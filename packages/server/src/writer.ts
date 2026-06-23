@@ -344,7 +344,7 @@ export class Writer {
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
       let success: SingleAttemptSuccess;
       try {
-        success = await this.#singleAttemptCommit([input], session, logPrefix, "Writer");
+        success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
       } catch (error) {
         // Only a retryable `Conflict` (see NOTE above — currently none)
         // backs off and retries. Anything else propagates.
@@ -381,9 +381,8 @@ export class Writer {
    * (single-write commit; no `current.json` CAS follows it). Stale index
    * keys are DELETE'd after the commit. Returns the success payload.
    *
-   * Called only as `#singleAttemptCommit([input], …)`: the array shape
-   * is retained dead-generality (D1.5), but every call commits exactly
-   * one entry.
+   * Commits exactly one {@link CommitInput} — the numbered log create is
+   * the single linearization point per call.
    *
    * A log-create 412 is disambiguated by session read-back: own session
    * / own seq ⇒ our crashed-or-lost-ack commit is already durable ⇒
@@ -404,7 +403,7 @@ export class Writer {
    * committed doc — is never produced.
    */
   async #singleAttemptCommit(
-    inputs: readonly CommitInput[],
+    input: CommitInput,
     session: string,
     logPrefix: string,
     errorPrefix: string,
@@ -460,17 +459,16 @@ export class Writer {
     const commitNowMs = Date.now();
     const commitTs = new Date(commitNowMs).toISOString();
     const lsnTimestamp = timestamp(commitNowMs);
-    const input0 = inputs[0]!;
     const mintEntry = (atSeq: number): LogEntry => ({
       lsn: `${lsnTimestamp}_${session}_${countKey(atSeq)}`,
       commit_ts: commitTs,
-      op: input0.op,
-      collection: input0.collection,
-      doc_id: input0.docId,
+      op: input.op,
+      collection: input.collection,
+      doc_id: input.docId,
       session,
       seq: atSeq,
-      ...(input0.op !== "D" && input0.body !== undefined ? { after: input0.body } : {}),
-      ...(input0.origin !== undefined ? { origin: input0.origin } : {}),
+      ...(input.op !== "D" && input.body !== undefined ? { after: input.body } : {}),
+      ...(input.origin !== undefined ? { origin: input.origin } : {}),
     });
     let entry = mintEntry(seq);
 
@@ -499,16 +497,35 @@ export class Writer {
     let contentPutCount = 0;
     let newKeysClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];
-    for (const input of inputs) {
-      if (input.op !== "D" && input.body !== undefined) {
-        contentPutCount++;
-        const bytes = encodeJsonBytes(input.body);
-        const version = await versionFromContent(bytes);
-        const contentKey = `${logPrefix}/content/${version}.json`;
-        assertKeyWithinLimit(contentKey);
+    if (input.op !== "D" && input.body !== undefined) {
+      contentPutCount++;
+      const bytes = encodeJsonBytes(input.body);
+      const version = await versionFromContent(bytes);
+      const contentKey = `${logPrefix}/content/${version}.json`;
+      assertKeyWithinLimit(contentKey);
+      parallelPuts.push(
+        this.#storage
+          .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+          .catch((error: unknown) => {
+            this.#observe429(error, input.collection);
+            if (isPreconditionFailed(error)) {
+              return;
+            }
+            throw error;
+          }),
+      );
+    }
+    // Additive index keys for the NEW value — emitted before the
+    // commit on I/U (a D has no new value). `op:"D"` and a missing
+    // body project to no keys. Empty `#indexes` short-circuits.
+    if (this.#indexes.length > 0 && input.op !== "D") {
+      const newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
+      for (const k of newKeys) {
+        assertKeyWithinLimit(k);
+        newKeysClassA++;
         parallelPuts.push(
           this.#storage
-            .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
+            .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
             .catch((error: unknown) => {
               this.#observe429(error, input.collection);
               if (isPreconditionFailed(error)) {
@@ -517,27 +534,6 @@ export class Writer {
               throw error;
             }),
         );
-      }
-      // Additive index keys for the NEW value — emitted before the
-      // commit on I/U (a D has no new value). `op:"D"` and a missing
-      // body project to no keys. Empty `#indexes` short-circuits.
-      if (this.#indexes.length > 0 && input.op !== "D") {
-        const newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-        for (const k of newKeys) {
-          assertKeyWithinLimit(k);
-          newKeysClassA++;
-          parallelPuts.push(
-            this.#storage
-              .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-              .catch((error: unknown) => {
-                this.#observe429(error, input.collection);
-                if (isPreconditionFailed(error)) {
-                  return;
-                }
-                throw error;
-              }),
-          );
-        }
       }
     }
     await Promise.all(parallelPuts);
@@ -602,7 +598,7 @@ export class Writer {
       const decision = tryAdoptOwnSessionLogEntry({
         self: entry,
         existing,
-        batchSize: inputs.length,
+        batchSize: 1,
       });
       if (decision.adopt) {
         // Own crashed/lost-ack commit already durable at `seq`. Adopt it
@@ -657,8 +653,7 @@ export class Writer {
     // The pre-image is read at the RESOLVED committing `seq` (Step 5
     // may have advanced `seq` past a foreign winner): `#readPreImage`
     // back-walks from `seq - 1`, so it skips the just-committed entry
-    // and finds the prior same-doc image. For a same-`docId` input
-    // earlier in this batch the in-batch image takes precedence.
+    // and finds the prior same-doc image.
     //
     // Filter-aware projection (T4): `allIndexKeysFor` short-circuits on
     // `def.predicate` miss. The diff `oldKeys \ newKeys` covers all four
@@ -667,7 +662,7 @@ export class Writer {
     // pinned by a named test in `writer.test.ts` ("Writer — filtered
     // index").
     const staleKeysClassA = await this.#cleanupStaleIndexKeysBestEffort({
-      inputs,
+      input,
       logPrefix,
       seq,
     });
@@ -676,7 +671,7 @@ export class Writer {
     const indexClassA = newKeysClassA + staleKeysClassA;
     if (this.#indexes.length > 0 && indexClassA > 0) {
       ctxMetrics().histogram("db.write.index_ops_per_logical_write", indexClassA, {
-        collection: input0.collection,
+        collection: input.collection,
       });
     }
 
@@ -818,7 +813,7 @@ export class Writer {
   }
 
   async #cleanupStaleIndexKeysBestEffort(args: {
-    inputs: readonly CommitInput[];
+    input: CommitInput;
     logPrefix: string;
     seq: number;
   }): Promise<number> {
@@ -826,54 +821,52 @@ export class Writer {
       return 0;
     }
 
-    let staleKeysClassA = 0;
-    const indexDeletes: Array<Promise<unknown>> = [];
-    // Per-docId in-batch image map: a later input on the same docId
-    // reads the in-batch pre-image, not the on-disk one.
-    const inBatchImage = new Map<string, DocumentData | undefined>();
-    for (const input of args.inputs) {
-      let staleKeys: readonly string[] = [];
-      try {
-        if (input.op === "U") {
-          const preImage = inBatchImage.has(input.docId)
-            ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(args.logPrefix, input.collection, input.docId, args.seq);
-          const oldKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
-          const newSet = new Set(
-            allIndexKeysFor(args.logPrefix, this.#indexes, input.body, input.docId),
-          );
-          staleKeys = oldKeys.filter((k) => !newSet.has(k));
-        } else if (input.op === "D") {
-          const preImage = inBatchImage.has(input.docId)
-            ? inBatchImage.get(input.docId)
-            : await this.#readPreImage(args.logPrefix, input.collection, input.docId, args.seq);
-          staleKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
-        }
-      } catch {
-        ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
-          collection: input.collection,
-          step: "pre-image-read",
-        });
-        inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
-        continue;
-      }
-
-      // (op:"I" has no pre-image → no stale keys.)
-      for (const k of staleKeys) {
-        indexDeletes.push(
-          this.#storage.delete(k).catch(() => {
-            ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
-              collection: input.collection,
-              step: "delete",
-            });
-          }),
+    const { input } = args;
+    let staleKeys: readonly string[] = [];
+    try {
+      if (input.op === "U") {
+        const preImage = await this.#readPreImage(
+          args.logPrefix,
+          input.collection,
+          input.docId,
+          args.seq,
         );
+        const oldKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
+        const newSet = new Set(
+          allIndexKeysFor(args.logPrefix, this.#indexes, input.body, input.docId),
+        );
+        staleKeys = oldKeys.filter((k) => !newSet.has(k));
+      } else if (input.op === "D") {
+        const preImage = await this.#readPreImage(
+          args.logPrefix,
+          input.collection,
+          input.docId,
+          args.seq,
+        );
+        staleKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
       }
-      staleKeysClassA += staleKeys.length;
-      inBatchImage.set(input.docId, input.op === "D" ? undefined : input.body);
+    } catch {
+      ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
+        collection: input.collection,
+        step: "pre-image-read",
+      });
+      return 0;
+    }
+
+    // (op:"I" has no pre-image → no stale keys.)
+    const indexDeletes: Array<Promise<unknown>> = [];
+    for (const k of staleKeys) {
+      indexDeletes.push(
+        this.#storage.delete(k).catch(() => {
+          ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
+            collection: input.collection,
+            step: "delete",
+          });
+        }),
+      );
     }
     await Promise.all(indexDeletes);
-    return staleKeysClassA;
+    return staleKeys.length;
   }
 
   /**
