@@ -466,6 +466,27 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
 };
 
 /**
+ * CF-paid profile — opt-in via `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A paid
+ * isolate keeps the CPU-killable single-phase shape but has the 10,000-
+ * subrequest budget (vs free's 50), so it reuses the `NODE_MAINTENANCE_*`
+ * per-pass caps. CRITICAL: snapshot ceilings `maxFoldBytes` (`C`) /
+ * `maxFoldRows` (`E`) are UNCHANGED — a profile moves rate, never correctness
+ * (the equivalence invariant); the memory wall is raised via
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`.
+ *
+ * @see packages/adapter-cloudflare/src/worker.ts
+ * @see docs/about/graduation.md
+ */
+export const MAINTENANCE_PROFILE_CF_PAID: MaintenanceProfileShape = {
+  gcInterval: NODE_MAINTENANCE_GC_INTERVAL,
+  gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
+  gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
+  maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
+  maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
+  maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
+};
+
+/**
  * Rate-limit the defer-warn off SHARED current.json.last_warned_seq (not per-isolate
  * memory — CF recycles isolates). ~once per this many writes.
  *

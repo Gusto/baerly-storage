@@ -28,6 +28,7 @@ import {
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
@@ -141,7 +142,11 @@ export interface MaintenanceProfile {
   readonly maxFoldRows: number;
 }
 
-export { MAINTENANCE_PROFILE_CF_FREE, MAINTENANCE_PROFILE_NODE } from "@baerly/protocol";
+export {
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
+  MAINTENANCE_PROFILE_NODE,
+} from "@baerly/protocol";
 
 // Snapshot ceilings aren't part of the scheduled cap surface; omitted.
 const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMaintenanceOptions => ({
@@ -173,6 +178,21 @@ const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMainten
  */
 export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_FREE,
+);
+
+/**
+ * Tuning profile for the 10,000-subrequest Cloudflare paid-tier budget,
+ * derived from {@link MAINTENANCE_PROFILE_CF_PAID} (one source of truth).
+ * Keeps the single-phase CPU-killable shape but affords Node-tier per-pass
+ * throughput (compact ≈ 3+200, gc ≈ 6+200+100 — far under the 10k cap).
+ *
+ * To honour `BAERLY_MAINTENANCE_PROFILE=cf-paid` on the cron path, pass this
+ * constant to `runScheduledMaintenance` inside your
+ * {@link WorkerScheduledHandler}; the worked recipe lives in the `scheduled`
+ * handler docstring of `baerlyWorker` (`@gusto/baerly-storage/cloudflare`).
+ */
+export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = profileToScheduledOptions(
+  MAINTENANCE_PROFILE_CF_PAID,
 );
 
 // =====================================================================

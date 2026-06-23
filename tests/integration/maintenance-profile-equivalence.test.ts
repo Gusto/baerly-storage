@@ -39,6 +39,7 @@ import {
   casUpdateCurrentJson,
   type Collection,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
   readCurrentJson,
   type Storage,
@@ -169,6 +170,7 @@ interface ProfileCase {
 const PROFILE_CASES: readonly ProfileCase[] = [
   { label: "cf-free", profile: MAINTENANCE_PROFILE_CF_FREE },
   { label: "node", profile: MAINTENANCE_PROFILE_NODE },
+  { label: "cf-paid", profile: MAINTENANCE_PROFILE_CF_PAID },
 ];
 
 const VARIANTS = makeVariants("baerly-profile-equiv-");

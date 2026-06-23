@@ -3,6 +3,7 @@ import {
   type BaerlyAppConfig,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
   type Verifier,
 } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
@@ -70,6 +71,16 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     on a free isolate that fold risks a mid-rebuild CPU kill.
  *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Any non-empty value
  *     other than `"0"` / `"false"` disables write-tick maintenance.
+ *   - `BAERLY_MAINTENANCE_PROFILE` — opt-in profile selector. Set to
+ *     `"cf-paid"` on a paid Worker to raise the per-pass throughput caps
+ *     (GC marks/sweeps, fold entries per pass) to the Node-tier values,
+ *     exploiting the paid 10,000-subrequest budget. Default / unknown
+ *     values resolve to `cf-free` (unchanged zero-config behaviour). Does
+ *     NOT change the snapshot ceilings `C` / `E` — raise those separately
+ *     via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`. Must be set consistently on
+ *     BOTH the write-tick path and the cron path (use
+ *     {@link resolveCfMaintenanceProfile} in your
+ *     {@link WorkerScheduledHandler}).
  */
 export interface BaerlyEnv {
   BUCKET: R2Bucket;
@@ -86,7 +97,27 @@ export interface BaerlyEnv {
    * `"0"` / `"false"`) disables the in-band fold + GC dispatch.
    */
   BAERLY_MAINTENANCE_DISABLE?: string;
+  /**
+   * Opt-in maintenance profile. `"cf-paid"` raises per-pass throughput
+   * caps to Node-tier values on a paid Worker isolate. Default / unknown
+   * values resolve to `cf-free`. Does NOT change snapshot ceilings.
+   */
+  BAERLY_MAINTENANCE_PROFILE?: string;
 }
+
+/**
+ * Resolve the maintenance profile from the opt-in operator env var.
+ * Default (unset / unknown) is the CPU-killable CF-free profile, so
+ * zero-config behavior is unchanged. `cf-paid` raises the per-pass
+ * caps to exploit the paid 10,000-subrequest budget; it does NOT change
+ * the snapshot ceilings. Used by BOTH the write-tick dispatch and the
+ * cron path so the two maintenance triggers stay coherent when the
+ * operator wires the recipe below into their scheduled handler.
+ */
+export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | undefined) =>
+  readEnv("BAERLY_MAINTENANCE_PROFILE") === "cf-paid"
+    ? MAINTENANCE_PROFILE_CF_PAID
+    : MAINTENANCE_PROFILE_CF_FREE;
 
 /**
  * Assemble the per-request {@link MaintenanceDispatch} for a Cloudflare
@@ -147,12 +178,11 @@ export const cfMaintenanceDispatch = (
     options: {
       // A CPU-killable free isolate does ONE phase per request.
       phasesPerTick: "single",
-      // Write-tick profile. The cron path (user-supplied `scheduled` callback
-      // below) independently picks its own profile; today both resolve to
-      // CF-free, so they stay coherent. If a second profile is ever
-      // introduced, it MUST be threaded to BOTH paths or the two maintenance
-      // triggers diverge.
-      profile: MAINTENANCE_PROFILE_CF_FREE,
+      // Write-tick profile. The cron path (user-supplied `scheduled` callback)
+      // resolves the profile via the SAME `resolveCfMaintenanceProfile` export
+      // so the two maintenance triggers stay coherent when the operator wires
+      // the recipe below into their `scheduled` handler.
+      profile: resolveCfMaintenanceProfile(readEnv),
     },
   };
 };
@@ -500,6 +530,12 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     async scheduled(event, env, ctx): Promise<void> {
       const { options } = await ensureResolved(env);
       if (options.scheduled !== undefined) {
+        // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, call
+        // `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` when the
+        // profile is "cf-paid", or `CLOUDFLARE_FREE_TIER` (the default) —
+        // both imported from `@gusto/baerly-storage/maintenance`. Use
+        // `resolveCfMaintenanceProfile((k) => env[k])` (exported from this
+        // module) to read the env var inside your WorkerScheduledHandler.
         await options.scheduled(event, env, ctx);
       }
     },

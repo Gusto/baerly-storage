@@ -268,7 +268,13 @@ const BUDGETS: readonly Budget[] = [
   //     barrel pulls. Genuinely new logic — both axes climb (measured 224105
   //     raw / 69699 gz); min-gz still under. Rebaseline raw + gz to the
   //     smallest whole-KiB that clears.
-  { entry: "index.js", raw: 219 * 1024, gz: 69 * 1024, minGz: 19 * 1024 },
+  //   → raw +2 KiB (2026-06-22): CLOUDFLARE_PAID_TIER constant + JSDoc (~23 lines)
+  //     in maintenance.ts lands in the protocol/maintenance shared chunk; comments
+  //     ship un-stripped.
+  //   → raw −1 KiB (2026-06-23): trimmed the duplicated @example recipe from the
+  //     CLOUDFLARE_PAID_TIER JSDoc (kept a terse pointer); reclaims one of the two
+  //     KiB above (measured 225667 raw). The constant's code holds the other KiB.
+  { entry: "index.js", raw: 221 * 1024, gz: 69 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -385,7 +391,10 @@ const BUDGETS: readonly Budget[] = [
   //     request-path writer → maintenance subgraph. Genuinely new logic —
   //     both axes climb (measured 339734 raw / 100780 gz); min-gz still under.
   //     Rebaseline raw + gz to the smallest whole-KiB that clears.
-  { entry: "http.js", raw: 332 * 1024, gz: 99 * 1024, minGz: 34 * 1024 },
+  //   → raw +1 KiB (2026-06-22): CLOUDFLARE_PAID_TIER constant + JSDoc in
+  //     maintenance.ts lands in the request-path writer → maintenance closure
+  //     (measured 341936 raw); gz/min-gz unaffected.
+  { entry: "http.js", raw: 334 * 1024, gz: 99 * 1024, minGz: 34 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -494,7 +503,13 @@ const BUDGETS: readonly Budget[] = [
   //     re-exports. Genuinely new logic — both axes climb (measured 122167
   //     raw / 37458 gz); min-gz still under. Rebaseline raw + gz to the
   //     smallest whole-KiB that clears.
-  { entry: "maintenance.js", raw: 120 * 1024, gz: 37 * 1024, minGz: 11 * 1024 },
+  //   → raw +1 KiB / gz +1 KiB (2026-06-22): CLOUDFLARE_PAID_TIER constant +
+  //     JSDoc (~23 lines) in maintenance.ts lands directly in this subpath's
+  //     closure (measured 124481 raw / 38054 gz); min-gz unaffected.
+  //   → raw −1 KiB (2026-06-23): trimmed the duplicated @example recipe from the
+  //     CLOUDFLARE_PAID_TIER JSDoc (measured 123841 raw). gz stays at 38 KiB —
+  //     the trim narrowed but didn't cross the KiB boundary (measured 37916 gz).
+  { entry: "maintenance.js", raw: 121 * 1024, gz: 38 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -585,7 +600,10 @@ const BUDGETS: readonly Budget[] = [
   //     writer → maintenance subgraph. Genuinely new logic — both axes climb
   //     (measured 396326 raw / 119124 gz); min-gz still under. Rebaseline
   //     raw + gz to the smallest whole-KiB that clears.
-  { entry: "cloudflare.js", raw: 388 * 1024, gz: 117 * 1024, minGz: 40 * 1024 },
+  //   → raw +1 KiB (2026-06-22): CLOUDFLARE_PAID_TIER constant + JSDoc (~23 lines)
+  //     in maintenance.ts reaches the cloudflare closure via the maintenance shared
+  //     chunk (measured 399144 raw); gz/min-gz unaffected.
+  { entry: "cloudflare.js", raw: 390 * 1024, gz: 117 * 1024, minGz: 40 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -705,7 +723,10 @@ const BUDGETS: readonly Budget[] = [
   //     (`log-tail.ts`, single-write-commit Plan B) lands in this barrel's
   //     closure via `Db.probeLogTail` (measured 36200 raw). Bump raw +1 KiB;
   //     gz stays under 13 KiB.
-  { entry: "dev.js", raw: 36 * 1024, gz: 13 * 1024 },
+  //   → 37 KiB raw / 14 KiB gz (2026-06-22): MAINTENANCE_PROFILE_CF_PAID JSDoc
+  //     (~23 lines) in constants.ts lands in the protocol chunk this dev barrel
+  //     pulls; comments ship un-stripped (gz 13→14).
+  { entry: "dev.js", raw: 37 * 1024, gz: 14 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
