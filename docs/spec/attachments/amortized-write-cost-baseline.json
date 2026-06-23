@@ -1,0 +1,56 @@
+[
+  {
+    "profile": "cf-free",
+    "workload": "update-heavy/50-docs/2KB",
+    "writes": 2000,
+    "puts": 4697,
+    "lists": 1488,
+    "deletesFree": 3923,
+    "billableClassAPerWrite": 3.092
+  },
+  {
+    "profile": "cf-free",
+    "workload": "update-heavy/50-docs/200B",
+    "writes": 2000,
+    "puts": 4671,
+    "lists": 1377,
+    "deletesFree": 3499,
+    "billableClassAPerWrite": 3.024
+  },
+  {
+    "profile": "cf-free",
+    "workload": "insert-only/growing/200B",
+    "writes": 1500,
+    "puts": 3459,
+    "lists": 1017,
+    "deletesFree": 626,
+    "billableClassAPerWrite": 2.984
+  },
+  {
+    "profile": "node",
+    "workload": "update-heavy/50-docs/2KB",
+    "writes": 2000,
+    "puts": 5081,
+    "lists": 2976,
+    "deletesFree": 3988,
+    "billableClassAPerWrite": 4.029
+  },
+  {
+    "profile": "node",
+    "workload": "update-heavy/50-docs/200B",
+    "writes": 2000,
+    "puts": 5023,
+    "lists": 2837,
+    "deletesFree": 3694,
+    "billableClassAPerWrite": 3.93
+  },
+  {
+    "profile": "node",
+    "workload": "insert-only/growing/200B",
+    "writes": 1500,
+    "puts": 3761,
+    "lists": 2087,
+    "deletesFree": 771,
+    "billableClassAPerWrite": 3.899
+  }
+]
