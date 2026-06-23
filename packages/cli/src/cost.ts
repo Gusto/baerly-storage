@@ -105,7 +105,7 @@ const renderAdvisoryLine = (t: Trajectory): string => {
     `  advisory:            ~100 writes/min crossed (${costNote}, object-storage ops). Object storage buys\n` +
     `                       zero ops, no on-call, and no migration for your bytes. A managed DB trades those\n` +
     `                       dollars for a schema, SQL, and an ops surface. Review if that tradeoff\n` +
-    `                       makes sense for your workload. Hard graduation trigger: 50M/mo (~$220/mo on R2).\n`
+    `                       makes sense for your workload. Hard graduation trigger: 50M Class A/mo.\n`
   );
 };
 
