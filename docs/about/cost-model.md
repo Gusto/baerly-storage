@@ -20,7 +20,7 @@ companion file
 [pricing-log.md](pricing-log.md) is the one-line-per-change
 history of every price or cap update.
 
-All prices below were re-checked **2026-06-15** against the official
+All prices below were re-checked **2026-06-22** against the official
 [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/),
 [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 and
@@ -44,6 +44,12 @@ secondary at the M-size operating point.
 | Worker CPU-ms (Workers Paid)                                         | $0.02 / 1M     | 30M / mo (paid plan)                              |
 | Workers Paid plan floor                                              | $5 / mo        | —                                                 |
 
+> **Note on AWS S3 free tier:** AWS S3's 12-month free tier no longer
+> applies to new accounts (credit-based since 2025). The
+> self-hosted-Node "idle is free on S3" claim holds only for existing
+> or paid accounts, or for workloads inside a bucket you already own
+> on a paid plan.
+
 Class A is the meter that matters. Three reasons:
 
 1. **Highest unit cost of the high-volume items** ($4.50 / 1M vs.
@@ -56,10 +62,14 @@ Class A is the meter that matters. Three reasons:
 
 `baerly cost --bucket=<bucket-uri> --collection=<collection>`
 projects the Class A ops/mo, free-tier-aware dollar projection, and
-distance to the M-size ceiling + 50M/mo graduation trigger. That
-covers the day-1 cost-verification moment without wiring an external
-sink. For longer windows (7-day, 30-day) operators pipe the canonical
-log line to CloudWatch / Workers Analytics / Datadog — see
+distance to the M-size ceiling + 50M/mo graduation trigger. The
+projection uses the **measured effective write-amp** (≈3× on R2/
+Cloudflare, ≈4× on S3/Node), not the 2-op commit floor — so the
+estimate includes the in-band maintenance ops that are incurred on
+the write path. That covers the day-1 cost-verification moment
+without wiring an external sink. For longer windows (7-day, 30-day)
+operators pipe the canonical log line to CloudWatch / Workers
+Analytics / Datadog — see
 [`docs/guide/observability.md`](../guide/observability.md).
 
 ## Cost ceiling
@@ -68,9 +78,10 @@ baerly-storage commits to a published, architecturally-enforced ceiling so
 the cost line is bounded, not best-effort. Two bounds, both
 verified in CI:
 
-- **Small constant storage ops per logical write.** The unindexed
-  first-try insert baseline is PUT content + the committing `log/<seq>`
-  create (two Class A ops; the create-if-absent IS the commit, so there
+- **Small constant storage ops per logical write (commit floor: 2
+  Class A ops).** The unindexed first-try insert baseline is PUT
+  content + the committing `log/<seq>` create (two Class A ops —
+  the **commit floor**; the create-if-absent IS the commit, so there
   is no `current.json` write on the commit path — down from three).
   Deletes can be cheaper; indexes,
   retries, and first-collection provisioning add bounded mutations.
@@ -80,13 +91,29 @@ verified in CI:
   on every commit (verified in CI by `writer.test.ts`); operators
   who pipe it to a metrics sink can alert when p99 exceeds ~5; that
   threshold is a recommendation, not a shipped or CI-gated check.
+- **Effective Class A write-amplification is ~3× on Cloudflare, ~4×
+  on serverful Node — not the 2-op commit floor above.** The commit
+  path is two Class A ops (content PUT + `log/<seq>` create), but
+  in-band maintenance (folds + GC) is triggered on the write path
+  and adds ~1 Class A op/write on the cf-free profile and ~2 on Node
+  (Node's `gcInterval=2` vs cf's `4` doubles the GC LISTs; each GC
+  pass is 3 LIST + 1 PUT, each fold is 2 PUT). Measured empirically
+  — see
+  `docs/spec/attachments/amortized-write-cost-baseline.json`
+  (`pnpm bench:amortized-write-cost`) and gated by
+  `tests/integration/write-amp.test.ts`. `DeleteObject` (the GC
+  sweep) is $0 on R2/S3 and is excluded from this count.
 - **`< 1 Class A op / writer / hour` for idle readers.** Real
   expectation is exactly zero — readers walk `current.json` plus the
   snapshot plus the live-tail log via deterministic GETs, never
   LIST. The tail forward-probe (GET from
   `max(log_seq_start, tail_hint)` — normally `tail_hint` — to the first
   404) is Class B, so tail discovery never touches the Class A meter
-  and the idle-reader bound is untouched.
+  and the idle-reader bound is untouched. The one read-path
+  Class A cost: an **indexed `.where()` issues one `ListObjects`
+  (Class A) per equality value** (`$in` ⇒ N calls) to walk the index
+  prefix and resolve matching `_id`s. The default fold path (full
+  scan over snapshot + tail) is zero Class A.
 
 ### Maintenance is write-driven; reads are pure
 
@@ -322,10 +349,12 @@ real argument lives.
 The graduation triggers follow directly: any one of (sustained over 7
 days) R2 Class A ops > 50M/month, effective write-amp > 6, or stored
 data > 5 GB is the system telling the user they have outgrown the
-ceiling. Today the `baerly cost` projection's `percentOfGraduation`
-tracks only the **Class A** trigger (the 50M ops/month line); the
-write-amp and stored-data triggers are documented targets but are not
-yet surfaced by the tooling.
+ceiling. At the measured ~3× effective write-amp, the 50M Class A/mo
+trigger corresponds to ≈ **390 writes/min** sustained (previously ≈580
+at the 2-op commit floor). Today the `baerly cost` projection's
+`percentOfGraduation` tracks only the **Class A** trigger (the 50M
+ops/month line); the write-amp and stored-data triggers are documented
+targets but are not yet surfaced by the tooling.
 
 ### Hot-prefix cliff at high write fan-in
 
