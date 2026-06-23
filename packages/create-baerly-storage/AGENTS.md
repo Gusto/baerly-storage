@@ -102,15 +102,6 @@ readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
 `baerly.config.ts`) is fair game to write; the user's worker entry
 (`src/index.ts`) is printed as a snippet, never written.
 
-## When iterating against local Verdaccio
-
-`pnpm dlx` caches resolved tarballs by `pkg@version`. Republishing
-`create-baerly-storage@0.1.0` to Verdaccio does **not** bust the cache.
-After every `pnpm verdaccio:publish`, run `pnpm dlx:bust-cache` (or
-the publish script does it for you — check the package.json wiring).
-Do not probe `pnpm config get cache-dir` to find the cache; see the
-CLAUDE.md Anti-patterns section for why.
-
 ## When editing templates
 
 - Use sentinels (e.g. `appName`, not the literal value) so the

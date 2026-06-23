@@ -12,10 +12,7 @@ related: ["development.md", "../../CLAUDE.md"]
 Two packages publish from this repo, both scoped to `@gusto/` and
 both published publicly to the standard npm registry (npmjs.com) with
 `publishConfig.access: "public"` — the project is open source under
-Apache-2.0, so anyone can install them without auth. The local
-Verdaccio registry (`pnpm verdaccio:publish`, `localhost:4873`) is a
-throwaway test harness for scaffolder iteration only — never a publish
-target.
+Apache-2.0, so anyone can install them without auth.
 
 ## Cutting a release
 
