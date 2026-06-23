@@ -47,11 +47,29 @@ export interface ProviderPricing {
  * Source: `docs/about/cost-model.md:159-163`.
  */
 export const GRADUATION_CLASS_A_PER_MONTH = 50_000_000;
-// GRADUATION_WRITE_AMP = 6 — sustained write-amp at this level
-// suggests the workload is too bursty for the M-size positioning.
-// Not yet wired into project(); kept for the storedBytes follow-up.
-// GRADUATION_STORED_BYTES = 5 * 1024 * 1024 * 1024 — storage graduation
-// trigger (~5 GB). Not yet wired; deferred alongside write-amp gating.
+/**
+ * Advisory crossing — eyes-open signal, NOT a hard stop.
+ *
+ * Keyed to a sustained WRITE RATE (100 writes/min, account-wide), not an
+ * absolute Class A count, so it fires at the same workload on every
+ * provider regardless of write-amp. On R2 (×3) that is ~13M Class A/mo
+ * (~$54/mo object-storage ops); on S3 (×4) ~17.3M Class A/mo (~$86/mo).
+ * The previous absolute 13M-Class-A threshold was R2-derived and, applied
+ * to S3, fired at ~75 writes/min (~$65/mo) while the rendered note quoted
+ * the 100-writes/min figure (~$86) — provider-inconsistent. Fires before
+ * the 50M hard trigger to surface the ops-vs-cost tradeoff: object storage
+ * buys zero ops / no on-call / no migration; a managed DB trades those
+ * dollars for a schema, SQL, and an ops surface. Does NOT change the 50M
+ * hard trigger.
+ */
+export const GRADUATION_ADVISORY_WRITES_PER_MIN = 100;
+// Storage graduation is a COST SIGNAL at the ~10 GB R2 free-tier line,
+// not a hard trigger — intentionally not represented as a graduation
+// constant. `storedBytes` feeds the dollar projection (storage overage)
+// but the projection surfaces no storage graduation %; the tooling
+// tracks only the 50M Class A/mo trigger. See cost-model.md. (The
+// historic `effective write-amp > 6` trigger is retired — see
+// pricing-log.md 2026-06-22 — and is not represented here either.)
 
 /** What the inspect footer renders from. */
 export interface Trajectory {
@@ -61,6 +79,8 @@ export interface Trajectory {
   readonly percentOfFreeTier: number | null;
   /** Percent of the 50M/mo graduation trigger. Always a finite number. */
   readonly percentOfGraduation: number;
+  /** Percent of the 100-writes/min advisory threshold (provider-agnostic). Always a finite number. */
+  readonly percentOfAdvisory: number;
   /** Projected USD/month. `0` when fully inside the free tier. `null` when the provider has no $ model (self-hosted/dev). */
   readonly projectedUsdPerMonth: number | null;
   readonly withinFreeTier: boolean;
@@ -86,6 +106,11 @@ export const project = (
   const classAPerMonth = writesPerMin * 60 * 24 * 30 * pricing.effectiveWriteAmp;
 
   const percentOfGraduation = (classAPerMonth / GRADUATION_CLASS_A_PER_MONTH) * 100;
+  // Advisory is a write-RATE crossing (provider-agnostic), not an absolute
+  // Class A count — so it fires at the same 100 writes/min on R2 and S3
+  // alike, rather than at a lower S3 rate where the rendered cost note
+  // would be wrong. See GRADUATION_ADVISORY_WRITES_PER_MIN.
+  const percentOfAdvisory = (writesPerMin / GRADUATION_ADVISORY_WRITES_PER_MIN) * 100;
 
   const percentOfFreeTier =
     pricing.freeClassAPerMonth > 0 ? (classAPerMonth / pricing.freeClassAPerMonth) * 100 : null;
@@ -114,6 +139,7 @@ export const project = (
     classAPerMonth,
     percentOfFreeTier,
     percentOfGraduation,
+    percentOfAdvisory,
     projectedUsdPerMonth,
     withinFreeTier,
     provider: pricing.provider,
