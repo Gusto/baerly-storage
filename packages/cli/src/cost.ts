@@ -17,7 +17,9 @@
  *   --json      JSON envelope.
  *
  * Cost shape:
- *   1 LIST log/ prefix
+ *   ceil(logKeys/1000) LIST pages over the log/ prefix (1 for typical
+ *     logs; more only for deep, uncompacted logs — R2/S3 list pages cap
+ *     at 1000 keys)
  *   + up to 120 GETs for trailing log entries (`SAMPLE_SIZE`)
  *
  * Exit codes:
@@ -86,6 +88,27 @@ const formatOps = (n: number): string => {
   return n.toFixed(0);
 };
 
+/** Advisory line rendered when past 100 writes/min but under the 50M/mo graduation trigger. */
+const renderAdvisoryLine = (t: Trajectory): string => {
+  if (t.percentOfAdvisory < 100 || t.percentOfGraduation >= 100) {
+    return "";
+  }
+  if (t.projectedUsdPerMonth === null) {
+    return (
+      `  advisory:            ~100 writes/min crossed. Object storage buys zero ops, no on-call,\n` +
+      `                       no migration; a managed DB trades those dollars for schema + SQL + ops.\n` +
+      `                       Hard graduation trigger: 50M Class A/mo. Self-hosted — bill model not modelled.\n`
+    );
+  }
+  const costNote = t.provider === "r2" ? "~$54/mo on R2" : "~$86/mo on S3";
+  return (
+    `  advisory:            ~100 writes/min crossed (${costNote}, object-storage ops). Object storage buys\n` +
+    `                       zero ops, no on-call, and no migration for your bytes. A managed DB trades those\n` +
+    `                       dollars for a schema, SQL, and an ops surface. Review if that tradeoff\n` +
+    `                       makes sense for your workload. Hard graduation trigger: 50M/mo (~$220/mo on R2).\n`
+  );
+};
+
 /** Two-line trajectory block. Three output states per design spec §4.2. */
 const renderTrajectory = (t: Trajectory): string => {
   const wpm = t.writesPerMin.toFixed(t.writesPerMin < 10 ? 1 : 0);
@@ -93,9 +116,11 @@ const renderTrajectory = (t: Trajectory): string => {
   // State 2: ops-only — provider known but no $ model. Today only
   // self-hosted reaches this (dev is filtered out upstream).
   if (t.projectedUsdPerMonth === null) {
+    const advisory = renderAdvisoryLine(t);
     return [
       `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo`,
       `                       ${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger. Self-hosted — bill model not modelled.`,
+      ...(advisory ? [advisory] : []),
     ].join("\n");
   }
   // Only "r2" can reach withinFreeTier===true (aws-s3 has freeClassAPerMonth: 0).
@@ -108,9 +133,11 @@ const renderTrajectory = (t: Trajectory): string => {
   const tail = t.withinFreeTier
     ? `${t.percentOfFreeTier!.toFixed(0)}% of free-tier Class A budget. ${t.percentOfFreeTier! < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
     : `${t.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger.`;
+  const advisory = renderAdvisoryLine(t);
   return [
     `  trajectory:          ~${wpm} writes/min  →  ~${classA} Class A/mo  →  ${usd}`,
     `                       ${tail}`,
+    ...(advisory ? [advisory] : []),
   ].join("\n");
 };
 

@@ -5,7 +5,12 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { GRADUATION_CLASS_A_PER_MONTH, type ProviderPricing, project } from "./project.ts";
+import {
+  GRADUATION_ADVISORY_WRITES_PER_MIN,
+  GRADUATION_CLASS_A_PER_MONTH,
+  type ProviderPricing,
+  project,
+} from "./project.ts";
 
 const R2: ProviderPricing = {
   provider: "r2",
@@ -124,5 +129,38 @@ describe("project", () => {
     expect(t!.percentOfFreeTier).not.toBeNull();
     expect(t!.percentOfFreeTier!).toBeGreaterThanOrEqual(50);
     expect(t!.percentOfFreeTier!).toBeLessThan(100);
+  });
+
+  test("percentOfAdvisory: exactly at the 100-writes/min advisory rate → 100%, on every provider", () => {
+    // The advisory is a write-RATE crossing, not an absolute Class A count,
+    // so a provider's write-amp must NOT shift where it fires.
+    const r2 = project(GRADUATION_ADVISORY_WRITES_PER_MIN, 0, R2);
+    const s3 = project(GRADUATION_ADVISORY_WRITES_PER_MIN, 0, AWS_S3);
+    expect(r2).not.toBeNull();
+    expect(s3).not.toBeNull();
+    expect(r2!.percentOfAdvisory).toBeCloseTo(100, 3);
+    expect(s3!.percentOfAdvisory).toBeCloseTo(100, 3);
+  });
+
+  test("percentOfAdvisory: at half the advisory write rate → 50%", () => {
+    const t = project(GRADUATION_ADVISORY_WRITES_PER_MIN / 2, 0, R2);
+    expect(t).not.toBeNull();
+    expect(t!.percentOfAdvisory).toBeCloseTo(50, 3);
+  });
+
+  test("percentOfAdvisory: at the 50M Class A/mo R2 graduation rate → well past 100%", () => {
+    // R2 graduation rate (writesPerMin), expressed as a percent of the
+    // 100-writes/min advisory: ~385.8 writes/min ⇒ ~386%.
+    const wpm = GRADUATION_CLASS_A_PER_MONTH / (60 * 24 * 30 * 3);
+    const t = project(wpm, 0, R2);
+    expect(t).not.toBeNull();
+    expect(t!.percentOfAdvisory).toBeCloseTo((wpm / GRADUATION_ADVISORY_WRITES_PER_MIN) * 100, 1);
+    expect(t!.percentOfAdvisory).toBeGreaterThan(100);
+  });
+
+  test("percentOfAdvisory is always finite (self-hosted provider)", () => {
+    const t = project(100, 0, SELF_HOSTED);
+    expect(t).not.toBeNull();
+    expect(Number.isFinite(t!.percentOfAdvisory)).toBe(true);
   });
 });
