@@ -8,7 +8,6 @@ describe("counting-storage billable taxonomy", () => {
     await c.storage.put("k", new Uint8Array([1]));
     await c.storage.delete("k");
     // one list iteration — drain the iterator; no entries expected (key was deleted)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const entry of c.storage.list("")) {
       void entry;
     }
