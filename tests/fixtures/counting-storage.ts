@@ -25,8 +25,20 @@ export interface CountingStorage {
   readonly puts: number;
   readonly deletes: number;
   readonly lists: number;
-  /** Sum of `puts + deletes + lists`. */
+  /**
+   * Operation/subrequest count: `puts + deletes + lists`. Includes DELETE
+   * because a `DeleteObject` is still a real CF subrequest against the
+   * subrequest budget. Use `billableClassAOps` when measuring cost in dollars.
+   */
   readonly classAOps: number;
+  /**
+   * Billing-correct Class A op count: `puts + lists`. Excludes
+   * `DeleteObject`, which is $0 on both R2 and S3 (see
+   * docs/about/cost-model.md). Use this for COST measurement; use
+   * `classAOps` (which includes DELETE) for CF subrequest-budget
+   * measurement, where a DELETE is still a real subrequest.
+   */
+  readonly billableClassAOps: number;
   reset(): void;
 }
 
@@ -68,6 +80,9 @@ export function wrapCountingStorage(inner: Storage): CountingStorage {
     },
     get classAOps() {
       return puts + deletes + lists;
+    },
+    get billableClassAOps() {
+      return puts + lists;
     },
     reset() {
       puts = 0;
