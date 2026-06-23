@@ -47,11 +47,13 @@ const UNFORMATTED_EXT = new Set([
   "yml",
   "sh",
   "png",
+  "gif", // rendered demo assets (docs/assets/demo.gif from a .tape script)
   "svg",
   "ico",
   "txt",
   "example",
   "toml",
+  "tape", // VHS terminal-demo scripts (docs/assets/*.tape) — no formatter owns these
 ]);
 
 // Exact basenames that are extension-less or dotfiles (no meaningful ext).
