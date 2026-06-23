@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-06-15
+last-reviewed: 2026-06-22
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -18,23 +18,30 @@ related:
 
 # Sync protocol
 
-baerly-storage turns an S3-compatible bucket into a document database by
-appending to a numbered, per-collection log. Each `(app, tenant,
-collection)` has a `log/<seq>.json` series and a `current.json`
-control object. A commit is **one** linearizable
-`If-None-Match: "*"` create on `log/<seq>.json`: the writer builds its
-content body and additive index keys first, then creates the numbered
-log entry — and **that create is the commit**. Readers load the
-snapshot named by `current.json`, fold the log range below the
-non-authoritative `tail_hint`, then forward-probe the log to discover
-the true tail.
+A conforming `Storage` backend gives the protocol one hot-path
+arbitration primitive: create a named object only if it does not already
+exist. baerly-storage uses that primitive on the next numbered log
+entry, not on `current.json`.
 
-The atomic moment is the conditional `If-None-Match: "*"` create on
-`log/<seq>.json`, **not** a CAS on `current.json`. `current.json` is
-read for its snapshot pointer and a tail-discovery floor, not as the
-authoritative head. The current kernel does not replay committed rows
-by wall-clock time and does not use a reader-side list-and-repair lag
-window.
+For each `(app, tenant, collection)`, the bucket holds a
+`log/<seq>.json` series and a `current.json` control object. The writer
+prepares the content body and additive index keys first. Then it creates
+exactly one numbered log object with `If-None-Match: "*"`. If that
+create succeeds, the mutation is committed at that `seq`; no later
+`current.json` CAS is needed.
+
+The live log is dense: writers target the first missing sequence
+number, and readers stop at the first missing sequence number. In this
+spec, the tail means that first missing sequence number: the exclusive
+upper bound of committed log entries. If `log/0` through `log/6` exist
+and `log/7` is missing, the committed tail is 7. `current.json` can tell
+readers where to start looking, but it cannot decide where the tail is.
+
+The atomic moment is therefore the conditional `If-None-Match: "*"`
+create on `log/<seq>.json`, **not** a CAS on `current.json`. The current
+kernel orders rows by integer `seq` and discovers the end by probing to
+the first missing log entry; it does not replay committed rows by
+wall-clock time or use a reader-side list-and-repair lag window.
 
 This is the single-write commit design; see
 [ADR-008](../adr/008-single-write-commit.md) for the decision record
@@ -85,27 +92,42 @@ interface CurrentJson {
 }
 ```
 
-`tail_hint` is a non-authoritative monotone **lower bound** for the
-live tail (it replaces the old authoritative head pointer that carried
-the next sequence number), and `mean_entry_bytes` is the optional
-compactor-stamped mean folded-entry size that drives the derived
-live-tail estimate after the first fold (it replaces the old exact
-stored-byte counter, which can no longer be writer-incremented once
-commits skip `current.json`). `writer_fence` is **dormant** — no prod
-path reads or writes it; its drop is deferred (see
-[ADR-008 §1](../adr/008-single-write-commit.md)).
+`tail_hint` exists to shorten tail discovery, not to certify the end of
+the log. If the true tail is 7 and `tail_hint` is 5, entries 5 and 6
+are still committed. The reader must find them by probing forward.
 
-Readers fold the trusted range `[log_seq_start, tail_hint)` and then
-**forward-probe** `[tail_hint, true tail)` to discover entries
-committed above the hint. Entries below `log_seq_start` have already
-been folded into `snapshot`. `tail_hint` is a lower bound, not an
-authoritative ceiling: a committed entry may exist at or above it.
-Entries at or above the discovered tail (the first 404 the probe hits)
-do not exist yet.
+`tail_hint` is a non-authoritative monotone **lower bound** for the live
+tail: the protocol requires it to be less than or equal to the true
+tail. It can be stale low; a value above the true tail is a protocol
+violation. Readers must probe at and above it. It replaces the old
+authoritative head pointer that carried the next sequence number.
+
+`mean_entry_bytes` is the optional compactor-stamped mean folded-entry
+size that drives the derived live-tail estimate after the first fold. It
+is a maintenance sizing estimate, not tail authority. It replaces the
+old exact stored-byte counter, which can no longer be writer-incremented
+once commits skip `current.json`.
+
+`writer_fence` is **dormant** authority metadata: no production
+commit/read path uses it for authority. Its drop is deferred (see
+[ADR-008 §1](../adr/008-single-write-commit.md#1-the-numbered-log-append-is-the-commit)).
+
+Readers fold `[log_seq_start, tail_hint)`, the range `current.json`
+asserts is committed but not snapshotted. A missing entry inside that
+range is an error. Then readers **forward-probe** from
+`max(log_seq_start, tail_hint)` to the first missing log entry. For
+valid `current.json`, that normally starts at `tail_hint`. Entries below
+`log_seq_start` have already been folded into `snapshot`. The first 404
+marks the prefix this read can trust: `log/<tail>` was absent when
+probed, and entries at or above it are outside this read's prefix.
+Later commits may appear there.
 
 ## Required storage semantics
 
-The `Storage` backend must provide three behaviors:
+On the ordinary commit path, writers do not race to update
+`current.json`. They race to create the same fresh numbered log key.
+Separately, compaction still needs CAS on `current.json`. The `Storage`
+backend must provide three behaviors:
 
 1. **Read-after-write on the same key.** A successful PUT is visible
    to a later GET of that key.
@@ -133,25 +155,26 @@ baerly-storage backend: it can lose updates without a visible error.
 arbitrary bucket before deploy, including the **concurrent**
 exactly-one-winner sub-check. The probe writes throwaway sentinels and
 asserts stale `If-Match`, colliding `If-None-Match: "*"`, and
-concurrent create-if-absent races all behave correctly. Operators
-should run this probe before relying on a bucket. Cloudflare deploy can
-run the same live probe when passed `--probe-bucket=<uri>` and aborts
-before deploying if that opt-in preflight fails; self-hosted Node has
-no deploy wrapper, so the doctor command is the manual gate.
+concurrent create-if-absent races all behave correctly. Operators should
+run this probe before relying on a bucket. Cloudflare deploy can run the
+same live probe when passed `--probe-bucket=<uri>` and aborts before
+deploying if that opt-in preflight fails; self-hosted Node has no deploy
+wrapper, so the doctor command is the manual gate.
 
 **Deployment-topology rule — no negative caching in front of the
 log/CAS path.** The log and CAS requests must hit the object-store API
 **directly**, never through a negative-caching CDN or proxy. A cached
-`404` on a `log/<seq>` that was just created would corrupt the
+`404` on a newly created `log/<seq>` would corrupt the
 forward-probe's "first 404 = tail" signal, hiding a committed entry.
-Object-store APIs are themselves strongly consistent (post-2020), so
-this is a deployment-topology constraint about what sits in front of
-them, not a property of the store.
+The conformance and live probe checks validate the direct object-store
+API path; this is a deployment-topology constraint about anything placed
+in front of that path, not a substitute for backend probing.
 
 ## Write algorithm
 
-`Writer.commit` is per collection. It holds no process state that is
-required for correctness; each commit reads `current.json` fresh.
+`Writer.commit` is per collection and carries no authority between
+calls. Each commit reads `current.json` fresh; correctness comes from
+the conditional log create, not from process-local writer state.
 
 The shipped public writer commits one document mutation at a time and
 emits one `LogEntry` per successful call. Some internal helper shapes
@@ -169,17 +192,19 @@ For a single-document mutation:
 2. **Find the true tail and mint `seq`.** Starting from
    `max(log_seq_start, tail_hint)`, run a GET-based galloping search
    (`findLogTail`) to discover the first empty log slot. That slot
-   becomes `seq`. The search is Class B only; the `If-None-Match: "*"`
-   create happens later, at the discovered first-empty slot.
+   becomes `seq`. The search is Class B (GET/read-class) only; the
+   `If-None-Match: "*"` create happens later, at the discovered
+   first-empty slot. The walk is capped by `LOG_FORWARD_PROBE_CAP`; cap
+   exhaustion is an `Internal` runaway alarm, not normal contention.
 3. **PUT content and additive (new) index keys — before the commit.**
    `I` / `U` post-images are written under `content/<sha>.json` with
    `If-None-Match: "*"`; because the body is content-addressed, a retry
-   is a no-op. Additive **new** index keys are PUT (`If-None-Match:
-"*"`) **before** the committing log create, so a committed row is
-   _always_ index-findable — there is no window in which a committed
-   doc is observed unindexed. (Stale index keys are deleted _after_ the
-   commit; see step 5. Index completeness is its own invariant — see
-   the index access-path notes under
+   is a no-op. Additive **new** index keys are PUT
+   (`If-None-Match: "*"`) **before** the committing log create, so a
+   committed row is _always_ index-findable — there is no window in
+   which a committed doc is observed unindexed. (Stale index keys are
+   deleted _after_ the commit; see step 5. Index completeness is its own
+   invariant — see the index access-path notes under
    "[Read algorithm](#read-algorithm)".)
 4. **Create `log/<seq>.json` with `If-None-Match: "*"` — this create
    _is_ the commit.** Winning (`200`) means committed; a `412` means
@@ -195,12 +220,12 @@ sees the mutation once the log entry exists and the reader's
 forward-probe reaches it. There is no `current.json` write on the
 commit path and no post-commit fence verify — the create-if-absent is
 itself the proof of commit. `writer_fence` is dormant authority
-metadata; no prod path reads or writes it.
+metadata; no production commit/read path uses it for authority.
 
 ### Contention and retries
 
-Two writers racing the same collection discover the same first-empty
-slot and contend for the `log/<seq>` create — not for a `current.json`
+Two writers racing the same collection may discover the same first-empty
+slot and contend for the `log/<seq>` create, not for a `current.json`
 CAS. For any given `seq`, exactly one `If-None-Match: "*"` create wins
 (`200`). A loser gets a `412`, reads the occupant back, and either
 adopts its own lost-ack entry or re-runs tail discovery from `seq + 1`.
@@ -212,9 +237,10 @@ _committed_ entry, so it never leaves a hole behind it.
 a lost race, the writer **must read the occupant back** and
 disambiguate:
 
-- A **same-session / same-seq** occupant is this writer's _own_
-  committed write whose ack was lost (a self-retry). The writer
-  **adopts** it as already-committed rather than failing.
+- A **same-session / same-seq / same-entry** occupant is this writer's
+  _own_ committed write whose ack was lost (a self-retry). The writer
+  **adopts** it as already-committed rather than failing. Adoption is
+  only sound for the single-input commit shape shipped today.
 - A **foreign** occupant means a peer genuinely won that seq. The
   writer re-runs GET-based tail discovery from `seq + 1` and tries the
   new first-empty slot.
@@ -229,42 +255,48 @@ ordinary `BaerlyError` path.
 
 ### Crash safety
 
-The write order is content + additive (new) index keys first, the
-committing `log/<seq>` create second, stale-key DELETEs last. The
-single `log/<seq>` create is the only point at which the mutation
-becomes committed, so every crash either leaves the doc fully
-committed and index-findable or fully uncommitted.
+Crashes fall on one side of the commit line: content and additive (new)
+index keys are preparation, the `log/<seq>` create is the commit, and
+stale-key DELETEs are cleanup. The single `log/<seq>` create is the only
+point at which the mutation becomes committed, so every crash either
+leaves the doc fully committed and index-findable or fully uncommitted.
 
 | Crash point                                           | Bucket residue                                                                                                                        | Reader behavior                                                                                                                                                                 |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Before the log create (during content / new-key PUTs) | Unreferenced content body and orphan additive index keys may exist; the doc is **not** committed (no log entry).                      | Invisible — no committed `seq` points at the content, and an orphan additive key is a benign false-positive dropped by `matchesWire`. GC later sweeps the unreferenced content. |
-| After the log create, before the stale-key DELETE     | The doc is **committed** and correctly index-findable (its new keys are already down); it may transiently carry an extra _stale_ key. | Visible and findable. The extra stale key is a benign false-positive that `matchesWire` drops.                                                                                  |
+| After the log create, before the stale-key DELETE     | The doc is **committed** and correctly index-findable (its new keys have already been written); it may transiently carry an extra _stale_ key. | Visible and findable. The extra stale key is a benign false-positive that `matchesWire` drops.                                                                                  |
 
-The dangerous failure of the old two-write commit — a _committed_ doc
-silently **de-indexed** by a crash, which the read path can never
-repair (it filters false-positives but never conjures a missing
-candidate) — is **eliminated**: new keys are PUT _before_ the commit,
-so a committed doc is always index-findable, and stale-key DELETEs land
-only _after_ the commit, so an uncommitted write can never remove a key
-a committed value depends on. The only residual is a benign
-false-positive (an extra key), and it always self-heals: the doc's next
-write re-emits its keys, and `rebuildIndex` is the whole-collection
-operator backstop. (A bounded in-tick reconcile slice was considered
-and deferred — see [ADR-008 §5](../adr/008-single-write-commit.md).)
+Index failures are asymmetric: extra candidates are repairable false
+positives, but missing candidates can hide committed rows from
+index-routed queries. The old two-write commit could leave a
+_committed_ doc silently **de-indexed** by a crash; the read path
+filters false positives but cannot recover missing candidates.
+
+The single-write order eliminates that failure: new keys are PUT
+_before_ the commit, so a committed doc is always index-findable, and
+stale-key DELETEs land only _after_ the commit, so an uncommitted write
+can never remove a key a committed value depends on. The residual is
+safe: an extra key is a false-positive. It can be healed by the doc's
+next write; `rebuildIndex` is the whole-collection operator backstop. (A
+bounded in-tick reconcile slice was considered and deferred — see
+[ADR-008 §5](../adr/008-single-write-commit.md#5-index-emission-is-hybrid-around-the-commit).)
 
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
-a committed log entry can never be left unacknowledged. Garbage
-collection later marks and sweeps orphan content, stale log objects
-below `log_seq_start`, and superseded snapshots after a grace window.
-For artifacts outside the committed range, GC is cleanup, not reader
-correctness: readers decide visibility from the snapshot,
-`[log_seq_start, tail_hint)`, and the forward-probe.
+a committed log entry can never be left undiscoverable behind
+`current.json`. Garbage collection later marks and sweeps orphan
+content, stale log objects below `log_seq_start`, and superseded
+snapshots after a grace window. For artifacts outside the committed
+range, GC is cleanup, not reader correctness: readers decide visibility
+from the snapshot, `[log_seq_start, tail_hint)`, and the forward-probe.
 
 ## Read algorithm
 
-Every read loads `current.json` fresh for its collection. If it is
-missing, the collection is empty.
+Every read loads `current.json` fresh for the collection to get the
+snapshotted prefix and the probe start for newer commits. If
+`current.json` is missing, the collection is empty. Otherwise, a
+full-scan read reconstructs the collection from a snapshot plus a
+numbered log suffix.
 
 For a full-scan read:
 
@@ -274,31 +306,33 @@ For a full-scan read:
 3. **Fold the trusted range, then forward-probe the tail.** Fetch
    `log/<seq>.json` for every integer in `[log_seq_start, tail_hint)`
    (the trusted, dense range) with bounded parallelism, then
-   forward-probe `GET log/<tail_hint>, log/<tail_hint+1>, …` (Class B
-   GETs), folding each found entry and **stopping at the first 404** —
-   that 404 is the true tail. Because the live range is dense, the
-   probe can never stop early inside a hole. A reader that stops at a
-   stale-hint+404 still sees a valid committed _prefix_; a
-   just-committed entry above a stale hint becomes visible as soon as
-   the probe reaches it.
+   forward-probe from `max(log_seq_start, tail_hint)` (normally
+   `tail_hint`) using Class B (GET/read-class) operations. Fold each
+   found entry and **stop at the first 404**. If the probe reaches a 404
+   within the cap, that 404 is the discovered tail for this read. For
+   example, with `tail_hint = 5` and committed entries at 5 and 6, the
+   reader folds 5 and 6 and stops at the 404 for 7. Because the live
+   range is dense, the probe can never stop early inside a hole.
 4. Fold entries in ascending `seq` order:
    - `I` / `U` with `after` set `doc_id` to that full post-image.
    - `D` deletes `doc_id`.
 5. Apply the predicate, order, and limit in memory.
 
-The index path is a derived access path over the same snapshot + log
+The index path is a shortcut to candidates, not a second source of
 truth. `planQuery` may choose an index prefix, fetch candidate document
-IDs, and fold only the relevant log entries, then re-check the
-predicate against materialized rows. Stale extra index markers can make
-the path do extra work and cannot invent rows. Missing index markers can
-hide rows from an index-routed query, so index completeness is a real
+IDs, and fold only the relevant log entries, then re-check the predicate
+against materialized rows. Stale extra index markers can make the path
+do extra work and cannot invent rows. Missing index markers can hide
+rows from an index-routed query, so index completeness is a real
 invariant. Newly declared or suspect indexes must be reconciled with
 `rebuildIndex` before operators treat them as complete.
 
 Marker completeness is necessary but not sufficient. For a _filtered_
-(partial) index, the route is sound only when the index's filter
-predicate is implied by the query predicate — otherwise the index LIST
-never yields rows that fall outside the filter, and the post-fetch
+(partial) index, the route is sound only when the query predicate
+implies the index filter. An index filtered to `status = "open"` is
+sound for a query that asks for `status = "open"` and `priority = "p1"`;
+it is not sound for a query that asks only for `priority = "p1"`,
+because the index LIST never yields closed rows and the post-fetch
 predicate re-check cannot resurrect rows the LIST never returned. The
 planner prefers an implied-or-unfiltered index and, as a last resort
 when it is the only candidate, will still route through a non-implied
@@ -308,8 +342,10 @@ matching rows). This last-resort path is a known limitation in
 
 ## Snapshots and compaction
 
-The log is append-only, so write-triggered maintenance folds a prefix
-of the live log into a snapshot:
+The log is append-only, so reads would grow with every write unless
+maintenance periodically turns an old log prefix into a snapshot.
+Write-triggered maintenance folds a prefix of the live log into a
+snapshot:
 
 1. Read `current.json`.
 2. Load the prior snapshot named by `current.snapshot`, or start from
@@ -334,7 +370,7 @@ of the live log into a snapshot:
 
 The snapshot file is content-hashed. If a compactor crashes mid-PUT,
 the body will not match its own filename hash and readers reject it.
-If a compactor loses the `current.json` CAS, the snapshot is simply an
+If a compactor loses the `current.json` CAS, the snapshot becomes an
 orphan; the winner's `current.json` remains authoritative.
 
 The shipped snapshot level is `L9`. The key shape reserves room for a
@@ -349,7 +385,7 @@ commit (a winning `log/<seq>` create), the writer may dispatch
 
 - Reads never dispatch maintenance.
 - The fold handles at most
-  `BoundedMaintenanceOptions.maxFoldEntriesPerPass` entries per pass.
+  the maintenance profile's `maxFoldEntriesPerPass` entries per pass.
   The Cloudflare/free-safe default is
   `WRITE_TICK_FOLD_ENTRIES_PER_PASS`; the Node adapter threads the
   larger `NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS`.
@@ -406,21 +442,22 @@ These are the load-bearing rules.
 5. **Snapshots cover a prefix.** If `log_seq_start > 0`,
    `current.snapshot` names a snapshot that covers
    `[0, log_seq_start)`.
-6. **`current.json` is compaction state, sole-written by the
-   compactor in steady state.** The compactor's fold CAS is the only
-   steady-state writer; `tail_hint` is a non-authoritative monotone
-   lower bound, durably advanced by compaction folds and by the
-   write-tick runner's tail refresh when fold/GC work defers or is
-   disabled. Ordinary writer commits never refresh it inline. Other
-   non-commit-path writers are explicit: the one-time `createCurrentJson`
-   bootstrap, operator/import paths such as `admin restore`, and the
-   best-effort `last_warned_seq` graduation stamp.
-7. **A committed doc is eventually correctly indexed.** New index keys
-   are emitted _before_ the commit and stale keys deleted _after_, so
-   a committed value is never de-indexed by an abandoned write. The
-   only residual is a benign false-positive (an extra key) dropped by
-   `matchesWire`; it self-heals on the doc's next write, with
-   `rebuildIndex` as the operator backstop.
+6. **`current.json` is compaction state; the commit path does not write
+   it.** The compactor's fold CAS is the only steady-state writer of
+   the snapshot pointer, `log_seq_start`, and snapshot counters.
+   `tail_hint` is a non-authoritative monotone lower bound, durably
+   advanced by compaction folds and by the write-tick runner's tail
+   refresh when fold/GC work defers or is disabled. Ordinary writer
+   commits never refresh it inline. Other non-commit-path writers are
+   explicit: the one-time `createCurrentJson` bootstrap, operator/import
+   paths such as `admin restore`, and the best-effort `last_warned_seq`
+   graduation stamp.
+7. **An abandoned write cannot falsely unindex a committed doc.** New
+   index keys are emitted _before_ the commit and stale keys deleted
+   _after_, so a committed value is never de-indexed by a write that did
+   not commit. The only residual is a benign false-positive (an extra
+   key) dropped by `matchesWire`; it self-heals on the doc's next write,
+   with `rebuildIndex` as the operator backstop.
 8. **Reads are pure.** Reads load state; they never compact, GC, or
    tick maintenance. The tail forward-probe is Class B (GETs), so the
    idle-reader cost bound is untouched.
@@ -432,24 +469,24 @@ These are the load-bearing rules.
     not serialize unrelated collections, and cross-collection atomicity
     is not part of the protocol.
 11. **`writer_fence` is not a replay filter.** The current kernel does
-    not stamp log entries with fence epochs and no prod path reads or
-    writes the field (it is dormant). Readers decide visibility from
-    `seq`, the snapshot, the trusted log range, and the forward-probe.
+    not stamp log entries with fence epochs, and no production
+    commit/read path uses the field for authority. Readers decide
+    visibility from `seq`, the snapshot, the trusted log range, and the
+    forward-probe.
 
 ## LSNs, wall clocks, and downstream consumers
 
-Each `LogEntry` carries both:
+Each `LogEntry` carries a kernel sequence and an external cursor:
 
 - `seq`: the integer sequence minted as the first empty log slot found
-  by the forward-probe from `current.json.tail_hint`.
+  by the forward-probe from `max(log_seq_start, tail_hint)`.
 - `lsn`: an opaque cursor shaped
-  `<base32-time>_<session>_<seq-fragment>`.
+  `<base32-time>_<session>_<seq>`.
 
-The timestamp component uses descending base-32 encoding so ordinary
-lexicographic listing can find recent LSN-shaped keys efficiently in
-contexts that store by LSN. The kernel does not use that ordering for
-correctness. It reconstructs `log/<seq>.json` directly from integer
-`seq`. This ordering property is verified by
+The timestamp-like prefix is for downstream LSN listing only: descending
+base-32 makes recent LSN keys list efficiently, but the kernel orders by
+integer `seq`. The kernel reconstructs `log/<seq>.json` directly from
+integer `seq`. This ordering property is verified by
 [`packages/protocol/src/lsn-reverse-list.test.ts`](../../packages/protocol/src/lsn-reverse-list.test.ts)
 and quantified by [`bench/lsn-reverse-walk.ts`](../../bench/lsn-reverse-walk.ts)
 against the pinned baseline at
@@ -458,10 +495,10 @@ against the pinned baseline at
 
 `LAG_WINDOW_MILLIS = 5000` remains the named tolerance for wall-clock
 skew in log timestamps consumed outside the kernel. A writer whose
-clock regresses can mint an `lsn` whose time prefix sorts before a
-causally earlier entry; this cannot reorder kernel reads, because
-kernel reads sort by `seq`. Downstream CDC/export consumers must sort
-by `seq`, not by the timestamp prefix.
+clock regresses can mint an `lsn` whose time prefix sorts after a
+causally earlier entry, or otherwise out of causal order; this cannot
+reorder kernel reads, because kernel reads sort by `seq`. Downstream
+CDC/export consumers must sort by `seq`, not by the timestamp prefix.
 
 ## Commit scope is per collection
 
@@ -509,12 +546,12 @@ requires updating this spec and the relevant property tests.
 
 ## Prior art
 
-The protocol uses the same broad move as Git, Iceberg, Delta Lake,
-Litestream, and SlateDB: write immutable artifacts, then atomically
-advance a small control object. baerly-storage's constraint is stricter
-than most of those systems: the coordinator must fit inside a portable
-`(Request) => Response` handler and a bucket. That rules out a
-catalog service, lock table, always-on compactor, or operator-installed
-scheduler.
+Like Git, Iceberg, Delta Lake, Litestream, and SlateDB, the protocol
+writes immutable artifacts and keeps mutable coordination small.
+baerly-storage makes the high-frequency coordination point the numbered
+log append; `current.json` is compaction state. The coordinator must fit
+inside a portable `(Request) => Response` handler and a bucket. That
+rules out a catalog service, lock table, always-on compactor, or
+operator-installed scheduler.
 
 See [prior-art.md](prior-art.md) for the detailed comparison.

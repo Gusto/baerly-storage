@@ -2,30 +2,50 @@
 title: Causal-consistency property checking
 audience: spec
 summary: Low-complexity verification of causal consistency via a known global timeline.
-last-reviewed: 2026-06-14
+last-reviewed: 2026-06-23
 tags: [protocol, verification, property-testing]
 related: [sync-protocol.md]
 ---
 
-# Checking Causal Consistency the Easy Way
+# Checking Causal Consistency with a Known Global Timeline
 
-Message infrastructure has fairly clear semantics: "send the messages to the recipients in the order they were written".
-And yet, things start to get complicated as advanced features are added.
+A basic message service sounds simple: send each recipient the messages in
+the order they were written. The hard part starts when the product keeps
+that same API while changing the path each message takes.
 
-- Multiplayer? well now you have to consider merging queues and multiple timelines
-- Optimistic updates? Well now, local writes have a different pathway.
-- Mobile-first? Well clients connectivity is unreliable, so you need transparent resumption
-- Local-first? Well now some participants messages are buffered and delayed for days
+In this doc, a chat message stands in for an ordered write event in one
+baerly-storage collection log.
 
-Still, there is an intuitive notion of ordering that is preserved even under these use cases: causal consistency.
-Most advanced features are transparent to the messaging user. They use the same SDK, but the path of the messages through the system changes. So you need a way to
-verify the API semantics are observably correct just from SDK usage experiments.
+- Multiplayer means merging queues from more than one participant.
+- Optimistic updates give local writes a faster path than remote writes.
+- Mobile-first clients need transparent resumption after unreliable
+  connectivity.
+- Local-first clients may buffer messages for days before reconnecting.
 
-Verifying causal consistency is quite tricky in general ([NP-Complete](https://arxiv.org/abs/1611.00580#:~:text=Causal%20consistency%20is%20one%20of,according%20to%20their%20causal%20precedence.) in fact!), but I consider randomized property checking central to building a robust infrastructure. Here I explain a low complexity technique for verifying causal consistency, that avoids complex model checking. Its implemented in < 100 lines of Typescript ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25)) and uses `eval` legitimately! We avoid any searching by exploiting the known global timeline.
+A reply should not arrive before the message it replies to. That expectation
+is the shape of causal consistency.
+
+Checking that expectation in a fully general distributed history is hard:
+deciding causal consistency is
+[NP-Complete](https://arxiv.org/abs/1611.00580#:~:text=Causal%20consistency%20is%20one%20of,according%20to%20their%20causal%20precedence.).
+For randomized testing, we can use a cheaper check. The test harness records
+one concrete execution order, then asks whether the causal constraints are
+true in that known order. That avoids model-checker search.
+
+The original MPS3 checker is implemented in 86 lines of TypeScript
+([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25))
+and deliberately evaluates the generated boolean expression with `eval`.
+baerly-storage keeps the same expression model in
+`tests/fixtures/consistency.ts`; the backend-agnostic randomized cascade uses
+an equivalent structural evaluator in `tests/fixtures/randomized-cascade.ts`
+because Workerd disallows code generation from strings.
 
 ### Relevant Reading
 
-"Time, Clocks, and the Ordering of Events in a Distributed System" by Leslie Lamport, the foundational paper of causal consistency that introduced the relation "happens-before" is a way that scales to multiple timelines. Its not the easiest introduction, but basically all knowledge required is there.
+"Time, Clocks, and the Ordering of Events in a Distributed System" by
+Leslie Lamport is the foundational paper for the "happens-before" relation,
+a way to talk about ordering when there is no single clock shared by every
+participant.
 
 [Causal Consistency - Jepsen blog](https://jepsen.io/consistency/models/causal#:~:text=Causal%20consistency%20captures%20the%20notion,order%20of%20causally%20independent%20operations.)
 
@@ -57,60 +77,112 @@ Carol: Yes! I'll bring dessert
 Bob: Would you like to come over for dinner?
 ```
 
-We can intuitively spot a causal violation in Carol answering Bob's question before it was asked. Logically it doesn't make sense to answer a question before it was asked, but what is really going on here formally?
+Carol's answer only makes sense after Bob's question. The rest of this page
+turns that ordering intuition into a small executable check.
 
 ## Causal Consistency
 
-Causal consistency is defined as ensuring that event X happens before event Y, denoted as \(X < Y\).
+Causal consistency preserves the order of events when one event depends on
+another. If event `Y` could only have happened after event `X`, we write that
+dependency as \(X < Y\), read as "`X` happened before `Y`."
 
-From Carol's perspective, she received a question from Bob as incoming information from the chat app. She then wrote a reply in the chat application. She only wrote that reply **because** she was asked the question. Thus, a causal ordering (`<`) is established between these two events:
+In the example, Carol first receives Bob's question. Then she writes a reply.
+The reply exists **because** she saw the question, so the question event must
+be ordered before the reply event:
 
 ```
-"Bob: Would you like to come over for dinner? < Carol: Yes! I'll bring dessert"
+BobQuestion < CarolReply
 ```
 
-In Alice's chat window, she expects to receive messages preserving causal ordering. She is notified of two messages sent by two different people. In general, she can't tell if the messages are out of order, but in this specific case, the messages have inferable causal ordering because one is clearly the reply to the other. Thus, Alice can tell just from her own timeline that causal consistency has been violated.
+`BobQuestion` is the event that sent "Would you like to come over for
+dinner?" `CarolReply` is the event that sent "Yes! I'll bring dessert."
 
-By encoding causal ordering dependency information into the messages themselves, we can verify causality has not been violated without complex model checking.
+Alice receives two messages from two different people. In general, she cannot
+infer the true order of unrelated messages. Here she can, because one message
+is plainly the reply to the other. If Alice sees the reply first, her own
+timeline contains enough evidence to prove a causal violation.
+
+The checker encodes these inferred dependencies as constraints and verifies
+that they can all hold together. In these tests, the payload carries only
+enough identity (`sender`, `send_time`) for the harness to reconstruct those
+facts; that is test data, not a public API requirement.
 
 ### Causal Consistency Over Multiple Timelines
 
-Each participant (client) experiences events in an order. This is their personal history. In a strictly serialized system, this history would need to appear the same for all participants. But in a causally consistent system, participants can go offline and catch up later. The main guarantee in causally consistent systems is that things that "happened before" other things are preserved when replaying history, e.g., when getting back online.
+Each participant experiences events in an order. That order is the
+participant's local history. A strictly serialized system would force every
+participant to see the same history. A causally consistent system allows more
+flexibility: participants can go offline, buffer work, and catch up later.
+The rule it keeps is narrower. If one event "happened before" another, that
+ordering must survive replay.
 
 #### Principle 1: Consistency Within a Client's Timeline
 
-So there is not a single global history in a causally consistent system; there is an observed history for each client. We can say client A observes events at `A01 < A02 < A03...`, and client B observes events on its own timeline of steps `B01 < B02 < B03...`. For a system to be causally consistent, there must be a combination of timelines that preserve causal ordering:
+There is not one required global history. There is one observed history per
+client. Client A observes `A01 < A02 < A03...`; client B observes
+`B01 < B02 < B03...`. A causally consistent interpretation is any way of
+combining those timelines that preserves the known causal order:
 
 ```
-A01 <              < A02 < A03
-       B01 < B02                < B03
+A01 < B01 < B02 < A02 < A03 < B03
 ```
 
-#### Principle 2: Send time happens before receive time
+That interleaving is one valid interpretation because it preserves A's local
+order and B's local order. Another interleaving may also be valid if it
+preserves the same constraints.
 
-If client B, at time B5, observes client A broadcasting "I am at A3," it can deduce \( A3 < B5 \) (A3 happened-before B5).
+#### Principle 2: Send Time Happens Before Receive Time
 
-#### Principle 3: Global Ordering of Messages in Topic
+If client B, at time `B5`, observes client A broadcasting "I am at A3," then
+B can deduce \(A3 < B5\). A message cannot be received before the sending
+event it reports.
 
-Within shared topics, like chat, you want everybody to receive the messages in the same order. A centralised system also fits this definition. A received message occurs after
-the previously received message for all given client.
+#### Principle 3: Observed message order
+
+Within the centralised chat example, the checker assumes a single topic
+order. Here, a topic corresponds to one collection log; the assumption does
+not apply across baerly-storage collections. The simplified topic rule is:
+if a client observes topic message `M` before topic message `N`, the checker
+records that the send event for `M` happened before the send event for `N`:
 
 ```
-previous_message < received_message
+send(M) < send(N)
 ```
 
-Note this does not preclude clients locally buffering messages or going offline, it just implies there is a global ordering that every message eventually passes through.
+This still allows local buffering and offline clients. The local
+baerly-storage cascade uses the offline-first variant of the model: for each
+receiver, the previously seen remote message is recorded before the next
+observed source event. That preserves observed per-receiver order without
+requiring one global order across all senders.
 
 ### Grounding
 
-Usefully the causal "happens-before" relation works similarly to the Javascript's less-than does on the number line. So finding a causally consistent interpretation is equivalent to assigning numbers that satisfy the numerical inequalities (grounding).
+The useful trick is that `happened-before` behaves like `<` on a number line:
+if `X < Y` and `Y < Z`, then `X < Z`. So a causal interpretation can be
+checked by assigning a number to each event and asking whether every `<`
+clause is true. This assignment is the grounding.
 
-In a general setting this involves a exhaustive symbolic searching, but if we know the
-global order of events, then we can simply set the temporal variables to their known global values.
+In the general setting, finding such an assignment requires symbolic search.
+The system contract does not require a global history, but the randomized test
+run has an instrumentation log that gives one concrete execution order.
+Concretely, it can set `B1 = 1`, `C1 = 2`, `C2 = 3`, `A1 = 4`, and then
+evaluate the collected inequalities directly. If any inequality is false
+under that known order, the observed execution is not causally consistent.
 
 ## Live Annotation
 
-We can append causal implications (expressed as `<` and `&&`) as we observe a live system exchanging messages. Here's the salient part of our chat example. It is then enough to evaluate the expressions as Javascript using `eval` to check for validity.
+The live checker appends each new implication as a `<` clause joined with
+`&&`, then evaluates the grounded expression.
+
+Legend:
+
+- `P1` means client-local order.
+- `P2` means send before receive.
+- `P3` means observed topic order.
+- `A0`, `B0`, and `C0` are the synthetic timeline starts.
+- The leading number is the harness's global event number; `B1` means Bob's
+  first local event; quoted `"B1"` is the message id being published or
+  observed.
 
 ```
 // Bob: Would you like to come over for dinner?
@@ -127,7 +199,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1; // grounding
 
 const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2;
 /*P1*/ B0 < B1 && // previous knowledge
-/*P1*/ C0 < C1 && // new stuff
+/*P1*/ C0 < C1 && // Carol local step
 /*P2*/ B1 < C1
 > true
 ```
@@ -141,7 +213,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3;
 /*P1*/ C0 < C1 &&
 /*P2*/ B1 < C1 &&
 /*P1*/ C1 < C2 &&
-/*P3*/ B1 < C1      // Note Carol's response depends on Bob
+/*P3*/ B1 < C1      // Bob's message reached Carol before her reply step
 > true
 ```
 
@@ -162,7 +234,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4;
 
 ```
 // Alice receives: Would you like to come over for dinner?
-5 A2: observe ("B2") =>
+5 A2: observe ("B1") =>
 
 const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4, A2 = 5;
 /*P1*/ B0 < B1 &&
@@ -174,38 +246,42 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4, A2 = 5;
 /*P2*/ C2 < A1 &&
 /*P1*/ A1 < A2 &&
 /*P2*/ B1 < A2 &&
-/*P3*/ C2 < B1    // Eeek
+/*P3*/ C2 < B1    // conflict
 > false // A causal violation!
 ```
 
-The clauses that conflict are
+The contradiction is now explicit. These three clauses cannot all be true:
 
 ```
-/*P3*/ B1 < C1 // When carol heard bob
+/*P3*/ B1 < C1 // When Carol heard Bob
 /*P1*/ C1 < C2 // Carol's sequential timeline
-/*P3*/ C2 < B1 // When alice received bobs message after carols
+/*P3*/ C2 < B1 // When Alice received Bob's message after Carol's
 ```
 
 ## Conclusion
 
-This framework drives randomized testing of the baerly-storage client.
-One precision note on the _guarantee_ it grounds against:
-baerly-storage's true contract is **per-document and per-collection
-linearizable** — the
-winning `log/<seq>` `If-None-Match: "*"` create is the linearization
-point (see `docs/spec/sync-protocol.md`). **Cross-collection there is no ordering
-guarantee and multi-collection writes are not atomic** (each write
-commits to exactly one collection log;
-`docs/adr/001-tenant-cas-isolation.md`). This causal-consistency checker
-is therefore a cheap _lower-bound_ test: it witnesses violations of the
-weaker causal model, not a linearizability violation that still respects
-causality. Layering even causal semantics over vanilla S3 is not easy,
-so the checker is worth the extra mile.
+This framework drives randomized testing of baerly-storage's `Db` / `Writer`
+commit path and storage adapters.
 
-In fact, the checker immediately found a bug with one of the possible configurations of the clients (the no versioning setting). I am very pleased this could be implemented with no additional dependencies in pure Javascript with very little code.
+For one collection, baerly-storage chooses a single winning append order;
+across collections, it does not. More precisely, collection reads and writes
+are **linearizable** at the winning `log/<seq>` `If-None-Match: "*"` create
+(see `docs/spec/sync-protocol.md`). Each public write is atomic per document.
+**Cross-collection there is no ordering guarantee and multi-collection writes
+are not atomic**: each write commits to exactly one collection log
+(`docs/adr/001-tenant-cas-isolation.md`).
+
+That makes this causal-consistency checker a cheap _lower-bound_ test. It can
+witness violations of the weaker causal model; it is not trying to prove every
+linearizability property. Layering even causal semantics over vanilla S3 is
+hard enough to make that check valuable.
+
+The original MPS3 checker immediately found a bug in one possible SDK
+configuration: the no-versioning setting. The practical value is that the
+check needs no extra dependencies and stays small enough to audit.
 
 ### Links
 
-- The self contained 86 LOC implementation of the causal model and checker ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25))
+- The self-contained 86 LOC implementation of the causal model and checker ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25))
 - Using the checker against the article's Alice, Bob and Carol example ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.test.ts#L115))
-- Using the checker to verify the consistency of the MPS3 SDK ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/minio.test.ts#L350))
+- Using the checker to verify the consistency of the predecessor MPS3 SDK ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/minio.test.ts#L350))
