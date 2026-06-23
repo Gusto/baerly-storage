@@ -1,0 +1,45 @@
+{
+  "bench": "collection-fanout",
+  "rows": [
+    {
+      "collections": 10,
+      "discovered": 10,
+      "objectsPerCollection": 6,
+      "discoverLists": 1,
+      "realStorageDiscoverPages": 1,
+      "usageScanLists": 11,
+      "usageScanGets": 50,
+      "usageScanOps": 61
+    },
+    {
+      "collections": 100,
+      "discovered": 100,
+      "objectsPerCollection": 6,
+      "discoverLists": 1,
+      "realStorageDiscoverPages": 1,
+      "usageScanLists": 101,
+      "usageScanGets": 500,
+      "usageScanOps": 601
+    },
+    {
+      "collections": 500,
+      "discovered": 500,
+      "objectsPerCollection": 6,
+      "discoverLists": 1,
+      "realStorageDiscoverPages": 3,
+      "usageScanLists": 501,
+      "usageScanGets": 2500,
+      "usageScanOps": 3001
+    },
+    {
+      "collections": 1000,
+      "discovered": 1000,
+      "objectsPerCollection": 6,
+      "discoverLists": 1,
+      "realStorageDiscoverPages": 6,
+      "usageScanLists": 1001,
+      "usageScanGets": 5000,
+      "usageScanOps": 6001
+    }
+  ]
+}
