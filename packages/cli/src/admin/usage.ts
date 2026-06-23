@@ -4,10 +4,17 @@
  * Reads the most recent `SAMPLE_SIZE` log entries for every collection
  * under `app/<app>/tenant/<tenant>/manifests/`, compares the spread of
  * their embedded `commit_ts` timestamps against the M-size operating
- * ceiling (~30 writes/min/collection — see
- * `docs/about/thesis.md:50-68`), and prints one finding per collection
- * — `info` when well under the ceiling, `warning` when approaching or
- * exceeding it.
+ * ceiling (~30 writes/min/collection — see `M_SIZE_WRITES_PER_MIN_PER_COLLECTION`
+ * below and `docs/about/thesis.md`), and prints one finding per
+ * collection — `info` when well under the ceiling, `warning` when
+ * approaching or exceeding it.
+ *
+ * The ~100 collections/tenant fan-out guideline is bench-grounded:
+ * `admin usage` costs ≈ N × (1 LIST + up to 120 GETs per collection)
+ * — strictly linear. See `docs/spec/attachments/collection-fanout-baseline.json`
+ * (`pnpm bench:collection-fanout`). Neither the ~100 figure nor the
+ * >10 GB/tenant storage line is a code constant here; both are cost
+ * signals documented in `docs/about/cost-model.md`.
  *
  * Distinct from `baerly cost` (the per-table, $/month projection):
  * `cost` is a developer-facing trajectory for one table, `usage` is an
@@ -66,7 +73,7 @@ export interface UsageFinding {
 export const M_SIZE_WRITES_PER_MIN_PER_COLLECTION = 30;
 
 /** Number of trailing log entries the estimator reads per collection. */
-const SAMPLE_SIZE = 120;
+export const SAMPLE_SIZE = 120;
 
 /** Per-collection verdict surfaced by {@link estimateWritesPerMin}. */
 export interface UsageVerdict {

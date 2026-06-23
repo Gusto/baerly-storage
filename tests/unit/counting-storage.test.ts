@@ -19,4 +19,11 @@ describe("counting-storage billable taxonomy", () => {
     // Billing-correct: DeleteObject is $0 on both R2 and S3.
     expect(c.billableClassAOps).toBe(2);
   });
+
+  test("gets counter increments on storage.get calls", async () => {
+    const c = wrapCountingStorage(new MemoryStorage());
+    await c.storage.put("k", new Uint8Array([1]));
+    await c.storage.get("k");
+    expect(c.gets).toBe(1);
+  });
 });

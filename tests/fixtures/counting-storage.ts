@@ -11,7 +11,7 @@ import type {
  * Wraps a `Storage` instance with per-method op counters.
  *
  * Class A = mutating/enumerating ops in the S3/R2 taxonomy (PUT,
- * DELETE, LIST). Class B (GET, HEAD) is transparent. `classAOps`
+ * DELETE, LIST). Class B GET is counted via `gets`; HEAD is not wrapped. `classAOps`
  * is a derived sum used by callers that only care about aggregate
  * cost (e.g. the `phase5-end-to-end` idle-reader bound). Callers
  * that need per-verb shape (e.g. "POST should produce exactly 3
@@ -25,6 +25,7 @@ export interface CountingStorage {
   readonly puts: number;
   readonly deletes: number;
   readonly lists: number;
+  readonly gets: number;
   /**
    * Operation/subrequest count: `puts + deletes + lists`. Includes DELETE
    * because a `DeleteObject` is still a real CF subrequest against the
@@ -46,9 +47,12 @@ export function wrapCountingStorage(inner: Storage): CountingStorage {
   let puts = 0;
   let deletes = 0;
   let lists = 0;
+  let gets = 0;
   const storage: Storage = {
-    get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> =>
-      inner.get(key, opts),
+    get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
+      gets++;
+      return inner.get(key, opts);
+    },
     put: (key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> => {
       puts++;
       return inner.put(key, body, opts);
@@ -78,6 +82,9 @@ export function wrapCountingStorage(inner: Storage): CountingStorage {
     get lists() {
       return lists;
     },
+    get gets() {
+      return gets;
+    },
     get classAOps() {
       return puts + deletes + lists;
     },
@@ -88,6 +95,7 @@ export function wrapCountingStorage(inner: Storage): CountingStorage {
       puts = 0;
       deletes = 0;
       lists = 0;
+      gets = 0;
     },
   };
 }

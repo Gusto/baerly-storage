@@ -191,7 +191,9 @@
     "bench:lsn-reverse-walk": "node --import ./bench/register-hooks.mjs bench/lsn-reverse-walk.ts",
     "bench:fold-cost": "node --import ./bench/register-hooks.mjs bench/fold-cost.ts",
     "bench:maintenance-backlog": "node --import ./bench/register-hooks.mjs bench/maintenance-backlog.ts",
-    "bench:amortized-write-cost": "node --import ./bench/register-hooks.mjs bench/amortized-write-cost.ts"
+    "bench:amortized-write-cost": "node --import ./bench/register-hooks.mjs bench/amortized-write-cost.ts",
+    "bench:write-amp-stress": "node --import ./bench/register-hooks.mjs bench/write-amp-stress.ts",
+    "bench:collection-fanout": "node --import ./bench/register-hooks.mjs bench/collection-fanout.ts"
   },
   "dependencies": {
     "@logtape/logtape": "2.1.3"

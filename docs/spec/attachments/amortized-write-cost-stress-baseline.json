@@ -1,0 +1,71 @@
+{
+  "peak_billable_class_a_per_write": 4.032,
+  "rows": [
+    {
+      "profile": "cf-free",
+      "workload": "extreme-churn/10-docs/2KB",
+      "writes": 3000,
+      "puts": 7047,
+      "lists": 2238,
+      "deletesFree": 6016,
+      "putsPerWrite": 2.349,
+      "listsPerWrite": 0.746,
+      "billableClassAPerWrite": 3.095
+    },
+    {
+      "profile": "cf-free",
+      "workload": "insert-burst/growing/2KB",
+      "writes": 3000,
+      "puts": 6298,
+      "lists": 807,
+      "deletesFree": 209,
+      "putsPerWrite": 2.099,
+      "listsPerWrite": 0.269,
+      "billableClassAPerWrite": 2.368
+    },
+    {
+      "profile": "cf-free",
+      "workload": "rewrite-all/500-docs/2KB",
+      "writes": 4000,
+      "puts": 8361,
+      "lists": 996,
+      "deletesFree": 209,
+      "putsPerWrite": 2.09,
+      "listsPerWrite": 0.249,
+      "billableClassAPerWrite": 2.339
+    },
+    {
+      "profile": "node",
+      "workload": "extreme-churn/10-docs/2KB",
+      "writes": 3000,
+      "puts": 7621,
+      "lists": 4476,
+      "deletesFree": 6048,
+      "putsPerWrite": 2.54,
+      "listsPerWrite": 1.492,
+      "billableClassAPerWrite": 4.032
+    },
+    {
+      "profile": "node",
+      "workload": "insert-burst/growing/2KB",
+      "writes": 3000,
+      "puts": 7507,
+      "lists": 4476,
+      "deletesFree": 196,
+      "putsPerWrite": 2.502,
+      "listsPerWrite": 1.492,
+      "billableClassAPerWrite": 3.994
+    },
+    {
+      "profile": "node",
+      "workload": "rewrite-all/500-docs/2KB",
+      "writes": 4000,
+      "puts": 10007,
+      "lists": 5976,
+      "deletesFree": 196,
+      "putsPerWrite": 2.502,
+      "listsPerWrite": 1.494,
+      "billableClassAPerWrite": 3.996
+    }
+  ]
+}
