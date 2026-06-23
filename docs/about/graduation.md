@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, workload-fit.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
 ---
