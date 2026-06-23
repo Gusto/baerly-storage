@@ -312,10 +312,11 @@ function assembleResult(o: AssembleOpts): RunResult {
   const rateLimit429 = sum((s) => s.object_store.rate_limit_429);
 
   // Class A idle bound: measured during query-post phase only.
+  // Billing-correct — DeleteObject is $0 on R2/S3, so it is excluded
+  // (see docs/about/cost-model.md). The idle reader path issues neither
+  // PUT nor LIST, so this is 0 on a healthy idle workload.
   const classAInQueryPost =
-    o.queryPostRes.metrics.object_store.put +
-    o.queryPostRes.metrics.object_store.list +
-    o.queryPostRes.metrics.object_store.delete;
+    o.queryPostRes.metrics.object_store.put + o.queryPostRes.metrics.object_store.list;
   const queryPostHours = Math.max(1e-6, o.queryPostRes.wallclockMs / 3_600_000);
   const classAPerTenantPerHour = classAInQueryPost / Math.max(1, o.tenants) / queryPostHours;
 

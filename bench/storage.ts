@@ -110,6 +110,11 @@ function tailOrUndefined(samples: number[]): OpLatencyTail | undefined {
 export class CountingStorage implements Storage {
   classAOps = 0;
   classBOps = 0;
+
+  /** Billing-correct Class A: PUT + LIST (DeleteObject is $0). */
+  get billableClassAOps(): number {
+    return this.putCount + this.listCount;
+  }
   conflict412 = 0;
   rateLimit429 = 0;
 
