@@ -37,6 +37,7 @@ import { compact } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions } from "./gc.ts";
 import {
   CLOUDFLARE_FREE_TIER,
+  CLOUDFLARE_PAID_TIER,
   crossesGcBoundary,
   dispatchInlineAwaited,
   estimateTailBytes,
@@ -133,6 +134,18 @@ describe("runScheduledMaintenance", () => {
     expect(cfFree.compact?.minEntriesToCompact).toBe(50);
     expect(cfFree.gc?.maxMarksPerRun).toBe(20);
     expect(cfFree.gc?.maxSweepsPerRun).toBe(10);
+  });
+
+  test("CLOUDFLARE_PAID_TIER carries the Node-derived per-pass bounds", () => {
+    // CF-paid reuses NODE_MAINTENANCE_* per-pass caps: the paid 10,000-
+    // subrequest budget is far above these bounds (compact ≈ 3+200,
+    // gc ≈ 6+200+100). A regression here means the cron-path recipe in
+    // worker.ts is lying about what callers can afford per tick.
+    const cfPaid = CLOUDFLARE_PAID_TIER as InternalMaintenanceOptions;
+
+    expect(cfPaid.compact?.maxEntriesPerRun).toBe(200);
+    expect(cfPaid.gc?.maxMarksPerRun).toBe(200);
+    expect(cfPaid.gc?.maxSweepsPerRun).toBe(100);
   });
 });
 

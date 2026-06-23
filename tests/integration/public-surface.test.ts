@@ -74,6 +74,7 @@ describe("@gusto/baerly-storage/http", () => {
 // ---------------------------------------------------------------------------
 import {
   CLOUDFLARE_FREE_TIER,
+  CLOUDFLARE_PAID_TIER,
   compact,
   rebuildIndex,
   runGc,
@@ -84,6 +85,7 @@ describe("@gusto/baerly-storage/maintenance", () => {
   test("imports resolve", () => {
     expect(typeof runScheduledMaintenance).toBe("function");
     expect(typeof CLOUDFLARE_FREE_TIER).toBe("object");
+    expect(typeof CLOUDFLARE_PAID_TIER).toBe("object");
     expect(typeof compact).toBe("function");
     expect(typeof runGc).toBe("function");
     expect(typeof rebuildIndex).toBe("function");
@@ -112,12 +114,17 @@ describe("@gusto/baerly-storage/observability", () => {
 // ---------------------------------------------------------------------------
 // @gusto/baerly-storage/cloudflare
 // ---------------------------------------------------------------------------
-import { baerlyWorker, r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
+import {
+  baerlyWorker,
+  r2BindingStorage,
+  resolveCfMaintenanceProfile,
+} from "@gusto/baerly-storage/cloudflare";
 
 describe("@gusto/baerly-storage/cloudflare", () => {
   test("imports resolve", () => {
     expect(typeof r2BindingStorage).toBe("function");
     expect(typeof baerlyWorker).toBe("function");
+    expect(typeof resolveCfMaintenanceProfile).toBe("function");
   });
 });
 

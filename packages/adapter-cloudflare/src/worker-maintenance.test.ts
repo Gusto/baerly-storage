@@ -28,6 +28,8 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
   type Storage,
   type Verifier,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
@@ -45,7 +47,12 @@ import { Writer } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
-import { baerlyWorker, type BaerlyEnv, cfMaintenanceDispatch } from "./worker.ts";
+import {
+  baerlyWorker,
+  type BaerlyEnv,
+  cfMaintenanceDispatch,
+  resolveCfMaintenanceProfile,
+} from "./worker.ts";
 
 const testConfig: BaerlyAppConfig = {
   app: "test-app",
@@ -215,6 +222,49 @@ describe("cfMaintenanceDispatch", () => {
           .disabled,
       ).toBeUndefined();
     }
+  });
+});
+
+describe("resolveCfMaintenanceProfile — profile selection from BAERLY_MAINTENANCE_PROFILE", () => {
+  const makeCtx = (): ExecutionContext => ({
+    waitUntil(): void {},
+    passThroughOnException(): void {},
+    props: {},
+  });
+
+  test("BAERLY_MAINTENANCE_PROFILE=cf-paid selects the paid profile on the write-tick path", () => {
+    const ctx = makeCtx();
+    const d = cfMaintenanceDispatch(ctx, (k) =>
+      k === "BAERLY_MAINTENANCE_PROFILE" ? "cf-paid" : undefined,
+    );
+    expect(d.options?.profile).toBe(MAINTENANCE_PROFILE_CF_PAID);
+  });
+
+  test("absent/unknown BAERLY_MAINTENANCE_PROFILE defaults to cf-free", () => {
+    const ctx = makeCtx();
+    expect(cfMaintenanceDispatch(ctx, () => undefined).options?.profile).toBe(
+      MAINTENANCE_PROFILE_CF_FREE,
+    );
+    expect(
+      cfMaintenanceDispatch(ctx, (k) =>
+        k === "BAERLY_MAINTENANCE_PROFILE" ? "garbage" : undefined,
+      ).options?.profile,
+    ).toBe(MAINTENANCE_PROFILE_CF_FREE);
+  });
+
+  // Step 11: cron-path selection — both triggers resolve the profile through
+  // the same `resolveCfMaintenanceProfile` helper, so they stay coherent when
+  // the operator wires it into their `scheduled` handler (see worker.ts).
+  test("resolveCfMaintenanceProfile resolves cf-paid for the cron path", () => {
+    expect(
+      resolveCfMaintenanceProfile((k) =>
+        k === "BAERLY_MAINTENANCE_PROFILE" ? "cf-paid" : undefined,
+      ),
+    ).toBe(MAINTENANCE_PROFILE_CF_PAID);
+  });
+
+  test("resolveCfMaintenanceProfile defaults to cf-free for the cron path", () => {
+    expect(resolveCfMaintenanceProfile(() => undefined)).toBe(MAINTENANCE_PROFILE_CF_FREE);
   });
 });
 
