@@ -522,8 +522,11 @@ It also means:
   owns a real transaction coordinator.
 
 The published envelope is roughly 30 sustained logical writes per
-minute per collection, 10 GB per tenant, and 100 collections per
-tenant. Crossing those is a graduation signal, not a protocol failure.
+minute per collection; ~100 collections per tenant (a soft fan-out
+guideline — cost grows linearly, not a protocol ceiling); and >10 GB per
+tenant stored (the R2 free-tier storage line, a cost signal, not a
+baerly-storage protocol constraint). Crossing those is a graduation
+signal, not a protocol failure.
 
 ## Verification
 

@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why baerly-storage exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-22
 tags: [positioning, product]
 related: [workload-fit.md, cost-model.md, graduation.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -352,17 +352,24 @@ starts makes graduation a feature rather than a surprise.
 
 The envelope:
 
-- **~10 GB / tenant** total.
 - **~30 logical writes / minute / collection** sustained. This
   ceiling reflects the CAS-livelock regime documented in the
   S3-as-database literature; per-collection commit scope
   ([ADR-001](../adr/001-tenant-cas-isolation.md)) is what buys the
   operating headroom.
-- **~100 collections / tenant** fan-out.
+- **>10 GB / tenant stored** — the R2 free-tier storage line (a cost
+  signal, not a protocol ceiling). A tenant is a key prefix; baerly-storage
+  enforces no per-tenant byte limit. Once stored bytes cross the R2
+  free-tier (10 GB-mo), storage billing begins; see
+  [cost-model.md](cost-model.md) for rates.
+- **~100 collections / tenant** fan-out — a bench-grounded soft guideline
+  (erosion, not a cliff). The `admin usage` sweep grows linearly with
+  collection count; ~100 is the range where sweep cost becomes noticeable.
+  Nothing in the protocol enforces a per-tenant collection cap.
 
-The cost model can advise graduation earlier; for example, stored data
-`> 5 GB` is a cost trigger. That is a separate axis from the workload
-envelope above.
+The cost model can advise graduation earlier; for example, Class A ops
+`> 50M/mo` is the published cost trigger. That is a separate axis from
+the workload envelope above.
 Before counting that axis, run the qualitative shape test in
 [workload-fit.md](workload-fit.md): a product whose core screen is the
 view across collections is the wrong starting point at any size.

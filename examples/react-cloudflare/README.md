@@ -108,10 +108,12 @@ follow `AGENTS.md` → "Going to production":
 ## When to graduate
 
 baerly-storage is sized for the small-to-medium operating point. Past
-~30 writes/min/collection, ~10 GB/tenant, or ~100 collections/
-tenant, graduate to D1 or Postgres via `baerly export
---target=postgres`. Your data was already in your bucket; the
-export is a mechanical translator, not a vendor migration.
+~30 writes/min/collection (throughput estimate), the R2 free-tier
+storage cost line (>10 GB/tenant), or the soft fan-out guideline
+(~100 collections/tenant — linear cost, nothing enforces it),
+graduate to D1 or Postgres via `baerly export --target=postgres`.
+Your data was already in your bucket; the export is a mechanical
+translator, not a vendor migration.
 
 ## Pointers
 

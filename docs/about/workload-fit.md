@@ -2,7 +2,7 @@
 title: Workload fit
 audience: product
 summary: A qualitative shape test for deciding whether an app fits baerly-storage before sizing the workload.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-22
 tags: [positioning, product, workload]
 related: [thesis.md, cost-model.md, graduation.md]
 ---
@@ -134,3 +134,26 @@ Once the one-collection test passes, use
 The system is built around many small collections; fan-out and size
 limits are covered in those pages. This page decides whether to start
 here; those pages decide when a working app should graduate.
+
+## Scale at a glance
+
+The numbers a builder needs before writing the first line of code. For
+derivations, see [cost-model.md](cost-model.md) and
+[graduation.md](graduation.md).
+
+| Dimension | Number | Notes |
+| --- | --- | --- |
+| Shape | 1 important screen = 1 collection | The fit test above; fails before size matters |
+| Throughput | ~30 writes/min/collection sustained | M-size operating point — model/estimate, pending real-infra measurement on Cloudflare R2 |
+| Per-collection size | ~100–500 docs (~512 KB snapshot) before compaction defers on CF free | A fold fits the free-tier CPU budget at ~512 KB; erosion, not a cliff — model/estimate, pending real CF-isolate measurement |
+| Fan-out | ~100 collections/tenant (soft guideline) | Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N |
+| Storage | >10 GB/tenant stored = R2 free-tier boundary | A cost line, not a protocol ceiling; billing begins above 10 GB-mo on R2 |
+| Cost | ~$18/mo all-in on R2 (~$13 object-storage ops + $5 Workers Paid floor), ~$26/mo on S3 at M-size | At ~30 writes/min/collection; `baerly cost` projects the object-storage-ops portion only (no platform floor); see [cost-model.md](cost-model.md) for the curve |
+
+**CPU and throughput walls are surfaced above as model/estimate** — the
+~11 ms/MB fold-cost model (used to derive the ~512 KB CF-free ceiling)
+and the ~30 writes/min contention ceiling both need validation against a
+real CF isolate and real R2. Real-infra measurement is the known
+follow-up. The numbers are the best current estimates; use them to
+decide whether to start here, and revisit if you observe persistent fold
+deferrals (`db.compaction.deferred_total`) or CAS-retry storms.

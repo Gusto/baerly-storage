@@ -160,11 +160,11 @@ baerly-storage is designed for the small-to-medium operating point.
 Past these thresholds, S3 list-prefix latency and per-class operation
 pricing start to dominate, and you're better off on a real database:
 
-- **~30 writes / minute / collection**
-- **~10 GB / tenant**
-- **~100 collections / tenant**
+- **~30 writes / minute / collection** — per-collection throughput estimate (CAS-livelock model)
+- **>10 GB / tenant** — R2 free-tier storage cost line (a billing signal, not a protocol ceiling)
+- **~100 collections / tenant** — soft fan-out guideline (linear cost, bench-grounded; nothing enforces it)
 
-When you cross the soft ceiling, graduation is mechanical:
+When you cross these signals, graduation is mechanical:
 `baerly export --target=postgres` walks your log entries (already Debezium-style CDC change events) into a real DB. If your
 deploy target is Cloudflare Workers and you'll accept Cloudflare
 lock-in, [D1](https://developers.cloudflare.com/d1/) is cheaper

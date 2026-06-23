@@ -173,10 +173,14 @@ Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or
   mechanical. That format may narrow before the first production
   consumer; after that, incompatible changes require a major version.
   The incremental exporter itself is future work.
-- **Honest about its envelope.** Sized for ~10 GB / tenant,
-  ~30 writes/min/collection sustained, ~100 collections / tenant.
-  Here, a tenant is one isolated app/customer namespace; a collection is
-  a table-like document set.
+- **Honest about its envelope.** ~30 writes/min/collection sustained
+  (throughput ceiling), ~100 collections/tenant (soft fan-out guideline —
+  cost grows linearly, not a cliff), >10 GB/tenant stored (R2 free-tier
+  storage line — a cost signal, not a protocol ceiling). Here, a tenant is
+  one isolated app/customer namespace; a collection is a table-like document
+  set. At M-size (~30 writes/min) the projected cost is ~$18/mo on R2. See
+  [workload-fit.md](./docs/about/workload-fit.md#scale-at-a-glance) for the
+  full envelope table.
   Crossing any of those is the success signal to graduate.
 
 ## Go deeper
