@@ -368,7 +368,7 @@ describe("baerly cost", () => {
     // The high rate (>> 100 writes/min) should trigger the advisory.
     expect(text).toContain("advisory:");
     expect(text).toContain("~$54/mo on R2");
-    expect(text).toContain("50M/mo");
+    expect(text).toContain("50M Class A/mo");
   });
 
   test("--provider=aws-s3 text mode: advisory shows S3 figure (~$86/mo on S3), not R2", async () => {
@@ -395,7 +395,9 @@ describe("baerly cost", () => {
     expect(text).toContain("~$86/mo on S3");
     // Must NOT show the R2 figure for an S3 user.
     expect(text).not.toContain("~$54/mo on R2");
-    expect(text).toContain("50M/mo");
+    // The hard-trigger line must not leak an R2 dollar figure either.
+    expect(text).not.toContain("on R2");
+    expect(text).toContain("50M Class A/mo");
   });
 
   test("--provider=r2 JSON mode: trajectory includes percentOfAdvisory field", async () => {
