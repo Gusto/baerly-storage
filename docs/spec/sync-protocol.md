@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [

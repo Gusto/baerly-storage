@@ -2,7 +2,7 @@
 title: Operations runbook
 audience: operator
 summary: Production preflight, auth, backup, observability, capacity, and route checks.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [operations, runbook, production]
 related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../about/cost-model.md"]
 ---

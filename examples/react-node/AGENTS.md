@@ -482,7 +482,7 @@ The cost model puts the soft ceiling at:
 - **>10 GB / tenant stored** (R2 free-tier storage line — a cost signal, not a protocol ceiling)
 - **~100 collections / tenant** (soft fan-out guideline — bench-grounded linear cost)
 
-At M-size (~30 writes/min) the projected cost is ~$18/mo on R2. Past
+At M-size (~30 writes/min) the projected cost is ~$26/mo on S3 (~$18/mo on R2). Past
 those, per-class op pricing and fan-out scan cost start to dominate;
 you're better off on a real database.
 Pick your graduation target:

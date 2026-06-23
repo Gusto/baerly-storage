@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why baerly-storage exists, what it is, and what it deliberately is not.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [positioning, product]
 related: [workload-fit.md, cost-model.md, graduation.md, "../contributing/conventions/change-discipline.md"]
 ---

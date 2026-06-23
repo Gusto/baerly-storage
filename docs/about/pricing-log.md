@@ -2,7 +2,7 @@
 title: Pricing log
 audience: operator
 summary: Append-only audit of price and cap changes.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [audit, pricing]
 related: [cost-model.md]
 ---

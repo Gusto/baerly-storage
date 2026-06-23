@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---

@@ -2,7 +2,7 @@
 title: Workload fit
 audience: product
 summary: A qualitative shape test for deciding whether an app fits baerly-storage before sizing the workload.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-23
 tags: [positioning, product, workload]
 related: [thesis.md, cost-model.md, graduation.md]
 ---
