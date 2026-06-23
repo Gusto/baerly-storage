@@ -478,12 +478,13 @@ your own schedule. Not required for steady-state operation.
 baerly-storage is designed for the small-to-medium operating point.
 The cost model puts the soft ceiling at:
 
-- **~30 writes / minute / collection**
-- **~10 GB / tenant**
-- **~100 collections / tenant**
+- **~30 writes / minute / collection** (throughput ceiling — model/estimate)
+- **>10 GB / tenant stored** (R2 free-tier storage line — a cost signal, not a protocol ceiling)
+- **~100 collections / tenant** (soft fan-out guideline — bench-grounded linear cost)
 
-Past those, S3 list-prefix latency, snapshot fold cost, and per-class
-op pricing start to dominate; you're better off on a real database.
+At M-size (~30 writes/min) the projected cost is ~$18/mo on R2. Past
+those, per-class op pricing and fan-out scan cost start to dominate;
+you're better off on a real database.
 Pick your graduation target:
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
 - **Off-Workers or portability matters:** managed Postgres.

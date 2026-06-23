@@ -2,7 +2,7 @@
 title: Operations runbook
 audience: operator
 summary: Production preflight, auth, backup, observability, capacity, and route checks.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-22
 tags: [operations, runbook, production]
 related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../about/cost-model.md"]
 ---
@@ -178,11 +178,12 @@ Sink wiring and field reference are in
 
 ## Capacity
 
-Cross any one and the next move is graduation, not quota tuning:
-
-- roughly 30 sustained logical writes/min per collection;
-- roughly 10 GB per tenant;
-- roughly 100 collections per tenant.
+- roughly 30 sustained logical writes/min per collection (throughput ceiling —
+  model/estimate, pending real-infra measurement);
+- >10 GB per tenant stored (R2 free-tier storage line — a cost signal, not a
+  protocol ceiling; baerly-storage does not enforce per-tenant byte limits);
+- ~100 collections per tenant (soft fan-out guideline — bench-grounded linear
+  cost; nothing in the protocol enforces a cap).
 
 Graduation thresholds and the fold-cost derivation live in
 [graduation.md](../about/graduation.md); cost math lives in
