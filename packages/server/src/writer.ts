@@ -598,7 +598,6 @@ export class Writer {
       const decision = tryAdoptOwnSessionLogEntry({
         self: entry,
         existing,
-        batchSize: 1,
       });
       if (decision.adopt) {
         // Own crashed/lost-ack commit already durable at `seq`. Adopt it
