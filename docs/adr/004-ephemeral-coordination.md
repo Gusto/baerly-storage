@@ -2,7 +2,7 @@
 title: Ephemeral coordination
 audience: adr
 summary: ADR 004 — coordination runs in request-bounded compute, not in a persistent process.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-22
 tags: [decision, adr, runtime-model]
 related:
   [
@@ -287,6 +287,13 @@ are the entire handoff to Postgres (`baerly export --target=postgres`).
    no lease, two writers can both fold the same tail; the CAS
    loser's work is discarded. Accepted; measured by
    `db.compaction.cas_lost_total`.
+5. **No fairness.** Lock-free CAS gives no queueing or fairness
+   guarantee: under sustained contention a slow writer can lose
+   every race and exhaust its retry budget, surfacing as a
+   `Conflict` at the app edge. This is bounded liveness loss,
+   never data loss — the app retries or backs off. A fair queue
+   would require exactly the external coordinator this ADR exists
+   to avoid.
 
 Independent of maintenance: readers may see a stale
 `current.json` until the in-isolate cache invalidates; the
@@ -315,3 +322,12 @@ that re-validate against an ETag, and write-tick-paced
 maintenance all preserve the property. The test is whether
 _removing the in-memory state_ breaks correctness. If it does,
 the feature violates this ADR.
+
+**Backing-store consistency.** The CAS property requires
+read-after-write strong consistency on the control object. It
+holds on single-region S3 and on R2 (globally strongly
+consistent). It does **not** hold across an S3 Multi-Region
+Access Point or active-active cross-region replication, where a
+replica's stale read can let two writers both believe they won
+the CAS. Run baerly against a single-region bucket (or R2); do
+not point it at an MRAP / cross-region-replication endpoint.
