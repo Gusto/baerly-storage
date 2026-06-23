@@ -10,10 +10,13 @@ related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 # Cost model
 
 baerly-storage's pricing posture in one page. The unindexed first-try insert
-baseline is two Class A R2 ops (content body + the committing
+**commit floor** is two Class A R2 ops (content body + the committing
 `log/<seq>` create — that create-if-absent IS the commit; there is no
-`current.json` write on the commit path); deletes are cheaper, while
-indexes, retries, and first-collection provisioning add bounded ops.
+`current.json` write on the commit path) — in-band maintenance raises
+the *effective* Class A write-amplification to ~3× on Cloudflare / ~4×
+on serverful Node (see the Cost-ceiling section below); deletes are
+cheaper, while indexes, retries, and first-collection provisioning add
+bounded ops.
 Reads emit Class B ops at a rate that depends on cache hits — including
 the tail forward-probe, which is Class B GETs and never Class A. The
 companion file
@@ -55,7 +58,9 @@ Class A is the meter that matters. Three reasons:
 1. **Highest unit cost of the high-volume items** ($4.50 / 1M vs.
    Class B at $0.36 / 1M vs. Worker requests at $0.30 / 1M).
 2. **Write-amplified by the protocol** — an unindexed first-try insert
-   produces 2 Class A ops, so Class A grows fastest with traffic.
+   produces 2 Class A ops at the commit floor (effective ~3× on
+   Cloudflare / ~4× on Node with in-band maintenance — see Cost
+   ceiling), so Class A grows fastest with traffic.
 3. **Compaction storms hit it** — a runaway compaction job still does
    PUT / LIST / CAS work; free `DeleteObject` calls are not the bill
    driver.
