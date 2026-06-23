@@ -2,7 +2,7 @@
 title: API surface lock
 audience: adr
 summary: ADR 002 — API surface lock.
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-22
 tags: [decision, adr]
 related: [README.md]
 ---
@@ -183,6 +183,23 @@ LLMs — this design closes that surface structurally.
   making `update` upsert instead of no-op-on-missing).
 - Adding boolean connectives (`or` / `not`) to the predicate
   algebra — see *Predicates are conjunction-only* above.
+
+## Deprecation lifecycle
+
+Now that the package is published with real consumers, removing a
+capability is no longer free. A removal proceeds in stages: (1) a
+supersession ADR records the decision and the replacement; (2) the
+capability is marked `@deprecated` in JSDoc — with a pointer to the
+replacement — for at least one minor release, where it still works
+and still type-checks; (3) it is removed in the next semver-major.
+A capability is never removed in the same release it is deprecated.
+
+**Hardening trigger.** The lock is "soft" (additive-only, removals
+allowed via the lifecycle above) until v1.0. At v1.0 the surface
+hardens: removals and signature-narrowings require a major bump
+_and_ a migration note in `CHANGELOG.md`, and the bar for accepting
+a removal rises from "clean narrowing" to "demonstrated harm in
+keeping it."
 
 ## Consequences
 

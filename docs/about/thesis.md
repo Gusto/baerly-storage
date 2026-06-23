@@ -103,7 +103,9 @@ The criteria the rest of this document is shaped around:
      paths not type-check. The additive-only lock on the public
      surface is codified in
      [ADR-002](../adr/002-api-surface-lock.md), which scopes
-     "additive" to _capabilities_, not _forms_.
+     "additive" to _capabilities_, not _forms_. The lock is soft
+     until v1.0 — removals are allowed only through the staged
+     deprecation lifecycle in that ADR, never as a silent break.
 5. **No DDL.** The moment the loop requires `CREATE TABLE`, "invent
    and preserve a schema across edits" is inserted into the part of
    the loop LLMs are worst at (`category` vs `categories` four
