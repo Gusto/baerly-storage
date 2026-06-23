@@ -4,10 +4,11 @@
  * change MUST be paired with a `docs/about/pricing-log.md` entry.
  *
  * Three rules:
- *   1. `classAPerMonth = writesPerMin × 60 × 24 × 30 × 3`. The `× 3`
- *      is the protocol's enforced write-amp ceiling
- *      (`docs/about/cost-model.md:43-44`); snapshot writes
- *      amortize and are excluded from the headline.
+ *   1. `classAPerMonth = writesPerMin × 60 × 24 × 30 × effectiveWriteAmp`
+ *      where `effectiveWriteAmp` (≈3 on Cloudflare, ≈4 on Node) is the
+ *      measured Class A ops/write INCLUDING in-band maintenance — see
+ *      `docs/spec/attachments/amortized-write-cost-baseline.json`. The
+ *      old "× 2" was the commit FLOOR only and undercounted maintenance.
  *   2. `projectedUsdPerMonth = 0` exactly when both `classAPerMonth
  *      ≤ pricing.freeClassAPerMonth` AND `storedBytes ≤
  *      pricing.freeStorageGb × 1GB`. Say `$0`, not `$0.00`. `null`
@@ -27,6 +28,16 @@ export interface ProviderPricing {
   readonly freeStorageGb: number;
   /** $/GB-month above free tier. NaN for "self-hosted" / "dev". */
   readonly usdPerGbMonth: number;
+  /**
+   * Effective Class A ops per logical write, INCLUDING in-band
+   * maintenance (folds + GC) — NOT just the 2-op commit floor.
+   * Empirically measured: ~3 on Cloudflare (cf-free profile), ~4 on
+   * serverful Node (gcInterval=2 ⇒ ~2× the GC LISTs). Source:
+   * docs/spec/attachments/amortized-write-cost-baseline.json (bench
+   * `pnpm bench:amortized-write-cost`). Provider is the host proxy:
+   * r2 ⇒ Cloudflare ⇒ 3; aws-s3 ⇒ Node ⇒ 4.
+   */
+  readonly effectiveWriteAmp: number;
 }
 
 /**
@@ -57,17 +68,6 @@ export interface Trajectory {
 }
 
 /**
- * Protocol write-amp ceiling: every logical write produces exactly
- * 2 Class A ops (PUT content + the committing `log/<seq>` create).
- * There is no `current.json` CAS on the commit path — the winning
- * log create IS the commit. Source: `docs/about/cost-model.md:43-44`.
- */
-const PROTOCOL_WRITE_AMP = 2;
-
-/** Minutes per month × write-amp = Class A ops/month per write/min. */
-const OPS_PER_WPM_PER_MONTH = 60 * 24 * 30 * PROTOCOL_WRITE_AMP;
-
-/**
  * Project a `writesPerMin` rate (typically from
  * `estimateWritesPerMin`) into a monthly cost trajectory.
  *
@@ -83,7 +83,7 @@ export const project = (
     return null;
   }
 
-  const classAPerMonth = writesPerMin * OPS_PER_WPM_PER_MONTH;
+  const classAPerMonth = writesPerMin * 60 * 24 * 30 * pricing.effectiveWriteAmp;
 
   const percentOfGraduation = (classAPerMonth / GRADUATION_CLASS_A_PER_MONTH) * 100;
 
