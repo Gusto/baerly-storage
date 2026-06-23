@@ -2,18 +2,21 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, grouped by audience.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-23
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---
 
 # `docs/` — topic map
 
-baerly-storage is a vendorless document database for the new middle —
-software that's real enough to need state but not real enough to
-deserve a Postgres + Docker + on-call stack. It runs over AWS S3,
-Cloudflare R2, or a conformant S3-compatible bucket that passes
-`baerly doctor --bucket`; your data lives in your bucket, and the
+baerly-storage is a vendorless document database for live application
+data — software that's real enough to need shared state but not real
+enough to deserve a Postgres + Docker + on-call stack. There is no
+database server behind the app: baerly-storage runs in your trusted
+request handler, wherever the bucket credentials safely live. Your
+AWS S3 or Cloudflare R2 bucket is the durable state; other
+S3-compatible endpoints require the support checks in
+[`spec/storage-compatibility.md`](spec/storage-compatibility.md). The
 protocol kernel is small enough that an LLM can use the public API
 zero-shot from the `.d.ts` shapes, with `dist/API.md` as the canonical
 companion reference. The positioning story is in
@@ -24,7 +27,9 @@ companion reference. The positioning story is in
 - New to the project: [`../README.md`](../README.md), then
   [`about/how-it-works.md`](about/how-it-works.md).
 - Evaluating the bet: [`about/thesis.md`](about/thesis.md), then
-  [`about/cost-model.md`](about/cost-model.md).
+  [`about/workload-fit.md`](about/workload-fit.md), then
+  [`about/cost-model.md`](about/cost-model.md), then
+  [`about/graduation.md`](about/graduation.md).
 - Building an app: [`guide/cheatsheet.md`](guide/cheatsheet.md), then
   [`packages/server/API.md`](../packages/server/API.md) — then scaffold
   from [`../examples/`](../examples/) or bolt onto an existing Worker
@@ -58,9 +63,8 @@ invariants, operator runbooks, and target-specific bolt-ons.
 - [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
   retention rotation, checksums, restore, and restore drills.
 - [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server
-  auth recipes and the dev/prod × Cloudflare/Node matrix; synthesis
-  first, hardened per-quadrant recipes live in the scaffold AGENTS.md
-  files.
+  auth recipes and the dev/prod × Cloudflare/Node matrix. Scaffolds
+  ship minimal recipes; fail-closed hardening lives in this guide.
 - [`guide/observability.md`](guide/observability.md) — Operator
   signals, first-response actions, sinks (OTel / Workers Analytics
   Engine / Datadog), cost-ballooning anti-patterns, and known gaps.
@@ -79,6 +83,9 @@ Product and business context.
   _how_ the system works.
 - [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
   baerly-storage is, who it's for, and what it deliberately isn't — the _why_.
+- [`about/workload-fit.md`](about/workload-fit.md) — the shape-fit
+  test: whether the app's core screens can be answered from one
+  collection before you count rows or costs.
 - [`about/cost-model.md`](about/cost-model.md) — per-line-item rates,
   write-amp meter, compression posture.
 - [`about/graduation.md`](about/graduation.md) — the CPU/memory bounds
@@ -93,7 +100,7 @@ For people changing the code in this repo.
 - [`contributing/architecture.md`](contributing/architecture.md) — module graph and the lifecycle
   of `db.collection(...).insert()`.
 - [`contributing/development.md`](contributing/development.md) — local setup, test commands,
-  Minio / Toxiproxy / Postgres stack.
+  MinIO / Toxiproxy / Postgres stack.
 - [`contributing/troubleshooting.md`](contributing/troubleshooting.md) — known pain points: test gating,
   ports, fuzzer, CI formatting.
 - [`contributing/extending.md`](contributing/extending.md) — worked examples for adding a `Db`
