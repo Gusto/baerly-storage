@@ -49,10 +49,11 @@ Configuration lives in `baerly.config.ts`.
 Single package, single `vite` process: `baerlyDev()` from
 `@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Vite
 middleware on `:5173` alongside the SPA dev server, so `pnpm dev`
-brings up SPA + HMR + `/v1/*` in one command — same origin in dev.
-The default production entrypoint runs the baerly-storage HTTP surface;
-it does not serve `dist/client/` unless you add the
-`baerlyNode({ webRoot: "dist/client" })` option.
+brings up SPA + HMR + `/v1/*` in one command — same origin in dev,
+same `dist/client/`-served origin in production via `pnpm start`. The
+production entrypoint serves the Vite-built SPA from `dist/client/`
+via the `baerlyNode({ webRoot: "dist/client" })` option, with `/v1/*`
+handled by the kernel on the same origin.
 
 If this scaffold was created with `--with=docker`, you'll also have a
 multi-stage distroless `Dockerfile`, a `.dockerignore`, and a
@@ -92,7 +93,7 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 | `pnpm test`      | `vitest run` — standalone `vitest.config.ts` (Node env). The template ships `src/notes.test.ts` by default.                                                                                    | seconds             |
 | `pnpm dev`       | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173                                                            | seconds to start    |
 | `pnpm build`     | `tsc -b && vite build` — emits the SPA into `dist/client/`                                                                                                                                 | seconds             |
-| `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves `/v1/*` and health/dev landing routes unless you add `webRoot`                                              | seconds to start    |
+| `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves the built SPA from `dist/client/` plus `/v1/*` on the same origin via `webRoot`                            | seconds to start    |
 
 **`pnpm verify` exercises typecheck + tests only.** The dev-auth
 middleware, the SPA bundle, and any custom `/api/*` route are NOT

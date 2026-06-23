@@ -37,7 +37,7 @@ minimal-node/
 │                             #   auth recipes, graduation
 ├── src/
 │   ├── server/
-│   │   └── index.ts          # baerlyNode({ config, storage }).listen(PORT)
+│   │   └── index.ts          # baerlyNode({ config, storage, webRoot }).listen(PORT)
 │   └── web/
 │       └── main.ts           # SPA client entry — bundled into dist/client/
 └── README.md
@@ -59,7 +59,8 @@ port, SPA + HMR + `/v1/*` in one command. Storage is `LocalFsStorage`
 rooted at `.baerly-data/`, so first-touch needs no S3 creds, no JWKS,
 and no second process.
 
-For production-shaped local runs against S3/R2:
+For production-shaped local runs against S3/R2 (the built SPA is
+served from `dist/client/` alongside `/v1/*`):
 
 ```sh
 pnpm build
@@ -70,9 +71,10 @@ The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` at startup. The default `auth: "none"`
 posture needs no auth env vars. The default entrypoint also reads
 optional `AWS_REGION`, `R2_ACCOUNT_ID` (switches the storage factory
-from `s3Storage` to `r2Storage`), and `PORT`. Auth, tenant, web-root,
-and maintenance env vars require adopting the documented code/config
-recipe first.
+from `s3Storage` to `r2Storage`), and `PORT`. There is no `WEB_ROOT`
+env var — the SPA path is the hard-coded `webRoot: "dist/client"`
+in `src/server/index.ts`. Auth, tenant, and maintenance env vars
+require adopting the documented code/config recipe first.
 
 Maintenance (compaction + GC) is automatic and in-band: it runs
 inline on the rare write that crosses a maintenance trigger — no env
@@ -82,10 +84,9 @@ snapshot ceiling and `BAERLY_MAINTENANCE_DISABLE=1` is a kill switch.
 For an explicit out-of-band sweep, call `runScheduledMaintenance`
 from `@gusto/baerly-storage`.
 
-After `pnpm build`, `pnpm start` runs the baerly-storage HTTP surface
-on `http://localhost:8080/v1/*` plus health/dev landing routes. It does
-not serve `dist/client/` unless you add `webRoot: "dist/client"` to the
-`baerlyNode({ ... })` call.
+After `pnpm build`, `pnpm start` serves the Vite-built SPA from
+`dist/client/` on `http://localhost:8080/` and the baerly-storage HTTP
+surface on `http://localhost:8080/v1/*` — single origin, no CORS.
 
 `pnpm typecheck` runs `tsc -b --noEmit` across both project
 references.

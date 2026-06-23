@@ -221,11 +221,14 @@ describe("scaffold", () => {
     expect(claudeMd).toEqual(agentsMd);
 
     // The default scaffold ships `auth: "none"`; the Node entry
-    // composes `baerlyNode({ config, storage })` with no inline
-    // verifier ternary. `bearerJwt(...)` / `sharedSecret(...)` only
-    // re-enter via the AGENTS.md "Going to production" recipe.
+    // composes `baerlyNode({ config, storage, webRoot: "dist/client" })`
+    // with no inline verifier ternary. The `webRoot` keeps production
+    // `pnpm start` serving the Vite-built SPA from `dist/client/` on the
+    // same origin as `/v1/*` (matching the dev `baerlyDev()` behavior).
+    // `bearerJwt(...)` / `sharedSecret(...)` only re-enter via the
+    // AGENTS.md "Going to production" recipe.
     const server = await readFile(join(result.outDir, "src", "server", "index.ts"), "utf8");
-    expect(server).toContain("baerlyNode({ config, storage })");
+    expect(server).toContain(`baerlyNode({ config, storage, webRoot: "dist/client" })`);
     expect(server).not.toContain("bearerJwt");
     expect(server).not.toContain("sharedSecret");
 
