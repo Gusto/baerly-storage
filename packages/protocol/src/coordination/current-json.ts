@@ -447,7 +447,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (r["schema_version"] === 1 || r["schema_version"] === 2) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key} is a pre-single-write-commit current.json; re-provision the bucket. Pre-launch, no production buckets — delete and re-seed the local-fs/Minio/Verdaccio scratch bucket, or recreate the R2/S3 bucket.`,
+      `current.json at ${key} is a pre-single-write-commit current.json; re-provision the bucket. Pre-launch, no production buckets — delete and re-seed the local-fs/Minio scratch bucket, or recreate the R2/S3 bucket.`,
     );
   }
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {

@@ -23,8 +23,7 @@ in [docs/](docs/).
 **Current state:** Open source under Apache-2.0, published publicly as
 `@gusto/baerly-storage` (and the `@gusto/create-baerly-storage`
 scaffolder) on npm (npmjs.com) with `publishConfig.access: "public"`.
-The `localhost:4873` Verdaccio registry is a local test harness only,
-never a publish target. See
+See
 [`docs/contributing/publishing.md`](docs/contributing/publishing.md) for
 the publish workflow.
 
@@ -97,7 +96,6 @@ variants for environments where the env var isn't propagated.
 | `pnpm build && pnpm baerly export --target=sqlite ...`                  | snapshot dump one collection to SQL                                                                                                                                                                                                                                                                                                                                                                                                                                    | seconds                              | ✅ no infra                                                                                                                                                           |
 | `pnpm build && pnpm baerly {init,inspect,admin dump,admin restore} ...` | operator surface: `init` drops `baerly.config.ts` into an existing repo; `inspect` prints a read-only summary of one collection's snapshot / log / index state; `admin dump` emits canonical NDJSON of the materialised view; `admin restore` re-imports that NDJSON into a fresh bucket                                                                                                                                                                               | seconds                              | ✅ no infra                                                                                                                                                           |
 | `pnpm build && pnpm baerly admin fsck ...`                              | maintenance surface: `admin fsck` walks `current.json` → snapshot hash → log range → index prefixes read-only and exits 4 on any finding                                                                                                                                                                                                                                                                                                                               | seconds                              | ✅ no infra                                                                                                                                                           |
-| `pnpm dlx:bust-cache`                                                   | wipes `~/.cache/pnpm/dlx` + `~/Library/Caches/pnpm/dlx` + `localhost+4873` registry metadata. Use after `pnpm verdaccio:publish` when iterating `pnpm create @gusto/baerly-storage@latest` against Verdaccio — dlx caches by `pkg@version` so re-publishing the same version is invisible without this step. `pnpm config get cache-dir` prints the literal string `"undefined"` — don't probe it manually                                                             | ~ms                                  | ✅                                                                                                                                                                    |
 | `cat node_modules/@gusto/baerly-storage/dist/API.md`                    | ~12k-token (~1030-line) public-API reference (soft budget ~12k tokens — now at the ceiling; net-new prose should land in a sibling RECIPES.md rather than grow this file). Read this BEFORE walking the hash-suffixed `dist/*.d.ts` chain. Named `API.md` (not `AGENTS.md`) so it never collides with a scaffolded app's project-root `AGENTS.md`. Source lives at `packages/server/API.md`; the rolldown `closeBundle` step copies it to `dist/API.md` on every build | n/a                                  | ✅                                                                                                                                                                    |
 | `cat node_modules/@gusto/baerly-storage/dist/CHANGELOG.md`              | migration-shaped record of what changed across versions; read it when a remembered API no longer type-checks. Maintained by Changesets at the repo root; the rolldown `closeBundle` step copies it to `dist/CHANGELOG.md` on every build                                                                                                                                                                                                                               | n/a                                  | ✅                                                                                                                                                                    |
 
@@ -403,12 +401,6 @@ auto-load on matching edits and point at the same files.
   Same idea for the other tools: prefer `pnpm verify:agent` / `pnpm build`
   over `pnpm exec tsgo` / `pnpm exec rolldown` so the canonical flags
   (`--pretty false`, `--format=unix --quiet`, etc.) come along.
-- ❌ Probing `pnpm config get cache-dir` to locate the dlx cache. It
-  returns the literal string `"undefined"` when not explicitly set
-  (the default), so `rm -rf "$(pnpm config get cache-dir)/dlx"` is a
-  silent no-op that exits 0. The real dlx cache lives at `~/.cache/pnpm/dlx`
-  (Linux/XDG) or `~/Library/Caches/pnpm/dlx` (macOS) — both can
-  exist. Use `pnpm dlx:bust-cache` instead.
 - ❌ Proposing maintenance/cleanup/coordination mechanisms that require
   _operator-installed_ scheduling (`wrangler.jsonc` `triggers.crons`,
   `node-cron`, k8s `CronJob`, systemd timer, DO Alarms). The kernel must
