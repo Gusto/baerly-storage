@@ -354,11 +354,11 @@ starts makes graduation a feature rather than a surprise.
 
 The envelope:
 
-- **~30 logical writes / minute / collection** sustained. This
-  ceiling reflects the CAS-livelock regime documented in the
-  S3-as-database literature; per-collection commit scope
-  ([ADR-001](../adr/001-tenant-cas-isolation.md)) is what buys the
-  operating headroom.
+- **~30 logical writes / minute / collection** sustained. This ceiling
+  follows from the raw S3-CAS conditional-PUT rate divided by baerly's
+  measured write-amplification (see [ADR-001](../adr/001-tenant-cas-isolation.md)
+  and [cost-model.md](cost-model.md)); per-collection commit scope is what
+  buys the operating headroom.
 - **>10 GB / tenant stored** — the R2 free-tier storage line (a cost
   signal, not a protocol ceiling). A tenant is a key prefix; baerly-storage
   enforces no per-tenant byte limit. Once stored bytes cross the R2

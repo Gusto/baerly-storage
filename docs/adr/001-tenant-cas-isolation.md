@@ -2,7 +2,7 @@
 title: Tenant CAS isolation
 audience: adr
 summary: ADR 001 — Tenant CAS isolation.
-last-reviewed: 2026-06-14
+last-reviewed: 2026-06-22
 tags: [decision, adr]
 related: [README.md]
 ---
@@ -34,10 +34,14 @@ For scope, three options were considered:
 
 - **Per-tenant CAS.** One `current.json` per tenant; every commit across
   every collection serializes through that one key. Simple topology,
-  but the published prior-art ceiling on the S3-CAS pattern is roughly
-  five writes per second; a 100-collection tenant at the documented
-  30-writes-per-minute-per-collection target lands about 10× over the
-  ceiling.
+  but the prior-art ceiling on the S3-CAS pattern is roughly five logical
+  writes per second per key. That figure is an estimate, not a published
+  AWS number: an order-~10 conditional-PUT/s same-key ceiling (single-region
+  S3 serialises conditional writes on a hot key well below the ~3,500 PUT/s
+  per-prefix wall) divided by baerly's measured effective write-amplification
+  (≈3–4× — see [cost-model.md](../about/cost-model.md)). It wants real-infra
+  confirmation; meanwhile a 100-collection tenant at the documented
+  30-writes-per-minute-per-collection target lands about 10× over it.
 - **Per-collection commit scope.** One `current.json` plus one
   numbered log per `(tenant, collection)` pair. More objects per
   tenant, but commit contention stays inside its own collection. Matches
