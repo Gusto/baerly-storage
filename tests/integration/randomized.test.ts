@@ -22,16 +22,38 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
-import { afterEach, beforeEach, describe, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { getOrCreateMemoryStorageForBucket, type Storage, uuid } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import {
   runCausalConsistencyCascade,
+  runMultiDocCascade,
   runRangeWalkParityCascade,
 } from "../fixtures/randomized-cascade.ts";
 import { MINIO_ENDPOINT, TOXIPROXY_ADMIN_ENDPOINT, TOXIPROXY_ENDPOINT } from "../setup/ports.ts";
+
+/**
+ * (a) Per-doc consistency: `observed` must be a subsequence of `written`
+ * (every observed value was written to this doc, in write order; no
+ * value never written to it ever appears). Returns `true` iff `observed`
+ * embeds into `written` preserving order. Values are compared by their
+ * canonical token so structural equality is decidable by string equality.
+ */
+const isSubsequence = (observed: readonly string[], written: readonly string[]): boolean => {
+  let w = 0;
+  for (const o of observed) {
+    while (w < written.length && written[w] !== o) {
+      w++;
+    }
+    if (w >= written.length) {
+      return false;
+    }
+    w++; // consume the match; preserves order + multiplicity
+  }
+  return true;
+};
 
 const stableConfig = {
   endpoint: MINIO_ENDPOINT,
@@ -171,6 +193,81 @@ describe("randomized (Db + Writer)", () => {
             // tracks the live doc set under the filter.
             injectFilteredIndex: true,
           });
+        },
+      );
+
+      test(
+        "multi-doc-per-collection: per-doc consistency + single collection total order",
+        { timeout: 60 * 1000 },
+        async () => {
+          const N = 3;
+          const docIds = ["alpha", "bravo", "charlie", "delta"];
+          const bucket = `mrnd-${variant.label}-${uuid().slice(0, 8)}`;
+          const storages = await variant.makeStorages(bucket, N);
+          const result = await runMultiDocCascade({
+            storages,
+            pollTickMs: variant.pollTickMs,
+            docIds,
+          });
+
+          // (a) Per-doc consistency: for each docId, the observed
+          // committed-value sequence for that doc is a subsequence of the
+          // values written to that doc — no value never written to it
+          // appears, and the order is preserved. The log linearizes the
+          // collection, so a doc's committed entries appear in the order
+          // they were committed; the observed sequence is the projection
+          // of the global log onto that doc.
+          for (const docId of docIds) {
+            const written = result.writtenPerDoc[docId] ?? [];
+            const observed = result.observedPerDoc[docId] ?? [];
+            for (const v of observed) {
+              expect(
+                written,
+                `doc ${docId}: observed value ${v} was never written to it`,
+              ).toContain(v);
+            }
+            expect(
+              isSubsequence(observed, written),
+              `doc ${docId}: observed sequence ${JSON.stringify(observed)} is not a subsequence of written ${JSON.stringify(written)}`,
+            ).toBe(true);
+          }
+
+          // (b) Collection total order: the committed `log/<seq>` numbers
+          // across ALL docs form a contiguous, gap-free, duplicate-free
+          // range `{start, start+1, …, start+n-1}`. The log linearizes the
+          // COLLECTION, not the doc — every doc's commit takes the next
+          // free slot in the one shared log.
+          const seqs = result.committedSeqs.toSorted((a, b) => a - b);
+          expect(seqs.length, "no commits landed in the multi-doc cascade").toBeGreaterThan(0);
+          // No duplicates.
+          expect(new Set(seqs).size, `duplicate log/<seq> slots: ${JSON.stringify(seqs)}`).toBe(
+            seqs.length,
+          );
+          // Contiguous, gap-free: max - min + 1 === count, and each step is +1.
+          const start = seqs[0]!;
+          const end = seqs[seqs.length - 1]!;
+          expect(end - start + 1, `log/<seq> range is not gap-free: ${JSON.stringify(seqs)}`).toBe(
+            seqs.length,
+          );
+          for (let i = 0; i < seqs.length; i++) {
+            expect(seqs[i], `gap at index ${i} in ${JSON.stringify(seqs)}`).toBe(start + i);
+          }
+
+          // (b′) Tie (a) and (b) together: every commit in this cascade is
+          // a `U` op carrying a unique token, so each committed log slot
+          // contributes exactly one observed per-doc value. The total count
+          // of observed values across all docs MUST equal the count of
+          // committed slots — proving the slot set and the projected
+          // entries describe the SAME committed log, not two independent
+          // tallies.
+          const totalObserved = docIds.reduce(
+            (sum, docId) => sum + (result.observedPerDoc[docId] ?? []).length,
+            0,
+          );
+          expect(
+            totalObserved,
+            `Σ observed per-doc values (${totalObserved}) != committed slot count (${seqs.length})`,
+          ).toBe(seqs.length);
         },
       );
 
