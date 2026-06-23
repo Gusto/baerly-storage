@@ -2,9 +2,9 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-15
+last-reviewed: 2026-06-23
 tags: [cost, pricing, operations]
-related: [pricing-log.md, thesis.md, graduation.md]
+related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---
 
 # Cost model
@@ -83,9 +83,10 @@ verified in CI:
 - **`< 1 Class A op / writer / hour` for idle readers.** Real
   expectation is exactly zero — readers walk `current.json` plus the
   snapshot plus the live-tail log via deterministic GETs, never
-  LIST. The tail forward-probe (GET `log/<tail_hint>`, `+1`, … to the
-  first 404) is Class B, so tail discovery never touches the Class A
-  meter and the idle-reader bound is untouched.
+  LIST. The tail forward-probe (GET from
+  `max(log_seq_start, tail_hint)` — normally `tail_hint` — to the first
+  404) is Class B, so tail discovery never touches the Class A meter
+  and the idle-reader bound is untouched.
 
 ### Maintenance is write-driven; reads are pure
 
@@ -290,14 +291,15 @@ Read this as positioning, not a cost claim:
   signal to graduate.
 - **Portability / switching cost:** This axis favors baerly-storage
   across all workload sizes. Object storage is the rare primitive
-  with a common dialect — the S3 API — that S3, R2, and MinIO all
-  speak with the conditional-write (CAS) semantics baerly-storage's
-  coordination requires; those are the stores the CAS contract is
-  proven against and that `baerly doctor --bucket` gates on (see
-  [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob
-  speaks a non-S3 dialect and GCS's S3-interop endpoint exposes
-  conditional writes as read-only, so both need a dedicated
-  adapter that doesn't exist yet. The portability point still
+  with a common dialect — the S3 API. AWS S3 and Cloudflare R2 are the
+  production-supported stores; MinIO is the local conformance target,
+  and other S3-compatible endpoints require `baerly doctor --bucket`
+  plus owner validation (see
+  [storage-compatibility.md](../spec/storage-compatibility.md) and
+  [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob speaks a
+  non-S3 dialect and GCS's S3-interop endpoint exposes conditional
+  writes as read-only, so both need a dedicated adapter that doesn't
+  exist yet. The portability point still
   holds where it counts: your bytes live in your bucket and
   leaving needs no vendor cooperation. D1, Supabase, Neon, and Firebase are
   excellent, but they are proprietary runtimes — choosing one is

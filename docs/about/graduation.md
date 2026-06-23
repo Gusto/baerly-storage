@@ -4,7 +4,7 @@ audience: operator
 summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
 last-reviewed: 2026-06-14
 tags: [operations, cost, capacity, graduation]
-related: [cost-model.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
+related: [cost-model.md, workload-fit.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
 ---
 
 # Graduation thresholds
