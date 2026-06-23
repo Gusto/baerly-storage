@@ -78,7 +78,6 @@ const makeEntry = (overrides: Partial<LogEntry> = {}): LogEntry => ({
 const ctxOf = (parts: Partial<AdoptionContext>): AdoptionContext => ({
   self: makeEntry(),
   existing: makeEntry(),
-  batchSize: 1,
   ...parts,
 });
 
@@ -138,7 +137,6 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
           const decision = tryAdoptOwnSessionLogEntry({
             self,
             existing: forged,
-            batchSize: 1,
           });
           return decision.adopt === false && decision.reason === "foreign-session";
         },

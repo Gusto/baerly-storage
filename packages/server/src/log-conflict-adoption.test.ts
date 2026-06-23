@@ -20,7 +20,6 @@ const makeEntry = (overrides: Partial<LogEntry> = {}): LogEntry => ({
 const ctxOf = (parts: Partial<AdoptionContext>): AdoptionContext => ({
   self: makeEntry(),
   existing: makeEntry(),
-  batchSize: 1,
   ...parts,
 });
 
@@ -54,22 +53,6 @@ describe("tryAdoptOwnSessionLogEntry", () => {
     expect(decision).toEqual({ adopt: false, reason: "wrong-seq" });
   });
 
-  test("clause (3) fails: batched commit → reject with reason 'batch'", () => {
-    const decision = tryAdoptOwnSessionLogEntry(ctxOf({ batchSize: 2 }));
-    expect(decision).toEqual({ adopt: false, reason: "batch" });
-  });
-
-  test("clause (3) is checked first — batch + foreign session still reports 'batch'", () => {
-    // Evaluation order matters for the patent-disclosure narrative:
-    // a batched commit must NEVER reach the field comparison, so
-    // even a same-session same-seq existing entry inside a batch
-    // surfaces as 'batch' (not as adopt: true).
-    const decision = tryAdoptOwnSessionLogEntry(
-      ctxOf({ batchSize: 2, existing: makeEntry({ session: SESSION_B }) }),
-    );
-    expect(decision).toEqual({ adopt: false, reason: "batch" });
-  });
-
   test("clause (1) is checked before clause (2)", () => {
     // Foreign session + wrong seq → reason MUST be 'foreign-session'.
     // Documents the precedence so a future refactor can't silently
@@ -78,13 +61,5 @@ describe("tryAdoptOwnSessionLogEntry", () => {
       ctxOf({ existing: makeEntry({ session: SESSION_B, seq: 99 }) }),
     );
     expect(decision).toEqual({ adopt: false, reason: "foreign-session" });
-  });
-
-  test("batchSize: 0 (empty inputs, defensive) → reject with reason 'batch'", () => {
-    // The single-input commit path never reaches this helper with a
-    // batchSize other than 1, but the helper itself MUST refuse a
-    // non-1 batchSize unconditionally.
-    const decision = tryAdoptOwnSessionLogEntry(ctxOf({ batchSize: 0 }));
-    expect(decision).toEqual({ adopt: false, reason: "batch" });
   });
 });

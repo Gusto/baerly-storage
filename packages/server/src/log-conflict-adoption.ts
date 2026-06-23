@@ -19,7 +19,7 @@
  *
  * ## Soundness invariant
  *
- * Adoption is sound iff all four hold:
+ * Adoption is sound iff all three hold:
  *
  *   1. **Same session.** `existing.session === self.session`. The
  *      session id is a per-commit, in-RAM-only secret minted at
@@ -36,16 +36,15 @@
  *      Same session + same seq alone is not sufficient: a collision,
  *      test seam, or out-of-model bucket writer must not be able to
  *      make this writer adopt a different logical mutation.
- *   4. **Single-input commit.** `self.batchSize === 1`. Every
- *      commit is single-input now, so this always holds; the guard
- *      is retained as a defensive invariant (its removal is the
- *      deferred follow-up tracked as D1.5). It is sound only for a single-input
- *      commit because per-input adoption decisions would not
- *      compose with the single-key single-write commit (the one
- *      `log/<seq>` create is the all-or-nothing commit point).
  *
- * When any of (1)/(2)/(3)/(4) fails, the caller MUST refuse adoption
+ * When any of (1)/(2)/(3) fails, the caller MUST refuse adoption
  * and treat the occupant as a conflicting committed entry.
+ *
+ * A fourth precondition — single-input commit — is now structural,
+ * not a runtime check: `#singleAttemptCommit` takes one `CommitInput`,
+ * so a multi-input commit is unrepresentable. It matters because the
+ * single `log/<seq>` create is the all-or-nothing commit point, so
+ * per-input adoption decisions could not compose.
  *
  * ## Threat model
  *
@@ -55,7 +54,7 @@
  * bucket. The adversary may NOT (d) read the writer's local RAM
  * and therefore cannot learn the per-commit `session` id before
  * observing the writer's own `/log/<seq>.json` PUT. Under these
- * constraints, conditions (1)+(2)+(3)+(4) close every attack path in
+ * constraints, conditions (1)+(2)+(3) close every attack path in
  * the adversarial-replay property test
  * (`tests/integration/log-conflict-adversarial.test.ts`).
  *
@@ -72,7 +71,7 @@
  * commit-protocol skeleton. SlateDB's scenario 3 — "conflicting SST
  * has same `writer_epoch` as me" — is explicitly labelled an
  * **illegal state that should panic**. The three-clause adoption
- * decision encoded here (same session ∧ matching seq ∧ matching intent ∧ single-input)
+ * decision encoded here (same session ∧ matching seq ∧ matching intent)
  * recognises that case as the writer's own prior in-flight attempt
  * and adopts it as success rather than aborting, closing the recovery
  * gap SlateDB leaves to operator intervention.
@@ -106,14 +105,6 @@ export interface AdoptionContext {
    * function is pure, no I/O).
    */
   readonly existing: LogEntry;
-  /**
-   * Input count of the parent commit attempt. Always `1` now —
-   * `Writer.commit` is the only commit path and is single-input.
-   * Adoption is only safe when this is exactly `1`; the field is
-   * retained as a defensive invariant (removing it is the deferred
-   * follow-up tracked as D1.5).
-   */
-  readonly batchSize: number;
 }
 
 /**
@@ -129,7 +120,7 @@ export type AdoptionDecision =
   | { readonly adopt: true; readonly entry: LogEntry }
   | {
       readonly adopt: false;
-      readonly reason: "foreign-session" | "wrong-seq" | "intent-mismatch" | "batch";
+      readonly reason: "foreign-session" | "wrong-seq" | "intent-mismatch";
     };
 
 /**
@@ -151,12 +142,6 @@ export type AdoptionDecision =
  * @see The soundness invariant in this module's header docstring.
  */
 export const tryAdoptOwnSessionLogEntry = (ctx: AdoptionContext): AdoptionDecision => {
-  // Clause (4) — single-input commit. Always holds now (every commit
-  // is single-input); evaluated first as a defensive guard before any
-  // field comparison.
-  if (ctx.batchSize !== 1) {
-    return { adopt: false, reason: "batch" };
-  }
   // Clause (1) — same session.
   if (ctx.existing.session !== ctx.self.session) {
     return { adopt: false, reason: "foreign-session" };
