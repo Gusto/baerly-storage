@@ -2,41 +2,52 @@
 title: Authentication
 audience: operator
 summary: Production auth recipes for Cloudflare and Node, plus tenant pinning and authorization boundaries.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-23
 tags: [auth, operations]
 related: ["../adr/005-verifier-function-shape.md", "../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
 ---
 
 # Authentication
 
-baerly-storage auth has one job: decide whether a request may reach
-`/v1/*`, and which tenant prefix that request is pinned to. The verifier
-returns `{ tenantPrefix, identity }`; the HTTP adapter constructs
-`Db.create({ tenant: tenantPrefix, ... })` from that result.
+For `/v1/c/*`, `/v1/count`, and `/v1/since`, baerly-storage auth
+answers two questions before any storage I/O: is this request accepted,
+and which tenant prefix should it use? A tenant prefix is the storage
+namespace for the request. Once the verifier returns it, the HTTP
+adapter constructs `Db.create({ tenant: tenantPrefix, ... })`, so every
+later read and write lands under that prefix.
 
-There are two configuration seams, in precedence order:
+Concretely, a verifier resolves to `{ tenantPrefix, identity }` for an
+accepted request, `null` for an unauthenticated one, or throws for
+broken auth configuration or dependencies. The kernel treats `identity`
+as opaque. It uses `tenantPrefix` for isolation; it does not turn
+identity claims into row-level permissions.
+
+There are two ways to configure auth, in precedence order:
 
 1. **`verifier:` on `baerlyWorker` / `baerlyNode`.** Use this for
    production. It can read runtime env and pick `cloudflareAccess`,
    `bearerJwt`, `sharedSecret`, or your own function.
 2. **`config.auth` in `baerly.config.ts`.** Use this for the
-   scaffold posture. `"none"` pins every request to `config.tenant`;
-   `"shared-secret"` synthesizes `sharedSecret({ secret:
-   env.SHARED_SECRET, tenantPrefix: config.tenant })`.
+   generated app's default or fallback config. `"none"` pins every
+   request to `config.tenant`; `"shared-secret"` synthesizes
+   `sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix:
+   config.tenant })`.
 
 `auth: "none"` is for local dev and trusted internal callsites. Do
-not deploy a public `/v1/*` route with it.
+not deploy a public data route with it.
 
-In production, fail closed: gate the `verifier:` override on an explicit
-env var (e.g. `BAERLY_AUTH_REQUIRED=1`) so missing auth config throws at
-startup instead of silently serving `auth: "none"`. Don't rely on
-`NODE_ENV` or a hostname check. [client-auth.md](client-auth.md) shows
-the full fail-closed pattern for both targets.
+In production, fail closed. The snippets below read required auth env
+before constructing the verifier, so missing config throws instead of
+serving `auth: "none"`. If the same artifact runs in both dev and
+prod, gate verifier setup on an explicit env var (e.g.
+`BAERLY_AUTH_REQUIRED=1`). Do not rely on `NODE_ENV` or a hostname
+check. [client-auth.md](client-auth.md) shows that full pattern for
+both targets.
 
 ## Cloudflare Production
 
-Preferred: put Cloudflare Access in front of the Worker and verify the
-Access JWT inside the Worker.
+Preferred: put Cloudflare Access in front of the Worker, then verify
+the injected JWT assertion before storage I/O.
 
 ```ts
 // src/server/index.ts
@@ -46,20 +57,37 @@ import { cloudflareAccess } from "@gusto/baerly-storage/auth";
 import config from "../../baerly.config.ts";
 
 interface Env extends BaerlyEnv {
-  CF_ACCESS_TEAM_DOMAIN: string;
-  CF_ACCESS_AUDIENCE_TAG: string;
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUDIENCE_TAG?: string;
 }
 
-export default baerlyWorker<Env>((env) => ({
-  config,
-  verifier: cloudflareAccess({
-    // teamDomain is the bare team SUBDOMAIN (e.g. "acme"), not a full
-    // domain: the preset derives https://<teamDomain>.cloudflareaccess.com.
-    teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
-    audienceTag: env.CF_ACCESS_AUDIENCE_TAG,
-    tenantPrefix: config.tenant, // single-tenant app
-  }),
-}));
+const requiredEnv = (value: string | undefined, name: string): string => {
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+};
+
+export default baerlyWorker<Env>((env) => {
+  const teamDomain = requiredEnv(
+    env.CF_ACCESS_TEAM_DOMAIN,
+    "CF_ACCESS_TEAM_DOMAIN",
+  );
+  const audienceTag = requiredEnv(
+    env.CF_ACCESS_AUDIENCE_TAG,
+    "CF_ACCESS_AUDIENCE_TAG",
+  );
+  return {
+    config,
+    verifier: cloudflareAccess({
+      // teamDomain is the bare team SUBDOMAIN (e.g. "acme"), not a full
+      // domain: the preset derives https://<teamDomain>.cloudflareaccess.com.
+      teamDomain,
+      audienceTag,
+      tenantPrefix: config.tenant, // single-tenant app
+    }),
+  };
+});
 ```
 
 Checklist:
@@ -88,8 +116,7 @@ Verify fail-closed behavior:
 ```sh
 baerly doctor --target=cloudflare
 
-# Should be public and pre-auth only if your Access policy excludes
-# /v1/healthz.
+# Should be public only if your Access policy excludes /v1/healthz.
 curl -fsS https://<worker-host>/v1/healthz
 
 # Should fail without Cloudflare Access auth.
@@ -101,8 +128,9 @@ curl -fsS \
   -H "cookie: CF_Authorization=$CF_AUTHORIZATION_COOKIE" \
   https://<worker-host>/v1/c/tickets
 
-# Service-token check: send the Access service credentials to
-# Cloudflare; Access validates them and injects the JWT for the Worker.
+# Service-token check: send credentials for a service token allowed by
+# the Access policy. Access validates them and injects the JWT for
+# the Worker.
 curl -fsS \
   -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
@@ -138,7 +166,8 @@ verifier.
 
 ## Node Production
 
-Preferred: verify bearer JWTs from your OIDC provider.
+Preferred: verify bearer JWTs from your OIDC provider before the Node
+server touches storage.
 
 ```ts
 // src/server/index.ts
@@ -146,20 +175,28 @@ import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
 import { bearerJwt } from "@gusto/baerly-storage/auth";
 import config from "../../baerly.config.ts";
 
+const requiredEnv = (name: string): string => {
+  const value = process.env[name];
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+};
+
 const handle = baerlyNode({
   config,
   storage: s3Storage({
-    bucket: process.env["BUCKET"]!,
+    bucket: requiredEnv("BUCKET"),
     region: process.env["AWS_REGION"] ?? "us-east-1",
     credentials: {
-      accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
-      secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+      accessKeyId: requiredEnv("AWS_ACCESS_KEY_ID"),
+      secretAccessKey: requiredEnv("AWS_SECRET_ACCESS_KEY"),
     },
   }),
   verifier: bearerJwt({
-    jwks: process.env["JWKS_URL"]!,
-    issuer: process.env["JWT_ISSUER"]!,
-    audience: process.env["JWT_AUDIENCE"]!,
+    jwks: requiredEnv("JWKS_URL"),
+    issuer: requiredEnv("JWT_ISSUER"),
+    audience: requiredEnv("JWT_AUDIENCE"),
     tenantPrefix: config.tenant, // or tenantClaim: "tenant"
   }),
 });
@@ -175,7 +212,7 @@ Required runtime env for the AWS S3 snippet:
 
 | Env var | Purpose |
 |---|---|
-| `BUCKET` | AWS S3 bucket name. Use `r2Storage`, `minioStorage`, or `gcsStorage` with their own endpoint/env shape for other providers. |
+| `BUCKET` | AWS S3 bucket name. Use `r2Storage` for Cloudflare R2. MinIO is a local/dev conformance target; GCS S3-interop is unsupported for database use today. |
 | `AWS_REGION` | Bucket region; default in the snippet is `us-east-1`. |
 | `AWS_ACCESS_KEY_ID` | S3-compatible access key. |
 | `AWS_SECRET_ACCESS_KEY` | S3-compatible secret key. |
@@ -184,10 +221,10 @@ Required runtime env for the AWS S3 snippet:
 | `JWT_AUDIENCE` | Expected `aud` claim. |
 
 There is no `baerly doctor --target=node` backend today. For Node,
-verify the bucket CAS prerequisite directly:
+verify the bucket CAS (compare-and-swap) prerequisite directly:
 
 ```sh
-baerly doctor --bucket=s3://baerly-prod
+baerly doctor --bucket=s3://<bucket>
 curl -fsS https://<your-host>/v1/healthz
 
 # Should fail without a bearer token.
@@ -211,22 +248,26 @@ presets". The short version:
 | `bearerJwt` | `Authorization: Bearer <jwt>` over JWKS | `tenantClaim` or `tenantPrefix` |
 | `cloudflareAccess` | `Cf-Access-Jwt-Assertion` | `tenantClaim` or `tenantPrefix` |
 
-`tenantPrefix` must be non-empty and contain no `/`. Do not mutate it
-after the verifier returns; it is the storage isolation boundary.
+When supplied, fixed `tenantPrefix` must be non-empty and contain no
+`/`; claim-derived tenant values must also be non-empty and `/`-free
+or the verifier rejects the request. Do not mutate the verifier result
+after it returns; the tenant prefix is the storage isolation boundary.
 
 ## Authorization Boundary
 
-baerly-storage does not ship row-level authorization. Once a caller is
-authenticated and pinned to a tenant, it can read and write any
-collection under that tenant through `/v1/*`.
+baerly-storage authentication chooses a tenant. It does not ship
+row-level authorization. Once a caller is authenticated and pinned to a
+tenant, it can read and write any collection under that tenant through
+`/v1/*`.
 
-For finer policy, put a custom route in front of the kernel:
+For finer policy, intercept protected collection routes before they
+reach `baerlyWorker` / `baerlyNode`:
 
-- run your own auth / ACL check;
+- run your own auth and ACL check;
 - stamp trusted fields server-side;
 - call `Db` directly for allowed writes;
 - block direct client writes to protected collections before falling
-  through to `baerlyWorker` / `baerlyNode`.
+  through to the default `/v1/*` handler.
 
 The trusted-fields recipe in
 [`packages/server/API.md`](../../packages/server/API.md) shows that

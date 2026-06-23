@@ -2,7 +2,7 @@
 title: Operations runbook
 audience: operator
 summary: Production preflight, auth, backup, observability, capacity, and route checks.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-23
 tags: [operations, runbook, production]
 related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../about/cost-model.md"]
 ---
@@ -24,16 +24,20 @@ BASE_URL=https://api.example.com
 
 ### Bucket and deploy checks
 
-Run the target-specific deploy check, then the portable bucket check.
-`baerly doctor --bucket` writes and deletes a throwaway sentinel to
-prove the bucket honors `If-Match` and `If-None-Match: "*"`, which the
-protocol requires.
+For Cloudflare, run the target check plus the bucket check. For
+Node/self-hosted, run the bucket check only. The target check validates
+deploy shape for the platform. The bucket check validates the storage
+rule that lets an object store serve as the commit log: exactly one
+conditional create must win, and stale conditional writes must fail.
 
-The bucket probe validates storage semantics only; it does not migrate
-or validate an existing baerly-storage prefix. Buckets written by the
-old pre-single-write `current.json` schema must be dumped under the old
-build and restored/reseeded under the current schema (`schema_version:
-3`), not reused in place.
+`baerly doctor --bucket` writes and deletes throwaway sentinels to prove
+the bucket honors `If-None-Match: "*"` and `If-Match`; it does not
+migrate or validate an existing baerly-storage prefix.
+
+New buckets can ignore the schema note. Buckets written by the old
+pre-single-write `current.json` schema (`schema_version` 1 or 2) must
+be dumped under the old build and restored/reseeded under the current
+schema (`schema_version: 3`), not reused in place.
 
 ```sh
 # Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
@@ -48,29 +52,37 @@ probe is the Node safety check.
 
 ### Auth
 
-Then verify HTTP behavior. `GET /v1/healthz` is anonymous inside the
-baerly-storage adapter; if an outer Cloudflare Access policy protects the
-whole hostname, Access may challenge it before the Worker sees it.
+Then verify the route boundary. `GET /v1/healthz` is anonymous inside
+the baerly-storage adapter; if an outer Cloudflare Access policy
+protects the whole hostname, Access may challenge it before the Worker
+sees it. The important data-route check is that an unauthenticated
+collection request fails closed.
 
 ```sh
 curl -fsS "$BASE_URL/v1/healthz"
 
 # Must fail closed without production auth.
+# Expect 401/403 or an Access challenge; any 2xx here is a production auth failure.
 curl -i "$BASE_URL/v1/c/$COLLECTION"
 
-# Shared-secret / generic bearer verifier.
+# Shared-secret or generic bearer verifier.
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v1/c/$COLLECTION"
 
-# Cloudflare Access service token verifier.
+# Cloudflare Access service-token verifier.
 curl -fsS \
   -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
   "$BASE_URL/v1/c/$COLLECTION"
 ```
 
+Set exactly one auth path's variables before running the authenticated
+curl: either `$TOKEN`, or the Cloudflare Access service-token pair.
+
 Use `auth: "none"` only for local development or trusted internal
-code paths. Production `/v1/*` routes need one of:
+code paths. Production data routes (`/v1/c/*`, `/v1/count`, and
+`/v1/since`) need a verifier that accepts the request and returns the
+tenant prefix:
 
 | Target             | Production default                                                           |
 | ------------------ | ---------------------------------------------------------------------------- |
@@ -84,10 +96,11 @@ Never ship `SHARED_SECRET` to a browser bundle. Full recipes are in
 ## Backups
 
 Run `baerly admin dump` for every production collection and store the
-result off-host. The default is the hardened wrapper in
-[backups.md](backups.md): root-readable env file, temp file plus atomic
-rename, `0600` files, SHA-256 sidecar, off-host retention, and restore
-drill.
+result off-host. Dumps are collection-scoped NDJSON, so your backup
+inventory needs every `(app, tenant, collection)` triple you operate.
+The default is the hardened wrapper in [backups.md](backups.md):
+`0600` env file owned by the job user, temp file plus atomic rename,
+`0600` files, SHA-256 sidecar, off-host retention, and restore drill.
 
 Use the direct command only for one-off manual dumps:
 
@@ -101,6 +114,11 @@ baerly admin dump \
 ```
 
 ## Weekly checks
+
+Run these for each production collection. `inspect` reports the live
+manifest, snapshot, and log state; `cost` samples the trailing log for a
+Class A/month projection; `admin fsck` checks `current.json`, the
+snapshot hash, and log holes.
 
 ```sh
 baerly inspect \
@@ -140,7 +158,10 @@ for current operation-cost projection.
 
 ## Incidents
 
-At minimum, collect the canonical JSON log line and alert on:
+For request/error alerts, collect the canonical JSON log line first; it
+carries `request_id`, `outcome`, status, and the `db.*` counters. For
+Cloudflare maintenance alerts, also collect the `wrangler tail`
+`console.warn` / `console.error` line. At minimum, alert on:
 
 | Signal                                       | Why it matters                               | First action                                                                                                                                                                                                                                                                 |
 | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -157,8 +178,7 @@ Sink wiring and field reference are in
 
 ## Capacity
 
-The design envelope — cross any one of these and it's the signal to
-graduate, not a hard quota:
+Cross any one and the next move is graduation, not quota tuning:
 
 - roughly 30 sustained logical writes/min per collection;
 - roughly 10 GB per tenant;

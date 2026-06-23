@@ -2,17 +2,26 @@
 title: Backups via baerly admin dump
 audience: operator
 summary: Safe NDJSON backup, retention, restore, and restore-drill defaults.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-06-23
 tags: [operations, backups, restore]
 related: ["../about/cost-model.md", "operations.md"]
 ---
 
 # Backups (`dump` + `restore`)
 
-`baerly admin dump` writes canonical NDJSON for one collection to
-stdout. Text mode is intentionally silent on success except for that
-NDJSON body, so shell redirection is safe. `baerly admin restore`
-reads the same format from stdin into a fresh collection.
+`baerly admin dump` is the backup stream: it writes canonical NDJSON
+for one collection to stdout. NDJSON means one JSON object per line; the
+dump sorts rows and object keys so repeated dumps can compare
+byte-for-byte. Text mode is intentionally silent on success except for
+that NDJSON body, so shell redirection is safe. `baerly admin restore`
+is the matching import path: it reads the same format from stdin into a
+fresh collection.
+
+Backups are scoped to one `(app, tenant, collection)` stream. In bucket
+terms, that collection lives under
+`app/<app>/tenant/<tenant>/manifests/<collection>/`; if the bucket URI
+contains a path prefix, this path sits under that prefix. Verify
+recovery in a separate bucket or prefix before production cutover.
 
 The safe default is:
 
@@ -21,19 +30,19 @@ collection)` triples to back up;
 - use least-privilege storage credentials that can read the production
   prefix and write the backup destination, not broad account-admin
   credentials;
-- credentials live in a root-readable env file, not crontab;
+- credentials live in a `0600` env file owned by the job user, not crontab;
 - dumps are written to a temp file, then atomically moved into place;
 - files are mode `0600`;
 - each dump gets a SHA-256 sidecar;
 - retention is handled off-host when possible;
-- restore is drilled into a separate bucket/prefix.
+- restore is drilled into a separate bucket/prefix before it is needed.
 
 ## Daily Backup Script
 
-Create one cron entry per production collection, or wrap this script
-with your own inventory loop. Do not rely on "all collections" being
-discoverable from one app directory unless you have verified that
-inventory separately.
+Create one cron entry per production collection, or have an inventory
+loop call the wrapper with explicit `(app, tenant, collection)`
+arguments. Do not rely on "all collections" being discoverable from one
+app directory unless you have verified that inventory separately.
 
 Environment file, owned by the user running the job and mode `0600`:
 
@@ -53,8 +62,8 @@ Wrapper `/opt/baerly/bin/backup.sh`:
 set -euo pipefail
 umask 077
 
-# cron runs with cwd=$HOME (or /); cd into the app dir so `baerly`
-# picks up the project's baerly.config.ts (paths are cwd-relative).
+# cron runs with cwd=$HOME (or /); use an explicit cwd so
+# cwd-relative config and tooling resolve predictably.
 cd /opt/baerly/app
 
 APP="$1"
@@ -97,26 +106,31 @@ Cron should call the wrapper, not inline credentials:
 ```
 
 For off-host retention, copy `"$FINAL"` and `"$FINAL.sha256"` to a
-backup bucket after the `mv`, then let that bucket's lifecycle policy
-expire old dumps. Prefer that to keeping the only backup on the same
-disk as the app.
+backup bucket after the checksum step, then let that bucket's lifecycle
+policy expire old dumps. Prefer that to keeping the only backup on the
+same disk as the app.
 
-`set -euo pipefail` makes the wrapper abort on any non-zero exit, so a
-failed dump never gets atomically moved into place. `admin dump` exits
-`0` on success, `1` on `InvalidConfig` (bad bucket URI, missing args, or
-collection not found), `2` on storage / network failure, and `3` on a
-protocol invariant — the
-distinct codes let a wrapper branch on the failure class. Do **not** use
-`--json` when redirecting `admin dump` stdout to an `.ndjson` file: the
-dump body is the data stream, and JSON-mode envelopes can contaminate
-the backup. Use text mode for backup files. Use `--json` only for
-commands whose stdout is not the dump stream, or call the programmatic
-dump helper with separate data and status streams.
+The temp-file/rename sequence prevents a failed dump command from
+replacing the last good dump. With `set -euo pipefail`, a failed dump
+may leave only the temporary file removed by the trap; it never gets
+moved into place.
+
+`admin dump` exits `0` on success, `1` on `InvalidConfig` (bad bucket
+URI, missing args, or collection not found), `2` on storage / network
+failure, and `3` on a protocol invariant. The distinct codes let a
+wrapper branch on the failure class.
+
+Keep backup stdout as data only. Do **not** use `--json` when
+redirecting `admin dump` stdout to an `.ndjson` file: JSON mode writes a
+success envelope to stdout after the dump body, corrupting the backup.
+Use text mode for backup files.
 
 ## Restore
 
-First probe the recovery bucket. This writes and deletes a throwaway
-sentinel and proves the target honors the CAS contract:
+First probe the recovery bucket. This writes and deletes throwaway
+sentinels to verify the S3 conditional-write contract: stale `If-Match`
+updates fail, `If-None-Match: "*"` refuses existing keys, and concurrent
+create-if-absent writes have one winner.
 
 ```sh
 baerly doctor --bucket=s3://baerly-recovery
@@ -133,41 +147,52 @@ baerly admin restore \
   < /var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
 ```
 
-If the target already exists, restore refuses with `Conflict`. Passing
-`--force` truncates by reseeding `current.json` above the old tail (the
-writer fence is dormant metadata hygiene, not the truncation mechanism),
-then imports rows at fresh sequence numbers. Use `--force` for
-rehearsals against a scratch prefix, not as a casual production habit.
+If the target collection's `current.json` already exists, restore
+refuses with `Conflict`. With `--force`, restore does not delete old
+objects first. It moves the collection's starting log position past the
+old numbered log files, imports rows at new sequence numbers, and leaves
+old objects for maintenance/GC. The `writer_fence` field is only bumped
+to keep metadata monotone; it does not perform truncation or protect
+against live writers.
 
-Partial restore semantics are deliberate: if stdin contains malformed
-NDJSON or storage fails mid-stream, rows committed before the failure
-remain committed. Re-run with `--force` into the same target, or choose
-a fresh recovery prefix.
+Restore is row-committing, not file-atomic: malformed NDJSON or a
+mid-stream storage failure leaves prior rows committed. Re-run with
+`--force` into the scratch target, or choose a fresh recovery prefix.
 
-Cost is `2N + 2` Class A ops for N rows: one truncate/reseed write,
-one metadata/tail write, and one content PUT plus one committing
-`log/<seq>` create per restored row.
+On R2's Class A billing meter, a non-empty restore costs `2N + 2`
+write-class operations for N rows: one initial `current.json`
+seed/reseed write, one final metadata/tail write, and one content PUT
+plus one committing `log/<seq>` create per restored row. An empty
+restore performs only the initial `current.json` seed/reseed write.
 
-For production recovery, do not restore over the live prefix while
-writers are still active. The safe cutover shape is:
+For production recovery, treat restore as a cutover to a proven copy,
+not as an overwrite of the live prefix. Do not restore over the live
+prefix while writers are still active. The safe cutover shape is:
 
 1. Pause writers or put the app in read-only mode.
 2. Restore into a separate recovery bucket or tenant prefix.
 3. Run `baerly admin fsck` on the recovered collection.
-4. Point the app at the recovered bucket/prefix. Prefer this to
+4. For indexed collections, run `baerly admin fsck --indexes
+   --config=<compiled baerly config>` on the recovered collection. Plain
+   restore imports rows; it does not rebuild secondary index markers. If
+   the index check reports drift, run it with `--fix` or run
+   `baerly admin rebuild-index` for each index before cutover.
+5. Point the app at the recovered bucket/prefix. Prefer this to
    copying. If you must copy the recovery prefix into place, do it
    inside the maintenance window and copy `current.json` **last** —
-   after the snapshot, log, content, _and_ index objects it references
-   exist at the destination. A `current.json` that lands before its
-   referenced objects is a broken head: a reader following it errors on
-   the missing snapshot/log, and a missing index marker silently drops
-   rows from an index-routed read.
-5. Resume writers only after a successful authenticated read against
+   after the recovered collection's snapshot, log, content, and any
+   rebuilt index objects exist at the destination. If `current.json`
+   lands before snapshot/log/content, readers can reference missing
+   objects; if index markers are missing, index-routed reads can miss
+   rows.
+6. Resume writers only after a successful authenticated read against
    the recovered route.
 
 ## Restore Drill
 
-At least once per retention window:
+At least once per retention window, run a restore drill: verify the
+checksum, restore the dump, and run `fsck` against the recovered
+collection.
 
 ```sh
 DUMP=/var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
@@ -189,6 +214,20 @@ baerly admin fsck \
   --collection=tickets
 ```
 
+For indexed collections, add index reconciliation to the drill before
+testing indexed routes:
+
+```sh
+baerly admin fsck \
+  --bucket=s3://baerly-restore-drill \
+  --app=acme \
+  --tenant=t1-restore-drill \
+  --collection=tickets \
+  --indexes \
+  --fix \
+  --config=./dist/baerly.config.mjs
+```
+
 For byte-level confidence, dump the restored collection and compare:
 
 ```sh
@@ -201,3 +240,6 @@ baerly admin dump \
 
 cmp "$DUMP" /tmp/tickets-restored.ndjson
 ```
+
+This comparison proves the materialized rows, not secondary index
+markers. Use the indexed `fsck` step above for indexed collections.

@@ -1,65 +1,94 @@
 ---
 title: Browser → server auth
 audience: integrator
-summary: Browser-to-server auth recipes and the four dev/prod × Cloudflare/Node postures.
-last-reviewed: 2026-06-13
+summary: Browser-to-server auth recipes for dev/prod Cloudflare and Node postures.
+last-reviewed: 2026-06-22
 tags: [client, auth, integration]
 related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
 ---
 
 # Browser → server auth
 
-baerly-storage's design center is "trusted multi-instance, browser is
-a typed HTTP client." The browser sends `/v1/*` HTTP requests; the
-server runs the verifier and pins the tenant. This page gives the
-minimal production recipes and explains why the four quadrants share
-one seam. Scaffold `AGENTS.md` files keep target-specific production
-variants next to runnable code, but an integrator should not need to
-leave this guide to understand the auth shape.
+Browser clients call `/v1/*`; the server applies auth, chooses a
+tenant prefix, then performs storage I/O. A tenant prefix is the
+storage namespace baerly-storage will read and write under. A verifier
+is the request-auth function that returns that prefix or rejects the
+request. With `auth: "none"`, no `Authorization` header is required and
+the prefix is `config.tenant`.
+
+This guide explains how the scaffolds keep that path open in dev and
+how production replaces the dev default with a real verifier. Scaffold
+`AGENTS.md` files keep target-specific production variants next to
+runnable code, but an integrator should not need to leave this guide to
+understand the auth shape.
 
 ## Why every quadrant defaults to `auth: "none"`
 
-The scaffolds ship `auth: "none"` in `baerly.config.ts` so day-1
-hits `/v1/*` with no `Authorization` header and every request
-resolves to `config.tenant`. This is the same default across all
-four quadrants for one structural reason: the most common
-beginner failure mode in this category is "paste `SHARED_SECRET`
-into a `VITE_*` env var thinking the leading `VITE_` makes it
-private." A non-zero default credential at scaffold time invites
-that mistake. `auth: "none"` makes the first happy path work
-without any credential at all; the dev→prod transition is then a
-deliberate flip rather than an undefended initial state.
+New scaffolds need `/v1/*` to work before you choose an identity
+provider. They avoid starter credentials because frontend `VITE_*`
+values are public.
 
-## The four-quadrant matrix
+Concretely, all four scaffolds ship `auth: "none"` in
+`baerly.config.ts`. A request with no `Authorization` header resolves
+to `config.tenant`. That default is not a production auth story; it
+keeps first run credential-free. Moving to prod is a deliberate
+env-gated verifier, not a hidden credential that was present from the
+beginning.
+
+## Auth posture matrix
 
 |           | Cloudflare target                                                                       | Node target                                                                              |
 | --------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | **Dev**   | `auth: "none"` default. No bearer injection — SPA hits `/v1/*` plain.                  | `auth: "none"` default. No bearer injection — SPA hits `/v1/*` plain.                   |
-| **Prod**  | **Pattern A** — `cloudflareAccess` verifier resolved from CF Access JWT cookie         | **Pattern C** — `bearerJwt` verifier over JWKS, token minted by your OIDC IdP            |
-| **Shared-secret (either + dev)** | **Pattern B** — `auth: "shared-secret"` + `baerlyDevAuth` in `vite.config.ts` for browser calls | **Pattern B** — `auth: "shared-secret"` + `SHARED_SECRET` in `.env` |
+| **Prod**  | **Pattern A** — `cloudflareAccess` verifier resolved from CF Access JWT assertion      | **Pattern C** — `bearerJwt` verifier over JWKS, token minted by your OIDC IdP            |
+| **Shared-secret (services + dev)** | **Pattern B** — `auth: "shared-secret"` + `baerlyDevAuth` when browser dev calls need bearer injection | **Pattern B** — `auth: "shared-secret"` + process `SHARED_SECRET`; `baerlyDev({ secret })` can inject it during Vite dev |
 
-Pattern A and Pattern C are the production-fit shapes — they take a
-real identity from a real IdP. Pattern B is the server-to-server
-shape (CI and internal services) and the only shape where dev
-needs a special Vite plugin (`baerlyDevAuth`) to inject the bearer
-server-side for browser calls. **Pattern B is never for end-user
-browser auth in prod.**
+Pattern A and Pattern C are the production browser-auth shapes: the
+browser authenticates with a real IdP, and the server verifies the
+result. Pattern B proves only possession of one shared string. Use it
+for CI, internal services, or local dev plumbing. **Pattern B is never
+for end-user browser auth in prod.**
+
+## What changes at the dev→prod flip
+
+In dev, the server can accept plain browser fetches because the
+scaffold is intentionally single-tenant: `auth: "none"` pins every
+request to `config.tenant`. In prod, the browser still does not receive
+a baerly-storage secret. What changes is the server factory gets a
+`verifier:`.
+
+More precisely, `verifier:` on `baerlyWorker` or `baerlyNode` takes
+precedence over `config.auth` when present. The safe recipe has three
+parts:
+
+- keep `auth: "none"` in `baerly.config.ts` for dev;
+- create the `verifier:` only when the real auth env vars are present;
+- set `BAERLY_AUTH_REQUIRED=1` in production and throw if those vars
+  are missing.
+
+`BAERLY_AUTH_REQUIRED` is an application-level guard in the snippets
+below; the library does not read it for you. Same code artifact ships
+to dev and prod, and the deploy environment decides whether fallback
+to no auth is allowed.
+
+Do not rely only on `NODE_ENV === "production"` or a hostname check.
+Use a specific env var that causes the fail-closed behavior. Before
+deploying, verify an unauthenticated `/v1/c/...` request fails.
 
 ## Pattern A: Cloudflare Access production
 
-Protect the Worker route with Cloudflare Access, then verify the
-Access JWT inside the Worker. The browser does not add an
-`Authorization` header; Cloudflare Access sets the cookie/header before
-the request reaches the Worker.
+Protect the Worker route with Cloudflare Access. After a successful
+Access login, Cloudflare sends the request on to the Worker with an
+Access JWT assertion; `cloudflareAccess` verifies that assertion inside
+the Worker. The browser does not add an `Authorization` header for
+baerly-storage.
 
 ```ts
 import { cloudflareAccess } from "@gusto/baerly-storage/auth";
 import { baerlyWorker, type BaerlyEnv } from "@gusto/baerly-storage/cloudflare";
 import config from "../../baerly.config.ts";
 
-// Extends BaerlyEnv (carries the required BUCKET/APP bindings); the
-// Access vars are optional so the dev artifact type-checks with them
-// unset.
+// Access vars stay optional so the same artifact type-checks in dev.
 interface AppEnv extends BaerlyEnv {
   readonly CF_ACCESS_TEAM_DOMAIN?: string;
   readonly CF_ACCESS_AUDIENCE_TAG?: string;
@@ -94,9 +123,13 @@ Set:
 |---|---|
 | `CF_ACCESS_TEAM_DOMAIN` | Worker env/vars; the bare `<team>` part of `https://<team>.cloudflareaccess.com`. |
 | `CF_ACCESS_AUDIENCE_TAG` | Worker env/vars; Cloudflare Access application audience tag. |
-| `BAERLY_AUTH_REQUIRED` | Set to `1` in production so missing Access env fails closed. |
+| `BAERLY_AUTH_REQUIRED` | Application env/var consumed by this snippet; set to `1` in production so missing Access env fails closed. |
 
 Verify:
+
+The cookie value comes from an interactive Cloudflare Access login. The
+client id/secret pair comes from a Cloudflare Access service token that
+your Access policy allows.
 
 ```sh
 curl -fsS https://<worker-host>/v1/healthz
@@ -117,20 +150,23 @@ closed. The cookie and service-token requests should return
 
 ## Pattern C: Node JWKS production
 
-Your SPA obtains a bearer token from the same OIDC provider the rest of
-your app uses. The baerly-storage server verifies that token over JWKS.
+For Node, the SPA sends its OIDC bearer token as
+`Authorization: Bearer $JWT`. `bearerJwt` verifies signature, issuer,
+and audience against JWKS, the provider's public key set, before
+storage I/O.
 
 ```ts
 import { bearerJwt } from "@gusto/baerly-storage/auth";
 import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
 import config from "../../baerly.config.ts";
 
-if (
-  process.env["BAERLY_AUTH_REQUIRED"] === "1" &&
-  (process.env["JWKS_URL"] === undefined ||
-    process.env["JWT_ISSUER"] === undefined ||
-    process.env["JWT_AUDIENCE"] === undefined)
-) {
+const jwksUrl = process.env["JWKS_URL"];
+const jwtIssuer = process.env["JWT_ISSUER"];
+const jwtAudience = process.env["JWT_AUDIENCE"];
+const jwtReady =
+  jwksUrl !== undefined && jwtIssuer !== undefined && jwtAudience !== undefined;
+
+if (process.env["BAERLY_AUTH_REQUIRED"] === "1" && !jwtReady) {
   throw new Error("JWKS_URL, JWT_ISSUER, and JWT_AUDIENCE are required in production");
 }
 
@@ -146,19 +182,22 @@ const handle = baerlyNode({
   }),
   // Keep `auth: "none"` in baerly.config.ts for dev. In production set
   // BAERLY_AUTH_REQUIRED=1 so missing JWKS env fails closed.
-  ...(process.env["JWKS_URL"] !== undefined && {
+  ...(jwtReady && {
     verifier: bearerJwt({
-      jwks: process.env["JWKS_URL"],
-      issuer: process.env["JWT_ISSUER"]!,
-      audience: process.env["JWT_AUDIENCE"]!,
+      jwks: jwksUrl,
+      issuer: jwtIssuer,
+      audience: jwtAudience,
       tenantPrefix: config.tenant,
     }),
   }),
 });
 ```
 
-Use `tenantClaim: "tenant"` instead when your IdP issues one tenant
-per token.
+Choose one tenant source. Keep `tenantPrefix: config.tenant` when the
+app is single-tenant or tenancy is enforced outside baerly-storage.
+Replace it with `tenantClaim: "<claim-name>"` when the token carries
+the tenant. If you omit both `tenantPrefix` and `tenantClaim`,
+`bearerJwt` reads the default `"tenant"` claim.
 
 ```sh
 baerly doctor --bucket=s3://<bucket>
@@ -170,23 +209,37 @@ curl -fsS -H "Authorization: Bearer $JWT" \
 
 ## Pattern B: shared secret for dev and services
 
-Shared secret is for server-to-server calls and local development,
-not end-user browser production. If a browser dev server needs to hit
-shared-secret-protected `/v1/*`, inject the bearer server-side with the
-Vite plugin; never expose `SHARED_SECRET` through `VITE_*`.
+Shared-secret auth is for CI, internal services, and local dev
+plumbing, not end-user browser production.
+
+If a browser dev server needs to hit shared-secret-protected `/v1/*`,
+inject the bearer server-side and keep the SPA's `fetch()` calls plain.
+On Cloudflare Vite dev, use the focused `baerlyDevAuth` plugin. In
+Node's all-in-one dev server, `baerlyDev({ secret })` performs the same
+server-side injection while mounting `/v1/*`.
+
+```ts
+// baerly.config.ts
+auth: "shared-secret", // flip from "none"
+```
 
 ```ts
 // vite.config.ts
-import { baerlyDevAuth } from "@gusto/baerly-storage/dev/vite";
+import { baerlyDevAuth, loadDevVars } from "@gusto/baerly-storage/dev/vite";
+
+const { SHARED_SECRET } = loadDevVars(".dev.vars", "SHARED_SECRET");
 
 export default {
   plugins: [
-    baerlyDevAuth({
-      secret: process.env["SHARED_SECRET"] ?? "dev-shared-secret",
-    }),
+    ...(SHARED_SECRET !== undefined
+      ? [baerlyDevAuth({ secret: SHARED_SECRET })]
+      : []),
   ],
 };
 ```
+
+The server or Worker reads `SHARED_SECRET`; the Vite plugin only adds
+the matching bearer to browser dev requests.
 
 Service verification:
 
@@ -195,31 +248,18 @@ curl -fsS -H "Authorization: Bearer $SHARED_SECRET" \
   https://<host>/v1/c/tickets
 ```
 
-## What changes at the dev→prod flip
-
-The Cloudflare and Node targets handle the transition with the same
-mechanism: the factory `verifier:` argument overrides `config.auth`
-when present. The safe recipe shape: keep `auth: "none"` in
-`baerly.config.ts` for dev, gate the `verifier:` override on the real
-auth env var, and set `BAERLY_AUTH_REQUIRED=1` in production so missing
-auth env throws instead of falling back to no auth. Same code artifact
-ships to dev and prod; the deploy environment decides whether the
-fallback is allowed.
-
-Do not rely only on `NODE_ENV === "production"` or a hostname check.
-Use a specific env var that *causes* the fail-closed behavior, then run
-the negative curl before deploy.
-
 ## The one invariant
 
-**Never put `SHARED_SECRET` in the SPA bundle**, in
-`import.meta.env.*`, in build-time env vars, or in static assets.
-The shared-secret posture is for server-to-server callers only.
-For browser → server auth in prod, use Pattern A (CF) or Pattern C
-(Node). The dev-mode `baerlyDevAuth` plugin injects the bearer
-*server-side* in the Vite middleware specifically so the SPA can
-keep its plain `Authorization`-less `fetch()` calls and the secret
-stays out of the bundle even during dev.
+A SPA bundle is public to its users. Any value placed in
+`import.meta.env.*`, build-time env vars, or static assets can be
+inspected after the page loads. Therefore: **Never put `SHARED_SECRET`
+in the SPA bundle.**
+
+The shared-secret posture is for server-to-server callers and dev
+middleware only. For browser → server auth in prod, use Pattern A (CF)
+or Pattern C (Node). The dev-mode Vite plugins inject the bearer
+*server-side* so the SPA can keep plain `Authorization`-less `fetch()`
+calls and the secret stays out of the bundle even during dev.
 
 If a code review ever surfaces a `SHARED_SECRET` import in any
 `src/web/**` file, that's a security defect, not a style issue —
@@ -236,12 +276,14 @@ Open the scaffold matching your target and posture; jump to the
 
 Those scaffold recipes stay byte-identical across paired scaffolds (the
 drift fence in `tests/integration/agents-md-drift.test.ts` enforces
-this) and give you a runnable starting point. They ship the *minimal*
-verifier shape — the `verifier:` override gated on a plain
-`env.* !== undefined` check, with no fail-closed throw. The
-`BAERLY_AUTH_REQUIRED=1` guard shown above is the production hardening
-this guide recommends layering on top: it turns "auth env missing" from
-a silent fallback to `auth: "none"` into a startup error. Treat the
-snippets on this page as the more complete reference, and read this file
-when you need to understand *why* the seam is shaped this way before
-making a non-default decision.
+this) and give you a runnable starting point. They ship the minimal
+verifier shape: the `verifier:` override is gated on the relevant
+runtime env var being present, with no fail-closed throw. Cloudflare
+examples check `env.CF_ACCESS_*`; Node examples check
+`process.env["JWKS_URL"]`.
+
+The `BAERLY_AUTH_REQUIRED=1` guard shown above is the production
+hardening this guide recommends layering on top: it turns "auth env
+missing" from a silent fallback to `auth: "none"` into a Node startup
+error or Worker first-invocation error. Use these snippets as the
+complete fail-closed verifier reference.
