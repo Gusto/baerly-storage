@@ -2,7 +2,7 @@
 title: Prior-art differentiation
 audience: spec
 summary: Technical differentiation against known prior art for baerly-storage's live object-store protocol mechanisms.
-last-reviewed: 2026-06-17
+last-reviewed: 2026-06-22
 tags: [protocol, patent, prior-art]
 related:
   [
@@ -288,6 +288,15 @@ Differentiation:
 
 The product distinction is not "serverless" in the broad sense. It is "no
 resident runtime required for correctness."
+
+- **Neon** — Postgres with storage disaggregated onto S3-backed pageservers;
+  a managed control plane owns consistency, so it is the _opposite_ pole from
+  baerly's catalog-free, killable-compute stance (Neon needs always-on
+  pageserver compute; baerly needs none).
+- **Cloudflare D1** — SQLite-on-a-Durable-Object; single-writer serialization
+  via the DO, not via object-store CAS. Same "no external lock service" spirit,
+  but it relies on DO compute being live, where baerly relies only on the
+  bucket.
 
 ## Other Object-Store Database and Log Families
 

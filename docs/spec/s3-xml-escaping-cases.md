@@ -2,7 +2,7 @@
 title: S3 XML escaping edge cases
 audience: spec
 summary: Why baerly-storage requests encoding-type=url, what that turns key escaping into, and the XML-1.0 control-char rule that makes it mandatory.
-last-reviewed: 2026-06-14
+last-reviewed: 2026-06-22
 tags: [protocol, s3, xml, edge-cases]
 related: [storage-compatibility.md]
 ---
@@ -19,7 +19,7 @@ not a convenience.
 ## The cause: baerly-storage requests `encoding-type=url`
 
 baerly-storage sets `encoding-type=url` on every list request
-(`packages/adapter-node/src/s3-http.ts:362`). This moves the entire
+(`packages/adapter-node/src/s3-http.ts:376`). This moves the entire
 escaping problem **out of XML and into percent-decoding**. With the marker
 set, S3 returns the key family — `Key` / `Prefix` / `Delimiter` /
 `StartAfter` — percent-encoded as `x-www-form-urlencoded`:
