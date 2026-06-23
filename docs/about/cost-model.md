@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-22
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---
@@ -67,14 +67,14 @@ Class A is the meter that matters. Three reasons:
 
 `baerly cost --bucket=<bucket-uri> --collection=<collection>`
 projects the Class A ops/mo, free-tier-aware dollar projection, and
-distance to the M-size ceiling + 50M/mo graduation trigger. The
-projection uses the **measured effective write-amp** (≈3× on R2/
-Cloudflare, ≈4× on S3/Node), not the 2-op commit floor — so the
-estimate includes the in-band maintenance ops that are incurred on
-the write path. That covers the day-1 cost-verification moment
-without wiring an external sink. For longer windows (7-day, 30-day)
-operators pipe the canonical log line to CloudWatch / Workers
-Analytics / Datadog — see
+distance to the advisory line (~100 writes/min; ~$54/mo R2
+object-storage ops) and the 50M/mo hard graduation trigger. The projection uses the **measured effective
+write-amp** (≈3× on R2/Cloudflare, ≈4× on S3/Node), not the 2-op
+commit floor — so the estimate includes the in-band maintenance ops
+that are incurred on the write path. That covers the day-1
+cost-verification moment without wiring an external sink. For longer
+windows (7-day, 30-day) operators pipe the canonical log line to
+CloudWatch / Workers Analytics / Datadog — see
 [`docs/guide/observability.md`](../guide/observability.md).
 
 ## Cost ceiling
@@ -192,6 +192,136 @@ Per-collection commit scope (see
 the idle-poll bound tractable: one cheap log series and one compaction
 bookmark per collection rather than contention on a global mutex.
 
+## Cost curve: theoretical $/mo by write rate
+
+### Ops-vs-cost tradeoff
+
+Object storage buys you **zero ops / no on-call** — there is no DB
+process to provision, patch, or page about. A managed relational DB
+trades dollars for that operational burden: you get a richer query
+model and a dedicated server, but you pay a per-project floor and you
+own the on-call rotation. At low write rates baerly-storage is
+essentially free; as write rates climb into the M-size range and
+above, the per-request billing of object-storage Class A ops compounds
+with the protocol's effective write-amplification, and the bill becomes
+real money. That cost is the graduation signal — it tells you the
+workload has grown to where a managed DB's operational tradeoff makes
+sense and the `baerly export` path is waiting.
+
+### Formulas (June-2026 rates)
+
+These are the formulas the `baerly cost` CLI projection is built on.
+`W` is monthly logical writes (write operations, not documents).
+All figures use the measured effective write-amplification, not the
+two-op commit floor.
+
+**Cloudflare R2 path** (effective write-amp ≈ 3×):
+
+```
+Class A ops/mo         = W × 3
+R2 object-storage $/mo = max(0, W×3 − 1,000,000) × $4.50 / 1,000,000
+                       + max(0, storedGB − 10) × $0.015
+                       + Class B reads (typically minor at M-size)
+```
+
+This is the **object-storage ops** projection `baerly cost` reports:
+R2 ops are billed above 1M Class A/mo, storage above 10 GB/mo. The $5/mo
+**Workers Paid** plan is a separate Cloudflare _platform_ floor — not an
+R2 charge, and absent on self-hosted Node, R2-over-the-S3-API, or the
+Workers free tier — so `baerly cost` does not fold it into the
+projection; add ~$5/mo for the all-in figure when you deploy on Workers
+Paid. At write rates that keep Class A under 1M/mo (roughly ≤ 7 writes/min
+sustained) the object-storage ops cost is $0 and the only charge is the
+Workers Paid floor, if it applies.
+
+**AWS S3 / self-hosted Node path** (effective write-amp ≈ 4×, no free tier):
+
+```
+Class A ops/mo = W × 4
+S3 $/mo = W×4 × $5.00 / 1,000,000
+        + storedGB × $0.023
+        + Class B reads (typically minor at M-size)
+```
+
+No free tier and no flat floor: every write costs linearly from zero.
+At steady state S3 is roughly **50% costlier than R2** per write —
+$20 vs $13.50 per million logical writes (4 × $5.00/1M vs
+3 × $4.50/1M) — driven by the higher write-amp (4× vs 3×) and the
+higher per-op rate. The gap is wider at low volume, where R2's
+1M-op/mo free tier still applies and S3 has none. The 12-month
+new-account free tier was retired in 2025; these figures apply to
+paid accounts.
+
+### Cost-vs-scale table
+
+Representative write rates and their projected monthly costs.
+Figures are **object-storage ops only** (storage and Class B reads are
+minor until L-size read fan-out and are excluded from these rows), and
+exclude the $5/mo Workers Paid platform floor — add it for the all-in
+cost on Cloudflare Workers Paid. These figures are what `baerly cost`
+projects. Storage: assume ~100 MB for S-size, scaling proportionally.
+
+| Writes/min (sustained, account-wide) | Class A/mo (R2, ×3) | R2 $/mo (object-storage ops) | Class A/mo (S3, ×4) | S3 $/mo (object-storage ops) | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 130k | $0 | 173k | ~$0.86 | Inside R2 free tier (1M/mo) |
+| 10 | 1.3M | ~$1 | 1.7M | ~$9 | R2: small Class A overage (+ $5 Workers Paid floor) |
+| **30 (M-size)** | **3.9M** | **~$13** | **5.2M** | **~$26** | **~$18/mo all-in on R2 incl. floor — see M-size breakdown below** |
+| **100** | **13.0M** | **~$54** | **17.3M** | **~$86** | **Advisory crossing: `baerly cost` prints eyes-open advisory** |
+| 390 | 50.5M | ~$223 | 67.4M | ~$337 | ≈ 50M Class A/mo R2 graduation trigger |
+| 1000 | 129.6M | ~$579 | 172.8M | ~$864 | Well past graduation |
+
+The 390 writes/min row is the 50M Class A/mo graduation trigger at the
+measured R2 write-amp (3×) — where `baerly cost`'s trajectory line
+crosses 100% of the 50M graduation trigger. At that rate R2 costs
+**~$223/mo** and S3 **~$337/mo** (object-storage ops), confirming that
+line is "real money" and a meaningful graduation signal. S3 reaches the
+same 50M op envelope at ~290 writes/min (4× amp).
+
+### M-size $/mo breakdown
+
+The M-size operating point is a **sustained** ~30 writes/min. In this cost-curve table
+that is an **account-wide aggregate** rate (Class A is billed per
+account, not per collection); it numerically coincides with — but is a
+different axis from — the **per-collection** CAS-contention ceiling
+`M_SIZE_WRITES_PER_MIN_PER_COLLECTION` (the CLI grading constant). Full
+arithmetic:
+
+```
+Writes/mo = 30 writes/min × 60 min/hr × 24 hr/day × 30 days = 1,296,000
+```
+
+**R2:**
+
+```
+Class A/mo = 1,296,000 × 3 = 3,888,000
+Free tier:   1,000,000 Class A/mo (included)
+Overage:     2,888,000 Class A ops
+Object-storage ops:  2,888,000 / 1,000,000 × $4.50 = ~$13/mo
+  + Workers Paid platform floor: $5.00 (only on CF Workers Paid)
+All-in (object-storage ops + floor): ~$18/mo
+```
+
+**S3:**
+
+```
+Class A/mo = 1,296,000 × 4 = 5,184,000
+Object-storage ops:  5,184,000 / 1,000,000 × $5.00 = ~$26/mo
+  (no platform floor — serverful Node / S3)
+```
+
+The `baerly cost` CLI surfaces the **object-storage ops** figure
+(~$13/mo on R2 here) as `projectedUsdPerMonth` in the inspect footer —
+it uses the same rates and effective write-amp constants from
+`packages/cli/src/cost/provider.ts`, and deliberately does NOT add the
+$5 Workers Paid platform floor (which doesn't apply on self-hosted Node,
+R2-over-the-S3-API, or Workers free tier). Add ~$5/mo for the all-in
+cost on Workers Paid.
+
+The ops-vs-cost comparison: $18/mo on R2 buys you zero-ops,
+no-on-call, and bytes-in-your-bucket. That tradeoff is the design
+center; the number is provided so you can make the comparison
+honestly, not to anchor against any specific alternative's price point.
+
 ## Compression off by default in `@gusto/baerly-storage/client`
 
 The `@gusto/baerly-storage/client` HTTP client defaults `compression: false`.
@@ -274,11 +404,20 @@ where it's available; managed Postgres wins above L.
 
 ## Alternative DBs at M size
 
-The M-size operating point is ~100 MAU, 10 000 docs, ~24 000
-writes/day (~50/min over an 8-hour workday), ~480 000 reads/day,
-100 MB stored. baerly-storage's modelled monthly cost there is ~$19 — the
-$5 Workers Paid floor plus R2 Class A/B ops dominate. Rough
-1-decimal comparisons at the same workload:
+The M-size **audience profile** is ~100 MAU, 10 000 docs, ~24 000
+writes/day (~50/min over an 8-hour workday — a bursty profile that
+averages well under the **sustained** ~30 writes/min basis the
+[cost-vs-scale table](#cost-vs-scale-table) uses), ~480 000 reads/day,
+100 MB stored. baerly-storage's modelled monthly cost at this profile is
+~$19 all-in — dominated by the $5 Workers Paid floor plus R2 Class A/B
+ops. This is a **different lens** from the sustained ~30 writes/min curve
+(~$18/mo all-in), not the same arithmetic: the profile's 720 000
+writes/mo (~2.16M R2 Class A) is _below_ the sustained curve's 1.296M
+writes/mo (~3.89M Class A), so the two land close by coincidence of
+drivers — not because either "sits at the free-tier floor" (both are
+above the 1M Class A free tier). Both figures are all-in incl. the
+Workers Paid floor; `baerly cost` reports the object-storage-ops portion
+only. Rough 1-decimal comparisons at the same workload:
 
 | Service                  | Plan         | $/mo                                                                  | Notes                                                                                                                                                                                 |
 | ------------------------ | ------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -351,15 +490,49 @@ experimentation, large internal-tools fleet) isn't economically
 viable under per-app managed-DB floors — and that's where the
 real argument lives.
 
-The graduation triggers follow directly: any one of (sustained over 7
-days) R2 Class A ops > 50M/month, effective write-amp > 6, or stored
-data > 5 GB is the system telling the user they have outgrown the
-ceiling. At the measured ~3× effective write-amp, the 50M Class A/mo
-trigger corresponds to ≈ **390 writes/min** sustained (previously ≈580
-at the 2-op commit floor). Today the `baerly cost` projection's
-`percentOfGraduation` tracks only the **Class A** trigger (the 50M
-ops/month line); the write-amp and stored-data triggers are documented
-targets but are not yet surfaced by the tooling.
+The graduation triggers follow directly. The first is an **advisory
+cost line** — an eyes-open early signal, not a hard stop — keyed to a
+sustained **~100 writes/min** (account-wide), provider-agnostic: ~13M
+Class A/mo on R2 (~$54/mo object-storage ops), ~17.3M on S3 (~$86/mo).
+At this rate the bill has crossed the point where managed Postgres or D1
+are priced comparably. Object storage buys zero ops, no on-call, and no
+migration for your bytes; a managed DB trades those dollars for a schema,
+SQL, and an ops surface. `baerly cost` prints an advisory note at this
+crossing. The **hard graduation cost line**, sustained over 7 days, is
+R2 Class A ops > 50M/month (an account/bucket-wide count; ~$220/mo
+object-storage ops on R2). At the measured effective write-amp the 50M
+Class A/mo line corresponds to ≈ **390 writes/min** sustained on R2
+(~3×); on serverful Node the same op envelope is reached at ≈ **290
+writes/min** (~4×), though S3's linear per-request pricing makes the
+relevant Node line a dollar budget rather than a free-tier-derived op
+count. Both correct the previous ≈580 figure, which assumed the 2-op
+commit floor. (Stored data is a graduation _cost signal_ at the ~10 GB
+R2 free-tier line — see below — not a hard trigger; the tooling does not
+enforce a storage hard stop.)
+
+The historic third trigger — **effective write-amp > 6** — is
+**retired**. It was calibrated against the old assumed 2-op floor (a 3×
+headroom signalling "maintenance badly behind"). Now that the effective
+write-amp is measured at ~3× / ~4× and _stress_-measured to peak at ~4×
+even under pathological churn
+(`docs/spec/attachments/amortized-write-cost-stress-baseline.json`,
+`pnpm bench:write-amp-stress`), a sustained > 6 is unreachable through
+the bounded in-band maintenance path — the only route past ~4× is a
+CAS-retry storm, which is already governed by the per-collection
+throughput ceiling below, not a billing signal. The signal that in-band
+maintenance is _falling behind_ is `db.compaction.deferred_total` and the
+defer `console.warn` (see [graduation.md](graduation.md)), not a
+write-amp ratio.
+
+These cost lines sit alongside two additional graduation signals in
+[graduation.md](graduation.md): ~30 logical writes/min/collection
+(per-collection throughput estimate, CAS-livelock model) and ~10 GB/tenant
+(the R2 free-tier storage cost line — a billing signal where R2 storage
+charges begin, not a hard stop) plus ~100 collections/tenant (a soft
+fan-out guideline — bench-grounded linear cost; nothing in the protocol
+enforces it). Today the `baerly cost` projection's `percentOfGraduation`
+tracks only the **Class A** trigger (the 50M ops/month line); the
+stored-data line is a documented cost signal not surfaced by the tooling.
 
 ### Hot-prefix cliff at high write fan-in
 

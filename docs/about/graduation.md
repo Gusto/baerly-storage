@@ -27,9 +27,20 @@ the `db.compaction.deferred_total` metric plus a rate-limited
 `console.warn` that names the byte-vs-row dimension that tripped.
 
 For the **cost** side of graduation (R2 Class A ops, write-amp, stored
-bytes), see [cost-model.md](cost-model.md). This page is about the
-**compute** side: when the single expensive operation, compaction,
-stops fitting in your runtime's budget.
+bytes), see [cost-model.md](cost-model.md). The cost side has two
+signals: an **advisory** at ~100 writes/min account-wide (provider-
+agnostic; ~13M Class A/mo / ~$54/mo object-storage ops on R2, ~17.3M /
+~$86/mo on S3) that `baerly cost` surfaces as an eyes-open early
+warning, and a **hard trigger** at 50M Class A/mo (~390 writes/min,
+~$220/mo object-storage ops on R2) — both sustained over 7 days. These
+writes/min are **account-wide aggregate** rates (Class A is billed per
+account, not per collection) — distinct from the per-collection
+~30-writes/min contention ceiling in trigger 4 below. The
+advisory is not a hard stop; it is the point where object storage's
+zero-ops / no-on-call value is worth consciously comparing against a
+managed DB. This page is about the **compute** side: when the single
+expensive operation, compaction, stops fitting in your runtime's
+budget.
 
 ## Decision table
 
@@ -56,7 +67,8 @@ baerly admin usage \
 | Same defer on Node                                                        | Warning text plus `snapshot_bytes` from `baerly inspect` vs. host memory                     | Host has enough RAM for old snapshot + new snapshot + tail          | Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; expect one inline write-latency spike.                           |
 | Object count grows while writes are steady                                | Logs + `admin fsck`                                                                          | GC sweep throughput no longer keeps up with orphan production       | Reduce contention, split the hot collection, or graduate the workload.                                      |
 | Sustained hot collection                                                  | `admin usage`                                                                                | ~30 logical writes/min/collection                                   | Graduate to D1/Postgres; this is the workload ceiling.                                                      |
-| Tenant data keeps growing                                                 | `admin usage` / bucket inventory                                                             | ~10 GB/tenant or ~100 collections/tenant                            | Graduate; this is beyond the prototype tier.                                                                |
+| Tenant data keeps growing                                                 | `admin usage` / bucket inventory                                                             | >10 GB/tenant (R2 free-tier storage line; see [cost-model.md](cost-model.md)) or ~100 collections/tenant (soft fan-out guideline; see [workload-fit.md](workload-fit.md#scale-at-a-glance)) | Cost signal to review graduation; neither is enforced by the protocol.                                      |
+| `baerly cost` prints advisory note                                        | `baerly cost`                                                                                | ~100 writes/min account-wide (provider-agnostic; ~13M Class A/mo / ~$54/mo R2 object-storage ops, ~17.3M / ~$86/mo S3) — advisory, NOT hard stop (see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff)) | Eyes-open review: object storage = zero ops / no on-call; managed DB = schema + SQL + ops surface. Hard trigger: 50M/mo (~$220/mo R2). |
 
 > **Status — the in-band auto-maintenance machinery is now shipped; the
 > cost-model _thresholds_ are still estimates.** Write-triggered folding,
@@ -261,11 +273,19 @@ snapshot envelope — that is `S_max = C`):
 | Read-amplification between folds | `≤ 1 + R`                  | ≤ 2×                    |
 
 A higher ratio lets the tail grow longer before a fold is dispatched —
-cutting write-amp but raising read-amp. LSM engines (Go's, RocksDB)
-commonly pick `R = 2`. baerly-storage picks a **lower** ratio (`R = 1.0`) to
-halve read-amp, accepting a modestly higher write-amp (~2×) — still
-comfortably under the cost-model's **write-amp > 6** graduation trigger
-(see [cost-model.md](cost-model.md#alternative-dbs-at-m-size)).
+cutting compaction write-amp but raising read-amp. LSM engines (Go's,
+RocksDB) commonly pick `R = 2`. baerly-storage picks a **lower** ratio
+(`R = 1.0`) to halve read-amp, accepting a modestly higher compaction
+write-amp (~2×).
+
+This **compaction write-amp** (~2×: snapshot bytes rewritten by the fold
+per byte ingested) is a distinct quantity from the **effective Class-A
+write-amp** (~3× on R2 / ~4× on Node: billable storage ops per logical
+write) that drives the cost model. The two are not comparable on one
+scale. The cost model's historic `effective write-amp > 6` graduation
+trigger has been **retired** — it was unreachable against the measured
+~3–4× baseline (see
+[cost-model.md](cost-model.md#alternative-dbs-at-m-size)).
 
 ## Per-tier bounds
 
@@ -290,7 +310,7 @@ incrementally over many ticks** rather than folding in one pass.
 | Tier                                                 | Hardware walls                                                                                | Binds on                             | What can actually fold                                                                                                                                                                                  |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cloudflare free**                                  | ~10 ms CPU/request **and** 50 subrequests/request                                             | **CPU + subrequests**                | default `C = 512 KB` ⟹ **~512 KB snapshot** (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) hits the CPU wall and `console.warn`s |
-| **Cloudflare paid**                                  | 30 s CPU default (up to 5 min); ~128 MB Worker memory; **10,000 subrequests/request** (default; raisable to 10M; changed 2026-02-11 — free wall stays 50) | **memory**                           | raise `C` and fold to **~tens of MB snapshot** (~40 MB); CPU is _not_ the wall — **memory** is                                                                                                          |
+| **Cloudflare paid**                                  | 30 s CPU default (up to 5 min); ~128 MB Worker memory; **10,000 subrequests/request** (default; raisable to 10M; changed 2026-02-11 — free wall stays 50) | **memory**                           | raise `C` and fold to **~tens of MB snapshot** (~40 MB); CPU is _not_ the wall — **memory** is; opt in to higher per-pass throughput with `BAERLY_MAINTENANCE_PROFILE=cf-paid`                        |
 | **Serverful Node**                                   | none per-request; process RAM; a fold blocks the event loop                                   | **host memory**                      | raise `C` and fold up to host memory — far above either Worker tier; per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted)                                                                |
 | **AWS Lambda** _(adapter pending — not yet shipped)_ | 3–10 GB RAM selectable; up to 15 min timeout; `AWS_LAMBDA_FUNCTION_MEMORY_SIZE` self-reported | **host memory** (same shape as Node) | between the Workers tiers and serverful Node in practice; raise `C` once the adapter ships                                                                                                              |
 
@@ -458,27 +478,55 @@ below, and the signal is to graduate the _workload_ off baerly-storage
 to D1 / Postgres (`baerly export --target=postgres`), regardless of which
 deployment tier you're on:
 
-- **~30 logical writes / minute / collection** — this one _is_ a code
+- **~30 logical writes / minute / collection** (a **per-collection**
+  contention ceiling, not an account-wide rate) — this one _is_ a code
   constant: `M_SIZE_WRITES_PER_MIN_PER_COLLECTION = 30` in
-  `packages/cli/src/admin/usage.ts:66`, the threshold
-  `baerly admin usage` grades against.
-- **~10 GB / tenant** total.
-- **~100 collections / tenant** fan-out.
+  `packages/cli/src/admin/usage.ts:73`, the threshold
+  `baerly admin usage` grades each collection against. Being a code
+  constant is **not** the same as being measured: it is a hard-coded
+  grading threshold derived from the CAS-livelock regime in the
+  S3-as-database literature — a **model/estimate, pending real-infra
+  measurement on real R2** (the same caveat
+  [workload-fit.md](workload-fit.md) and
+  [operations.md](../guide/operations.md) carry on this wall).
+- **>10 GB / tenant stored** — the R2 free-tier storage line (10 GB-mo
+  included), not a protocol ceiling. Nothing in baerly-storage reads,
+  enforces, or computes per-tenant byte totals; a tenant is a key prefix.
+  This is a cost signal: once stored bytes cross the R2 free tier, storage
+  billing begins. See [cost-model.md](cost-model.md) for the rate.
+- **~100 collections / tenant** fan-out — a bench-grounded **soft** linear-cost
+  guideline (erosion, not a cliff). Measured via `pnpm bench:collection-fanout`
+  (`docs/spec/attachments/collection-fanout-baseline.json`): the `admin usage`
+  sweep costs ≈ N × (1 LIST + up to 120 GETs per collection) — strictly linear.
+  Nothing in the protocol enforces a per-tenant collection cap; cost and scan
+  latency grow linearly with N.
 
-> **Where these live:** the 30-writes/min figure is grounded in code
-> (`packages/cli/src/admin/usage.ts:66`). The ~10 GB/tenant and
-> ~100 collections/tenant figures are **not** in
-> `packages/protocol/src/constants.ts` — they are documented in
-> [pricing-log.md](pricing-log.md) (the 2026-05-11 envelope entry) and
-> [thesis.md](thesis.md#workload-ceiling), and cited in code only as a
-> JSDoc comment at `packages/cli/src/admin/usage.ts:7`.
+> **Where these live:** the 30-writes/min figure is a code constant
+> (`packages/cli/src/admin/usage.ts:73`) — a per-collection grading
+> threshold, still a literature-derived estimate, not a measured number.
+> The >10 GB/tenant figure is the
+> R2 free-tier storage line documented in [cost-model.md](cost-model.md) and
+> [pricing-log.md](pricing-log.md); it does not appear in any code file.
+> The ~100 collections/tenant guideline is bench-derived
+> (`docs/spec/attachments/collection-fanout-baseline.json`); it also does not
+> appear as a code constant in `packages/protocol/src/constants.ts`.
 
 The thesis [workload-ceiling](thesis.md#workload-ceiling) section
 covers the rationale (the ~30 writes/min figure tracks the CAS-livelock
 regime in the S3-as-database literature). The
 [cost-model](cost-model.md#alternative-dbs-at-m-size) covers the cost
-triggers that ride alongside these (Class A ops > 50M/mo, write-amp > 6,
-stored > 5 GB).
+lines that ride alongside the graduation signals above: an advisory at
+~100 writes/min (provider-agnostic; ~13M Class A/mo / ~$54/mo R2
+object-storage ops, ~17.3M / ~$86/mo S3) — an eyes-open early signal
+surfaced by `baerly cost` — and the hard Class A trigger at Class A ops
+> 50M/mo (≈390 writes/min on R2 at the measured ~3×; ≈290 on Node at
+~4×). Stored data is a graduation _cost signal_ at the ~10 GB R2
+free-tier line (where storage billing begins), not a hard trigger. The
+historic `effective write-amp > 6` trigger has been
+**retired** — measured (and stress-measured) at ~3–4×, it is unreachable
+through the bounded maintenance path; "maintenance is falling behind" is
+signalled by `db.compaction.deferred_total` and the defer `console.warn`
+instead.
 
 ## Operations plane (env vars)
 
@@ -499,6 +547,7 @@ Maintenance has **two configuration planes**, and they never mix:
 | Env var                             | Effect                                                                                                                                                                 | When to set it                                                                                            |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides the static snapshot ceiling `C` (default `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`). Raises `S_max = C`, letting larger snapshot rebuilds past the gate. | On Cloudflare **paid** or a big **Node** host, after you've confirmed the host can rebuild that snapshot. |
+| `BAERLY_MAINTENANCE_PROFILE`        | Cloudflare-only. Accepts `cf-free` (default) or `cf-paid`. The `cf-paid` profile raises the four per-pass throughput caps (fold entries, GC marks/sweeps) to Node values, exploiting the paid 10,000-subrequest budget. Ceilings `C`/`E` are unchanged across profiles. | On Cloudflare **paid**, after upgrading the plan tier, to recover per-pass throughput. Never set on Node — Node selects its own profile. |
 | `BAERLY_MAINTENANCE_DISABLE`        | Kill switch — turns in-band maintenance off entirely.                                                                                                                  | Diagnostics, or to stop fold attempts on a deferring collection while you plan a graduation.              |
 
 (The row ceiling `E = MAINTENANCE_MAX_FOLD_ROWS = 2048` is **not**
