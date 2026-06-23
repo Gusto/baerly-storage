@@ -39,20 +39,20 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`minimal-node` is a baerly app scaffolded with `create-baerly-storage` for the
-Node target — any host that runs `node server.js` (Railway, Render,
-Fly without Docker, Heroku, a VM, a container scheduler). One flat
-package: the Node-side server lives in `src/server/index.ts`; the
-optional client lives in `src/web/`. Configuration lives in
-`baerly.config.ts`.
+`minimal-node` is a baerly-storage app scaffolded with
+`create-baerly-storage` for the Node target: any host that runs
+`node server.js` (Railway, Render, Fly without Docker, Heroku, a VM, a
+container scheduler). One flat package: the Node-side server lives in
+`src/server/index.ts`; the optional client lives in `src/web/`.
+Configuration lives in `baerly.config.ts`.
 
 Single package, single `vite` process: `baerlyDev()` from
 `@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Vite
 middleware on `:5173` alongside the SPA dev server, so `pnpm dev`
-brings up SPA + HMR + `/v1/*` in one command — same origin in dev,
-same `dist/client/`-served origin in production via `pnpm start`
-(the listener serves the built SPA via the `baerlyNode({ webRoot })`
-option).
+brings up SPA + HMR + `/v1/*` in one command — same origin in dev.
+The default production entrypoint runs the baerly-storage HTTP surface;
+it does not serve `dist/client/` unless you add the
+`baerlyNode({ webRoot: "dist/client" })` option.
 
 If this scaffold was created with `--with=docker`, you'll also have a
 multi-stage distroless `Dockerfile`, a `.dockerignore`, and a
@@ -68,10 +68,9 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 - **Package manager:** pnpm. The emitted repo pins
   `packageManager: pnpm@11.1.2`.
 - **Test runner:** vitest.
-- **Type checker:** TypeScript 5.6+. (The baerly-storage monorepo
-  itself uses TypeScript 7 via `@typescript/native-preview`; this
-  template tracks the broadly-compatible TS major so scaffolded
-  apps work with the wider ecosystem.)
+- **Type checker:** TypeScript 6.x, as pinned in `package.json`.
+  (The baerly-storage monorepo itself uses TypeScript 7 via
+  `@typescript/native-preview`.)
 - **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the
   code stays compatible with type-stripping runtimes (Node's
   `--experimental-strip-types`, esbuild's strip path). The flag bans
@@ -90,10 +89,10 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 | `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once                                    | seconds to a minute |
 | `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works                                                 | seconds             |
 | `pnpm typecheck` | TS typecheck across the `app` + `server` project references                                                                                                                                | seconds             |
-| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds             |
+| `pnpm test`      | `vitest run` — standalone `vitest.config.ts` (Node env). The template ships `src/notes.test.ts` by default.                                                                                    | seconds             |
 | `pnpm dev`       | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173                                                            | seconds to start    |
 | `pnpm build`     | `tsc -b && vite build` — emits the SPA into `dist/client/`                                                                                                                                 | seconds             |
-| `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot`                                                                 | seconds to start    |
+| `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves `/v1/*` and health/dev landing routes unless you add `webRoot`                                              | seconds to start    |
 
 **`pnpm verify` exercises typecheck + tests only.** The dev-auth
 middleware, the SPA bundle, and any custom `/api/*` route are NOT
@@ -356,13 +355,12 @@ apps or tenancy enforced outside baerly-storage.
 
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether
-  `R2_ACCOUNT_ID` is set. To use **Minio** (self-hosted dev S3) or
-  **GCS** (HMAC keys), swap the import to `minioStorage` /
-  `gcsStorage` from `@gusto/baerly-storage/node`. All four factories take
-  the same shape — a single bucket-name + credentials object — and
-  hide `aws4fetch` / `@xmldom/xmldom` behind the package boundary.
-  JSDoc `@example` blocks for each factory are visible in your
-  editor's TS hover.
+  `R2_ACCOUNT_ID` is set. AWS S3 and Cloudflare R2 are the
+  production-supported stores. **MinIO** is the local/dev conformance
+  target. Other S3-compatible endpoints need a green
+  `baerly doctor --bucket` plus owner validation; GCS S3-interop is not
+  supported for database use today. JSDoc `@example` blocks for the
+  factories are visible in your editor's TS hover.
 
 - **Switching from static creds to EKS Pod Identity** — in
   `src/server/index.ts`, swap `credentials: { accessKeyId,

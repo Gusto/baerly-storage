@@ -1,13 +1,17 @@
 # react-cloudflare
 
-A baerly app scaffolded with `@gusto/create-baerly-storage` for the **Cloudflare
-Workers** target, with a React + Vite SPA. Single-bucket R2-backed
-deployment via `@gusto/baerly-storage/cloudflare`. Ships `auth: "none"`
-so the day-1 happy path works with zero env vars, plus a
-one-collection `notes` schema you extend; flip to Cloudflare Access
-or a shared secret before deploy — see "Production auth" below.
+A baerly-storage app scaffolded with `@gusto/create-baerly-storage` for
+the **Cloudflare Workers** target, with a React + Vite SPA.
+Single-bucket R2-backed deployment via
+`@gusto/baerly-storage/cloudflare`. Ships `auth: "none"` so the day-1
+happy path works with zero env vars, plus a one-collection `notes`
+schema you extend; flip to Cloudflare Access or a shared secret before
+deploy — see "Production auth" below.
 
-**The only persistent component is your R2 bucket** — there is no Worker to keep warm, no database daemon to operate, no idle bill, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+**The R2 bucket is the durable state.** The Worker is trusted app code
+with an R2 binding; it applies the baerly-storage protocol, but it is
+not a database server. No daemon, lock table, scheduler, or idle
+database bill; maintenance is automatic and write-triggered.
 
 ## What you got
 
@@ -103,7 +107,7 @@ follow `AGENTS.md` → "Going to production":
 
 ## When to graduate
 
-baerly is sized for the small-to-medium operating point. Past
+baerly-storage is sized for the small-to-medium operating point. Past
 ~30 writes/min/collection, ~10 GB/tenant, or ~100 collections/
 tenant, graduate to D1 or Postgres via `baerly export
 --target=postgres`. Your data was already in your bucket; the

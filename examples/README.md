@@ -1,6 +1,10 @@
 # examples/
 
-**The only persistent component is your bucket** — there is no separate database server or daemon to deploy, no idle bill, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+**The bucket is the durable state.** The Worker or Node process is
+trusted app code with bucket credentials; it applies the
+baerly-storage protocol, but it is not a database server. No daemon,
+lock table, scheduler, or idle database bill; maintenance is automatic
+and write-triggered.
 
 Catalog of runnable baerly-storage example apps. Each subdirectory
 is a self-contained pnpm workspace — `cd` in, `pnpm install`, and
@@ -16,9 +20,9 @@ Every scaffold below ships `auth: "none"` in `baerly.config.ts` so
 the day-1 happy path works with zero env vars. The adapter reads
 `config.auth` and synthesizes its verifier; for production, each
 scaffold's `AGENTS.md` "Going to production" section documents the
-two upgrade recipes — Pattern A (env-aware factory `verifier:`
-override, used by CF Access on CF / JWKS on Node) and Pattern B
-(flip `auth` to `"shared-secret"` and set `SHARED_SECRET`).
+upgrade recipes. Cloudflare examples use Pattern A for CF Access and
+Pattern B for shared-secret auth; Node examples use Pattern B for
+shared-secret auth and Pattern C for JWKS-backed JWTs.
 `baerly doctor --target=cloudflare` warns on `auth: "none"` for
 Worker deploy targets and fails on `"shared-secret"` without
 `SHARED_SECRET` reachable from the runtime env. Node targets use
@@ -53,21 +57,23 @@ selector + `baerlyWorker`), then `wrangler.jsonc`
 
 ## minimal-node
 
-Bare self-hosted Node scaffold. S3-compatible bucket via
-`@gusto/baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
+Bare self-hosted Node scaffold. AWS S3 / Cloudflare R2 storage via
+`@gusto/baerly-storage/node`; MinIO is for local conformance, and other
+S3-compatible endpoints need `baerly doctor --bucket` plus owner
+validation. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
 `auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
 OIDC IdP via an env-aware factory `verifier:` override. Runs anywhere
 `node server.js` runs — Railway, Render, Fly without Docker, Heroku,
 a VM, any process manager. Scaffolded with `--target=node`.
 
-For a production Dockerfile alongside (distroless multi-stage build
-+ `healthcheck.js` + `.dockerignore`), scaffold with
-`--target=node --with=docker`. The Docker add-on lives at
-`packages/create-baerly-storage/templates/addons/docker/` and is layered on
-top of this same shape — no second template directory.
+For a production Dockerfile alongside the scaffold, use
+`--target=node --with=docker`. The add-on writes a distroless
+multi-stage Dockerfile, `healthcheck.js`, and `.dockerignore`; it lives
+at `packages/create-baerly-storage/templates/addons/docker/` and is
+layered on top of this same shape — no second template directory.
 
-**Audience:** anyone scaffolding a self-hosted Node baerly app —
+**Audience:** anyone scaffolding a self-hosted Node baerly-storage app —
 the modal "I just want a Node HTTP server with S3 storage" path.
 
 **Run it:**
@@ -86,8 +92,8 @@ vars are only required for `pnpm start` and the production deploy.
 Auth-related env vars (`SHARED_SECRET` / `JWKS_URL` etc.) only
 appear if you adopt one of the "Going to production" recipes.
 
-**Read first:** `src/server/index.ts` (the `node:http` listener
-+ verifier selector).
+**Read first:** `src/server/index.ts` (the `node:http` listener and
+verifier selector).
 
 ## react-cloudflare
 
@@ -131,8 +137,10 @@ Assets split).
 
 Self-hosted Node scaffold with a React + Vite SPA. LocalFs-backed
 storage in dev via `baerlyDev()` (single Vite process — Vite serves
-both `/v1/*` and the SPA), any S3-compatible bucket in production
-via `@gusto/baerly-storage/node`. Ships `auth: "none"`; see the scaffold's
+both `/v1/*` and the SPA), AWS S3 / Cloudflare R2 storage in
+production via `@gusto/baerly-storage/node`. MinIO is for local
+conformance, and other S3-compatible endpoints need
+`baerly doctor --bucket` plus owner validation. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
 `auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
 OIDC IdP via an env-aware factory `verifier:` override. Demonstrates
@@ -172,24 +180,23 @@ read), then `baerly.config.ts` (the `NoteSchema` shape), then
 If the example should be CLI-scaffoldable, drop a
 `.baerly/scaffold.json` manifest at its root and wire it into
 `STARTER_TO_EXAMPLE` in `packages/create-baerly-storage/src/scaffold.ts`.
-The manifest shape:
+The manifest shape is strict JSON:
 
-```jsonc
+```json
 {
-  // Each `from` string is search-and-replaced in file contents
-  // and path segments; `fromKey` names which scaffold input
-  // (e.g. "appName", "tenant") provides the replacement value.
   "renames": [
     { "from": "minimal-cloudflare", "fromKey": "appName" },
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
-  // Paths skipped at copy time (relative to the example root).
   "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
-  // devDependencies stripped from the scaffolded `package.json`
-  // (e.g. workspace-internal tooling that doesn't ship).
   "dropDevDeps": ["@gusto/create-baerly-storage"]
 }
 ```
+
+`renames` search-and-replaces strings in file contents and path
+segments; `excludePaths` skips paths relative to the example root;
+`dropDevDeps` strips workspace-only dev dependencies from the
+scaffolded `package.json`.
 
 Examples without a manifest are runnable but not CLI-
 scaffoldable. The rolldown build copies every example into

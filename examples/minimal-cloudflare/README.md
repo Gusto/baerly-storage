@@ -1,13 +1,16 @@
 # minimal-cloudflare
 
-A baerly app scaffolded with `@gusto/create-baerly-storage` for the **Cloudflare
-Workers** target. Single-bucket R2-backed deployment via the
-`@gusto/baerly-storage/cloudflare` adapter. Ships `auth: "none"` so the
-day-1 happy path works with zero env vars; flip to Cloudflare
-Access or a shared secret before deploy — see "Going to
+A baerly-storage app scaffolded with `@gusto/create-baerly-storage` for
+the **Cloudflare Workers** target. Single-bucket R2-backed deployment
+via the `@gusto/baerly-storage/cloudflare` adapter. Ships
+`auth: "none"` so the day-1 happy path works with zero env vars; flip
+to Cloudflare Access or a shared secret before deploy — see "Going to
 production" below.
 
-**The only persistent component is your R2 bucket** — there is no Worker to keep warm, no database daemon to operate, no idle bill, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+**The R2 bucket is the durable state.** The Worker is trusted app code
+with an R2 binding; it applies the baerly-storage protocol, but it is
+not a database server. No daemon, lock table, scheduler, or idle
+database bill; maintenance is automatic and write-triggered.
 
 ## What you got
 
@@ -86,9 +89,9 @@ needs no secrets. If you adopt a "Going to production" recipe:
   `CF_ACCESS_AUDIENCE_TAG` go in `wrangler.jsonc:vars` (they're
   public identifiers, not secrets).
 - **Pattern B (`auth: "shared-secret"`):** `SHARED_SECRET` is a
-  secret — `.dev.vars` for `wrangler dev`, `wrangler secret put
-  SHARED_SECRET` for production. Each secret is encrypted at rest
-  and exposed on `env` at runtime.
+  secret — use `.dev.vars` for `wrangler dev` and
+  `wrangler secret put SHARED_SECRET` for production. Each secret is
+  encrypted at rest and exposed on `env` at runtime.
 
 ## Next steps
 
@@ -98,9 +101,9 @@ needs no secrets. If you adopt a "Going to production" recipe:
    reads `CLAUDE.md`; both files are byte-identical so either
    surface lands you the same context.
 2. **Declare your first collection schema** in `baerly.config.ts`
-   via `defineConfig({ collections: { ... } })` and pass it to
-   `Db.create({ ..., collections })`. Schema validation is live;
-   bad inserts return 400.
+   via `defineConfig({ collections: { ... } })`. The Worker adapter
+   passes that config to `Db.create({ storage, app, tenant, config })`,
+   so schema validation is live and bad inserts return 400.
 3. **Set up production auth** — follow `AGENTS.md` → "Going to
    production". Pattern A wires CF Access via an env-aware factory
    `verifier:` override; Pattern B flips `auth: "shared-secret"`.
@@ -118,9 +121,9 @@ needs no secrets. If you adopt a "Going to production" recipe:
 
 ## When to graduate
 
-baerly is designed for the small-to-medium operating point. Past these
-thresholds, S3 list-prefix latency and per-class operation pricing
-start to dominate, and you're better off on a real database:
+baerly-storage is designed for the small-to-medium operating point.
+Past these thresholds, S3 list-prefix latency and per-class operation
+pricing start to dominate, and you're better off on a real database:
 
 - **~30 writes / minute / collection**
 - **~10 GB / tenant**

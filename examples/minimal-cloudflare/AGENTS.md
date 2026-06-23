@@ -39,9 +39,10 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`minimal-cloudflare` is a baerly app scaffolded with `create-baerly-storage`.
-The Worker-side server lives in `src/server/`; the optional client
-lives in `src/web/`. Configuration lives in `baerly.config.ts`.
+`minimal-cloudflare` is a baerly-storage app scaffolded with
+`create-baerly-storage`. The Worker-side server lives in `src/server/`;
+the optional client lives in `src/web/`. Configuration lives in
+`baerly.config.ts`.
 
 Single package, single `vite` process: `@cloudflare/vite-plugin` runs
 the Worker inside `workerd` alongside the SPA dev server, and
@@ -57,10 +58,9 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 - **Package manager:** pnpm. The emitted repo pins
   `packageManager: pnpm@11.1.2`.
 - **Test runner:** vitest.
-- **Type checker:** TypeScript 5.6+. (The baerly-storage monorepo
-  itself uses TypeScript 7 via `@typescript/native-preview`; this
-  template tracks the broadly-compatible TS major so scaffolded
-  apps work with the wider ecosystem.)
+- **Type checker:** TypeScript 6.x, as pinned in `package.json`.
+  (The baerly-storage monorepo itself uses TypeScript 7 via
+  `@typescript/native-preview`.)
 - **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the
   code stays compatible with type-stripping runtimes (Node's
   `--experimental-strip-types`, esbuild's strip path). The flag bans
@@ -79,7 +79,7 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 | `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once                                                                                                    | seconds to a minute |
 | `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works                                                                                                                 | seconds             |
 | `pnpm typecheck` | TS typecheck across the worker + web project references (`tsc -b --noEmit`)                                                                                                                                                                                | seconds             |
-| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). The minimal template ships no SPA tests by default; `--passWithNoTests` keeps the gate green until you add one. | seconds             |
+| `pnpm test`      | `vitest run` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). The template ships `src/notes.test.ts` by default. | seconds             |
 | `pnpm dev`       | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173                                                                                                                                       | seconds to start    |
 | `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding                                                                                                                                                                               | seconds             |
 | `pnpm deploy`    | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`)                                                                                                                                               | seconds             |

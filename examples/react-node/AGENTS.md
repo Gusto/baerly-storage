@@ -39,11 +39,12 @@ Common anti-patterns that compile but are wrong:
 
 ## What this is
 
-`react-node` is a baerly app scaffolded with `create-baerly-storage` for the
-Node target — any host that runs `node server.js` (Railway, Render,
-Fly without Docker, Heroku, a VM, a container scheduler). The
-Node-side server lives in `src/server/`; the React client lives in
-`src/web/`. Configuration lives in `baerly.config.ts`.
+`react-node` is a baerly-storage app scaffolded with
+`create-baerly-storage` for the Node target: any host that runs
+`node server.js` (Railway, Render, Fly without Docker, Heroku, a VM, a
+container scheduler). The Node-side server lives in `src/server/`; the
+React client lives in `src/web/`. Configuration lives in
+`baerly.config.ts`.
 
 Single package, single `vite` process: `baerlyDev()` from
 `@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
@@ -74,10 +75,9 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 - **Package manager:** pnpm. The emitted repo pins
   `packageManager: pnpm@11.1.2`.
 - **Test runner:** vitest.
-- **Type checker:** TypeScript 5.6+. (The baerly-storage monorepo
-  itself uses TypeScript 7 via `@typescript/native-preview`; this
-  template tracks the broadly-compatible TS major so scaffolded
-  apps work with the wider ecosystem.)
+- **Type checker:** TypeScript 6.x, as pinned in `package.json`.
+  (The baerly-storage monorepo itself uses TypeScript 7 via
+  `@typescript/native-preview`.)
 - **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the
   code stays compatible with type-stripping runtimes (Node's
   `--experimental-strip-types`, esbuild's strip path). The flag bans
@@ -96,7 +96,7 @@ published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 | `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once | seconds to a minute |
 | `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
 | `pnpm typecheck` | TS typecheck across the `app` + `server` project references (`tsc -b --noEmit`)        | seconds          |
-| `pnpm test`      | `vitest run --passWithNoTests` — standalone `vitest.config.ts` (Node env)              | seconds          |
+| `pnpm test`      | `vitest run` — standalone `vitest.config.ts` (Node env)                                | seconds          |
 | `pnpm dev`       | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the `baerlyNode({ webRoot })` static-serve branch | seconds  |
 | `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
@@ -121,7 +121,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 | `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib, `jsx: react-jsx`)                                                        |
 | `tsconfig.server.json`     | Node server TS project (`src/server/`, Node lib)                                                                 |
 | `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `collections` (schemas live here). Also exports the inferred `Note` row type used by the web client. |
-| `.env.example`             | Source of truth for env vars the Node entry reads (`BUCKET`, `AWS_*`, the optional `BAERLY_MAINTENANCE_*` ops-plane tuners, etc.; `SHARED_SECRET` / `JWKS_URL` only needed if you adopt the "Going to production" auth recipes) |
+| `.env.example`             | Source of truth for env vars the default Node entry reads (`BUCKET`, `AWS_*`, optional `R2_ACCOUNT_ID`, optional `PORT`) |
 
 > **`baerly.config.ts` is dual-included.** Both `tsconfig.app.json`
 > and `tsconfig.server.json` `include` this file, so it must only
@@ -258,9 +258,10 @@ http://localhost:5173/<path>`) before declaring the task complete.
   });
   ```
 
-  The adapter threads `collections` into `Db.create({ ... })` for
-  you. Predicates the planner can't route fall back to the full
-  scan with a metric bump — correctness is preserved.
+  The adapter passes your `config` into
+  `Db.create({ storage, app, tenant, config })` for you. Predicates the
+  planner can't route fall back to the full scan with a metric bump —
+  correctness is preserved.
 
 - **Schemas (live feature)** — schemas are validated on the server
   for every `insert` / `update` / `replace` when bound. Declare via
@@ -389,14 +390,12 @@ apps or tenancy enforced outside baerly-storage.
 <!-- pattern-c:end -->
 - **Storage backend** — `src/server/index.ts` picks between
   `s3Storage` (AWS) and `r2Storage` (Cloudflare R2 via S3-compat)
-  based on whether `R2_ACCOUNT_ID` is set. To use **Minio**
-  (self-hosted dev S3) or **GCS** (HMAC keys), swap the import to
-  `minioStorage` / `gcsStorage` from `@gusto/baerly-storage/node`. All
-  four factories take the same shape — a single bucket-name +
-  credentials object — and hide `aws4fetch` / `@xmldom/xmldom`
-  behind the package boundary. JSDoc `@example` blocks for each
-  factory are visible in your editor's TS hover. The bucket name
-  comes from the `BUCKET` env var; AWS credentials are read from
+  based on whether `R2_ACCOUNT_ID` is set. AWS S3 and Cloudflare R2 are
+  the production-supported stores. **MinIO** is the local/dev
+  conformance target. Other S3-compatible endpoints need a green
+  `baerly doctor --bucket` plus owner validation; GCS S3-interop is not
+  supported for database use today. The bucket name comes from the
+  `BUCKET` env var; AWS credentials are read from
   `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optional
   `AWS_REGION`).
 
@@ -652,8 +651,9 @@ JSON-merge-patch (RFC 7386) semantics apply on `update()`:
 omitting `tags` from an update preserves the existing value;
 passing `tags: null` deletes the field; passing `tags: []` sets
 it to an empty array. Note that `null` is the deletion sentinel,
-not a storable value — `DocumentValue` doesn't include `null`,
-so `find()` returns deleted fields as `undefined`, not `null`.
+not a storable value — `DocumentValue` doesn't include `null`, so
+subsequent `get()` / query results expose deleted optional fields as
+`undefined`, not `null`.
 That's why this recipe uses `.optional()` and not `.nullable()`.
 
 ## Pointers

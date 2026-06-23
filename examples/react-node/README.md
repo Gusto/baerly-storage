@@ -1,16 +1,22 @@
 # react-node
 
-A baerly app scaffolded with `@gusto/create-baerly-storage` for the **Node** target —
-any host that runs `node server.js` (Railway, Render, Fly without
-Docker, Heroku, a VM, a container scheduler, your laptop). Uses
-`@gusto/baerly-storage/node` against an S3-compatible bucket (AWS S3, R2 via
-S3-compat, Minio, etc.). Ships `auth: "none"` so the day-1 happy
-path works with zero env vars, plus a React + Vite SPA and a
-one-collection `notes` schema you extend; flip to a shared secret
+A baerly-storage app scaffolded with `@gusto/create-baerly-storage` for
+the **Node** target — any host that runs `node server.js` (Railway,
+Render, Fly without Docker, Heroku, a VM, a container scheduler, your
+laptop). Uses `@gusto/baerly-storage/node` against an S3-compatible
+bucket. AWS S3 and Cloudflare R2 are the production-supported targets;
+MinIO is the local conformance target, and other endpoints require
+`baerly doctor --bucket` plus owner validation. Ships `auth: "none"` so
+the day-1 happy path works with zero env vars, plus a React + Vite SPA
+and a one-collection `notes` schema you extend; flip to a shared secret
 or wire `bearerJwt` against your OIDC IdP before deploy — see
 "Production auth" below.
 
-**The only persistent component is your S3-compatible bucket** — there is no separate database server or daemon to deploy alongside the node process, no idle bill, and maintenance is automatic and write-triggered (no cron, no sidecar, no scheduler).
+**The S3-compatible bucket is the durable state.** The Node process is
+trusted app code with bucket credentials; it applies the
+baerly-storage protocol, but it is not a database server. No daemon,
+lock table, scheduler, or idle database bill; maintenance is automatic
+and write-triggered.
 
 To ship a production Dockerfile alongside, scaffold with
 `--with=docker` — the add-on writes a multi-stage distroless Dockerfile,
@@ -26,7 +32,7 @@ react-node/
 ├── tsconfig.server.json      # Node server TS project (src/server)
 ├── vite.config.ts            # Vite + @vitejs/plugin-react + baerlyDev()
 ├── index.html                # SPA shell — Vite's entry point
-├── .env.example              # storage creds, verifier, observability
+├── .env.example              # storage creds and PORT
 ├── baerly.config.ts          # app, tenant, target, NoteSchema, `Note` type
 ├── AGENTS.md                 # deeper guide: hooks, schema, auth, deploy
 ├── CLAUDE.md                 # same content (Claude Code reads this)
@@ -48,11 +54,10 @@ pnpm install
 pnpm dev
 ```
 
-
 `pnpm dev` runs `vite`. `baerlyDev()` from `@gusto/baerly-storage/dev/vite`
 mounts the Node HTTP listener as Connect middleware on the same Vite
 process that serves the SPA, so `GET /` hits the SPA on
-`http://localhost:5173/` and anything baerly handles (e.g.
+`http://localhost:5173/` and anything baerly-storage handles (e.g.
 `GET /v1/healthz`, `POST /v1/c/notes`) is served on the same origin —
 one process, one port, SPA + HMR + `/v1/*` in one command. Storage is
 `LocalFsStorage` rooted at `.baerly-data/`, so first-touch needs no
@@ -76,7 +81,7 @@ posture needs no auth env vars; if you adopt Pattern B / C from
 "Production auth" below, also set `SHARED_SECRET` (Pattern B) or
 `JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C). Optional:
 `R2_ACCOUNT_ID` (switches the storage factory from `s3Storage` to
-`r2Storage`), `AWS_REGION`, `PORT`, `TENANT`, `WEB_ROOT`.
+`r2Storage`), `AWS_REGION`, `PORT`.
 
 Maintenance (compaction + GC) is automatic and in-band: it runs
 inline on the rare write that crosses a maintenance trigger — no env
@@ -88,7 +93,7 @@ from `@gusto/baerly-storage`.
 
 After `pnpm build`, `http://localhost:8080/` serves the built SPA
 out of `dist/client/` and `http://localhost:8080/v1/*` is the
-baerly HTTP surface — single origin, no CORS.
+baerly-storage HTTP surface — single origin, no CORS.
 
 `pnpm typecheck` runs `tsc -b --noEmit` across both project
 references.
@@ -110,7 +115,7 @@ Concrete shapes:
   to `.env`, run `pnpm install && pnpm build && pnpm start` under
   your process manager of choice (systemd, pm2, etc.).
 - **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile):
-  scaffold with `pnpm create @gusto/baerly-storage@latest --target=node --with=docker` to add
+  scaffold with `pnpm create @gusto/baerly-storage@latest my-app --target=node --with=docker` to add
   a production Dockerfile, `.dockerignore`, and `healthcheck.js`
   alongside this shape, then `docker build .`.
 
@@ -151,9 +156,9 @@ follow `AGENTS.md` → "Going to production":
 
 ## When to graduate
 
-baerly is designed for the small-to-medium operating point. Past these
-thresholds, S3 list-prefix latency and per-class operation pricing
-start to dominate, and you're better off on a real database:
+baerly-storage is designed for the small-to-medium operating point.
+Past these thresholds, S3 list-prefix latency and per-class operation
+pricing start to dominate, and you're better off on a real database:
 
 - **~30 writes / minute / collection**
 - **~10 GB / tenant**
