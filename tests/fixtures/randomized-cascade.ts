@@ -141,8 +141,15 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
  * entry whose `doc_id` matches. Returns `undefined` when no entry has
  * landed yet. Tolerates transient read failures (Toxiproxy flips, R2
  * propagation jitter) by re-throwing — callers swallow.
+ *
+ * `docId` defaults to {@link COLLECTION} so the single-key cascade
+ * (where `collection === docId`) keeps its exact behavior; the
+ * multi-doc cascade passes a distinct id per doc.
  */
-const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> => {
+const readLatest = async (
+  inst: Instance,
+  docId: string = COLLECTION,
+): Promise<CascadeMessage | undefined> => {
   const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
   if (read === null) {
     return undefined;
@@ -161,7 +168,7 @@ const readLatest = async (inst: Instance): Promise<CascadeMessage | undefined> =
     } catch {
       continue;
     }
-    if (entry.doc_id === COLLECTION && entry.op === "U" && entry.after !== undefined) {
+    if (entry.doc_id === docId && entry.op === "U" && entry.after !== undefined) {
       return entry.after as CascadeMessage;
     }
   }
@@ -193,7 +200,7 @@ const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
   // `allIndexKeysFor` and is filter-aware via T4's projector
   // change).
   await rebuildIndex(inst.storage, inst.currentJsonKey, FILTERED_INDEX);
-  const live = await readLatest(inst);
+  const live = await readLatest(inst, COLLECTION);
   const expected = new Set(allIndexKeysFor(inst.logPrefix, [FILTERED_INDEX], live, COLLECTION));
   const actual = new Set<string>();
   for await (const entry of inst.storage.list(`${inst.logPrefix}/index/${FILTERED_INDEX.name}/`)) {
@@ -476,6 +483,191 @@ export const runCausalConsistencyCascade = (opts: {
       }
     })();
   });
+
+// ---------------------------------------------------------------------
+// Multi-doc-per-collection cascade (Finding 3c)
+// ---------------------------------------------------------------------
+
+/** Escape a literal string for safe interpolation into a `RegExp`. */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Result of {@link runMultiDocCascade}, consumed by the assertions in
+ * `tests/integration/randomized.test.ts`.
+ */
+export interface MultiDocCascadeResult {
+  /** The doc ids driven through the one collection. */
+  readonly docIds: readonly string[];
+  /**
+   * Per doc id, the ordered list of values WRITTEN to that doc across
+   * all writers, keyed by canonical token (`<writer>:<n>`). Order is the
+   * commit-enqueue order on each doc's serializer, which equals the
+   * order those commits take in the shared log (the log linearizes the
+   * collection and the per-doc serializer keeps a doc's own commits in
+   * enqueue order).
+   */
+  readonly writtenPerDoc: Readonly<Record<string, string[]>>;
+  /**
+   * Per doc id, the ordered list of values OBSERVED committed for that
+   * doc — the projection of the committed `log/<seq>` range onto that
+   * doc, in seq order.
+   */
+  readonly observedPerDoc: Readonly<Record<string, string[]>>;
+  /**
+   * The set of committed `log/<seq>` slot numbers across ALL docs,
+   * parsed from the ACTUAL occupied storage keys under the collection's
+   * `log/` prefix (NOT synthesized from an array index). The collection's
+   * linearization point is the `log/<seq>` create, so this MUST be a
+   * contiguous, gap-free, duplicate-free range — and since this set comes
+   * from real keys, a hypothetical gap or duplicate slot WOULD fail the
+   * caller's assertion.
+   */
+  readonly committedSeqs: readonly number[];
+}
+
+/**
+ * Drive M distinct doc ids through ONE collection's log with N writers,
+ * then walk the committed log to surface (a) each doc's observed
+ * committed-value sequence and (b) the collection's `log/<seq>` slot
+ * set, so the caller can assert per-doc consistency and collection-level
+ * total order.
+ *
+ * Where the single-key cascade pins `collection === docId === "k"` and
+ * hammers one row, this routes a round-robin of writes across M docs
+ * that all share the SAME collection log — exercising the invariant the
+ * single-key cascade can't witness: independent documents serialized
+ * through one log, where the log linearizes the *collection* (every
+ * commit, regardless of doc, takes the next free `log/<seq>` slot) while
+ * each doc's own committed history stays internally consistent.
+ *
+ * Each value is a canonical token `<writer>:<n>` so written-vs-observed
+ * comparison is decidable by string equality. Per-doc commits are
+ * serialized (one in-flight commit per doc) so a doc's enqueue order is
+ * its log order; cross-doc interleaving is unconstrained, which is the
+ * point — the log still totally orders them.
+ *
+ * @param opts.storages   N {@link Storage} handles sharing a backing
+ *                        store; `N === storages.length`.
+ * @param opts.pollTickMs Unused by the writer loop here but accepted for
+ *                        signature parity with the other cascades and to
+ *                        document the backend's commit-latency class.
+ * @param opts.docIds     The distinct doc ids to route through the one
+ *                        collection. Defaults to `[COLLECTION]` so a
+ *                        zero-arg-doc caller degenerates to the
+ *                        single-key shape.
+ * @param opts.commitsPerDoc How many U-commits to attempt per doc
+ *                        (default 8). Total attempted commits is
+ *                        `docIds.length * commitsPerDoc`.
+ */
+export const runMultiDocCascade = async (opts: {
+  storages: Storage[];
+  pollTickMs: number;
+  docIds?: readonly string[];
+  commitsPerDoc?: number;
+}): Promise<MultiDocCascadeResult> => {
+  void opts.pollTickMs;
+  const docIds = opts.docIds ?? [COLLECTION];
+  const commitsPerDoc = opts.commitsPerDoc ?? 8;
+  const N = opts.storages.length;
+  const instances = await buildInstances(opts.storages, []);
+
+  const writtenPerDoc: Record<string, string[]> = {};
+  for (const docId of docIds) {
+    writtenPerDoc[docId] = [];
+  }
+
+  // Per-doc commit serializer: keep one in-flight commit per doc so a
+  // doc's enqueue order is its committed-log order. Cross-doc
+  // interleaving is left unconstrained — that's the contention the log's
+  // total order must absorb.
+  const docQueues: Record<string, Promise<void>> = {};
+  for (const docId of docIds) {
+    docQueues[docId] = Promise.resolve();
+  }
+  // Per-doc monotonic counter so each written value is unique within a doc.
+  const docCounter: Record<string, number> = {};
+  for (const docId of docIds) {
+    docCounter[docId] = 0;
+  }
+
+  // Round-robin: step k routes to doc `k % M` and writer `k % N`.
+  const total = docIds.length * commitsPerDoc;
+  for (let k = 0; k < total; k++) {
+    const docId = docIds[k % docIds.length]!;
+    const writerIdx = k % N;
+    const n = docCounter[docId]!++;
+    const token = `${writerIdx}:${n}`;
+    const message: CascadeMessage = { sender: writerIdx, send_time: n };
+    // Record the WRITE in this doc's enqueue order before chaining the
+    // commit so `writtenPerDoc` reflects intended order even if a
+    // commit later loses a CAS race and gets dropped.
+    writtenPerDoc[docId]!.push(token);
+    docQueues[docId] = docQueues[docId]!.then(async () => {
+      try {
+        await instances[writerIdx]!.writer.commit({
+          op: "U",
+          collection: COLLECTION,
+          docId,
+          body: { ...message, token },
+        });
+      } catch (error) {
+        // Transient Conflict under contention is expected — the value is
+        // simply not committed (and won't appear in `observedPerDoc`),
+        // which keeps the subsequence property intact. Other errors
+        // propagate.
+        if (error instanceof BaerlyError && error.code === "Conflict") {
+          return;
+        }
+        throw error;
+      }
+    });
+  }
+
+  await Promise.all(Object.values(docQueues));
+
+  // Derive `committedSeqs` from the ACTUAL occupied log-slot KEYS, not
+  // from an array index — otherwise the "contiguous / gap-free / no-dup"
+  // assertions on it are tautological (a forward probe is dense by
+  // construction, so synthesizing `start + i` can NEVER witness a gap or
+  // duplicate the storage might actually hold). Enumerate the live slots
+  // under the collection's `log/` prefix and parse the integer `<N>` out
+  // of each `log/<N>.json` key; the resulting set is the real committed
+  // range the collection-total-order property exists to witness.
+  const inst = instances[0]!;
+  const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
+  const start = read === null ? 0 : read.json.log_seq_start;
+
+  // Match ONLY `<logPrefix>/log/<digits>.json` slot keys — ignore any
+  // non-slot keys under that prefix (`current.json`, index subdirs, …).
+  const slotKeyPattern = new RegExp(`^${escapeRegExp(`${inst.logPrefix}/log/`)}(\\d+)\\.json$`);
+  const committedSeqs: number[] = [];
+  for await (const listed of inst.storage.list(`${inst.logPrefix}/log/`)) {
+    const m = slotKeyPattern.exec(listed.key);
+    if (m !== null) {
+      committedSeqs.push(Number.parseInt(m[1]!, 10));
+    }
+  }
+
+  // Walk the committed entries in ascending seq order for the per-doc
+  // projection — `observedPerDoc[docId]` is that doc's committed-value
+  // sequence. The probe returns entries in ascending slot order, so the
+  // projection onto each doc preserves commit order.
+  const probe = await probeTailFrom(inst.storage, inst.logPrefix, start);
+  const observedPerDoc: Record<string, string[]> = {};
+  for (const docId of docIds) {
+    observedPerDoc[docId] = [];
+  }
+  for (const entry of probe.entries) {
+    if (entry.op === "U" && entry.after !== undefined) {
+      const after = entry.after as CascadeMessage & { token?: string };
+      if (after.token !== undefined && observedPerDoc[entry.doc_id] !== undefined) {
+        observedPerDoc[entry.doc_id]!.push(after.token);
+      }
+    }
+  }
+
+  return { docIds, writtenPerDoc, observedPerDoc, committedSeqs };
+};
 
 // ---------------------------------------------------------------------
 // Range-walk parity cascade (T3)
