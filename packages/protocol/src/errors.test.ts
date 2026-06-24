@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { BaerlyError } from "./errors.ts";
+import { BaerlyError, RETRIABLE_CODES, isRetriableCode } from "./errors.ts";
 
 describe("BaerlyError", () => {
   test("is an Error carrying name, code, and message", () => {
@@ -35,5 +35,49 @@ describe("BaerlyError", () => {
   test("leaves status undefined when not provided", () => {
     const e = new BaerlyError("NotFound", "x");
     expect(e.status).toBeUndefined();
+  });
+
+  test("sets resolution when provided", () => {
+    const e = new BaerlyError("InvalidConfig", "bad", undefined, undefined, undefined, "do X");
+    expect(e.resolution).toBe("do X");
+  });
+
+  test("leaves resolution undefined when not provided", () => {
+    expect(new BaerlyError("InvalidConfig", "bad").resolution).toBeUndefined();
+  });
+});
+
+describe("retriable classification", () => {
+  test("RETRIABLE_CODES is exactly {NetworkError, Conflict}", () => {
+    expect([...RETRIABLE_CODES].toSorted()).toEqual(["Conflict", "NetworkError"]);
+  });
+  test("isRetriableCode reflects the set", () => {
+    expect(isRetriableCode("NetworkError")).toBe(true);
+    expect(isRetriableCode("Conflict")).toBe(true);
+    expect(isRetriableCode("SchemaError")).toBe(false);
+    expect(isRetriableCode("NotFound")).toBe(false);
+  });
+  test("BaerlyError.retriable defaults from code", () => {
+    expect(new BaerlyError("Conflict", "x").retriable).toBe(true);
+    expect(new BaerlyError("NetworkError", "x").retriable).toBe(true);
+    expect(new BaerlyError("SchemaError", "x").retriable).toBe(false);
+  });
+
+  test("BaerlyError.retriable can be overridden per instance", () => {
+    expect(
+      new BaerlyError(
+        "Conflict",
+        "duplicate _id",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+      ).retriable,
+    ).toBe(false);
+    expect(
+      new BaerlyError("SchemaError", "temporary", undefined, undefined, undefined, undefined, true)
+        .retriable,
+    ).toBe(true);
   });
 });

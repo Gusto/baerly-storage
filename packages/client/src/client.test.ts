@@ -117,6 +117,18 @@ describe("createBaerlyClient", () => {
     });
   });
 
+  test("wire resolution is rebuilt onto BaerlyError.resolution", async () => {
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse({ error: { code: "InvalidConfig", message: "bad", resolution: "do X" } }, 400),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+      code: "InvalidConfig",
+      resolution: "do X",
+    });
+  });
+
   test("count() issues GET /v1/count and returns scalar (does not download rows)", async () => {
     const mock = new MockFetch();
     let sawListGet = false;
@@ -204,6 +216,80 @@ describe("createBaerlyClient", () => {
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     await expect(client.collection("tickets").where({}).all()).rejects.toMatchObject({
       code: "InvalidResponse",
+    });
+  });
+
+  // §3.9 — wire decoder preserves issues + surfaces retriable
+  test("client rebuilds issues + retriable from the error envelope", async () => {
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse(
+        {
+          error: {
+            code: "SchemaError",
+            message: "bad",
+            retriable: false,
+            issues: [{ path: ["title"], message: "required" }],
+          },
+        },
+        400,
+      ),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "SchemaError",
+      status: 400,
+      retriable: false,
+      issues: [{ path: ["title"], message: "required" }],
+    });
+  });
+
+  test("client surfaces retriable:true on Conflict", async () => {
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse({ error: { code: "Conflict", message: "CAS lost", retriable: true } }, 409),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "Conflict",
+      status: 409,
+      retriable: true,
+    });
+  });
+
+  test("client preserves retriable:false on terminal Conflict", async () => {
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse(
+        { error: { code: "Conflict", message: "duplicate _id", retriable: false } },
+        409,
+      ),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ _id: "x" })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "Conflict",
+      status: 409,
+      retriable: false,
+    });
+  });
+
+  test("client falls back to the code default when the server omits retriable", async () => {
+    // Older server: the envelope carries no `retriable` field. The client
+    // must fall back to the code-derived default (Conflict → retriable),
+    // not silently treat the missing field as non-retriable.
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse({ error: { code: "Conflict", message: "CAS lost" } }, 409),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "Conflict",
+      status: 409,
+      retriable: true,
     });
   });
 });

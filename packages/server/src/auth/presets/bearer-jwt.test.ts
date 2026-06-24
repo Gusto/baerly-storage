@@ -274,6 +274,12 @@ describe("bearerJwt — config validation", () => {
       BaerlyError,
     );
   });
+
+  test("InvalidConfig throws carry a resolution string", () => {
+    expect(() => bearerJwt({ jwks, issuer: "", audience: AUDIENCE })).toThrowError(
+      expect.objectContaining({ resolution: expect.any(String) }),
+    );
+  });
 });
 
 describe("bearerJwt — idempotence", () => {

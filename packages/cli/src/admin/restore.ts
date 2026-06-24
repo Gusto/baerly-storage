@@ -135,6 +135,11 @@ const bundle = defineBaerlySubcommand({
       throw new BaerlyError(
         "Conflict",
         `baerly admin restore: ${currentJsonKey} exists; pass --force to truncate`,
+        undefined,
+        undefined,
+        undefined,
+        "Pass --force to truncate the existing collection, or choose an empty target.",
+        false,
       );
     }
     if (head !== null) {

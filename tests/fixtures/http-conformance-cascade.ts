@@ -29,7 +29,11 @@
 
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import type { DocumentData } from "@baerly/protocol";
+import {
+  type DocumentData,
+  WHERE_ORDER_JSON_RESOLUTION,
+  WRITE_BODY_SHAPE_RESOLUTION,
+} from "@baerly/protocol";
 import { CONFORMANCE_BEARER, CONFORMANCE_TENANT } from "./test-verifier.ts";
 
 /**
@@ -203,7 +207,12 @@ const base64ToBytes = (b64: string): Uint8Array => {
 };
 
 interface ErrorEnvelope {
-  readonly error?: { readonly code?: string; readonly message?: string };
+  readonly error?: {
+    readonly code?: string;
+    readonly message?: string;
+    readonly resolution?: string;
+    readonly retriable?: boolean;
+  };
 }
 
 /**
@@ -336,6 +345,28 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(404);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("NotFound");
+        // `retriable` rides on every error envelope (errorEnvelope() in
+        // contract.ts derives it from the code). NotFound is terminal —
+        // re-issuing the same GET will 404 again — so it MUST be false.
+        expect(env.error?.retriable).toBe(false);
+      });
+
+      test("POST duplicate caller-supplied _id returns terminal 409 Conflict", async () => {
+        const table = await mintTable("rt-duplicate-id");
+        const first = await postDoc(table, { _id: "user-chosen-id", seed: 1 });
+        expect(first.status).toBe(201);
+        expect(first.id).toBe("user-chosen-id");
+
+        const res = await doFetch(
+          authedRequest("POST", `/v1/c/${table}`, {
+            doc: { _id: "user-chosen-id", seed: 2 },
+          }),
+        );
+        expect(res.status).toBe(409);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("Conflict");
+        expect(env.error?.retriable).toBe(false);
+        expect(env.error?.resolution).toContain("different `_id`");
       });
 
       test("PATCH of missing _id returns 404 with NotFound", async () => {
@@ -561,6 +592,7 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
+        expect(env.error?.resolution).toBe(WHERE_ORDER_JSON_RESOLUTION);
       });
 
       test("?order=<JSON spec> sorts the row set", async () => {
@@ -690,6 +722,7 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
+        expect(env.error?.resolution).toBe(WRITE_BODY_SHAPE_RESOLUTION);
       });
     });
 

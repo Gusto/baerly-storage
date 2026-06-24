@@ -164,4 +164,10 @@ describe("cloudflareAccess", () => {
       cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: "A".repeat(64) }),
     ).toThrow(BaerlyError);
   });
+
+  test("InvalidConfig throws carry a resolution string", () => {
+    expect(() => cloudflareAccess({ teamDomain: "", audienceTag: AUDIENCE_TAG })).toThrowError(
+      expect.objectContaining({ resolution: expect.any(String) }),
+    );
+  });
 });

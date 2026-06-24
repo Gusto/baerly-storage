@@ -60,6 +60,8 @@ import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.t
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { Writer } from "./writer.ts";
 
+const DUPLICATE_ID_RESOLUTION = "Use different `_id` or omit it.";
+
 /**
  * What a `Query<T>` needs to issue a read against the bucket. The
  * `Db` builds this once and hands it to `Collection` / `Query`; the chain
@@ -396,6 +398,11 @@ export const runInsert = async <T extends DocumentData>(
     throw new BaerlyError(
       "Conflict",
       `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
+      undefined,
+      undefined,
+      undefined,
+      DUPLICATE_ID_RESOLUTION,
+      false,
     );
   }
 

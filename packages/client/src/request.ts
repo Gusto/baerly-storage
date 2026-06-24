@@ -80,7 +80,15 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     }
     const code: BaerlyErrorCode = envelope?.error?.code ?? "Internal";
     const message = envelope?.error?.message ?? `HTTP ${res.status}`;
-    throw new BaerlyError(code, message, undefined, undefined, res.status);
+    throw new BaerlyError(
+      code,
+      message,
+      undefined,
+      envelope?.error?.issues,
+      res.status,
+      envelope?.error?.resolution,
+      envelope?.error?.retriable,
+    );
   }
 
   // 200 — only GET reads ship `HttpOkEnvelope<T>`. PATCH (and any
