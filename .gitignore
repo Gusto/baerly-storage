@@ -4,6 +4,9 @@
 .claude/worktrees/
 .claude/settings.local.json
 
+# Planning artifacts (untracked; not shipped, not doc-validated)
+.plans/
+
 # Dependencies
 node_modules/
 .pnpm-store/
