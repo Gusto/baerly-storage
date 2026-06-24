@@ -81,6 +81,8 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev";
 
 ## `Db.create({ storage, app, tenant, config? })`
 
+*When NOT to use: in a browser/SPA — use `createBaerlyClient` (HTTP) instead; `Db` is the in-process server surface.*
+
 One `Db` per `(app, tenant)` request. The constructor is private —
 always go through `Db.create`. Collections are auto-provisioned on first
 write (no `ensureCollection` step).
@@ -140,6 +142,8 @@ overloads as the inferred return; `Db` (no parameter) widens to
 `Db<UnboundConfig>` and accepts any string collection name.
 
 ## `db.collection(name)` → `Collection<T>`
+
+*When NOT to use: from the browser — call collection verbs over HTTP via `createBaerlyClient`.*
 
 `Collection<T>` carries the common-case verbs directly (collection-level
 reads plus by-primary-key mutations). Modifiers (`where`, `order`,
@@ -330,7 +334,7 @@ try {
   await db.collection("tickets").insert({ title: "hi" });
 } catch (err) {
   if (err instanceof BaerlyError && err.code === "Conflict") {
-    // CAS lost; caller decides whether to retry
+    // Check err.retriable: CAS conflicts can retry; duplicate _id cannot.
   }
 }
 ```
@@ -442,6 +446,8 @@ mismatches fall back to the full scan with a metric bump (correctness
 preserved).
 
 ## `createBaerlyClient` (browser / Node HTTP client)
+
+*When NOT to use: server-side in the same process as `Db` — call `Db`/`Collection` directly; the client is for out-of-process / browser callers.*
 
 ```ts
 import type config from "./baerly.config"; // type-only — server adapter stays out of the SPA bundle
@@ -647,6 +653,8 @@ client.
 
 ## Adapter factories
 
+*On Cloudflare Workers use `r2BindingStorage(env.BUCKET)` (the R2 binding), NOT the S3-credentials factory — credential-based factories assume `fetch` + Node TLS, not the Workers runtime.*
+
 ```ts
 // Cloudflare Worker entry
 import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
@@ -709,12 +717,7 @@ export default baerlyWorker(() => ({ config }));
 `s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from
 `@gusto/baerly-storage/node` are re-exports of one factory family — same
 shape (bucket + credentials), all hide `aws4fetch` / `@xmldom/xmldom`
-behind the package boundary. **Don't confuse them with
-`r2BindingStorage` from `@gusto/baerly-storage/cloudflare`**: that one takes
-the platform-bound `R2Bucket` directly (`r2BindingStorage(env.BUCKET)`)
-and is the only storage factory a Worker should reach for — the
-credential-based factories assume `fetch` + Node TLS, not the Workers
-runtime.
+behind the package boundary.
 
 ### Verifier presets
 
@@ -1046,17 +1049,11 @@ once. Pick by what you want to observe.
 
 ## Anti-patterns
 
-- Don't reach into `node_modules/@gusto/baerly-storage/dist/` at runtime —
-  consume the published exports.
-- Don't widen branded types (`UUID`, `ContentVersionId`) with
-  `as string`. The brand exists to prevent confusion bugs.
-- Don't put `SHARED_SECRET` in the SPA bundle. It's
-  server-to-server-only; the dev path uses `baerlyDevAuth` to inject
-  it server-side, the prod path uses CF Access (CF target) or
-  `bearerJwt` (Node target).
-- Don't mutate `VerifierResult.tenantPrefix` between the verifier
-  and `Db.create`. The dispatcher pins the tenant from the
-  verifier's return value.
+A few that compile but are wrong (full list, keyed by the exact error
+string you see: `cat node_modules/@gusto/baerly-storage/dist/RECIPES.md`):
+
+- Don't widen branded types (`UUID`, `ContentVersionId`) with `as string`.
+- Don't put `SHARED_SECRET` in the SPA bundle — it's server-to-server only.
 
 ## Where to look next
 
@@ -1069,4 +1066,4 @@ once. Pick by what you want to observe.
   splits them; `cat dist/*.d.ts` gives the union.
 - Theoretical foundations + cost model: the repository's `docs/`
   tree (`docs/about/`, `docs/spec/`).
-- Recipes: `docs/guide/` (auth, observability, backups, troubleshooting).
+- Common mistakes & recipes: `cat node_modules/@gusto/baerly-storage/dist/RECIPES.md`; deeper guides in the repo's `docs/guide/`.
