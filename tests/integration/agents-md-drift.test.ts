@@ -104,6 +104,19 @@ describe("AGENTS.md Pattern drift fence", () => {
     expect(normalise(a)).toBe(normalise(b));
   });
 
+  test("STOP preamble is byte-identical across all four files", () => {
+    // The orientation preamble ("## STOP — read this before writing any
+    // storage code") carries no per-template variation, so it must match
+    // RAW across all four — no normalise().
+    const cfMin = extractSentinel(read("minimal-cloudflare"), "stop");
+    const cfReact = extractSentinel(read("react-cloudflare"), "stop");
+    const nodeMin = extractSentinel(read("minimal-node"), "stop");
+    const nodeReact = extractSentinel(read("react-node"), "stop");
+    expect(cfReact).toBe(cfMin);
+    expect(nodeMin).toBe(cfMin);
+    expect(nodeReact).toBe(cfMin);
+  });
+
   test("Pattern D (## Maintenance) is byte-identical across all four files", () => {
     // Pattern D is host-agnostic: no tenant / app / schema / vite-plugin
     // variation, so it must match RAW across all four — no normalise().

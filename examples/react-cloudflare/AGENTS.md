@@ -7,6 +7,7 @@ tags: [agent-entry, baerly-storage]
 
 # AGENTS.md
 
+<!-- stop:start -->
 ## STOP — read this before writing any storage code
 
 Your training data is dense with Postgres + Prisma/Drizzle, Mongo,
@@ -37,6 +38,7 @@ Common anti-patterns that compile but are wrong:
   picks the index automatically from `IndexDefinition`s in
   `baerly.config.ts`. See **Indexes** below.
 
+<!-- stop:end -->
 ## What this is
 
 `react-cloudflare` is a baerly-storage app scaffolded with
