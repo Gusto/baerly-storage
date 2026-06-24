@@ -1,10 +1,11 @@
 /**
- * The `--with=agent-rules` bolt-on add-on. Drops a delimited block
- * that tells the user's AI agent (Claude / Cursor / Copilot) that
+ * Bolt-on agent-rules writer. The CLI enables this by default for
+ * existing wrangler projects and lets users opt out with
+ * `--no-agent-rules`. It drops a delimited block that tells the user's
+ * AI agent (Claude / Cursor / Copilot) that
  * `node_modules/@gusto/baerly-storage/dist/API.md` is the canonical API
- * surface and that the patterns those agents' training data is
- * densest with (Postgres/Prisma/Drizzle, Mongo, Firebase) don't
- * apply.
+ * surface and that the patterns those agents' training data is densest
+ * with (Postgres/Prisma/Drizzle, Mongo, Firebase) don't apply.
  *
  * Scaffolded apps already get this via the per-template `AGENTS.md`
  * shipped by `scaffold()`. This module is for the bolt-on path —
@@ -45,6 +46,8 @@ This repo uses @gusto/baerly-storage. Before writing or modifying storage code:
 - Read **\`node_modules/@gusto/baerly-storage/dist/API.md\`** — public-API
   quickref. Every method, every error code, every example. If a
   pattern you want to use is not here, it does not exist in baerly.
+- Common mistakes keyed by the exact error string live in
+  \`node_modules/@gusto/baerly-storage/dist/RECIPES.md\`.
 - Type contracts live in \`node_modules/@gusto/baerly-storage/dist/*.d.ts\`.
   The whole API is \`Db\`, \`Collection<T>\`, \`Query<T>\`, and \`Predicate<T>\`.
 

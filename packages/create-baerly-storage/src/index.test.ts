@@ -14,6 +14,10 @@
  *   5. --with=docker on --target=cloudflare is rejected with an
  *      actionable message.
  *   6. --with=junk lists the available add-ons.
+ *   7. --with=agent-rules is rejected in scaffold mode with a default-on
+ *      bolt-on explanation.
+ *   8. Bolt-on mode writes agent rules by default, preserves existing
+ *      AGENTS.md content, and honors --no-agent-rules.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -185,7 +189,7 @@ describe("create-baerly-storage runner (non-TTY)", () => {
     expect(err).toContain("agent-rules");
   });
 
-  test("rejects --with=agent-rules in scaffold mode (bolt-on-only addon)", async () => {
+  test("rejects --with=agent-rules in scaffold mode (default-on bolt-on compatibility token)", async () => {
     const stderr = captureStream(process.stderr);
     let exitCode: number;
     try {
@@ -199,7 +203,8 @@ describe("create-baerly-storage runner (non-TTY)", () => {
     }
     expect(exitCode).toBe(1);
     const err = stderr.captured.join("");
-    expect(err).toContain("--with=agent-rules only applies to bolt-on mode");
+    expect(err).toContain("--with=agent-rules is unnecessary in scaffold mode");
+    expect(err).toContain("--no-agent-rules");
     expect(err).toContain("Scaffolded apps already include");
   });
 
@@ -524,6 +529,118 @@ describe("create-baerly-storage runner — bolt-on dispatch (non-TTY)", () => {
     }
     expect(exitCode).toBe(1);
     expect(stderr.captured.join("")).toMatch(/detected wrangler\.jsonc but --target=node/);
+  });
+
+  test("bolt-on writes the AGENTS.md router by default (no --with flag)", async () => {
+    const dir = join(outRoot, "bolton-default-agent-rules");
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "wrangler.jsonc"),
+      `{ "name": "test-app", "main": "src/index.ts", "compatibility_date": "2026-05-24" }`,
+    );
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "test-app", version: "0.0.0", private: true }, null, 2),
+    );
+    process.chdir(dir);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([".", "--json"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(stderr.captured.join("")).toBe("");
+    expect(exitCode).toBe(0);
+    const out = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { agentRules?: { path: string; action: string } };
+    };
+    // Default-on: agentRules block should be written.
+    expect(out.result.agentRules).toBeDefined();
+    expect(out.result.agentRules?.action).toBe("created");
+    // The AGENTS.md file should exist with the managed sentinel.
+    const agentsPath = join(dir, "AGENTS.md");
+    expect(existsSync(agentsPath)).toBe(true);
+    const { readFile: rf } = await import("node:fs/promises");
+    const content = await rf(agentsPath, "utf8");
+    expect(content).toContain("<!-- baerly:start -->");
+    expect(content).toContain("<!-- baerly:end -->");
+  });
+
+  test("bolt-on preserves a pre-existing user AGENTS.md on the default-on path", async () => {
+    const dir = join(outRoot, "bolton-preserve-agent-rules");
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "wrangler.jsonc"),
+      `{ "name": "test-app", "main": "src/index.ts", "compatibility_date": "2026-05-24" }`,
+    );
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "test-app", version: "0.0.0", private: true }, null, 2),
+    );
+    // User already has a hand-authored AGENTS.md — the default-on path
+    // (`args["agent-rules"] !== false`, no flag passed) must NOT clobber it.
+    const userContent = "# My App\n\nHand-authored rules the user wrote.\n";
+    await writeFile(join(dir, "AGENTS.md"), userContent);
+    process.chdir(dir);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([".", "--json"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(stderr.captured.join("")).toBe("");
+    expect(exitCode).toBe(0);
+    const out = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { agentRules?: { path: string; action: string } };
+    };
+    // Default-on path ran and appended (file already existed).
+    expect(out.result.agentRules).toBeDefined();
+    expect(out.result.agentRules?.action).toBe("appended");
+    // The user's original content survives byte-identical at the front,
+    // and the managed baerly block is added.
+    const { readFile: rf } = await import("node:fs/promises");
+    const content = await rf(join(dir, "AGENTS.md"), "utf8");
+    expect(content.startsWith(userContent)).toBe(true);
+    expect(content).toContain("<!-- baerly:start -->");
+    expect(content).toContain("<!-- baerly:end -->");
+  });
+
+  test("bolt-on skips the AGENTS.md router when --no-agent-rules is passed", async () => {
+    const dir = join(outRoot, "bolton-no-agent-rules");
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "wrangler.jsonc"),
+      `{ "name": "test-app", "main": "src/index.ts", "compatibility_date": "2026-05-24" }`,
+    );
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "test-app", version: "0.0.0", private: true }, null, 2),
+    );
+    process.chdir(dir);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCreateBaerly([".", "--no-agent-rules", "--json"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
+    expect(stderr.captured.join("")).toBe("");
+    expect(exitCode).toBe(0);
+    const out = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { agentRules?: unknown };
+    };
+    // --no-agent-rules: no block should be written.
+    expect(out.result.agentRules).toBeUndefined();
+    expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(dir, ".claude", "rules", "baerly.md"))).toBe(false);
   });
 });
 
