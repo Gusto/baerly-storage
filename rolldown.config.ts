@@ -5,20 +5,24 @@ import { createRollupLicensePlugin } from "rollup-license-plugin";
 import { licensePluginOptions, PARTIAL_LIB_FILENAME } from "./scripts/third-party-licenses.mjs";
 
 /**
- * Copy the hand-authored markdown artifacts (the public-API quickref and
- * the changelog) into `dist/` so a
- * freshly-installed `node_modules/@gusto/baerly-storage/dist/API.md` gives a
- * CLI agent (no TS LS) the entire public surface in one read. Named
- * `API.md` — not `AGENTS.md` — to avoid colliding with the scaffolded
- * app's own `AGENTS.md` at the user's project root. The `.d.ts` files
- * are split into hash-suffixed shared chunks by the bundler's type
- * splitter; the quickref is the flat sibling.
+ * Copy the hand-authored markdown artifacts (the public-API quickref,
+ * the common-mistakes companion RECIPES.md, and the changelog) into
+ * `dist/` so a freshly-installed
+ * `node_modules/@gusto/baerly-storage/dist/API.md` gives a CLI agent
+ * (no TS LS) the entire public surface in one read, and RECIPES.md
+ * gives a fast "why did my call fail" lookup keyed by exact error
+ * string. Named `API.md` — not `AGENTS.md` — to avoid colliding with
+ * the scaffolded app's own `AGENTS.md` at the user's project root. The
+ * `.d.ts` files are split into hash-suffixed shared chunks by the
+ * bundler's type splitter; the quickref and recipe files are flat
+ * siblings.
  */
 const copyApiQuickref = () => ({
   name: "copy-api-quickref",
   closeBundle() {
     mkdirSync("dist", { recursive: true });
     copyFileSync("packages/server/API.md", "dist/API.md");
+    copyFileSync("packages/server/RECIPES.md", "dist/RECIPES.md");
     // Ship the changelog too: a stranded agent that remembers an older
     // API reads `node_modules/@gusto/baerly-storage/dist/CHANGELOG.md`
     // to recover the current call. Maintained by Changesets at the repo

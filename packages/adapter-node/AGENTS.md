@@ -1,3 +1,10 @@
+## When NOT to use this package
+
+On Cloudflare Workers, do NOT use `@baerly/adapter-node`'s S3-credentials
+factory — use `r2BindingStorage` from `@gusto/baerly-storage/cloudflare`
+(the native R2 binding). This package is for Node hosts that talk to an
+S3-compatible endpoint over HTTP.
+
 ## Credentials
 
 All four storage factories (`s3Storage`, `r2Storage`, `minioStorage`,
