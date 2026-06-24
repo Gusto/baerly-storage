@@ -81,6 +81,8 @@ import {
 } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
+const CAS_CONFLICT_RESOLUTION = "Re-read and retry.";
+
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
@@ -370,6 +372,11 @@ export class Writer {
     throw new BaerlyError(
       "Conflict",
       `Writer: CAS conflict on ${this.#currentJsonKey} after ${this.#maxRetries} attempts`,
+      undefined,
+      undefined,
+      undefined,
+      CAS_CONFLICT_RESOLUTION,
+      true,
     );
   }
 

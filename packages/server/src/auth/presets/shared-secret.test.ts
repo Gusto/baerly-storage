@@ -48,6 +48,12 @@ describe("sharedSecret", () => {
     }
   });
 
+  test("InvalidConfig throws carry a resolution string", () => {
+    expect(() => sharedSecret({ secret: "", tenantPrefix: "acme" })).toThrowError(
+      expect.objectContaining({ resolution: expect.any(String) }),
+    );
+  });
+
   test("throws BaerlyError{InvalidConfig} on empty tenantPrefix", () => {
     try {
       sharedSecret({ secret: "s3cret", tenantPrefix: "" });

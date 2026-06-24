@@ -34,6 +34,30 @@ export interface HttpErrorEnvelope {
   readonly error: {
     readonly code: BaerlyErrorCode;
     readonly message: string;
+    /**
+     * Whether this error instance is retriable. Servers always send it;
+     * older servers may omit it. The client preserves the wire hint when
+     * present and otherwise falls back to the code-derived default.
+     * Mirrors `HttpErrorEnvelope.error.retriable` in
+     * `packages/server/src/contract.ts`.
+     */
+    readonly retriable?: boolean;
+    /**
+     * Field-path issues, present only when `code === "SchemaError"`.
+     * Mirrors the server contract. Older servers omit this field.
+     */
+    readonly issues?: ReadonlyArray<{
+      readonly path: ReadonlyArray<string | number>;
+      readonly message: string;
+    }>;
+    /**
+     * Human-readable remediation hint. Mirrors the server contract:
+     * present when the code has a per-code default or a site override
+     * (e.g. `PayloadTooLarge`, `Unauthorized`, `AccessDenied`, `NotFound`,
+     * or a context-specific `Conflict`); absent for opaque/transient codes.
+     * Older servers may omit it.
+     */
+    readonly resolution?: string;
   };
 }
 

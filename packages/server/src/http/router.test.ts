@@ -1,4 +1,9 @@
-import { BaerlyError, MemoryStorage } from "@baerly/protocol";
+import {
+  BaerlyError,
+  MemoryStorage,
+  WHERE_ORDER_JSON_RESOLUTION,
+  WRITE_BODY_SHAPE_RESOLUTION,
+} from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Db } from "../db.ts";
@@ -42,14 +47,43 @@ describe("mapError", () => {
     const err = new BaerlyError("NotFound", "No such row: doc-42");
     const { status, envelope } = mapError(err);
     expect(status).toBe(404);
-    expect(envelope.error).toEqual({ code: "NotFound", message: "No such row: doc-42" });
+    expect(envelope.error).toEqual({
+      code: "NotFound",
+      message: "No such row: doc-42",
+      retriable: false,
+      resolution: "No row matches this id; create it first or treat this as a miss.",
+    });
   });
 
   test("unmapped BaerlyError code falls through to 500 with its own message", () => {
     const err = new BaerlyError("InvalidResponse", "GET k: missing ETag");
     const { status, envelope } = mapError(err);
     expect(status).toBe(500);
-    expect(envelope.error).toEqual({ code: "InvalidResponse", message: "GET k: missing ETag" });
+    expect(envelope.error).toEqual({
+      code: "InvalidResponse",
+      message: "GET k: missing ETag",
+      retriable: false,
+    });
+  });
+
+  test("BaerlyError retriable override reaches the wire envelope", () => {
+    const err = new BaerlyError(
+      "Conflict",
+      "duplicate _id",
+      undefined,
+      undefined,
+      undefined,
+      "Choose a different `_id`.",
+      false,
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(409);
+    expect(envelope.error).toEqual({
+      code: "Conflict",
+      message: "duplicate _id",
+      retriable: false,
+      resolution: "Choose a different `_id`.",
+    });
   });
 
   test("unknown thrown value is sanitized and emitted via the observability channel", () => {
@@ -57,7 +91,11 @@ describe("mapError", () => {
     const { status, envelope } = mapError(err);
     expect(status).toBe(500);
     // No internal detail in the wire envelope.
-    expect(envelope.error).toEqual({ code: "Internal", message: "internal error" });
+    expect(envelope.error).toEqual({
+      code: "Internal",
+      message: "internal error",
+      retriable: false,
+    });
     // The original error reaches the structured server-side channel
     // at error level on the http category.
     expect(records).toHaveLength(1);
@@ -72,7 +110,11 @@ describe("mapError", () => {
   test("non-Error thrown value is sanitized identically", () => {
     const { status, envelope } = mapError("naked string with /etc/secret");
     expect(status).toBe(500);
-    expect(envelope.error).toEqual({ code: "Internal", message: "internal error" });
+    expect(envelope.error).toEqual({
+      code: "Internal",
+      message: "internal error",
+      retriable: false,
+    });
     expect(records).toHaveLength(1);
     expect(records[0]!.level).toBe("error");
     const serialized = records[0]!.properties["error"] as { code: string; message: string };
@@ -243,6 +285,33 @@ describe("router is silent without a wrapping observability scope", () => {
     );
     expect(res.status).toBe(200);
     expect(canonical()).toHaveLength(0);
+  });
+});
+
+describe("request-path 400s carry a resolution hint", () => {
+  test("flat-body 400 teaches the wrap-it resolution", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/c/notes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "hi" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      readonly error: { readonly code: string; readonly resolution?: string };
+    };
+    expect(body.error.code).toBe("SchemaError");
+    expect(body.error.resolution).toBe(WRITE_BODY_SHAPE_RESOLUTION);
+  });
+
+  test("invalid ?where= JSON teaches the URL-encoded-JSON resolution", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/c/notes?where=not-json");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      readonly error: { readonly code: string; readonly resolution?: string };
+    };
+    expect(body.error.resolution).toBe(WHERE_ORDER_JSON_RESOLUTION);
   });
 });
 

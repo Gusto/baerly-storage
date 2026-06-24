@@ -23,6 +23,11 @@ import { parseListObjectsV2CommandOutput, parseS3Error } from "./xml.ts";
  * `Conflict` (CAS guard lost — retrying would just re-lose against
  * the same state). `NetworkError` is intentionally absent — it covers
  * transient transport faults and stays retryable.
+ *
+ * Transport-layer set, distinct from `RETRIABLE_CODES` in `@baerly/protocol`'s
+ * `errors.ts` (the default wire `retriable` hint). `Conflict` is "permanent"
+ * here (a blind re-PUT re-loses the CAS race) yet retryable for logical CAS
+ * callers that can fresh-read + re-apply. Same code, two different questions.
  */
 const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
   "AccessDenied",

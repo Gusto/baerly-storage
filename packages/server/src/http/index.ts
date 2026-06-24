@@ -5,3 +5,4 @@ export {
   listEventsSince,
   longPollSince,
 } from "./since.ts";
+export { type HttpErrorEnvelope, errorEnvelope } from "../contract.ts";

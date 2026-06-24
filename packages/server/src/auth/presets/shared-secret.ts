@@ -1,4 +1,4 @@
-import { BaerlyError, type Verifier } from "@baerly/protocol";
+import { BaerlyError, SHARED_SECRET_CONFIG_RESOLUTION, type Verifier } from "@baerly/protocol";
 import { timingSafeEqual } from "../internal/timing-safe-equal.ts";
 
 /**
@@ -53,12 +53,23 @@ export interface SharedSecretOptions {
  */
 export const sharedSecret = (opts: SharedSecretOptions): Verifier => {
   if (opts.secret.length === 0) {
-    throw new BaerlyError("InvalidConfig", "sharedSecret: secret must be non-empty");
+    throw new BaerlyError(
+      "InvalidConfig",
+      "sharedSecret: secret must be non-empty",
+      undefined,
+      undefined,
+      undefined,
+      SHARED_SECRET_CONFIG_RESOLUTION,
+    );
   }
   if (opts.tenantPrefix.length === 0 || opts.tenantPrefix.includes("/")) {
     throw new BaerlyError(
       "InvalidConfig",
       `sharedSecret: tenantPrefix must be non-empty and "/"-free (got ${JSON.stringify(opts.tenantPrefix)})`,
+      undefined,
+      undefined,
+      undefined,
+      SHARED_SECRET_CONFIG_RESOLUTION,
     );
   }
   const expected = new TextEncoder().encode(`Bearer ${opts.secret}`);

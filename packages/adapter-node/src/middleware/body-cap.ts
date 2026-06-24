@@ -1,5 +1,6 @@
 import type { HttpBindings } from "@hono/node-server";
 import { BaerlyError } from "@baerly/protocol";
+import { errorEnvelope } from "@baerly/server/http";
 
 /**
  * Body-cap enforcement for Node-hosted requests. Replaces the
@@ -81,9 +82,10 @@ export function applyBodyCap(req: Request, env: unknown, max: number): Request |
 
 function cap413(max: number): Response {
   return new Response(
-    JSON.stringify({
-      error: { code: "PayloadTooLarge", message: `Body exceeds ${max} bytes` },
-    }),
-    { status: 413, headers: { "content-type": "application/json" } },
+    JSON.stringify(errorEnvelope("PayloadTooLarge", `Body exceeds ${max} bytes`)),
+    {
+      status: 413,
+      headers: { "content-type": "application/json" },
+    },
   );
 }

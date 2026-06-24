@@ -115,6 +115,8 @@ describe("Collection.insert", () => {
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
     expect((thrown as BaerlyError).code).toBe("Conflict");
+    expect((thrown as BaerlyError).retriable).toBe(false);
+    expect((thrown as BaerlyError).resolution).toContain("different `_id`");
     // Cardinality / id should appear in the message so callers can
     // distinguish "duplicate id" from a generic CAS conflict.
     expect((thrown as BaerlyError).message).toContain("dup");

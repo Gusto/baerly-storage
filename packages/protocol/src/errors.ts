@@ -26,8 +26,10 @@ export type BaerlyErrorCode =
    */
   | "SchemaError"
   /**
-   * CAS lost on `current.json`. Caller decides whether to retry.
-   * Surfaces in the collection API and HTTP layer.
+   * Write conflicted with current state: CAS retry budget exhausted,
+   * duplicate caller-supplied `_id`, or an already-existing guarded
+   * storage key. Check `BaerlyError.retriable` to decide whether the
+   * same logical operation should be retried.
    */
   | "Conflict"
   /**
@@ -107,6 +109,19 @@ export type BaerlyErrorCode =
   | "MutationFailed";
 
 /**
+ * Codes whose default failure class is resolved by retrying with a fresh read.
+ * Throw sites may override this when the same code is context-sensitive
+ * (notably caller-supplied `_id` collisions, which also use `Conflict`).
+ */
+export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
+  "NetworkError",
+  "Conflict",
+]);
+
+/** True iff this error code's default failure class is retriable. */
+export const isRetriableCode = (code: BaerlyErrorCode): boolean => RETRIABLE_CODES.has(code);
+
+/**
  * The single error class thrown by baerly-storage. Discriminate by `code`, not
  * `instanceof`: the code string survives `JSON.stringify` round-trips
  * across Worker / iframe / postMessage realm boundaries, where each
@@ -120,7 +135,7 @@ export type BaerlyErrorCode =
  *   await db.collection("tickets").insert({ title: "hi" });
  * } catch (err) {
  *   if (err instanceof BaerlyError && err.code === "Conflict") {
- *     // ... CAS lost; retry
+ *     // Check err.retriable; CAS can retry, duplicate _id cannot.
  *   }
  *   throw err;
  * }
@@ -153,6 +168,17 @@ export class BaerlyError extends Error {
    * you genuinely need the wire value.
    */
   readonly status?: number;
+  /** Canonical corrective action; crosses the wire via `HttpErrorEnvelope.error.resolution`. */
+  readonly resolution?: string;
+  private readonly retriableOverride: boolean | undefined;
+
+  /**
+   * Whether this error instance is retriable. Defaults from `code`, but
+   * context-sensitive throw sites can override it.
+   */
+  get retriable(): boolean {
+    return this.retriableOverride ?? isRetriableCode(this.code);
+  }
 
   constructor(
     code: BaerlyErrorCode,
@@ -163,11 +189,14 @@ export class BaerlyError extends Error {
       readonly message: string;
     }>,
     status?: number,
+    resolution?: string,
+    retriableOverride?: boolean,
   ) {
     super(message);
     this.name = "BaerlyError";
     this.code = code;
     this.cause = cause;
+    this.retriableOverride = retriableOverride;
     // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (issues !== undefined) {
       this.issues = issues;
@@ -175,6 +204,10 @@ export class BaerlyError extends Error {
     // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (status !== undefined) {
       this.status = status;
+    }
+    // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
+    if (resolution !== undefined) {
+      this.resolution = resolution;
     }
   }
 }

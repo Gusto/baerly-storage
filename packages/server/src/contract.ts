@@ -1,4 +1,9 @@
-import type { LogEntry, BaerlyErrorCode } from "@baerly/protocol";
+import {
+  CODE_RESOLUTIONS,
+  isRetriableCode,
+  type LogEntry,
+  type BaerlyErrorCode,
+} from "@baerly/protocol";
 
 /**
  * Wire envelope for every error response. Mirrors `BaerlyError` so
@@ -10,6 +15,8 @@ export interface HttpErrorEnvelope {
   readonly error: {
     readonly code: BaerlyErrorCode;
     readonly message: string;
+    /** Whether this error instance is retriable. Always present; defaults from `code`, with throw-site overrides. Additive. */
+    readonly retriable: boolean;
     /**
      * Field-path issues, present only when `code === "SchemaError"`.
      * Each entry is `{ path, message }` where `path` is the dotted
@@ -21,25 +28,35 @@ export interface HttpErrorEnvelope {
       readonly path: ReadonlyArray<string | number>;
       readonly message: string;
     }>;
+    /** Human-readable remediation hint. Present when the code has a per-code default or a site override; absent for opaque/transient codes. */
+    readonly resolution?: string;
   };
 }
 
 /**
  * Single drift surface for the {@link HttpErrorEnvelope} shape. The
  * router and both adapters call this — adding or renaming a field on
- * the wire is a one-edit change here.
+ * the wire is a one-edit change here. `retriable` is additive (always
+ * present, defaulted from `code`); older clients ignore it.
  */
 export const errorEnvelope = (
   code: BaerlyErrorCode,
   message: string,
   issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>,
-): HttpErrorEnvelope => ({
-  error: {
-    code,
-    message,
-    ...(issues !== undefined && issues.length > 0 ? { issues } : {}),
-  },
-});
+  resolution?: string,
+  retriable?: boolean,
+): HttpErrorEnvelope => {
+  const resolved = resolution ?? CODE_RESOLUTIONS[code];
+  return {
+    error: {
+      code,
+      message,
+      retriable: retriable ?? isRetriableCode(code),
+      ...(issues !== undefined && issues.length > 0 ? { issues } : {}),
+      ...(resolved !== undefined ? { resolution: resolved } : {}),
+    },
+  };
+};
 
 /**
  * Metadata embedded in every successful read response.
@@ -111,7 +128,7 @@ export type Routes =
  * | 401    | `Verifier` returned null → `code:"Unauthorized"`, `message: "Missing or invalid Authorization header"`. |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
- * | 409    | CAS lost → `code:"Conflict"`.                                    |
+ * | 409    | Write conflict → `code:"Conflict"` (`retriable` says whether to retry). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
  * | 500    | Anything else → `code:"Internal"`.                               |
  */

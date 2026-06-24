@@ -150,7 +150,12 @@ describe("applyBodyCap", () => {
     const response = result as Response;
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({
-      error: { code: "PayloadTooLarge", message: `Body exceeds ${CAP} bytes` },
+      error: {
+        code: "PayloadTooLarge",
+        message: `Body exceeds ${CAP} bytes`,
+        retriable: false,
+        resolution: "Reduce the request body below the server's body-size cap (1 MiB default).",
+      },
     });
     expect(incoming.resumed).toBe(1);
   });

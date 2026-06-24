@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  BEARER_JWT_CONFIG_RESOLUTION,
+  CLOUDFLARE_ACCESS_CONFIG_RESOLUTION,
+  SHARED_SECRET_CONFIG_RESOLUTION,
+} from "./auth-resolution.ts";
+import {
   CURRENT_JSON_CONTENT_TYPE,
   GC_PENDING_CONTENT_TYPE,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
@@ -42,6 +47,24 @@ describe("wire-contract constants", () => {
     // contract that operators and tools match against.
     expect(SHARED_SECRET_MISSING_MESSAGE).toBe(
       'baerly: auth="shared-secret" but SHARED_SECRET env is empty/unset. Cloudflare: `wrangler secret put SHARED_SECRET`, or add to .dev.vars for local dev. Node: set in process env.',
+    );
+  });
+
+  test("SHARED_SECRET_CONFIG_RESOLUTION is locked corrective-action wording", () => {
+    expect(SHARED_SECRET_CONFIG_RESOLUTION).toBe(
+      'Pass a non-empty `secret` and a non-empty `tenantPrefix` with no "/" to sharedSecret({ secret, tenantPrefix }).',
+    );
+  });
+
+  test("BEARER_JWT_CONFIG_RESOLUTION is locked corrective-action wording", () => {
+    expect(BEARER_JWT_CONFIG_RESOLUTION).toBe(
+      'Provide non-empty `issuer`, `audience`, and at least one `algorithms` entry; `tenantClaim` and `tenantPrefix` are mutually exclusive and `tenantPrefix` must be non-empty with no "/".',
+    );
+  });
+
+  test("CLOUDFLARE_ACCESS_CONFIG_RESOLUTION is locked corrective-action wording", () => {
+    expect(CLOUDFLARE_ACCESS_CONFIG_RESOLUTION).toBe(
+      "Pass a non-empty `teamDomain` and a 64-char lowercase-hex `audienceTag` (the Application Audience (AUD) tag from the CF Access app config).",
     );
   });
 });

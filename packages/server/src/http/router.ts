@@ -31,6 +31,8 @@ import {
   type OrderSpec,
   type PredicateWire,
   validateWire,
+  WHERE_ORDER_JSON_RESOLUTION,
+  WRITE_BODY_SHAPE_RESOLUTION,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import {
@@ -201,7 +203,14 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/count", async (c) => {
     const collection = c.req.query("collection");
     if (collection === undefined || collection.length === 0) {
-      throw new BaerlyError("SchemaError", "GET /v1/count requires ?collection=<name>");
+      throw new BaerlyError(
+        "SchemaError",
+        "GET /v1/count requires ?collection=<name>",
+        undefined,
+        undefined,
+        undefined,
+        "Add ?collection=<name> to the request URL.",
+      );
     }
     const wire = parseWhereParam(c);
     const { rows, manifestPointer, fresh } = await runAllWithMeta(
@@ -295,7 +304,14 @@ const assertJsonBodyField = (body: unknown, field: string): Record<string, unkno
       ? (body as Record<string, unknown>)[field]
       : undefined;
   if (value === undefined || typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new BaerlyError("SchemaError", `Request body must be { ${field}: object }`);
+    throw new BaerlyError(
+      "SchemaError",
+      `Request body must be { ${field}: object }`,
+      undefined,
+      undefined,
+      undefined,
+      WRITE_BODY_SHAPE_RESOLUTION,
+    );
   }
   return value as Record<string, unknown>;
 };
@@ -327,7 +343,14 @@ const parseWhereParam = (c: Context): PredicateWire => {
   try {
     parsed = JSON.parse(whereParam);
   } catch {
-    throw new BaerlyError("SchemaError", "Invalid JSON in ?where=");
+    throw new BaerlyError(
+      "SchemaError",
+      "Invalid JSON in ?where=",
+      undefined,
+      undefined,
+      undefined,
+      WHERE_ORDER_JSON_RESOLUTION,
+    );
   }
   return validateWire(parsed as PredicateWire);
 };
@@ -369,10 +392,24 @@ function parseOrder(raw: string | undefined): OrderSpec<DocumentData> | undefine
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new BaerlyError("SchemaError", "Invalid JSON in ?order=");
+    throw new BaerlyError(
+      "SchemaError",
+      "Invalid JSON in ?order=",
+      undefined,
+      undefined,
+      undefined,
+      WHERE_ORDER_JSON_RESOLUTION,
+    );
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new BaerlyError("SchemaError", "?order= must encode a JSON object");
+    throw new BaerlyError(
+      "SchemaError",
+      "?order= must encode a JSON object",
+      undefined,
+      undefined,
+      undefined,
+      WHERE_ORDER_JSON_RESOLUTION,
+    );
   }
   return parsed as OrderSpec<DocumentData>;
 }
@@ -405,7 +442,10 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {
     const status = ERROR_TO_STATUS.get(err.code) ?? 500;
-    return { status, envelope: errorEnvelope(err.code, err.message, err.issues) };
+    return {
+      status,
+      envelope: errorEnvelope(err.code, err.message, err.issues, err.resolution, err.retriable),
+    };
   }
   // Unknown thrown value: the message may carry internal detail
   // (file paths, bucket names, upstream response bodies). Log on the
@@ -471,11 +511,25 @@ async function readJsonBody(c: Context, maxBytes: number): Promise<unknown> {
     );
   }
   if (raw.length === 0) {
-    throw new BaerlyError("SchemaError", "Empty request body");
+    throw new BaerlyError(
+      "SchemaError",
+      "Empty request body",
+      undefined,
+      undefined,
+      undefined,
+      WRITE_BODY_SHAPE_RESOLUTION,
+    );
   }
   try {
     return JSON.parse(raw);
   } catch {
-    throw new BaerlyError("SchemaError", "Invalid JSON in request body");
+    throw new BaerlyError(
+      "SchemaError",
+      "Invalid JSON in request body",
+      undefined,
+      undefined,
+      undefined,
+      WRITE_BODY_SHAPE_RESOLUTION,
+    );
   }
 }
