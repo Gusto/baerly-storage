@@ -86,9 +86,13 @@ export const CREATE_BAERLY_ARGS = {
     type: "string",
     description:
       'Comma-separated add-ons. Scaffold mode: "docker" (requires --target=node). ' +
-      "Bolt-on mode (`create baerly .` in an existing wrangler project): " +
-      '"agent-rules" drops an AGENTS.md block pointing at the baerly API surface.',
-    valueHint: "docker|agent-rules",
+      "The bolt-on AGENTS.md block is its own default-on flag — see --agent-rules.",
+    valueHint: "docker",
+  },
+  "agent-rules": {
+    type: "boolean",
+    description:
+      "Bolt-on mode: write/refresh the AGENTS.md router pointing at the baerly API (default true; negate with --no-agent-rules). Ignored in scaffold mode.",
   },
   pm: {
     type: "string",
@@ -245,7 +249,7 @@ export const handleCreateBaerly = async (
           json: jsonMode,
           isInteractive,
           installer: opts.installer,
-          agentRules: withAddonsFromFlag?.includes("agent-rules") === true,
+          agentRules: args["agent-rules"] !== false,
         });
       }
       projectName = w.projectName;
@@ -276,7 +280,7 @@ export const handleCreateBaerly = async (
           json: jsonMode,
           isInteractive,
           installer: opts.installer,
-          agentRules: withAddonsFromFlag?.includes("agent-rules") === true,
+          agentRules: args["agent-rules"] !== false,
         });
       }
       if (args.target === undefined) {
@@ -311,9 +315,9 @@ export const handleCreateBaerly = async (
     }
     if (withAddons.includes("agent-rules")) {
       throw new Error(
-        `--with=agent-rules only applies to bolt-on mode (pnpm create @gusto/baerly-storage@latest . ` +
-          `inside an existing wrangler project). Scaffolded apps already include ` +
-          `an AGENTS.md preamble — drop --with=agent-rules.`,
+        `--with=agent-rules is unnecessary in scaffold mode. Bolt-on mode writes ` +
+          `agent rules by default and supports --no-agent-rules to opt out. ` +
+          `Scaffolded apps already include an AGENTS.md preamble — drop --with=agent-rules.`,
       );
     }
     const result = await scaffold({

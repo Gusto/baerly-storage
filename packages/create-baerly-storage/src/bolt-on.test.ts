@@ -172,7 +172,7 @@ describe("boltOnExistingWrangler", () => {
   });
 });
 
-describe("boltOnExistingWrangler --with=agent-rules", () => {
+describe("boltOnExistingWrangler agentRules option", () => {
   test("without agentRules, no agent file is created or modified", async () => {
     const dir = await fixtureDir();
     const result = await boltOnExistingWrangler({

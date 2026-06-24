@@ -24,8 +24,8 @@ const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "react-node"),
 ];
 
-// `packages/create-baerly-storage/templates/addons/` carries the opt-in add-on
-// trees layered on top of the base scaffold via `withAddons`.
+// `packages/create-baerly-storage/templates/addons/` carries template add-on
+// trees layered on top of the base scaffold via `withAddons`; currently docker.
 const ADDONS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "templates", "addons");
 
 describe("scaffold", () => {

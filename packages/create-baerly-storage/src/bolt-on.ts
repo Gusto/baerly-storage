@@ -47,8 +47,10 @@ export interface BoltOnOptions {
   /**
    * When `true`, drop a delimited "this repo uses @gusto/baerly-storage"
    * block telling the user's AI agent where the canonical API
-   * surface lives. Default `false`. See `agent-rules.ts` for the
-   * target-detection chain and the literal block content.
+   * surface lives. The programmatic helper is opt-in; the CLI bolt-on
+   * path passes `true` by default unless `--no-agent-rules` is set.
+   * See `agent-rules.ts` for the target-detection chain and the
+   * literal block content.
    */
   readonly agentRules?: boolean;
 }

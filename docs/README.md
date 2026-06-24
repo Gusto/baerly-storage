@@ -56,7 +56,7 @@ invariants, operator runbooks, and target-specific bolt-ons.
 - [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md)
   — One-command bolt-on for an existing `wrangler create` project —
   `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc,
-  patches it, prints the worker-entry snippet.
+  patches it, refreshes agent rules, prints the worker-entry snippet.
 - [`guide/auth.md`](guide/auth.md) — Production auth recipes for
   Cloudflare and Node, tenant pinning, and the no-built-in-authorization
   caveat.

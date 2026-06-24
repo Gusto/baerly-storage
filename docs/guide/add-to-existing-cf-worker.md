@@ -1,7 +1,7 @@
 ---
 title: Add baerly-storage to an existing Cloudflare Worker
 audience: integrator
-summary: One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, prints the worker-entry snippet.
+summary: One-command bolt-on for an existing `wrangler create` project — `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc, patches it, refreshes agent rules, prints the worker-entry snippet.
 last-reviewed: 2026-06-13
 tags: [getting-started, cloudflare]
 related: [../contributing/extending.md]
@@ -25,8 +25,8 @@ pnpm create @gusto/baerly-storage@latest .
 binding and the `vars` baerly-storage expects, seeds a `.dev.vars` with
 a dev secret, adds `.dev.vars` to `.gitignore` if it isn't already
 covered, appends `@gusto/baerly-storage` to your `package.json` dependencies,
-runs your package manager's install, and prints the worker-entry
-snippet for you to paste.
+refreshes a managed agent-rules block, runs your package manager's install,
+and prints the worker-entry snippet for you to paste.
 
 (The npm/yarn/bun equivalents work too — keep the scope:
 `npm create @gusto/baerly-storage@latest .`,
@@ -43,6 +43,7 @@ shorthand resolves to a different, non-existent package.)
 | `.gitignore` | Appends `.dev.vars` unless an equivalent pattern (`.env*.local`, `*.local`, `.env`) is already present. |
 | `package.json` | Appends `@gusto/baerly-storage` to `dependencies` if not present. |
 | `baerly.config.ts` | Written if absent. Pass `--force` to overwrite. |
+| `AGENTS.md` / `.claude/rules/baerly.md` / `.cursor/rules/baerly.md` | Writes or refreshes a delimited baerly-storage API guidance block. Pass `--no-agent-rules` to skip. |
 
 ## What does NOT get written
 
@@ -97,7 +98,8 @@ shorthand resolves to a different, non-existent package.)
 ## Re-running
 
 `pnpm create @gusto/baerly-storage@latest .` is idempotent on existing wrangler projects.
-Re-run it any time — every write is gated by detection, so a second
-run with the same flags is a no-op. Use this to add a missing `vars`
-key or to re-check the R2 binding after editing `wrangler.jsonc` by
+Re-run it any time — writes are gated by detection or managed-block
+replacement, so a second run with the same flags does not duplicate
+entries. Use this to add a missing `vars` key, refresh the agent-rules
+block, or re-check the R2 binding after editing `wrangler.jsonc` by
 hand.

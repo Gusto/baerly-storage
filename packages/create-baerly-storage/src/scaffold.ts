@@ -10,20 +10,19 @@ import {
 } from "./substitute.ts";
 
 /**
- * Optional add-ons that can be layered on top of a base template
- * (`docker`) or on top of an existing wrangler project in bolt-on
- * mode (`agent-rules`). Adding a new entry here is what makes
- * `--with=<name>` recognised by both the flag parser and the wizard.
+ * Optional add-ons and compatibility tokens recognised by the CLI.
+ * `docker` is a scaffold template overlay; `agent-rules` is the legacy
+ * bolt-on `--with` token for the default-on agent-rules writer. Adding
+ * a new entry here is what makes `--with=<name>` recognised by both the
+ * flag parser and the wizard.
  *
  * - `docker` (scaffold-only, `--target=node`): copies the Dockerfile
  *   add-on under `templates/addons/docker/` on top of the scaffolded
  *   project.
- * - `agent-rules` (bolt-on-only): drops a delimited block telling AI
- *   agents that `node_modules/@gusto/baerly-storage/dist/API.md` is the
- *   canonical API surface. Scaffolded apps already ship that
- *   guidance via the per-template `AGENTS.md`; this closes the gap
- *   for users adopting baerly into a repo that didn't start from a
- *   `create-baerly-storage` template.
+ * - `agent-rules` (bolt-on compatibility token): the CLI now writes
+ *   this by default in bolt-on mode and accepts `--no-agent-rules` to
+ *   opt out. Scaffolded apps already ship the same guidance via the
+ *   per-template `AGENTS.md`.
  */
 export const KNOWN_ADDONS = ["docker", "agent-rules"] as const;
 export type Addon = (typeof KNOWN_ADDONS)[number];
