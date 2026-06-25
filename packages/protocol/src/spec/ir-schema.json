@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://baerly.dev/spec/ir-schema.json",
+  "title": "baerly machine-readable contract IR",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "specVersion",
+    "kernelVersion",
+    "errorCodes",
+    "operators",
+    "collectionMethods",
+    "queryMethods",
+    "storageInterface",
+    "predicateWire",
+    "schemaContract",
+    "httpRoutes"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "specVersion": { "type": "string" },
+    "kernelVersion": { "type": "string" },
+    "errorCodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "httpStatus", "retriable", "summary"],
+        "properties": {
+          "code": { "type": "string" },
+          "httpStatus": { "type": ["integer", "null"] },
+          "retriable": { "type": "boolean" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "operators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "valueType", "summary"],
+        "properties": {
+          "name": { "type": "string" },
+          "valueType": { "type": "string", "enum": ["equality", "range", "set"] },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "collectionMethods": { "$ref": "#/$defs/methodList" },
+    "queryMethods": { "$ref": "#/$defs/methodList" },
+    "storageInterface": { "$ref": "#/$defs/methodList" },
+    "predicateWire": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clause", "envelope"],
+      "properties": {
+        "clause": { "type": "object" },
+        "envelope": { "type": "object" }
+      }
+    },
+    "schemaContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "validatesPostImage", "idRequired", "rejectsWith"],
+      "properties": {
+        "adapter": { "type": "string" },
+        "validatesPostImage": { "type": "boolean" },
+        "idRequired": { "type": "boolean" },
+        "rejectsWith": { "type": "string" }
+      }
+    },
+    "httpRoutes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["method", "path", "auth"],
+        "properties": {
+          "method": { "type": "string" },
+          "path": { "type": "string" },
+          "auth": { "type": "string", "enum": ["anonymous", "verified"] },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "collections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "indexes"],
+        "properties": {
+          "name": { "type": "string" },
+          "indexes": { "type": "array", "items": { "type": "string" } },
+          "schemaVendor": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "methodList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "params", "returns"],
+        "properties": {
+          "name": { "type": "string" },
+          "params": { "type": "string" },
+          "returns": { "type": "string" },
+          "throws": { "type": "array", "items": { "type": "string" } },
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  }
+}
