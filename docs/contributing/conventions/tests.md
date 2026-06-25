@@ -84,6 +84,37 @@ values.
   `credentials/` (gitignored). It's excluded from the default test
   glob; opt in with `pnpm test:conformance`.
 
+## Cross-adapter parity gate
+
+The four storage adapters — `MemoryStorage`, `LocalFsStorage`, `S3HttpStorage`
+(AWS/Minio), and `r2BindingStorage` — pass **one** shared contract:
+`defineStorageConformanceSuite` (`packages/protocol/src/storage/conformance.ts`) plus the
+`runCollectionApiCascade` / `runCausalConsistencyCascade` drivers. `green locally ⇒ green
+in cloud` rests on memory/local-fs reproducing the minio/r2 **error codes** (the
+`error-code parity` table), **CAS semantics** (exactly-one-winner under concurrent
+create), and **validation order** (`$`-key rejection is synchronous + I/O-free; schema
+validation rejects an invalid write before any mutating I/O reaches the bucket).
+
+Run it:
+
+- No infra: `pnpm test:parity` (memory + local-fs; Minio rows skip honestly).
+- Minio rows: `pnpm dev:storage` then `MINIO=1 pnpm test:parity`.
+- R2 rows: `pnpm test:adapter-cloudflare`.
+
+**Legitimate divergences the gate does NOT over-assert:**
+
+- A contended create-loser may surface `Conflict` (412) **or** a retryable `NetworkError`
+  (409 ConditionalRequestConflict, real AWS S3) — the parity table accepts a code *set*.
+- CAS **fairness is not a parity property** ([ADR-004](../../adr/004-ephemeral-coordination.md)
+  "No fairness"); only exactly-one-winner + code-on-loss are asserted, never
+  ordering/FIFO.
+- `LocalFsStorage` `ifMatch` is **in-process TOCTOU only** — the suite exercises
+  single-process CAS, so parity holds for what is tested; it does not claim cross-process
+  parity for local-fs.
+- **HTTP-wire CAS parity is a known hole** (`tests/fixtures/http-conformance-cascade.ts`
+  defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does
+  not cover the HTTP `If-Match` round-trip.
+
 ## Performance
 - `pnpm test` should stay under ~30s on a developer laptop. Prefer
   `await Promise.resolve()` ticks or short intervals (≤50ms) over

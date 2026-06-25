@@ -164,6 +164,7 @@
     "test:http-conformance": "vitest run --project=default tests/integration/http-conformance.test.ts",
     "test:adapter-node": "MINIO=1 vitest run --project=default packages/adapter-node",
     "test:adapters": "pnpm test:adapter-cloudflare && pnpm test:adapter-node",
+    "test:parity": "vitest run --project=default packages/protocol/src/storage/memory.test.ts packages/dev/src/local-fs.test.ts packages/adapter-node/src/s3-http.conformance.test.ts tests/integration/collection-api.test.ts tests/integration/randomized.test.ts",
     "test:manual-e2e": "vitest run --project=default manual-e2e/cloudflare/e2e.test.ts manual-e2e/node/e2e.test.ts",
     "test:mutate": "stryker run",
     "mutate:survivors": "node scripts/mutation-survivors.mjs",

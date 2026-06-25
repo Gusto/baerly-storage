@@ -722,6 +722,108 @@ const runSchemaValidation = async (
 };
 
 /**
+ * Counting `Storage` decorator — delegates to `inner` and tallies the
+ * mutating + reading calls so a test can assert ORDERING (what ran before
+ * a throw). Test-only; lives in the fixture.
+ */
+const countingStorage = (
+  inner: Storage,
+): {
+  readonly storage: Storage;
+  counts: () => { get: number; put: number; delete: number; list: number };
+} => {
+  const c = { get: 0, put: 0, delete: 0, list: 0 };
+  const storage: Storage = {
+    get: (key, opts) => {
+      c.get += 1;
+      return inner.get(key, opts);
+    },
+    put: (key, body, opts) => {
+      c.put += 1;
+      return inner.put(key, body, opts);
+    },
+    delete: (key, opts) => {
+      c.delete += 1;
+      return inner.delete(key, opts);
+    },
+    list: (prefix, opts) => {
+      c.list += 1;
+      return inner.list(prefix, opts);
+    },
+  };
+  return { storage, counts: () => ({ ...c }) };
+};
+
+/**
+ * Validation-ORDERING parity (makes the implicit explicit). Asserts the
+ * fixed order that makes "green locally ⇒ green in cloud" hold for writes:
+ *
+ *  1. `$`-key predicate rejection is SYNCHRONOUS at `.where(...)` and does
+ *     ZERO storage I/O — it fires before any await.
+ *  2. Schema validation (post-image) rejects an invalid write with ZERO
+ *     mutating I/O (no `put` / `delete` reaches the bucket) — an invalid
+ *     op never half-writes, on any adapter. A VALID insert DOES write
+ *     (proves the counter is wired).
+ */
+const runValidationOrdering = async (
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("order");
+  await provision(storage, app, tenant, t);
+
+  // (1) `$`-key rejection is synchronous + I/O-free.
+  {
+    const { storage: counting, counts } = countingStorage(storage);
+    const db = Db.create({ storage: counting, app, tenant });
+    const before = counts();
+    const bad = { $or: [{ a: 1 }] } as unknown as Parameters<
+      ReturnType<typeof db.collection>["where"]
+    >[0];
+    let err: unknown;
+    try {
+      db.collection(t).where(bad);
+    } catch (error) {
+      err = error;
+    }
+    expect(err, "where($or) must throw synchronously").toBeInstanceOf(BaerlyError);
+    expect((err as BaerlyError).code).toBe("InvalidConfig");
+    expect(counts(), "synchronous rejection must do zero storage I/O").toEqual(before);
+  }
+
+  // (2) Schema validation rejects an invalid write with zero mutating I/O.
+  {
+    const { storage: counting, counts } = countingStorage(storage);
+    const db = Db.create({
+      storage: counting,
+      app,
+      tenant,
+      config: { collections: { [t]: { schema: STATUS_SCHEMA } } },
+    });
+
+    const mutationsBefore = counts().put + counts().delete;
+    let err: unknown;
+    try {
+      await db.collection(t).insert({ status: "bogus" });
+    } catch (error) {
+      err = error;
+    }
+    expect(err, "invalid insert must reject").toBeInstanceOf(BaerlyError);
+    expect((err as BaerlyError).code).toBe("SchemaError");
+    expect(
+      counts().put + counts().delete - mutationsBefore,
+      "invalid write must not mutate the bucket",
+    ).toBe(0);
+
+    // A valid insert DOES write — proves the counter is live, not stuck.
+    const mutationsBeforeValid = counts().put;
+    await db.collection(t).insert({ status: "open" });
+    expect(counts().put - mutationsBeforeValid).toBeGreaterThan(0);
+  }
+};
+
+/**
  * LogEntry shape — frozen assertion. After an I+I+U+D sequence,
  * walk `<collectionPrefix>/log/<seq>.json` directly via `Storage` and
  * assert the per-op shape from `packages/protocol/src/log.ts:22–100`.
@@ -870,6 +972,10 @@ export const runCollectionApiCascade = async (opts: {
   //    `SchemaValidator` (ticket 70). Runs on every adapter via the
   //    variant table.
   await runSchemaValidation(opts.storage, APP, tenant);
+
+  // 8b. Validation-ordering parity — `$`-key rejection is synchronous +
+  //     I/O-free; schema rejection does zero mutating I/O before the throw.
+  await runValidationOrdering(opts.storage, APP, tenant);
 
   // 9. LogEntry shape — frozen.
   await runLogEntryShape(db, opts.storage, APP, tenant);
