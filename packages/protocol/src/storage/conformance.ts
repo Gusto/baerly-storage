@@ -1,6 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { BaerlyError } from "../errors.ts";
+import { BaerlyError, type BaerlyErrorCode } from "../errors.ts";
 import type { Storage } from "./types.ts";
 
 /**
@@ -276,6 +276,72 @@ export function defineStorageConformanceSuite(
         expect(winners).toBe(1);
         expect(losers).toBe(RACERS - 1);
       });
+    });
+
+    // Error-code parity — the canonical "every adapter throws the same
+    // BaerlyError.code for the same illegal op" statement. The suite runs
+    // against all four adapters, so this single table is the cross-adapter
+    // equivalence assertion. `expectedCodes` is a SET, never a single code:
+    // a contended create-loser legitimately diverges between `Conflict`
+    // (412 — Memory/LocalFs/Minio/R2) and a retryable `NetworkError`
+    // (409 ConditionalRequestConflict — real AWS S3); see the
+    // exactly-one-winner test above. Asserting a single code would
+    // manufacture false parity.
+    const ENC = new TextEncoder();
+    const ERROR_PARITY_TABLE: ReadonlyArray<{
+      readonly label: string;
+      readonly act: (store: Storage) => Promise<unknown>;
+      readonly expectedCodes: ReadonlyArray<BaerlyErrorCode>;
+    }> = [
+      {
+        label: "stale ifMatch",
+        act: async (store) => {
+          await store.put("k", ENC.encode("v1"));
+          return store.put("k", ENC.encode("v2"), { ifMatch: '"deadbeef"' });
+        },
+        expectedCodes: ["Conflict"],
+      },
+      {
+        label: 'ifNoneMatch:"*" on existing key',
+        act: async (store) => {
+          await store.put("k", ENC.encode("v"));
+          return store.put("k", ENC.encode("v2"), { ifNoneMatch: "*" });
+        },
+        expectedCodes: ["Conflict"],
+      },
+      {
+        label: "concurrent create-if-absent loser",
+        act: async (store) => {
+          const outcomes = await Promise.allSettled(
+            Array.from({ length: 16 }, (_u, i) =>
+              store.put("k", ENC.encode(`r${i}`), { ifNoneMatch: "*" }),
+            ),
+          );
+          const loser = outcomes.find((o) => o.status === "rejected");
+          if (loser === undefined) {
+            throw new Error("expected at least one contended loser");
+          }
+          throw (loser as PromiseRejectedResult).reason;
+        },
+        expectedCodes: ["Conflict", "NetworkError"],
+      },
+    ];
+
+    describe("error-code parity", () => {
+      for (const row of ERROR_PARITY_TABLE) {
+        test(`${row.label} → ${row.expectedCodes.join("|")}`, async () => {
+          let err: unknown;
+          try {
+            await row.act(s);
+          } catch (error) {
+            err = error;
+          }
+          expect(err, `${row.label} must reject`).toBeInstanceOf(BaerlyError);
+          expect(row.expectedCodes, `${row.label} → code ${(err as BaerlyError).code}`).toContain(
+            (err as BaerlyError).code,
+          );
+        });
+      }
     });
 
     describe("conditional get — ifNoneMatch", () => {
