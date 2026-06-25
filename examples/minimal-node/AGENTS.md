@@ -356,12 +356,16 @@ apps or tenancy enforced outside baerly-storage.
 
 <!-- pattern-c:end -->
 
-- **Storage backend** — `src/server/index.ts` defaults to
-  `localFsStorage()` (persists to `./.baerly-data`, zero credentials,
-  single-node only) and promotes to `s3Storage` (AWS) when `BUCKET` is
-  set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set. AWS
-  S3 and Cloudflare R2 are the production-supported stores. **MinIO** is
-  the local/dev conformance target. Other S3-compatible endpoints need a
+- **Storage backend** — `src/server/index.ts` resolves storage by env:
+  `R2_ACCOUNT_ID` → Cloudflare R2, else `BUCKET` → AWS S3, else
+  zero-config `localFsStorage()` (persists to `./.baerly-data`, no
+  credentials, local dev only). **In a detected deployment
+  (`NODE_ENV=production` or a known PaaS) the server fails loud and
+  requires a bucket** — local-fs is single-process with no cross-process
+  CAS or crash durability, so it is never a production store (there is no
+  opt-in). AWS S3 and Cloudflare R2 are the production-supported stores;
+  self-hosting without a cloud bucket, run **MinIO** on the box (also the
+  local/dev conformance target) or graduate to SQLite + Litestream. Other S3-compatible endpoints need a
   green `baerly doctor --bucket` plus owner validation; GCS S3-interop
   is not supported for database use today. JSDoc `@example` blocks for
   the factories are visible in your editor's TS hover.

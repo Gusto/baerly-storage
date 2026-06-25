@@ -57,10 +57,12 @@ selector + `baerlyWorker`), then `wrangler.jsonc`
 
 ## minimal-node
 
-Bare self-hosted Node scaffold. AWS S3 / Cloudflare R2 storage via
-`@gusto/baerly-storage/node`; MinIO is for local conformance, and other
-S3-compatible endpoints need `baerly doctor --bucket` plus owner
-validation. Ships `auth: "none"`; see the scaffold's
+Bare self-hosted Node scaffold. Zero-config local filesystem storage by
+default; promote to AWS S3 / Cloudflare R2 via
+`@gusto/baerly-storage/node` for production (the server fails loud rather
+than silently running a deployment on local-fs). MinIO is for local
+conformance, and other S3-compatible endpoints need
+`baerly doctor --bucket` plus owner validation. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
 `auth: "shared-secret"`; Pattern C wires `bearerJwt` against your
 OIDC IdP via an env-aware factory `verifier:` override. Runs anywhere
@@ -74,7 +76,8 @@ at `packages/create-baerly-storage/templates/addons/docker/` and is
 layered on top of this same shape — no second template directory.
 
 **Audience:** anyone scaffolding a self-hosted Node baerly-storage app —
-the modal "I just want a Node HTTP server with S3 storage" path.
+the modal "I just want a Node HTTP server, local-first, with an S3 / R2
+upgrade path" user.
 
 **Run it:**
 
@@ -87,8 +90,10 @@ pnpm dev
 `pnpm dev` runs a single `vite` process — `baerlyDev()` from
 `@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
 middleware on `:5173` next to the SPA dev server, backed by
-`LocalFsStorage`. No credentials needed; the `BUCKET` / `AWS_*` env
-vars are only required for `pnpm start` and the production deploy.
+`LocalFsStorage`. No credentials needed; `pnpm start` also runs
+local-first, and the `BUCKET` / `AWS_*` env vars promote it to a durable
+bucket — required for a production deploy, where the server fails loud
+rather than silently using local-fs.
 Auth-related env vars (`SHARED_SECRET` / `JWKS_URL` etc.) only
 appear if you adopt one of the "Going to production" recipes.
 
@@ -135,10 +140,10 @@ Assets split).
 
 ## react-node
 
-Self-hosted Node scaffold with a React + Vite SPA. LocalFs-backed
-storage in dev via `baerlyDev()` (single Vite process — Vite serves
-both `/v1/*` and the SPA), AWS S3 / Cloudflare R2 storage in
-production via `@gusto/baerly-storage/node`. MinIO is for local
+Self-hosted Node scaffold with a React + Vite SPA. Local filesystem
+storage by default (dev via `baerlyDev()` — single Vite process serving
+both `/v1/*` and the SPA — and local `pnpm start` runs); promote to AWS
+S3 / Cloudflare R2 via `@gusto/baerly-storage/node` for production. MinIO is for local
 conformance, and other S3-compatible endpoints need
 `baerly doctor --bucket` plus owner validation. Ships `auth: "none"`; see the scaffold's
 `AGENTS.md` "Going to production" recipes — Pattern B flips
@@ -169,8 +174,8 @@ Open <http://localhost:5173>. No credentials needed for dev —
 
 **Read first:** `src/web/NoteList.tsx` (the `useQuery` reactive
 read), then `baerly.config.ts` (the `NoteSchema` shape), then
-`src/server/index.ts` (the `s3Storage` / `r2Storage` selector +
-`baerlyNode` invocation for production).
+`src/server/index.ts` (the local-fs → `s3Storage` / `r2Storage`
+selector + `baerlyNode` invocation).
 
 **Scaffold from the CLI:** `pnpm create @gusto/baerly-storage@latest my-app --target=node --starter=react`
 (add `--with=docker` for a Dockerfile + healthcheck).
