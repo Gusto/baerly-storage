@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { baerlyDev } from "@gusto/baerly-storage/dev/vite";
@@ -11,7 +10,6 @@ export default defineConfig({
     react(),
     baerlyDev({
       config,
-      dataDir: resolve(import.meta.dirname, ".baerly-data"),
     }),
   ],
 });

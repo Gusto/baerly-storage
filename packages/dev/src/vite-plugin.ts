@@ -1,5 +1,6 @@
 import type { AddressInfo } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
 import { baerlyNode } from "@baerly/adapter-node";
@@ -40,8 +41,12 @@ export interface BaerlyDevOptions {
    * staging IdP, or any custom auth shape.
    */
   readonly verifier?: Verifier;
-  /** Absolute path to the data directory for LocalFsStorage. */
-  readonly dataDir: string;
+  /**
+   * Absolute path to the data directory for LocalFsStorage.
+   * **Optional** — defaults to `<vite root>/.baerly-data`, so the dev
+   * server runs zero-config.
+   */
+  readonly dataDir?: string;
   /** Optional async seed callback, invoked after ensureTable, before mount. */
   readonly seed?: (db: Db) => Promise<void>;
   /** Extra hints appended to the dev banner. */
@@ -291,7 +296,9 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
       const tenant = opts.config.tenant;
       const tables = Object.keys(opts.config.collections);
       const ready = (async () => {
-        const storage = new LocalFsStorage({ root: opts.dataDir });
+        const storage = new LocalFsStorage({
+          root: opts.dataDir ?? resolve(server.config.root, ".baerly-data"),
+        });
         for (const table of tables) {
           await ensureTable(storage, { app, tenant, table });
         }
