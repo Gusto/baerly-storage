@@ -390,12 +390,16 @@ IdP issues one tenant per token; use `tenantPrefix` for single-tenant
 apps or tenancy enforced outside baerly-storage.
 
 <!-- pattern-c:end -->
-- **Storage backend** — `src/server/index.ts` defaults to
-  `localFsStorage()` (persists to `./.baerly-data`, zero credentials,
-  single-node only) and promotes to `s3Storage` (AWS) when `BUCKET` is
-  set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set. AWS
-  S3 and Cloudflare R2 are the production-supported stores. **MinIO** is
-  the local/dev conformance target. Other S3-compatible endpoints need a
+- **Storage backend** — `src/server/index.ts` resolves storage by env:
+  `R2_ACCOUNT_ID` → Cloudflare R2, else `BUCKET` → AWS S3, else
+  zero-config `localFsStorage()` (persists to `./.baerly-data`, no
+  credentials, local dev only). **In a detected deployment
+  (`NODE_ENV=production` or a known PaaS) the server fails loud and
+  requires a bucket** — local-fs is single-process with no cross-process
+  CAS or crash durability, so it is never a production store (there is no
+  opt-in). AWS S3 and Cloudflare R2 are the production-supported stores;
+  self-hosting without a cloud bucket, run **MinIO** on the box (also the
+  local/dev conformance target) or graduate to SQLite + Litestream. Other S3-compatible endpoints need a
   green `baerly doctor --bucket` plus owner validation; GCS S3-interop
   is not supported for database use today. The bucket name comes from
   the `BUCKET` env var; AWS credentials are read from
@@ -419,11 +423,14 @@ apps or tenancy enforced outside baerly-storage.
   `node --experimental-strip-types src/server/index.ts`. Arrange the
   host to run `pnpm install && pnpm build` (populates
   `dist/client/` for the `webRoot` static-serve branch) before
-  `pnpm start`. Without storage env vars, the server defaults to
-  `localFsStorage()` (single-node only); for production, set `BUCKET` +
-  `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (S3) or `R2_ACCOUNT_ID`
-  + creds (R2). The default scaffold's `auth: "none"` needs no auth env
-  vars; if you adopt Pattern B / C from "Going to production" above,
+  `pnpm start`. A deployment **must** configure a durable bucket:
+  `BUCKET` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (S3) or
+  `R2_ACCOUNT_ID` + those creds (R2). With none set, the server fails
+  loud in a detected deployment (`NODE_ENV=production` or a known PaaS)
+  rather than running on local-fs, which is local-dev only. Self-hosting
+  without a cloud bucket, run MinIO on the box or use SQLite + Litestream.
+  The default scaffold's `auth: "none"` needs no
+  auth env vars; if you adopt Pattern B / C from "Going to production" above,
   also set `SHARED_SECRET` (Pattern B) or `JWKS_URL` + `JWT_ISSUER` +
   `JWT_AUDIENCE` (Pattern C).
 

@@ -3,16 +3,18 @@
 A baerly-storage app scaffolded with `@gusto/create-baerly-storage` for
 the **Node** target — any host that runs `node server.js` (Railway,
 Render, Fly without Docker, Heroku, a VM, a container scheduler, your
-laptop). Uses `@gusto/baerly-storage/node` against an S3-compatible
-bucket. AWS S3 and Cloudflare R2 are the production-supported targets;
-MinIO is the local conformance target, and other endpoints require
-`baerly doctor --bucket` plus owner validation. Ships `auth: "none"` so
-the day-1 happy path works with zero env vars, plus a React + Vite SPA
-and a one-collection `notes` schema you extend; flip to a shared secret
-or wire `bearerJwt` against your OIDC IdP before deploy — see
-"Production auth" below.
+laptop). Runs zero-config on local filesystem storage out of the box;
+promote to an S3-compatible bucket via `@gusto/baerly-storage/node` for
+production. AWS S3 and Cloudflare R2 are the production-supported
+targets; MinIO is the local conformance target, and other endpoints
+require `baerly doctor --bucket` plus owner validation. Ships
+`auth: "none"` so the day-1 happy path works with zero env vars, plus a
+React + Vite SPA and a one-collection `notes` schema you extend; flip
+to a shared secret or wire `bearerJwt` against your OIDC IdP before
+deploy — see "Production auth" below.
 
-**The S3-compatible bucket is the durable state.** The Node process is
+**In production, the S3-compatible bucket is the durable state**
+(locally, a `./.baerly-data` directory stands in). The Node process is
 trusted app code with bucket credentials; it applies the
 baerly-storage protocol, but it is not a database server. No daemon,
 lock table, scheduler, or idle database bill; maintenance is automatic
@@ -32,7 +34,7 @@ react-node/
 ├── tsconfig.server.json      # Node server TS project (src/server)
 ├── vite.config.ts            # Vite + @vitejs/plugin-react + baerlyDev()
 ├── index.html                # SPA shell — Vite's entry point
-├── .env.example              # storage creds and PORT
+├── .env.example              # storage selection (local-fs default) + PORT
 ├── baerly.config.ts          # app, tenant, target, NoteSchema, `Note` type
 ├── AGENTS.md                 # deeper guide: hooks, schema, auth, deploy
 ├── CLAUDE.md                 # same content (Claude Code reads this)
@@ -89,11 +91,14 @@ R2_ACCOUNT_ID=... BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... pnp
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` at startup; when those are absent it falls
-back to `localFsStorage()`. The default `auth: "none"` posture needs
-no auth env vars; if you adopt Pattern B / C from "Production auth"
-below, also set `SHARED_SECRET` (Pattern B) or `JWKS_URL` +
-`JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C). Optional: `AWS_REGION`,
-`PORT`.
+back to `localFsStorage()` for local runs. **In a detected deployment
+(`NODE_ENV=production` or a known PaaS) it refuses to start and requires
+a bucket** — local-fs is local-dev only (single-process, no
+cross-process CAS or crash durability). The default `auth: "none"`
+posture needs no auth env vars; if you adopt Pattern B / C from
+"Production auth" below, also set `SHARED_SECRET` (Pattern B) or
+`JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C). Optional:
+`AWS_REGION`, `PORT`.
 
 Maintenance (compaction + GC) is automatic and in-band: it runs
 inline on the rare write that crosses a maintenance trigger — no env
@@ -117,6 +122,10 @@ exposes `build` (Vite SPA + TS check) and `start`
 (`node --experimental-strip-types src/server/index.ts`); arrange your
 host to run `pnpm install && pnpm build`, then `pnpm start` with the
 storage/auth env vars exported or configured in the process manager.
+A deployment must set a durable bucket (`BUCKET` + `AWS_*`, or
+`R2_ACCOUNT_ID` + creds); the server fails loud rather than running on
+local-fs, which is local-dev only. Self-hosting without a cloud bucket,
+run MinIO on the box or use SQLite + Litestream.
 
 Concrete shapes:
 

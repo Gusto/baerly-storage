@@ -39,8 +39,10 @@ For the Cloudflare target, `pnpm dev` boots Vite + workerd on `:5173`, so
 `/v1/*` and the React UI share one origin — no S3 creds needed in
 development. For Node, scaffold with `--target=node --starter=react`;
 `pnpm dev` runs on `:5173` through Vite middleware over `LocalFsStorage`,
-and `pnpm start` runs the Node listener on any Node 24+ host with bucket
-credentials in its environment — Railway, Render, Fly, Docker, bare VMs.
+and `pnpm start` runs the Node listener on any Node 24+ host —
+local-first by default, promoting to a durable bucket when you set
+`BUCKET` / `R2_ACCOUNT_ID` (required in production; the server fails loud
+rather than silently using local-fs) — Railway, Render, Fly, Docker, bare VMs.
 
 For a runnable multi-tab demo see
 [`examples/react-node/`](./examples/react-node); for the full set of
