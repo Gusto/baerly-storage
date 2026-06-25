@@ -109,6 +109,41 @@ export type BaerlyErrorCode =
   | "MutationFailed";
 
 /**
+ * Runtime enumeration of every {@link BaerlyErrorCode}. The spec
+ * generator and the drift gate iterate this to assert the IR lists
+ * each code; the type guard in `spec/ir-schema.test.ts` fails tsgo if
+ * this tuple and the union diverge. Keep order stable for deterministic
+ * artifact diffs. This is the canonical code list — do not re-list
+ * codes elsewhere (see RETRIABLE_CODES, the sibling retriable subset).
+ */
+export const ERROR_CODES = [
+  "InvalidConfig",
+  "NetworkError",
+  "AccessDenied",
+  "InvalidResponse",
+  "Internal",
+  "SchemaError",
+  "Conflict",
+  "Unauthorized",
+  "NotFound",
+  "PayloadTooLarge",
+  "UnsatisfiablePredicate",
+  "UseQueryAwaitedRecorder",
+  "UnexpectedWriteInQuery",
+  "MutationFailed",
+] as const satisfies readonly BaerlyErrorCode[];
+
+// Exhaustiveness guard: every union member must appear in ERROR_CODES.
+// If a code is added to BaerlyErrorCode without a tuple entry, this
+// errors at tsgo time (the union is not assignable to the tuple's union).
+type _ErrorCodesExhaustive = [BaerlyErrorCode] extends [(typeof ERROR_CODES)[number]]
+  ? true
+  : ["missing code in ERROR_CODES", Exclude<BaerlyErrorCode, (typeof ERROR_CODES)[number]>];
+// eslint-disable-next-line no-underscore-dangle
+const _errorCodesExhaustive: _ErrorCodesExhaustive = true;
+void _errorCodesExhaustive;
+
+/**
  * Codes whose default failure class is resolved by retrying with a fresh read.
  * Throw sites may override this when the same code is context-sensitive
  * (notably caller-supplied `_id` collisions, which also use `Conflict`).
@@ -120,6 +155,20 @@ export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyError
 
 /** True iff this error code's default failure class is retriable. */
 export const isRetriableCode = (code: BaerlyErrorCode): boolean => RETRIABLE_CODES.has(code);
+
+/**
+ * Codes raised only inside the client-side React runtime
+ * (`useQuery` / `useMutation`); they never travel the HTTP wire, so the
+ * machine-contract IR reports `httpStatus: null` for them — distinct
+ * from a real `500` (a server-side transport/internal failure the HTTP
+ * layer maps to a status). Sibling of {@link RETRIABLE_CODES}; add a
+ * code here when a new client-only failure mode joins the union.
+ */
+export const CLIENT_RUNTIME_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
+  "UseQueryAwaitedRecorder",
+  "UnexpectedWriteInQuery",
+  "MutationFailed",
+]);
 
 /**
  * The single error class thrown by baerly-storage. Discriminate by `code`, not

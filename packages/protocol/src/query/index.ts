@@ -11,6 +11,7 @@ export { normalizeObject, normalizePredicateArg } from "./normalize.ts";
 export { validateWire } from "./validate.ts";
 export {
   EMPTY_PREDICATE_WIRE,
+  PREDICATE_OPS,
   type PredicateClause,
   type PredicateOpName,
   type PredicateWire,
