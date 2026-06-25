@@ -55,15 +55,25 @@ describe("mapError", () => {
     });
   });
 
-  test("unmapped BaerlyError code falls through to 500 with its own message", () => {
+  test("upstream storage errors map to 502 with their own message", () => {
     const err = new BaerlyError("InvalidResponse", "GET k: missing ETag");
     const { status, envelope } = mapError(err);
-    expect(status).toBe(500);
+    expect(status).toBe(502);
     expect(envelope.error).toEqual({
       code: "InvalidResponse",
       message: "GET k: missing ETag",
       retriable: false,
     });
+
+    expect(mapError(new BaerlyError("NetworkError", "S3 timeout")).status).toBe(502);
+  });
+
+  test("unsatisfiable predicates are caller errors", () => {
+    const { status, envelope } = mapError(
+      new BaerlyError("UnsatisfiablePredicate", "empty interval"),
+    );
+    expect(status).toBe(400);
+    expect(envelope.error.code).toBe("UnsatisfiablePredicate");
   });
 
   test("BaerlyError retriable override reaches the wire envelope", () => {
