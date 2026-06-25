@@ -14,79 +14,15 @@
  * production store — so a missing/typo'd bucket fails loud instead of
  * silently losing data.
  */
-import { baerlyNode, localFsStorage, r2Storage, s3Storage } from "@gusto/baerly-storage/node";
-import type { Storage } from "@gusto/baerly-storage";
+import { baerlyNode } from "@gusto/baerly-storage/node";
 import config from "../../baerly.config.ts";
+import { resolveStorage } from "./resolve-storage.ts";
 
-const reqEnv = (name: string): string => {
-  const v = process.env[name];
-  if (v === undefined || v === "") {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return v;
-};
-
-// Heuristic for "this is a real deployment, not a laptop." Any one
-// marker is enough; it decides whether a missing bucket should fail
-// loud (deployment) or fall back to local-fs (local dev).
-const PAAS_MARKERS = [
-  "RAILWAY_ENVIRONMENT",
-  "RENDER",
-  "FLY_APP_NAME",
-  "K_SERVICE", // Google Cloud Run
-  "DYNO", // Heroku
-  "KUBERNETES_SERVICE_HOST", // Kubernetes
-  "ECS_CONTAINER_METADATA_URI_V4", // AWS ECS
-];
-const looksDeployed =
-  process.env["NODE_ENV"] === "production" ||
-  PAAS_MARKERS.some((m) => (process.env[m] ?? "") !== "");
-// Storage resolution, in priority order:
-//   1. R2_ACCOUNT_ID set → Cloudflare R2 (S3-compat endpoint)
-//   2. BUCKET set        → AWS S3
-//   3. neither, local dev → LocalFsStorage (zero credentials)
-//   4. neither, deployed  → throw. local-fs is a local-dev convenience
-//      only — single-process, no cross-process CAS, no crash-fsync — so
-//      it is never a production store (there is no opt-in).
-let storage: Storage;
-let storageLabel: string;
-if (process.env["R2_ACCOUNT_ID"] !== undefined) {
-  storage = r2Storage({
-    accountId: reqEnv("R2_ACCOUNT_ID"),
-    bucket: reqEnv("BUCKET"),
-    credentials: {
-      accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-      secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
-    },
-  });
-  storageLabel = `r2 (bucket=${process.env["BUCKET"]})`;
-} else if (process.env["BUCKET"] !== undefined) {
-  storage = s3Storage({
-    region: process.env["AWS_REGION"] ?? "us-east-1",
-    bucket: reqEnv("BUCKET"),
-    credentials: {
-      accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-      secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
-    },
-  });
-  storageLabel = `s3 (bucket=${process.env["BUCKET"]})`;
-} else if (!looksDeployed) {
-  storage = localFsStorage();
-  storageLabel = `local-fs (${process.env["BAERLY_DATA_DIR"] ?? "./.baerly-data"}) — local dev only, not a production store`;
-} else {
-  throw new Error(
-    [
-      "[baerly] Refusing to start: no durable storage configured in a deployed environment.",
-      "Local filesystem storage is a local-dev convenience only — single-process, with no",
-      "cross-process CAS and no crash durability — so it is never used in production.",
-      "Configure a real bucket:",
-      "  • AWS S3:        BUCKET + AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (+ optional AWS_REGION)",
-      "  • Cloudflare R2: R2_ACCOUNT_ID + BUCKET + AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY",
-      "Self-hosting without a cloud bucket? Run MinIO on the box for real S3 semantics, or",
-      "use SQLite + Litestream for a single-instance app.",
-    ].join("\n"),
-  );
-}
+// Pick the storage backend from the environment (R2 / S3 / local-fs),
+// failing loud if a deployment has no bucket. The policy lives in
+// `./resolve-storage.ts` — edit it there to change how your app maps
+// env vars to storage.
+const { storage, label: storageLabel } = resolveStorage();
 
 // Announce the effective backend so the chosen store (and any surprise
 // local-fs fallback) is visible in the deploy logs, not a surprise.

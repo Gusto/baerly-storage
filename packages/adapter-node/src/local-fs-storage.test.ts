@@ -42,6 +42,23 @@ describe("localFsStorage", () => {
     }
   });
 
+  test("defaults to <cwd>/.baerly-data when neither arg nor BAERLY_DATA_DIR is set", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "baerly-lfs-cwd-"));
+    vi.stubEnv("BAERLY_DATA_DIR", undefined as unknown as string);
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(dir);
+    try {
+      await localFsStorage().put("k", new TextEncoder().encode("v"));
+      // Data must land under <cwd>/.baerly-data — read it back via an
+      // explicit dataDir pointed at the same resolved path.
+      await expect(
+        collectKeys(localFsStorage({ dataDir: join(dir, ".baerly-data") })),
+      ).resolves.toContain("k");
+    } finally {
+      cwdSpy.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("explicit dataDir wins over BAERLY_DATA_DIR", async () => {
     const argDir = await mkdtemp(join(tmpdir(), "baerly-lfs-win-"));
     const envDir = await mkdtemp(join(tmpdir(), "baerly-lfs-lose-"));

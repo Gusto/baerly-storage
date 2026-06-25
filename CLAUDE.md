@@ -203,7 +203,10 @@ Pure-unit tests that always pass: `packages/protocol/src/hashing.test.ts`,
 `tests/regressions.test.ts`,
 `tests/integration/write-amp.test.ts`.
 Pattern A/B/C drift across `examples/*/AGENTS.md` is fenced by
-`tests/integration/agents-md-drift.test.ts`.
+`tests/integration/agents-md-drift.test.ts`. The Node example servers'
+storage-resolution guard (`examples/{minimal,react}-node/src/server/resolve-storage.ts`)
+is unit-tested and kept byte-identical by
+`tests/integration/node-storage-resolution.test.ts`.
 
 ## Local dev
 
