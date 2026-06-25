@@ -34,6 +34,10 @@
     "./_internal/testing": {
       "types": "./src/_internal/testing.ts",
       "import": "./src/_internal/testing.ts"
+    },
+    "./_internal/spec-gen": {
+      "types": "./src/_internal/spec-gen.ts",
+      "import": "./src/_internal/spec-gen.ts"
     }
   },
   "publishConfig": {

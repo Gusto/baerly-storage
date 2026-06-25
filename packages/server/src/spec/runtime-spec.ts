@@ -58,8 +58,15 @@ export async function handleSpecRequest(
     if (identity !== null) {
       config = resolved;
     }
-  } catch {
-    config = undefined;
+  } catch (error) {
+    // A verifier *reject* is `null` (handled above); reaching here means
+    // resolve() or the verifier *threw* — the auth backend or tenant config
+    // is unhealthy. Stay tolerant (the static contract is public infra and
+    // must stay up), but emit one operational signal so the outage isn't
+    // invisible on this anonymous, pre-observability route. `console.warn`
+    // (not a canonical line) matches the adapters' other ops warnings and
+    // keeps this light module out of the observability closure.
+    console.warn("[baerly] /v1/spec degraded to the anonymous contract:", error);
   }
   return new Response(JSON.stringify(buildSpecResponse(config)), {
     status: 200,
