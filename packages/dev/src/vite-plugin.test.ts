@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -244,6 +244,49 @@ describe("baerlyDev() plugin", () => {
     // Wait a tick so we capture the post-mutation state synchronously
     // — the mutation happens before the async ready.then() resolves.
     expect(req.headers["authorization"]).toBe("Bearer test-secret");
+  });
+});
+
+describe("baerlyDev — default dataDir", () => {
+  test("defaults storage to <vite root>/.baerly-data when dataDir is omitted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-vite-root-"));
+    try {
+      const captured: CapturedMw[] = [];
+      const fakeServer = {
+        middlewares: { use: (mw: CapturedMw) => captured.push(mw) },
+        httpServer: null,
+        config: { root },
+      };
+      // No `dataDir` — the plugin must derive it from server.config.root.
+      const plugin = baerlyDev({
+        config: baseConfig("shared-secret"),
+        secret: "test-secret",
+        banner: false,
+      });
+      const configureServer = plugin.configureServer;
+      if (typeof configureServer !== "function") {
+        throw new Error("configureServer must be a function");
+      }
+      configureServer.call(null as never, fakeServer as never);
+
+      // Drive a request so the async `ready` (which builds the storage
+      // rooted at <root>/.baerly-data and ensures the tables) completes.
+      const mw = captured[0]!;
+      const req = makeReq("/v1/healthz");
+      const res = makeRes();
+      mw(req, res, () => {
+        throw new Error("next should not be called");
+      });
+      for (let i = 0; i < 50; i += 1) {
+        if (existsSync(join(root, ".baerly-data"))) {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(existsSync(join(root, ".baerly-data"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
