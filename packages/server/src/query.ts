@@ -130,15 +130,33 @@ export interface ReadResult<T extends DocumentData> {
 }
 
 /**
- * Serialise a {@link CurrentJson} head into the wire cursor
- * `"<snapshot>@<tail>"`. `tail` is the DISCOVERED tail (defaults to
- * `json.tail_hint` when no probe has run). `null` snapshots stringify
- * as {@link MANIFEST_POINTER_EMPTY_SNAPSHOT}.
+ * Serialise a {@link CurrentJson} head into an opaque wire cursor.
+ * `tail` is the DISCOVERED tail (defaults to `json.tail_hint` when no
+ * probe has run). Physical snapshot keys feed the digest but never
+ * cross the HTTP boundary.
  *
  * @internal — exported for `query.test.ts`.
  */
+const manifestPointerDigest = (seed: string): string => {
+  let hash = 0xcbf29ce484222325n;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= BigInt(seed.charCodeAt(i));
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(36).padStart(13, "0");
+};
+
 export const serializeManifestPointer = (json: CurrentJson, tail = json.tail_hint): string =>
-  `${json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT}@${tail}`;
+  `m1:${manifestPointerDigest(
+    [
+      json.snapshot ?? MANIFEST_POINTER_EMPTY_SNAPSHOT,
+      json.log_seq_start,
+      json.tail_hint,
+      json.snapshot_bytes,
+      json.snapshot_rows,
+      tail,
+    ].join("|"),
+  )}`;
 
 /**
  * Frozen state carried along a `Query<T>` chain. Every modifier
@@ -598,7 +616,7 @@ const runRead = async <T extends DocumentData>(
   // not-found head still emits a well-defined cursor so the wire shape
   // never carries `""`.
   if (head === null) {
-    return { rows: [], manifestPointer: `${MANIFEST_POINTER_EMPTY_SNAPSHOT}@0`, fresh };
+    return { rows: [], manifestPointer: "m1:0000000000000", fresh };
   }
 
   // ── Optional index-walk fast path. ──────────────────────────────

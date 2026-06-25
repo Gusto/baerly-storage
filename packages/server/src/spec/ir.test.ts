@@ -16,10 +16,17 @@ describe("buildSpecIR", () => {
     const conflict = ir.errorCodes.find((e) => e.code === "Conflict");
     expect(conflict?.httpStatus).toBe(409);
     expect(conflict?.retriable).toBe(true);
+    expect(conflict?.messagePolicy).toBe("contextual");
     expect(ir.errorCodes.find((e) => e.code === "NetworkError")?.httpStatus).toBe(502);
     expect(ir.errorCodes.find((e) => e.code === "NetworkError")?.retriable).toBe(true);
+    expect(ir.errorCodes.find((e) => e.code === "NetworkError")?.messagePolicy).toBe("scrubbed");
+    expect(ir.errorCodes.find((e) => e.code === "InvalidConfig")?.messagePolicy).toBe("contextual");
     expect(ir.errorCodes.find((e) => e.code === "InvalidResponse")?.httpStatus).toBe(502);
+    expect(ir.errorCodes.find((e) => e.code === "InvalidResponse")?.messagePolicy).toBe("scrubbed");
     expect(ir.errorCodes.find((e) => e.code === "UnsatisfiablePredicate")?.httpStatus).toBe(400);
+    expect(ir.errorCodes.find((e) => e.code === "UnsatisfiablePredicate")?.messagePolicy).toBe(
+      "public",
+    );
 
     // Client-runtime-only codes never travel HTTP → null, not a fabricated 500.
     const nullHttpStatusCodes = ir.errorCodes
@@ -27,6 +34,19 @@ describe("buildSpecIR", () => {
       .map((e) => e.code)
       .toSorted();
     expect(nullHttpStatusCodes).toEqual([...CLIENT_RUNTIME_CODES].toSorted());
+    expect(
+      ir.errorCodes
+        .filter((e) => e.messagePolicy === "not-on-http")
+        .map((e) => e.code)
+        .toSorted(),
+    ).toEqual([...CLIENT_RUNTIME_CODES].toSorted());
+  });
+
+  test("Internal is the only code that resolves to HTTP 500", () => {
+    // `mapError` scrubs server/storage diagnostics by code policy; any
+    // new 500-class code needs an explicit status AND message policy.
+    const status500Codes = ir.errorCodes.filter((e) => e.httpStatus === 500).map((e) => e.code);
+    expect(status500Codes).toEqual(["Internal"]);
   });
 
   test("declares the full by-id CRUD surface, not just the collection routes", () => {

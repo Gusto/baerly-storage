@@ -26,11 +26,15 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["code", "httpStatus", "retriable", "summary"],
+        "required": ["code", "httpStatus", "retriable", "messagePolicy", "summary"],
         "properties": {
           "code": { "type": "string" },
           "httpStatus": { "type": ["integer", "null"] },
           "retriable": { "type": "boolean" },
+          "messagePolicy": {
+            "type": "string",
+            "enum": ["public", "scrubbed", "contextual", "not-on-http"]
+          },
           "summary": { "type": "string" }
         }
       }

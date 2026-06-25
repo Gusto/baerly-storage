@@ -26,7 +26,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { planQuery } from "./query-planner.ts";
-import { runAllWithMeta, singleIdFromPredicate } from "./query.ts";
+import { runAllWithMeta, serializeManifestPointer, singleIdFromPredicate } from "./query.ts";
 
 const wireOf = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
 import { Writer } from "./writer.ts";
@@ -480,7 +480,7 @@ describe("Db.collection read terminals", () => {
     // deliberately stale-low tail_hint=3. The strict walk covers
     // [log_seq_start=0, 3); the forward-probe must discover the true
     // tail=8 and fold [3, 8). All 8 docs must surface and the manifest
-    // pointer must reflect @8, not @3.
+    // pointer must reflect the discovered tail, not the stored hint.
     await createCurrentJson(storage, currentJsonKey(COLL), {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
       snapshot: null,
@@ -521,8 +521,47 @@ describe("Db.collection read terminals", () => {
       "doc-6",
       "doc-7",
     ]);
-    // Pointer reflects the discovered tail (8), not the stored hint (3).
-    expect(res.manifestPointer.endsWith("@8")).toBe(true);
+    // Pointer reflects the discovered tail (8), not the stored hint (3),
+    // while staying opaque enough not to expose bucket layout.
+    expect(res.manifestPointer).toMatch(/^m1:[0-9a-z]+$/);
+    expect(res.manifestPointer).not.toContain("current.json");
+    expect(res.manifestPointer).not.toContain("manifests");
+    const staleHead = {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      tail_hint: 3,
+      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+      log_seq_start: 0,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    } satisfies CurrentJson;
+    const staleHintPointer = serializeManifestPointer(staleHead, 3);
+    const discoveredTailPointer = serializeManifestPointer(staleHead, 8);
+    expect(res.manifestPointer).toBe(discoveredTailPointer);
+    expect(res.manifestPointer).not.toBe(staleHintPointer);
+  });
+});
+
+describe("serializeManifestPointer", () => {
+  test("emits a stable opaque digest of manifest state and discovered tail", () => {
+    const head = {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: "manifests/notes/snapshot/L0/0000-sha256.json",
+      tail_hint: 3,
+      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
+      log_seq_start: 0,
+      snapshot_bytes: 123,
+      snapshot_rows: 2,
+    } satisfies CurrentJson;
+
+    const discoveredTailPointer = serializeManifestPointer(head, 8);
+    expect(discoveredTailPointer).toBe("m1:0btxreq7patbd");
+    expect(serializeManifestPointer(head, 8)).toBe(discoveredTailPointer);
+    expect(serializeManifestPointer(head, 3)).toBe("m1:0btxtcvr9h3e0");
+    expect(serializeManifestPointer(head, 3)).not.toBe(discoveredTailPointer);
+    expect(discoveredTailPointer).not.toContain("manifests");
+    expect(discoveredTailPointer).not.toContain("snapshot");
+    expect(discoveredTailPointer).not.toContain("sha256");
   });
 });
 

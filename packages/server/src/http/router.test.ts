@@ -55,17 +55,56 @@ describe("mapError", () => {
     });
   });
 
-  test("upstream storage errors map to 502 with their own message", () => {
-    const err = new BaerlyError("InvalidResponse", "GET k: missing ETag");
+  test("upstream storage errors map to 502 with scrubbed messages", () => {
+    const err = new BaerlyError(
+      "InvalidResponse",
+      "GET app/router-test/tenant/t1/manifests/notes/current.json: missing ETag",
+    );
     const { status, envelope } = mapError(err);
     expect(status).toBe(502);
     expect(envelope.error).toEqual({
       code: "InvalidResponse",
-      message: "GET k: missing ETag",
+      message: "upstream response error",
       retriable: false,
     });
+    expect(envelope.error.message).not.toContain("current.json");
+    expect(records).toHaveLength(1);
+    const serialized = records[0]!.properties["error"] as { code: string; message: string };
+    expect(serialized.code).toBe("InvalidResponse");
+    expect(serialized.message).toContain("current.json");
 
-    expect(mapError(new BaerlyError("NetworkError", "S3 timeout")).status).toBe(502);
+    const network = mapError(
+      new BaerlyError(
+        "NetworkError",
+        "LIST app/router-test/tenant/t1/manifests/notes: 503 upstream body",
+      ),
+    );
+    expect(network.status).toBe(502);
+    expect(network.envelope.error).toEqual({
+      code: "NetworkError",
+      message: "upstream network error",
+      retriable: true,
+    });
+  });
+
+  test("AccessDenied is scrubbed on the wire but logged in full", () => {
+    const err = new BaerlyError(
+      "AccessDenied",
+      "GET app/router-test/tenant/t1/manifests/notes/current.json: provider denied bucket policy",
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(403);
+    expect(envelope.error).toEqual({
+      code: "AccessDenied",
+      message: "access denied",
+      retriable: false,
+      resolution: "These credentials are denied for this tenant prefix or bucket policy.",
+    });
+    expect(envelope.error.message).not.toContain("current.json");
+    expect(records).toHaveLength(1);
+    const serialized = records[0]!.properties["error"] as { code: string; message: string };
+    expect(serialized.code).toBe("AccessDenied");
+    expect(serialized.message).toContain("current.json");
   });
 
   test("unsatisfiable predicates are caller errors", () => {
@@ -94,6 +133,97 @@ describe("mapError", () => {
       retriable: false,
       resolution: "Choose a different `_id`.",
     });
+  });
+
+  test("retriable Conflict is scrubbed but non-retriable caller Conflict stays actionable", () => {
+    const storageConflict = new BaerlyError(
+      "Conflict",
+      "Writer: CAS conflict on app/router-test/tenant/t1/manifests/notes/current.json",
+      undefined,
+      undefined,
+      undefined,
+      "Re-read and re-apply your change.",
+      true,
+    );
+    expect(mapError(storageConflict).envelope.error).toEqual({
+      code: "Conflict",
+      message: "write conflict",
+      retriable: true,
+      resolution: "Re-read and re-apply your change.",
+    });
+
+    const callerConflict = new BaerlyError(
+      "Conflict",
+      "duplicate _id",
+      undefined,
+      undefined,
+      undefined,
+      "Choose a different `_id`.",
+      false,
+    );
+    expect(mapError(callerConflict).envelope.error).toEqual({
+      code: "Conflict",
+      message: "duplicate _id",
+      retriable: false,
+      resolution: "Choose a different `_id`.",
+    });
+  });
+
+  test("InvalidConfig scrubs storage config detail by default", () => {
+    const storageError = new BaerlyError(
+      "InvalidConfig",
+      "LocalFsStorage: resolved path escapes root: app/router-test/tenant/t1/manifests/notes/current.json",
+    );
+    expect(mapError(storageError).envelope.error).toEqual({
+      code: "InvalidConfig",
+      message: "invalid server configuration",
+      retriable: false,
+    });
+    const serialized = records[0]!.properties["error"] as { code: string; message: string };
+    expect(serialized.message).toContain("current.json");
+  });
+
+  test("Internal BaerlyError is scrubbed on the wire but logged in full", () => {
+    // Server-thrown protocol-invariant violations embed bucket-key /
+    // log-prefix layout in their message; that detail must never reach
+    // the client, only the server-side log.
+    const err = new BaerlyError(
+      "Internal",
+      "compact: snapshot pointer router-test/notes/t1/manifests/notes/snapshot/L0/0000-sha256.json resolves to no body; protocol violation",
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(500);
+    // Wire envelope carries no internal layout detail.
+    expect(envelope.error).toEqual({
+      code: "Internal",
+      message: "internal error",
+      retriable: false,
+    });
+    // The full message reaches the structured server-side channel.
+    expect(records).toHaveLength(1);
+    expect(records[0]!.level).toBe("error");
+    expect(records[0]!.category).toEqual(["baerly", "http"]);
+    expect(records[0]!.message.join("")).toBe("scrubbed_error");
+    const serialized = records[0]!.properties["error"] as { code: string; message: string };
+    expect(serialized.code).toBe("Internal");
+    expect(serialized.message).toContain("snapshot/L0/0000-sha256.json");
+  });
+
+  test("client-runtime-only BaerlyError codes collapse to Internal on HTTP", () => {
+    const err = new BaerlyError(
+      "UseQueryAwaitedRecorder",
+      "useQuery recorder error should never reach the server",
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(500);
+    expect(envelope.error).toEqual({
+      code: "Internal",
+      message: "internal error",
+      retriable: false,
+    });
+    expect(records).toHaveLength(1);
+    const serialized = records[0]!.properties["error"] as { code: string; message: string };
+    expect(serialized.code).toBe("UseQueryAwaitedRecorder");
   });
 
   test("unknown thrown value is sanitized and emitted via the observability channel", () => {
@@ -201,7 +331,7 @@ describe("observability middleware", () => {
     expect(p["outcome"]).toBe("conflict");
     const err = p["error"] as { code: string; message: string };
     expect(err.code).toBe("Conflict");
-    expect(err.message).toBe("CAS lost");
+    expect(err.message).toBe("write conflict");
   });
 
   test("x-request-id header is honoured", async () => {
@@ -232,9 +362,36 @@ describe("observability middleware", () => {
     const req = new Request("http://localhost/v1/throw-internal");
     const res = await withHttpObservability(req, (r) => app.fetch(r));
     expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error).toMatchObject({ code: "Internal", message: "internal error" });
     const lines = canonical();
     expect(lines).toHaveLength(1);
     expect(lines[0]!.level).toBe("error");
+  });
+
+  test("router scrubs storage key detail from malformed current.json errors", async () => {
+    const storage = new MemoryStorage();
+    await storage.put(
+      "app/router-test/tenant/t1/manifests/notes/current.json",
+      new TextEncoder().encode("{not json"),
+    );
+    const db = Db.create({
+      storage,
+      app: "router-test",
+      tenant: "t1",
+    });
+    const app = createRouter({ db });
+    const req = new Request("http://localhost/v1/c/notes");
+    const res = await withHttpObservability(req, (r) => app.fetch(r));
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error).toEqual({
+      code: "InvalidResponse",
+      message: "upstream response error",
+      retriable: false,
+    });
+    expect(JSON.stringify(body)).not.toContain("current.json");
+    expect(JSON.stringify(body)).not.toContain("router-test");
   });
 });
 
@@ -322,6 +479,20 @@ describe("request-path 400s carry a resolution hint", () => {
       readonly error: { readonly code: string; readonly resolution?: string };
     };
     expect(body.error.resolution).toBe(WHERE_ORDER_JSON_RESOLUTION);
+  });
+
+  test("predicate InvalidConfig from ?where= keeps caller-facing guidance", async () => {
+    const app = buildApp();
+    const where = encodeURIComponent(
+      JSON.stringify({ clauses: [{ op: "eq", field: "_id", value: "x" }] }),
+    );
+    const res = await app.request(`/v1/c/notes?where=${where}`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      readonly error: { readonly code: string; readonly message: string };
+    };
+    expect(body.error.code).toBe("InvalidConfig");
+    expect(body.error.message).toContain('Predicates may not key on "_id"');
   });
 });
 
