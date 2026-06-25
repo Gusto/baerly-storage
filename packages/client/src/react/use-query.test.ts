@@ -10,7 +10,7 @@ import { useQuery, type UseQueryResult } from "./use-query.ts";
 
 const okEnvelope = <T>(data: T) => ({
   data,
-  _meta: { manifest_pointer: "none@0", fresh: true },
+  _meta: { manifest_pointer: "mock-cursor", fresh: true },
 });
 
 const jsonResponse = (body: unknown, status = 200): Response =>

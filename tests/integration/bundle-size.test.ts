@@ -290,7 +290,10 @@ const BUDGETS: readonly Budget[] = [
   //     mangling locals that this unminified-gz axis still counts). Treat raw/gz as
   //     creep tripwires, NOT hard limits; do not trim explanatory comments or golf
   //     identifiers to satisfy them. min-gz here is 19104 / 19456 (−352, healthy).
-  { entry: "index.js", raw: 222 * 1024, gz: 70 * 1024, minGz: 19 * 1024 },
+  //   → raw +1 KiB (2026-06-25): opaque manifest_pointer digest replaces the
+  //     old snapshot/log-tail-shaped cursor. The FNV helper reaches the kernel
+  //     query closure (measured 227561 raw); gz/min-gz remain under.
+  { entry: "index.js", raw: 223 * 1024, gz: 70 * 1024, minGz: 19 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -429,7 +432,16 @@ const BUDGETS: readonly Budget[] = [
   //     reach http.js via the protocol barrel → errorEnvelope. Measured: 342699 raw.
   //   → raw +1 KiB (2026-06-24): WS4.1 T2 WHERE_ORDER/WRITE_BODY_SHAPE_RESOLUTION wired into
   //     router.ts throw sites (7 new resolution strings inline). Measured: 343596 raw.
-  { entry: "http.js", raw: 336 * 1024, gz: 100 * 1024, minGz: 34 * 1024 },
+  //   → raw +2 KiB / gz +1 KiB / min-gz +1 KiB (2026-06-25): HTTP error
+  //     message policy now scrubs storage/server diagnostics by code+origin,
+  //     logs the full original error server-side, and preserves predicate
+  //     InvalidConfig guidance for raw HTTP callers. Opaque manifest pointers
+  //     also reach the read path. Measured: 345775 raw / 102837 gz / 35038 min-gz.
+  //   → raw +1 KiB (2026-06-25): PR review follow-up replaces duplicated
+  //     defaulted switches and prefix-based InvalidConfig exposure with one
+  //     exhaustive policy table plus a typed request-boundary marker.
+  //     Measured: 346767 raw; gz/min-gz remain under.
+  { entry: "http.js", raw: 339 * 1024, gz: 101 * 1024, minGz: 35 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -672,7 +684,14 @@ const BUDGETS: readonly Budget[] = [
   //     122866 gz / 42545 min-gz. Budgets carry the policy ~1 KiB headroom (the
   //     gz axis in particular: 121 KiB clears 122866 by ~1 KiB, vs 14 B if pinned
   //     to 120 KiB — too tight against this closure's known ambient drift).
-  { entry: "cloudflare.js", raw: 402 * 1024, gz: 121 * 1024, minGz: 43 * 1024 },
+  //   → raw +2 KiB (2026-06-25): same request-path error scrub/log policy and
+  //     opaque manifest_pointer digest as http.js, pulled through the Worker
+  //     adapter aggregator. Measured: 413601 raw; gz/min-gz remain under.
+  //   → raw +1 KiB / gz +1 KiB (2026-06-25): same exhaustive policy-table
+  //     follow-up as http.js. The gz axis crossed by 17 B; keep the clear
+  //     table rather than byte-golfing policy metadata.
+  //     Measured: 414593 raw / 123921 gz; min-gz remains under.
+  { entry: "cloudflare.js", raw: 405 * 1024, gz: 122 * 1024, minGz: 43 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

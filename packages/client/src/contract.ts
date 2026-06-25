@@ -13,7 +13,8 @@ import type { BaerlyErrorCode, LogEntry } from "@baerly/protocol";
  *
  * - `manifest_pointer` — opaque-to-the-consumer string cursor
  *   identifying the `current.json` generation this read folded over.
- *   Treat as opaque on the wire.
+ *   It is a digest of manifest state, not a bucket key. Treat as
+ *   opaque on the wire.
  * - `fresh` — `true` iff this read advanced the locally-cached
  *   pointer on the server (cold path); `false` iff it served from the
  *   cached view.

@@ -12,7 +12,7 @@ import {
 // the path reach is contained; a moved/restructured root fails loudly at
 // `pnpm gen:spec` rather than silently emitting a wrong version.
 import pkg from "../../../../package.json" with { type: "json" };
-import { ERROR_TO_STATUS } from "../http/router.ts";
+import { ERROR_TO_STATUS, errorMessagePolicyFor, type ErrorMessagePolicy } from "../http/router.ts";
 
 /** Machine-readable contract IR. Validated against `protocol/src/spec/ir-schema.json`. */
 export interface SpecIR {
@@ -25,6 +25,7 @@ export interface SpecIR {
     // travel HTTP); a number for every code the HTTP layer can return.
     readonly httpStatus: number | null;
     readonly retriable: boolean;
+    readonly messagePolicy: ErrorMessagePolicy | "not-on-http";
     readonly summary: string;
   }>;
   readonly operators: ReadonlyArray<{
@@ -232,6 +233,7 @@ export function buildSpecIR(): SpecIR {
       // server-side codes that mapError falls through to a 500.
       httpStatus: ERROR_TO_STATUS.get(code) ?? (CLIENT_RUNTIME_CODES.has(code) ? null : 500),
       retriable: isRetriableCode(code),
+      messagePolicy: CLIENT_RUNTIME_CODES.has(code) ? "not-on-http" : errorMessagePolicyFor(code),
       summary: ERROR_SUMMARY[code],
     })),
     operators: PREDICATE_OPS.map((name) => ({

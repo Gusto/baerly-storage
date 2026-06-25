@@ -9,7 +9,7 @@ import { MockFetch } from "./testing/index.ts";
 
 const okEnvelope = <T>(data: T): HttpOkEnvelope<T> => ({
   data,
-  _meta: { manifest_pointer: "none@0", fresh: true },
+  _meta: { manifest_pointer: "mock-cursor", fresh: true },
 });
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -144,7 +144,7 @@ describe("createBaerlyClient", () => {
       );
       return jsonResponse({
         data: { count: 42 },
-        _meta: { manifest_pointer: "none@0", fresh: true },
+        _meta: { manifest_pointer: "mock-cursor", fresh: true },
       });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
@@ -161,7 +161,7 @@ describe("createBaerlyClient", () => {
       expect(url.searchParams.has("where")).toBe(false);
       return jsonResponse({
         data: { count: 7 },
-        _meta: { manifest_pointer: "none@0", fresh: true },
+        _meta: { manifest_pointer: "mock-cursor", fresh: true },
       });
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });

@@ -7,84 +7,98 @@
       "code": "InvalidConfig",
       "httpStatus": 400,
       "retriable": false,
+      "messagePolicy": "contextual",
       "summary": "Caller config or input is invalid."
     },
     {
       "code": "NetworkError",
       "httpStatus": 502,
       "retriable": true,
+      "messagePolicy": "scrubbed",
       "summary": "S3/HTTP transport failure (5xx, retries exhausted)."
     },
     {
       "code": "AccessDenied",
       "httpStatus": 403,
       "retriable": false,
+      "messagePolicy": "scrubbed",
       "summary": "S3 returned 403 — credentials or bucket policy."
     },
     {
       "code": "InvalidResponse",
       "httpStatus": 502,
       "retriable": false,
+      "messagePolicy": "scrubbed",
       "summary": "Server returned unparseable data."
     },
     {
       "code": "Internal",
       "httpStatus": 500,
       "retriable": false,
+      "messagePolicy": "scrubbed",
       "summary": "Internal invariant violation — file a bug."
     },
     {
       "code": "SchemaError",
       "httpStatus": 400,
       "retriable": false,
+      "messagePolicy": "public",
       "summary": "Document body failed schema validation; carries .issues."
     },
     {
       "code": "Conflict",
       "httpStatus": 409,
       "retriable": true,
+      "messagePolicy": "contextual",
       "summary": "Write conflicted (CAS exhausted, duplicate _id, guarded key)."
     },
     {
       "code": "Unauthorized",
       "httpStatus": 401,
       "retriable": false,
+      "messagePolicy": "public",
       "summary": "Verifier returned no identity."
     },
     {
       "code": "NotFound",
       "httpStatus": 404,
       "retriable": false,
+      "messagePolicy": "public",
       "summary": "Addressed resource does not exist."
     },
     {
       "code": "PayloadTooLarge",
       "httpStatus": 413,
       "retriable": false,
+      "messagePolicy": "public",
       "summary": "Request body exceeded MAX_BODY_BYTES."
     },
     {
       "code": "UnsatisfiablePredicate",
       "httpStatus": 400,
       "retriable": false,
+      "messagePolicy": "public",
       "summary": "Predicate is well-formed but contradicts itself."
     },
     {
       "code": "UseQueryAwaitedRecorder",
       "httpStatus": null,
       "retriable": false,
+      "messagePolicy": "not-on-http",
       "summary": "A useQuery callback awaited a recorder terminal."
     },
     {
       "code": "UnexpectedWriteInQuery",
       "httpStatus": null,
       "retriable": false,
+      "messagePolicy": "not-on-http",
       "summary": "A write verb was called inside a useQuery callback."
     },
     {
       "code": "MutationFailed",
       "httpStatus": null,
       "retriable": false,
+      "messagePolicy": "not-on-http",
       "summary": "A useMutation callback rejected with a non-BaerlyError."
     }
   ],

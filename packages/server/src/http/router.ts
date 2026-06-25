@@ -43,7 +43,7 @@ import {
   type SinceResponse,
 } from "../contract.ts";
 import { serializeError } from "../observability/canonical.ts";
-import { CATEGORY, getLogger } from "../observability/index.ts";
+import { CATEGORY, getCurrentContext, getLogger } from "../observability/index.ts";
 import { runAllWithMeta, runByIdWithMeta } from "../query.ts";
 import { longPollSince } from "./since.ts";
 
@@ -352,7 +352,11 @@ const parseWhereParam = (c: Context): PredicateWire => {
       WHERE_ORDER_JSON_RESOLUTION,
     );
   }
-  return validateWire(parsed as PredicateWire);
+  try {
+    return validateWire(parsed as PredicateWire);
+  } catch (error) {
+    throw markCallerFacingInvalidConfig(error);
+  }
 };
 
 /**
@@ -438,6 +442,123 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
 ]);
 
 /**
+ * Machine-visible policy for whether an error code's thrown message is
+ * safe to copy into the HTTP envelope. This is code-level metadata;
+ * `Conflict` is instance-contextual because duplicate `_id` conflicts are
+ * caller-facing, while retriable CAS/storage conflicts may carry bucket keys.
+ * `InvalidConfig` is also contextual: predicate-wire validation errors are
+ * caller-facing, but storage/adapter config errors may carry internal layout.
+ *
+ * Deliberately NOT re-exported from the `@baerly/server/http` barrel.
+ */
+export type ErrorMessagePolicy = "public" | "scrubbed" | "contextual";
+
+type ErrorCodePolicy =
+  | { readonly messagePolicy: "public" }
+  | {
+      readonly messagePolicy: "scrubbed";
+      readonly scrubbedMessage: string;
+    }
+  | {
+      readonly messagePolicy: "contextual";
+      readonly scrubbedMessage: string;
+      readonly shouldExpose: (err: BaerlyError) => boolean;
+    };
+
+const CALLER_FACING_INVALID_CONFIG_ERRORS = new WeakSet<BaerlyError>();
+
+const ERROR_CODE_POLICY = {
+  AccessDenied: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "access denied",
+  },
+  Conflict: {
+    messagePolicy: "contextual",
+    scrubbedMessage: "write conflict",
+    shouldExpose: (err) => !err.retriable,
+  },
+  Internal: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "internal error",
+  },
+  InvalidConfig: {
+    messagePolicy: "contextual",
+    scrubbedMessage: "invalid server configuration",
+    shouldExpose: (err) => CALLER_FACING_INVALID_CONFIG_ERRORS.has(err),
+  },
+  InvalidResponse: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "upstream response error",
+  },
+  MutationFailed: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "internal error",
+  },
+  NetworkError: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "upstream network error",
+  },
+  NotFound: {
+    messagePolicy: "public",
+  },
+  PayloadTooLarge: {
+    messagePolicy: "public",
+  },
+  SchemaError: {
+    messagePolicy: "public",
+  },
+  Unauthorized: {
+    messagePolicy: "public",
+  },
+  UnexpectedWriteInQuery: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "internal error",
+  },
+  UnsatisfiablePredicate: {
+    messagePolicy: "public",
+  },
+  UseQueryAwaitedRecorder: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "internal error",
+  },
+} as const satisfies Record<BaerlyErrorCode, ErrorCodePolicy>;
+
+export const errorMessagePolicyFor = (code: BaerlyErrorCode): ErrorMessagePolicy =>
+  ERROR_CODE_POLICY[code].messagePolicy;
+
+const markCallerFacingInvalidConfig = (err: unknown): unknown => {
+  if (err instanceof BaerlyError && err.code === "InvalidConfig") {
+    CALLER_FACING_INVALID_CONFIG_ERRORS.add(err);
+  }
+  return err;
+};
+
+const shouldExposeErrorMessage = (err: BaerlyError): boolean => {
+  const policy = ERROR_CODE_POLICY[err.code];
+  if (policy.messagePolicy === "public") {
+    return true;
+  }
+  if (policy.messagePolicy === "scrubbed") {
+    return false;
+  }
+  return policy.shouldExpose(err);
+};
+
+const scrubbedMessageFor = (code: BaerlyErrorCode): string => {
+  const policy = ERROR_CODE_POLICY[code];
+  return policy.messagePolicy === "public" ? "internal error" : policy.scrubbedMessage;
+};
+
+const logScrubbedError = (err: BaerlyError, status: HttpStatus): void => {
+  const ctx = getCurrentContext();
+  getLogger(CATEGORY.http).error("scrubbed_error", {
+    error: serializeError(err),
+    status,
+    ...(ctx !== undefined ? { request_id: ctx.request_id } : {}),
+  });
+};
+
+/**
  * Map an unknown thrown value onto the wire envelope plus an HTTP
  * status code. The mapping is keyed by `BaerlyError.code` so any future
  * code addition forces a re-check here. Unmapped server-side codes fall
@@ -449,7 +570,27 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
  */
 export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErrorEnvelope } {
   if (err instanceof BaerlyError) {
-    const status = ERROR_TO_STATUS.get(err.code) ?? 500;
+    const mappedStatus = ERROR_TO_STATUS.get(err.code);
+    const status = mappedStatus ?? 500;
+    const wireCode: BaerlyErrorCode = mappedStatus === undefined ? "Internal" : err.code;
+    // Do not use HTTP status as the "safe to expose" signal: storage
+    // and protocol errors mapped to 4xx/502 often carry physical bucket
+    // keys, ETags, upstream response bodies, or provider binding text.
+    // Preserve caller-facing messages, scrub server/storage diagnostics,
+    // and keep the full detail in the server-side log.
+    if (wireCode !== err.code || !shouldExposeErrorMessage(err)) {
+      logScrubbedError(err, status);
+      return {
+        status,
+        envelope: errorEnvelope(
+          wireCode,
+          scrubbedMessageFor(wireCode),
+          undefined,
+          wireCode === "Conflict" ? err.resolution : undefined,
+          wireCode === err.code ? err.retriable : undefined,
+        ),
+      };
+    }
     return {
       status,
       envelope: errorEnvelope(err.code, err.message, err.issues, err.resolution, err.retriable),

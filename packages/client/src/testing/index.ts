@@ -20,7 +20,7 @@ import type { Fetcher } from "../request.ts";
  * mock.on("GET", "/v1/c/tickets", () =>
  *   new Response(JSON.stringify({
  *     data: [{ _id: "a" }],
- *     _meta: { manifest_pointer: "none@0", fresh: true },
+ *     _meta: { manifest_pointer: "mock-cursor", fresh: true },
  *   })),
  * );
  * const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });

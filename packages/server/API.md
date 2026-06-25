@@ -381,10 +381,16 @@ app.post("/notes", async (c) => {
 });
 ```
 
-`mapError` accepts any thrown value — non-`BaerlyError` throws fall
-through to `500 Internal` with the message redacted, and the
-underlying error is logged via the observability channel. The HTTP
-status / envelope shape is locked.
+`mapError` accepts any thrown value. Caller-facing errors such as
+`SchemaError`, `NotFound`, `PayloadTooLarge`, predicate `InvalidConfig`,
+and non-retriable caller `Conflict`s keep their actionable message.
+Storage/server diagnostics such as `Internal`, `NetworkError`,
+`InvalidResponse`, storage `AccessDenied`, storage `InvalidConfig`, and
+retriable CAS/storage `Conflict`s keep their code/status/retriable shape
+but use a generic wire message; the full thrown error is logged via the
+observability channel. Non-`BaerlyError` throws fall through to
+`500 Internal` with the message redacted. The HTTP status / envelope shape
+is locked.
 
 ## `defineConfig({ app, tenant, target, collections })`
 

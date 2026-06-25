@@ -520,11 +520,11 @@ export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
 export const MAINTENANCE_TAIL_HINT_REFRESH_WRITES: number = 128;
 
 /**
- * Placeholder for `CurrentJson.snapshot === null` in the
- * `_meta.manifest_pointer` cursor emitted on read responses. The
- * wire format is `"<snapshot>@<tail_hint>"`, and `null` snapshots
- * serialise as this literal so the cursor is never empty and stays
- * byte-stable when destructured by operators.
+ * Stable seed for `CurrentJson.snapshot === null` when building the
+ * opaque `_meta.manifest_pointer` cursor emitted on read responses.
+ * The literal no longer appears by itself on the wire; it is folded
+ * into the server-side digest so the cursor never exposes physical
+ * snapshot keys.
  *
  * @see packages/server/src/contract.ts (HttpOkMeta)
  */

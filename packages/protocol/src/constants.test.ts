@@ -26,9 +26,8 @@ describe("wire-contract constants", () => {
   });
 
   test("MANIFEST_POINTER_EMPTY_SNAPSHOT is an on-wire cursor contract", () => {
-    // Serialised into _meta.manifest_pointer on HTTP read responses as
-    // "<snapshot>@<tail_hint>" — null snapshots use this literal so the
-    // cursor is byte-stable and never empty (e.g. "none@0").
+    // Used as the stable null-snapshot seed for the opaque
+    // _meta.manifest_pointer digest.
     expect(MANIFEST_POINTER_EMPTY_SNAPSHOT).toBe("none");
   });
 

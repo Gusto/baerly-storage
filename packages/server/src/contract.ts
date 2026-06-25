@@ -9,7 +9,11 @@ import {
  * Wire envelope for every error response. Mirrors `BaerlyError` so
  * the client SDK reconstructs the same class shape it would see
  * in-process. `code` is the discriminant; `cause` is never sent on
- * the wire.
+ * the wire. `message` follows the HTTP message policy: caller-facing
+ * errors carry actionable detail, predicate `InvalidConfig` keeps its
+ * request-fix guidance, and storage/server diagnostics use generic text
+ * so bucket keys, layout, ETags, and upstream response bodies stay
+ * server-side.
  */
 export interface HttpErrorEnvelope {
   readonly error: {
@@ -63,10 +67,8 @@ export const errorEnvelope = (
  *
  * - `manifest_pointer` is an opaque-to-the-consumer string cursor
  *   identifying the `current.json` generation this read folded over.
- *   Today's format is `"<snapshot>@<tail_hint>"` where `<snapshot>` is
- *   the literal `"none"` when `CurrentJson.snapshot` is `null`. Treat
- *   as opaque on the wire — the shape may change in a future minor
- *   without breaking destructuring consumers.
+ *   It is a digest of manifest state, not a bucket key; treat it as
+ *   opaque on the wire.
  * - `fresh` is `true` iff this read advanced the locally-cached
  *   pointer (cold path); `false` iff it served from the cached view
  *   (cached pointer was unchanged).
@@ -124,13 +126,13 @@ export type Routes =
  * | 201    | `POST` insert success — body `{ _id }`.                          |
  * | 204    | `DELETE` success — no body.                                      |
  * | 304    | Reserved. Long-poll idleness ships as 200 + empty events.        |
- * | 400    | Body parse failed → `HttpErrorEnvelope` `code:"SchemaError"`.    |
+ * | 400    | Caller request failed → `SchemaError` / `InvalidConfig` / `UnsatisfiablePredicate`. Predicate `InvalidConfig` guidance is public; server/storage config detail is scrubbed. |
  * | 401    | `Verifier` returned null → `code:"Unauthorized"`, `message: "Missing or invalid Authorization header"`. |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
- * | 409    | Write conflict → `code:"Conflict"` (`retriable` says whether to retry). |
+ * | 409    | Write conflict → `code:"Conflict"` (`retriable` says whether to retry). Non-retriable caller conflicts keep their message; retriable CAS/storage conflicts are scrubbed. |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
- * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"`. |
- * | 500    | Anything else → `code:"Internal"`.                               |
+ * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"` with a generic message. |
+ * | 500    | Anything else → `code:"Internal"` with a generic message.         |
  */
 export type HttpStatus = 200 | 201 | 204 | 304 | 400 | 401 | 403 | 404 | 409 | 413 | 500 | 502;
