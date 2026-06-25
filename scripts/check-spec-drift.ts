@@ -5,8 +5,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { ERROR_CODES, MemoryStorage, PREDICATE_OPS } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
-// buildSpecIR is build-time-only and has no published barrel by design.
-import { buildSpecIR } from "../packages/server/src/spec/ir.ts";
+import { buildSpecIR } from "@baerly/server/_internal/spec-gen";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const artifactPath = resolve(here, "../packages/server/spec/baerly.spec.json");
@@ -21,9 +20,9 @@ const fail = (msg: string): never => {
 let checkedIn: string;
 try {
   checkedIn = readFileSync(artifactPath, "utf8");
-} catch {
-  fail(`missing artifact at ${artifactPath}`);
-  throw new Error("unreachable"); // tsgo does not narrow definite-assignment through fail()'s `never`
+} catch (error) {
+  fail(`missing artifact at ${artifactPath}: ${(error as Error).message}`);
+  throw new Error("unreachable", { cause: error }); // tsgo does not narrow definite-assignment through fail()'s `never`
 }
 
 let parsed: {
@@ -33,17 +32,17 @@ let parsed: {
 };
 try {
   parsed = JSON.parse(checkedIn);
-} catch {
-  fail("checked-in baerly.spec.json is not valid JSON");
-  throw new Error("unreachable"); // tsgo does not narrow definite-assignment through fail()'s `never`
+} catch (error) {
+  fail(`checked-in baerly.spec.json is not valid JSON: ${(error as Error).message}`);
+  throw new Error("unreachable", { cause: error }); // tsgo does not narrow definite-assignment through fail()'s `never`
 }
 
 let schema: object;
 try {
   schema = JSON.parse(readFileSync(schemaPath, "utf8")) as object;
-} catch {
-  fail(`missing or invalid IR schema at ${schemaPath}`);
-  throw new Error("unreachable"); // tsgo does not narrow definite-assignment through fail()'s `never`
+} catch (error) {
+  fail(`missing or invalid IR schema at ${schemaPath}: ${(error as Error).message}`);
+  throw new Error("unreachable", { cause: error }); // tsgo does not narrow definite-assignment through fail()'s `never`
 }
 
 const ajv = new Ajv2020({ allErrors: true });
