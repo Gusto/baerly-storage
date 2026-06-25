@@ -414,7 +414,7 @@ function parseOrder(raw: string | undefined): OrderSpec<DocumentData> | undefine
   return parsed as OrderSpec<DocumentData>;
 }
 
-const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
+export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
   BaerlyErrorCode,
   HttpStatus
 >([
@@ -425,15 +425,17 @@ const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
-  // NetworkError, InvalidResponse, Internal → 500
+  ["UnsatisfiablePredicate", 400],
+  ["NetworkError", 502],
+  ["InvalidResponse", 502],
+  // Internal → 500
 ]);
 
 /**
  * Map an unknown thrown value onto the wire envelope plus an HTTP
  * status code. The mapping is keyed by `BaerlyError.code` so any future
- * code addition forces a re-check here (currently unmapped codes fall
- * through to 500 by design — see the `NetworkError` / `InvalidResponse`
- * / `Internal` comment in `ERROR_TO_STATUS`).
+ * code addition forces a re-check here. Unmapped server-side codes fall
+ * through to 500 by design — currently only `Internal`.
  *
  * Public via `@gusto/baerly-storage/http` for the embed-by-hand recipe
  * (your own Hono / Express / Fastify app calling `Db` directly).

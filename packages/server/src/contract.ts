@@ -130,6 +130,7 @@ export type Routes =
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | Write conflict → `code:"Conflict"` (`retriable` says whether to retry). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
+ * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"`. |
  * | 500    | Anything else → `code:"Internal"`.                               |
  */
-export type HttpStatus = 200 | 201 | 204 | 304 | 400 | 401 | 403 | 404 | 409 | 413 | 500;
+export type HttpStatus = 200 | 201 | 204 | 304 | 400 | 401 | 403 | 404 | 409 | 413 | 500 | 502;
