@@ -11,6 +11,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./local-fs": {
+      "types": "./src/local-fs.ts",
+      "import": "./src/local-fs.ts"
+    },
     "./vite": {
       "types": "./src/vite-plugin.ts",
       "import": "./src/vite-plugin.ts"
