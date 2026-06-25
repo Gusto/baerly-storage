@@ -443,4 +443,67 @@ describe("baerlyWorker dev landing", () => {
     );
     expect(res.status).toBe(401);
   });
+
+  test("GET /v1/spec serves the static IR even when the verifier denies (no 401)", async () => {
+    // denyVerifier returns null — a normal /v1/* route would 401, but
+    // /v1/spec is anonymous and must still 200 with the static IR.
+    const worker = baerlyWorker(() => ({ config: baseConfig, verifier: denyVerifier }));
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://example.com/v1/spec")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["specVersion"]).toBe("1");
+    expect("collections" in body).toBe(false);
+  });
+
+  test("GET /v1/spec serves the static IR when the verifier throws", async () => {
+    const throwingVerifier: Verifier = async () => {
+      throw new Error("jwks unavailable");
+    };
+    const worker = baerlyWorker(() => ({
+      config: { ...baseConfig, collections: { notes: {} } },
+      verifier: throwingVerifier,
+    }));
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://example.com/v1/spec")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["specVersion"]).toBe("1");
+    expect("collections" in body).toBe(false);
+  });
+
+  test("GET /v1/spec serves the static IR when auth resolution fails", async () => {
+    const worker = baerlyWorker(() => ({
+      config: { ...baseConfig, auth: "shared-secret", collections: { notes: {} } },
+    }));
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://example.com/v1/spec")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["specVersion"]).toBe("1");
+    expect("collections" in body).toBe(false);
+  });
+
+  test("GET /v1/spec appends declared collections when the verifier accepts", async () => {
+    // Mirror of the Node adapter's authed case — keep both adapters in parity.
+    const config = { ...baseConfig, collections: { notes: {}, tasks: {} } };
+    const worker = baerlyWorker(() => ({ config, verifier: trivialVerifier }));
+    const res = await worker.fetch!(
+      asWorkersRequest(new Request("https://example.com/v1/spec")),
+      makeEnv(getBinding()),
+      makeCtx(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { collections?: Array<{ name: string }> };
+    expect(body.collections?.map((c) => c.name).toSorted()).toEqual(["notes", "tasks"]);
+  });
 });

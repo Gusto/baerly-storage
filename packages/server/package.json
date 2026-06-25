@@ -27,6 +27,10 @@
       "types": "./src/observability/index.ts",
       "import": "./src/observability/index.ts"
     },
+    "./spec": {
+      "types": "./src/spec/index.ts",
+      "import": "./src/spec/index.ts"
+    },
     "./_internal/testing": {
       "types": "./src/_internal/testing.ts",
       "import": "./src/_internal/testing.ts"

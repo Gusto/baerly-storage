@@ -8,6 +8,7 @@ import {
 } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
+import { buildSpecResponse } from "@baerly/server/spec";
 import type { MaintenanceDispatch } from "@baerly/server/maintenance";
 import {
   CATEGORY,
@@ -404,13 +405,34 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
 
   return {
     async fetch(req, env, ctx): Promise<Response> {
+      const url = new URL(req.url);
+
+      // /v1/spec — anonymous static contract IR. Keep this before
+      // `ensureResolved`: even a verifier/config-resolution failure
+      // should not hide the public machine contract. Tenant collections
+      // are appended only when resolution succeeds AND the verifier
+      // accepts.
+      if (req.method === "GET" && url.pathname === "/v1/spec") {
+        let body = buildSpecResponse();
+        try {
+          const { options, verifier } = await ensureResolved(env);
+          const identity = await verifier(req);
+          body = buildSpecResponse(identity !== null ? options.config : undefined);
+        } catch {
+          body = buildSpecResponse();
+        }
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
       const { options, verifier } = await ensureResolved(env);
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
       // returns 204 so browsers don't pin a second JSON 404 next
       // to the landing page.
-      const url = new URL(req.url);
       if (options.dev !== undefined && req.method === "GET") {
         if (url.pathname === "/") {
           return new Response(renderDevLanding(options.dev), {

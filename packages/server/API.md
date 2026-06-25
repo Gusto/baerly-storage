@@ -633,6 +633,16 @@ If your probe path is fixed to something else (a k8s readiness path,
 say), put a custom route in front of the kernel (see "Recipe — custom
 routes in front of `baerlyNode`" below).
 
+### Machine contract (`GET /v1/spec`)
+
+`baerlyWorker` and `baerlyNode` both mount an anonymous
+`GET /v1/spec` → the machine-readable contract IR (error codes +
+HTTP status, predicate operators, method/route tables) — the same
+data shipped as `dist/baerly.spec.json`. It runs the verifier
+tolerantly: an unauthenticated probe gets the static contract (no
+401), and a request that the verifier accepts additionally gets a
+`collections` array of declared collection + index names.
+
 ### Read modifiers (query params)
 
 `GET /v1/c/:collection` accepts three JSON-encoded query params; all are
