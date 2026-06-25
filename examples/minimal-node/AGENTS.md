@@ -109,7 +109,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 | Path                         | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/server/index.ts`        | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)`                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src/server/index.ts`        | Server entry — defaults to zero-config `localFsStorage()` (persists to `./.baerly-data`); promotes to `s3Storage` (AWS) when `BUCKET` is set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set; composes a verifier and calls `baerlyNode({ ... }).listen(PORT)`                                                                                                                                                                                                                                                  |
 | `src/web/`, `index.html`     | Optional SPA shell built by Vite into `dist/client/`. `src/web/main.ts` is a ~17-line hello-world: reads `client.collection("notes").all()` to render a `${n} note(s)` count and an `[Add note]` button that inserts a timestamped row and re-fetches. Demonstrates both read and write paths on first load — extend, replace, or remove the whole tree if not needed. The `config`-bound `client.collection("notes")` is the typed surface (the generic on `.collection()` is the collection **name**, not the row type). |
 | `vite.config.ts`             | Vite client build — `outDir: dist/client`; `baerlyDev()` mounts the Node listener as middleware so SPA + `/v1/*` share `:5173` in dev                                                                                                                                                                                                                                                                                                                                                                                      |
 | `tsconfig.{app,server}.json` | TS project references for the client and server projects                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -356,14 +356,15 @@ apps or tenancy enforced outside baerly-storage.
 
 <!-- pattern-c:end -->
 
-- **Storage backend** — `src/server/index.ts` picks between
-  `s3Storage` (AWS) and `r2Storage` (Cloudflare R2) based on whether
-  `R2_ACCOUNT_ID` is set. AWS S3 and Cloudflare R2 are the
-  production-supported stores. **MinIO** is the local/dev conformance
-  target. Other S3-compatible endpoints need a green
-  `baerly doctor --bucket` plus owner validation; GCS S3-interop is not
-  supported for database use today. JSDoc `@example` blocks for the
-  factories are visible in your editor's TS hover.
+- **Storage backend** — `src/server/index.ts` defaults to
+  `localFsStorage()` (persists to `./.baerly-data`, zero credentials,
+  single-node only) and promotes to `s3Storage` (AWS) when `BUCKET` is
+  set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set. AWS
+  S3 and Cloudflare R2 are the production-supported stores. **MinIO** is
+  the local/dev conformance target. Other S3-compatible endpoints need a
+  green `baerly doctor --bucket` plus owner validation; GCS S3-interop
+  is not supported for database use today. JSDoc `@example` blocks for
+  the factories are visible in your editor's TS hover.
 
 - **Switching from static creds to EKS Pod Identity** — in
   `src/server/index.ts`, swap `credentials: { accessKeyId,
