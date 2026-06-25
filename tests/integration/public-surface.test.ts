@@ -134,6 +134,7 @@ describe("@gusto/baerly-storage/cloudflare", () => {
 import {
   baerlyNode,
   gcsStorage,
+  localFsStorage,
   minioStorage,
   r2Storage,
   S3HttpStorage as NodeS3HttpStorage,
@@ -147,6 +148,7 @@ describe("@gusto/baerly-storage/node", () => {
     expect(typeof r2Storage).toBe("function");
     expect(typeof minioStorage).toBe("function");
     expect(typeof gcsStorage).toBe("function");
+    expect(typeof localFsStorage).toBe("function");
     expect(typeof NodeS3HttpStorage).toBe("function");
   });
 });
