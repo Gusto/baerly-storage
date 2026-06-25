@@ -6,6 +6,7 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
+import { buildSpecResponse } from "@baerly/server/spec";
 import type { MaintenanceDispatch } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
@@ -154,6 +155,27 @@ export function createFetchHandler(
     // adapter-cloudflare/src/worker.ts.
     if (request.method === "GET" && path === "/v1/healthz") {
       return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // /v1/spec is anonymous (like healthz): the static contract IR is
+    // non-sensitive (same info as the public .d.ts). Per-tenant
+    // collection names are appended ONLY when the verifier accepts —
+    // we run it here tolerantly (null → anonymous, no 401), so an
+    // unauthenticated probe still gets the static contract. Verifier
+    // throws also degrade to anonymous: the static contract is public
+    // and should stay available when the auth backend is unhealthy.
+    if (request.method === "GET" && path === "/v1/spec") {
+      let body = buildSpecResponse();
+      try {
+        const identity = await opts.verifier(request);
+        body = buildSpecResponse(identity !== null ? opts.config : undefined);
+      } catch {
+        body = buildSpecResponse();
+      }
+      return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
       });

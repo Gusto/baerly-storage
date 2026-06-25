@@ -665,7 +665,14 @@ const BUDGETS: readonly Budget[] = [
   //     minification (no prop-mangle), so this lands +2 B on the min-gz axis
   //     (measured 40962 / 40960). A clearer field is worth two shipped bytes —
   //     rebaseline min-gz to 41 KiB.
-  { entry: "cloudflare.js", raw: 393 * 1024, gz: 119 * 1024, minGz: 41 * 1024 },
+  //   → raw +9 KiB / gz +2 KiB / min-gz +2 KiB (2026-06-24): WS5 T6 anonymous
+  //     GET /v1/spec route — pulls runtime-spec-FV6ikMXW.js (7.62 kB raw incl.
+  //     baerly.spec.json IR) into the cloudflare adapter bundle. The subpath keeps
+  //     it out of the kernel barrel (index.js unaffected). Measured: 410063 raw /
+  //     122866 gz / 42545 min-gz. Budgets carry the policy ~1 KiB headroom (the
+  //     gz axis in particular: 121 KiB clears 122866 by ~1 KiB, vs 14 B if pinned
+  //     to 120 KiB — too tight against this closure's known ambient drift).
+  { entry: "cloudflare.js", raw: 402 * 1024, gz: 121 * 1024, minGz: 43 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -1060,4 +1067,16 @@ describe("bundle size", () => {
       ).toEqual([]);
     });
   }
+});
+
+describe("spec artifact emission", () => {
+  test("dist/baerly.spec.json is emitted and schema-shaped", () => {
+    const distDir = resolve(__dirname, "../../dist");
+    const path = resolve(distDir, "baerly.spec.json");
+    expect(existsSync(path)).toBe(true);
+    const ir = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(ir["specVersion"]).toBe("1");
+    expect(Array.isArray(ir["errorCodes"])).toBe(true);
+    expect((ir["errorCodes"] as unknown[]).length).toBe(14);
+  });
 });
