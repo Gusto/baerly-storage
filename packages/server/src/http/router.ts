@@ -414,6 +414,12 @@ function parseOrder(raw: string | undefined): OrderSpec<DocumentData> | undefine
   return parsed as OrderSpec<DocumentData>;
 }
 
+// Exported as the single source of truth for the error-code → HTTP-status
+// mapping: the runtime router (below) and the build-time spec generator
+// (`spec/ir.ts`, reached via the `_internal/spec-gen` subpath) both read it,
+// so the served `/v1/spec` contract cannot drift from real router behaviour —
+// that drift gate is the point. Deliberately NOT re-exported from the
+// `@baerly/server/http` barrel, so the published package surface is unchanged.
 export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map<
   BaerlyErrorCode,
   HttpStatus

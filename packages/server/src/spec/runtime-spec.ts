@@ -65,8 +65,12 @@ export async function handleSpecRequest(
     // must stay up), but emit one operational signal so the outage isn't
     // invisible on this anonymous, pre-observability route. `console.warn`
     // (not a canonical line) matches the adapters' other ops warnings and
-    // keeps this light module out of the observability closure.
-    console.warn("[baerly] /v1/spec degraded to the anonymous contract:", error);
+    // keeps this light module out of the observability closure. Log only the
+    // error *message*, never the error object: an auth-backend failure can
+    // carry credential material (tokens, keys, connection strings) in its
+    // fields/stack, and this line lands in plaintext logs.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[baerly] /v1/spec degraded to the anonymous contract: ${reason}`);
   }
   return new Response(JSON.stringify(buildSpecResponse(config)), {
     status: 200,
