@@ -8,7 +8,7 @@ import {
 } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
-import { buildSpecResponse } from "@baerly/server/spec";
+import { handleSpecRequest } from "@baerly/server/spec";
 import type { MaintenanceDispatch } from "@baerly/server/maintenance";
 import {
   CATEGORY,
@@ -413,17 +413,9 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // are appended only when resolution succeeds AND the verifier
       // accepts.
       if (req.method === "GET" && url.pathname === "/v1/spec") {
-        let body = buildSpecResponse();
-        try {
+        return handleSpecRequest(req, async () => {
           const { options, verifier } = await ensureResolved(env);
-          const identity = await verifier(req);
-          body = buildSpecResponse(identity !== null ? options.config : undefined);
-        } catch {
-          body = buildSpecResponse();
-        }
-        return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "content-type": "application/json" },
+          return { verifier, config: options.config };
         });
       }
 

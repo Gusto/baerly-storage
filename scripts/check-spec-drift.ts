@@ -3,8 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { ERROR_CODES, MemoryStorage, PREDICATE_OPS } from "@baerly/protocol";
-import { Db } from "../packages/server/src/db.ts";
-import { createRouter } from "../packages/server/src/http/router.ts";
+import { Db } from "@baerly/server";
+import { createRouter } from "@baerly/server/http";
+// buildSpecIR is build-time-only and has no published barrel by design.
 import { buildSpecIR } from "../packages/server/src/spec/ir.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,7 +23,7 @@ try {
   checkedIn = readFileSync(artifactPath, "utf8");
 } catch {
   fail(`missing artifact at ${artifactPath}`);
-  throw new Error("unreachable"); // tsgo: narrowing aid — fail() exits
+  throw new Error("unreachable"); // tsgo does not narrow definite-assignment through fail()'s `never`
 }
 
 let parsed: {
@@ -34,7 +35,7 @@ try {
   parsed = JSON.parse(checkedIn);
 } catch {
   fail("checked-in baerly.spec.json is not valid JSON");
-  throw new Error("unreachable"); // tsgo: narrowing aid — fail() exits
+  throw new Error("unreachable"); // tsgo does not narrow definite-assignment through fail()'s `never`
 }
 
 let schema: object;
@@ -42,7 +43,7 @@ try {
   schema = JSON.parse(readFileSync(schemaPath, "utf8")) as object;
 } catch {
   fail(`missing or invalid IR schema at ${schemaPath}`);
-  throw new Error("unreachable"); // tsgo: narrowing aid — fail() exits
+  throw new Error("unreachable"); // tsgo does not narrow definite-assignment through fail()'s `never`
 }
 
 const ajv = new Ajv2020({ allErrors: true });

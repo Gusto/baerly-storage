@@ -6,7 +6,7 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
-import { buildSpecResponse } from "@baerly/server/spec";
+import { handleSpecRequest } from "@baerly/server/spec";
 import type { MaintenanceDispatch } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
@@ -168,17 +168,10 @@ export function createFetchHandler(
     // throws also degrade to anonymous: the static contract is public
     // and should stay available when the auth backend is unhealthy.
     if (request.method === "GET" && path === "/v1/spec") {
-      let body = buildSpecResponse();
-      try {
-        const identity = await opts.verifier(request);
-        body = buildSpecResponse(identity !== null ? opts.config : undefined);
-      } catch {
-        body = buildSpecResponse();
-      }
-      return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return handleSpecRequest(request, async () => ({
+        verifier: opts.verifier,
+        config: opts.config,
+      }));
     }
 
     const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
