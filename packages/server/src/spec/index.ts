@@ -1,1 +1,6 @@
-export { type SpecCollection, type SpecResponse, buildSpecResponse } from "./runtime-spec.ts";
+export {
+  type SpecCollection,
+  type SpecResponse,
+  buildSpecResponse,
+  handleSpecRequest,
+} from "./runtime-spec.ts";

@@ -1,27 +1,13 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, test } from "vitest";
 import { CLIENT_RUNTIME_CODES, ERROR_CODES, PREDICATE_OPS } from "@baerly/protocol";
+import { expectValidAgainstIrSchema } from "../../../../tests/fixtures/ir-schema.ts";
 import { buildSpecIR } from "./ir.ts";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const schema = JSON.parse(
-  readFileSync(resolve(here, "../../../protocol/src/spec/ir-schema.json"), "utf8"),
-) as object;
 
 describe("buildSpecIR", () => {
   const ir = buildSpecIR();
 
   test("validates against ir-schema.json", () => {
-    const ajv = new Ajv2020({ allErrors: true });
-    const validate = ajv.compile(schema);
-    const ok = validate(ir);
-    if (!ok) {
-      throw new Error(`IR failed schema: ${JSON.stringify(validate.errors, null, 2)}`);
-    }
-    expect(ok).toBe(true);
+    expectValidAgainstIrSchema(ir);
   });
 
   test("lists every BaerlyErrorCode with its httpStatus + retriable flag", () => {

@@ -5,6 +5,12 @@ import {
   isRetriableCode,
   PREDICATE_OPS,
 } from "@baerly/protocol";
+// Read the ROOT package.json version: `@gusto/baerly-storage` is published
+// from the monorepo root under changesets lockstep, so the root version is
+// the kernel/published version — deliberately NOT server's internal
+// workspace version. buildSpecIR is build/test-time only (never bundled), so
+// the path reach is contained; a moved/restructured root fails loudly at
+// `pnpm gen:spec` rather than silently emitting a wrong version.
 import pkg from "../../../../package.json" with { type: "json" };
 import { ERROR_TO_STATUS } from "../http/router.ts";
 
