@@ -4,7 +4,7 @@
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
   "excludePaths": [".baerly/scaffold.json"],
-  "excludeNames": ["node_modules", "dist", ".DS_Store", "*.tsbuildinfo"],
+  "excludeNames": ["node_modules", "dist", ".baerly-data", ".DS_Store", "*.tsbuildinfo"],
   "dropDevDeps": [],
   "copies": [
     { "from": "AGENTS.md", "to": "CLAUDE.md" },

@@ -115,7 +115,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
 
 | Path                       | What it is                                                                                                       |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `src/server/index.ts`      | Server entry — composes `s3Storage` / `r2Storage` + a verifier and calls `baerlyNode({ ... }).listen(PORT)`      |
+| `src/server/index.ts`      | Server entry — defaults to zero-config `localFsStorage()` (persists to `./.baerly-data`); promotes to `s3Storage` (AWS) when `BUCKET` is set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set; composes a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
 | `src/web/`                 | React+Vite frontend. Served by the Node listener via `baerlyNode({ webRoot })` in production.                    |
 | `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.tsx`.                              |
 | `vite.config.ts`           | Vite + `@vitejs/plugin-react` + `baerlyDev()` — mounts the Node HTTP listener as middleware so SPA + `/v1/*` share `:5173` in dev |
@@ -390,14 +390,15 @@ IdP issues one tenant per token; use `tenantPrefix` for single-tenant
 apps or tenancy enforced outside baerly-storage.
 
 <!-- pattern-c:end -->
-- **Storage backend** — `src/server/index.ts` picks between
-  `s3Storage` (AWS) and `r2Storage` (Cloudflare R2 via S3-compat)
-  based on whether `R2_ACCOUNT_ID` is set. AWS S3 and Cloudflare R2 are
-  the production-supported stores. **MinIO** is the local/dev
-  conformance target. Other S3-compatible endpoints need a green
-  `baerly doctor --bucket` plus owner validation; GCS S3-interop is not
-  supported for database use today. The bucket name comes from the
-  `BUCKET` env var; AWS credentials are read from
+- **Storage backend** — `src/server/index.ts` defaults to
+  `localFsStorage()` (persists to `./.baerly-data`, zero credentials,
+  single-node only) and promotes to `s3Storage` (AWS) when `BUCKET` is
+  set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set. AWS
+  S3 and Cloudflare R2 are the production-supported stores. **MinIO** is
+  the local/dev conformance target. Other S3-compatible endpoints need a
+  green `baerly doctor --bucket` plus owner validation; GCS S3-interop
+  is not supported for database use today. The bucket name comes from
+  the `BUCKET` env var; AWS credentials are read from
   `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optional
   `AWS_REGION`).
 
@@ -418,12 +419,13 @@ apps or tenancy enforced outside baerly-storage.
   `node --experimental-strip-types src/server/index.ts`. Arrange the
   host to run `pnpm install && pnpm build` (populates
   `dist/client/` for the `webRoot` static-serve branch) before
-  `pnpm start`. Set env vars from `.env.example` in the host's
-  config — at minimum `BUCKET`, `AWS_ACCESS_KEY_ID`,
-  `AWS_SECRET_ACCESS_KEY`. The default scaffold's `auth: "none"`
-  needs no auth env vars; if you adopt Pattern B / C from "Going to
-  production" above, also set `SHARED_SECRET` (Pattern B) or
-  `JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C).
+  `pnpm start`. Without storage env vars, the server defaults to
+  `localFsStorage()` (single-node only); for production, set `BUCKET` +
+  `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (S3) or `R2_ACCOUNT_ID`
+  + creds (R2). The default scaffold's `auth: "none"` needs no auth env
+  vars; if you adopt Pattern B / C from "Going to production" above,
+  also set `SHARED_SECRET` (Pattern B) or `JWKS_URL` + `JWT_ISSUER` +
+  `JWT_AUDIENCE` (Pattern C).
 
   Shapes: **managed PaaS** (Railway, Render, DO App Platform, Fly
   without Docker, Heroku) auto-detects Node and runs the root

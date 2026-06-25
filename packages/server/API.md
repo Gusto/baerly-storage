@@ -664,7 +664,15 @@ export default baerlyWorker((env) => ({
 }));
 
 // Node listener entry (any host that runs `node server.js`)
-import { baerlyNode, s3Storage } from "@gusto/baerly-storage/node";
+// localFsStorage() is the zero-credential default for local/single-node;
+// promote to s3Storage / r2Storage for production.
+import { baerlyNode, localFsStorage, s3Storage } from "@gusto/baerly-storage/node";
+baerlyNode({
+  storage: localFsStorage(),
+  webRoot: "dist/client",                         // optional SPA static-serve
+}).listen(PORT);
+
+// Production S3 / R2 stores use bucket credentials instead.
 baerlyNode({
   storage: s3Storage({ bucket: "…", credentials: { … } }),
   verifier: bearerJwt({ jwks, issuer, audience }),

@@ -59,22 +59,34 @@ port, SPA + HMR + `/v1/*` in one command. Storage is `LocalFsStorage`
 rooted at `.baerly-data/`, so first-touch needs no S3 creds, no JWKS,
 and no second process.
 
-For production-shaped local runs against S3/R2 (the built SPA is
-served from `dist/client/` alongside `/v1/*`):
+For production-shaped local runs (the built SPA served from
+`dist/client/` alongside `/v1/*`):
 
 ```sh
 pnpm build
+pnpm start
+```
+
+`pnpm start` defaults to `localFsStorage()` (persists to
+`./.baerly-data`, zero credentials, single-node only). To opt into
+S3 or R2:
+
+```sh
+# AWS S3
 BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... pnpm start
+
+# Cloudflare R2
+R2_ACCOUNT_ID=... BUCKET=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... pnpm start
 ```
 
 The server reads `BUCKET`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY` at startup. The default `auth: "none"`
-posture needs no auth env vars. The default entrypoint also reads
-optional `AWS_REGION`, `R2_ACCOUNT_ID` (switches the storage factory
-from `s3Storage` to `r2Storage`), and `PORT`. There is no `WEB_ROOT`
-env var — the SPA path is the hard-coded `webRoot: "dist/client"`
-in `src/server/index.ts`. Auth, tenant, and maintenance env vars
-require adopting the documented code/config recipe first.
+`AWS_SECRET_ACCESS_KEY` at startup; when those are absent it falls
+back to `localFsStorage()`. The default `auth: "none"` posture needs
+no auth env vars. The default entrypoint also reads optional
+`AWS_REGION` and `PORT`. There is no `WEB_ROOT` env var — the SPA
+path is the hard-coded `webRoot: "dist/client"` in
+`src/server/index.ts`. Auth, tenant, and maintenance env vars require
+adopting the documented code/config recipe first.
 
 Maintenance (compaction + GC) is automatic and in-band: it runs
 inline on the rare write that crosses a maintenance trigger — no env
@@ -96,7 +108,8 @@ references.
 This scaffold runs anywhere `node server.js` runs. The `package.json`
 exposes `build` (Vite SPA + TS check) and `start`
 (`node --experimental-strip-types src/server/index.ts`); arrange your
-host to run `pnpm install && pnpm build`, then `pnpm start`.
+host to run `pnpm install && pnpm build`, then `pnpm start` with the
+storage/auth env vars exported or configured in the process manager.
 
 Concrete shapes:
 
@@ -105,8 +118,10 @@ Concrete shapes:
   repo, set env vars from `.env.example` in the dashboard, deploy.
   The platform's buildpack detects Node and runs the root scripts.
 - **VM / bare-metal**: clone, install Node 24+, copy `.env.example`
-  to `.env`, run `pnpm install && pnpm build && pnpm start` under
-  your process manager of choice (systemd, pm2, etc.).
+  to `.env` as a template, then export those values or configure them
+  in your process manager (Node does not load `.env` automatically).
+  Run `pnpm install && pnpm build && pnpm start` under systemd, pm2,
+  or your process manager of choice.
 - **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile):
   scaffold with `pnpm create @gusto/baerly-storage@latest my-app --target=node --with=docker` to add
   a production Dockerfile, `.dockerignore`, and `healthcheck.js`

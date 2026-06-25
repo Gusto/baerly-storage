@@ -5,10 +5,11 @@
  * with no header check. See AGENTS.md "Going to production" for
  * the recipe to flip `auth` or wire a custom verifier.
  *
- * Storage: AWS S3 by default; set `R2_ACCOUNT_ID` to switch to
- * Cloudflare R2 via the S3-compat endpoint.
+ * Storage: zero-config `LocalFsStorage` rooted at ./.baerly-data by
+ * default — runs with no credentials. Set `BUCKET` (+ AWS creds) for
+ * AWS S3, or `R2_ACCOUNT_ID` (+ creds) for Cloudflare R2.
  */
-import { baerlyNode, r2Storage, s3Storage } from "@gusto/baerly-storage/node";
+import { baerlyNode, localFsStorage, r2Storage, s3Storage } from "@gusto/baerly-storage/node";
 import type { Storage } from "@gusto/baerly-storage";
 import config from "../../baerly.config.ts";
 
@@ -20,24 +21,41 @@ const reqEnv = (name: string): string => {
   return v;
 };
 
-const storage: Storage =
-  process.env["R2_ACCOUNT_ID"] !== undefined
-    ? r2Storage({
-        accountId: reqEnv("R2_ACCOUNT_ID"),
-        bucket: reqEnv("BUCKET"),
-        credentials: {
-          accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-          secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
-        },
-      })
-    : s3Storage({
-        region: process.env["AWS_REGION"] ?? "us-east-1",
-        bucket: reqEnv("BUCKET"),
-        credentials: {
-          accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
-          secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
-        },
-      });
+// Storage resolution, in priority order:
+//   1. R2_ACCOUNT_ID set → Cloudflare R2 (S3-compat endpoint)
+//   2. BUCKET set        → AWS S3
+//   3. neither           → LocalFsStorage at ./.baerly-data
+//                          (zero credentials; single-node only)
+let storage: Storage;
+let storageLabel: string;
+if (process.env["R2_ACCOUNT_ID"] !== undefined) {
+  storage = r2Storage({
+    accountId: reqEnv("R2_ACCOUNT_ID"),
+    bucket: reqEnv("BUCKET"),
+    credentials: {
+      accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+      secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+    },
+  });
+  storageLabel = `r2 (bucket=${process.env["BUCKET"]})`;
+} else if (process.env["BUCKET"] !== undefined) {
+  storage = s3Storage({
+    region: process.env["AWS_REGION"] ?? "us-east-1",
+    bucket: reqEnv("BUCKET"),
+    credentials: {
+      accessKeyId: reqEnv("AWS_ACCESS_KEY_ID"),
+      secretAccessKey: reqEnv("AWS_SECRET_ACCESS_KEY"),
+    },
+  });
+  storageLabel = `s3 (bucket=${process.env["BUCKET"]})`;
+} else {
+  storage = localFsStorage();
+  storageLabel = "local-fs (./.baerly-data) — single-node, non-durable across redeploys";
+}
+
+// Announce the effective backend so a missing/typo'd bucket env (which
+// silently selects local-fs) is visible in the deploy logs, not a surprise.
+console.log(`[baerly] storage=${storageLabel}`);
 
 const PORT = Number(process.env["PORT"] ?? 8080);
 
