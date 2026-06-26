@@ -8,8 +8,8 @@ services:
       - ${BAERLY_MINIO_HOST_PORT:-9102}:9000
       - 9103:9090
     environment:
-      MINIO_ROOT_USER: baerly
-      MINIO_ROOT_PASSWORD: ZOAmumEzdsUUcVlQ
+      MINIO_ROOT_USER: ${BAERLY_MINIO_ROOT_USER:-baerly}
+      MINIO_ROOT_PASSWORD: ${BAERLY_MINIO_ROOT_PASSWORD:-baerly-local-dev}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 2s
