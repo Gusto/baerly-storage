@@ -32,7 +32,13 @@ import {
   runMultiDocCascade,
   runRangeWalkParityCascade,
 } from "../fixtures/randomized-cascade.ts";
-import { MINIO_ENDPOINT, TOXIPROXY_ADMIN_ENDPOINT, TOXIPROXY_ENDPOINT } from "../setup/ports.ts";
+import {
+  MINIO_ACCESS_KEY,
+  MINIO_ENDPOINT,
+  MINIO_SECRET_KEY,
+  TOXIPROXY_ADMIN_ENDPOINT,
+  TOXIPROXY_ENDPOINT,
+} from "../setup/ports.ts";
 
 /**
  * (a) Per-doc consistency: `observed` must be a subsequence of `written`
@@ -58,7 +64,7 @@ const isSubsequence = (observed: readonly string[], written: readonly string[]):
 const stableConfig = {
   endpoint: MINIO_ENDPOINT,
   region: "eu-central-1",
-  credentials: { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" },
+  credentials: { accessKeyId: MINIO_ACCESS_KEY, secretAccessKey: MINIO_SECRET_KEY },
 };
 const unstableConfig = { ...stableConfig, endpoint: TOXIPROXY_ENDPOINT };
 

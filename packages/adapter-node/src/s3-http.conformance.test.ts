@@ -4,17 +4,20 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "./s3-http.ts";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
-import { MINIO_ENDPOINT, MINIO_HOST_PORT } from "../../../tests/setup/ports.ts";
+import {
+  MINIO_ACCESS_KEY,
+  MINIO_ENDPOINT,
+  MINIO_HOST_PORT,
+  MINIO_SECRET_KEY,
+} from "../../../tests/setup/ports.ts";
 import { minioStorage } from "./storage-factories.ts";
 
 // Same Minio that `pnpm dev:storage` provisions. Endpoint and creds
 // are pinned across the existing Minio-touching tests
 // (`tests/integration/randomized.test.ts`,
 //  `tests/integration/conformance.test.ts`,
-//  `docker-compose.yml`). Re-use; do not invent. The endpoint comes
-// from `tests/setup/ports.ts` so per-worktree port overrides flow through.
-const MINIO_ACCESS_KEY = "baerly";
-const MINIO_SECRET_KEY = "ZOAmumEzdsUUcVlQ";
+//  `docker-compose.yml`). Re-use; do not invent. Endpoint and creds come
+// from `tests/setup/ports.ts` so per-worktree overrides flow through.
 const MINIO_REGION = "us-east-1";
 const BUCKET = "baerly-conformance-adapter-node";
 

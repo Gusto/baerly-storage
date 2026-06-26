@@ -27,7 +27,7 @@ import { S3HttpStorage } from "@baerly/adapter-node";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 
 import { createBucket } from "../fixtures/s3-fixtures.ts";
-import { MINIO_ENDPOINT } from "../setup/ports.ts";
+import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
 // Minio's REST gateway rejects request paths whose resource component
 // is `.` or `..` (it validates URL paths as POSIX paths on the backing
@@ -83,8 +83,8 @@ const endpoints: Endpoint[] = [
           region: "us-east-1",
           bucket: "baerly-conformance-multi",
           credentials: {
-            accessKeyId: "baerly",
-            secretAccessKey: "ZOAmumEzdsUUcVlQ",
+            accessKeyId: MINIO_ACCESS_KEY,
+            secretAccessKey: MINIO_SECRET_KEY,
           },
         }
       : undefined,

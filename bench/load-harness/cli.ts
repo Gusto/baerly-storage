@@ -213,7 +213,7 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
       }
       const signer = new AwsClient({
         accessKeyId: "baerly",
-        secretAccessKey: "ZOAmumEzdsUUcVlQ",
+        secretAccessKey: "baerly-local-dev",
         region: "us-east-1",
         service: "s3",
       });

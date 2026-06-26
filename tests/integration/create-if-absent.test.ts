@@ -36,7 +36,7 @@ import { S3HttpStorage } from "@baerly/adapter-node";
 import { uuid } from "@baerly/protocol";
 
 import { createBucket } from "../fixtures/s3-fixtures.ts";
-import { MINIO_ENDPOINT } from "../setup/ports.ts";
+import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
 const MINIO = process.env["MINIO"] === "1";
 
@@ -44,7 +44,7 @@ const MINIO = process.env["MINIO"] === "1";
 // and `randomized.test.ts` (and `docker-compose.yml`).
 const ENDPOINT = MINIO_ENDPOINT;
 const BUCKET = "baerly-create-if-absent";
-const CREDS = { accessKeyId: "baerly", secretAccessKey: "ZOAmumEzdsUUcVlQ" };
+const CREDS = { accessKeyId: MINIO_ACCESS_KEY, secretAccessKey: MINIO_SECRET_KEY };
 
 describe.runIf(MINIO)("create-if-absent (bare-* against MinIO)", () => {
   const signer = new AwsClient({

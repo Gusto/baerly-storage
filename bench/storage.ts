@@ -334,11 +334,12 @@ function endpointFor(via: BenchStorageOpts["via"]): string {
 }
 
 function makeSigner(): AwsClient {
-  // Credentials match `docker-compose.yml`'s Minio service. Local
-  // only; never published.
+  // Credentials match `docker-compose.yml`'s Minio service defaults
+  // (BAERLY_MINIO_ROOT_USER / BAERLY_MINIO_ROOT_PASSWORD). Local only;
+  // never published.
   return new AwsClient({
     accessKeyId: "baerly",
-    secretAccessKey: "ZOAmumEzdsUUcVlQ",
+    secretAccessKey: "baerly-local-dev",
     region: "us-east-1",
     service: "s3",
   });

@@ -1,7 +1,8 @@
 /**
- * Test-side mirror of the host ports docker-compose.yml binds. Default values
- * match the compose defaults; override per-worktree with environment variables
- * to run two stacks on one machine.
+ * Test-side mirror of the host ports and Minio root credentials
+ * docker-compose.yml binds. Default values match the compose defaults;
+ * override per-worktree with environment variables to run two stacks on one
+ * machine.
  *
  *   BAERLY_MINIO_HOST_PORT=9202 \
  *   BAERLY_TOXIPROXY_HOST_PORT=9204 \
@@ -9,8 +10,14 @@
  *   BAERLY_POSTGRES_HOST_PORT=5434 \
  *     pnpm dev:storage
  *
- * Consumers should import these and never write the literal port. The point
- * is exactly to make "what port is Minio on?" answerable in one place.
+ * Consumers should import these and never write the literal port or
+ * credential. The point is exactly to make "what port is Minio on?" and
+ * "what's the Minio key?" answerable in one place.
+ *
+ * The credentials are local-dev only — they authenticate the throwaway Minio
+ * container `pnpm dev:storage` spins up on localhost and grant nothing in
+ * production. Override the defaults with `BAERLY_MINIO_ROOT_USER` /
+ * `BAERLY_MINIO_ROOT_PASSWORD` (the same vars docker-compose.yml reads).
  */
 const num = (env: string, fallback: number): number => {
   const v = process.env[env];
@@ -23,6 +30,14 @@ const num = (env: string, fallback: number): number => {
   }
   return parsed;
 };
+
+const str = (env: string, fallback: string): string => {
+  const v = process.env[env];
+  return v === undefined || v === "" ? fallback : v;
+};
+
+export const MINIO_ACCESS_KEY = str("BAERLY_MINIO_ROOT_USER", "baerly");
+export const MINIO_SECRET_KEY = str("BAERLY_MINIO_ROOT_PASSWORD", "baerly-local-dev");
 
 export const MINIO_HOST_PORT = num("BAERLY_MINIO_HOST_PORT", 9102);
 export const TOXIPROXY_HOST_PORT = num("BAERLY_TOXIPROXY_HOST_PORT", 9104);
