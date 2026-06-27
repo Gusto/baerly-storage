@@ -54,6 +54,7 @@ import {
   Writer,
 } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
+import { ciTimeout } from "../setup/ci.ts";
 import {
   APP,
   bootstrap as bootstrapCurrentJson,
@@ -102,8 +103,9 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
         // per-commit file PUTs under macOS ulimit). The seed is O(N) —
         // no per-commit integrity walk, and the in-band maintenance tick
         // is explicitly DISABLED during the seed (see (1)) so it can't
-        // re-fold the growing tail. 90s gives headroom on local-fs.
-        { timeout: 90_000 },
+        // re-fold the growing tail. 90s gives headroom on local-fs;
+        // ciTimeout widens it on the slower, contended CI core.
+        { timeout: ciTimeout(90_000) },
         async () => {
           const made = await variant.build();
           cleanup = made.cleanup;
@@ -237,7 +239,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 
       test(
         "idle reader uses < 1 Class A op / writer / hour (cost-model gate)",
-        { timeout: 30_000 },
+        { timeout: ciTimeout(30_000) },
         async () => {
           const made = await variant.build();
           cleanup = made.cleanup;
@@ -378,7 +380,7 @@ const countOrphanSnapshots = async (storage: Storage, currentJsonKey: string): P
 describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
   test(
     "writes alone maintain the bucket: snapshot lands + log_seq_start advances",
-    { timeout: 30_000 },
+    { timeout: ciTimeout(30_000) },
     async () => {
       // NOTE: `runScheduledMaintenance` is NOT imported nor called inside
       // this test body. The ONLY maintenance trigger is the writer's
@@ -441,7 +443,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
     // pace only "once" (the weak old "count dropped" gate), the count
     // would still climb here; the plateau assertion is what confronts
     // the §7.1 rate. Memory-only (see block comment).
-    { timeout: 60_000 },
+    { timeout: ciTimeout(60_000) },
     async () => {
       const storage = new MemoryStorage();
       await bootstrap(storage);
@@ -507,7 +509,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
 
   test(
     "ceiling honored: a low maxFoldBytes DEFERS the fold; the default ceiling FOLDS",
-    { timeout: 30_000 },
+    { timeout: ciTimeout(30_000) },
     async () => {
       // Two arms over the same seed on a fresh memory bucket. On a FRESH
       // bucket the runner's `foldViable = snapshot_bytes <= C` gate
@@ -601,7 +603,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
     // is the §7.1 RATE in its sharpest form: the post-drain orphan count
     // must be BOUNDED and INVARIANT under the write count — a 2× longer
     // run must NOT leave ~2× the orphans. Memory-only (see block comment).
-    { timeout: 60_000 },
+    { timeout: ciTimeout(60_000) },
     async () => {
       const blob = "x".repeat(BODY_BYTES);
       const FOLDERS = 6; // concurrent fold attempts per round — models N isolates racing one fold; the round's superseded prior snapshot (~1/round, NOT FOLDERS-proportional) is what strands
