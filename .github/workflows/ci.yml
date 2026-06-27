@@ -86,6 +86,18 @@ jobs:
       - name: Verify
         run: pnpm verify
 
+      # create-baerly-storage's "real git" integration test scaffolds a
+      # project and asserts `git init` + an initial commit happened. The
+      # scaffolder gracefully SKIPS git-init when no `user.name`/`user.email`
+      # is configured (intended product behavior), so on a bare runner —
+      # which has git but no identity — it would skip and the test would see
+      # no .git/. Configure a CI identity so the happy path is exercised.
+      # (Locally the test passes off the developer's ambient global config.)
+      - name: Configure git identity (for create-baerly-storage git-init test)
+        run: |
+          git config --global user.name "baerly-ci"
+          git config --global user.email "ci@baerly.invalid"
+
       # Default vitest project: memory + local-fs suites under pool: forks.
       # Zero infra, no credentials. The pretest hook rebuilds dist/ here.
       - name: Test
