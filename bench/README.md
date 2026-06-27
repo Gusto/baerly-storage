@@ -4,7 +4,7 @@ audience: coder
 summary: Two bench harnesses under bench/ — r2-contention.ts and load-harness/. When to run each, how to read results, DuckDB analysis pattern, and green-light criteria.
 last-reviewed: 2026-05-12
 tags: [bench, performance, cost-model]
-related: ["../docs/about/cost-model.md", "../tests/integration/phase5-end-to-end.test.ts"]
+related: ["../docs/about/cost-model.md", "../tests/integration/maintenance-e2e.test.ts"]
 ---
 
 # Bench harnesses
@@ -24,7 +24,7 @@ Two harnesses live under `bench/`:
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
 in-process counting proxy in
-`tests/integration/phase5-end-to-end.test.ts` and the randomized
+`tests/integration/maintenance-e2e.test.ts` and the randomized
 cascade in `tests/integration/randomized.test.ts` are the
 correctness gates that run on every PR.
 
@@ -45,7 +45,7 @@ violation prints a clear stderr message and exits 1.
 Writes one JSON file per run to `bench/results/`; prints a one-line
 summary to stdout. See `bench/r2-contention.ts` (head comment) for
 full scenario semantics. The cost-model bound mirrors the in-process
-gate in `tests/integration/phase5-end-to-end.test.ts`.
+gate in `tests/integration/maintenance-e2e.test.ts`.
 
 ## bench/load-harness/
 
@@ -332,6 +332,6 @@ The bench gate is met when ALL of the following hold:
 Explicitly NOT a green-light criterion: a per-PR CI gate. The bench
 is run by humans hill-climbing storage layout, cache TTLs, and
 compaction profiles. The in-process counting proxy
-(`tests/integration/phase5-end-to-end.test.ts`) and the randomized
+(`tests/integration/maintenance-e2e.test.ts`) and the randomized
 cascade (`tests/integration/randomized.test.ts`) are the CI-level
 gates that already serve the per-PR role.

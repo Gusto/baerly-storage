@@ -34,7 +34,7 @@ two writes left an **orphan at `next_seq`** — a committed log entry that
 `current.json.next_seq`, that orphan **wedged the collection**: the next
 writer's create-if-absent at `next_seq` collided with the orphan forever.
 Read-clean and no data loss, but a permanent liveness hole (the old
-`phase5-crash-fuzz.test.ts` BUG 1).
+`maintenance-crash-fuzz.test.ts` BUG 1).
 
 The settled fix removes the second write entirely. There is no longer a
 pointer to crash between, so the whole orphan-at-`next_seq` class — and the

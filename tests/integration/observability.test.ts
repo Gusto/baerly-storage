@@ -69,7 +69,7 @@ interface Ticket extends DocumentData {
 
 /**
  * Counting `Storage` proxy. Mirrors the pattern in
- * `tests/integration/phase5-end-to-end.test.ts` but exposes per-op
+ * `tests/integration/maintenance-e2e.test.ts` but exposes per-op
  * counts so we can assert against the canonical line's per-op
  * breakdown as well as the aggregate class-A / class-B totals.
  *

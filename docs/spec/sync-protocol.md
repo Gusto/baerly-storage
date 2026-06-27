@@ -538,8 +538,8 @@ The implementation is pinned by tests at three layers:
 - `tests/fixtures/randomized-cascade.ts` drives the all-to-all
   causal-consistency cascade across memory, local-fs, Minio, and
   Cloudflare R2 variants.
-- `tests/integration/phase5-end-to-end.test.ts` and
-  `phase5-crash-fuzz.test.ts` exercise compaction, GC, crash
+- `tests/integration/maintenance-e2e.test.ts` and
+  `maintenance-crash-fuzz.test.ts` exercise compaction, GC, crash
   injection, read parity, object-count drain, and the idle-reader
   cost bound.
 

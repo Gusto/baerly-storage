@@ -12,7 +12,7 @@ const numRuns = process.env["FC_NUM_RUNS"] ? Number(process.env["FC_NUM_RUNS"]) 
 // cleanly. We deliberately do *not* set `interruptAfterTimeLimit` here
 // — `fc.configureGlobal` applies it across every property test, and
 // some tests override their own vitest `timeout` (e.g.
-// `tests/integration/phase5-crash-fuzz.test.ts` sets 10 minutes per
+// `tests/integration/maintenance-crash-fuzz.test.ts` sets 10 minutes per
 // test even at default `FC_NUM_RUNS=100`). A global interrupt would
 // fail those tests prematurely.
 

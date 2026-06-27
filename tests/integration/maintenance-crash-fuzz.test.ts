@@ -29,7 +29,7 @@
  *      committed snapshot's content survives.
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
- * variant `pnpm test:fuzz-phase5` (`FC_NUM_RUNS=10000`) is the
+ * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
  * intended thorough sweep.
  *
  * Test-only. The control-flow-level kill points complement
@@ -68,7 +68,7 @@ import { logStateCurrentJson } from "../fixtures/log-state.ts";
 /**
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default
  * `pnpm test`) each property finishes in <1s; at `FC_NUM_RUNS=10000`
- * (`pnpm test:fuzz-phase5`) each property runs multiple minutes.
+ * (`pnpm test:fuzz-maintenance`) each property runs multiple minutes.
  * Pick a value that comfortably accommodates 10k iterations on a
  * modern laptop.
  */
@@ -82,7 +82,7 @@ const provision = async (storage: Storage): Promise<void> => {
   await createCurrentJson(
     storage,
     CURRENT_JSON_KEY,
-    logStateCurrentJson({ writer_fence: { epoch: 0, owner: "phase5-fuzz", claimed_at: "" } }),
+    logStateCurrentJson({ writer_fence: { epoch: 0, owner: "maintenance-fuzz", claimed_at: "" } }),
   );
 };
 
@@ -628,7 +628,7 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
 /**
  * Two storage variants for the ticket-01 characterization tests:
  * `memory` (zero infra) and `local-fs` (real I/O over a temp dir).
- * Mirrors the variant table in `phase5-end-to-end.test.ts`; the
+ * Mirrors the variant table in `maintenance-e2e.test.ts`; the
  * Minio / Cloudflare variants are intentionally excluded so these
  * stay in the default zero-infra `pnpm test` glob.
  */

@@ -177,7 +177,7 @@ Why a published ceiling? Two failure modes shape it:
 Without architectural enforcement the protocol drifts: a new feature
 adds a poll here, a LIST there, and the cost line creeps upward with
 no single regression to point at. The ceiling is a gate, not a
-target — `tests/integration/phase5-end-to-end.test.ts` wraps
+target — `tests/integration/maintenance-e2e.test.ts` wraps
 `Storage` with a counting proxy and gates on
 `expect(classAOps).toBeLessThan(1)` after 1800 polls (one hour at
 2 s cadence). The `CLOUDFLARE_FREE_TIER` profile in

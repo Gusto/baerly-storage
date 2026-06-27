@@ -1,6 +1,6 @@
 /**
  * Shared scaffolding for the two maintenance end-to-end suites:
- * `tests/integration/phase5-end-to-end.test.ts` and
+ * `tests/integration/maintenance-e2e.test.ts` and
  * `tests/integration/maintenance-profile-equivalence.test.ts`.
  *
  * Both seed a single-collection bucket, bootstrap an identical
@@ -34,7 +34,7 @@ export const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLLECTION}
 export const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
 
 /**
- * The document shape both suites seed. `phase5-end-to-end` uses the
+ * The document shape both suites seed. `maintenance-e2e` uses the
  * three required fields directly; `maintenance-profile-equivalence`
  * carries an extra `rev` on its own row type — its op stream needs the
  * revision counter, this gate's doesn't. Kept to the common core here

@@ -3,7 +3,7 @@
  *
  * Stores every observation; useful for tests (e.g. the
  * synthetic-5000-entry durability gate in
- * `tests/integration/phase5-end-to-end.test.ts`) and dev probes.
+ * `tests/integration/maintenance-e2e.test.ts`) and dev probes.
  * Memory grows unbounded — **not suitable for production**.
  *
  * Production emissions flow through the per-request

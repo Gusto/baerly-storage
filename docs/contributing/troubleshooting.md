@@ -83,7 +83,7 @@ Run it when:
 - You have a flaky failure with a fast-check seed/path and want more
   coverage before trusting a fix.
 
-Use `pnpm test:fuzz-phase5` when changing `packages/server/src/compactor.ts`,
+Use `pnpm test:fuzz-maintenance` when changing `packages/server/src/compactor.ts`,
 `packages/server/src/gc.ts`, or `packages/server/src/writer.ts`; that
 script runs the crash-injection fuzzer. Neither command is a load test or
 a latency benchmark.

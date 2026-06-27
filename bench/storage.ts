@@ -3,7 +3,7 @@
  * in a `CountingStorage` proxy so the harness can compute Class A /
  * Class B op counts and a per-writer-per-hour Class A rate — the
  * wire-level analogue of the in-process counting proxy in
- * `tests/integration/phase5-end-to-end.test.ts`.
+ * `tests/integration/maintenance-e2e.test.ts`.
  *
  * Endpoint choices: Minio host port (`:9102`) for the `direct` path,
  * or the Toxiproxy listener (`:9104`) when toxics are installed. Both
@@ -101,7 +101,7 @@ function tailOrUndefined(samples: number[]): OpLatencyTail | undefined {
  * (put / delete / list — the S3/R2 mutating-or-enumerating verbs)
  * and Class B (get / head). Used by the harness to compute
  * per-writer Class A op rate per hour and assert the cost-model
- * bound from `tests/integration/phase5-end-to-end.test.ts`.
+ * bound from `tests/integration/maintenance-e2e.test.ts`.
  *
  * Extended with per-op counters, byte-volume tracking, per-op latency
  * samples, and per-prefix attribution for load-harness
