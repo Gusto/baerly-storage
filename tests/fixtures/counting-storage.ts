@@ -13,7 +13,7 @@ import type {
  * Class A = mutating/enumerating ops in the S3/R2 taxonomy (PUT,
  * DELETE, LIST). Class B GET is counted via `gets`; HEAD is not wrapped. `classAOps`
  * is a derived sum used by callers that only care about aggregate
- * cost (e.g. the `phase5-end-to-end` idle-reader bound). Callers
+ * cost (e.g. the `maintenance-e2e` idle-reader bound). Callers
  * that need per-verb shape (e.g. "POST should produce exactly 3
  * PUTs and 0 LISTs") read `puts` / `deletes` / `lists` directly.
  *

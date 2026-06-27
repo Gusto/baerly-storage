@@ -40,7 +40,7 @@ import { describe, expect } from "vitest";
  * exercises ~10k commits × ~4 PUTs each over `MemoryStorage`
  * and lands in a few seconds even on a busy CI box. The default
  * vitest timeout (5000ms) is far too tight when other heavy
- * property tests are co-resident; mirror `phase5-crash-fuzz`'s
+ * property tests are co-resident; mirror `maintenance-crash-fuzz`'s
  * pattern with a comfortable upper bound.
  */
 const PROP_TIMEOUT_MS = 600_000;

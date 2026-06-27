@@ -293,7 +293,7 @@ function applyD3(rows: readonly Row[]): GateResult {
  *
  * Any S2-idle cell with `class_a_per_writer_per_hour >= 1` fails the
  * script (exit 1). This is the wire-level analogue of the in-process
- * bound enforced by `tests/integration/phase5-end-to-end.test.ts`.
+ * bound enforced by `tests/integration/maintenance-e2e.test.ts`.
  */
 function applyD4(rows: readonly Row[]): GateResult {
   const target = rows.filter((r) => r.scenario === "S2-idle");
@@ -321,7 +321,7 @@ function applyD4(rows: readonly Row[]): GateResult {
       `### D4 — idle polling cost\n\n` +
       `${summary}\n\n` +
       `**Threshold:** < 1 Class A op / poller / hour (the documented bound from ` +
-      `\`tests/integration/phase5-end-to-end.test.ts\`).\n\n` +
+      `\`tests/integration/maintenance-e2e.test.ts\`).\n\n` +
       `**Verdict: ${failed ? "FAILED" : "passed"}.** ` +
       `${failed ? "The idle reader is issuing Class A operations. This is a cost-model leak. Page the operator; do not relax the bound." : "Cost-model assumption verified on the wire."}\n`,
     failed,

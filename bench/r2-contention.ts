@@ -259,7 +259,7 @@ async function runS2Idle(cell: SweepCell): Promise<RunResult> {
     latency_p99_ms: 0,
     latency_p999_ms: 0,
     retry_tail_max: 0,
-    // The validated bound. `tests/integration/phase5-end-to-end.test.ts`
+    // The validated bound. `tests/integration/maintenance-e2e.test.ts`
     // asserts the in-process counter is exactly 0; on the wire we
     // tolerate < 1 to absorb adapter implementation drift (e.g. a
     // future LIST-based optimisation that pre-fetches the snapshot

@@ -194,7 +194,7 @@ compaction are long-lived self-metering processes. The
 inline-write-tick-on-a-killable-isolate combination is genuinely
 novel and **unproven by precedent** — so the empirical gates do
 the work precedent can't: the crash-injection fuzz (Task 4.5,
-`phase5-crash-fuzz.test.ts`) and `db.compaction.cas_lost_total`
+`maintenance-crash-fuzz.test.ts`) and `db.compaction.cas_lost_total`
 are the validation strategy of record.
 
 Deriving citations (supporting, not load-bearing): PostgreSQL

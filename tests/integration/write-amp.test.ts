@@ -4,7 +4,7 @@
  * $0 on R2/S3) per logical write, INCLUDING in-band maintenance. This is
  * the steady-state number that drives the bill — the write-path
  * counterpart to writer.test.ts (which gates only the commit FLOOR of 2)
- * and phase5-end-to-end.test.ts (which gates the idle READER at 0).
+ * and maintenance-e2e.test.ts (which gates the idle READER at 0).
  *
  * Bands are grounded in docs/spec/attachments/amortized-write-cost-baseline.json
  * (measured 2026-06-22): cf-free ~3.0, node ~3.9. The bench runs the full

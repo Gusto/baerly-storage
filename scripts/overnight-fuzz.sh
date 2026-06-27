@@ -7,7 +7,7 @@
 #   timestamped log under reports/overnight/. Halts (or logs and continues)
 #   on the first real failure so the operator wakes up to a clear finding.
 #
-# WHY pnpm exec vitest (not pnpm test:fuzz-phase5 / pnpm test:randomize)
+# WHY pnpm exec vitest (not pnpm test:fuzz-maintenance / pnpm test:randomize)
 #   `pnpm build` MUST be run once before starting this script. Calling
 #   `pnpm exec vitest run ...` directly skips the `pretest` build hook
 #   intentionally — this avoids three concurrent rolldown rebuilds racing
@@ -18,14 +18,14 @@
 #
 # ENV KNOBS (all optional, shown with defaults)
 #   FC_NUM_RUNS=10000      fast-check iterations per property per suite.
-#                          phase5-crash-fuzz is always capped at 5000 (its
+#                          maintenance-crash-fuzz is always capped at 5000 (its
 #                          600s/property timeout is hard-coded and not scaled
 #                          by FC_NUM_RUNS — 10000 timed out 7/102 overnight).
 #                          The other suites use the full value.
 #   MAX_HOURS=9            Wall-clock cap (SECONDS builtin). 0 = unlimited.
 #                          Checked between suites, not mid-suite — actual runtime
 #                          can exceed MAX_HOURS by up to the longest single-suite
-#                          duration (several min for phase5 at its 5000 cap).
+#                          duration (several min for maintenance-crash-fuzz at its 5000 cap).
 #   BREAK_ON_FAIL=1        1 = stop on first failure; 0 = log and continue.
 #   SKIP_MINIO=0           1 = skip the node-minio Toxiproxy variant even if
 #                          Minio is healthy.
@@ -59,23 +59,23 @@ SKIP_CF="${SKIP_CF:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 MINIO_HEALTH="http://127.0.0.1:9102/minio/health/live"
-# Ceiling for phase5-crash-fuzz only. PROP_TIMEOUT_MS=600s/property is hard-coded
+# Ceiling for maintenance-crash-fuzz only. PROP_TIMEOUT_MS=600s/property is hard-coded
 # in the test and NOT scaled by FC_NUM_RUNS. An overnight run at FC_NUM_RUNS=10000
 # timed out 7/102 times across 5 different heavy properties on this hardware; at
 # FC_NUM_RUNS=500 the suite finishes in ~12s, so 5000 stays comfortably under the
 # 600s cap with margin. The other suites are unaffected (and FC_NUM_RUNS is a
 # near-no-op for the fault-injection-driven randomized cascade anyway).
-PHASE5_MAX_FC=5000
+CRASH_FUZZ_MAX_FC=5000
 
 # ---------------------------------------------------------------------------
-# Derived: clamped FC_NUM_RUNS for phase5
+# Derived: clamped FC_NUM_RUNS for maintenance-crash-fuzz
 # ---------------------------------------------------------------------------
-if [ "$FC_NUM_RUNS" -gt "$PHASE5_MAX_FC" ]; then
-  PHASE5_FC=$PHASE5_MAX_FC
-  PHASE5_CLAMPED=1
+if [ "$FC_NUM_RUNS" -gt "$CRASH_FUZZ_MAX_FC" ]; then
+  CRASH_FUZZ_FC=$CRASH_FUZZ_MAX_FC
+  CRASH_FUZZ_CLAMPED=1
 else
-  PHASE5_FC=$FC_NUM_RUNS
-  PHASE5_CLAMPED=0
+  CRASH_FUZZ_FC=$FC_NUM_RUNS
+  CRASH_FUZZ_CLAMPED=0
 fi
 
 # ---------------------------------------------------------------------------
@@ -108,8 +108,8 @@ elapsed_hm() {
 log "===== overnight-fuzz started  $(date)  log=$LOG_FILE ====="
 log "FC_NUM_RUNS=$FC_NUM_RUNS  MAX_HOURS=$MAX_HOURS  BREAK_ON_FAIL=$BREAK_ON_FAIL  SKIP_MINIO=$SKIP_MINIO  SKIP_CF=$SKIP_CF  DRY_RUN=$DRY_RUN"
 
-if [ "$PHASE5_CLAMPED" -eq 1 ]; then
-  log "phase5-crash-fuzz capped at FC_NUM_RUNS=$PHASE5_MAX_FC (its 600s/property timeout is hard-coded and not scaled by FC_NUM_RUNS; higher risks spurious timeouts and orphan-iteration bleed). The other suites use FC_NUM_RUNS=$FC_NUM_RUNS."
+if [ "$CRASH_FUZZ_CLAMPED" -eq 1 ]; then
+  log "maintenance-crash-fuzz capped at FC_NUM_RUNS=$CRASH_FUZZ_MAX_FC (its 600s/property timeout is hard-coded and not scaled by FC_NUM_RUNS; higher risks spurious timeouts and orphan-iteration bleed). The other suites use FC_NUM_RUNS=$FC_NUM_RUNS."
 fi
 
 # ---------------------------------------------------------------------------
@@ -201,8 +201,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
   log ""
   log "===== DRY RUN — planned per-iteration suite commands ====="
   log ""
-  log "CORE A (zero infra) — phase5-crash-fuzz:"
-  log "  FC_NUM_RUNS=$PHASE5_FC pnpm exec vitest run --project=default tests/integration/phase5-crash-fuzz.test.ts --reporter=dot"
+  log "CORE A (zero infra) — maintenance-crash-fuzz:"
+  log "  FC_NUM_RUNS=$CRASH_FUZZ_FC pnpm exec vitest run --project=default tests/integration/maintenance-crash-fuzz.test.ts --reporter=dot"
   log ""
   if [ "$INCLUDE_MINIO" -eq 1 ]; then
     log "randomized (MINIO=1: mem+local-fs+node-minio): INCLUDED"
@@ -246,16 +246,16 @@ while true; do
   ITERATION_COUNT=$(( ITERATION_COUNT + 1 ))
   log "===== iteration $ITERATION_COUNT  $(date)  (elapsed $(elapsed_hm)) ====="
 
-  # --- CORE A: phase5-crash-fuzz ---
+  # --- CORE A: maintenance-crash-fuzz ---
   # errexit is intentionally off globally — SUITE_EXIT captures the exit code so
   # a failing suite doesn't abort the script; BREAK_ON_FAIL controls continuation.
-  FC_NUM_RUNS="$PHASE5_FC" pnpm exec vitest run \
+  FC_NUM_RUNS="$CRASH_FUZZ_FC" pnpm exec vitest run \
     --project=default \
-    tests/integration/phase5-crash-fuzz.test.ts \
+    tests/integration/maintenance-crash-fuzz.test.ts \
     --reporter=dot
   SUITE_EXIT="${PIPESTATUS[0]}"
   if [ "$SUITE_EXIT" -ne 0 ]; then
-    log "FOUND FAILURE in CORE-A (phase5-crash-fuzz) at iteration $ITERATION_COUNT (exit $SUITE_EXIT)"
+    log "FOUND FAILURE in CORE-A (maintenance-crash-fuzz) at iteration $ITERATION_COUNT (exit $SUITE_EXIT)"
     FOUND_FAILURE=1
     if [ "$BREAK_ON_FAIL" -eq 1 ]; then STOP_REASON=failure; break; fi
   fi

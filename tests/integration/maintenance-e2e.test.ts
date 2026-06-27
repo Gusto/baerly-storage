@@ -72,7 +72,7 @@ import {
 // bootstrap docstring). These are steady-state fold/GC mechanism tests, not
 // cold-start bootstrap tests.
 const bootstrap = (storage: Storage): Promise<void> =>
-  bootstrapCurrentJson(storage, "phase5-e2e", BODY_BYTES);
+  bootstrapCurrentJson(storage, "maintenance-e2e", BODY_BYTES);
 
 const countBucketObjects = async (storage: Storage, prefix: string): Promise<number> => {
   let count = 0;
@@ -82,7 +82,7 @@ const countBucketObjects = async (storage: Storage, prefix: string): Promise<num
   return count;
 };
 
-const VARIANTS = makeVariants("baerly-phase5-e2e-");
+const VARIANTS = makeVariants("baerly-maintenance-e2e-");
 
 describe("Synthetic 5000-entry end-to-end gate", () => {
   for (const variant of VARIANTS) {

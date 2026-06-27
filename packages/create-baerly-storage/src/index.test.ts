@@ -33,7 +33,7 @@ import { runCreateBaerly } from "./runner.ts";
 // isolation that's ~1.7s, but under the full fork-pool suite the spawns +
 // FS I/O starve past vitest's 5s default `testTimeout` (`vitest.config.ts`)
 // — a timeout here is load, not a real hang. 30s matches the repo's
-// integration floor (`phase5-end-to-end`, `reads-pure`, the `MINIO=1`
+// integration floor (`maintenance-e2e`, `reads-pure`, the `MINIO=1`
 // global). `hookTimeout` too: the `mkdtemp` in `freshTmpdir` and the
 // recursive `rm` in `afterEach` are I/O that can also starve.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });

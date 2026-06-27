@@ -7,7 +7,7 @@
  * cores. Both effects are wall-clock, not correctness: the same assertions
  * run and pass, they just need headroom. Per-test timeouts authored against
  * dev-core speed are too tight there — which is why CI has flaked on a
- * rotating cast of heavy tests (phase5 / maintenance-profile) as each one
+ * rotating cast of heavy tests (maintenance-e2e / maintenance-profile) as each one
  * crossed its individual ceiling under contention.
  *
  * `ciTimeout` widens a per-test timeout on CI only, so the tighter local

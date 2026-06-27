@@ -7,7 +7,7 @@
  * path.
  *
  * Wraps a `MemoryStorage` in `abortingStorage(inner)` (the same
- * shape `phase5-crash-fuzz.test.ts` uses), runs a fixed-shape commit
+ * shape `maintenance-crash-fuzz.test.ts` uses), runs a fixed-shape commit
  * sequence with the K-th storage op aborted, then swaps to a clean
  * storage handle and calls `rebuildIndex` on the affected
  * `(table, index)` pair. The assertion:
@@ -42,7 +42,7 @@ import { describe, expect } from "vitest";
  * `FC_NUM_RUNS=10000` (`pnpm test:randomize`) it lands in a
  * few seconds even on a busy CI box. The default vitest timeout
  * (5000ms) is far too tight when other heavy property tests are
- * co-resident; mirror `phase5-crash-fuzz`'s pattern with a
+ * co-resident; mirror `maintenance-crash-fuzz`'s pattern with a
  * comfortable upper bound.
  */
 const PROP_TIMEOUT_MS = 600_000;
