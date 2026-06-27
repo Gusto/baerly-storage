@@ -22,6 +22,7 @@
 
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { configDefaults, defineConfig } from "vitest/config";
+import { IS_CI } from "./tests/setup/ci.ts";
 
 // `pnpm test:randomize` sets `FC_NUM_RUNS=10000`. At that volume the
 // disk-bound property tests in `packages/dev/src/local-fs.test.ts`,
@@ -42,6 +43,13 @@ import { configDefaults, defineConfig } from "vitest/config";
 const isRandomize =
   process.env["FC_NUM_RUNS"] !== undefined && Number(process.env["FC_NUM_RUNS"]) > 1_000;
 const isMinio = process.env["MINIO"] === "1";
+// CI runners (GitHub-hosted `ubuntu-latest` is 2 vCPUs) are markedly slower
+// than dev machines, and under `pool: forks` the full suite contends hard for
+// those two cores — heavy but correct CPU/LocalFs-bound tests (dataset
+// determinism, maintenance-profile equivalence) overrun the 5s default that
+// is comfortable locally. Give the default budget headroom in CI.
+// `IS_CI` (`CI=true`, set by GitHub Actions and most CI providers) is the
+// shared detector — the same one `ciTimeout` uses for per-test widening.
 const vitestTestTimeoutMs = ((): number => {
   if (isRandomize) {
     return 600_000;
@@ -49,7 +57,12 @@ const vitestTestTimeoutMs = ((): number => {
   if (isMinio) {
     return 30_000;
   }
-  return 5_000;
+  // 4× the local 5s default — empirical headroom for the contended
+  // 2-vCPU CI core under `pool: forks`. This is the floor every default
+  // test gets; the heavy maintenance/compaction suites layer `ciTimeout`
+  // (a separate 3× factor) on top of their own already-large bases, so
+  // the two multipliers are independent tunings, not a single constant.
+  return IS_CI ? 20_000 : 5_000;
 })();
 
 // `conformance.test.ts` requires gitignored credentials files
