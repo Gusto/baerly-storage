@@ -1,0 +1,58 @@
+# Dependabot version updates.
+#
+# Scope: the GitHub Actions used by our workflows. Those `uses:` refs are
+# pinned to full commit SHAs (see .github/workflows/ci.yml) for supply-chain
+# safety, which means they can't drift on their own — Dependabot is how they
+# stay current. It understands the `owner/repo@<sha> # vX.Y.Z` format and
+# opens a PR that bumps BOTH the SHA and the trailing version comment, with
+# the upstream release notes attached for review.
+#
+# npm dependency *security* updates are handled by the org-level Dependabot
+# alert config and don't need an entry here. We deliberately do NOT enable
+# npm *version* updates: the runtime footprint is curated by hand (see the
+# anti-patterns section of CLAUDE.md), so automated npm bump PRs would be noise.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" scans .github/workflows for github-actions; it is not a filesystem path.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Let a freshly-published action ref "bake" before we propose it. The
+    # whole point of SHA-pinning is to resist a compromised or freshly
+    # force-pushed release; a cooldown closes the just-published-malicious-
+    # release window that a same-day bump would otherwise walk straight into.
+    cooldown:
+      default-days: 7
+    # Group bumps into as few PRs as possible, but keep MAJOR bumps separate:
+    # a major (e.g. checkout v7 -> v8) can carry runner-minimum or behavior
+    # breaks that deserve their own reviewable PR, while minor/patch flow
+    # together as low-risk noise. Dependabot places an update in the first
+    # group it matches, so the major group is listed first.
+    groups:
+      github-actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # Two groups (major, minor+patch) → at most two grouped PRs in flight.
+    # The limit only bites if a group ever fails to group and fans out into
+    # per-action PRs; 2 keeps that capped to the intended one-PR-per-group.
+    open-pull-requests-limit: 2
+    # Review routing is via .github/CODEOWNERS (`/.github/ @baer`), not a
+    # `reviewers:` key here — Dependabot removed that option in Aug 2025,
+    # replacing it with code owners. CODEOWNERS is what puts a human in
+    # front of each new SHA against the upstream release notes.
+    commit-message:
+      # Conventional Commits, matching the repo style: `ci(deps): bump ...`.
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
