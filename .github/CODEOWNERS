@@ -1,0 +1,19 @@
+# Code owners. GitHub requests review from the matching owner on PRs that
+# touch these paths. Ownership here is ADVISORY — `main` does not enable
+# "require review from Code Owners" branch protection, so these lines
+# auto-request a reviewer but never block a merge. (Enforcement is
+# deliberately off: with a single owner, GitHub forbids self-approval, so
+# requiring code-owner review would block the maintainer's own PRs.)
+#
+# Later, more specific rules win, so the catch-all is listed first.
+
+# Default owner for everything — routes every PR, including external
+# contributions, to the maintainer for a review request.
+* @baer
+
+# CI / supply-chain surface, called out explicitly. CODEOWNERS is also the
+# supported replacement for the `reviewers:` key Dependabot removed in
+# Aug 2025: the github-actions Dependabot config bumps `.github/workflows/*`
+# (and the trailing `# vX.Y.Z` comments there), so owning `.github/` is what
+# puts a human in front of every new pinned SHA.
+/.github/ @baer
