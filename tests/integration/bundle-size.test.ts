@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 // min+gz numbers are esbuild-version-sensitive: a minifier version bump
 // rebaselines every entry's `minGz` ceiling at once.
-import { transformSync } from "esbuild";
+import { transform } from "esbuild";
 import { describe, expect, test } from "vitest";
 import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 
@@ -846,12 +846,9 @@ function collectClosure(entryAbs: string, seen: Set<string>): void {
   }
 }
 
-function measureClosure(entry: string): {
-  raw: number;
-  gz: number;
-  minGz: number;
-  files: string[];
-} {
+// Absolute paths of every chunk in `entry`'s static-import closure,
+// sorted for deterministic concatenation order.
+function closureFiles(entry: string): string[] {
   const distDir = resolve(__dirname, "../../dist");
   const entryAbs = resolve(distDir, entry);
   if (!existsSync(entryAbs)) {
@@ -859,29 +856,81 @@ function measureClosure(entry: string): {
   }
   const seen = new Set<string>();
   collectClosure(entryAbs, seen);
-  const files = [...seen].toSorted();
+  return [...seen].toSorted();
+}
+
+// Raw + gzipped closure size. Pure fs + zlib, NO esbuild — so the
+// raw-only callers (the inline-dep-creep raw ceiling + the import
+// allowlist guard) never invoke the minifier. The consumer-cost
+// `min+gz` axis is the only one that needs esbuild; it lives in the
+// separate async `measureMinGz` below so a minifier flake can't sink a
+// test that only reads `.raw`.
+function measureClosure(entry: string): {
+  raw: number;
+  gz: number;
+  files: string[];
+} {
+  const distDir = resolve(__dirname, "../../dist");
+  const files = closureFiles(entry);
   const raw = files.reduce((sum, f) => sum + statSync(f).size, 0);
   const gz = gzipSync(Buffer.concat(files.map((f) => readFileSync(f)))).length;
-  // `min+gz` minifies each chunk with esbuild (the minifier most
-  // consumer bundlers — Vite/esbuild — actually run), concatenates,
-  // then gzips. This is the consumer-facing artifact proxy: the lib
-  // ships UNMINIFIED, so neither `raw` nor unminified-`gz` is what a
-  // consumer pays once their bundler re-minifies. CONSERVATIVE UPPER
-  // BOUND: per-file `transformSync` does syntax minification per chunk
-  // but NOT the cross-module tree-shaking / scope-hoisting a real
-  // consumer bundler does, so the real shipped cost is ≤ this number.
-  // It is not the exact shipped artifact.
-  const minified = files.map(
-    (f) => transformSync(readFileSync(f, "utf8"), { loader: "js", minify: true }).code,
-  );
-  const minGz = gzipSync(Buffer.concat(minified.map((c) => Buffer.from(c)))).length;
-  return { raw, gz, minGz, files: files.map((f) => f.replace(`${distDir}/`, "")) };
+  return { raw, gz, files: files.map((f) => f.replace(`${distDir}/`, "")) };
+}
+
+// `min+gz` minifies each chunk with esbuild (the minifier most consumer
+// bundlers — Vite/esbuild — actually run), concatenates, then gzips.
+// This is the consumer-facing artifact proxy: the lib ships UNMINIFIED,
+// so neither `raw` nor unminified-`gz` is what a consumer pays once
+// their bundler re-minifies. CONSERVATIVE UPPER BOUND: per-file syntax
+// minify only, NOT the cross-module tree-shaking / scope-hoisting a real
+// consumer bundler does, so the real shipped cost is ≤ this number.
+async function measureMinGz(entry: string): Promise<number> {
+  const minified: string[] = [];
+  for (const file of closureFiles(entry)) {
+    minified.push(await minifyChunk(readFileSync(file, "utf8")));
+  }
+  return gzipSync(Buffer.concat(minified.map((c) => Buffer.from(c)))).length;
+}
+
+// Use esbuild's ASYNC `transform`, NOT `transformSync`. The sync API
+// routes every call through a single persistent worker-thread service
+// (SharedArrayBuffer + Atomics.wait). On a contended 2-vCPU CI runner
+// (many parallel forks, each with its own esbuild worker thread) that
+// channel desyncs — a response gets matched to the wrong request — and
+// once desynced EVERY subsequent sync transform in the fork returns the
+// wrong chunk's result, surfacing as a bogus "<stdin>:N: ERROR: X is not
+// declared in this file" on perfectly valid input. That desync is
+// PERSISTENT, which is why retrying the sync call never recovered it.
+// The async `transform` instead uses esbuild's long-lived child-process
+// service with a length-prefixed, request-ID-matched protocol — the
+// multiplexed path every bundler runs under load — which does not
+// desync this way.
+//
+// The retry below is belt-and-suspenders around a one-off service
+// restart, scoped to the esbuild call ONLY (not the whole suite): budget
+// assertions are deterministic functions of the committed dist/ bytes,
+// so a real over-budget or closure-leak regression still fails on the
+// first and every attempt. Nothing here can mask a genuine regression.
+async function minifyChunk(source: string, attempts = 3): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const { code } = await transform(source, { loader: "js", minify: true });
+      return code;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 describe("bundle size", () => {
   for (const { entry, raw, gz, minGz, skip } of BUDGETS) {
-    test.skipIf(skip)(`dist/${entry} closure stays within budget`, () => {
+    test.skipIf(skip)(`dist/${entry} closure stays within budget`, async () => {
       const measured = measureClosure(entry);
+      // Only the consumer-cost axis needs esbuild; compute it on the
+      // robust async path, and only for entries that declare a ceiling.
+      const minGzMeasured = minGz !== undefined ? await measureMinGz(entry) : 0;
       // Show closure composition in failure output so a regression
       // points straight at the chunk that grew.
       const rawLine = formatBundleSizeLine({
@@ -901,7 +950,7 @@ describe("bundle size", () => {
       const minGzLine = formatBundleSizeLine({
         entry,
         kind: "min-gz",
-        measured: measured.minGz,
+        measured: minGzMeasured,
         budget: minGz ?? 0,
         chunks: measured.files,
       });
@@ -930,7 +979,7 @@ describe("bundle size", () => {
         { kind: "gz", measured: measured.gz, budget: gz, line: gzLine },
       ];
       if (minGz !== undefined) {
-        axes.push({ kind: "min-gz", measured: measured.minGz, budget: minGz, line: minGzLine });
+        axes.push({ kind: "min-gz", measured: minGzMeasured, budget: minGz, line: minGzLine });
       }
       const over = axes.filter((a) => a.measured > a.budget);
       const report = over
