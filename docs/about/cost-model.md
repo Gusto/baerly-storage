@@ -183,7 +183,7 @@ target — `tests/integration/maintenance-e2e.test.ts` wraps
 2 s cadence). The `CLOUDFLARE_FREE_TIER` profile in
 `packages/server/src/maintenance.ts` carries the bounded-tick
 budget arithmetic (engine defaults are unbounded, so a Node
-caller just passes `{}`); `maintenance.budget.test.ts` proves a
+caller just passes `{}`); `maintenance-budget.test.ts` proves a
 single maintenance pass under the Cloudflare free-tier profile sits
 under the 50-subrequest cap.
 

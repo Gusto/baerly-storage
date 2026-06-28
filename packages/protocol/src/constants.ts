@@ -301,14 +301,14 @@ export const MAINTENANCE_COLD_START_ENTRY_BYTES: number = 128;
 
 /**
  * Per-tick GC budget — these are DEFAULTS (= the most-constrained tier, CF free, reusing
- * the TESTED `CLOUDFLARE_FREE_TIER` values in maintenance.ts / maintenance.budget.test.ts).
+ * the TESTED `CLOUDFLARE_FREE_TIER` values in maintenance.ts / maintenance-budget.test.ts).
  * The adapter THREADS per-tier overrides into the context (§8.4); Node/CF-paid raise them.
  * NOT universal constants — a Node-sized value here would silently kill every CF-free fold
  * (round-4 Tier-1). gc pass ≈ 6 + maxMarks + maxSweeps subrequests (both GET/DELETE the
  * bucket — §3.1). Cadence is BOUNDARY-CROSSING (§3.1), not modulo.
  *
  * @see packages/server/src/maintenance.ts
- * @see packages/server/src/maintenance.budget.test.ts
+ * @see packages/server/src/maintenance-budget.test.ts
  */
 export const WRITE_TICK_GC_INTERVAL: number = 4; // tuned so maxSweeps/interval ≥ p (§7.1)
 
