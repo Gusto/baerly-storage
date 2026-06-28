@@ -3,7 +3,6 @@ import {
   CentralisedCausalSystem,
   CentralisedOfflineFirstCausalSystem,
   check,
-  toJS,
   union,
 } from "../fixtures/consistency.ts";
 describe("check", () => {
@@ -125,23 +124,18 @@ describe("CausalSystem", () => {
       carol = 2;
 
     system.observe({ receiver: bob, sender: bob, send_time: 0 }); // bob writes a message
-    console.log(toJS(system.grounding, system.knowledge_base));
     system.observe({ receiver: carol, sender: bob, send_time: 1 }); // carol received bobs question
-    console.log(toJS(system.grounding, system.knowledge_base));
     expect(system.causallyConsistent()).toBe(true);
     expect(system.client_clocks).toEqual([1, 2, 2]);
     system.observe({ receiver: carol, sender: carol, send_time: 1 }); // carol writes a message
-    console.log(toJS(system.grounding, system.knowledge_base));
     expect(system.causallyConsistent()).toBe(true);
     system.observe({ receiver: alice, sender: carol, send_time: 2 }); // alice hears carols reply
-    console.log(toJS(system.grounding, system.knowledge_base));
     expect(system.causallyConsistent()).toBe(true);
     expect(system.client_clocks).toEqual([2, 2, 3]);
 
     // violation, carol observes bob's message after carol's message that was a
     // reply to bob
     system.observe({ receiver: alice, sender: bob, send_time: 1 });
-    console.log(toJS(system.grounding, system.knowledge_base));
     expect(system.causallyConsistent()).toBe(false); // alice hears bob's question
   });
 });
