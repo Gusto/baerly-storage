@@ -50,6 +50,7 @@ import {
   type DocumentData,
   type LogEntry,
   MemoryStorage,
+  SESSION_ID_LENGTH,
   encodeJsonBytes,
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
@@ -131,7 +132,7 @@ const arbForgedEntry: fc.Arbitrary<LogEntry> = fc
     op: fc.constantFrom<LogEntry["op"]>("I", "U", "D"),
     collection: fc.constantFrom(COLLECTION, "other-collection"),
     doc_id: fc.string({ minLength: 1, maxLength: 16 }),
-    session: fc.string({ minLength: 6, maxLength: 6 }),
+    session: fc.string({ minLength: SESSION_ID_LENGTH, maxLength: SESSION_ID_LENGTH }),
     seq: fc.integer({ min: 0, max: 5 }),
     after: fc.record({ _id: fc.string({ minLength: 1, maxLength: 16 }) }),
   })
@@ -246,26 +247,20 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
     expect(result.entry.doc_id).toBe("writer-doc");
   });
 
-  test("attack 4 — same-session forgery is OUT OF THREAT MODEL, but if it happened the writer adopts only its own fields", async () => {
-    // Counterfactual: pretend the adversary somehow learned the
-    // writer's per-commit session id (impossible under the
-    // stated threat model — the session lives in RAM only and
-    // is minted at the top of Writer.commit). The test fixes a
-    // known session by patching the writer's clock via a deterministic
-    // session derivation is impractical, so this test is informational —
-    // we instead document by absence: any test in the property suite
-    // that DID accidentally collide on session and seq would surface
-    // a same-session adoption, and the property assertion above
-    // pinpoints whether the adopted entry's doc_id matches the
-    // writer's. We rely on the property's repeated runs (default
-    // FC_NUM_RUNS=100) to exercise that path stochastically — a
-    // bug that adopted a different doc_id would shrink to a
-    // 1-bit counterexample.
-    //
-    // No bucket-side assertion here; the property test above is
-    // the durable proof.
-    expect(true).toBe(true);
-  });
+  // attack 4 — same-session forgery is OUT OF THREAT MODEL. Pretend the
+  // adversary somehow learned the writer's per-commit session id
+  // (impossible under the stated threat model — the session lives in
+  // RAM only and is minted at the top of Writer.commit). Constructing a
+  // deterministic same-session collision is impractical, so there is no
+  // standalone test for it; we document by absence instead. The property
+  // test above ("no forged pre-populated log entry produces a successful
+  // commit with a foreign LogEntry") exercises this path stochastically:
+  // any run that DID accidentally collide on session and seq would
+  // surface a same-session adoption, and its assertion pinpoints whether
+  // the adopted entry's doc_id matches the writer's. A bug that adopted a
+  // different doc_id would shrink to a 1-bit counterexample. That
+  // property is the durable proof; a placeholder test here would assert
+  // nothing.
 
   test("attack 5 — adversary writes a future-seq entry (seq=5) while writer commits at seq=0: writer's seq-0 PUT succeeds, future-seq squat is ignored", async () => {
     // The adversary squatting at seq=5 doesn't intersect the

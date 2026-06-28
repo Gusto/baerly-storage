@@ -156,7 +156,7 @@ const committedSnapshotContentKeys = async (storage: Storage): Promise<Set<strin
   return keys;
 };
 
-describe("abortingStorage harness sanity", () => {
+describe("abortingStorage harness — fault-injection trap behavior", () => {
   test("armAt(K) fires AbortError on the K-th underlying op", async () => {
     const inner = new MemoryStorage();
     const handle = abortingStorage(inner);
@@ -242,9 +242,19 @@ describe("Writer crash never leaves readable phantom row", () => {
         // It was already a seed — must be present regardless.
         expect(probePresent).toBe(true);
       }
-      // The only forbidden state is a partial / corrupt row, which
-      // the reader contract makes unrepresentable: rows come from
+      // UNCONDITIONAL phantom-row guard. The branches above can both be
+      // skipped (the common case: a clean abort that didn't commit, with
+      // a non-seed probe — and `numInsertsBefore` can be 0, so the seed
+      // loop runs zero times). These assertions run on EVERY generated
+      // case so no shrink passes vacuously: every readable id is one we
+      // actually wrote (a seed or the probe), and no id appears twice.
+      // The only forbidden state is a partial / corrupt / foreign row,
+      // which the reader contract makes unrepresentable: rows come from
       // `LogEntry.after` whole, never split.
+      for (const id of ids) {
+        expect(seededIds.has(id) || id === docId).toBe(true);
+      }
+      expect(new Set(ids).size).toBe(ids.length);
     },
     PROP_TIMEOUT_MS,
   );

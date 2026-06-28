@@ -39,6 +39,7 @@ import { describe, expect, test } from "vitest";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  LOG_FORWARD_PROBE_CAP,
   type LogEntry,
   MemoryStorage,
   SESSION_ID_LENGTH,
@@ -120,8 +121,12 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     const numRuns = process.env["FC_NUM_RUNS"] ? Number(process.env["FC_NUM_RUNS"]) : 1000;
     fc.assert(
       fc.property(
-        fc.string({ unit: fc.constantFrom(...HEX_CHARS), minLength: 6, maxLength: 6 }),
-        fc.integer({ min: 0, max: 100_000 }),
+        fc.string({
+          unit: fc.constantFrom(...HEX_CHARS),
+          minLength: SESSION_ID_LENGTH,
+          maxLength: SESSION_ID_LENGTH,
+        }),
+        fc.integer({ min: 0, max: LOG_FORWARD_PROBE_CAP }),
         (forgedSessionString, forgedSeq) => {
           const writerSession = mintSession();
           if (forgedSessionString === writerSession) {
