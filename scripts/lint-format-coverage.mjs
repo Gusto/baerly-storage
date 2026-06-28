@@ -60,6 +60,7 @@ const UNFORMATTED_EXT = new Set([
 const ALLOWED_BASENAMES = new Set([
   "LICENSE",
   "NOTICE",
+  "CODEOWNERS", // GitHub review-routing config; no formatter
   "Dockerfile",
   "_gitignore", // scaffold-template rename sentinel
   ".gitignore",

@@ -62,6 +62,7 @@ import {
   type Ticket as BaseTicket,
   TENANT,
 } from "../fixtures/maintenance-harness.ts";
+import { ciTimeout } from "../setup/ci.ts";
 
 // This suite's row carries an extra `rev` revision counter its op stream
 // churns; the shared `Ticket` is the three-field common core (which
@@ -197,12 +198,15 @@ describe("MaintenanceProfile cross-profile correctness", () => {
 
       test(
         "(A) materialized state is byte-for-byte identical across every profile (and the no-maintenance reference)",
-        // 120s: under single-write commit each commit forward-probes the
-        // log tail (galloping, O(log gap) GETs). The no-maintenance
+        // 120s locally: under single-write commit each commit forward-probes
+        // the log tail (galloping, O(log gap) GETs). The no-maintenance
         // reference seed never advances tail_hint, so its gap grows to the
         // full stream length — over LocalFs (real file I/O) under
         // full-suite CPU contention the three replays exceed the old 60s.
-        { timeout: 120_000 },
+        // ciTimeout gives the 2-vCPU CI core extra headroom (the higher
+        // ceiling only bites if the replay is genuinely that slow; locally
+        // the tighter bound stands).
+        { timeout: ciTimeout(120_000) },
         async () => {
           const ops = buildOps();
 
@@ -267,7 +271,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
 
       test(
         "(B) profiles genuinely differ in maintenance RATE: ONE fold pass advances log_seq_start by exactly maxFoldEntriesPerPass",
-        { timeout: 60_000 },
+        { timeout: ciTimeout(60_000) },
         // Deliberately PAIRWISE (cf-free vs node), not a loop over
         // PROFILE_CASES — a future 3rd profile touches this by hand.
         async () => {

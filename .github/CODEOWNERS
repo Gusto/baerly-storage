@@ -1,0 +1,9 @@
+# Code owners. GitHub requests review from the matching owner on PRs that
+# touch these paths. This is also the supported replacement for the
+# `reviewers:` key that Dependabot removed in Aug 2025 — Dependabot routes
+# its bump PRs to the owner of the files they change.
+#
+# The github-actions Dependabot config bumps `.github/workflows/*` (and the
+# trailing version comments there), so owning `.github/` is what puts a
+# human in front of every new pinned SHA.
+/.github/ @baer

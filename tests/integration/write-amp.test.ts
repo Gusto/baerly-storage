@@ -21,6 +21,7 @@ import { createObservabilityContext, runWithContext } from "@baerly/server/obser
 import { Writer } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
 import { bootstrap, COLLECTION, CURRENT_JSON_KEY } from "../fixtures/maintenance-harness.ts";
+import { ciTimeout } from "../setup/ci.ts";
 
 const WRITES = 800;
 const BODY = 2000;
@@ -48,7 +49,7 @@ const measure = async (opts: BoundedMaintenanceOptions): Promise<number> => {
 };
 
 describe("amortized billable Class A per write (cost-model gate)", () => {
-  test("cf-free profile stays in the ~3x band", { timeout: 30_000 }, async () => {
+  test("cf-free profile stays in the ~3x band", { timeout: ciTimeout(30_000) }, async () => {
     const amperWrite = await measure({
       profile: MAINTENANCE_PROFILE_CF_FREE,
       minEntriesToCompact: 50,
@@ -62,7 +63,7 @@ describe("amortized billable Class A per write (cost-model gate)", () => {
     expect(amperWrite).toBeLessThan(4);
   });
 
-  test("node profile stays in the ~4x band", { timeout: 30_000 }, async () => {
+  test("node profile stays in the ~4x band", { timeout: ciTimeout(30_000) }, async () => {
     const amperWrite = await measure({
       profile: MAINTENANCE_PROFILE_NODE,
       minEntriesToCompact: 50,

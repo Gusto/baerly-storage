@@ -42,6 +42,13 @@ import { configDefaults, defineConfig } from "vitest/config";
 const isRandomize =
   process.env["FC_NUM_RUNS"] !== undefined && Number(process.env["FC_NUM_RUNS"]) > 1_000;
 const isMinio = process.env["MINIO"] === "1";
+// CI runners (GitHub-hosted `ubuntu-latest` is 2 vCPUs) are markedly slower
+// than dev machines, and under `pool: forks` the full suite contends hard for
+// those two cores — heavy but correct CPU/LocalFs-bound tests (dataset
+// determinism, maintenance-profile equivalence) overrun the 5s default that
+// is comfortable locally. Give the default budget headroom in CI. `CI=true`
+// is set by GitHub Actions (and most CI providers).
+const isCi = !!process.env["CI"];
 const vitestTestTimeoutMs = ((): number => {
   if (isRandomize) {
     return 600_000;
@@ -49,7 +56,7 @@ const vitestTestTimeoutMs = ((): number => {
   if (isMinio) {
     return 30_000;
   }
-  return 5_000;
+  return isCi ? 20_000 : 5_000;
 })();
 
 // `conformance.test.ts` requires gitignored credentials files
