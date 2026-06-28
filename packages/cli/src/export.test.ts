@@ -84,7 +84,7 @@ const captureStream = (
   };
 };
 
-describe("baerly export — CLI smoke", () => {
+describe("baerly export — SQL dump + sidecar plan generation", () => {
   let root: string;
   let outFile: string;
   let storage: LocalFsStorage;

@@ -52,7 +52,7 @@ const listIndexKeys = async (storage: Storage, indexName: string): Promise<strin
   return out.toSorted();
 };
 
-describe("baerly admin rebuild-index — CLI smoke", () => {
+describe("baerly admin rebuild-index — orphan index-key reconciliation", () => {
   let root: string;
   let storage: LocalFsStorage;
 

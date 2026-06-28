@@ -94,7 +94,7 @@ describe("preset op-mix sum", () => {
 // 3. Smoke-run: seed + ingest phase on memory backend
 // ---------------------------------------------------------------------------
 
-describe("preset smoke-run", () => {
+describe("preset seed + ingest phase (memory backend)", () => {
   for (const name of PRESET_NAMES) {
     test(`${name}: seed + ingest produces non-zero storage ops`, async () => {
       const preset = getPreset(name);

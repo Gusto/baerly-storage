@@ -79,7 +79,7 @@ const captureStream = (
   };
 };
 
-describe("baerly admin fsck — CLI smoke", () => {
+describe("baerly admin fsck — consistency check and corruption findings", () => {
   let root: string;
   let storage: LocalFsStorage;
 
