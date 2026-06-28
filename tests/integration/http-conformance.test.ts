@@ -341,7 +341,7 @@ for (const variant of variants) {
  * shape: a `SchemaError` carries a 400 status and the
  * `HttpErrorEnvelope` body's `issues[]` array reaches the client.
  */
-describe("HTTP boundary — schema validation (ticket 70)", () => {
+describe("HTTP boundary — schema validation error responses", () => {
   test("POST with schema-violating doc returns 400 + issues[]", async () => {
     const STATUS_SCHEMA: SchemaValidator = {
       "~standard": {

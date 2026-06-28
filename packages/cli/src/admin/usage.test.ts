@@ -219,7 +219,7 @@ describe("discoverCollections", () => {
   });
 });
 
-describe("baerly admin usage — CLI smoke", () => {
+describe("baerly admin usage — query-cost reporting", () => {
   const captureStream = (
     stream: NodeJS.WriteStream,
   ): { restore: () => void; readonly captured: string[] } => {
