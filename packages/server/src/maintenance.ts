@@ -172,7 +172,7 @@ const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMainten
  * the 50 cap combined. The Cloudflare scheduled handler therefore
  * alternates phases per tick (even minute → compact, odd minute →
  * GC) by calling `compact()` / `runGc()` directly instead of
- * `runScheduledMaintenance`; the `maintenance.budget.test.ts`
+ * `runScheduledMaintenance`; the `maintenance-budget.test.ts`
  * worst-case test proves each phase in isolation sits under 50 ops
  * with these bounds.
  */
