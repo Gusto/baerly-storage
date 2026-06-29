@@ -61,12 +61,13 @@ In the same change:
 
 The public surface — every `Db` / `Collection<T>` / `Query<T>` method and
 its behavioural contract — is **additive-only locked, scoped to
-capabilities, not forms**. It lives in
-[`packages/server/API.md`](../../../packages/server/API.md) and the JSDoc
-it mirrors; the conformance and collection-API integration suites are its
-executable specification — either breaking on a PR means the surface
-changed. The lock is **soft** (additive-only, removals via the lifecycle
-below) until v1.0.
+capabilities, not forms**. The API reference lives in
+[`packages/server/API.md`](../../../packages/server/API.md); JSDoc owns
+the exported `.d.ts` details; the spec owns protocol contracts. The
+conformance and collection-API integration suites are the executable API
+specification — either breaking on a PR means the surface changed. The
+lock is **soft** (additive-only, removals via the lifecycle below) until
+v1.0.
 
 **Allowed without ceremony:** new methods, new optional config fields, and
 new `BaerlyErrorCode` values. **Requires a supersession record:** renames
@@ -98,10 +99,9 @@ narrowing" to "demonstrated harm in keeping it."
   on `Db.create` duplicated `config.collections[*]`; the final shape is
   `Db.create({ storage, app, tenant, config? })` — no parallel knobs.
 - **Cross-collection atomic write path.** Prohibited — it breaks the
-  no-2PC invariant; every write touches exactly one collection log (see
-  [ADR-001](../../adr/001-tenant-cas-isolation.md)). Re-adding a
-  `transaction` surface is only permitted as an additive,
-  single-collection method.
+  no-2PC invariant. There is no atomic write path spanning collections;
+  every write appends to exactly one collection log (see
+  [ADR-001](../../adr/001-tenant-cas-isolation.md)).
 - **Boolean connectives (`or` / `not`) in the predicate algebra.** The
   wire is a flat `clauses[]` conjunction; the algebra is conjunction-only
   **in perpetuity**. Builder methods like `q.or(...)` fail at the type

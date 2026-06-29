@@ -18,11 +18,11 @@ A bucket gives every request the same primitive: bytes stored at a key.
 `PUT` writes an object, `If-None-Match: "*"` makes that write
 create-if-absent, and a `404` means the key is absent.
 
-The threshold concept for this codebase is single-write commit: a
-mutation commits by creating one numbered log object,
-`log/<seq>.json`. There is no database server deciding the winner. Every
-writer races for the first empty log slot; on a supported backend,
-exactly one create can win. That winning create is the commit.
+The key idea to keep in mind is single-write commit: a mutation commits
+by creating one numbered log object, `log/<seq>.json`. There is no
+database server deciding the winner. Every writer races for the first
+empty log slot; on a supported backend, exactly one create can win. That
+winning create is the commit.
 
 Everything before the log create prepares data a future reader will need.
 Everything after it is cleanup or maintenance. `current.json` does not
@@ -284,8 +284,8 @@ graph-based dependency tool (`dependency-cruiser`, Nx,
 `eslint-plugin-boundaries`) would resolve dynamic and relative edges
 natively and is in-policy, but config-as-data is heavier than the
 ~120-line script for an 8-node graph with a unit-test harness. Revisit
-at N>12 packages, or the first dynamic import the climb-out heuristic
-can't classify.
+at N>12 packages, or when dynamic and relative imports outgrow the
+script.
 
 ## CLI surfaces
 
@@ -418,9 +418,9 @@ After the commit lands, the writer reads a per-request
 (`getCurrentContext()?.maintenance`, set by the adapter) and calls
 `runBoundedMaintenance` (`packages/server/src/maintenance.ts`) when the
 write-tick gate is due. **Reads are pure — they never tick.** A bare
-`Db.create(...)` dispatches inline with the CF-free-safe default profile
-once enough writes accrue; no `setInterval`, cron, or operator scheduler
-is required.
+`Db.create(...)` dispatches inline with the default profile sized for
+Cloudflare Workers' free-tier subrequest budget once enough writes
+accrue; no `setInterval`, cron, or operator scheduler is required.
 
 The bounded pass splits that work across two existing primitives:
 

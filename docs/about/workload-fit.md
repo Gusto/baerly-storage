@@ -15,22 +15,23 @@ shape of the product:
 > Can the app's most important screen be answered from one collection?
 
 A collection is the row set baerly-storage reads, writes, snapshots, and
-conflicts over as one independent unit.
+handles concurrent writes for as one independent unit.
 
 The collection boundary is the decision point. Inside that boundary,
-reads, writes, snapshots, and commit races stay in one row set. Across
-it, there is no join engine, no cross-collection query planner, and no
-cross-collection atomic commit.
+reads, writes, and snapshots stay in one row set, and concurrent writers
+race for that row set's next log slot. Across it, there is no join
+engine, no cross-collection query planner, and no cross-collection
+atomic commit.
 
 If yes, baerly-storage may fit. If no, baerly-storage should not be the
 only query engine for that screen. Reshape the screen around one
 collection, make the cross-collection view a rebuildable projection, or
 start with a database that owns that boundary.
 
-Each collection has its own ordered log, `current.json`, snapshot, and
-commit race. A write commits when one writer creates the next
-`log/<seq>` object for that collection. A read rebuilds that collection
-by loading the snapshot and folding the log tail. See the
+Each collection has its own ordered log, `current.json`, and snapshot.
+Writers for that collection race to create the next `log/<seq>` object;
+the one that creates it commits. A read rebuilds that collection by
+loading the snapshot and folding the log tail. See the
 [thesis](thesis.md#what-this-deliberately-is-not) for the positioning and
 the [sync protocol](../spec/sync-protocol.md) for the mechanism.
 

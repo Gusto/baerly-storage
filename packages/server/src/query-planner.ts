@@ -8,11 +8,11 @@
  * storage-encoding boundary (`encodeIndexValue`, `Storage.list`,
  * etc.).
  *
- * T2 shipped equality-only walks — single-field, composite full,
- * and composite partial-prefix. T3 fills the `rangeOn` / `inOn`
- * slots reserved on {@link IndexWalkPlan} so range / `$in` clauses
- * on the LAST indexed field beyond the equality prefix get pushed
- * into the walk too. T4 adds the filtered-index cost bias.
+ * Walks are equality-prefix anchored — single-field, composite full,
+ * and composite partial-prefix — with an optional tail slot
+ * (`rangeOn` / `inOn` on {@link IndexWalkPlan}) so a range / `$in`
+ * clause on the LAST indexed field beyond the equality prefix gets
+ * pushed into the walk too. A filtered-index cost bias ranks them.
  *
  * Numeric range / `$in` are routed normally; the encoder at
  * `./indexes.ts:encodeIndexValue` is value-order-preserving for
@@ -35,9 +35,11 @@ export type QueryPlan = IndexWalkPlan | FullScanPlan;
  * executor encodes `equalityKeys` via `encodeIndexValue` at the I/O
  * boundary and lists `<collectionPrefix>/index/<indexName>/<v0>/.../<vN>/`.
  *
- * `rangeOn` and `inOn` are reserved for T3 — both `undefined` under
- * T2's equality-only routing. The executor re-applies the FULL
- * original wire via `matchesWire(...)` after fetching rows; that
+ * `rangeOn` and `inOn` are the optional tail slot — at most one is
+ * set, and only when a routable range / `$in` clause lands on the
+ * last indexed field beyond the equality prefix. The executor
+ * re-applies the FULL original wire via `matchesWire(...)` after
+ * fetching rows; that
  * single check is both the stale-index defence and the residue
  * consumer, so the planner does NOT emit a separate `postFilter`.
  */
@@ -52,8 +54,9 @@ export interface IndexWalkPlan {
    */
   readonly equalityKeys: ReadonlyArray<DocumentValue>;
   /**
-   * T3 fills this slot. Range bound on the LAST indexed field beyond
-   * the equality prefix. Mutually exclusive with `inOn`.
+   * Tail slot: range bound on the LAST indexed field beyond the
+   * equality prefix, set by the planner when routable. Mutually
+   * exclusive with `inOn`.
    */
   readonly rangeOn?: {
     readonly field: string;
@@ -63,8 +66,9 @@ export interface IndexWalkPlan {
     readonly hiInclusive: boolean;
   };
   /**
-   * T3 fills this slot. $in multi-walk on the LAST indexed field
-   * beyond the equality prefix. Mutually exclusive with `rangeOn`.
+   * Tail slot: $in multi-walk on the LAST indexed field beyond the
+   * equality prefix, set by the planner when routable. Mutually
+   * exclusive with `rangeOn`.
    */
   readonly inOn?: {
     readonly field: string;
@@ -292,7 +296,7 @@ export const planQuery = (
   }
 
   // Enumerate every viable candidate over the declared indexes,
-  // then sort with the T4 tie-break:
+  // then sort with the cost-bias tie-break:
   //
   //  (1) Implied filter — a filtered index whose
   //      `predicateImplies(def.predicate, queryWire)` is `true`
@@ -355,7 +359,7 @@ export const planQuery = (
     return { kind: "full-scan", reason: "no-matching-index" };
   }
 
-  // T4 cost-bias rank: 0 = filtered + implied (best), 1 = unfiltered
+  // Cost-bias rank: 0 = filtered + implied (best), 1 = unfiltered
   // (mid), 2 = filtered + NOT implied (worst). A filtered candidate
   // whose filter is NOT implied is STILL eligible — but only as a
   // last resort. The post-fetch `matchesWire(wire, ...)` re-check

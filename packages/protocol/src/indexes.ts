@@ -12,8 +12,8 @@
  *
  *   `<logPrefix>/index/<indexName>/<value-b32>/<docId>.json`
  *
- * Wire shape (composite — accepted by the encoder, not consulted by
- * the read path today):
+ * Wire shape (composite — read-path routable by a left-anchored
+ * equality prefix, optionally with a range / `$in` tail slot):
  *
  *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
  *
@@ -45,10 +45,10 @@ export interface IndexDefinition {
   readonly name: string;
 
   /**
-   * Field name(s) to index on. `string` is a single-field index
-   * (today's read-path target). `readonly string[]` is composite —
-   * accepted by the key encoder but the predicate matcher only
-   * consults single-field index entries today.
+   * Field name(s) to index on. `string` is a single-field index.
+   * `readonly string[]` is composite; the read path can route a
+   * left-anchored equality prefix and, when present, a range / `$in`
+   * clause on the final indexed field beyond that equality prefix.
    *
    * Top-level fields only — dotted-path `on` values throw
    * `SchemaError` from `projectIndexValues`. A future change widens

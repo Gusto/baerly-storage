@@ -23,8 +23,8 @@ Accepted (2026-06-15). Implemented. Supersedes the two-write commit
 described by earlier revisions of
 [sync-protocol.md](../spec/sync-protocol.md). Before the 0.3.0 public
 baseline, the v2→v3 `current.json` schema break shipped with **no
-migration path** — a v2 bucket had to be dumped and recreated under
-the v3 build.
+migration path** — a v2 bucket had to be dumped with v2 tooling and
+restored into a fresh v3 bucket.
 
 ## Decision
 
@@ -49,9 +49,10 @@ entirely on the backend's `If-None-Match:"*"` create-if-absent being
 **linearizable under concurrency** — N concurrent creates of a fresh seq
 yield **exactly one** winner. A backend that admits two winners produces a
 split-brain commit, so the log/CAS path must hit the object store
-directly, never through a negative-caching CDN (a cached `404` on a
-just-created `log/<seq>` would corrupt the "first 404 = tail" signal). See
-[ADR-002](002-ephemeral-coordination.md) for the backend gate.
+directly, never through a negative-caching CDN or proxy (a cached `404` on
+a newly created `log/<seq>` would corrupt the forward-probe's "first 404 =
+tail" signal). See [ADR-002](002-ephemeral-coordination.md) for the backend
+gate.
 
 ## Closed paths
 
@@ -61,8 +62,9 @@ These remain closed unless a future post-0.3.0 ADR supersedes this one.
   CAS-advance), and any recovery tooling (`dead_seqs`, K-detector,
   recovery CAS) to police it. The second write let a crash orphan a
   committed entry at `next_seq` and **wedge the collection** permanently;
-  the single write removes the pointer there is to crash between, so there
-  is no hole to recover.
+  stale `current.json.next_seq` can make future writers retry the already
+  occupied slot forever. The single write removes the pointer there is to
+  crash between, so there is no hole to recover.
 - **`current.json` as commit authority.** It is compaction state; the
   commit path does not write it. Restoring it to the commit path
   reintroduces the two-write wedge.

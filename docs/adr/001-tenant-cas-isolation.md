@@ -43,8 +43,9 @@ over.
 
 - **Per-tenant single CAS** — one `current.json` per tenant, every
   collection serializing through it. A 100-collection tenant at the
-  documented write target lands ~10× over the S3-CAS same-key contention
-  ceiling. Commit contention must stay inside its own collection.
+  documented write target is 100 × 30 = 3,000 writes/min against one CAS
+  key, roughly 10× over the same-key contention budget. Commit contention
+  must stay inside its own collection.
 - **A server-vended lease** with peer revocation. It would require a
   coordination service or sticky routing; the portable
   `(Request) => Response` server contract rules both out (see

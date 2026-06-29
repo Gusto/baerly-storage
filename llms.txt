@@ -5,17 +5,20 @@ on an AWS S3 or Cloudflare R2 bucket — a document database on S3/R2 with
 no resident database server. It runs as a
 server-side `Db` (from `@gusto/baerly-storage`) behind a `Verifier`
 synthesized from `config.auth` (or supplied directly via the
-adapter factory), with your data persisted in any S3-compatible
-bucket (S3, R2, GCS, Minio). Browsers and other clients talk to it
-over HTTP via the typed `@gusto/baerly-storage/client`. The change-feed is a
-long-poll on `/v1/since?cursor=<lsn>` — there is no client-side
-polling of the storage layer.
+adapter factory), with production data persisted in AWS S3 or
+Cloudflare R2. MinIO is the local/dev conformance target; other
+S3-compatible endpoints require `baerly doctor --bucket` plus owner
+validation, and GCS S3-interop is unsupported for database use today.
+Browsers and other clients talk to it over HTTP via the typed
+`@gusto/baerly-storage/client`. The change-feed is a long-poll on
+`/v1/since?cursor=<lsn>` — there is no client-side polling of the
+storage layer.
 
 Day-1 deploy targets, both first-class:
 
 - **Cloudflare Worker** (R2 binding, `@gusto/baerly-storage/cloudflare`).
-- **Self-hosted Node** (S3 / R2 / GCS / Minio over HTTP,
-  `@gusto/baerly-storage/node`).
+- **Self-hosted Node** (AWS S3 or Cloudflare R2 over HTTP,
+  `@gusto/baerly-storage/node`; MinIO is for local/dev conformance).
 
 `create-baerly-storage` scaffolds either shape; see the module map in
 [CLAUDE.md](./CLAUDE.md) for the package layout.
@@ -100,9 +103,11 @@ pnpm · vitest · TypeScript 7 (tsgo) · oxfmt · oxlint · rolldown
 
 ## Verification
 
-Run `pnpm verify` (typecheck + lint). It is the only check guaranteed
-green on `main` — see CLAUDE.md for the full verification ritual and
-known-baseline test failures.
+Run `pnpm verify` for the full static/docs gate: typecheck, examples,
+lint, format, import/use-query/package-layer/format-coverage guards,
+docs validation, and spec drift. Run `pnpm test` for the default
+zero-infra Vitest suite. Infra/cloud/credential-gated suites are listed
+in [CLAUDE.md](./CLAUDE.md).
 
 ## Where to start
 

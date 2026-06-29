@@ -21,7 +21,7 @@ in [CLAUDE.md](../../CLAUDE.md) and [architecture.md](../architecture.md).
 
 The `Db` class is the entry point. `db.collection<T>(name)` returns a
 typed `Collection<T>` carrying the locked SQL-shape API
-(`first` / `all` / `count` / `insert` / `update` / `replace` /
+(`first` / `all` / `count` / `get` / `insert` / `update` / `replace` /
 `delete`) and the predicate AST (`where` / `order` / `limit`).
 All public methods carry JSDoc with `@example` blocks — your IDE or
 `tsgo` is the canonical reference. Change notifications are
@@ -143,10 +143,14 @@ export default defineConfig({
 ```
 
 `CollectionDefinition` is defined in
-[`packages/server/src/config.ts`](../../packages/server/src/config.ts);
-the per-index shape lives at
+[`packages/protocol/src/app-config.ts`](../../packages/protocol/src/app-config.ts);
+the per-index type lives at
+[`packages/protocol/src/indexes.ts`](../../packages/protocol/src/indexes.ts)
+as `IndexDefinition`. Server runtime helpers in
+[`packages/server/src/config.ts`](../../packages/server/src/config.ts)
+and
 [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts)
-as `IndexDefinition`.
+validate and normalize those protocol-owned shapes.
 
 ### How the planner picks one
 
@@ -347,7 +351,7 @@ unless `--force` truncates first.
 Read-only consistency walk for one collection. Verifies
 `current.json` parses, the snapshot body's content hash matches
 its filename hash, the trusted log range `[log_seq_start, tail_hint)`
-has no holes, and (with `--rebuild-indexes` + `--config=`) reports
+has no holes, and (with `--indexes` + `--config=`) reports
 orphan index keys without rebuilding. Exit 4 on any finding —
 distinguished from exit 2 ("command itself failed") so CI can
 wire `fsck` as a regression gate.

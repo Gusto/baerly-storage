@@ -96,12 +96,14 @@ The criteria:
    preserve a schema across edits" enters the part of the loop where
    small naming drift is costly (`category` vs. `categories` four turns
    later).
-6. **Zero operator burden.** No cron to schedule, no sidecar to run, no
-   scheduler to provision, no lock service, no managed catalog. The full
-   operator action set is "create a bucket; run the kernel inside an
-   HTTP handler." If a feature needs `wrangler.jsonc` edits beyond auth,
-   a `node-cron` install, or any "step 2: also configure..." — it is the
-   wrong shape for this audience.
+6. **Zero operator burden.** No cron required for correctness, no sidecar
+   to run, no scheduler to provision, no lock service, no managed
+   catalog. The full operator action set for serving application data is
+   "create a bucket; run the kernel inside an HTTP handler." If a feature
+   needs `wrangler.jsonc` edits beyond auth, a `node-cron` install, or
+   any "step 2: also configure..." for the database to stay correct — it
+   is the wrong shape for this audience. Operational jobs such as backups
+   remain optional runbook choices.
 
 Plus one anti-feature:
 

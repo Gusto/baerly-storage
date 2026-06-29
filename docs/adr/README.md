@@ -93,6 +93,9 @@ into the ADR.
 ```markdown
 # NNNN — Title
 
+Status: accepted
+Date: YYYY-MM-DD
+
 ## Context
 
 What was true when the decision was made. The problem; the constraints;
@@ -102,8 +105,17 @@ the alternatives considered.
 
 The choice. One paragraph.
 
+## Closed Paths
+
+What this rejects or forbids, if anything.
+
 ## Consequences
 
 What this commits us to — both the wins and the costs. What changes
 later if we reverse course.
+
+## Live Owner
+
+Link to the spec, API reference, or contributing doc that owns the
+current contract.
 ```
