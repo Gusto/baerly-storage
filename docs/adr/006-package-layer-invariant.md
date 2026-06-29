@@ -1,6 +1,7 @@
 ---
 title: Package layer invariant
 audience: adr
+doc_type: adr
 summary: ADR 006 — hand-maintained package import allow list, enforced by scripts/lint-package-layers.mjs.
 last-reviewed: 2026-06-14
 tags: [decision, adr]

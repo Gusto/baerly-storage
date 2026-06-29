@@ -1,6 +1,7 @@
 ---
 title: Architecture Decision Records
 audience: meta
+doc_type: evidence-index
 summary: Index of ADRs. Each ADR captures one load-bearing technical decision whose rationale doesn't fit naturally in any single code or doc file.
 last-reviewed: 2026-06-12
 tags: [index, decisions]
@@ -23,14 +24,24 @@ rules live in
 
 ## Index
 
+Grouped by role; numeric order is preserved within each group.
+
+### Thesis-level architecture & protocol guardrails
+
 - [001 — Tenant CAS isolation](./001-tenant-cas-isolation.md)
 - [002 — API surface lock](./002-api-surface-lock.md)
-- [003 — `Baerly` prefix naming convention](./003-naming-convention.md)
 - [004 — Ephemeral coordination](./004-ephemeral-coordination.md)
-- [005 — Verifier is a function](./005-verifier-function-shape.md)
-- [006 — Package layer invariant](./006-package-layer-invariant.md)
 - [007 — Layout versioning cordon](./007-layout-versioning-cordon.md)
 - [008 — Single-write commit](./008-single-write-commit.md)
+
+### Contributor conventions
+
+- [003 — `Baerly` prefix naming convention](./003-naming-convention.md)
+- [006 — Package layer invariant](./006-package-layer-invariant.md)
+
+### API seam decisions
+
+- [005 — Verifier is a function](./005-verifier-function-shape.md)
 - [009 — Schema-validator function shape](./009-schema-validator-shape.md)
 
 ## Template

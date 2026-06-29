@@ -1,6 +1,7 @@
 ---
 title: API surface lock
 audience: adr
+doc_type: adr
 summary: ADR 002 — API surface lock.
 last-reviewed: 2026-06-22
 tags: [decision, adr]

@@ -1,6 +1,7 @@
 ---
 title: Single-write commit — the numbered log append is the commit
 audience: adr
+doc_type: adr
 summary: ADR 008 — a commit is one linearizable `If-None-Match:"*"` create on `log/<seq>`; `current.json` leaves the commit path and becomes compactor-owned compaction state with a non-authoritative `tail_hint`; readers discover the tail by forward-probe; index emission is hybrid (new keys before the commit, stale keys after); schema bumps v2→v3 (breaking).
 last-reviewed: 2026-06-23
 tags: [decision, adr, sync-protocol, runtime-model]

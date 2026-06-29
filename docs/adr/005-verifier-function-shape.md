@@ -1,6 +1,7 @@
 ---
 title: Verifier function shape
 audience: adr
+doc_type: adr
 summary: ADR 005 — auth lives on a single async `(Request) => Promise<VerifierResult | null>` seam. Records the three properties this shape upholds and the four rejected alternatives.
 last-reviewed: 2026-05-28
 tags: [decision, adr, auth]

@@ -1,6 +1,7 @@
 ---
 title: Baerly-prefix naming convention
 audience: adr
+doc_type: adr
 summary: ADR 003 — when public symbols carry the `Baerly` prefix.
 last-reviewed: 2026-06-14
 tags: [decision, adr, naming]

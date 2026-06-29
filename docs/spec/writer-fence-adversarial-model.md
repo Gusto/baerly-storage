@@ -1,6 +1,7 @@
 ---
 title: Writer-fence adversarial model
 audience: spec
+doc_type: historical
 summary: Failure envelope of the now-dormant two-phase fence-claim protocol (retained as an admin/testing primitive and patent-C1 record) under absent, delayed, forged, and non-monotonic Date headers.
 last-reviewed: 2026-06-16
 tags: [protocol, fence, claim, adversarial-model, patent-c1]

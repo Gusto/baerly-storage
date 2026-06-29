@@ -118,20 +118,20 @@ For people changing the code in this repo.
   - [`contributing/conventions/docs.md`](contributing/conventions/docs.md)
   - [`contributing/conventions/observability.md`](contributing/conventions/observability.md)
   - [`contributing/conventions/change-discipline.md`](contributing/conventions/change-discipline.md)
-- [`contributing/diagrams/`](contributing/diagrams/) — rendered diagram artifacts and editable
-  Excalidraw sources.
 
 ## Protocol & decisions
 
-For theory and spec readers.
+For theory and spec readers. The split is by ownership — each fact is
+single-sourced in the doc type that owns it:
 
-- [`spec/`](spec/) — protocol theory and stable contracts (sync protocol,
-  causal consistency, JSON merge patch, log-entry shape, S3
-  features used).
-- [`adr/008-single-write-commit.md`](adr/008-single-write-commit.md) —
-  live commit model: the numbered `log/<seq>` create is the commit;
-  `current.json` is compaction state.
-- [`adr/`](adr/) — Architecture Decision Records.
+- [`spec/`](spec/) — **current contracts.** What the protocol guarantees
+  today, tiered by role: current contracts, semantic references,
+  verification, adapter edge cases, and historical/rationale/evidence.
+- [`adr/`](adr/) — **durable rationale and rejected paths.** Why each
+  load-bearing decision was made and what it ruled out, grouped by role:
+  architecture guardrails, contributor conventions, and API seams.
+- [`contributing/`](contributing/) — **how to change things.** Local
+  setup, extension patterns, and the conventions a change must satisfy.
 
 ---
 

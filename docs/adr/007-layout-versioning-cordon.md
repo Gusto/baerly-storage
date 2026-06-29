@@ -1,6 +1,7 @@
 ---
 title: Layout versioning and the reserved-namespace cordon
 audience: adr
+doc_type: adr
 summary: ADR 007 — schema_version is a per-artifact shape sentinel; the bucket key-layout axis is distinct and deferred (layout_version, additive-optional); the leading-underscore namespace is reserved now.
 last-reviewed: 2026-06-01
 tags: [decision, adr, runtime-model]

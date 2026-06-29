@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname, resolve, relative } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { splitFrontmatter } from "./lib/frontmatter.mjs";
 
 // VERIFY_DOCS_ROOT lets unit tests point at a temp dir;
 // default to the repo root resolved from this script's location.
@@ -37,26 +38,19 @@ function walk(dir) {
     const st = statSync(path);
     if (st.isDirectory()) {
       walk(path);
-    }
-    // Skip Excalidraw-managed source files (*.excalidraw.md). Their
-    // frontmatter is owned by the Excalidraw Obsidian plugin and
-    // doesn't carry an `audience:` field.
-    else if (name.endsWith(".md") && !name.endsWith(".excalidraw.md")) {
+    } else if (name.endsWith(".md")) {
       checkFile(path);
     }
   }
 }
 
 function extractFrontmatter(content) {
-  if (!content.startsWith("---\n")) {
-    return null;
-  }
-  const end = content.indexOf("\n---\n", 4);
-  if (end === -1) {
+  const { raw } = splitFrontmatter(content);
+  if (raw === undefined) {
     return null;
   }
   try {
-    return parseYaml(content.slice(4, end));
+    return parseYaml(raw);
   } catch (error) {
     return { parseError: error.message };
   }
@@ -88,14 +82,28 @@ function checkFile(path) {
       `  To fix: change the \`audience:\` field to one of: ${[...VALID_AUDIENCE].join(", ")}.`,
     );
   }
-  if (Array.isArray(fm.related)) {
-    for (const link of fm.related) {
-      if (typeof link !== "string" || link.startsWith("http")) {
-        continue;
-      }
-      const target = resolve(dirname(path), link);
-      if (!existsSync(target)) {
-        findings.push(`${rel}: broken related link → ${link}`);
+  if (fm.related !== undefined) {
+    if (!Array.isArray(fm.related)) {
+      findings.push(`${rel}: invalid 'related' metadata — expected an array of strings`);
+    } else {
+      for (const link of fm.related) {
+        if (typeof link !== "string") {
+          findings.push(
+            `${rel}: invalid 'related' entry ${JSON.stringify(link)} — expected a string`,
+          );
+          continue;
+        }
+        if (/^[a-z][a-z0-9+.-]*:/i.test(link)) {
+          continue;
+        }
+        const targetWithoutAnchor = link.split("#")[0];
+        if (!targetWithoutAnchor) {
+          continue;
+        }
+        const target = resolve(dirname(path), targetWithoutAnchor);
+        if (!existsSync(target)) {
+          findings.push(`${rel}: broken related link → ${link}`);
+        }
       }
     }
   }
