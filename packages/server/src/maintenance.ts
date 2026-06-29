@@ -505,14 +505,13 @@ export const runBoundedMaintenance = async (
         if (nextSeq - (current.last_warned_seq ?? 0) >= MAINTENANCE_WARN_INTERVAL_WRITES) {
           console.warn(
             `baerly-storage: collection "${collection}" is deferring compaction — its ` +
-              `snapshot exceeds the fold ceiling (${snapshotBytes > C ? "bytes" : "rows"}), ` +
-              `so the tail keeps growing and read amplification will climb. This is ` +
-              `graduation-pending: the dataset has outgrown prototype-tier maintenance. ` +
-              `On paid Cloudflare / Node you can raise BAERLY_MAINTENANCE_MAX_FOLD_BYTES — ` +
-              `but on Cloudflare a cap above what a single isolate can fold makes folds get ` +
-              `CPU-killed mid-flight and silently not land (no clean metric — watch snapshot ` +
-              `age / object count); see docs/about/graduation.md. Otherwise, graduate to a ` +
-              `server-backed database.`,
+              `snapshot exceeds the fold ceiling (${snapshotBytes > C ? `${C} bytes` : `${E} rows`}), ` +
+              `so the tail keeps growing and read amplification will climb. The dataset has ` +
+              `outgrown the maintenance envelope. On paid Cloudflare / Node you can raise ` +
+              `BAERLY_MAINTENANCE_MAX_FOLD_BYTES — but on Cloudflare a cap above what a single ` +
+              `isolate can fold makes folds get CPU-killed mid-flight and silently not land ` +
+              `(no clean metric — watch snapshot age / object count); see docs/about/graduation.md. ` +
+              `Otherwise, move to a database service (D1 / Postgres).`,
           );
           // SEPARATE best-effort CAS — explicitly NOT folded into any
           // commit CAS. A lost stamp just means another isolate warns
