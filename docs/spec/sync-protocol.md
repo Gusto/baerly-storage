@@ -2,7 +2,7 @@
 title: Sync protocol
 audience: spec
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-28
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -527,6 +527,23 @@ guideline — cost grows linearly, not a protocol ceiling); and >10 GB per
 tenant stored (the R2 free-tier storage line, a cost signal, not a
 baerly-storage protocol constraint). Crossing those is a graduation
 signal, not a protocol failure.
+
+## Common misdescriptions
+
+These statements read as plausible but describe a different system than
+the one above. Each is a recurring way the protocol gets mis-summarized;
+the right-hand column is the load-bearing correction.
+
+| Don't say | Actually |
+| --- | --- |
+| "`current.json` is the latest-commit pointer." | It is a compaction bookmark: snapshot pointer, `log_seq_start`, counters, and a non-authoritative `tail_hint`. The commit is the log create. See [Storage layout](#storage-layout). |
+| "A write commits by updating both a log entry and `current.json`." | The ordinary commit is the single `log/<seq>` create-if-absent. There is no `current.json` write on the commit path. See [Write algorithm](#write-algorithm). |
+| "The `session` is an account, login, lease, or persistent writer identity." | It is a one-time in-memory value for recognizing one writer's own retry. See [Contention and retries](#contention-and-retries). |
+| "`tail_hint` is the authoritative tail." | It is a lower-bound starting point that only moves forward. The true tail is the first missing `seq` found by the forward-probe. See [Read algorithm](#read-algorithm). |
+| "Reads repair, compact, or garbage collect." | Reads are pure: they fetch and verify state. Maintenance is triggered by successful writes. See [Maintenance runtime model](#maintenance-runtime-model). |
+| "The LSN text globally sorts all writes into causal order." | The kernel orders by integer `seq`. The LSN time prefix is a downstream listing hint only; cross-session same-millisecond order is arbitrary. See [LSNs, wall clocks, and downstream consumers](#lsns-wall-clocks-and-downstream-consumers). |
+| "An external scheduler is required for correctness." | The in-band write-tick is the default and needs no scheduler. `runScheduledMaintenance` is an opt-in convenience for buckets that outgrow in-band draining. See [Maintenance runtime model](#maintenance-runtime-model). |
+| "The server-timestamped `writer_fence` is the commit path." | `writer_fence` is dormant. No production commit path relies on it; the field persists only for schema compatibility. |
 
 ## Verification
 

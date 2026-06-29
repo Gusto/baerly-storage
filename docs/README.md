@@ -2,7 +2,7 @@
 title: docs/ — topic map
 audience: meta
 summary: Index of everything under docs/, grouped by audience.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-28
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
 ---
@@ -35,6 +35,8 @@ companion reference. The positioning story is in
   from [`../examples/`](../examples/) or bolt onto an existing Worker
   with [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md).
 - Operating a production app: [`guide/operations.md`](guide/operations.md).
+- Stuck on a term: [`glossary.md`](glossary.md) — one-line definitions of
+  commit, log, seq, tail, snapshot, compaction, GC, LSN, and session.
 
 ## Using baerly-storage
 
