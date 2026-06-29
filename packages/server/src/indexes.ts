@@ -24,8 +24,7 @@
  *
  *   `<logPrefix>/index/<indexName>/<value-b32>/<docId>.json`
  *
- * Wire shape (composite — accepted by the encoder, not consulted by
- * the read path today):
+ * Wire shape (composite):
  *
  *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
  *
@@ -46,8 +45,9 @@
  *     and `$in` walks over numeric fields are first-class — no
  *     planner fall-back to full-scan).
  *
- * Locked: single-field indexes only on the read path. Composite
- * shape is documented and reserved (the path encoder accepts it).
+ * Composite read routing is left-anchored. The planner may consume an
+ * equality prefix plus a range / `$in` tail slot; predicates that do
+ * not match a routable prefix fall back to the snapshot+log fold.
  *
  * @see docs/spec/sync-protocol.md — index emission is hybrid around
  *      the commit: additive (new) keys are PUT before the committing
@@ -301,8 +301,8 @@ export const indexKeyPrefix = (logPrefix: string, indexName: string): string =>
  * Single-field: `<logPrefix>/index/<name>/<v0-b32>/<docId>.json`.
  * Composite:    `<logPrefix>/index/<name>/<v0-b32>/<v1-b32>/.../<docId>.json`.
  *
- * Composite shape is accepted but the read path today only
- * consults single-field entries.
+ * Composite entries are read-path routable when the planner can consume
+ * a left-anchored prefix of the indexed tuple.
  */
 export const indexKeyFor = (
   logPrefix: string,
