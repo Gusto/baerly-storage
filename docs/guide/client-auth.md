@@ -2,12 +2,18 @@
 title: Browser → server auth
 audience: integrator
 summary: Browser-to-server auth recipes for dev/prod Cloudflare and Node postures.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-28
 tags: [client, auth, integration]
 related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
 ---
 
 # Browser → server auth
+
+> **Scope.** This guide owns the **browser → server** posture: why
+> scaffolds default to `auth: "none"`, the dev→prod verifier flip, and
+> the SPA-secret invariant. For the canonical **verifier preset
+> reference and production verify recipes** (the operator's server-side
+> view), see [auth.md](auth.md).
 
 Browser clients call `/v1/*`; the server applies auth, chooses a
 tenant prefix, then performs storage I/O. A tenant prefix is the
@@ -125,28 +131,16 @@ Set:
 | `CF_ACCESS_AUDIENCE_TAG` | Worker env/vars; Cloudflare Access application audience tag. |
 | `BAERLY_AUTH_REQUIRED` | Application env/var consumed by this snippet; set to `1` in production so missing Access env fails closed. |
 
-Verify:
-
-The cookie value comes from an interactive Cloudflare Access login. The
-client id/secret pair comes from a Cloudflare Access service token that
-your Access policy allows.
-
-```sh
-curl -fsS https://<worker-host>/v1/healthz
-curl -i https://<worker-host>/v1/c/tickets
-curl -fsS -H "cookie: CF_Authorization=$CF_AUTHORIZATION_COOKIE" \
-  https://<worker-host>/v1/c/tickets
-curl -fsS \
-  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-  https://<worker-host>/v1/c/tickets
-```
-
-The health check is `200` only when your Access policy excludes
-`/v1/healthz`; otherwise Cloudflare Access may challenge it before the
-Worker sees it. The unauthenticated collection request should fail
-closed. The cookie and service-token requests should return
-`{ data, _meta }`.
+**Verify** the deploy fails closed and authenticated requests succeed
+with the curl recipe in
+[auth.md → Cloudflare Production](auth.md#cloudflare-production):
+`/v1/healthz`, an unauthenticated `/v1/c/*` that must fail closed, then a
+cookie- or service-token-authenticated request that returns
+`{ data, _meta }`. The health check is `200` only when your Access policy
+excludes `/v1/healthz`; otherwise Access may challenge it before the
+Worker sees it. The cookie value comes from an interactive Access login;
+the client id/secret pair comes from an Access service token your policy
+allows.
 
 ## Pattern C: Node JWKS production
 
@@ -199,13 +193,10 @@ Replace it with `tenantClaim: "<claim-name>"` when the token carries
 the tenant. If you omit both `tenantPrefix` and `tenantClaim`,
 `bearerJwt` reads the default `"tenant"` claim.
 
-```sh
-baerly doctor --bucket=s3://<bucket>
-curl -fsS https://<node-host>/v1/healthz
-curl -i https://<node-host>/v1/c/tickets
-curl -fsS -H "Authorization: Bearer $JWT" \
-  https://<node-host>/v1/c/tickets
-```
+**Verify** with the Node curl recipe in
+[auth.md → Node Production](auth.md#node-production): `baerly doctor
+--bucket`, `/v1/healthz`, an unauthenticated `/v1/c/*` that must fail
+closed, then a bearer-authenticated request.
 
 ## Pattern B: shared secret for dev and services
 

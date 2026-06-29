@@ -1,10 +1,10 @@
 ---
 title: Developer setup
 audience: coder
-summary: "Local dev: pnpm, MinIO + Toxiproxy + Postgres stack, test commands."
-last-reviewed: 2026-06-23
-tags: [development, setup, tests]
-related: ["./troubleshooting.md", "../../CLAUDE.md"]
+summary: "Local dev: pnpm, MinIO + Toxiproxy + Postgres stack, test commands, and troubleshooting."
+last-reviewed: 2026-06-28
+tags: [development, setup, tests, troubleshooting]
+related: ["../../CLAUDE.md"]
 ---
 
 # Development
@@ -52,12 +52,29 @@ pnpm dev:storage      # docker compose up -d --wait (blocks until healthy)
 pnpm dev:storage:stop # tear down
 ```
 
-MinIO runs on `http://127.0.0.1:9102` (S3 API), console on `:9103`
-(login `baerly` / see `docker-compose.yml`); Toxiproxy on `:9104` proxies
-MinIO for latency/failure injection; Postgres on `:5433` backs the
-export-smoke suite. The `minio` proxy is declared
-statically in [`docker/toxiproxy.json`](../../docker/toxiproxy.json) and
-loaded at container start.
+The local stack exposes these ports:
+
+| Service | Port | Purpose |
+|---|---|---|
+| MinIO API | `:9102` | Direct S3-compatible endpoint; tests use this when they need reliable MinIO. |
+| MinIO console | `:9103` | Web UI at <http://127.0.0.1:9103> (login `baerly` / see `docker-compose.yml`). |
+| Toxiproxy | `:9104` | Proxy in front of MinIO; `randomized.test.ts` uses it for injected network failure. |
+| Toxiproxy admin | `:8474` | HTTP admin API for toggling or configuring the proxy. |
+| Postgres | `:5433` | Backs `export-smoke.test.ts`. Host port 5433 dodges a local dev Postgres on 5432. |
+
+The `minio` proxy is declared statically in
+[`docker/toxiproxy.json`](../../docker/toxiproxy.json) and loaded at
+container start.
+
+The MinIO/Toxiproxy split matters because both endpoints reach the same
+bucket but test different failure modes. Direct `:9102` traffic tests
+available MinIO; proxied `:9104` traffic tests convergence while the
+proxy drops and returns. Bucket setup uses direct MinIO through
+`stableConfig`; fault-injected `S3HttpStorage` traffic uses Toxiproxy
+through `unstableConfig`. Toxiproxy's default config creates one enabled
+`minio` proxy with no toxics (a toxic is a configured latency, drop, or
+bandwidth rule); the randomized tests simulate failure by toggling the
+proxy through the admin API on `:8474`, not by adding toxics.
 
 Running two worktrees at once? `pnpm dev:storage` runs `docker compose`
 directly; it does not load `.env.local`, and the checked-in Compose file
@@ -159,6 +176,68 @@ confirm it's yours.
    resilience gap. The static proxy lives in `docker/toxiproxy.json`;
    add toxics at runtime with the admin API on `:8474`
    (`POST /proxies/minio/toxics`) or via `toxiproxy-cli`.
+
+## When to crank the fuzzers
+
+`pnpm test:randomize` runs the default Vitest project once with
+`FC_NUM_RUNS=10000`, raising fast-check property tests from 100 to
+10,000 cases. It does not loop until failure, and the
+`randomized.test.ts` cascade has its own backend variants, so a higher
+`FC_NUM_RUNS` does not make that file loop. Reach for it when you:
+
+- changed property-tested protocol, query, index, compaction, or GC
+  behavior and want a larger fast-check sample;
+- changed timing constants in `packages/protocol/src/constants.ts`
+  (`LAG_WINDOW_MILLIS`, etc.);
+- have a flaky failure with a fast-check seed and want more coverage
+  before trusting a fix.
+
+Use `pnpm test:fuzz-maintenance` instead when changing
+`packages/server/src/compactor.ts`, `packages/server/src/gc.ts`, or
+`packages/server/src/writer.ts`; that script runs the crash-injection
+fuzzer. Neither command is a load test or a latency benchmark.
+
+## Troubleshooting
+
+Repeatable local-checkout failures not covered above or in `CLAUDE.md`.
+
+### A test fails naming infra
+
+`pnpm test` is meant to pass on a fresh checkout without MinIO,
+Postgres, or cloud credentials. When a failure names one of those
+dependencies, check the gate first:
+
+| Failure mentions | Run or check |
+|---|---|
+| MinIO, S3, `:9102`, or Toxiproxy | Start `pnpm dev:storage`, then run `pnpm test:minio` or the narrower MinIO-backed script. |
+| `export-smoke.test.ts` or Postgres | Start `pnpm dev:storage`, then run `pnpm test:export-smoke`. |
+| `conformance.test.ts` credentials | Add `credentials/{aws,gcs,cloudflare}.json`, then run `pnpm test:conformance`. |
+| Anything else | Treat it as an ungated failure in the current branch. |
+
+The full gate list lives in
+[CLAUDE.md → Test gating](../../CLAUDE.md#test-gating).
+
+### `pnpm format:check` is red
+
+It is green on `main`, so a local failure usually means the current
+branch introduced a formatting violation. Run `pnpm format` to write the
+oxfmt result in place, then re-run. `format:check` (`oxfmt --check .`,
+whole-repo) is part of `pnpm verify`, and the lefthook pre-commit hook
+also runs `oxfmt` on staged code/markup. Markdown is outside oxfmt;
+`verify:docs` validates Markdown instead of reformatting it.
+
+### The pre-commit hook didn't fire
+
+`pnpm install` installs the lefthook pre-commit hook in the primary
+checkout via `prepare`; secondary worktrees skip that install because
+they share hook config with the primary checkout. A checkout is
+secondary when `git rev-parse --git-dir` differs from
+`git rev-parse --git-common-dir`. If the hook is missing, run
+`pnpm install` in the primary checkout or `pnpm exec lefthook install`
+explicitly, and verify from any checkout with
+`cat "$(git rev-parse --git-path hooks/pre-commit)"` — it should be a
+lefthook stub. Use `git commit --no-verify` only for local WIP commits
+that will be fixed before review; never for merge commits or PR branches.
 
 ## Project layout
 
