@@ -1,6 +1,7 @@
 ---
 title: Ephemeral coordination
 audience: adr
+doc_type: adr
 summary: ADR 004 — coordination runs in request-bounded compute, not in a persistent process.
 last-reviewed: 2026-06-22
 tags: [decision, adr, runtime-model]

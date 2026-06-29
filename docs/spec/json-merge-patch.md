@@ -1,6 +1,7 @@
 ---
 title: JSON merge patch (RFC 7396)
 audience: spec
+doc_type: semantic-reference
 summary: Sparse JSON updates plus the algebraic boundaries for safe patch coalescing.
 last-reviewed: 2026-06-22
 tags: [protocol, json, rfc-7396, rfc-7386, merge-patch]

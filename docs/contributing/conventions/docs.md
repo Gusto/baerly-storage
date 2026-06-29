@@ -33,6 +33,19 @@ Conventions for content under `docs/`.
 - Inline code paths are `packages/<pkg>/src/<file>.ts` (relative to
   repo root).
 
+## Ownership
+
+Route by doc type so each fact stays single-sourced:
+
+- **Specs** (`docs/spec/`) own current protocol contracts.
+- **ADRs** (`docs/adr/`) own durable rationale and rejected paths.
+- **Contributing docs** (`docs/contributing/`) own how-to-change guidance.
+
+Specs and ADRs carry a `doc_type:` frontmatter field recording their role
+(e.g. `current-contract`, `semantic-reference`, `verification`,
+`adapter-edge-case`, `historical`, `rationale`, `adr`). The `spec/` and
+`adr/` index READMEs group their entries by that role.
+
 ## When to update which doc
 
 | Change                                   | File to update                                                                                    |
@@ -72,4 +85,3 @@ phrasing aligned; don't claim they're byte-identical.
 
 - ❌ Duplicate content between `CLAUDE.md` and `docs/*.md`. CLAUDE.md
   links out; long-form lives in `docs/`.
-- ❌ Add screenshots without compressing — keep `docs/contributing/diagrams/` lean.

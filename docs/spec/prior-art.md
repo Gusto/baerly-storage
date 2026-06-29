@@ -1,6 +1,7 @@
 ---
 title: Prior-art differentiation
 audience: spec
+doc_type: rationale
 summary: Technical differentiation against known prior art for baerly-storage's live object-store protocol mechanisms.
 last-reviewed: 2026-06-22
 tags: [protocol, patent, prior-art]

@@ -58,6 +58,28 @@ test("fails on broken related: link", () => {
   expect(r.stderr).toMatch(/broken related link/);
 });
 
+test("fails when related is not an array", () => {
+  write("a.md", `---\ntitle: A\naudience: meta\nrelated: ./b.md\n---\n`);
+  write("b.md", `---\ntitle: B\naudience: meta\n---\n`);
+  const r = runScript(tmpRoot);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toMatch(/invalid 'related' metadata/);
+});
+
+test("fails when related contains a non-string entry", () => {
+  write("a.md", `---\ntitle: A\naudience: meta\nrelated: [42]\n---\n`);
+  const r = runScript(tmpRoot);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toMatch(/invalid 'related' entry 42/);
+});
+
+test("accepts an anchor on a resolved related link", () => {
+  write("a.md", `---\ntitle: A\naudience: meta\nrelated: ["./b.md#heading"]\n---\n`);
+  write("b.md", `---\ntitle: B\naudience: meta\n---\n`);
+  const r = runScript(tmpRoot);
+  expect(r.code).toBe(0);
+});
+
 test("fails on last-reviewed older than 180 days", () => {
   // 365 days ago is well past the 180d threshold.
   const stale = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);

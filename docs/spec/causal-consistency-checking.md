@@ -1,6 +1,7 @@
 ---
 title: Causal-consistency property checking
 audience: spec
+doc_type: verification
 summary: Low-complexity verification of causal consistency via a known global timeline.
 last-reviewed: 2026-06-23
 tags: [protocol, verification, property-testing]

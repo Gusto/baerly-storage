@@ -1,6 +1,7 @@
 ---
 title: Tenant CAS isolation
 audience: adr
+doc_type: adr
 summary: ADR 001 — Tenant CAS isolation.
 last-reviewed: 2026-06-22
 tags: [decision, adr]

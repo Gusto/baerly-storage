@@ -1,6 +1,7 @@
 ---
 title: LogEntry wire shape
 audience: spec
+doc_type: current-contract
 summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; the CDC wire contract (pre-launch: may still narrow)."
 last-reviewed: 2026-06-23
 tags: [protocol, log, cdc, contract]

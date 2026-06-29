@@ -1,6 +1,7 @@
 ---
 title: Storage compatibility
 audience: spec
+doc_type: current-contract
 summary: Which S3-compatible stores baerly-storage supports, and the conditional-write features it depends on.
 last-reviewed: 2026-06-14
 tags: [protocol, s3]

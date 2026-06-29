@@ -1,6 +1,7 @@
 ---
 title: Schema-validator function shape
 audience: adr
+doc_type: adr
 summary: ADR 009 — the collection schema validator runs against the post-image (document after merge-patch), requires `_id`, and accepts any StandardSchemaV1-compatible library; rejects on failure with BaerlyError{code:"SchemaError"}.
 last-reviewed: 2026-06-22
 tags: [decision, adr, schema, validation]
