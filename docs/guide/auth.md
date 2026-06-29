@@ -2,12 +2,17 @@
 title: Authentication
 audience: operator
 summary: Production auth recipes for Cloudflare and Node, plus tenant pinning and authorization boundaries.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-28
 tags: [auth, operations]
 related: ["../adr/005-verifier-function-shape.md", "../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
 ---
 
 # Authentication
+
+> **Scope.** This is the canonical reference for **server-side verifier
+> configuration and production verification** — the operator's view. For
+> the **browser → server** posture (dev defaults, the dev→prod flip, and
+> the SPA-secret invariant), see [client-auth.md](client-auth.md).
 
 For `/v1/c/*`, `/v1/count`, and `/v1/since`, baerly-storage auth
 answers two questions before any storage I/O: is this request accepted,

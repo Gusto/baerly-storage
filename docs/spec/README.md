@@ -34,6 +34,9 @@ implementation lives in `packages/`.
   for `ListObjectsV2` XML responses; companion to
   `manual-e2e/fixtures/s3-key-escaping/`.
 - [writer-fence-adversarial-model.md](writer-fence-adversarial-model.md)
-  — threat model for writer fencing and stale-authority rejection.
+  — adversarial model for the **dormant** fence-claim primitive
+  (retained for admin/testing and as the patent-C1 provenance record;
+  not on the commit path under
+  [ADR-008](../adr/008-single-write-commit.md)).
 - [prior-art.md](prior-art.md) — comparison against object-storage
   databases and adjacent coordination systems.

@@ -59,9 +59,9 @@ invariants, operator runbooks, and target-specific bolt-ons.
   — One-command bolt-on for an existing `wrangler create` project —
   `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc,
   patches it, refreshes agent rules, prints the worker-entry snippet.
-- [`guide/auth.md`](guide/auth.md) — Production auth recipes for
-  Cloudflare and Node, tenant pinning, and the no-built-in-authorization
-  caveat.
+- [`guide/auth.md`](guide/auth.md) — Canonical server-side verifier
+  reference: production auth recipes for Cloudflare and Node, verify
+  recipes, tenant pinning, and the no-built-in-authorization caveat.
 - [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
   retention rotation, checksums, restore, and restore drills.
 - [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server
@@ -102,9 +102,8 @@ For people changing the code in this repo.
 - [`contributing/architecture.md`](contributing/architecture.md) — module graph and the lifecycle
   of `db.collection(...).insert()`.
 - [`contributing/development.md`](contributing/development.md) — local setup, test commands,
-  MinIO / Toxiproxy / Postgres stack.
-- [`contributing/troubleshooting.md`](contributing/troubleshooting.md) — known pain points: test gating,
-  ports, fuzzer, CI formatting.
+  MinIO / Toxiproxy / Postgres stack, and troubleshooting (test gating,
+  ports, fuzzer, CI formatting).
 - [`contributing/extending.md`](contributing/extending.md) — worked examples for adding a `Db`
   method, `Query` constraint, etc.
 - [`contributing/features.md`](contributing/features.md) — feature → code map.
