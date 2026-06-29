@@ -1,7 +1,18 @@
 {
   "name": "@gusto/create-baerly-storage",
   "version": "0.3.0",
-  "description": "Scaffold a new baerly-storage app. Run via `pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare`.",
+  "description": "Create an app with a document database on S3 or Cloudflare R2 — TypeScript scaffold for Workers and Node",
+  "keywords": [
+    "boilerplate",
+    "cloudflare-workers",
+    "document-database",
+    "r2",
+    "s3",
+    "scaffold",
+    "serverless",
+    "starter",
+    "typescript"
+  ],
   "homepage": "https://github.com/Gusto/baerly-storage#readme",
   "bugs": {
     "url": "https://github.com/Gusto/baerly-storage/issues"
