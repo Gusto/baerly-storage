@@ -1,10 +1,10 @@
 ---
 title: Day-one handshake gate
-audience: operator
+audience: maintainer
 summary: Manual release-readiness gate that times scaffold → deploy → first record against the day-one SLO.
 last-reviewed: 2026-05-28
 tags: [operations, gate, day-one, scaffold, deploy]
-related: ["../guide/backups.md"]
+related: ["publishing.md"]
 ---
 
 # Day-one handshake gate (`pnpm gate:day-one`)

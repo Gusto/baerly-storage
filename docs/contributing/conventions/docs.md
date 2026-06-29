@@ -42,15 +42,16 @@ Route by doc type so each fact stays single-sourced:
 - **Contributing docs** (`docs/contributing/`) own how-to-change guidance.
 
 Specs and ADRs carry a `doc_type:` frontmatter field recording their role
-(e.g. `current-contract`, `semantic-reference`, `verification`,
+(`current-contract`, `semantic-reference`, `verification`,
 `adapter-edge-case`, `historical`, `rationale`, `adr`). The `spec/` and
-`adr/` index READMEs group their entries by that role.
+`adr/` index READMEs carry `doc_type: index` and group their entries by
+that role.
 
 ## When to update which doc
 
 | Change                                   | File to update                                                                                    |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| New module / refactor                    | `docs/contributing/architecture.md` (graph + lifecycle)                                           |
+| New module / refactor                    | `docs/architecture.md` (graph + lifecycle)                                                        |
 | New developer setup step                 | `docs/contributing/development.md`                                                                |
 | New extension pattern                    | `docs/contributing/extending.md`                                                                  |
 | Protocol change                          | `docs/spec/sync-protocol.md` (and a coverage entry in `docs/spec/causal-consistency-checking.md`) |

@@ -4,7 +4,7 @@ audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
 last-reviewed: 2026-06-28
 tags: [architecture, lifecycle, module-map]
-related: ["../spec/sync-protocol.md", extending.md, features.md]
+related: ["spec/sync-protocol.md", "contributing/extending.md", "contributing/features.md"]
 ---
 
 # Architecture
@@ -55,23 +55,23 @@ predicates run against that row set.
 Change notifications use the HTTP
 `/v1/since?collection=<name>&cursor=<opaque>` long-poll route. The
 protocol is specified in
-[spec/sync-protocol.md](../spec/sync-protocol.md) and proven causally
+[spec/sync-protocol.md](spec/sync-protocol.md) and proven causally
 covered by the randomized checker in
-[spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
+[spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 
 The useful git comparison is narrow: content-addressed documents,
 immutable numbered log entries, and one conditional log create as the
 commit, per collection. The consistency side of this shape depends on
 S3's December 2020 strong read/write/list consistency; the commit point
 also depends on create-if-absent conditional writes (see
-[spec/storage-compatibility.md](../spec/storage-compatibility.md)).
+[spec/storage-compatibility.md](spec/storage-compatibility.md)).
 
 Bundle-size budgets set the scope: the full Cloudflare Workers bundle
 (`cloudflare.js`) is capped at 122 KiB gzipped; the Node HTTP closure
 (`http.js`) at 101 KiB; the browser client (`client.js`) at 6 KiB. The
 whole public API surface fits in a single ~12k-token `dist/API.md`, so
 an LLM can use it from `.d.ts` alone (see the
-[API surface lock](conventions/change-discipline.md#api-surface-lock)).
+[API surface lock](contributing/conventions/change-discipline.md#api-surface-lock)).
 
 ## Runtime model
 
@@ -102,10 +102,10 @@ below. The default profile is sized to fit inside the platform's
 subrequest budget — Cloudflare Workers' 50-subrequest limit is the
 tightest target — so larger backlogs drain across many write-ticks
 rather than spilling into a long-lived process. The opt-in
-[`runScheduledMaintenance`](../../packages/server/src/maintenance.ts)
+[`runScheduledMaintenance`](../packages/server/src/maintenance.ts)
 SDK can still be driven from a cron trigger, but it is not the
 default and not required. The rationale is in
-[ADR-002](../adr/002-ephemeral-coordination.md).
+[ADR-002](adr/002-ephemeral-coordination.md).
 
 ## Module dependency graph
 
@@ -277,7 +277,7 @@ listener, and `@baerly/adapter-node`'s `dev-landing` middleware imports
 never reach Workerd; breaking it is a separate refactor.
 
 The allow list is enforced at edit time by
-[`scripts/lint-package-layers.mjs`](../../scripts/lint-package-layers.mjs),
+[`scripts/lint-package-layers.mjs`](../scripts/lint-package-layers.mjs),
 which runs in `pnpm verify` / `pnpm verify:agent`. It walks
 `packages/*/src/**`, matches bare, subpath, dynamic, and relative
 cross-package specifiers, forbids the disallowed `node:` builtins, and
@@ -399,7 +399,7 @@ clauses the index did not cover. Run `rebuildIndex` before treating a
 newly declared or suspect index as complete. For filtered indexes, marker
 completeness is sound only when the query implies the index filter. The
 plan shape, diagnostic `reason` values, and filtered-index caveat are in
-[features.md](features.md) §"Secondary indexes".
+[features.md](contributing/features.md) §"Secondary indexes".
 
 The HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route in
 `packages/server/src/http/since.ts` is the change-notification
@@ -407,7 +407,7 @@ channel: it walks the log from a caller-supplied cursor and
 either returns the new entries immediately or holds the request
 until new entries arrive (or the long-poll deadline elapses).
 The protocol-level theory lives in
-[spec/sync-protocol.md](../spec/sync-protocol.md).
+[spec/sync-protocol.md](spec/sync-protocol.md).
 
 ### After the write — the in-band maintenance tick
 
@@ -452,7 +452,7 @@ snapshot is reclaimed by `runGc` past the grace window. **Dispatch is by
 capability:** Cloudflare relocates the maintenance pass past the
 response via `ctx.waitUntil`; everywhere else it runs inline
 (`dispatchInlineAwaited`). See
-[graduation.md](../about/graduation.md) for the per-tier envelope
+[graduation.md](about/graduation.md) for the per-tier envelope
 and ceiling math, and "Storage layout in the bucket" below for
 the on-disk shape these passes produce.
 
@@ -502,19 +502,19 @@ adapter package. Platform-specific code belongs in adapters.
   forward-probes from `max(log_seq_start, tail_hint)`.
   A reader's observed sequence is a prefix of the collection log.
   Randomized checker:
-  [spec/causal-consistency-checking.md](../spec/causal-consistency-checking.md).
+  [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 - **Split-brain fencing:** `writer_fence.epoch` inside `current.json`
   is **dormant** under single-write commit — the post-commit fence
   verify was removed (the winning `log/<seq>` create is itself the
   proof of commit), and no prod path reads or writes the field. Its
-  drop is deferred (see [ADR-004](../adr/004-single-write-commit.md)).
+  drop is deferred (see [ADR-004](adr/004-single-write-commit.md)).
 - **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
   RFC 7386 with the array-replacement convention; see
-  [spec/json-merge-patch.md](../spec/json-merge-patch.md).
+  [spec/json-merge-patch.md](spec/json-merge-patch.md).
 - **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire
   `LogEntry` interface and its 0.3.0 public-baseline / 0.x stability
   rules. See
-  [spec/log-entry-shape.md](../spec/log-entry-shape.md).
+  [spec/log-entry-shape.md](spec/log-entry-shape.md).
 
 ## Key types (where the contracts live)
 
@@ -532,7 +532,7 @@ adapter package. Platform-specific code belongs in adapters.
   `Writer.commit` request/response shapes.
 - `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log
   entry. Field set is fixed at major versions; consumers ack on
-  `lsn`. Full contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md).
+  `lsn`. Full contract in [spec/log-entry-shape.md](spec/log-entry-shape.md).
 - `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type
   pattern. `UUID` and `ContentVersionId` are both `string`s but not
   assignable to each other.
@@ -544,7 +544,7 @@ adapter package. Platform-specific code belongs in adapters.
   baked into the filename, and returns a `Map<_id, body>`. Internal
   callers: the compactor's fold-base load, the reader
   (`Query.runRead`), `runGc`, `rebuildIndex`. See
-  [extending.md §5](extending.md#5-shared-utilities-on-the-public-surface).
+  [extending.md §5](contributing/extending.md#5-shared-utilities-on-the-public-surface).
 
 ## Storage layout in the bucket
 
