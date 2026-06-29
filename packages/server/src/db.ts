@@ -330,7 +330,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
 /**
  * Guard a string used as a path-segment in the bucket-key encoding.
  * Routes through the single shared {@link assertPathSegment} rule
- * (empty / `"/"` / `"."`|`".."` / C0-C1 control / leading `"_"` (ADR-007) /
+ * (empty / `"/"` / `"."`|`".."` / C0-C1 control / leading `"_"` (ADR-003) /
  * overlong), all as `BaerlyError{code:"InvalidConfig"}`. `role` and `verb`
  * are baked into the message so the caller doesn't need to format their own.
  *

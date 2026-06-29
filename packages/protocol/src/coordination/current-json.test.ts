@@ -91,11 +91,11 @@ describe("readCurrentJson", () => {
     });
   });
 
-  // Tolerant-reader / forward-compat regression (ADR-007 Tier 1).
+  // Tolerant-reader / forward-compat regression (ADR-003 Tier 1).
   // An UNKNOWN field on current.json must be IGNORED, not rejected.
   // This pins the "additive-optional, no bump" evolution rule so a
   // future refactor cannot silently add unknown-key rejection and break
-  // the deferred layout_version plan. See docs/adr/007-layout-versioning-cordon.md.
+  // the deferred layout_version plan. See docs/adr/003-layout-versioning-cordon.md.
   plainTest(
     "tolerant reader: an unknown future field on current.json is ignored, not rejected",
     async () => {

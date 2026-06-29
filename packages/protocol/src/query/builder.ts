@@ -27,8 +27,9 @@ import type { PredicateClause, PredicateWire } from "./wire.ts";
  * The methods on this interface ARE the supported operator surface.
  * Vocabulary additions (`or`, `not`, `regex`, `ne`, `exists`, ...)
  * are intentionally absent — calling them is a TS2339 compile
- * error, not a runtime rejection. See ADR-002 amendment dated
- * 2026-05-26 for the algebra-lock policy.
+ * error, not a runtime rejection. The algebra is conjunction-only in
+ * perpetuity — see the API surface lock in
+ * docs/contributing/conventions/change-discipline.md.
  *
  * @template T - the document shape the predicate is keyed against.
  */

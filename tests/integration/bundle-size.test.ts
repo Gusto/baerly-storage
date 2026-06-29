@@ -233,7 +233,7 @@ const BUDGETS: readonly Budget[] = [
   //     bytes on both axes (measured 214669 raw / 65783 gz). gz was already
   //     +2 over the prior 64 KiB ceiling on main (pre-existing drift) and
   //     this change widened it. Rebaseline raw +1 KiB and gz +1 KiB
-  //     (owner-accepted; user chose rebaseline). See docs/adr/007-layout-versioning-cordon.md.
+  //     (owner-accepted; user chose rebaseline). See docs/adr/003-layout-versioning-cordon.md.
   //   → +min+gz axis 19 KiB (2026-06-01): consumer-facing artifact proxy
   //     baselined / measured 17980. See the file header on what min+gz is.
   //   → 212 KiB raw (2026-06-14): maintenance-profile consolidation —
@@ -381,7 +381,7 @@ const BUDGETS: readonly Budget[] = [
   //     tolerant-reader contract JSDoc on `assertCurrentJson` (in the http
   //     closure) ships un-stripped. Measured 328788 raw / 96357 gz — gz is
   //     comfortably UNDER the 95 KiB ceiling; only raw crosses (+84 over the
-  //     prior 321 KiB). Rebaseline raw +1 KiB. See docs/adr/007-layout-versioning-cordon.md.
+  //     prior 321 KiB). Rebaseline raw +1 KiB. See docs/adr/003-layout-versioning-cordon.md.
   //   → +min+gz axis 34 KiB (2026-06-01): consumer-facing artifact proxy
   //     baselined / measured 33029.
   //   → 324 KiB raw (2026-06-14): caller-supplied `_id` boundary guard.
@@ -626,7 +626,7 @@ const BUDGETS: readonly Budget[] = [
   //     Measured 386641 raw / 115250 gz. gz was already +295 over the prior
   //     112 KiB ceiling on main (pre-existing drift) and this change widened
   //     it. Rebaseline raw +1 KiB and gz +1 KiB (owner-accepted; user chose
-  //     rebaseline). See docs/adr/007-layout-versioning-cordon.md.
+  //     rebaseline). See docs/adr/003-layout-versioning-cordon.md.
   //   → +min+gz axis 40 KiB (2026-06-01): consumer-facing artifact proxy
   //     baselined / measured 39317. For this entry the compressed axis
   //     (`gz` / `min+gz`) is the one that maps to the real Cloudflare

@@ -126,7 +126,7 @@ Three bounds matter:
 
 The idle-reader bound holds because maintenance ticks only on the write
 path. A read does zero maintenance work
-([ADR-004](../adr/004-ephemeral-coordination.md),
+([ADR-002](../adr/002-ephemeral-coordination.md),
 [graduation.md](graduation.md)). The cost consequences:
 
 - **A read-only bucket pays a bounded ≤ ~1× tail replay per read while
@@ -429,7 +429,7 @@ Read this as positioning, not a cost claim:
   other S3-compatible endpoints require `baerly doctor --bucket` plus
   owner validation (see
   [storage-compatibility.md](../spec/storage-compatibility.md) and
-  [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob is not an
+  [ADR-002](../adr/002-ephemeral-coordination.md)). Azure Blob is not an
   S3 dialect, and GCS's S3-interop endpoint exposes conditional writes
   as read-only, so both need dedicated adapters that do not exist yet.
   D1, Supabase, Neon, and Firebase are proprietary runtimes; choosing

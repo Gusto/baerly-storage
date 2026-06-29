@@ -2,13 +2,12 @@
 title: Extending baerly-storage
 audience: coder
 summary: Worked patterns for adding methods to Db, Query verbs, and Collection verbs.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-28
 tags: [extending, api-design, patterns]
 related:
   [
     architecture.md,
-    "../adr/002-api-surface-lock.md",
-    "../adr/003-naming-convention.md",
+    "conventions/change-discipline.md",
     "conventions/tests.md",
   ]
 ---
@@ -31,9 +30,9 @@ invariant.
 > _invariants_ live in `packages/server/src/writer.ts`.
 
 > Before adding a public symbol to a barrel, read
-> [ADR-003 — `Baerly`-prefix naming convention](../adr/003-naming-convention.md).
-> It codifies when an export carries the `Baerly` prefix and when it
-> stays generic.
+> [§6 Naming a public symbol](#6-naming-a-public-symbol) — it codifies
+> when an export carries the `Baerly` prefix and when it stays generic,
+> including the rejected "prefix everything" alternative.
 
 ---
 
@@ -91,8 +90,9 @@ public async collections(): Promise<string[]> {
   [conventions/change-discipline.md](conventions/change-discipline.md).
   If the new method's operation is already expressible via an
   existing type-valid path, plan for removal of the old path in the
-  same PR — or amend [ADR-002](../adr/002-api-surface-lock.md) with
-  the justification for keeping both.
+  same PR — or amend the
+  [API surface lock](conventions/change-discipline.md#api-surface-lock)
+  with the justification for keeping both.
 - **JSDoc with `@example`.** IDE hover and `tsgo` surface these
   directly from source — they are the public-API reference.
 - **No request state on `Db`.** `Db` carries stable construction state:
@@ -230,6 +230,18 @@ patch (`{ status: "closed" }`) wouldn't satisfy a schema requiring
 other fields, and the schema is the shape of the _final row_, not of
 a delta.
 
+`_id` is part of the validated shape and is required. The post-image
+always carries `_id` (the server mints a UUIDv7 for inserts that omit
+it), so the schema must assert it — author `_id: z.string()`, not
+`.optional()`.
+
+A multi-row `update()` is **not** transactional across rows. Validation
+runs per row on the merged post-image, and each row commits
+independently: if row N fails, rows 0..N-1 are already committed and stay
+committed, and the call throws `BaerlyError{code:"SchemaError"}` on row
+N. The schema seam inherits the per-row atomicity contract; it does not
+add all-or-nothing semantics on top of it.
+
 ### Wiring schemas into `Db.create`
 
 Schemas are declared on the collection, not on `Db.create` — pass
@@ -248,14 +260,29 @@ construct the maps directly). When `config` is omitted, schema
 validation is a no-op.
 
 The previous `schemas:` / `indexes:` overrides on `Db.create` are no longer
-supported — see [`docs/adr/002-api-surface-lock.md`](../adr/002-api-surface-lock.md)
-for the reasoning.
+supported — they duplicated `config.collections[*]`, and a second
+type-valid path to the same capability is redundant ceremony (see the
+[API surface lock](conventions/change-discipline.md#api-surface-lock)).
 
 ### Forward-only migration
 
 Collection schemas validate future writes; they do not rewrite existing rows.
 If a deployment needs old documents to satisfy a stricter Zod/Valibot shape,
 that backfill is application-layer work.
+
+The validator runs only on the write path — never on reads, export, or
+replay. The log stores the post-image produced at write time, and replay
+folds those stored documents directly without re-validating. A schema
+change therefore never retroactively rejects existing rows: documents
+written under an older schema remain readable and exportable regardless
+of the current schema.
+
+Two alternatives were rejected. **Validating the incoming patch** (not
+the post-image) would fail any schema with required fields a valid
+partial update doesn't restate. **A baerly-proprietary validator
+signature** was rejected for the ecosystem-neutral `StandardSchemaV1`
+contract, so any compatible library (Zod, Valibot, ArkType, …) works via
+the `SchemaValidator` type from `@baerly/protocol`.
 
 Protocol artifact migrations are separate. The forward-compatible
 schema-versioning mechanism lives on the `CurrentJson` coordination document:
@@ -268,10 +295,13 @@ Adding a new optional field to `CurrentJson` is non-breaking.
 The `LogEntry` CDC wire shape has a separate
 forward/backward-compatibility policy documented in
 [`docs/spec/log-entry-shape.md`](../../docs/spec/log-entry-shape.md):
-new optional fields are additive; renaming, removing, or narrowing a
-field is a major-version migration. Pre-launch the shape may still
-narrow. `LogEntry` does not carry its own `schema_version` field, and there
-is no out-of-band announcement opcode today — `op` is the closed
+new optional fields are additive; renaming, removing, repurposing, or
+narrowing a field is a breaking wire change. Since 0.3.0, `LogEntry`
+is a public early-access baseline; it is still pre-1.0 and soaking, but
+those changes require an explicit compatibility decision,
+changelog/migration notes, and a versioned release. `LogEntry` does not
+carry its own `schema_version` field, and there is no out-of-band
+announcement opcode today — `op` is the closed
 union `"I" | "U" | "D"`. If a schema-change announcement channel is
 ever needed, it would arrive as a deliberate major-version migration
 (a new `op` value or a top-level `_v` field — see
@@ -616,3 +646,58 @@ Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
 end-to-end orchestrators rather than helpers; their entry points are
 documented in [architecture.md](architecture.md) under "Where
 invariants live."
+
+---
+
+## 6. Naming a public symbol
+
+The package is `baerly-storage`. The `Baerly` prefix that appears on a
+few public symbols is a shortening of the package name — used to
+disambiguate from globals or common user identifiers where a bare symbol
+would be unreadable. It is not a brand applied universally; doing so
+would just re-state the package name on every export. Apply this rule
+before adding a new export to a barrel.
+
+**The `Baerly` prefix carries a symbol when:**
+
+1. The bare name would **collide** with a global (`Error`) or a name
+   users routinely declare (`Config`, `Client`, `Env`, `Storage`).
+   Prefix to disambiguate — `BaerlyError`, `BaerlyClient`,
+   `BaerlyConfig`, `BaerlyAppConfig`. (`BaerlyError` is _caught_; the
+   `*Config` types are used as `Db<typeof config>` type args, not
+   constructed by name — users call `defineConfig({...})` — so the
+   operative test is collision, not "construct or catch".)
+2. It is a platform-integration entry function the user puts behind
+   `export default` — `baerlyWorker`, `baerlyNode`, `baerlyDev`.
+   Generic names (`worker()`, `node()`) would be unreadable at the
+   call site.
+3. It mirrors a platform-defined type the user would otherwise
+   re-alias — `BaerlyEnv` extending Cloudflare's `Env`.
+
+**The `Baerly` prefix is dropped when:**
+
+1. The symbol is generic to the import context — `Db`, `Collection`,
+   `Query`, `Storage`, `Writer`. Adding the prefix duplicates
+   `baerly-storage` from the import line.
+2. The subpath already disambiguates — `/auth/sharedSecret`,
+   `/maintenance/compact`, `/observability/withObservability`,
+   `/client/react/useQuery`. The path supplies the namespace.
+3. The symbol is a strategy or adapter that names its underlying
+   technology — `S3HttpStorage`, `r2BindingStorage`, `MemoryStorage`,
+   `bearerJwt`, `cloudflareAccess`. The technology name is what users
+   look for.
+
+If a symbol falls cleanly into "drops" but the rule feels wrong, that
+is a signal the boundary is off — surface to a maintainer rather than
+papering over it with the prefix. Exported-symbol renames are breaking
+changes held to the
+[API surface lock](conventions/change-discipline.md#api-surface-lock)
+bar; `Baerly`-prefix decisions that would change an export are
+API-lock work, not hygiene.
+
+**Rejected: prefix every symbol.** `BaerlyDb`, `BaerlyCollection`,
+`BaerlyStorage` re-state the package name inside its own export and break
+the zero-shot-legibility criterion in the
+[product thesis](../about/thesis.md); rejected. Drift control stays
+prose, not a lint rule — once a symbol ships, a rename is held to the
+API-surface-lock bar above.

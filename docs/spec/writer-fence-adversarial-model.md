@@ -11,7 +11,7 @@ related: [sync-protocol.md, causal-consistency-checking.md, log-entry-shape.md]
 # Writer-fence adversarial model
 
 > **Dormancy note.** Under single-write commit
-> ([ADR-008](../adr/008-single-write-commit.md)) the writer fence and
+> ([ADR-004](../adr/004-single-write-commit.md)) the writer fence and
 > its `claimWriter` two-phase protocol are **dormant**: no production
 > commit path reads, writes, claims, or verifies the fence. The
 > numbered `log/<seq>` create (via `If-None-Match: "*"`) _is_ the

@@ -10,8 +10,8 @@ related:
     sync-protocol.md,
     storage-compatibility.md,
     causal-consistency-checking.md,
-    ../adr/004-ephemeral-coordination.md,
-    ../adr/008-single-write-commit.md,
+    ../adr/002-ephemeral-coordination.md,
+    ../adr/004-single-write-commit.md,
   ]
 ---
 
@@ -30,10 +30,10 @@ not the older provisional `C1` / `C2` / `C3` bundle as originally worded.
 
 | Label  | Plain-English mechanism                                                                                                                                                                                                                                                                                   | Where to read more                                                                                                                                      |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P1** | A write commits by creating the next numbered `log/<seq>.json` object with `If-None-Match: "*"`; `current.json` is not the commit head. If the acknowledgement is lost, the same in-flight writer can adopt the already-written log entry after a strict same-session / same-sequence / same-entry check. | [ADR-008](../adr/008-single-write-commit.md), [`log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)                          |
+| **P1** | A write commits by creating the next numbered `log/<seq>.json` object with `If-None-Match: "*"`; `current.json` is not the commit head. If the acknowledgement is lost, the same in-flight writer can adopt the already-written log entry after a strict same-session / same-sequence / same-entry check. | [ADR-004](../adr/004-single-write-commit.md), [`log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)                          |
 | **P2** | New index markers are written before the commit and stale markers are deleted after it, so crashes can leave extra candidates but not missing committed rows.                                                                                                                                             | [sync-protocol.md](sync-protocol.md#crash-safety)                                                                                                       |
-| **P3** | Compaction and GC run as bounded write-tick slices; reads never perform maintenance. The honest bound is per configured slice, not a fixed operation count for every bucket state.                                                                                                                        | [ADR-004](../adr/004-ephemeral-coordination.md), [sync-protocol.md](sync-protocol.md#maintenance-runtime-model)                                         |
-| **S1** | A bucket can be probed for stale-`If-Match` rejection, existing-key `If-None-Match` rejection, and exactly-one-winner concurrent create-if-absent before the protocol relies on it.                                                                                                                       | [storage-compatibility.md](storage-compatibility.md), [ADR-008](../adr/008-single-write-commit.md#7-the-load-bearing-prerequisite--deploy-time-probing) |
+| **P3** | Compaction and GC run as bounded write-tick slices; reads never perform maintenance. The honest bound is per configured slice, not a fixed operation count for every bucket state.                                                                                                                        | [ADR-002](../adr/002-ephemeral-coordination.md), [sync-protocol.md](sync-protocol.md#maintenance-runtime-model)                                         |
+| **S1** | A bucket can be probed for stale-`If-Match` rejection, existing-key `If-None-Match` rejection, and exactly-one-winner concurrent create-if-absent before the protocol relies on it.                                                                                                                       | [storage-compatibility.md](storage-compatibility.md), [ADR-004](../adr/004-single-write-commit.md#decision) |
 | **S2** | Writers target the first empty log sequence and readers stop at the first missing sequence. This dense forward-probe rule lets `current.json` leave the commit path.                                                                                                                                      | [sync-protocol.md](sync-protocol.md#protocol-invariants)                                                                                                |
 | **S3** | The public `/v1/since` cursor is opaque to clients but carries an embedded integer `seq` that the server recovers before resuming by numbered log GETs.                                                                                                                                                   | [sync-protocol.md](sync-protocol.md#lsns-wall-clocks-and-downstream-consumers)                                                                          |
 
@@ -155,7 +155,7 @@ The main components are:
   write-triggered maintenance;
 - `packages/protocol/src/storage/probe-cas.ts` and CLI doctor wiring for
   backend conditional-write probing; and
-- `docs/spec/sync-protocol.md` / ADR-008 for the protocol statement.
+- `docs/spec/sync-protocol.md` / ADR-004 for the protocol statement.
 
 ## Platform Primitives Are Background
 
@@ -329,7 +329,7 @@ Keep two encodings separate:
 
 | Encoding                                            | Current status        | Notes                                                                                                                             |
 | --------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `log/<seq>.json` raw decimal object keys            | Reverse-LIST rejected | ADR-008 rejects reverse-LIST for log-tail discovery. The live log tail is discovered by dense forward-probe.                      |
+| `log/<seq>.json` raw decimal object keys            | Reverse-LIST rejected | ADR-004 rejects reverse-LIST for log-tail discovery. The live log tail is discovered by dense forward-probe.                      |
 | LSN string `<base32-time>_<session>_<seq-fragment>` | Live cursor mechanism | Minted on every commit, parsed at `/v1/since`, tested in `lsn-reverse-list.test.ts`, and benchmarked in `bench:lsn-reverse-walk`. |
 
 Descending-key tricks are background practice. Examples include Azure
@@ -373,7 +373,7 @@ The previous provisional disclosure emphasized a two-phase fence: first
 CAS a writer epoch, harvest the storage server's `Date` response, then CAS
 the record again to back-stamp that server-derived timestamp.
 
-That is not the live production commit path. ADR-008 removed the
+That is not the live production commit path. ADR-004 removed the
 post-commit fence verify. `writer_fence` remains in the `current.json`
 schema and is written inert at bootstrap and on `admin restore --force`,
 but no production commit path acts on its value.

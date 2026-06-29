@@ -21,7 +21,7 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
  * The single validation rule for every caller-controlled key segment
  * (`_id`, `collection`, `app`, `tenant`) before it becomes a written
  * key segment or `LocalFsStorage` path. Rejects empty / `"/"` /
- * `"."`|`".."` / C0-C1 control / leading `"_"` (ADR-007) / `> MAX_SEGMENT_BYTES`,
+ * `"."`|`".."` / C0-C1 control / leading `"_"` (ADR-003) / `> MAX_SEGMENT_BYTES`,
  * all as `BaerlyError{code:"InvalidConfig"}`.
  *
  * @param role  human label for the segment ("_id" | "collection" | "app" | "tenant").
@@ -50,6 +50,6 @@ export const assertPathSegment = (value: string, role: string, verb = ""): void 
   if (utf8.encode(value).length > MAX_SEGMENT_BYTES) {
     throw new BaerlyError("InvalidConfig", `${where} is too long (> ${MAX_SEGMENT_BYTES} bytes)`);
   }
-  // Leading `_` is the ADR-007 reserved namespace.
+  // Leading `_` is the ADR-003 reserved namespace.
   assertNameNotReserved(value, where);
 };

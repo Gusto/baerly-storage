@@ -29,13 +29,13 @@
     `+mean_entry_bytes`, `−tail_bytes`), and readers discover the true tail by
     forward-probe. **Buckets written under schema v2 are rejected with no
     migration path** — re-create the bucket (or `admin dump` on a v2 build →
-    `admin restore` on this one). See ADR-008.
+    `admin restore` on this one). See ADR-004.
   - **`Db.transaction` removed — the document is the atomic unit.** Single-document
     writes are each atomic; there is no batch. Replace
     `db.transaction(name, tx => { tx.update(a); tx.update(b) })` with individual
     `db.collection(name).update(...)` calls. The both-or-neither guarantee is
     gone; model a single document as your consistency boundary. Re-adding
-    transactions later is additive (ADR-002).
+    transactions later is additive (under the API surface lock).
   - **Tighter key-segment validation.** One shared rule validates every
     caller-controlled segment (`_id`, `collection`, `app`, `tenant`), rejecting
     empty / `/` / `.` / `..` / control chars / reserved leading `_` / over-length
@@ -94,8 +94,7 @@
   ```
 
   The loose exports no longer exist; obtain the hooks from the factory so
-  they are typed against your config. See ADR-002 (additive-only surface
-  lock).
+  they are typed against your config (additive-only surface lock).
 
 ## 0.1.2
 

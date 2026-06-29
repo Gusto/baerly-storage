@@ -2,7 +2,7 @@
 title: LogEntry wire shape
 audience: spec
 doc_type: current-contract
-summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; the CDC wire contract (pre-launch: may still narrow)."
+summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; 0.3.0 public early-access baseline with compatibility-managed pre-1.0 changes."
 last-reviewed: 2026-06-23
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md]
@@ -19,13 +19,12 @@ field semantics, what we borrowed from Postgres logical replication,
 what we deliberately did not, and the stability rules for future
 change.
 
-**Pre-launch (today): the shape may still narrow.** No external
-consumers exist; we may rename, remove, or repurpose fields to
-honestly reflect what the writer emits today. Once the first
-production consumer ships, the shape is fixed: consumers ack on
-`lsn`, the JSON keys become public, and renaming, removing, or
-repurposing a field becomes a major-version migration. New
-optional fields can be added at any time, pre- or post-launch.
+**0.3.0 public early-access baseline.** `LogEntry` is now a public
+wire contract. It is still pre-1.0 and soaking, so breaking changes
+remain possible, but only through an explicit compatibility decision,
+changelog/migration notes, and a versioned release. Assume external
+consumers may exist: do not silently rename, remove, or repurpose
+fields. New optional fields can be added in compatible releases.
 
 The canonical TypeScript definition lives in
 [`packages/protocol/src/log.ts`](../../packages/protocol/src/log.ts).
@@ -328,17 +327,18 @@ into the snapshot.
 
 ## Stability
 
-- **After the first production consumer, the keys above never change.**
-  Renaming a field, repurposing a value, or removing a field is a
-  major-version migration.
-- **New optional fields can be added at any time.** The `LogEntry`
-  type is `interface` (open under structural typing). Consumers
-  must ignore unknown keys.
-- **`op` is a closed union; widening it is a major-version
-  migration.** Today's emitter produces only `I` / `U` / `D`.
-  `LogEntry.op` is typed as that closed set so consumers can switch
-  exhaustively. New `op` values come with an envelope mapping and a
-  wire-version bump together; never silently.
+- **0.3.0 is the public early-access baseline.** Breaking changes are
+  still possible before 1.0, but renaming a field, repurposing a
+  value, or removing a field requires an explicit compatibility
+  decision, changelog/migration notes, and a versioned release.
+- **Assume external consumers may exist.** New optional fields can be
+  added in compatible releases. The `LogEntry` type is `interface`
+  (open under structural typing). Consumers must ignore unknown keys.
+- **`op` is a closed union; widening it is a breaking wire change.**
+  Today's emitter produces only `I` / `U` / `D`. `LogEntry.op` is typed
+  as that closed set so consumers can switch exhaustively. New `op`
+  values come with an envelope mapping and a wire-version bump
+  together; never silently.
 - **`after` is always a complete post-image.** No TOAST-elision,
   no "unchanged-field" markers, no per-field absence-vs-null
   ambiguity. For SQL export targets, a projected table column absent

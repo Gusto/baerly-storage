@@ -100,11 +100,12 @@ The criteria the rest of this document is shaped around:
      the same operation (e.g. `.get(id)` _and_
      `.where({_id}).first()`). JSDoc steering does not override
      training-distribution priors; the fix is making one path not
-     type-check. [ADR-002](../adr/002-api-surface-lock.md) codifies the
-     additive-only lock and scopes "additive" to _capabilities_, not
-     _forms_. The lock is soft until v1.0 — removals are allowed only
-     through the staged deprecation lifecycle in that ADR, never as a
-     silent break.
+     type-check. The
+     [API surface lock](../contributing/conventions/change-discipline.md#api-surface-lock)
+     codifies the additive-only lock and scopes "additive" to
+     _capabilities_, not _forms_. The lock is soft until v1.0 — removals
+     are allowed only through the staged deprecation lifecycle recorded
+     there, never as a silent break.
 5. **No DDL.** The moment the loop requires `CREATE TABLE`, "invent and
    preserve a schema across edits" enters the part of the loop where
    small naming drift is costly (`category` vs. `categories` four turns
@@ -149,7 +150,8 @@ bounded. Runtime or operator fields may still be typed for
 configuration, but they stay out of the app-authoring quickref and
 examples unless an author must set them. Detailed API/reference
 ownership lives in [docs conventions](../contributing/conventions/docs.md);
-the public surface lock lives in [ADR-002](../adr/002-api-surface-lock.md).
+the public surface lock lives in
+[change-discipline.md](../contributing/conventions/change-discipline.md#api-surface-lock).
 
 ## Why not Postgres
 
@@ -190,7 +192,7 @@ The production-supported backends are AWS S3 and Cloudflare R2; MinIO is
 the local conformance target, and other S3-compatible endpoints require
 a green `baerly doctor --bucket=<uri>` plus owner validation (see
 [storage-compatibility.md](../spec/storage-compatibility.md) and
-[ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob's non-S3
+[ADR-002](../adr/002-ephemeral-coordination.md)). Azure Blob's non-S3
 dialect and GCS's read-only S3-interop conditional writes each need a
 dedicated adapter that does not exist yet. Your bytes stay in your
 bucket; protocol support belongs to adapters and backends that pass the
@@ -234,7 +236,7 @@ with colocated durable storage. baerly-storage's bet is that this
 workload can coordinate through supported object-store conditional
 writes (`If-Match` / `If-None-Match`) if the protocol does the work. The
 full rationale, comparators, and rules for what would break the property
-are in [ADR-004](../adr/004-ephemeral-coordination.md).
+are in [ADR-002](../adr/002-ephemeral-coordination.md).
 
 ## Requirements → architecture
 
@@ -254,11 +256,11 @@ as the commit, per collection.
 - **Graduation with no hostage.** The `LogEntry` shape is a
   Debezium-style CDC envelope:
   `{lsn, commit_ts, op, collection, doc_id, after?, before?, key_old?, origin?, session, seq}`.
-  Not aesthetic — operational. Pre-launch it may still narrow; after the
-  first production consumer, removing, renaming, or repurposing fields is
-  a major-version migration. Snapshot export to SQL is shipped; the log
-  shape is intended to keep future incremental CDC export mechanical
-  rather than a marketing line. See
+  Not aesthetic — operational. `0.3.0` is the public early-access
+  baseline for that wire contract; pre-1.0 breaking changes are
+  compatibility-managed in the canonical policy. Snapshot export to SQL
+  is shipped; the log shape is intended to keep future incremental CDC
+  export mechanical rather than a marketing line. See
   [log-entry-shape.md](../spec/log-entry-shape.md).
 - **Strong consistency under contention.** Old log entries roll up into
   snapshots through bounded write-triggered maintenance. The hard part is
@@ -295,7 +297,8 @@ as the commit, per collection.
   translation. Day-one ships equality, dotted paths, ordered reads, and
   the `eq` / `gt` / `gte` / `lt` / `lte` / `in` predicate operators. The
   whole interface fits in an authoring agent's context; the additive-only
-  lock is codified in [ADR-002](../adr/002-api-surface-lock.md).
+  lock is codified in
+  [change-discipline.md](../contributing/conventions/change-discipline.md#api-surface-lock).
 
 ## What this deliberately is not
 

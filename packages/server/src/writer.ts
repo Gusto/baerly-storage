@@ -8,8 +8,8 @@
  * point.** The writer writes NOTHING to `current.json` on the commit
  * path; `tail_hint` advances outside ordinary commits via compaction
  * folds, write-tick refreshes, and explicit operator/import paths. The
- * commit model and its invariants are recorded in ADR-008
- * (`docs/adr/008-single-write-commit.md`). The
+ * commit model and its invariants are recorded in ADR-004
+ * (`docs/adr/004-single-write-commit.md`). The
  * optional integrity walk is gated by
  * {@link WriterOptions.verifyLogIntegrityOnCommit} (default off).
  *
@@ -29,7 +29,7 @@
  * `matchesWire` (read path) drops. Emitting `newKeys` before the commit
  * means a committed row is ALWAYS index-findable; the stale-key DELETE
  * stays after the commit so a crash can never de-index a committed
- * doc. See `index-emit-order.test.ts` and ADR-008 Q4.
+ * doc. See `index-emit-order.test.ts` and ADR-004 Q4.
  *
  * **`LogEntry` shape.** Emitted entries follow the contract in
  * `packages/protocol/src/log.ts` (see {@link LogEntry}) and
@@ -500,7 +500,7 @@ export class Writer {
     // value, and `matchesWire` (query.ts) drops the false-positive.
     // The stale-key DELETEs (de-indexing the OLD value) stay AFTER the
     // commit (Step 5b), so a crash can never de-index a committed doc.
-    // See ADR-008 Q4 + `index-emit-order.test.ts`.
+    // See ADR-004 Q4 + `index-emit-order.test.ts`.
     let contentPutCount = 0;
     let newKeysClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];
@@ -634,7 +634,7 @@ export class Writer {
     // commit), so a committed row is always index-findable. This block
     // handles only the OTHER half: deleting the OLD value's now-obsolete
     // markers. Keeping the stale-key DELETE AFTER the commit is the
-    // load-bearing polarity (ADR-008 Q4): a crash here leaves the OLD
+    // load-bearing polarity (ADR-004 Q4): a crash here leaves the OLD
     // value's marker lingering — benign, the index read includes the
     // candidate, the fold sees the doc's NEW committed value, and
     // `matchesWire` (query.ts) drops the false-positive; the lingering

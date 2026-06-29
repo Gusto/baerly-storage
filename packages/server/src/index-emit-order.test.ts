@@ -3,7 +3,7 @@
    test threads it through the writer + reader. */
 
 /**
- * Polarity test for index-emit ordering (ADR-008 Q4).
+ * Polarity test for index-emit ordering (ADR-004 Q4).
  *
  * The committing write is the `log/<seq>` create. Secondary-index
  * emission (`newKeys` PUT + `staleKeys` DELETE) must happen AFTER that

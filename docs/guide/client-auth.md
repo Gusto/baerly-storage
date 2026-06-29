@@ -4,7 +4,7 @@ audience: integrator
 summary: Browser-to-server auth recipes for dev/prod Cloudflare and Node postures.
 last-reviewed: 2026-06-28
 tags: [client, auth, integration]
-related: ["./auth.md", "../adr/005-verifier-function-shape.md"]
+related: ["./auth.md"]
 ---
 
 # Browser → server auth

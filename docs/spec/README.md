@@ -22,13 +22,13 @@ Binding descriptions of how the live protocol behaves today.
   object storage via single-write commit: the numbered `log/<seq>`
   create is the commit, `current.json` is compaction state, and readers
   discover the tail by forward-probe. Decision record:
-  [ADR-008](../adr/008-single-write-commit.md).
+  [ADR-004](../adr/004-single-write-commit.md).
 - [storage-compatibility.md](storage-compatibility.md) — the minimal S3 API
   surface the protocol depends on.
 - [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire
-  contract. Debezium-style CDC envelope; pre-launch it may still
-  narrow. After the first production consumer, removing, renaming, or
-  repurposing fields is a major-version migration.
+  contract. Debezium-style CDC envelope; `0.3.0` is the public
+  early-access baseline, and pre-1.0 breaks follow the compatibility
+  policy recorded there.
 
 ## Semantic references
 
@@ -55,7 +55,7 @@ Binding descriptions of how the live protocol behaves today.
   — adversarial model for the **dormant** fence-claim primitive
   (retained for admin/testing and as the patent-C1 provenance record;
   not on the commit path under
-  [ADR-008](../adr/008-single-write-commit.md)).
+  [ADR-004](../adr/004-single-write-commit.md)).
 - [prior-art.md](prior-art.md) — comparison against object-storage
   databases and adjacent coordination systems.
 - [attachments/](attachments/) — regenerated benchmark baselines and

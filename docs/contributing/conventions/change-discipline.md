@@ -1,16 +1,45 @@
 ---
 title: Conventions for changing code
 audience: coder
-summary: How to make non-trivial changes — no silent compat shims, one canonical form per operation, types over JSDoc.
-last-reviewed: 2026-06-22
+summary: How to make non-trivial changes — fix at the root, understand before changing, hold the surface to a best-in-class DX bar, no silent compat shims, one canonical form per operation, types over JSDoc.
+last-reviewed: 2026-06-28
 tags: [conventions, discipline]
-related: [docs.md, tests.md, "../../about/thesis.md", "../../adr/002-api-surface-lock.md"]
+related: [docs.md, tests.md, "../../about/thesis.md"]
 ---
 
 # Change discipline
 
 Rules for non-trivial code changes across `packages/`, `scripts/`,
 `bench/`, `examples/`, and `manual-e2e/`.
+
+## Design judgment
+
+Three habits that decide *how* a change is made, before any of the
+mechanical rules below apply.
+
+**Fix at the root, not the call site.** When you spot a root cause that
+spans multiple call sites, fix it once at the root rather than patching
+each symptom. A local patch that papers over a symptom leaves the real
+defect in the tree and multiplies the next contributor's surprise. If the
+systematic fix is too large for the change at hand, say so explicitly
+rather than shipping the patch silently.
+
+**Understand why before you change it.** Code, config, and ceremony that
+look redundant are often load-bearing for a reason that is not visible at
+the call site (see [What we keep even when it looks like ceremony](#what-we-keep-even-when-it-looks-like-ceremony)).
+Before deleting or restructuring something, use `git log`/`git blame` and
+the linked ADRs to recover *why* it exists. Many coding agents, humans,
+and analysts work in this tree; a proposed fix is a hypothesis, not a
+conclusion. Don't assume it is correct because it type-checks.
+
+**Hold the surface to a best-in-class DX bar.** The authoring audience is
+primary (thesis criterion #4, [Two audiences](../../about/thesis.md#two-audiences-two-pitches)),
+so when trading cleverness or performance against author DX, DX wins: a
+weird API that's fast is worse than an obvious API that's adequate. Error
+messages, type signatures, and the zero-shot readability of the public
+surface all count as DX. When weighing a design, ask how the teams that
+set the bar for developer-facing products — Convex, tRPC, Vercel,
+Railway, Stripe — would shape it, and hold the surface to that standard.
 
 ## Backwards compatibility
 
@@ -28,6 +57,58 @@ In the same change:
   A compat shim is a real commitment, not a free convenience — it
   needs explicit sign-off.
 
+## API surface lock
+
+The public surface — every `Db` / `Collection<T>` / `Query<T>` method and
+its behavioural contract — is **additive-only locked, scoped to
+capabilities, not forms**. It lives in
+[`packages/server/API.md`](../../../packages/server/API.md) and the JSDoc
+it mirrors; the conformance and collection-API integration suites are its
+executable specification — either breaking on a PR means the surface
+changed. The lock is **soft** (additive-only, removals via the lifecycle
+below) until v1.0.
+
+**Allowed without ceremony:** new methods, new optional config fields, and
+new `BaerlyErrorCode` values. **Requires a supersession record:** renames
+and behavioural shifts. A second type-valid path to an existing capability
+is **not** an addition — it is redundancy, and every redundant type-valid
+path is a hallucination magnet against the zero-shot-legibility criterion
+of the [product thesis](../../about/thesis.md) (criterion #4). That is the
+rule the [one-canonical-form](#one-canonical-form-per-operation) section
+below enforces in practice.
+
+### Deprecation lifecycle (soft until v1.0)
+
+Removing a capability proceeds in stages: (1) a supersession note records
+the decision and the replacement; (2) the capability is `@deprecated` in
+JSDoc — pointing at the replacement — for at least one minor release,
+still working and type-checking; (3) it is removed in the next
+semver-major. A capability is never removed in the same release it is
+deprecated. At **v1.0** the surface hardens: removals require a major bump
+plus a `CHANGELOG.md` migration note, and the bar rises from "clean
+narrowing" to "demonstrated harm in keeping it."
+
+### Closed paths
+
+- **Hard lock** (no additions ever) and **convention-only** (reviewer
+  judgement, no rule) both rejected: the first blocks useful follow-ups,
+  the second is inadequate for a surface whose value-prop is "any LLM can
+  use the `.d.ts` zero-shot."
+- **Redundant config knobs.** `metrics` / `schemas` / `indexes` overrides
+  on `Db.create` duplicated `config.collections[*]`; the final shape is
+  `Db.create({ storage, app, tenant, config? })` — no parallel knobs.
+- **Cross-collection atomic write path.** Prohibited — it breaks the
+  no-2PC invariant; every write touches exactly one collection log (see
+  [ADR-001](../../adr/001-tenant-cas-isolation.md)). Re-adding a
+  `transaction` surface is only permitted as an additive,
+  single-collection method.
+- **Boolean connectives (`or` / `not`) in the predicate algebra.** The
+  wire is a flat `clauses[]` conjunction; the algebra is conjunction-only
+  **in perpetuity**. Builder methods like `q.or(...)` fail at the type
+  level, not at runtime, so "what we don't support" is not a page the
+  model must hold in context. If `or` / `not` ever becomes load-bearing,
+  that is a separate spec — never additive on top of this lock.
+
 ## One canonical form per operation
 
 If a new public addition makes both `.get(id)` and
@@ -36,23 +117,24 @@ generated code. A shorter recommended form does not erase the longer
 legal one.
 
 That is why new public additions should preserve one type-valid path per
-operation unless ADR-002 or this section records why both forms stay.
-The operation is the capability; the spelling is the form. A second
-type-valid form for the same capability is *redundant ceremony* — a
-defect against criterion #4 of the
+operation unless the [API surface lock](#api-surface-lock) above or this
+section records why both forms stay. The operation is the capability; the
+spelling is the form. A second type-valid form for the same capability is
+*redundant ceremony* — a defect against criterion #4 of the
 [product thesis](../../about/thesis.md), and out of scope of the
-[additive-only lock](../../adr/002-api-surface-lock.md).
+additive-only lock.
 
 When adding a method, ask: does an existing path already express this
 operation in a type-valid way?
 
-- **No** — straightforward addition. ADR-002 §"Allowed additive
-  changes" applies.
+- **No** — straightforward addition. The
+  [API surface lock](#api-surface-lock) "allowed without ceremony" rule
+  applies.
 - **Yes** — pick one form. The non-canonical form should not
   type-check (narrow a `Predicate<T>` field, remove an overload,
   etc.). If the ceremony path must stay legal (e.g. because it
-  composes with operators the canonical path doesn't), amend ADR-002
-  with the justification.
+  composes with operators the canonical path doesn't), record the
+  justification against the [API surface lock](#api-surface-lock).
 
 Prefer type-level enforcement over JSDoc steering. LLMs follow what the
 type system permits; prose warnings are weaker than a compile error. If

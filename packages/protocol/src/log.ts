@@ -6,11 +6,13 @@ import { str2uintDesc } from "./types.ts";
 /**
  * Debezium-style JSON CDC envelope using pgoutput's message-tag (`I`/`U`/`D`) vocabulary. One per mutation.
  *
- * **Pre-launch: the shape may still narrow.** Once the first production
- * consumer ships, this becomes a frozen migration contract behind
- * `baerly export --target=postgres` — the keys will be public, consumers
- * ack on `lsn`, and any rename / removal will be a major-version
- * migration.
+ * `LogEntry` is now a public wire contract: 0.3.0 is the public
+ * early-access baseline. It is still pre-1.0 and soaking, so breaking
+ * changes remain possible, but only through an explicit compatibility
+ * decision, changelog/migration notes, and a versioned release. Assume
+ * external consumers may exist; do not silently rename, remove, or
+ * repurpose fields. New optional fields can be added in compatible
+ * releases.
  *
  * Field requirement matrix:
  * - Always: `lsn`, `commit_ts`, `op`, `collection`, `session`,

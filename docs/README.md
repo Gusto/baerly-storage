@@ -111,7 +111,7 @@ For people changing the code in this repo.
   StrykerJS mutation testing scoped to the protocol kernel: `pnpm test:mutate`.
 - [`contributing/publishing.md`](contributing/publishing.md) — how to publish
   `@gusto/baerly-storage` + `@gusto/create-baerly-storage` publicly to npmjs.com.
-- [`contributing/day-one-gate.md`](contributing/day-one-gate.md) — pre-release manual gate.
+- [`contributing/day-one-gate.md`](contributing/day-one-gate.md) — manual release-readiness gate.
 - [`contributing/conventions/`](contributing/conventions/) — path-scoped conventions auto-loaded
   by Claude via `.claude/rules/`:
   - [`contributing/conventions/tests.md`](contributing/conventions/tests.md)

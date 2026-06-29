@@ -4,7 +4,7 @@ audience: operator
 summary: Production auth recipes for Cloudflare and Node, plus tenant pinning and authorization boundaries.
 last-reviewed: 2026-06-28
 tags: [auth, operations]
-related: ["../adr/005-verifier-function-shape.md", "../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
+related: ["../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
 ---
 
 # Authentication
@@ -21,11 +21,31 @@ namespace for the request. Once the verifier returns it, the HTTP
 adapter constructs `Db.create({ tenant: tenantPrefix, ... })`, so every
 later read and write lands under that prefix.
 
-Concretely, a verifier resolves to `{ tenantPrefix, identity }` for an
-accepted request, `null` for an unauthenticated one, or throws for
-broken auth configuration or dependencies. The kernel treats `identity`
-as opaque. It uses `tenantPrefix` for isolation; it does not turn
-identity claims into row-level permissions.
+Concretely, a `Verifier` is a single async function
+`(req: Request) => Promise<VerifierResult | null>`. The dispatcher
+invokes it exactly once per request, at the dispatcher boundary, before
+any `Storage` I/O — there is no middleware chain and no second auth
+decision later in the request. It resolves to `{ tenantPrefix, identity }`
+for an accepted request, `null` for an unauthenticated one (which the
+dispatcher maps to HTTP 401 + `BaerlyError{code:"Unauthorized"}`), or
+throws a `BaerlyError` for broken auth configuration or dependencies (a
+500 operator fault). The null-vs-throw split is deliberate so on-call
+paging can target operator faults without false positives from
+credential-fishing traffic. The kernel treats `identity` as opaque; it
+uses `tenantPrefix` for isolation and does not turn identity claims into
+row-level permissions. The `tenantPrefix` derives from auth, never from
+the URL — a URL-encoded tenant would be a forgery surface (see
+[ADR-001](../adr/001-tenant-cas-isolation.md)).
+
+Auth is a single async function on purpose — not a class hierarchy, a
+middleware chain, or a closed enum. A class hierarchy tree-shakes worse;
+a middleware chain assumes per-request state the stateless server does
+not keep; a closed enum would force every new scheme through the kernel's
+own release cycle. Async (not sync) so JWKS / SigV4 / RPC presets aren't
+gated on a workaround. Kernel-side multi-verifier composition is left
+out deliberately — policy belongs to the deployment, and user-space
+`firstOf` / `allOf` sugar can compose verifiers later without the kernel
+picking a policy.
 
 There are two ways to configure auth, in precedence order:
 

@@ -142,7 +142,7 @@ export function minioStorage(opts: {
  * Whether GCS's interop layer enforces S3-style conditional *writes* is
  * unverified — run `baerly doctor --bucket=<your-gcs-bucket>` before
  * relying on it; a backend that fails the CAS probe is not a safe baerly
- * store. See ADR-004.
+ * store. See ADR-002.
  *
  * @example
  * ```ts

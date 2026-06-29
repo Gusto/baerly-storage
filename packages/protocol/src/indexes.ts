@@ -40,7 +40,7 @@ export interface IndexDefinition {
    * Stable path-safe identifier, used directly as a key segment under
    * `<logPrefix>/index/<name>/...`. Must match `/^[a-z][a-z0-9_]*$/`.
    * A reserved leading-`_` name throws `InvalidConfig`; a malformed
-   * name throws `SchemaError`. See docs/adr/007-layout-versioning-cordon.md.
+   * name throws `SchemaError`. See docs/adr/003-layout-versioning-cordon.md.
    */
   readonly name: string;
 
