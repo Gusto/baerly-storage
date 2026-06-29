@@ -417,7 +417,7 @@ Read this as positioning, not a provider quote:
   a bucket-native data layer or live CDC handoff. Off Workers, managed
   Postgres at $25+/mo behind a vendor catalog is the relevant
   comparison. If Cloudflare lock-in and SQL are acceptable, switch to
-  D1; [that move is the success path, not churn](thesis.md#what-prototype-tier-storage-needs).
+  D1; [that move is the success path, not churn](thesis.md#what-apps-within-the-envelope-need).
   Firebase Blaze also undercuts baerly-storage on raw per-op at M
   (~$5 vs. ~$19). That is expected: M is past the design center.
 - **L:** baerly-storage's R2 Class B alone (~$1 500) costs more than a

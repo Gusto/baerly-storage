@@ -410,7 +410,7 @@ auto-load on matching edits and point at the same files.
   _operator-installed_ scheduling (`wrangler.jsonc` `triggers.crons`,
   `node-cron`, k8s `CronJob`, systemd timer, DO Alarms). The kernel must
   work on a bare bucket with zero operator infrastructure — the pitch is
-  "Just a Bucket" (thesis criterion #6, [thesis.md](docs/about/thesis.md#what-prototype-tier-storage-needs)).
+  "Just a Bucket" (thesis criterion #6, [thesis.md](docs/about/thesis.md#what-apps-within-the-envelope-need)).
   Scheduled cron is a _user-opt-in_ acceleration via the exported
   `runScheduledMaintenance` SDK, never a default and never a requirement.
   **In-band write-tick maintenance is the sanctioned default and it
