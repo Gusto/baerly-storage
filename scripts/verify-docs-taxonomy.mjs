@@ -15,7 +15,7 @@ const ADR_DIR = join(ROOT, "docs", "adr");
 // keep these in sync with the headings in docs/spec/README.md and
 // docs/adr/README.md. This lint enforces routing metadata + index
 // coverage only — it deliberately encodes no protocol facts.
-const INDEX_DOC_TYPE = "evidence-index";
+const INDEX_DOC_TYPE = "index";
 const ADR_DOC_TYPE = "adr";
 const SPEC_CONTENT_DOC_TYPES = new Set([
   "current-contract",
@@ -155,7 +155,7 @@ function checkIndexCoverage(dir, contentFiles) {
   return body;
 }
 
-// --- ADRs: numbered records are `adr`, the README is `evidence-index`. ---
+// --- ADRs: numbered records are `adr`, the README is `index`. ---
 const adrFiles = topLevelMarkdown(ADR_DIR);
 for (const file of adrFiles) {
   const path = join(ADR_DIR, file);

@@ -4,7 +4,7 @@ audience: integrator
 summary: One-line definitions of the load-bearing terms used across the docs — commit, log, seq, tail, snapshot, compaction, GC, LSN, session, and the rest.
 last-reviewed: 2026-06-28
 tags: [reference, glossary, terms]
-related: ["about/how-it-works.md", "spec/sync-protocol.md", "contributing/architecture.md"]
+related: ["about/how-it-works.md", "spec/sync-protocol.md", "architecture.md"]
 ---
 
 # Glossary

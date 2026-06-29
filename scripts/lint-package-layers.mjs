@@ -3,7 +3,7 @@
 // dynamic `import()`, and relative cross-package — must follow the rule table
 // below. Additionally gates `node:`-builtin purity for `protocol` and `server`
 // so the kernel stays Workerd-loadable. Violations exit non-zero with a
-// remediation hint. See docs/contributing/architecture.md (§Package layers) for the WHY.
+// remediation hint. See docs/architecture.md (§Package layers) for the WHY.
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve as resolvePath } from "node:path";
@@ -14,7 +14,7 @@ const ROOT = resolvePath(HERE, "..");
 
 /**
  * Hand-maintained import allow list (contains one accepted Node-only
- * `dev ↔ adapter-node` cycle — see docs/contributing/architecture.md
+ * `dev ↔ adapter-node` cycle — see docs/architecture.md
  * §Package layers), plus a per-owner `node:`-builtin
  * purity gate for `protocol` and `server`. `allows` lists every other
  * @baerly/* package the owner is permitted to import. Self-imports always
@@ -23,7 +23,7 @@ const ROOT = resolvePath(HERE, "..");
  * in the list (`protocol` allows none; `server` allows `node:async_hooks`,
  * which Workerd supports under `nodejs_compat`). Rows leaving `allowNode`
  * undefined are Node-only by design and may import any builtin. Source of truth
- * lives in docs/contributing/architecture.md §Package layers; this table is the
+ * lives in docs/architecture.md §Package layers; this table is the
  * executable mirror. When adding a new @baerly/* package, add a row to both.
  */
 const RULES = {
@@ -110,7 +110,7 @@ export function formatViolation(v) {
       `${v.path}: @baerly/${v.ownerPkg} imports Node builtin ${v.importedPkg} — @baerly/${v.ownerPkg} must stay Workerd-loadable`,
       `  To fix: drop the Node builtin, or move the Node-only code into a package`,
       `  that is allowed to use it (e.g. @baerly/dev / @baerly/adapter-node).`,
-      `  See docs/contributing/architecture.md (§Package layers) for the WHY.`,
+      `  See docs/architecture.md (§Package layers) for the WHY.`,
     ].join("\n");
   }
   const allowList =
@@ -120,7 +120,7 @@ export function formatViolation(v) {
   return [
     `${v.path}: @baerly/${v.ownerPkg} imports @baerly/${v.importedPkg}`,
     `  To fix: move the imported symbol down into a package @baerly/${v.ownerPkg} is`,
-    `  allowed to depend on, or invert the dependency. See docs/contributing/architecture.md (§Package layers) for the WHY.`,
+    `  allowed to depend on, or invert the dependency. See docs/architecture.md (§Package layers) for the WHY.`,
     `  @baerly/${v.ownerPkg} may only import: ${allowList}`,
   ].join("\n");
 }

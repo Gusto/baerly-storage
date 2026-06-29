@@ -1,7 +1,7 @@
 ---
 title: Architecture Decision Records
 audience: meta
-doc_type: evidence-index
+doc_type: index
 summary: Index of ADRs. Each ADR captures one load-bearing protocol or architecture decision whose rationale and rejected alternatives don't fit naturally in any single code or doc file.
 last-reviewed: 2026-06-28
 tags: [index, decisions]
@@ -48,7 +48,7 @@ left behind. If you remember one of these as an ADR, it now lives at:
 - **`Baerly` prefix naming** → [contributing/extending.md](../contributing/extending.md#6-naming-a-public-symbol).
 - **Verifier is a function** → [guide/auth.md](../guide/auth.md) and the
   [API reference](../../packages/server/API.md).
-- **Package layer invariant** → [contributing/architecture.md](../contributing/architecture.md#package-layers).
+- **Package layer invariant** → [architecture.md](../architecture.md#package-layers).
 - **Schema-validator shape** → [contributing/extending.md](../contributing/extending.md#1b-declare-a-schema-for-a-collection).
 
 ## Policy — ADRs after 0.3.0

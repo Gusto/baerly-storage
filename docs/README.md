@@ -1,7 +1,7 @@
 ---
 title: docs/ — topic map
 audience: meta
-summary: Index of everything under docs/, grouped by audience.
+summary: Index of everything under docs/, organized by reader job (understand, evaluate, build, operate, change code) and single-sourced by ownership.
 last-reviewed: 2026-06-28
 tags: [index, navigation]
 related: ["../CLAUDE.md", "spec/README.md", "adr/README.md"]
@@ -22,67 +22,34 @@ zero-shot from the `.d.ts` shapes, with `dist/API.md` as the canonical
 companion reference. The positioning story is in
 [`about/thesis.md`](about/thesis.md).
 
-## Start here
+This index is organized by **reader job** — pick the row that matches
+what you're trying to do. The Protocol & decisions section at the end
+records how facts are single-sourced by ownership.
 
-- New to the project: [`../README.md`](../README.md), then
-  [`about/how-it-works.md`](about/how-it-works.md).
-- Evaluating the bet: [`about/thesis.md`](about/thesis.md), then
-  [`about/workload-fit.md`](about/workload-fit.md), then
-  [`about/cost-model.md`](about/cost-model.md), then
-  [`about/graduation.md`](about/graduation.md).
-- Building an app: [`guide/cheatsheet.md`](guide/cheatsheet.md), then
-  [`packages/server/API.md`](../packages/server/API.md) — then scaffold
-  from [`../examples/`](../examples/) or bolt onto an existing Worker
-  with [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md).
-- Operating a production app: [`guide/operations.md`](guide/operations.md).
-- Stuck on a term: [`glossary.md`](glossary.md) — one-line definitions of
-  commit, log, seq, tail, snapshot, compaction, GC, LSN, and session.
+## Understand how it works
 
-## Using baerly-storage
-
-For integrators and operators running baerly-storage against a real bucket.
-**The canonical surface is [`packages/server/API.md`](../packages/server/API.md),
-published as `node_modules/@gusto/baerly-storage/dist/API.md`** — installed
-consumers read the `dist/` copy, repo contributors read the source; they are
-the same file, copied into `dist/` at build. It
-carries the public API, Verifier presets, observability field
-reference, client-fetch wrapping recipes, and the trusted-fields
-recipe. The files below cover what doesn't fit there: cross-cutting
-invariants, operator runbooks, and target-specific bolt-ons.
-
-- [`guide/operations.md`](guide/operations.md) — Production runbook:
-  preflight, auth, backups, observability, capacity, and route checks.
-- [`guide/cheatsheet.md`](guide/cheatsheet.md) — One-screen quick
-  reference: verbs, modifiers, errors, and the HTTP wire. The thing to
-  show someone in 30 seconds; the full surface stays in API.md.
-- [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md)
-  — One-command bolt-on for an existing `wrangler create` project —
-  `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc,
-  patches it, refreshes agent rules, prints the worker-entry snippet.
-- [`guide/auth.md`](guide/auth.md) — Canonical server-side verifier
-  reference: production auth recipes for Cloudflare and Node, verify
-  recipes, tenant pinning, and the no-built-in-authorization caveat.
-- [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
-  retention rotation, checksums, restore, and restore drills.
-- [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server
-  auth recipes and the dev/prod × Cloudflare/Node matrix. Scaffolds
-  ship minimal recipes; fail-closed hardening lives in this guide.
-- [`guide/observability.md`](guide/observability.md) — Operator
-  signals, first-response actions, sinks (OTel / Workers Analytics
-  Engine / Datadog), cost-ballooning anti-patterns, and known gaps.
-  Canonical log-line shape lives in API.md.
-- Runnable scaffolds: `../examples/` (`minimal-cloudflare`,
-  `minimal-node`, `react-cloudflare`, `react-node`).
-
-## About baerly-storage
-
-Product and business context.
+The mental model, then the mechanism.
 
 - [`about/how-it-works.md`](about/how-it-works.md) — the mechanism
   on-ramp: the plain-language mental model — a bucket of files plus a
   library that creates one numbered log entry atomically, and the typed
   layers from protocol to React. Read this to understand (or explain)
   _how_ the system works.
+- [`architecture.md`](architecture.md) — the module graph and the
+  lifecycle of `db.collection(...).insert()` (full entry under
+  [Change the code](#change-the-code)).
+- [`spec/sync-protocol.md`](spec/sync-protocol.md) — the binding
+  description of single-write commit: the numbered `log/<seq>` create
+  is the commit, `current.json` is compaction state, readers discover
+  the tail by forward-probe.
+- [`glossary.md`](glossary.md) — one-line definitions of commit, log,
+  seq, tail, snapshot, compaction, GC, LSN, and session. Read it when a
+  term stops you.
+
+## Evaluate the bet
+
+Whether baerly-storage fits the app, and what it costs.
+
 - [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
   baerly-storage is, who it's for, and what it deliberately isn't — the _why_.
 - [`about/workload-fit.md`](about/workload-fit.md) — the shape-fit
@@ -93,17 +60,61 @@ Product and business context.
 - [`about/graduation.md`](about/graduation.md) — the CPU/memory bounds
   that tell you when a collection has outgrown its deployment tier, and
   what to do about it.
-- [`about/pricing-log.md`](about/pricing-log.md) — append-only audit of cost commitments.
+- [`about/pricing-log.md`](about/pricing-log.md) — append-only audit of
+  cost commitments.
 
-## Contributing
+## Build an app
+
+From zero to a working `client.collection().insert()`. **The canonical
+surface is [`packages/server/API.md`](../packages/server/API.md),
+published as `node_modules/@gusto/baerly-storage/dist/API.md`** —
+installed consumers read the `dist/` copy, repo contributors read the
+source; they are the same file, copied into `dist/` at build. It
+carries the public API, Verifier presets, observability field
+reference, client-fetch wrapping recipes, and the trusted-fields recipe.
+
+- [`guide/cheatsheet.md`](guide/cheatsheet.md) — One-screen quick
+  reference: verbs, modifiers, errors, and the HTTP wire. The thing to
+  show someone in 30 seconds; the full surface stays in API.md.
+- [`packages/server/API.md`](../packages/server/API.md) — the canonical
+  public-API reference (see above).
+- Runnable scaffolds: [`../examples/`](../examples/)
+  (`minimal-cloudflare`, `minimal-node`, `react-cloudflare`,
+  `react-node`).
+- [`guide/add-to-existing-cf-worker.md`](guide/add-to-existing-cf-worker.md)
+  — One-command bolt-on for an existing `wrangler create` project —
+  `pnpm create @gusto/baerly-storage@latest .` detects wrangler.jsonc,
+  patches it, refreshes agent rules, prints the worker-entry snippet.
+
+## Operate in production
+
+Runbooks and cross-cutting invariants for running against a real bucket.
+What doesn't fit in API.md lives here.
+
+- [`guide/operations.md`](guide/operations.md) — Production runbook:
+  preflight, auth, backups, observability, capacity, and route checks.
+- [`guide/auth.md`](guide/auth.md) — Canonical server-side verifier
+  reference: production auth recipes for Cloudflare and Node, verify
+  recipes, tenant pinning, and the no-built-in-authorization caveat.
+- [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server
+  auth recipes and the dev/prod × Cloudflare/Node matrix. Scaffolds
+  ship minimal recipes; fail-closed hardening lives in this guide.
+- [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
+  retention rotation, checksums, restore, and restore drills.
+- [`guide/observability.md`](guide/observability.md) — Operator
+  signals, first-response actions, sinks (OTel / Workers Analytics
+  Engine / Datadog), cost-ballooning anti-patterns, and known gaps.
+  Canonical log-line shape lives in API.md.
+
+## Change the code
 
 For people changing the code in this repo.
 
-- [`contributing/architecture.md`](contributing/architecture.md) — module graph and the lifecycle
-  of `db.collection(...).insert()`.
 - [`contributing/development.md`](contributing/development.md) — local setup, test commands,
   MinIO / Toxiproxy / Postgres stack, and troubleshooting (test gating,
   ports, fuzzer, CI formatting).
+- [`architecture.md`](architecture.md) — module graph and the lifecycle
+  of `db.collection(...).insert()`.
 - [`contributing/extending.md`](contributing/extending.md) — worked examples for adding a `Db`
   method, `Query` constraint, etc.
 - [`contributing/features.md`](contributing/features.md) — feature → code map.
@@ -111,7 +122,7 @@ For people changing the code in this repo.
   StrykerJS mutation testing scoped to the protocol kernel: `pnpm test:mutate`.
 - [`contributing/publishing.md`](contributing/publishing.md) — how to publish
   `@gusto/baerly-storage` + `@gusto/create-baerly-storage` publicly to npmjs.com.
-- [`contributing/day-one-gate.md`](contributing/day-one-gate.md) — manual release-readiness gate.
+- [`contributing/day-one-gate.md`](contributing/day-one-gate.md) — pre-release manual gate.
 - [`contributing/conventions/`](contributing/conventions/) — path-scoped conventions auto-loaded
   by Claude via `.claude/rules/`:
   - [`contributing/conventions/tests.md`](contributing/conventions/tests.md)
@@ -125,11 +136,12 @@ For theory and spec readers. The split is by ownership — each fact is
 single-sourced in the doc type that owns it:
 
 - [`spec/`](spec/) — **current contracts.** What the protocol guarantees
-  today, tiered by role: current contracts, semantic references,
+  today, grouped by role: current contracts, semantic references,
   verification, adapter edge cases, and historical/rationale/evidence.
-- [`adr/`](adr/) — **durable rationale and rejected paths.** Why each
-  load-bearing decision was made and what it ruled out, grouped by role:
-  architecture guardrails, contributor conventions, and API seams.
+- [`adr/`](adr/) — **durable rationale and rejected paths.** A flat
+  index of the four load-bearing protocol/architecture decisions, plus a
+  "decisions that live elsewhere" pointer for rules that now live next
+  to the code or doc they govern.
 - [`contributing/`](contributing/) — **how to change things.** Local
   setup, extension patterns, and the conventions a change must satisfy.
 

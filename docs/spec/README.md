@@ -1,7 +1,7 @@
 ---
 title: Protocol & contracts index
 audience: meta
-doc_type: evidence-index
+doc_type: index
 summary: "Stable specs and protocol-adjacent analyses: sync protocol, causal-consistency checking, merge patch, log shape, S3 surface, fencing, and prior art."
 last-reviewed: 2026-06-23
 tags: [index, protocol, spec]

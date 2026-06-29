@@ -4,7 +4,7 @@ audience: coder
 summary: Feature-by-feature pointers into source, tests, and docs.
 last-reviewed: 2026-06-13
 tags: [index, features, code-map]
-related: [architecture.md, "../spec/README.md", "../adr/README.md"]
+related: ["../architecture.md", "../spec/README.md", "../adr/README.md"]
 ---
 
 # Features → code map
@@ -15,7 +15,7 @@ user-facing capability and the source files, tests, and docs that
 implement or describe it.
 
 For a code-oriented view (read-this-first lifecycle), see the module map
-in [CLAUDE.md](../../CLAUDE.md) and [architecture.md](./architecture.md).
+in [CLAUDE.md](../../CLAUDE.md) and [architecture.md](../architecture.md).
 
 ## Public API surface
 
@@ -223,7 +223,7 @@ priorities, zero-padded numerics in string form, etc.).
   (the `describe("auto-planner index routing")` block),
   [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts),
   [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts).
-- Docs: this section, [`docs/contributing/architecture.md`](./architecture.md)
+- Docs: this section, [`docs/architecture.md`](../architecture.md)
   §"Lifecycle of `db.collection(...).insert()`",
   [`docs/contributing/extending.md`](./extending.md)
   §1c "Declare an index on a collection".

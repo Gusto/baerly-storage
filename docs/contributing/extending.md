@@ -6,7 +6,7 @@ last-reviewed: 2026-06-28
 tags: [extending, api-design, patterns]
 related:
   [
-    architecture.md,
+    "../architecture.md",
     "conventions/change-discipline.md",
     "conventions/tests.md",
   ]
@@ -24,7 +24,7 @@ This page walks through those shapes. Use the examples as placement rules first
 and code templates second; the right file follows from the layer that owns the
 invariant.
 
-> Before adding a feature, read [architecture.md](architecture.md) so you
+> Before adding a feature, read [architecture.md](../architecture.md) so you
 > know which module owns what. Most public API additions touch
 > `packages/server/src/db.ts` or `packages/server/src/collection.ts`, but write
 > _invariants_ live in `packages/server/src/writer.ts`.
@@ -372,7 +372,7 @@ export default defineConfig({
 
 ### What the planner does at read time
 
-- See [architecture.md](architecture.md) §"Planner step (between
+- See [architecture.md](../architecture.md) §"Planner step (between
   the predicate and the log fold)" for the lifecycle. The summary:
   if the predicate covers a declared index's `on` tuple, the
   planner emits `IndexWalkPlan` and the reader walks the encoded
@@ -644,7 +644,7 @@ on each is the canonical reference.
 
 Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
 end-to-end orchestrators rather than helpers; their entry points are
-documented in [architecture.md](architecture.md) under "Where
+documented in [architecture.md](../architecture.md) under "Where
 invariants live."
 
 ---

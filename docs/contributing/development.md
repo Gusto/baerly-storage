@@ -243,5 +243,5 @@ that will be fixed before review; never for merge commits or PR branches.
 
 The module map lives in [CLAUDE.md → Module map](../../CLAUDE.md#module-map);
 the deeper dependency graph + lifecycles live in
-[architecture.md](architecture.md). For a flat enumeration, just `ls
+[architecture.md](../architecture.md). For a flat enumeration, just `ls
 packages/*/src/ tests/`.

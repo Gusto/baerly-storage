@@ -35,7 +35,7 @@ function writeAdr(rel: string, body: string): void {
 function seedValidTree(): void {
   writeSpec(
     "README.md",
-    `---\ndoc_type: evidence-index\n---\n` +
+    `---\ndoc_type: index\n---\n` +
       `# spec\n\n## Current contracts\n\n- [sync-protocol.md](sync-protocol.md)\n\n` +
       `## Semantic references\n\n- [json-merge-patch.md](json-merge-patch.md)\n\n` +
       `## Verification\n\n- [causal-consistency-checking.md](causal-consistency-checking.md)\n\n` +
@@ -50,7 +50,7 @@ function seedValidTree(): void {
   writeSpec("s3-xml-escaping-cases.md", `---\ndoc_type: adapter-edge-case\n---\n`);
   writeSpec("writer-fence-adversarial-model.md", `---\ndoc_type: historical\n---\n`);
   writeSpec("prior-art.md", `---\ndoc_type: rationale\n---\n`);
-  writeAdr("README.md", `---\ndoc_type: evidence-index\n---\n# adr\n\n- [001 — X](./001-x.md)\n`);
+  writeAdr("README.md", `---\ndoc_type: index\n---\n# adr\n\n- [001 — X](./001-x.md)\n`);
   writeAdr("001-x.md", `---\ndoc_type: adr\n---\n`);
 }
 
@@ -66,7 +66,7 @@ test("fails when a spec doc is missing doc_type", () => {
   // also index it so we isolate the doc_type failure
   writeSpec(
     "README.md",
-    `---\ndoc_type: evidence-index\n---\n# spec\n\n` +
+    `---\ndoc_type: index\n---\n# spec\n\n` +
       `- [sync-protocol.md](sync-protocol.md)\n- [prior-art.md](prior-art.md)\n- [new-spec.md](new-spec.md)\n`,
   );
   const r = runScript(tmpRoot);
@@ -79,7 +79,7 @@ test("fails when an ADR is missing doc_type", () => {
   writeAdr("002-y.md", `---\ntitle: Y\n---\n`);
   writeAdr(
     "README.md",
-    `---\ndoc_type: evidence-index\n---\n# adr\n\n- [001 — X](./001-x.md)\n- [002 — Y](./002-y.md)\n`,
+    `---\ndoc_type: index\n---\n# adr\n\n- [001 — X](./001-x.md)\n- [002 — Y](./002-y.md)\n`,
   );
   const r = runScript(tmpRoot);
   expect(r.code).toBe(1);
@@ -114,7 +114,7 @@ test("fails on a duplicate index entry", () => {
   seedValidTree();
   writeSpec(
     "README.md",
-    `---\ndoc_type: evidence-index\n---\n# spec\n\n` +
+    `---\ndoc_type: index\n---\n# spec\n\n` +
       `- [sync-protocol.md](sync-protocol.md)\n- [sync-protocol.md](sync-protocol.md)\n- [prior-art.md](prior-art.md)\n`,
   );
   const r = runScript(tmpRoot);
@@ -136,7 +136,7 @@ test("fails when a historical doc is listed under Current contracts", () => {
   // "Current contracts" heading — section/metadata incoherence.
   writeSpec(
     "README.md",
-    `---\ndoc_type: evidence-index\n---\n# spec\n\n## Current contracts\n\n` +
+    `---\ndoc_type: index\n---\n# spec\n\n## Current contracts\n\n` +
       `- [sync-protocol.md](sync-protocol.md)\n- [prior-art.md](prior-art.md)\n`,
   );
   const r = runScript(tmpRoot);

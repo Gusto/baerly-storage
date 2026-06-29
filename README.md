@@ -1,28 +1,26 @@
 # baerly-storage
 
-**No database server. No daemon. No database runtime. Just your app and a bucket.**
+**A database with no server. No daemon. No database runtime. Just your app and a bucket.**
 
 ```text
-before: client → app handler → database server
-after:  client → app handler → S3/R2 bucket
+before: client → app handler → database server  (a server)
+after:  client → app handler → S3/R2 bucket     (just storage)
 ```
 
-baerly-storage is a small document database over AWS S3 or Cloudflare R2.
-The database is the bucket layout plus the commit protocol; this repo
-ships the TypeScript implementation for Workers and Node. Your app runs
-it inside a trusted request handler, and the bucket holds the durable
-state.
-baerly-storage runs wherever the bucket credentials safely live: a
-Worker or Node request handler.
+baerly-storage is a **document database whose execution layer fits inside
+an HTTP request**.
+
+It stores durable state in S3-compatible object storage, including AWS S3
+and Cloudflare R2, and ships as a TypeScript implementation for Workers
+and Node.
+
+There is no database server, daemon, or coordinator. Each read or write
+runs as library code inside your Worker or Node handler; the bucket holds
+the data, and the protocol supplies the commit rules.
 
 The load-bearing operation is narrow: one conditional create of the next
-log object commits a write. Backends must make concurrent
-create-if-absent requests resolve to exactly one winner, so the
-production stores are AWS S3 and Cloudflare R2.
-
-Start here when the app's most important screen maps to one collection and
-you want live documents without a resident database service. When the
-request ends, baerly-storage is gone. The bucket remains.
+log object commits a write. When the request ends, baerly-storage is
+gone.
 
 - **A tiny API humans and agents can hold in context.** No DDL, no raw
   SQL — 8 verbs and a ~12k-token API surface.
@@ -31,8 +29,8 @@ request ends, baerly-storage is gone. The bucket remains.
 - **No data hostage.** `baerly export --target=postgres` gives you a
   per-collection SQL snapshot. Crossing the envelope is the graduation
   signal; the data exit is mechanical.
-- **Built like git.** Content-addressed documents, an immutable numbered
-  log, and one conditional log create as the commit, per collection.
+- **Built like git.** Content-addressed documents, immutable numbered log
+  entries, and one conditional log create as the commit, per collection.
 
 <!-- Hero demo: render `docs/assets/demo.gif` from `docs/assets/demo.tape`
      (`vhs docs/assets/demo.tape`) against a real bucket, then uncomment:
@@ -42,16 +40,12 @@ request ends, baerly-storage is gone. The bucket remains.
 ## Quick start
 
 ```sh
-pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare --starter=react
-cd my-app
-pnpm install
-pnpm dev
+pnpm create @gusto/baerly-storage@latest
 ```
 
-For the interactive wizard, run `pnpm create @gusto/baerly-storage@latest`.
-Answer the prompts, run the printed dev command, and open the local URL.
-The dev app serves the UI and `/v1/*` from one origin, backed by local
-storage, so first run needs no bucket credentials.
+The wizard asks for a project name, target, and starter, then prints the
+dev command. First run needs no bucket credentials: local dev uses local
+storage and serves the UI plus `/v1/*` from one origin.
 
 For a runnable multi-tab demo see
 [`examples/react-node/`](./examples/react-node); for the full set of
@@ -59,9 +53,8 @@ production-shaped scaffolds see [`examples/`](./examples).
 
 ## In code
 
-In the TypeScript implementation, the protocol shows up as a small
-document API. The scaffolds wire `db` on the server and `useQuery` in
-React; the calls look like this:
+The public surface is a small document API. The scaffolds wire `db` on
+the server and `useQuery` in React; the calls look like this:
 
 ```ts
 // server — writes land in your object-storage bucket
@@ -72,13 +65,6 @@ const open = useQuery((c) => c.collection("tickets").where({ status: "open" }).a
 // open.status → "loading" | "refreshing" | "ok" | "skipped" | "error"
 // open.data is present for "ok" / "refreshing"
 ```
-
-Security model: bucket credentials never leave the server. Browsers
-talk only to your trusted handler, which authenticates the caller,
-chooses the tenant prefix, and applies the protocol against the
-bucket. Production recipes support Cloudflare Access and JWKS bearer
-verification; shared-secret auth is for service-to-service calls and dev.
-See [`client-auth.md`](./docs/guide/client-auth.md).
 
 Application auth and tenant choice stay explicit in the handler. What
 disappears is the database service and its surrounding machinery:
@@ -106,6 +92,15 @@ disappears is the database service and its surrounding machinery:
 Ordinary schema shape changes are TypeScript or config edits — no DDL, no
 SQL strings, no generated migration ceremony.
 
+### Security model
+
+Bucket credentials never leave the server. Browsers talk only to your
+trusted handler, which authenticates the caller, chooses the tenant
+prefix, and applies the protocol against the bucket. Production recipes
+support Cloudflare Access and JWKS bearer verification; shared-secret
+auth is for service-to-service calls and dev. See
+[`client-auth.md`](./docs/guide/client-auth.md).
+
 ## How it works
 
 **Built like git: content-addressed documents, immutable numbered log
@@ -125,6 +120,14 @@ That create _is_ the commit. There is no resident coordinator: each
 request reads bucket state, tries that create, and leaves no required
 process behind. A read follows `current.json` to the snapshot and folds
 the committed log tail into rows.
+
+This is the write-immutable-data-then-publish-an-atomic-pointer pattern
+that table formats like Apache Iceberg use, narrowed to a document
+database: the commit is a single conditional create of the next numbered
+log object (`If-None-Match`), made safe by S3's strong read-after-write
+consistency and conditional writes — no separate coordinator. See
+[prior art and lineage](docs/spec/prior-art.md) for how it relates to
+Iceberg, Delta Lake, Litestream, and Turbopuffer.
 
 Each collection has its own ordered log, so **writes are per-collection
 linearizable** — the `If-None-Match` log create linearizes every commit.
@@ -216,7 +219,7 @@ these is the signal to graduate the workload — `baerly export
   conditional log create)
 - 🧱 **Product thesis** — [`docs/about/thesis.md`](./docs/about/thesis.md)
 - 🏗️ **Architecture** —
-  [`docs/contributing/architecture.md`](./docs/contributing/architecture.md)
+  [`docs/architecture.md`](./docs/architecture.md)
 - 🔧 **Embed by hand** —
   [`packages/server/API.md`](./packages/server/API.md) (embed-by-hand +
   custom-routes recipes; ships as `dist/API.md` in the package)

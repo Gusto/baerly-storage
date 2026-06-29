@@ -1,7 +1,7 @@
 // Type declarations for the regex-based package-layer linter. Consumed by
 // `tests/unit/lint-package-layers.test.ts` so the pure-function entrypoint
 // can be unit-tested in-process. The script itself runs as a CLI in
-// `pnpm verify` / `pnpm verify:agent` — see docs/contributing/architecture.md (§Package layers).
+// `pnpm verify` / `pnpm verify:agent` — see docs/architecture.md (§Package layers).
 
 export interface PackageImportFile {
   readonly path: string;

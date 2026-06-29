@@ -1,6 +1,8 @@
 # Baerly Storage
 
-Vendorless, causally consistent document database that runs as a
+Serverless, vendorless, causally consistent document database that runs
+on an AWS S3 or Cloudflare R2 bucket — a document database on S3/R2 with
+no resident database server. It runs as a
 server-side `Db` (from `@gusto/baerly-storage`) behind a `Verifier`
 synthesized from `config.auth` (or supplied directly via the
 adapter factory), with your data persisted in any S3-compatible
@@ -104,12 +106,23 @@ known-baseline test failures.
 
 ## Where to start
 
+Using the library:
+
+- [packages/server/API.md](./packages/server/API.md) — the public-API
+  reference (shipped as `dist/API.md`); read this before the `.d.ts` chain
+- [docs/guide/cheatsheet.md](./docs/guide/cheatsheet.md) — one-screen API
+- [docs/about/how-it-works.md](./docs/about/how-it-works.md) — plain-language mental model
+- [docs/about/workload-fit.md](./docs/about/workload-fit.md) — whether an app's shape fits
+- [docs/about/graduation.md](./docs/about/graduation.md) — the bounds that say a collection has outgrown this tier
+
+Working in the repo:
+
 - [CLAUDE.md](./CLAUDE.md) — agent guidance, module map, conventions
 - [docs/contributing/features.md](./docs/contributing/features.md) — feature → code map
-- [docs/contributing/architecture.md](./docs/contributing/architecture.md) — lifecycle and module graph
+- [docs/architecture.md](./docs/architecture.md) — lifecycle and module graph
 - [docs/spec/sync-protocol.md](./docs/spec/sync-protocol.md) — protocol theory
 - [docs/adr/](./docs/adr/) — architecture decisions
-- [docs/guide/troubleshooting.md](./docs/guide/troubleshooting.md) — known issues
+- [docs/contributing/development.md#troubleshooting](./docs/contributing/development.md#troubleshooting) — troubleshooting & known issues
 - [docs/contributing/conventions/](./docs/contributing/conventions/) — path-scoped conventions for src/, tests/, docs/
 
 The public API entry point is `packages/server/src/db.ts` (the `Db`

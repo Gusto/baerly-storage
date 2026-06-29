@@ -4,7 +4,7 @@ audience: integrator
 summary: The plain-language mental model for a bucket of objects plus a library that commits by creating the next numbered log entry with a conditional write, then exposes typed layers from protocol to React.
 last-reviewed: 2026-06-26
 tags: [concepts, mental-model, protocol]
-related: [thesis.md, "../spec/sync-protocol.md", "../contributing/architecture.md"]
+related: [thesis.md, "../spec/sync-protocol.md", "../architecture.md"]
 ---
 
 # How it works
@@ -137,6 +137,28 @@ causal-consistency guarantees live in
 adversarial fencing model in
 [`spec/writer-fence-adversarial-model.md`](../spec/writer-fence-adversarial-model.md).
 
+## The same playbook as Apache Iceberg
+
+This is not a new trick. Table formats like Apache Iceberg commit by
+writing immutable data and then publishing an atomic pointer to it.
+baerly-storage uses the same write-immutable-then-publish pattern,
+applied to a document database instead of analytics tables — but the
+commit point is narrower. Iceberg-style writers prepare new metadata and
+atomically swap the table's current-metadata pointer; baerly-storage
+commits by creating one numbered log object with create-if-absent, and
+there is no metadata pointer to swap (`current.json` is only a
+compaction bookmark, not the authority on state). S3's strong
+read-after-write consistency and conditional writes (`If-None-Match`
+create-if-absent, `If-Match` compare-and-swap) make that publish safe
+without a separate coordinator.
+
+Systems like Litestream and Turbopuffer also lean on object storage, but
+they ship long-lived replication or query fleets; baerly-storage keeps
+the bucket as the only persistent component, with no resident compute
+between requests. The full comparison — including where Delta Lake's S3
+story splits by engine and backend — is in
+[`spec/prior-art.md`](../spec/prior-art.md).
+
 ## What a read does
 
 A read does not consult any resident database process. The trusted
@@ -234,7 +256,7 @@ then exposes the part it can safely execute.
 
 For the precise module graph and the full line-by-line lifecycle of
 `db.collection(...).insert()`, see
-[`contributing/architecture.md`](../contributing/architecture.md). A
+[`architecture.md`](../architecture.md). A
 runnable end-to-end example of every layer is
 [`examples/react-node`](../../examples/react-node).
 
