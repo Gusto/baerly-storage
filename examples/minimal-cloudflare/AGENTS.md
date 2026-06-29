@@ -549,7 +549,7 @@ The cost model puts the soft ceiling at:
 
 At M-size (~30 writes/min) the projected cost is ~$18/mo on R2. Past
 those, per-class op pricing and fan-out scan cost start to dominate;
-you're better off on a real database.
+you've outgrown the workload envelope — move to a database service (D1 / Postgres) suited to higher scale.
 Pick your graduation target:
 
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
