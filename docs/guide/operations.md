@@ -2,15 +2,15 @@
 title: Operations runbook
 audience: operator
 summary: Production preflight, auth, backup, observability, capacity, and route checks.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-26
 tags: [operations, runbook, production]
 related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../about/cost-model.md"]
 ---
 
 # Operations runbook
 
-This is the production checklist for a baerly-storage app. Fill these in
-once and keep the same values through every command:
+Production checklist for a baerly-storage app. Fill these once and keep
+the same values through every command:
 
 ```sh
 APP=acme
@@ -25,13 +25,24 @@ BASE_URL=https://api.example.com
 ### Bucket and deploy checks
 
 For Cloudflare, run the target check plus the bucket check. For
-Node/self-hosted, run the bucket check only. The target check validates
-deploy shape for the platform. The bucket check validates the storage
-rule that lets an object store serve as the commit log: exactly one
-conditional create must win, and stale conditional writes must fail.
+Node/self-hosted, run the bucket check only.
+
+```sh
+# Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
+baerly doctor --target=cloudflare
+
+# All targets: live conditional-write probe against the production bucket.
+baerly doctor --bucket="$BUCKET_URI"
+```
+
+- The target check validates platform deploy shape.
+- The bucket check validates the object-store commit rule: if several
+  writers try to create the same next log object, exactly one must win;
+  stale `If-Match` updates and create-if-absent writes over existing keys
+  must fail.
 
 `baerly doctor --bucket` writes and deletes throwaway sentinels to prove
-the bucket honors `If-None-Match: "*"` and `If-Match`; it does not
+the bucket honors `If-None-Match: "*"` and `If-Match`. It does not
 migrate or validate an existing baerly-storage prefix.
 
 New buckets can ignore the schema note. Buckets written by the old
@@ -39,24 +50,16 @@ pre-single-write `current.json` schema (`schema_version` 1 or 2) must
 be dumped under the old build and restored/reseeded under the current
 schema (`schema_version: 3`), not reused in place.
 
-```sh
-# Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
-baerly doctor --target=cloudflare
-
-# All targets: live CAS probe against the production bucket.
-baerly doctor --bucket="$BUCKET_URI"
-```
-
 There is no `baerly doctor --target=node` backend today; the bucket
 probe is the Node safety check.
 
 ### Auth
 
-Then verify the route boundary. `GET /v1/healthz` is anonymous inside
-the baerly-storage adapter; if an outer Cloudflare Access policy
-protects the whole hostname, Access may challenge it before the Worker
-sees it. The important data-route check is that an unauthenticated
-collection request fails closed.
+Verify the route boundary. `GET /v1/healthz` is anonymous inside the
+baerly-storage adapter; if Cloudflare Access protects the whole
+hostname, Access may challenge it before the Worker sees it. The
+data-route check is that an unauthenticated collection request fails
+closed.
 
 ```sh
 curl -fsS "$BASE_URL/v1/healthz"
@@ -69,7 +72,7 @@ curl -i "$BASE_URL/v1/c/$COLLECTION"
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v1/c/$COLLECTION"
 
-# Cloudflare Access service-token verifier.
+# Cloudflare Access service-token request.
 curl -fsS \
   -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
@@ -82,7 +85,7 @@ curl: either `$TOKEN`, or the Cloudflare Access service-token pair.
 Use `auth: "none"` only for local development or trusted internal
 code paths. Production data routes (`/v1/c/*`, `/v1/count`, and
 `/v1/since`) need a verifier that accepts the request and returns the
-tenant prefix:
+tenant prefix, the storage namespace for the request:
 
 | Target             | Production default                                                           |
 | ------------------ | ---------------------------------------------------------------------------- |
@@ -96,11 +99,11 @@ Never ship `SHARED_SECRET` to a browser bundle. Full recipes are in
 ## Backups
 
 Run `baerly admin dump` for every production collection and store the
-result off-host. Dumps are collection-scoped NDJSON, so your backup
-inventory needs every `(app, tenant, collection)` triple you operate.
-The default is the hardened wrapper in [backups.md](backups.md):
-`0600` env file owned by the job user, temp file plus atomic rename,
-`0600` files, SHA-256 sidecar, off-host retention, and restore drill.
+result off-host. Dumps are collection-scoped NDJSON; keep an inventory
+of every `(app, tenant, collection)` triple you operate. Use the
+hardened wrapper in [backups.md](backups.md): `0600` env file owned by
+the job user, temp file plus atomic rename, `0600` files, SHA-256
+sidecar, off-host retention, and restore drill.
 
 Use the direct command only for one-off manual dumps:
 
@@ -115,9 +118,9 @@ baerly admin dump \
 
 ## Weekly checks
 
-Run these for each production collection. `inspect` reports the live
-manifest, snapshot, and log state; `cost` samples the trailing log for a
-Class A/month projection; `admin fsck` checks `current.json`, the
+Run these for each production collection. `inspect` reports
+`current.json`, snapshot, and log state; `cost` samples the trailing log
+for a Class A/month projection; `admin fsck` checks `current.json`, the
 snapshot hash, and log holes.
 
 ```sh
@@ -151,17 +154,17 @@ baerly admin usage \
   --tenant="$TENANT"
 ```
 
-Cloudflare usage scanning is not wired yet from the Node CLI because
-the CLI cannot reach a Workers R2 binding directly. Use canonical logs
-for trend history and `baerly cost` with R2 S3-compatible credentials
-for current operation-cost projection.
+Cloudflare usage scanning is not wired from the Node CLI; the CLI cannot
+reach a Workers R2 binding directly. Use canonical logs for trend
+history and `baerly cost` with R2 S3-compatible credentials for current
+operation-cost projection.
 
 ## Incidents
 
-For request/error alerts, collect the canonical JSON log line first; it
-carries `request_id`, `outcome`, status, and the `db.*` counters. For
+On alerts, collect the canonical JSON log line first; it carries
+`request_id`, `outcome`, status, and the `db.*` counters. For
 Cloudflare maintenance alerts, also collect the `wrangler tail`
-`console.warn` / `console.error` line. At minimum, alert on:
+`console.warn` / `console.error` line. Alert on:
 
 | Signal                                       | Why it matters                               | First action                                                                                                                                                                                                                                                                 |
 | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -178,12 +181,11 @@ Sink wiring and field reference are in
 
 ## Capacity
 
-- roughly 30 sustained logical writes/min per collection (throughput ceiling —
-  model/estimate, pending real-infra measurement);
-- >10 GB per tenant stored (R2 free-tier storage line — a cost signal, not a
-  protocol ceiling; baerly-storage does not enforce per-tenant byte limits);
-- ~100 collections per tenant (soft fan-out guideline — bench-grounded linear
-  cost; nothing in the protocol enforces a cap).
+| Line | Meaning |
+| --- | --- |
+| roughly 30 sustained logical writes/min per collection | Throughput ceiling; model/estimate, pending real-infra measurement. |
+| >10 GB per tenant stored | R2 free-tier storage line; a cost signal, not a protocol ceiling. baerly-storage does not enforce per-tenant byte limits. |
+| ~100 collections per tenant | Soft fan-out guideline; bench-grounded linear cost. Nothing in the protocol enforces a cap. |
 
 Graduation thresholds and the fold-cost derivation live in
 [graduation.md](../about/graduation.md); cost math lives in

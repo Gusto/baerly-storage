@@ -2,26 +2,29 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-26
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---
 
 # Cost model
 
-baerly-storage's pricing posture in one page. The unindexed first-try insert
-**commit floor** is two Class A R2 ops (content body + the committing
-`log/<seq>` create — that create-if-absent IS the commit; there is no
-`current.json` write on the commit path) — in-band maintenance raises
-the *effective* Class A write-amplification to ~3× on Cloudflare / ~4×
-on serverful Node (see the Cost-ceiling section below); deletes are
-cheaper, while indexes, retries, and first-collection provisioning add
-bounded ops.
-Reads emit Class B ops at a rate that depends on cache hits — including
-the tail forward-probe, which is Class B GETs and never Class A. The
-companion file
-[pricing-log.md](pricing-log.md) is the one-line-per-change
-history of every price or cap update.
+The cost meter to watch is **billable Class A object-storage
+operations**: PUTs and LISTs. A first-try, unindexed insert has a
+two-op **commit floor**: one PUT for the content body and one
+create-if-absent PUT for `log/<seq>`. That log create is the commit.
+There is no `current.json` write on the commit path.
+
+The billable steady-state number is higher than the commit floor
+because successful writes also trigger bounded maintenance. The measured
+effective Class A write-amplification is ~3× on Cloudflare and ~4× on
+serverful Node. Deletes are cheaper; indexes, retries, and
+first-collection provisioning add bounded ops. Reads mostly emit Class B
+GETs, including the tail forward-probe, which never touches the Class A
+meter.
+
+[pricing-log.md](pricing-log.md) is the one-line-per-change history for
+price and cap updates.
 
 All prices below were re-checked **2026-06-22** against the official
 [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/),
@@ -33,8 +36,8 @@ pages. Re-check before quoting any figure externally; bumps land in
 
 ## Per-line-item rates (Cloudflare R2 + Workers)
 
-R2 storage and ops dominate; Worker CPU and request counts are
-secondary at the M-size operating point.
+R2 storage and ops dominate at M-size. Worker CPU and request counts are
+secondary.
 
 | Line item                                                            | Rate           | Free tier                                         |
 | -------------------------------------------------------------------- | -------------- | ------------------------------------------------- |
@@ -53,100 +56,96 @@ secondary at the M-size operating point.
 > or paid accounts, or for workloads inside a bucket you already own
 > on a paid plan.
 
-Class A is the meter that matters. Three reasons:
+Class A is the main meter:
 
-1. **Highest unit cost of the high-volume items** ($4.50 / 1M vs.
-   Class B at $0.36 / 1M vs. Worker requests at $0.30 / 1M).
-2. **Write-amplified by the protocol** — an unindexed first-try insert
-   produces 2 Class A ops at the commit floor (effective ~3× on
-   Cloudflare / ~4× on Node with in-band maintenance — see Cost
-   ceiling), so Class A grows fastest with traffic.
-3. **Compaction storms hit it** — a runaway compaction job still does
-   PUT / LIST / CAS work; free `DeleteObject` calls are not the bill
-   driver.
+1. It has the highest unit cost among high-volume items: $4.50 / 1M vs.
+   Class B at $0.36 / 1M and Worker requests at $0.30 / 1M.
+2. Writes amplify it: the commit floor is 2 Class A ops, and
+   maintenance raises the effective rate to ~3× on Cloudflare / ~4× on
+   Node.
+3. Compaction and GC use PUT / LIST / conditional-PUT work. Free
+   `DeleteObject` calls are not the bill driver.
 
-`baerly cost --bucket=<bucket-uri> --collection=<collection>`
-projects the Class A ops/mo, free-tier-aware dollar projection, and
-distance to the advisory line (~100 writes/min; ~$54/mo R2
-object-storage ops) and the 50M/mo hard graduation trigger. The projection uses the **measured effective
-write-amp** (≈3× on R2/Cloudflare, ≈4× on S3/Node), not the 2-op
-commit floor — so the estimate includes the in-band maintenance ops
-that are incurred on the write path. That covers the day-1
-cost-verification moment without wiring an external sink. For longer
-windows (7-day, 30-day) operators pipe the canonical log line to
-CloudWatch / Workers Analytics / Datadog — see
+`baerly cost --bucket=<bucket-uri> --collection=<collection>` projects:
+
+- Class A ops/mo;
+- free-tier-aware dollars;
+- distance to the advisory line (~100 writes/min; ~$54/mo R2
+  object-storage ops); and
+- distance to the 50M Class A/mo hard graduation trigger.
+
+The projection uses measured effective write-amp, not the 2-op commit
+floor, so it includes write-path maintenance. Write amp is a
+host/maintenance-profile property: the Cloudflare free profile measures
+≈3×, and the Node profile measures ≈4×. Today `baerly cost` maps that
+onto provider defaults (`r2` ⇒ ≈3×, `aws-s3` / self-hosted ⇒ ≈4×), which
+matches the default Worker+R2 and Node+S3 paths but is only a projection
+assumption for cross-provider deployments such as Node against R2. For
+longer windows (7-day, 30-day), pipe the canonical log line to
+CloudWatch / Workers Analytics / Datadog; see
 [`docs/guide/observability.md`](../guide/observability.md).
 
 ## Cost ceiling
 
-baerly-storage commits to a published, architecturally-enforced ceiling so
-the cost line is bounded, not best-effort. Two bounds, both
-verified in CI:
+baerly-storage publishes and tests a ceiling so cost drift is caught.
+Three bounds matter:
 
-- **Small constant storage ops per logical write (commit floor: 2
-  Class A ops).** The unindexed first-try insert baseline is PUT
-  content + the committing `log/<seq>` create (two Class A ops —
-  the **commit floor**; the create-if-absent IS the commit, so there
-  is no `current.json` write on the commit path — down from three).
-  Deletes can be cheaper; indexes,
-  retries, and first-collection provisioning add bounded mutations.
-  Snapshot writes amortize across many log entries and are paid by
-  the compactor, not the writer. The
-  `db.write.class_a_ops_per_logical_write` histogram is **emitted**
-  on every commit (verified in CI by `writer.test.ts`); operators
-  who pipe it to a metrics sink can alert when p99 exceeds ~5; that
-  threshold is a recommendation, not a shipped or CI-gated check.
-- **Effective Class A write-amplification is ~3× on Cloudflare, ~4×
-  on serverful Node — not the 2-op commit floor above.** The commit
-  path is two Class A ops (content PUT + `log/<seq>` create), but
-  in-band maintenance (folds + GC) is triggered on the write path
-  and adds ~1 Class A op/write on the cf-free profile and ~2 on Node
-  (Node's `gcInterval=2` vs cf's `4` doubles the GC LISTs; each GC
-  pass is 3 LIST + 1 PUT, each fold is 2 PUT). Measured empirically
-  — see
+- **Small constant storage ops per logical write.** The unindexed
+  first-try insert baseline is PUT content + the committing
+  `log/<seq>` create: 2 Class A ops. The create-if-absent is the
+  commit, so there is no `current.json` write on the commit path.
+  Deletes can be cheaper; indexes, retries, and first-collection
+  provisioning add bounded mutations. Snapshot writes amortize across
+  many log entries and are paid by the compactor, not the writer. The
+  `db.write.class_a_ops_per_logical_write` histogram is emitted on
+  every commit (verified in CI by `writer.test.ts`). Operators who pipe
+  it to a metrics sink can alert when p99 exceeds ~5; that threshold is
+  a recommendation, not a shipped or CI-gated check.
+- **Effective Class A write-amplification is ~3× on Cloudflare and ~4×
+  on serverful Node.** The commit path is still two Class A ops, but
+  in-band folds and GC run from the write path. They add ~1 Class A
+  op/write on the cf-free profile and ~2 on Node. Node's
+  `gcInterval=2` vs. cf's `4` doubles the GC LISTs; each GC pass is a
+  handful of LISTs plus per-candidate mark `GET`s and a `pending.json`
+  CAS `PUT`, and each fold is 2 PUT. Measured empirically; see
   `docs/spec/attachments/amortized-write-cost-baseline.json`
   (`pnpm bench:amortized-write-cost`) and gated by
   `tests/integration/write-amp.test.ts`. `DeleteObject` (the GC
   sweep) is $0 on R2/S3 and is excluded from this count.
-- **`< 1 Class A op / writer / hour` for idle readers.** Real
-  expectation is exactly zero — readers walk `current.json` plus the
-  snapshot plus the live-tail log via deterministic GETs, never
-  LIST. The tail forward-probe (GET from
-  `max(log_seq_start, tail_hint)` — normally `tail_hint` — to the first
-  404) is Class B, so tail discovery never touches the Class A meter
-  and the idle-reader bound is untouched. The one read-path
-  Class A cost: an **indexed `.where()` issues one `ListObjects`
-  (Class A) per equality value** (`$in` ⇒ N calls) to walk the index
-  prefix and resolve matching `_id`s. The default fold path (full
-  scan over snapshot + tail) is zero Class A.
+- **`< 1 Class A op / writer / hour` for idle readers.** The expected
+  value is exactly zero. Unindexed reads walk `current.json`, the
+  snapshot, and the live-tail log by deterministic GETs. The tail
+  forward-probe GETs from `max(log_seq_start, tail_hint)` (normally
+  `tail_hint`) to the first 404; those are Class B calls. The read-path
+  exception is an indexed `.where()`: it issues one `ListObjects`
+  Class A call per equality value (`$in` ⇒ N calls) to walk the index
+  prefix and resolve matching `_id`s. The default fold path (full scan
+  over snapshot + tail) is zero Class A.
 
 ### Maintenance is write-driven; reads are pure
 
-The idle-reader bound holds because **maintenance ticks only on
-the write path** — a read does zero maintenance work
+The idle-reader bound holds because maintenance ticks only on the write
+path. A read does zero maintenance work
 ([ADR-004](../adr/004-ephemeral-coordination.md),
 [graduation.md](graduation.md)). The cost consequences:
 
-- **A read-only bucket pays a bounded ≤ ~1× tail replay per read
-  _while folds succeed_.** At the default `TARGET_RATIO = 1.0` the
-  live tail stays within ~1× the snapshot, so a reader replays at
-  most about one snapshot's worth of log entries on top of the
-  snapshot. Above `S_max` (the snapshot ceiling `C` / `E`) the
-  fold defers and the **tail grows unbounded** — read cost climbs
-  with every write since the last fold. That is the graduation
-  cliff, not steady state.
-- **An over-ceiling bucket defers ~free.** The defer decision is a
-  zero-storage-op projection over `current.json` already in scope,
-  so a deferring collection adds no Class A ops beyond its normal
-  writes (plus the rate-limited graduation `console.warn`).
+- **A read-only bucket pays a bounded ≤ ~1× tail replay per read while
+  folds succeed.** At the default `TARGET_RATIO = 1.0`, the live tail
+  stays within ~1× the snapshot, so a reader replays at most about one
+  snapshot's worth of log entries on top of the snapshot. Above `S_max`
+  (the snapshot ceiling `C` / `E`), the fold defers and the tail grows
+  unbounded. Read cost then climbs with every write since the last fold.
+  That is the graduation cliff, not steady state.
+- **An over-ceiling bucket defers cheaply, not magically.** The defer
+  decision is a zero-storage-op projection over `current.json` already
+  in scope, so it avoids a fold attempt. A deferring collection can still
+  do normal writes plus rate-limited `tail_hint` / warning stamps.
 - **Inline-Node fold latency is I/O-dominated, not CPU-dominated.**
   A fold's wall-clock is roughly
-  `⌈tail / MAX_PARALLEL_LOG_READS⌉` storage round-trips (the
-  log-tail GETs are already issued concurrently, capped at
-  `MAX_PARALLEL_LOG_READS = 16`); the snapshot ceiling bounds
-  CPU/memory, **not** the round-trip count. A future serverful
-  post-response dispatch would move this off the write's critical
-  path entirely.
+  `⌈tail / MAX_PARALLEL_LOG_READS⌉` storage round-trips. Log-tail GETs
+  are concurrent, capped at `MAX_PARALLEL_LOG_READS = 16`; the snapshot
+  ceiling bounds CPU/memory, not round-trip count. A future serverful
+  post-response dispatch would move this off the write's critical path.
 - **Node worst case = a fold _plus_ a full GC pass on one write.**
   Node runs `phasesPerTick: "both"`, so a single boundary-crossing
   write can pay both a fold slice and a GC pass. The combined cost
@@ -154,38 +153,32 @@ the write path** — a read does zero maintenance work
   latency-budgeted `NODE_MAINTENANCE_*` caps (fold 200 / marks 200
   / sweeps 100). Budget for the **combined** number, not the fold
   alone; a future post-response dispatch removes the spike.
-- **Seed-then-idle orphan residual (a named envelope boundary).**
-  A bucket bulk-seeded (e.g. `admin restore`) and then left idle
-  within the 7-day GC grace window carries a **bounded,
-  never-reclaimed orphan pile**: reads are pure, so with no further
-  writes nothing ticks and `runGc` never re-runs to sweep the
-  marked orphans. This is **irreducible under reads-pure**, bounded
-  by the import size, and reclaimed on demand by the opt-in
-  `runScheduledMaintenance` SDK. It is a known boundary of the
-  in-band model, not a leak.
+- **Seed-then-idle orphan residual.** A bucket bulk-seeded with
+  `admin restore` and then left idle within the 7-day GC grace window
+  can carry a bounded, never-reclaimed orphan pile. Reads are pure, so
+  without later writes nothing ticks and `runGc` never re-runs to sweep
+  marked orphans. This is irreducible under reads-pure, bounded by the
+  import size, and reclaimable on demand through the opt-in
+  `runScheduledMaintenance` SDK. It is a known boundary of the in-band
+  model, not a leak.
 
-Why a published ceiling? Two failure modes shape it:
+The ceiling protects two workloads:
 
-1. **The idle case.** A deployed app with one daily writer and a
-   handful of pollers should be free on R2 and effectively free on
-   S3. One Class A op per poll destroys that economics inside a day.
-2. **The small-workload case.** A ~100-MAU helpdesk app should cost
-   single-digit dollars per month. The per-write op count must be a
-   bounded small constant — not something that grows with table
-   size, snapshot depth, or history.
+1. An app with one daily writer and a handful of pollers should be free
+   on R2 and effectively free on S3. One Class A op per poll breaks that.
+2. A ~100-MAU helpdesk app should cost single-digit dollars per month.
+   Per-write ops must stay a small constant, not grow with table size,
+   snapshot depth, or history.
 
-Without architectural enforcement the protocol drifts: a new feature
-adds a poll here, a LIST there, and the cost line creeps upward with
-no single regression to point at. The ceiling is a gate, not a
-target — `tests/integration/maintenance-e2e.test.ts` wraps
-`Storage` with a counting proxy and gates on
-`expect(classAOps).toBeLessThan(1)` after 1800 polls (one hour at
-2 s cadence). The `CLOUDFLARE_FREE_TIER` profile in
-`packages/server/src/maintenance.ts` carries the bounded-tick
-budget arithmetic (engine defaults are unbounded, so a Node
-caller just passes `{}`); `maintenance-budget.test.ts` proves a
-single maintenance pass under the Cloudflare free-tier profile sits
-under the 50-subrequest cap.
+The ceiling is a gate, not a target. `tests/integration/maintenance-e2e.test.ts`
+wraps `Storage` with a counting proxy and gates on
+`expect(classAOps).toBeLessThan(1)` after 1800 polls (one hour at 2 s
+cadence). `packages/server/src/maintenance.ts` carries the
+`CLOUDFLARE_FREE_TIER` bounded-tick arithmetic. Engine defaults are
+unbounded, so a Node caller just passes `{}`.
+`maintenance-budget.test.ts` proves each Cloudflare free-tier compact or
+GC phase sits under the 50-subrequest cap; the scheduled handler
+alternates phases rather than running both in one free-tier tick.
 
 Per-collection commit scope (see
 [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md)) is what makes
@@ -196,30 +189,27 @@ bookmark per collection rather than contention on a global mutex.
 
 ### Ops-vs-cost tradeoff
 
-Object storage buys you **zero ops / no on-call** — there is no DB
-process to provision, patch, or page about. A managed relational DB
-trades dollars for that operational burden: you get a richer query
-model and a dedicated server, but you pay a per-project floor and you
-own the on-call rotation. At low write rates baerly-storage is
-essentially free; as write rates climb into the M-size range and
-above, the per-request billing of object-storage Class A ops compounds
-with the protocol's effective write-amplification, and the bill becomes
-real money. That cost is the graduation signal — it tells you the
-workload has grown to where a managed DB's operational tradeoff makes
-sense and the `baerly export` path is waiting.
+Object storage buys low operator burden: no DB process to provision,
+patch, or page about. A managed relational DB buys a richer query model
+and a dedicated server, but you pay a per-project floor and own the
+on-call surface. At low write rates baerly-storage is nearly free. At
+M-size and above, Class A billing compounds with effective write-amp;
+that bill is the graduation signal.
 
 ### Formulas (June-2026 rates)
 
 These are the formulas the `baerly cost` CLI projection is built on.
-`W` is monthly logical writes (write operations, not documents).
-All figures use the measured effective write-amplification, not the
-two-op commit floor.
+`W` is monthly logical writes (write operations, not documents), and
+`A` is the measured effective Class A write-amplification for the host
+maintenance profile. Use `A ≈ 3` for the Cloudflare free profile and
+`A ≈ 4` for the Node profile. All figures use measured effective
+write-amplification, not the two-op commit floor.
 
-**Cloudflare R2 path** (effective write-amp ≈ 3×):
+**Cloudflare R2 pricing** (default Worker+R2 path uses `A ≈ 3`):
 
 ```
-Class A ops/mo         = W × 3
-R2 object-storage $/mo = max(0, W×3 − 1,000,000) × $4.50 / 1,000,000
+Class A ops/mo         = W × A
+R2 object-storage $/mo = max(0, W×A − 1,000,000) × $4.50 / 1,000,000
                        + max(0, storedGB − 10) × $0.015
                        + Class B reads (typically minor at M-size)
 ```
@@ -231,26 +221,29 @@ R2 charge, and absent on self-hosted Node, R2-over-the-S3-API, or the
 Workers free tier — so `baerly cost` does not fold it into the
 projection; add ~$5/mo for the all-in figure when you deploy on Workers
 Paid. At write rates that keep Class A under 1M/mo (roughly ≤ 7 writes/min
-sustained) the object-storage ops cost is $0 and the only charge is the
-Workers Paid floor, if it applies.
+sustained) and storage under 10 GB, the R2 object-storage cost is $0;
+the only charge is the Workers Paid floor, if it applies.
 
-**AWS S3 / self-hosted Node path** (effective write-amp ≈ 4×, no free tier):
+**AWS S3 pricing** (default self-hosted Node+S3 path uses `A ≈ 4`, no free tier):
 
 ```
-Class A ops/mo = W × 4
-S3 $/mo = W×4 × $5.00 / 1,000,000
+Class A ops/mo = W × A
+S3 $/mo = W×A × $5.00 / 1,000,000
         + storedGB × $0.023
         + Class B reads (typically minor at M-size)
 ```
 
 No free tier and no flat floor: every write costs linearly from zero.
-At steady state S3 is roughly **50% costlier than R2** per write —
-$20 vs $13.50 per million logical writes (4 × $5.00/1M vs
-3 × $4.50/1M) — driven by the higher write-amp (4× vs 3×) and the
-higher per-op rate. The gap is wider at low volume, where R2's
-1M-op/mo free tier still applies and S3 has none. The 12-month
-new-account free tier was retired in 2025; these figures apply to
-paid accounts.
+In the default deployment paths, Node+S3 is roughly **50% costlier than
+Worker+R2** per write — $20 vs $13.50 per million logical writes
+(4 × $5.00/1M vs. 3 × $4.50/1M) — driven by the higher Node maintenance
+write-amp and the higher S3 per-op rate. If you run Node against R2, use
+R2's rates with Node's `A ≈ 4`; if you run a non-default profile, treat
+the table as a starting projection and validate against
+`db.write.class_a_ops_per_logical_write`. The gap is wider at low
+volume, where R2's 1M-op/mo free tier still applies and S3 has none. The
+12-month new-account free tier was retired in 2025; these figures apply
+to paid accounts.
 
 ### Cost-vs-scale table
 
@@ -261,7 +254,7 @@ exclude the $5/mo Workers Paid platform floor — add it for the all-in
 cost on Cloudflare Workers Paid. These figures are what `baerly cost`
 projects. Storage: assume ~100 MB for S-size, scaling proportionally.
 
-| Writes/min (sustained, account-wide) | Class A/mo (R2, ×3) | R2 $/mo (object-storage ops) | Class A/mo (S3, ×4) | S3 $/mo (object-storage ops) | Notes |
+| Writes/min (sustained, account-wide) | Class A/mo (Worker+R2, A≈3) | R2 $/mo (object-storage ops) | Class A/mo (Node+S3, A≈4) | S3 $/mo (object-storage ops) | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 130k | $0 | 173k | ~$0.86 | Inside R2 free tier (1M/mo) |
 | 10 | 1.3M | ~$1 | 1.7M | ~$9 | R2: small Class A overage (+ $5 Workers Paid floor) |
@@ -271,26 +264,25 @@ projects. Storage: assume ~100 MB for S-size, scaling proportionally.
 | 1000 | 129.6M | ~$579 | 172.8M | ~$864 | Well past graduation |
 
 The 390 writes/min row is the 50M Class A/mo graduation trigger at the
-measured R2 write-amp (3×) — where `baerly cost`'s trajectory line
-crosses 100% of the 50M graduation trigger. At that rate R2 costs
-**~$223/mo** and S3 **~$337/mo** (object-storage ops), confirming that
-line is "real money" and a meaningful graduation signal. S3 reaches the
-same 50M op envelope at ~290 writes/min (4× amp).
+default Worker+R2 write amp (`A≈3`): R2 costs **~$223/mo** and the
+Node+S3 default path costs **~$337/mo** in object-storage ops. The
+Node-profile path reaches the same 50M op envelope at ~290 writes/min
+(`A≈4`).
 
 ### M-size $/mo breakdown
 
-The M-size operating point is a **sustained** ~30 writes/min. In this cost-curve table
-that is an **account-wide aggregate** rate (Class A is billed per
-account, not per collection); it numerically coincides with — but is a
-different axis from — the **per-collection** CAS-contention ceiling
-`M_SIZE_WRITES_PER_MIN_PER_COLLECTION` (the CLI grading constant). Full
-arithmetic:
+The M-size operating point is a **sustained** ~30 writes/min. In this
+cost-curve table that is an **account-wide aggregate** rate because
+Class A is billed per account, not per collection. It numerically
+coincides with, but is different from, the per-collection CAS-contention
+ceiling `M_SIZE_WRITES_PER_MIN_PER_COLLECTION` (the CLI grading
+constant). Full arithmetic:
 
 ```
 Writes/mo = 30 writes/min × 60 min/hr × 24 hr/day × 30 days = 1,296,000
 ```
 
-**R2:**
+**Worker+R2 default (`A≈3`):**
 
 ```
 Class A/mo = 1,296,000 × 3 = 3,888,000
@@ -301,7 +293,7 @@ Object-storage ops:  2,888,000 / 1,000,000 × $4.50 = ~$13/mo
 All-in (object-storage ops + floor): ~$18/mo
 ```
 
-**S3:**
+**Node+S3 default (`A≈4`):**
 
 ```
 Class A/mo = 1,296,000 × 4 = 5,184,000
@@ -310,114 +302,97 @@ Object-storage ops:  5,184,000 / 1,000,000 × $5.00 = ~$26/mo
 ```
 
 The `baerly cost` CLI surfaces the **object-storage ops** figure
-(~$13/mo on R2 here) as `projectedUsdPerMonth` in the inspect footer —
-it uses the same rates and effective write-amp constants from
+(~$13/mo on R2 here) as `projectedUsdPerMonth` in the inspect footer. It
+uses the provider rates and default effective write-amp constants from
 `packages/cli/src/cost/provider.ts`, and deliberately does NOT add the
-$5 Workers Paid platform floor (which doesn't apply on self-hosted Node,
+$5 Workers Paid platform floor (which does not apply on self-hosted Node,
 R2-over-the-S3-API, or Workers free tier). Add ~$5/mo for the all-in
-cost on Workers Paid.
+cost on Workers Paid. For cross-provider deployments, use the host
+profile's measured write amp when doing manual projections.
 
-The ops-vs-cost comparison: $18/mo on R2 buys you zero-ops,
-no-on-call, and bytes-in-your-bucket. That tradeoff is the design
-center; the number is provided so you can make the comparison
-honestly, not to anchor against any specific alternative's price point.
+$18/mo on R2 buys low operator burden and bytes-in-your-bucket. The
+number is here for comparison, not as an anchor against any one
+alternative's price.
 
-## Compression off by default in `@gusto/baerly-storage/client`
+## Compression default decision for `@gusto/baerly-storage/client`
 
-The `@gusto/baerly-storage/client` HTTP client defaults `compression: false`.
+Decision: when HTTP-client wire compression ships, the default is
+`compression: false`.
 
-**Why.** The dominant baerly-storage deploy shape is a Cloudflare Worker
-talking to R2 in the same data center. That path is CPU-constrained
-(Worker CPU-ms is the metered resource on Workers Paid) and the
-intra-DC R2 link has zero egress cost. On-the-wire gzip in that
-shape spends Worker CPU-ms to save zero billable bytes — strictly
-worse on the metered axis. The same argument applies to the
-self-hosted Node deploy when the Node process and the bucket sit in
-the same network (the typical hosted Minio / on-prem Ceph case).
+**Why.** The dominant deploy shape is a Cloudflare Worker talking to R2
+in the same data center. Worker CPU-ms is metered on Workers Paid, and
+the intra-DC R2 link has zero egress cost. Gzip spends CPU to save zero
+billable bytes. The same applies when self-hosted Node and the bucket
+sit in the same network, such as hosted Minio or on-prem Ceph.
 
 **When to flip it on.** The trade-off inverts for the
-BYO-Node-to-remote-bucket shape — a Node process running outside
-the bucket's network where every read or write crosses a paid
-egress link. In that shape, compression on the wire shrinks
-billable bytes at the cost of local CPU (cheap on a long-running
-Node process compared to a per-request Worker isolate). Users
-running that shape should set `compression: true` on the client.
+BYO-Node-to-remote-bucket shape: a Node process running outside the
+bucket's network where every read or write crosses a paid egress link.
+In that shape, compression shrinks billable bytes at the cost of local
+CPU, which is cheap on a long-running Node process compared to a
+per-request Worker isolate. Users running that shape should set
+`compression: true` once the client option exists.
 
-**Default.** `false`. Single-line override on the client config.
+**Default.** `false`. Single-line override on the client config once
+the option ships.
 
 This decision is logged at [pricing-log.md](pricing-log.md)
 when it ships in `@gusto/baerly-storage/client`.
 
 ## Two operating points, two stories
 
-The cost story breaks cleanly along the workload-shape axis the
-thesis targets. Comparing baerly-storage to managed DBs at a single
-operating point is misleading — the same protocol that wins at
-idle and across portfolios is what loses on per-write unit cost
-at the graduation cliff. We grade at both.
+baerly-storage wins on idle × portfolio cost and loses on per-write unit
+cost past the graduation cliff. Both are intentional.
 
 ### At the audience operating point: idle × N portfolio
 
-The thesis's [audience-in-practice](thesis.md#audience-in-practice)
-section names a population, not a single app: forty internal
-tools, a Saturday side project that might be abandoned, a finance
-team's Claude Artifact, a $20/mo ChatGPT subscriber's dream. For
-this population, **the per-app floor is the cost line, not the
-per-write rate.** Costs at N=30 mostly-idle apps (a realistic
-internal-tools fleet at a 10,000-person company):
+For the [audience-in-practice](thesis.md#audience-in-practice), the
+per-app floor is the cost line, not the per-write rate. Costs at N=30
+mostly-idle apps:
 
-Every cell below is on the **same N=30 basis** so the columns are
-comparable. Where a provider has a non-zero per-app floor that is
-usage-based or per-project rather than a single flat fee, the N=30
-figure is shown as a **per-app basis × 30 estimate** (marked
-_est._), derived from that provider's documented per-app floor —
-not a hard total we assert as fact. Per-project floors of $0 stay
-$0 at any N. Re-check the per-app floors before quoting any total
-externally.
+Every cell uses the same N=30 basis. Non-zero usage-based or per-project
+floors are shown as **per-app basis × 30 estimates** and marked
+_est._. Per-project floors of $0 stay $0 at any N. Re-check provider
+floors before quoting totals externally.
 
 | Service                       | Cost at N=30 idle apps                   | Notes                                                                                                                                                                                                                                        |
 | ----------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **baerly-storage (Cloudflare)**       | **~$5/mo**                               | One Workers Paid floor amortized across all N apps (paid once, not ×30). Class A/B ops effectively zero at idle (`< 1 op/writer/hour`, [CI-gated](#cost-ceiling)).                                                                           |
-| **baerly-storage (self-hosted Node)** | **$0/mo** (your hardware)                | No platform floor; idle is free against any S3-API bucket.                                                                                                                                                                                   |
+| **baerly-storage (self-hosted Node)** | **$0/mo** (your hardware)                | No platform floor; idle storage-op cost is $0 against an S3-API bucket. See the AWS free-tier caveat above.                                                                                                                                  |
 | Cloudflare D1                 | ~$5/mo                                   | Same single Workers Paid floor amortized across all N apps; ties baerly-storage here, **but only if all N apps are Workers-native**. `wrangler d1 export` gives a SQL dump, but leaving is a dump-and-reload migration, not a zero-cooperation exit. |
 | Supabase Free                 | $0                                       | Two free projects per org; not a fleet posture for N=30.                                                                                                                                                                                     |
 | Supabase Pro                  | ≈ $25/app × 30 ≈ **~$750/mo** _(est.)_   | Paid plans bill per project (each carries its own always-on Postgres compute), so a 30-app fleet pays ~30 per-project floors. Derived from the documented ~$25/project Pro floor; usage on top varies.                                       |
 | Neon Launch                   | ≈ $5/app × 30 ≈ **~$150/mo** _(est.)_    | Usage-based with no monthly minimum and scale-to-zero, but each intermittently-awake app still meters CU-hours; ~$5/app is a typical small-app monthly figure, so a 30-app fleet lands near ~$150/mo. Varies with how often each app wakes.  |
 | Firebase Spark                | $0 while inside no-cost Firestore quotas | Official quota is 1 GiB stored, 20k writes/day, 50k reads/day, 20k deletes/day, **per project** — a 30-app fleet can stay $0 only while every app stays inside quota.                                                                        |
 
-The idle × portfolio multiplier is where baerly-storage's "rounds to zero"
-property does its real work. A team with 30 internal tools doesn't
-pay 30 platform floors — they pay one (or zero, on self-hosted
-Node). That's not a moat against D1 specifically; it's what makes
-the workload class economically viable at all. The alternative
-for most of these apps isn't "another database" — it's **the
-experiment doesn't happen** and the data stays in a Google Sheet.
+A team with 30 internal tools does not pay 30 platform floors. It pays
+one, or zero on self-hosted Node. For this workload class, the
+alternative is often not another database; it is the experiment staying
+in a Google Sheet.
 
 ### At the graduation cliff: M-size and above
 
-Past the workload ceiling, you have crossed the design center on
-purpose — the per-write economics flip, and that flip is the
-signal to graduate. The "Alternative DBs at M size" table below
-grades baerly-storage against the systems users should _graduate to_, not
-the systems they should be running on long-term. D1 wins per-write
-where it's available; managed Postgres wins above L.
+Past the workload ceiling, per-write economics flip. The table below
+compares baerly-storage with systems users should graduate to. D1 wins
+per-write where it is available; managed Postgres wins above L.
 
 ## Alternative DBs at M size
 
-The M-size **audience profile** is ~100 MAU, 10 000 docs, ~24 000
-writes/day (~50/min over an 8-hour workday — a bursty profile that
-averages well under the **sustained** ~30 writes/min basis the
-[cost-vs-scale table](#cost-vs-scale-table) uses), ~480 000 reads/day,
-100 MB stored. baerly-storage's modelled monthly cost at this profile is
-~$19 all-in — dominated by the $5 Workers Paid floor plus R2 Class A/B
-ops. This is a **different lens** from the sustained ~30 writes/min curve
-(~$18/mo all-in), not the same arithmetic: the profile's 720 000
-writes/mo (~2.16M R2 Class A) is _below_ the sustained curve's 1.296M
-writes/mo (~3.89M Class A), so the two land close by coincidence of
-drivers — not because either "sits at the free-tier floor" (both are
-above the 1M Class A free tier). Both figures are all-in incl. the
-Workers Paid floor; `baerly cost` reports the object-storage-ops portion
-only. Rough 1-decimal comparisons at the same workload:
+M-size, in this comparison, means:
+
+- ~100 MAU;
+- 10 000 docs;
+- ~24 000 writes/day (~50/min over an 8-hour workday);
+- ~480 000 reads/day; and
+- 100 MB stored.
+
+This is a bursty audience profile, not the same lens as the sustained
+~30 writes/min [cost-vs-scale table](#cost-vs-scale-table). The profile
+has 720 000 writes/mo (~2.16M R2 Class A), below the sustained curve's
+1.296M writes/mo (~3.89M Class A). Both are above the 1M Class A free
+tier. baerly-storage's modelled cost here is ~$19 all-in, dominated by
+the $5 Workers Paid floor plus R2 Class A/B ops; `baerly cost` reports
+only the object-storage-ops portion.
 
 | Service                  | Plan         | $/mo                                                                  | Notes                                                                                                                                                                                 |
 | ------------------------ | ------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -431,108 +406,70 @@ only. Rough 1-decimal comparisons at the same workload:
 
 Read this as positioning, not a cost claim:
 
-- **XS / S workloads:** baerly-storage is decisively cheaper than any
-  always-on managed DB, especially across a portfolio — see the
+- **XS / S:** baerly-storage is cheaper than always-on managed DBs,
+  especially across a portfolio; see the
   [idle × portfolio table](#at-the-audience-operating-point-idle--n-portfolio).
-  The differentiator is both _what_ you get (schemaless docs,
-  multi-instance causal consistency, bytes-in-your-bucket) AND
-  the price.
-- **M workload:** baerly-storage (~$19) is ~4× more expensive than D1
-  (~$5) **where D1 is available** — and D1 is Workers-runtime-only:
-  `wrangler d1 export` gives a SQL dump, but there's no
-  bucket-native data layer or live CDC handoff, so leaving is a
-  dump-and-reload migration, not the bytes-already-in-your-bucket,
-  zero-cooperation exit baerly-storage offers. Off-Workers (AWS,
-  on-prem, self-hosted Node, any environment that doesn't tolerate
-  Cloudflare lock-in), managed Postgres at $25+/mo behind a vendor's
-  managed catalog is the relevant comparison. A user willing to accept
-  Cloudflare lock-in and a SQL schema should **switch to D1** —
-  it's strictly cheaper, and [that move is the success path,
-  not a churn event](thesis.md#what-prototype-tier-storage-needs).
-  Firebase Blaze is also cheaper than baerly-storage on raw per-op at M
-  (~$5 vs. ~$19, recomputed above) — but the argument here was
-  never "baerly-storage is cheapest per-op." It's idle × portfolio,
-  portability, and availability; on a per-op basis at M, both D1
-  and Firebase undercut baerly-storage, and that's expected — M is past
-  the design center.
-- **L workload:** baerly-storage's R2 Class B alone (~$1 500) costs more
-  than a Postgres Pro plan — read-heavy traffic on a per-doc
-  fan-out protocol is disproportionately expensive vs. a B-tree
-  lookup in a real DB. Reaching that price line is the success
-  signal to graduate.
-- **Portability / switching cost:** This axis favors baerly-storage
-  across all workload sizes. Object storage is the rare primitive
-  with a common dialect — the S3 API. AWS S3 and Cloudflare R2 are the
-  production-supported stores; MinIO is the local conformance target,
-  and other S3-compatible endpoints require `baerly doctor --bucket`
-  plus owner validation (see
+  The differentiators are schemaless docs, multi-instance causal
+  consistency, bytes-in-your-bucket, and price.
+- **M:** baerly-storage (~$19) is ~4× more expensive than D1 (~$5)
+  where D1 is available. D1 is Workers-runtime-only; `wrangler d1
+  export` gives a SQL dump, but leaving is dump-and-reload rather than
+  a bucket-native data layer or live CDC handoff. Off Workers, managed
+  Postgres at $25+/mo behind a vendor catalog is the relevant
+  comparison. If Cloudflare lock-in and SQL are acceptable, switch to
+  D1; [that move is the success path, not churn](thesis.md#what-prototype-tier-storage-needs).
+  Firebase Blaze also undercuts baerly-storage on raw per-op at M
+  (~$5 vs. ~$19). That is expected: M is past the design center.
+- **L:** baerly-storage's R2 Class B alone (~$1 500) costs more than a
+  Postgres Pro plan. Read-heavy traffic on a per-doc fan-out protocol is
+  disproportionately expensive compared with a B-tree lookup.
+- **Portability / switching cost:** baerly-storage keeps this advantage
+  across workload sizes. AWS S3 and Cloudflare R2 are the
+  production-supported stores; MinIO is the local conformance target;
+  other S3-compatible endpoints require `baerly doctor --bucket` plus
+  owner validation (see
   [storage-compatibility.md](../spec/storage-compatibility.md) and
-  [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob speaks a
-  non-S3 dialect and GCS's S3-interop endpoint exposes conditional
-  writes as read-only, so both need a dedicated adapter that doesn't
-  exist yet. The portability point still
-  holds where it counts: your bytes live in your bucket and
-  leaving needs no vendor cooperation. D1, Supabase, Neon, and Firebase are
-  excellent, but they are proprietary runtimes — choosing one is
-  a switching-cost decision. Even at M-size where D1 wins on
-  raw per-write price, the portability axis sits orthogonal to
-  price and should be weighed alongside it.
+  [ADR-004](../adr/004-ephemeral-coordination.md)). Azure Blob is not an
+  S3 dialect, and GCS's S3-interop endpoint exposes conditional writes
+  as read-only, so both need dedicated adapters that do not exist yet.
+  D1, Supabase, Neon, and Firebase are proprietary runtimes; choosing
+  one is a switching-cost decision.
 
-Cost is decisive in the regimes baerly-storage is sized for; it's
-designed to lose past them — that loss is the graduation signal,
-mechanical via `baerly export --target=postgres --collection=<name>`
-(per collection). We name three
-axes explicitly: per-write price (where baerly-storage loses at M-size),
-idle × portfolio cost (where it wins decisively), and
-portability / switching cost (where it wins on every workload).
-The workload class the thesis targets (idle × portfolio, XS/S
-experimentation, large internal-tools fleet) isn't economically
-viable under per-app managed-DB floors — and that's where the
-real argument lives.
+The three axes are per-write price, idle × portfolio cost, and
+portability / switching cost. baerly-storage loses the first at M-size
+and above; `baerly export --target=postgres --collection=<name>` is the
+per-collection graduation path.
 
-The graduation triggers follow directly. The first is an **advisory
-cost line** — an eyes-open early signal, not a hard stop — keyed to a
-sustained **~100 writes/min** (account-wide), provider-agnostic: ~13M
-Class A/mo on R2 (~$54/mo object-storage ops), ~17.3M on S3 (~$86/mo).
-At this rate the bill has crossed the point where managed Postgres or D1
-are priced comparably. Object storage buys zero ops, no on-call, and no
-migration for your bytes; a managed DB trades those dollars for a schema,
-SQL, and an ops surface. `baerly cost` prints an advisory note at this
-crossing. The **hard graduation cost line**, sustained over 7 days, is
-R2 Class A ops > 50M/month (an account/bucket-wide count; ~$220/mo
-object-storage ops on R2). At the measured effective write-amp the 50M
-Class A/mo line corresponds to ≈ **390 writes/min** sustained on R2
-(~3×); on serverful Node the same op envelope is reached at ≈ **290
-writes/min** (~4×), though S3's linear per-request pricing makes the
-relevant Node line a dollar budget rather than a free-tier-derived op
-count. Both correct the previous ≈580 figure, which assumed the 2-op
-commit floor. (Stored data is a graduation _cost signal_ at the ~10 GB
-R2 free-tier line — see below — not a hard trigger; the tooling does not
-enforce a storage hard stop.)
+### Cost-side graduation signals
 
-The historic third trigger — **effective write-amp > 6** — is
-**retired**. It was calibrated against the old assumed 2-op floor (a 3×
-headroom signalling "maintenance badly behind"). Now that the effective
-write-amp is measured at ~3× / ~4× and _stress_-measured to peak at ~4×
-even under pathological churn
-(`docs/spec/attachments/amortized-write-cost-stress-baseline.json`,
-`pnpm bench:write-amp-stress`), a sustained > 6 is unreachable through
-the bounded in-band maintenance path — the only route past ~4× is a
-CAS-retry storm, which is already governed by the per-collection
-throughput ceiling below, not a billing signal. The signal that in-band
-maintenance is _falling behind_ is `db.compaction.deferred_total` and the
-defer `console.warn` (see [graduation.md](graduation.md)), not a
-write-amp ratio.
+- **Advisory:** sustained ~100 writes/min account-wide. This is
+  provider-agnostic: ~13M Class A/mo on R2 (~$54/mo object-storage ops)
+  and ~17.3M on S3 (~$86/mo). It is an eyes-open signal, not a hard
+  stop; `baerly cost` prints an advisory note at this crossing.
+- **Hard cost line:** R2 Class A ops > 50M/month, sustained over 7 days
+  (account/bucket-wide; ~$220/mo object-storage ops on R2). At measured
+  effective write-amp, that is ≈ **390 writes/min** on R2 (~3×). The
+  same op envelope on serverful Node is ≈ **290 writes/min** (~4×), but
+  S3's linear pricing makes the Node line a dollar budget rather than a
+  free-tier-derived op count. Both correct the previous ≈580 figure,
+  which assumed the 2-op commit floor.
+- **Stored data:** a graduation cost signal at the ~10 GB R2 free-tier
+  line, not a hard trigger. The tooling does not enforce a storage hard
+  stop.
+- **Retired:** `effective write-amp > 6`. It was calibrated against the
+  old assumed 2-op floor. Effective write-amp is now measured at
+  ~3× / ~4× and stress-measured to peak at ~4× under pathological churn
+  (`docs/spec/attachments/amortized-write-cost-stress-baseline.json`,
+  `pnpm bench:write-amp-stress`). The route past ~4× is a CAS-retry
+  storm, governed by the per-collection throughput ceiling. Maintenance
+  falling behind is signalled by `db.compaction.deferred_total` and the
+  defer `console.warn` (see [graduation.md](graduation.md)).
 
-These cost lines sit alongside two additional graduation signals in
+These sit alongside the other graduation signals in
 [graduation.md](graduation.md): ~30 logical writes/min/collection
-(per-collection throughput estimate, CAS-livelock model) and ~10 GB/tenant
-(the R2 free-tier storage cost line — a billing signal where R2 storage
-charges begin, not a hard stop) plus ~100 collections/tenant (a soft
-fan-out guideline — bench-grounded linear cost; nothing in the protocol
-enforces it). Today the `baerly cost` projection's `percentOfGraduation`
-tracks only the **Class A** trigger (the 50M ops/month line); the
-stored-data line is a documented cost signal not surfaced by the tooling.
+(throughput estimate), ~10 GB/tenant (R2 storage cost signal, not a hard
+stop), and ~100 collections/tenant (soft fan-out guideline). Today
+`baerly cost` `percentOfGraduation` tracks only the Class A trigger.
 
 ### Hot-prefix cliff at high write fan-in
 
