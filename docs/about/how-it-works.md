@@ -209,11 +209,12 @@ write, the handler may run a bounded compaction or GC slice when the live
 log ratio or GC cadence says work is due. Cloudflare can finish the slice
 after the response with `ctx.waitUntil`; Node runs it inline and may run
 both phases in one tick. **Reads are pure: they never run maintenance.**
-An idle bucket does nothing and pays nothing. Teams that want batched
-maintenance windows can call `runScheduledMaintenance` from their own
-scheduler, but it is an opt-in convenience, never a requirement. The
-product boundary is named in [`thesis.md`](thesis.md); the rationale is
-in [ADR-002](../adr/002-ephemeral-coordination.md).
+An idle bucket runs no handlers, sends no requests, and schedules no
+maintenance. Teams that want batched maintenance windows can call
+`runScheduledMaintenance` from their own scheduler, but it is an opt-in
+convenience, never a requirement. The product boundary is named in
+[`thesis.md`](thesis.md); the rationale is in
+[ADR-002](../adr/002-ephemeral-coordination.md).
 
 ## Where the types and schema fit
 

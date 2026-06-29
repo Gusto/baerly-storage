@@ -34,13 +34,17 @@ invocation and the only persistent component is the bucket. Idle apps
 cost zero runtime; cold starts read correctly the same as warm ones.
 
 Maintenance (compaction + GC) runs as **bounded, single-attempt slices
-dispatched on the write path after a commit** — never on a schedule,
-never from a long-lived process. **Reads are pure — they never tick.** The
+dispatched on the write path after a commit** — never on a schedule
+required for correctness or default operation, never from a long-lived
+process. **Reads are pure — they never tick.** The
 unsliceable snapshot rebuild is bounded by a **static two-way ceiling**
-(`snapshot_bytes ≤ C` **and** `snapshot_rows ≤ E`); over either, the fold
-defers and drains across later write-ticks. The fold's pointer advance is
-a full-fence CAS; a lost CAS abandons the fold and its orphan snapshot is
-GC-swept. **No lease.**
+(`snapshot_bytes ≤ C` **and**
+`snapshot_rows + maxFoldEntriesPerPass <= E`); see the spec for the exact
+formula. Tail slices drain across later write-ticks. An over-ceiling
+snapshot rebuild defers until the collection shrinks, the profile changes,
+or the workload graduates. The fold's pointer advance is a full-fence CAS;
+a lost CAS abandons the fold and its orphan snapshot is GC-swept. **No
+lease.**
 
 **The runtime model lives in
 [sync-protocol.md §Maintenance runtime model](../spec/sync-protocol.md#maintenance-runtime-model);

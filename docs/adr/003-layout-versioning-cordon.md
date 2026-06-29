@@ -55,10 +55,10 @@ the reserved-`_` error contract lives in
 Binding on whatever v2 becomes: **reclaiming cordoned prior data must
 never depend on operator-configured bucket policy as a correctness
 requirement.** A bare bucket keeps working; cordoned prior-generation data
-is idle (idle→zero cost). An operator MAY reclaim it via a lifecycle rule,
-but the kernel requires no bucket policy to be correct — the same
-zero-operator-infrastructure doctrine that keeps coordination
-request-bounded in [ADR-002](002-ephemeral-coordination.md).
+is idle: no runtime path, requests, or maintenance. An operator MAY
+reclaim it via a lifecycle rule, but the kernel requires no bucket policy
+to be correct — the same zero-operator-infrastructure doctrine that keeps
+coordination request-bounded in [ADR-002](002-ephemeral-coordination.md).
 
 ## Closed paths
 

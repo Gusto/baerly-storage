@@ -37,7 +37,10 @@ Conventions for content under `docs/`.
 
 Route by doc type so each fact stays single-sourced:
 
+- **About docs** (`docs/about/`) own thesis, graduation, and project
+  positioning.
 - **Specs** (`docs/spec/`) own current protocol contracts.
+- **Guides** (`docs/guide/`) own user-facing workflows and examples.
 - **ADRs** (`docs/adr/`) own durable rationale and rejected paths.
 - **Contributing docs** (`docs/contributing/`) own how-to-change guidance.
 

@@ -10,7 +10,7 @@ related: ["publishing.md"]
 # Day-one handshake gate (`pnpm gate:day-one`)
 
 The day-one gate asserts that a non-engineer + Claude can go from
-`npm create baerly@latest` (post-publish) to a working
+`pnpm create @gusto/baerly-storage@latest` (post-publish) to a working
 `client.collection().insert()` inside the day-one SLO:
 
 - Cloudflare target: **< 5 min cold**
@@ -151,7 +151,8 @@ wrangler r2 bucket delete <name>
 
 ## What the budgets measure
 
-- **`scaffold-complete`** — `npm create baerly@latest` returned.
+- **`scaffold-complete`** — `pnpm create @gusto/baerly-storage@latest`
+  returned.
 - **`install-complete`** — `pnpm install` inside the scaffold
   returned.
 - **`server-ready`** (Node) — the scaffold's `/v1/healthz` returned 200.

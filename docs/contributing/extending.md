@@ -14,11 +14,12 @@ related:
 
 # Extending baerly-storage
 
-Start by deciding which invariant changes. If a feature only gives callers a
-better way to ask for existing state, it belongs near `Db`, `Collection<T>`, or
-`Query<T>`. If it changes what becomes durable when a write commits, it belongs
-in the protocol wire shape and `Writer`. If it changes how `get` / `put` /
-`delete` / `list` work for a backend, it belongs behind `Storage`.
+Start by deciding which invariant changes: what the system must keep true. If a
+feature only gives callers a better way to ask for existing state, it belongs
+near `Db`, `Collection<T>`, or `Query<T>`. If it changes what becomes durable
+when a write commits, it belongs in the protocol wire shape and `Writer`. If it
+changes how `get` / `put` / `delete` / `list` work for a backend, it belongs
+behind `Storage`.
 
 | If the change...                              | Start here                                                                                       |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -283,7 +284,9 @@ Rejected alternatives:
   (Zod, Valibot, ArkType, …) works via the `SchemaValidator` type from
   `@baerly/protocol`.
 
-Do not confuse collection schemas with protocol artifact schemas:
+Collection schemas are application validation. Protocol artifact schemas are
+compatibility contracts for stored baerly-storage files, so older readers and
+newer writers can make explicit accept/reject decisions. Do not confuse the two:
 
 - **Collection schemas** validate application rows, as described above.
 - **`CurrentJson`** carries the protocol artifact schema version. Its
@@ -386,6 +389,10 @@ falls through to the snapshot+log fold.
 - `name` must match `/^[a-z][a-z0-9_]*$/`. A name in the reserved
   leading-`_` namespace throws `InvalidConfig`; a name that fails the
   regex throws `SchemaError`.
+- **Filtered indexes are sound only when the query predicate implies the index
+  predicate.** Keep an unfiltered fallback for broader queries; otherwise the
+  planner can route through the filtered index as a last resort and miss rows
+  outside the filter.
 - `predicate?` is a `PredicateWire` —
   `{ clauses: PredicateClause[] }`. It accepts the full operator vocabulary (`eq`,
   `gt` / `gte`, `lt` / `lte`, `in`) end-to-end. `predicateImplies`
@@ -393,10 +400,6 @@ falls through to the snapshot+log fold.
   a filtered index whenever the query's bounds (whether expressed
   as equality, `in` members, or another range) fall inside the
   filter's bounds.
-- A filtered index is sound only when the query predicate implies the index
-  predicate. Keep an unfiltered fallback for broader queries; otherwise the
-  planner can route through the filtered index as a last resort and miss rows
-  outside the filter.
 - **Numeric range and `in` walks route through the index** — see
   [`docs/contributing/features.md`](features.md)
   §"Numeric range and `in` walks".

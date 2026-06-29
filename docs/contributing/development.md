@@ -142,7 +142,7 @@ confirm it's yours.
 - **No `baseUrl`.** `tsconfig.json` uses `moduleResolution: "bundler"` and
   no `baseUrl`. Cross-package imports use the `@baerly/<pkg>`
   workspace name; sibling imports are relative
-  (`import { makeCollection } from "./collection"`).
+  (`import { makeCollection } from "./collection.ts"`).
 - **`oxfmt --write` modifies files.** Use `format:check` if you only want
   to verify.
 - **`tsgo` is the TS 7 native preview.** Errors look slightly different

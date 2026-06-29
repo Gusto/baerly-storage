@@ -13,11 +13,13 @@ baerly-storage is sized for the prototype tier: internal tools, side
 projects, and small product experiments. Graduation is what you do when
 one collection outgrows that tier.
 
-The threshold concept is **the fold**: compaction that rolls committed
-log entries into a snapshot. The tail is the newer log entries not yet in
-that snapshot. baerly-storage slices the tail, but it still rebuilds the
-whole snapshot in one pass. Graduation starts when that rebuild no longer
-fits the host's CPU, subrequest, or memory budget.
+The threshold concept is **the fold**: the moment maintenance turns many
+small committed writes into one refreshed snapshot. That makes reads
+cheap again, but the snapshot rebuild still has to fit in one host turn.
+The tail is the newer log entries not yet in that snapshot.
+baerly-storage slices the tail, but it still rebuilds the whole snapshot
+in one pass. Graduation starts when that rebuild no longer fits the
+host's CPU, subrequest, or memory budget.
 
 Watch `snapshot_bytes` and `snapshot_rows`. `baerly inspect` reports
 them, and they also live on `current.json`. When write-tick maintenance
@@ -253,10 +255,11 @@ and `R` is only the read-amplification / fold-frequency knob.
 | Read-amplification between folds | `≤ 1 + R` | ≤ 2x |
 
 A higher `R` lets the tail grow longer before a fold, reducing
-compaction write-amplification and increasing read-amplification. LSM
-engines such as Go's and RocksDB commonly pick `R = 2`.
-baerly-storage uses `R = 1.0` to halve read-amplification while
-accepting ~2x compaction write-amplification.
+compaction write-amplification and increasing read-amplification. Many
+log-structured storage engines commonly let the next level grow to ~2x
+the previous one; baerly-storage uses `R = 1.0` to halve
+read-amplification while accepting ~2x compaction
+write-amplification.
 
 This compaction write-amplification is not the cost model's **effective
 Class-A write-amplification** (~3x on the Cloudflare profile / ~4x on

@@ -43,17 +43,23 @@ beginning.
 
 ## Auth posture matrix
 
-|           | Cloudflare target                                                                       | Node target                                                                              |
-| --------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **Dev**   | `auth: "none"` default. No bearer injection — SPA hits `/v1/*` plain.                  | `auth: "none"` default. No bearer injection — SPA hits `/v1/*` plain.                   |
-| **Prod**  | **Pattern A** — `cloudflareAccess` verifier resolved from CF Access JWT assertion      | **Pattern C** — `bearerJwt` verifier over JWKS, token minted by your OIDC IdP            |
-| **Shared-secret (services + dev)** | **Pattern B** — `auth: "shared-secret"` + `baerlyDevAuth` when browser dev calls need bearer injection | **Pattern B** — `auth: "shared-secret"` + process `SHARED_SECRET`; `baerlyDev({ secret })` can inject it during Vite dev |
+|           | Cloudflare target                                                                  | Node target                                                                   |
+| --------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Dev**   | `auth: "none"` default. No bearer injection — SPA hits `/v1/*` plain.             | `auth: "none"` default. No bearer injection — SPA hits `/v1/*` plain.        |
+| **Prod**  | **Pattern A** — `cloudflareAccess` verifier from CF Access JWT assertion          | **Pattern C** — `bearerJwt` verifier over JWKS from your OIDC IdP             |
+| **Shared-secret (services + dev)** | **Pattern B** — shared secret, injected server-side for browser dev calls | **Pattern B** — shared secret for services; Vite dev can inject server-side |
 
 Pattern A and Pattern C are the production browser-auth shapes: the
 browser authenticates with a real IdP, and the server verifies the
 result. Pattern B proves only possession of one shared string. Use it
 for CI, internal services, or local dev plumbing. **Pattern B is never
 for end-user browser auth in prod.**
+
+Pattern B targets:
+
+- Cloudflare browser dev: `auth: "shared-secret"` plus `baerlyDevAuth`.
+- Node browser dev: `auth: "shared-secret"` plus `baerlyDev({ secret })`.
+- Services or CI: send `Authorization: Bearer $SHARED_SECRET` directly.
 
 ## What changes at the dev→prod flip
 
