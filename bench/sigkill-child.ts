@@ -1,6 +1,6 @@
 /**
  * S3-sigkill child entrypoint for the historical two-write commit
- * harness. Issues the synthetic pre-ADR-008 three-step write (PUT
+ * harness. Issues the synthetic pre-ADR-004 three-step write (PUT
  * content → PUT log entry → CAS current.json) and prints a `READY-N`
  * line to stdout after each step. The parent watches stdout and
  * delivers SIGKILL after `READY-N` where N == BENCH_KILL_AFTER_STEP.

@@ -4,7 +4,7 @@ audience: operator
 summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
 last-reviewed: 2026-06-26
 tags: [operations, cost, capacity, graduation]
-related: [cost-model.md, workload-fit.md, thesis.md, "../adr/004-ephemeral-coordination.md"]
+related: [cost-model.md, workload-fit.md, thesis.md, "../adr/002-ephemeral-coordination.md"]
 ---
 
 # Graduation thresholds
@@ -510,7 +510,7 @@ not an operator knob.
   and the cost side of graduation.
 - [thesis.md](thesis.md#workload-ceiling) — why the envelope is named
   and why graduation is the success path.
-- [adr/004-ephemeral-coordination.md](../adr/004-ephemeral-coordination.md)
+- [adr/002-ephemeral-coordination.md](../adr/002-ephemeral-coordination.md)
   — why graduation is mechanical: there is no stateful coordinator to
   migrate away from, so the bucket plus the log shape are the handoff to
   Postgres.

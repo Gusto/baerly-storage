@@ -78,7 +78,7 @@ const B32_ALPHABET = "0123456789abcdefghijklmnopqrstuv";
 
 /**
  * Reject malformed {@link IndexDefinition} shapes synchronously, at
- * writer construction. See docs/adr/007-layout-versioning-cordon.md.
+ * writer construction. See docs/adr/003-layout-versioning-cordon.md.
  *
  * @throws BaerlyError code="InvalidConfig" — reserved leading-`_` `name`.
  * @throws BaerlyError code="SchemaError" — `name` fails the regex, or `on` is empty.
@@ -322,7 +322,7 @@ export const indexKeyFor = (
  *
  * @throws BaerlyError code="SchemaError" — `on` contains a dotted
  *   path, or the indexed field's value is an array. Both restrictions
- *   are pre-launch; multi-value (array) indexes are a follow-up.
+ *   are current 0.x limitations; multi-value (array) indexes are a follow-up.
  */
 export const projectIndexValues = (
   def: IndexDefinition,

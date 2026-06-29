@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# overnight-fuzz.sh — Pre-launch overnight correctness fuzz-hunt driver.
+# overnight-fuzz.sh — Overnight correctness fuzz-hunt driver for the 0.x soak.
 #
 # PURPOSE
 #   Loops the repo's property-based and crash-injection fuzz suites with

@@ -105,7 +105,7 @@ Run it:
 
 - A contended create-loser may surface `Conflict` (412) **or** a retryable `NetworkError`
   (409 ConditionalRequestConflict, real AWS S3) — the parity table accepts a code *set*.
-- CAS **fairness is not a parity property** ([ADR-004](../../adr/004-ephemeral-coordination.md)
+- CAS **fairness is not a parity property** ([ADR-002](../../adr/002-ephemeral-coordination.md)
   "No fairness"); only exactly-one-winner + code-on-loss are asserted, never
   ordering/FIFO.
 - `LocalFsStorage` `ifMatch` is **in-process TOCTOU only** — the suite exercises

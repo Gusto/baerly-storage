@@ -70,8 +70,8 @@ Bundle-size budgets set the scope: the full Cloudflare Workers bundle
 (`cloudflare.js`) is capped at 122 KiB gzipped; the Node HTTP closure
 (`http.js`) at 101 KiB; the browser client (`client.js`) at 6 KiB. The
 whole public API surface fits in a single ~12k-token `dist/API.md`, so
-an LLM can use it from `.d.ts` alone (see
-[ADR-002](../adr/002-api-surface-lock.md)).
+an LLM can use it from `.d.ts` alone (see the
+[API surface lock](conventions/change-discipline.md#api-surface-lock)).
 
 ## Runtime model
 
@@ -105,7 +105,7 @@ rather than spilling into a long-lived process. The opt-in
 [`runScheduledMaintenance`](../../packages/server/src/maintenance.ts)
 SDK can still be driven from a cron trigger, but it is not the
 default and not required. The rationale is in
-[ADR-004](../adr/004-ephemeral-coordination.md).
+[ADR-002](../adr/002-ephemeral-coordination.md).
 
 ## Module dependency graph
 
@@ -190,6 +190,108 @@ flowchart TD
     logio -. uses .-> protocol
     storage -. implements .-> protocol
 ```
+
+## Package layers
+
+The dependency graphs above show the request flow through one runtime.
+The `@baerly/*` packages it spans obey a separate, hard import
+invariant — the one that keeps the kernel portable:
+
+- **`@baerly/protocol` is pure: no I/O, no `node:` builtins.** It is the
+  universal leaf and imports nothing. This is the load-bearing claim that
+  lets the kernel run unchanged on Workerd, in Node, and in the browser
+  where applicable.
+- **`@baerly/server` imports nothing below `@baerly/protocol`** — in
+  particular it never reaches sideways into a storage adapter. Workerd
+  compatibility is defined as "everything reachable from
+  `@baerly/server`'s entry points runs under Workerd"; that holds because
+  `server` depends only on `protocol`.
+- **Workerd-incompatible `node:` builtins are blocked in `protocol` and
+  `server`.** `server` allowlists `node:async_hooks` only (Workerd
+  supports it under `nodejs_compat`); `protocol` allows none. Packages
+  above this line are Node-only by design and may import any builtin.
+
+The production import graph (`*.test.ts` / `*.test-d.ts` excluded) is a
+hand-maintained allow list — each row names the packages that owner may
+import; anything not listed is forbidden, and self-imports are allowed:
+
+| Owner package | May import |
+|---|---|
+| `protocol` | (nothing — protocol must remain pure) |
+| `server` | `protocol` |
+| `dev` | `protocol`, `server`, `adapter-node` |
+| `adapter-node` | `protocol`, `server`, `dev` |
+| `adapter-cloudflare` | `protocol`, `server`, `dev` |
+| `client` | `protocol`, `server` |
+| `cli` | `protocol`, `server`, `dev`, `adapter-node`, `adapter-cloudflare`, `client` |
+| `create-baerly-storage` | `protocol`, `server`, `cli` |
+
+```mermaid
+flowchart TD
+    create["create-baerly-storage"]
+    cli["cli"]
+    client["client"]
+    adapterCf["adapter-cloudflare"]
+    adapterNode["adapter-node"]
+    dev["dev"]
+    server["server"]
+    protocol["protocol"]
+
+    create --> cli
+    create --> server
+    create --> protocol
+
+    cli --> client
+    cli --> adapterCf
+    cli --> adapterNode
+    cli --> dev
+    cli --> server
+    cli --> protocol
+
+    client --> server
+    client --> protocol
+
+    adapterCf --> dev
+    adapterCf --> server
+    adapterCf --> protocol
+
+    adapterNode --> server
+    adapterNode --> protocol
+
+    dev --> server
+    dev --> protocol
+
+    server --> protocol
+
+    dev -->|vite-plugin| adapterNode
+    adapterNode -->|dev-landing| dev
+
+    linkStyle 19,20 stroke:#d33,stroke-width:2px
+```
+
+The two red edges are an accepted Node-only `dev ↔ adapter-node` cycle:
+`@baerly/dev`'s Vite plugin imports `baerlyNode` as the in-process dev
+listener, and `@baerly/adapter-node`'s `dev-landing` middleware imports
+`renderDevLanding` as a runtime value. The cycle sits above the
+`server`/`protocol` line, cannot pull anything into the kernel, and will
+never reach Workerd; breaking it is a separate refactor.
+
+The allow list is enforced at edit time by
+[`scripts/lint-package-layers.mjs`](../../scripts/lint-package-layers.mjs),
+which runs in `pnpm verify` / `pnpm verify:agent`. It walks
+`packages/*/src/**`, matches bare, subpath, dynamic, and relative
+cross-package specifiers, forbids the disallowed `node:` builtins, and
+exits non-zero with a remediation hint. **This table is the source of
+truth; the script's `RULES` table is its executable mirror — a new
+`@baerly/*` package must add its row to both in the same PR.**
+
+The list is hand-maintained on purpose: each new edge gets a deliberate
+review. A graph-based dependency tool (`dependency-cruiser`, Nx,
+`eslint-plugin-boundaries`) would resolve dynamic and relative edges
+natively and is in-policy, but config-as-data for it is heavier than the
+~120-line script for an 8-node graph that already has a unit-test
+harness. Revisit at N>12 packages, or the first dynamic import the
+climb-out heuristic can't classify.
 
 ## CLI surfaces
 
@@ -405,13 +507,13 @@ adapter package. Platform-specific code belongs in adapters.
   is **dormant** under single-write commit — the post-commit fence
   verify was removed (the winning `log/<seq>` create is itself the
   proof of commit), and no prod path reads or writes the field. Its
-  drop is deferred (see [ADR-008](../adr/008-single-write-commit.md)).
+  drop is deferred (see [ADR-004](../adr/004-single-write-commit.md)).
 - **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
   RFC 7386 with the array-replacement convention; see
   [spec/json-merge-patch.md](../spec/json-merge-patch.md).
 - **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire
-  `LogEntry` interface, with pre-launch narrowing rules and
-  post-consumer major-version stability. See
+  `LogEntry` interface and its 0.3.0 public-baseline / 0.x stability
+  rules. See
   [spec/log-entry-shape.md](../spec/log-entry-shape.md).
 
 ## Key types (where the contracts live)

@@ -41,7 +41,7 @@ changeset body for that reader.
   import { newThing } from "@gusto/baerly-storage/...";
   ```
 
-  Why, and a pointer to the ADR if one applies (e.g. ADR-002).
+  Why, and a pointer to the ADR if one applies (e.g. ADR-001).
   ````
 
 The `.d.ts` types are the canonical authority. If this changelog and the

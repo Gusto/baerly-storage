@@ -186,7 +186,8 @@ interface Query<T> extends /* Collection<T>'s modifiers */ {
 `replace` is by-id only — `Collection<T>.replace(id, doc)` throws
 `NotFound` on missing id. There is no predicate-form `.replace(doc)`
 on `Query<T>`: a strict-cardinality-1 verb is redundant ceremony to
-the by-id form (see ADR-002).
+the by-id form (the public surface is additive-only locked, so a second
+type-valid path to one capability is redundancy).
 
 ### Predicates
 
@@ -426,7 +427,9 @@ Schemas: any [StandardSchema v1](https://standardschema.dev) validator
 (Zod 3.24+, Valibot 0.36+, ArkType 2.0+). Validation runs on the
 post-image: `update` and `replace` see the full doc, not just the
 patch. Failures → `BaerlyError{code:"SchemaError", issues:[…]}`,
-mapped to HTTP 400.
+mapped to HTTP 400. Validation is write-path only — reads, export, and
+replay never re-validate, so a schema change never retroactively rejects
+existing rows.
 
 **Author `_id` as required, not `.optional()`.** The validator runs
 on the post-image — by the time it fires, the server has already
@@ -770,8 +773,9 @@ Signature, audience, and expiry checks are still enforced; only
 tenant derivation is replaced.
 
 **Why a function and not a class?** The source repo's
-`docs/adr/005-verifier-function-shape.md` records the three
-properties the shape upholds and the four rejected alternatives.
+`docs/guide/auth.md` records the properties the shape upholds and the
+rejected alternatives (class hierarchy, middleware chain, closed enum,
+kernel-side composition).
 
 ## Observability
 
@@ -913,7 +917,7 @@ via `GET /v1/since?collection=messages&cursor=…` — both still served by
 a second instance — it doesn't share `baerlyWorker`'s
 `observableStorage(...)` wrapping (so custom-route writes don't land
 in the canonical-line storage counters) or the read-cache invalidation
-helper. For pre-launch chat-shape apps this is acceptable; the
+helper. For small chat-shaped apps this is acceptable; the
 observability gap is being tracked as a follow-up. If you also need
 PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for
 each verb.
@@ -1082,7 +1086,7 @@ string you see: `cat node_modules/@gusto/baerly-storage/dist/RECIPES.md`):
 ## Where to look next
 
 - **A call you expected doesn't type-check?** The public surface is
-  additive-only locked (ADR-002), but the rare breaking change carries an
+  additive-only locked, but the rare breaking change carries an
   old→new migration in `dist/CHANGELOG.md` (`cat dist/CHANGELOG.md`). The
   `.d.ts` types are canonical; the changelog is the recovery path.
 - Per-symbol JSDoc: read the `.d.ts` chunks in this directory

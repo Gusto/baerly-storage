@@ -5,7 +5,7 @@ import { assertPathSegment } from "./path-segment.ts";
  * (index keys, log `doc_id`) or filesystem path (`LocalFsStorage`). The
  * `_id` analogue of `assertKeySegment` (`db.ts`). Routes through the
  * single shared {@link assertPathSegment} rule (empty / `"/"` /
- * `"."`|`".."` / C0-C1 control chars / leading `"_"` (ADR-007) / overlong,
+ * `"."`|`".."` / C0-C1 control chars / leading `"_"` (ADR-003) / overlong,
  * all as `BaerlyError{code:"InvalidConfig"}`).
  */
 export const assertDocId = (id: string): void => {

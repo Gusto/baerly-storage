@@ -10,7 +10,7 @@ describe("assertDocId", () => {
     "..", // path-segment trick
     "../victim", // traversal-shaped
     "x/../y", // embedded ..
-    "_internal", // ADR-007 reserved namespace
+    "_internal", // ADR-003 reserved namespace
     "with\u0000null", // control char (NUL)
     "tab\tchar", // control char (TAB)
   ])("rejects %j", (bad) => {

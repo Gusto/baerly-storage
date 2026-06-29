@@ -10,7 +10,7 @@ describe("assertPathSegment", () => {
     "..", // traversal
     "../victim", // traversal-shaped
     "x/../y", // embedded ..
-    "_internal", // ADR-007 reserved
+    "_internal", // ADR-003 reserved
     "with\u0000null", // C0 control (NUL) - escape, never a literal byte
     "tab\tchar", // C0 control (TAB)
     "del\u007fchar", // DEL / C1

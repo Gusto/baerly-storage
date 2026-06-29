@@ -12,8 +12,8 @@ related:
     json-merge-patch.md,
     writer-fence-adversarial-model.md,
     prior-art.md,
-    "../adr/004-ephemeral-coordination.md",
-    "../adr/008-single-write-commit.md",
+    "../adr/002-ephemeral-coordination.md",
+    "../adr/004-single-write-commit.md",
   ]
 ---
 
@@ -45,7 +45,7 @@ the first missing log entry; it does not replay committed rows by
 wall-clock time or use a reader-side list-and-repair lag window.
 
 This is the single-write commit design; see
-[ADR-008](../adr/008-single-write-commit.md) for the decision record
+[ADR-004](../adr/004-single-write-commit.md) for the decision record
 it supersedes (the earlier two-write commit) and the rationale.
 
 ## Storage layout
@@ -111,7 +111,7 @@ once commits skip `current.json`.
 
 `writer_fence` is **dormant** authority metadata: no production
 commit/read path uses it for authority. Its drop is deferred (see
-[ADR-008 §1](../adr/008-single-write-commit.md#1-the-numbered-log-append-is-the-commit)).
+[ADR-004](../adr/004-single-write-commit.md#decision)).
 
 Readers fold `[log_seq_start, tail_hint)`, the range `current.json`
 asserts is committed but not snapshotted. A missing entry inside that
@@ -280,7 +280,7 @@ can never remove a key a committed value depends on. The residual is
 safe: an extra key is a false-positive. It can be healed by the doc's
 next write; `rebuildIndex` is the whole-collection operator backstop. (A
 bounded in-tick reconcile slice was considered and deferred — see
-[ADR-008 §5](../adr/008-single-write-commit.md#5-index-emission-is-hybrid-around-the-commit).)
+[ADR-004](../adr/004-single-write-commit.md#closed-paths).)
 
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
@@ -409,7 +409,7 @@ want an explicit maintenance window; it is not required for
 correctness.
 
 The doctrine and trade-offs live in
-[ADR-004](../adr/004-ephemeral-coordination.md). Capacity thresholds
+[ADR-002](../adr/002-ephemeral-coordination.md). Capacity thresholds
 and operator actions live in
 [graduation.md](../about/graduation.md).
 

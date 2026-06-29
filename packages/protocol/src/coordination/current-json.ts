@@ -434,7 +434,7 @@ const encodeJson = (json: CurrentJson): Uint8Array => encodeJsonBytes(json);
  * Runtime guard for `parsed` to be a {@link CurrentJson}. Throws
  * `BaerlyError{code:"InvalidResponse"}` rather than coercing. Tolerant
  * reader: unknown keys ignored, new required fields bump
- * `schema_version` (move (b), ADR-007).
+ * `schema_version` (move (b), ADR-003).
  */
 const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (parsed === null || typeof parsed !== "object") {
@@ -447,7 +447,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (r["schema_version"] === 1 || r["schema_version"] === 2) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key} is a pre-single-write-commit current.json; re-provision the bucket. Pre-launch, no production buckets — delete and re-seed the local-fs/Minio scratch bucket, or recreate the R2/S3 bucket.`,
+      `current.json at ${key} uses schema v${String(r["schema_version"])} from a pre-0.3.0 internal build; this build requires schema v${CURRENT_JSON_SCHEMA_VERSION}. Dump/restore with the old build, or re-provision scratch/local buckets.`,
     );
   }
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {

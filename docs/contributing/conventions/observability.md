@@ -34,7 +34,7 @@ metrics never appear on that request's line; failures surface only via
 `console.error` in `packages/server/src/maintenance.ts`. This is inherent
 to the `waitUntil` model — you can't append to an already-sent response's
 log line. Changing it would require a separate maintenance log
-context/flush; not planned pre-launch.
+context/flush; not currently planned.
 
 Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed
 callback that calls `db.collection().insert()` from inside the Vite
