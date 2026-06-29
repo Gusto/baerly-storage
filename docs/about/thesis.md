@@ -41,8 +41,9 @@ Agent-Built Software_; the technical detail lives across `docs/`.
 It is now cheap to try a software idea. That creates many small apps
 with uncertain lifespans and mixed criticality: dashboards, internal
 trackers, personal apps, workflow sidecars. Some run for a week. Some
-run every Tuesday for five years. Some become important. Most live
-between toy and production.
+run every Tuesday for five years. Some become important. Most are
+production apps — real data, real users — that simply live inside a
+defined workload envelope.
 
 You need three primitives to build software in 2026: compute, tokens,
 and storage. Compute has an answer: FaaS, pay per request, scale to
@@ -53,30 +54,34 @@ The gap shows up as ordinary failures: `localStorage` does not survive a
 share link; LLM-generated Postgres + RLS can return empty arrays when a
 policy is wrong, which looks like "no data" instead of broken
 authorization; a real database invites service ceremony the operator
-never sees. baerly-storage is sized for the territory between toy and
-production.
+never sees. baerly-storage is built for production apps that live
+within a defined workload envelope — internal tools, admin panels,
+dashboards, and low-to-moderate-traffic line-of-business apps. The
+ceiling is scale and shape, not seriousness.
 
 Better models do not remove that need. Stronger agents do better when
 the surface is small, tools are boring, and invalid states are
 unrepresentable.
 
-## What prototype-tier storage needs
+## What apps within the envelope need
 
-Prototype-tier does not mean fake data. It means live data while the
-operator is still learning whether the app deserves standing
-infrastructure. Sandboxes and review bots reduce blast radius after a
-tool has chosen a storage shape; baerly-storage supplies the safer
-default.
+Apps within the envelope run real data and real users. What they share
+is that they have not yet crossed — or do not need to cross — the
+cost-and-commitment threshold of standing infrastructure: a managed
+database service, a migration workflow, a DBA on-call. Sandboxes and
+review bots reduce blast radius after a tool has chosen a storage
+shape; baerly-storage supplies the safer default before that investment
+is warranted.
 
 The criteria:
 
 1. **Idle rounds to zero.** No $5/mo floors multiplied across forty
-   abandoned internal tools. A prototype should not accumulate rent for
+   abandoned internal tools. An app should not accumulate rent for
    merely existing.
 2. **Low operational overhead.** No CVE rotation, no kernel patches, no
    on-call for an app with fifteen users.
-3. **Graduation path with no hostage situation.** Prototype-tier
-   storage without an exit is deferred migration pain. _Graduation is
+3. **Graduation path with no hostage situation.** Storage within a
+   scale envelope without an exit is deferred migration pain. _Graduation is
    the success path, not a failure mode._ When an app crosses the
    envelope and moves to Cloudflare D1 or Postgres, that is a
    baerly-storage **win**, not a churn event. Snapshot export ships
@@ -152,8 +157,8 @@ Criteria #2 and #5 rule out Postgres directly:
    deserves it or not.
 
 Postgres and D1 are graduation targets, not villains. baerly-storage's
-job is to keep the experiment cheap and exit-controlled until the
-operator knows the app deserves that tier.
+job is to keep production apps cheap and exit-controlled until they
+cross the scale envelope where a database service is the right tool.
 
 ## Why object storage
 
@@ -240,8 +245,8 @@ bucket layout and read/write algorithms are explained in
   where it is available; that is the graduation signal, not a
   competitive position. See [cost-model.md](cost-model.md).
 - **Not a D1 / Postgres replacement.** D1 and Postgres are graduation
-  targets. baerly-storage keeps the experiment cheap until the user
-  knows whether it is worth graduating.
+  targets. baerly-storage keeps production apps cheap and exit-ready
+  until they cross the scale envelope where graduating makes sense.
 
 ## Workload ceiling
 

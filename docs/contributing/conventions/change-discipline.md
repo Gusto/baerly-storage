@@ -182,7 +182,7 @@ Before proposing a mechanism that involves scheduling, cleanup,
 coordination, or cross-request state, run the three checks below. A
 failing answer means the mechanism needs redesign before it becomes a
 configuration option. The principle this enforces is thesis criterion #6
-([Zero operator burden](../../about/thesis.md#what-prototype-tier-storage-needs)):
+([Zero operator burden](../../about/thesis.md#what-apps-within-the-envelope-need)):
 "create a bucket; run the kernel inside an HTTP handler" is the entire
 operator action set.
 

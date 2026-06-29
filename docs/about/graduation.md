@@ -9,9 +9,13 @@ related: [cost-model.md, workload-fit.md, thesis.md, "../adr/002-ephemeral-coord
 
 # Graduation thresholds
 
-baerly-storage is sized for the prototype tier: internal tools, side
-projects, and small product experiments. Graduation is what you do when
-one collection outgrows that tier.
+baerly-storage is built for production apps that live within a defined
+workload envelope: internal tools, admin panels, dashboards, and
+low-to-moderate-traffic line-of-business apps, up to roughly
+~30 writes/min/collection, ~10 GB/tenant stored, and ~100
+collections/tenant. Graduation is what you do when a collection or
+workload crosses one of those documented bounds — a scale event, not a
+maturity one.
 
 The threshold concept is **the fold**: the moment maintenance turns many
 small committed writes into one refreshed snapshot. That makes reads
