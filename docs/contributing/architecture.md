@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-06-26
+last-reviewed: 2026-06-28
 tags: [architecture, lifecycle, module-map]
 related: ["../spec/sync-protocol.md", extending.md, features.md]
 ---
@@ -241,6 +241,30 @@ markers are zero-byte objects used to find candidate doc ids.
    `LOG_FORWARD_PROBE_CAP`; exhausting it surfaces
    `BaerlyError{code:"Internal"}`. There is no post-commit fence verify;
    `writer_fence` is dormant.
+
+   The ordering, and the read-back branch that distinguishes a lost
+   acknowledgement from a foreign write:
+
+   ```mermaid
+   sequenceDiagram
+       participant W as Writer (request handler)
+       participant B as Bucket (S3 / R2)
+
+       W->>B: GET current.json (snapshot ptr and tail_hint)
+       W->>B: GET log/N onward (forward-probe)
+       B-->>W: first 404 fixes seq = N
+       W->>B: PUT content/sha (create-if-absent)
+       W->>B: PUT new index markers (create-if-absent)
+       W->>B: PUT log/N (create-if-absent)
+       alt slot was free
+           B-->>W: 200 — COMMIT
+           W->>B: DELETE stale index markers (after commit)
+       else slot taken
+           B-->>W: 412 Precondition Failed
+           W->>B: GET log/N (read the occupant)
+           Note over W: adopt only if same session, same seq,<br/>and full-entry equality — otherwise re-probe the next slot
+       end
+   ```
 
 3. **Read path: `Collection.where(p).all()`**
    (`packages/server/src/query.ts`): reads `current.json`, loads the
