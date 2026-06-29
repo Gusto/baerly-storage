@@ -49,9 +49,13 @@ The mental model, then the mechanism.
 ## Evaluate the bet
 
 Whether baerly-storage fits the app, and what it costs.
+Limits are split by the decision they support: shape in workload fit,
+runtime and graduation in graduation thresholds, cost in cost model, and
+backend support in the storage compatibility spec.
 
 - [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
-  baerly-storage is, who it's for, and what it deliberately isn't — the _why_.
+  baerly-storage is, who it fits, and what boundaries it deliberately
+  keeps — the _why_.
 - [`about/workload-fit.md`](about/workload-fit.md) — the shape-fit
   test: whether the app's core screens can be answered from one
   collection before you count rows or costs.

@@ -14,32 +14,30 @@ codebase.
 
 ## Core idea
 
-Start with the only shared thing every request can see: a bucket object,
-meaning bytes stored at a key. `PUT` writes an object,
-`If-None-Match: "*"` makes that write create-only, and a `404` means the
-key is absent.
+A bucket gives every request the same primitive: bytes stored at a key.
+`PUT` writes an object, `If-None-Match: "*"` makes that write
+create-if-absent, and a `404` means the key is absent.
 
-The threshold concept for this codebase is single-write commit: the
-database commits a mutation by creating one numbered log object,
+The threshold concept for this codebase is single-write commit: a
+mutation commits by creating one numbered log object,
 `log/<seq>.json`. There is no database server deciding the winner. Every
 writer races for the first empty log slot; on a supported backend,
-exactly one create can win, and that winning create is the commit.
+exactly one create can win. That winning create is the commit.
 
 Everything before the log create prepares data a future reader will need.
 Everything after it is cleanup or maintenance. `current.json` does not
 commit writes.
 
 For an insert or update, the writer uploads the content body and new
-index markers to S3-compatible storage before it creates the `LogEntry`
-at `log/<seq>.json` with `If-None-Match: "*"`. There is no
-`current.json` write on the commit path. `current.json` is
-compactor-owned state: it names the snapshot, stores `log_seq_start`
-(the first log seq not covered by that snapshot), and carries a
-non-authoritative `tail_hint`.
+index markers before it creates the `LogEntry` at `log/<seq>.json` with
+`If-None-Match: "*"`. There is no `current.json` write on the commit
+path. `current.json` is compactor-owned state: it names the snapshot,
+stores `log_seq_start` (the first log seq not covered by that snapshot),
+and carries a non-authoritative `tail_hint`.
 
 The live tail is the first missing sequence after the committed log
-entries. `tail_hint` is only a monotone lower bound on that tail; it tells
-readers where to start probing and may lag.
+entries. `tail_hint` is only a monotone lower bound on that tail; it may
+lag and only tells readers where to start probing.
 
 Reads use `current.json` as a starting point, not as the tail authority.
 They load the snapshot it names, fold the trusted range
@@ -80,12 +78,13 @@ state. The Worker or Node handler is stateless per-request app code with
 bucket credentials, and correctness must survive losing the process.
 
 A request constructs a `Db` with
-`Db.create({ storage, app, tenant, config? })`. `app` and `tenant` are
-bucket-prefix namespace segments such as `app/tickets/tenant/acme/...`.
-The `Db` reads a fresh `current.json`, does the work — query evaluation,
-conflict resolution, or the committing `log/<seq>` create — and returns.
-Reads are strong by construction because each request fetches
-`current.json`; no warm cache is load-bearing for correctness.
+`Db.create({ storage, app, tenant, config? })`. `app` and `tenant` become
+bucket-prefix namespace segments such as
+`app/tickets/tenant/acme/...`. The `Db` reads a fresh `current.json`,
+does the work — query evaluation, conflict resolution, or the committing
+`log/<seq>` create — and returns. Reads do not rely on a warm cache:
+each request fetches `current.json` and discovers the live tail from
+storage.
 
 Cloudflare can finish a write-triggered maintenance tick after the
 response with `ctx.waitUntil`; Node runs it inline unless the host wraps
@@ -95,24 +94,21 @@ in-memory state from one request is load-bearing for the next.
 Maintenance is **triggered in-band on the write path**, not by a
 scheduler. After a successful commit, the writer may dispatch one
 bounded `runBoundedMaintenance` pass if the ratio or GC-boundary gate is
-due. If no gate trips, it does nothing, and leftover work waits for later
-writes. See
+due; otherwise leftover work waits for later writes. See
 [the maintenance subsection](#after-the-write--the-in-band-maintenance-tick)
-below. The default profile is sized to fit inside the platform's
-subrequest budget — Cloudflare Workers' 50-subrequest limit is the
-tightest target — so larger backlogs drain across many write-ticks
-rather than spilling into a long-lived process. The opt-in
+below. The default profile fits the tightest platform target,
+Cloudflare Workers' 50-subrequest limit, so larger backlogs drain across
+many write-ticks instead of a long-lived process. The opt-in
 [`runScheduledMaintenance`](../packages/server/src/maintenance.ts)
-SDK can still be driven from a cron trigger, but it is not the
-default and not required. The rationale is in
+SDK can still be driven from a cron trigger; it is not the default or
+required. The rationale is in
 [ADR-002](adr/002-ephemeral-coordination.md).
 
 ## Module dependency graph
 
-A request flows top-to-bottom through a few layers; the engine leans on
-a column of pure protocol contracts and triggers maintenance after
-a commit. The second diagram zooms into the read/write engine — the part
-you touch when changing `writer.ts` or the query path.
+The first diagram shows request flow. The second zooms into the
+read/write engine — the part you touch when changing `writer.ts` or the
+query path.
 
 Solid arrows are a direct dependency or call path. Dashed arrows are a
 looser relationship: **uses** a pure contract, **implements** an
@@ -193,14 +189,12 @@ flowchart TD
 
 ## Package layers
 
-The dependency graphs above show the request flow through one runtime.
-The `@baerly/*` packages it spans obey a separate, hard import
-invariant — the one that keeps the kernel portable:
+The `@baerly/*` packages obey a separate import invariant that keeps the
+kernel portable:
 
 - **`@baerly/protocol` is pure: no I/O, no `node:` builtins.** It is the
-  universal leaf and imports nothing. This is the load-bearing claim that
-  lets the kernel run unchanged on Workerd, in Node, and in the browser
-  where applicable.
+  universal leaf and imports nothing, so the kernel can run unchanged on
+  Workerd, in Node, and in the browser where applicable.
 - **`@baerly/server` imports nothing below `@baerly/protocol`** — in
   particular it never reaches sideways into a storage adapter. Workerd
   compatibility is defined as "everything reachable from
@@ -285,24 +279,24 @@ exits non-zero with a remediation hint. **This table is the source of
 truth; the script's `RULES` table is its executable mirror — a new
 `@baerly/*` package must add its row to both in the same PR.**
 
-The list is hand-maintained on purpose: each new edge gets a deliberate
-review. A graph-based dependency tool (`dependency-cruiser`, Nx,
+The list is hand-maintained so each new edge gets deliberate review. A
+graph-based dependency tool (`dependency-cruiser`, Nx,
 `eslint-plugin-boundaries`) would resolve dynamic and relative edges
-natively and is in-policy, but config-as-data for it is heavier than the
-~120-line script for an 8-node graph that already has a unit-test
-harness. Revisit at N>12 packages, or the first dynamic import the
-climb-out heuristic can't classify.
+natively and is in-policy, but config-as-data is heavier than the
+~120-line script for an 8-node graph with a unit-test harness. Revisit
+at N>12 packages, or the first dynamic import the climb-out heuristic
+can't classify.
 
 ## CLI surfaces
 
-Two CLIs ship from this repo, and the split is load-bearing:
+Two CLIs ship from this repo:
 
 | CLI | Package | Role |
 | --- | --- | --- |
 | `@gusto/create-baerly-storage` | `packages/create-baerly-storage/` | Puts baerly-storage into a project by scaffolding from `examples/` or bolting onto an existing Cloudflare Worker (`pnpm create @gusto/baerly-storage@latest .`). It is the only npm-published CLI besides `baerly-storage` itself. |
 | `baerly` | `packages/cli/` | Operates on a project that already has baerly-storage: `deploy`, `doctor`, `inspect`, `export`, `cost`, and the `admin` subgroup. Workspace-internal; bundled to `dist/baerly.js` inside the `baerly-storage` tarball. |
 
-The two share one helper module — `@baerly/cli/wrangler-patch` — because
+They share one helper module — `@baerly/cli/wrangler-patch` — because
 both `baerly deploy --target=cloudflare` and
 `@gusto/create-baerly-storage`'s bolt-on flow merge into the same
 `wrangler.jsonc`. Everything else stays in its package. See
@@ -322,24 +316,28 @@ markers are zero-byte objects used to find candidate doc ids.
    constructs a `CommitInput{ op: "I", collection, docId, body }`,
    and calls `Writer.commit(...)`.
 
-2. **`Writer.commit(req)`**
-   (`packages/server/src/writer.ts`): reads `current.json` fresh for
-   its snapshot pointer and `tail_hint`, then forward-probes from
-   `max(log_seq_start, tail_hint)` to find the first empty log slot and
-   mint `seq`. It PUTs the content body under
-   `app/<app>/tenant/<tenant>/manifests/<collection>/content/<sha>.json`
-   and PUTs additive (new) index artifacts under
-   `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`
-   **before** the commit. It then creates the log entry under
-   `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
-   with `If-None-Match: "*"` — **that create is the commit** (no
-   `current.json` write on the commit path) — and finally DELETEs stale
-   index keys after the commit. A `412` on the log create means the key
-   already exists. The writer reads the existing `LogEntry` and adopts it
-   only when it has the same `session`, same `seq`, and full-entry
-   equality with the attempted entry. Any failed adoption check means a
-   foreign or invalid occupant, so the writer re-probes until it finds
-   the next empty slot. That re-probe is bounded by
+2. **`Writer.commit(req)`** (`packages/server/src/writer.ts`):
+   - reads `current.json` fresh for its snapshot pointer and `tail_hint`;
+   - forward-probes from `max(log_seq_start, tail_hint)` to find the
+     first empty log slot and mint `seq`;
+   - PUTs the content body under
+     `app/<app>/tenant/<tenant>/manifests/<collection>/content/<sha>.json`
+     and additive (new) index artifacts under
+     `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`
+     **before** the commit;
+   - creates the log entry under
+     `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
+     with `If-None-Match: "*"` — **that create is the commit** (no
+     `current.json` write on the commit path);
+   - DELETEs stale index keys after the commit.
+
+   A `412` on the log create means the key already exists. The writer
+   reads the existing `LogEntry` and adopts it only when it has the same
+   `session`, same `seq`, and full-entry equality with the attempted
+   entry. Any failed adoption check treats the occupant as a conflicting
+   committed entry, so the writer re-probes until it finds the next empty
+   slot. A malformed log entry surfaces as corrupt storage state, not as
+   an ordinary conflict. That re-probe is bounded by
    `LOG_FORWARD_PROBE_CAP`; exhausting it surfaces
    `BaerlyError{code:"Internal"}`. There is no post-commit fence verify;
    `writer_fence` is dormant.
@@ -401,20 +399,19 @@ completeness is sound only when the query implies the index filter. The
 plan shape, diagnostic `reason` values, and filtered-index caveat are in
 [features.md](contributing/features.md) §"Secondary indexes".
 
-The HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route in
-`packages/server/src/http/since.ts` is the change-notification
-channel: it walks the log from a caller-supplied cursor and
-either returns the new entries immediately or holds the request
-until new entries arrive (or the long-poll deadline elapses).
-The protocol-level theory lives in
+The HTTP `/v1/since?collection=<name>&cursor=<opaque>` route in
+`packages/server/src/http/since.ts` walks the log from a caller-supplied
+cursor, then returns new entries immediately or holds the request until
+entries arrive (or the long-poll deadline elapses). The protocol-level
+theory lives in
 [spec/sync-protocol.md](spec/sync-protocol.md).
 
 ### After the write — the in-band maintenance tick
 
 Compaction keeps reads from replaying old log entries; GC removes
-orphaned objects. Both still obey the no-daemon rule: the writer's
-post-commit dispatch point (`packages/server/src/writer.ts`) is the
-single default in-band trigger site for this work.
+orphaned objects. The writer's post-commit dispatch point
+(`packages/server/src/writer.ts`) is the single default in-band trigger
+site for this work.
 
 After the commit lands, the writer reads a per-request
 `MaintenanceDispatch` off the observability context

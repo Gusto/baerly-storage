@@ -14,65 +14,61 @@ related: ["../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md
 > the **browser → server** posture (dev defaults, the dev→prod flip, and
 > the SPA-secret invariant), see [client-auth.md](client-auth.md).
 
-For `/v1/c/*`, `/v1/count`, and `/v1/since`, baerly-storage auth
-answers two questions before any storage I/O: is this request accepted,
-and which tenant prefix should it use? A tenant prefix is the storage
-namespace for the request. Once the verifier returns it, the HTTP
+For data routes (`/v1/c/*`, `/v1/count`, and `/v1/since`), auth runs
+before storage I/O. It answers two questions: is this request accepted,
+and which tenant prefix may the request use? A tenant prefix is the
+storage namespace for the request. Once the verifier returns it, the
 adapter constructs `Db.create({ tenant: tenantPrefix, ... })`, so every
 later read and write lands under that prefix.
 
-Concretely, a `Verifier` is a single async function
+A `Verifier` is the async function that makes that decision:
 `(req: Request) => Promise<VerifierResult | null>`. The dispatcher
-invokes it exactly once per request, at the dispatcher boundary, before
-any `Storage` I/O — there is no middleware chain and no second auth
-decision later in the request. It resolves to `{ tenantPrefix, identity }`
-for an accepted request, `null` for an unauthenticated one (which the
-dispatcher maps to HTTP 401 + `BaerlyError{code:"Unauthorized"}`), or
-throws a `BaerlyError` for broken auth configuration or dependencies (a
-500 operator fault). The null-vs-throw split is deliberate so on-call
-paging can target operator faults without false positives from
-credential-fishing traffic. The kernel treats `identity` as opaque; it
+invokes it exactly once per request, before any `Storage` I/O. There is
+no middleware chain and no later auth decision inside the dispatcher.
+
+It returns `{ tenantPrefix, identity }` for accepted requests, `null`
+for unauthenticated requests (HTTP 401 +
+`BaerlyError{code:"Unauthorized"}`), or throws `BaerlyError` for broken
+auth configuration or dependencies (500 operator fault). That
+null-vs-throw split keeps credential-fishing traffic from being
+reported as operator faults. The kernel treats `identity` as opaque; it
 uses `tenantPrefix` for isolation and does not turn identity claims into
 row-level permissions. The `tenantPrefix` derives from auth, never from
 the URL — a URL-encoded tenant would be a forgery surface (see
 [ADR-001](../adr/001-tenant-cas-isolation.md)).
 
-Auth is a single async function on purpose — not a class hierarchy, a
-middleware chain, or a closed enum. A class hierarchy tree-shakes worse;
-a middleware chain assumes per-request state the stateless server does
-not keep; a closed enum would force every new scheme through the kernel's
-own release cycle. Async (not sync) so JWKS / SigV4 / RPC presets aren't
-gated on a workaround. Kernel-side multi-verifier composition is left
-out deliberately — policy belongs to the deployment, and user-space
-`firstOf` / `allOf` sugar can compose verifiers later without the kernel
-picking a policy.
+The function shape is deliberate: class hierarchies tree-shake worse;
+middleware assumes per-request state the stateless server does not keep;
+a closed enum would force every new scheme through the kernel's release
+cycle. It is async so JWKS / SigV4 / RPC presets need no workaround.
+The kernel leaves multi-verifier composition to deployments; user-space
+`firstOf` / `allOf` sugar can compose later without kernel policy.
 
-There are two ways to configure auth, in precedence order:
+Auth config resolves in this order:
 
 1. **`verifier:` on `baerlyWorker` / `baerlyNode`.** Use this for
    production. It can read runtime env and pick `cloudflareAccess`,
    `bearerJwt`, `sharedSecret`, or your own function.
 2. **`config.auth` in `baerly.config.ts`.** Use this for the
    generated app's default or fallback config. `"none"` pins every
-   request to `config.tenant`; `"shared-secret"` synthesizes
-   `sharedSecret({ secret: env.SHARED_SECRET, tenantPrefix:
-   config.tenant })`.
+   request to `config.tenant`; `"shared-secret"` reads `SHARED_SECRET`
+   from runtime env and synthesizes `sharedSecret({ secret,
+   tenantPrefix: config.tenant })`.
 
 `auth: "none"` is for local dev and trusted internal callsites. Do
 not deploy a public data route with it.
 
-In production, fail closed. The snippets below read required auth env
-before constructing the verifier, so missing config throws instead of
-serving `auth: "none"`. If the same artifact runs in both dev and
-prod, gate verifier setup on an explicit env var (e.g.
-`BAERLY_AUTH_REQUIRED=1`). Do not rely on `NODE_ENV` or a hostname
-check. [client-auth.md](client-auth.md) shows that full pattern for
-both targets.
+In production, fail closed: read required auth env before constructing
+the verifier, so missing config throws instead of serving
+`auth: "none"`. If one artifact runs in dev and prod, gate verifier
+setup on an explicit env var (e.g. `BAERLY_AUTH_REQUIRED=1`). Do not
+rely on `NODE_ENV` or a hostname check. [client-auth.md](client-auth.md)
+shows that full pattern for both targets.
 
 ## Cloudflare Production
 
-Preferred: put Cloudflare Access in front of the Worker, then verify
-the injected JWT assertion before storage I/O.
+Preferred: use Cloudflare Access in front of the Worker; the verifier
+checks the injected JWT assertion before storage I/O.
 
 ```ts
 // src/server/index.ts
@@ -178,7 +174,7 @@ export default defineConfig({
 });
 ```
 
-Then set the secret with:
+Set the secret:
 
 ```sh
 wrangler secret put SHARED_SECRET
@@ -191,8 +187,8 @@ verifier.
 
 ## Node Production
 
-Preferred: verify bearer JWTs from your OIDC provider before the Node
-server touches storage.
+Preferred: use bearer JWTs from your OIDC provider; the Node server
+verifies them before storage I/O.
 
 ```ts
 // src/server/index.ts
@@ -229,7 +225,7 @@ const handle = baerlyNode({
 await handle.listen(Number(process.env["PORT"] ?? 8080));
 ```
 
-Use `tenantClaim` when your IdP issues one tenant per token. Use
+Use `tenantClaim` when your IdP issues one tenant per token; use
 `tenantPrefix` when the app is single-tenant or tenancy is enforced
 outside baerly-storage. They are mutually exclusive.
 
@@ -280,10 +276,10 @@ after it returns; the tenant prefix is the storage isolation boundary.
 
 ## Authorization Boundary
 
-baerly-storage authentication chooses a tenant. It does not ship
-row-level authorization. Once a caller is authenticated and pinned to a
-tenant, it can read and write any collection under that tenant through
-`/v1/*`.
+Do not treat authentication as row-level authorization. baerly-storage
+authentication chooses a tenant. Once a caller is authenticated and
+pinned to a tenant, it can read and write any collection under that
+tenant through `/v1/*`.
 
 For finer policy, intercept protected collection routes before they
 reach `baerlyWorker` / `baerlyNode`:

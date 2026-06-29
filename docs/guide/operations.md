@@ -2,15 +2,17 @@
 title: Operations runbook
 audience: operator
 summary: Production preflight, auth, backup, observability, capacity, and route checks.
-last-reviewed: 2026-06-26
+last-reviewed: 2026-06-28
 tags: [operations, runbook, production]
 related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../about/cost-model.md"]
 ---
 
 # Operations runbook
 
-Production checklist for a baerly-storage app. Fill these once and keep
-the same values through every command:
+Production checklist for one baerly-storage app. Operational safety
+depends on one bucket URI, one `(app, tenant, collection)` scope, and
+auth returning the intended tenant prefix. Fill these once and keep the
+same values through every command:
 
 ```sh
 APP=acme
@@ -24,8 +26,8 @@ BASE_URL=https://api.example.com
 
 ### Bucket and deploy checks
 
-For Cloudflare, run the target check plus the bucket check. For
-Node/self-hosted, run the bucket check only.
+For Cloudflare, run both checks. For Node/self-hosted, run only the
+bucket check.
 
 ```sh
 # Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
@@ -36,8 +38,8 @@ baerly doctor --bucket="$BUCKET_URI"
 ```
 
 - The target check validates platform deploy shape.
-- The bucket check validates the object-store commit rule: if several
-  writers try to create the same next log object, exactly one must win;
+- The bucket check validates the object-store commit rule: when several
+  writers try to create the same fresh log object, exactly one must win;
   stale `If-Match` updates and create-if-absent writes over existing keys
   must fail.
 
@@ -45,10 +47,10 @@ baerly doctor --bucket="$BUCKET_URI"
 the bucket honors `If-None-Match: "*"` and `If-Match`. It does not
 migrate or validate an existing baerly-storage prefix.
 
-New buckets can ignore the schema note. Buckets written by the old
-pre-single-write `current.json` schema (`schema_version` 1 or 2) must
-be dumped under the old build and restored/reseeded under the current
-schema (`schema_version: 3`), not reused in place.
+For new buckets, skip this note: buckets written by the old
+pre-single-write `current.json` schema (`schema_version` 1 or 2) must be
+dumped under the old build and restored/reseeded under the current schema
+(`schema_version: 3`), not reused in place.
 
 There is no `baerly doctor --target=node` backend today; the bucket
 probe is the Node safety check.
@@ -58,8 +60,8 @@ probe is the Node safety check.
 Verify the route boundary. `GET /v1/healthz` is anonymous inside the
 baerly-storage adapter; if Cloudflare Access protects the whole
 hostname, Access may challenge it before the Worker sees it. The
-data-route check is that an unauthenticated collection request fails
-closed.
+unauthenticated collection request below is the production data-route
+check.
 
 ```sh
 curl -fsS "$BASE_URL/v1/healthz"
@@ -85,7 +87,7 @@ curl: either `$TOKEN`, or the Cloudflare Access service-token pair.
 Use `auth: "none"` only for local development or trusted internal
 code paths. Production data routes (`/v1/c/*`, `/v1/count`, and
 `/v1/since`) need a verifier that accepts the request and returns the
-tenant prefix, the storage namespace for the request:
+tenant prefix, the storage namespace for that request:
 
 | Target             | Production default                                                           |
 | ------------------ | ---------------------------------------------------------------------------- |
@@ -98,12 +100,11 @@ Never ship `SHARED_SECRET` to a browser bundle. Full recipes are in
 
 ## Backups
 
-Run `baerly admin dump` for every production collection and store the
-result off-host. Dumps are collection-scoped NDJSON; keep an inventory
-of every `(app, tenant, collection)` triple you operate. Use the
-hardened wrapper in [backups.md](backups.md): `0600` env file owned by
-the job user, temp file plus atomic rename, `0600` files, SHA-256
-sidecar, off-host retention, and restore drill.
+Dump every production collection off-host. Dumps are collection-scoped
+NDJSON; keep an inventory of every `(app, tenant, collection)` triple
+you operate. Use the hardened wrapper in [backups.md](backups.md):
+`0600` env file owned by the job user, temp file plus atomic rename,
+`0600` files, SHA-256 sidecar, off-host retention, and restore drill.
 
 Use the direct command only for one-off manual dumps:
 
@@ -118,10 +119,7 @@ baerly admin dump \
 
 ## Weekly checks
 
-Run these for each production collection. `inspect` reports
-`current.json`, snapshot, and log state; `cost` samples the trailing log
-for a Class A/month projection; `admin fsck` checks `current.json`, the
-snapshot hash, and log holes.
+Run these for each production collection:
 
 ```sh
 baerly inspect \
@@ -143,6 +141,9 @@ baerly admin fsck \
   --collection="$COLLECTION"
 ```
 
+They cover `current.json`, snapshot and log state, Class A/month
+projection from the trailing log, the snapshot hash, and log holes.
+
 For Node/self-hosted buckets, also run the all-collection writes/min
 scan:
 
@@ -154,17 +155,17 @@ baerly admin usage \
   --tenant="$TENANT"
 ```
 
-Cloudflare usage scanning is not wired from the Node CLI; the CLI cannot
-reach a Workers R2 binding directly. Use canonical logs for trend
-history and `baerly cost` with R2 S3-compatible credentials for current
-operation-cost projection.
+For Cloudflare, `admin usage` is not wired for this scan yet: the Node
+CLI cannot reach a Workers R2 binding directly. Use canonical logs for
+trend history and `baerly cost` with R2 S3-compatible credentials for
+current operation-cost projection.
 
 ## Incidents
 
 On alerts, collect the canonical JSON log line first; it carries
 `request_id`, `outcome`, status, and the `db.*` counters. For
 Cloudflare maintenance alerts, also collect the `wrangler tail`
-`console.warn` / `console.error` line. Alert on:
+`console.warn` / `console.error` line. Alert and respond on:
 
 | Signal                                       | Why it matters                               | First action                                                                                                                                                                                                                                                                 |
 | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
