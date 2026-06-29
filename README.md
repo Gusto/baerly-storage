@@ -3,25 +3,36 @@
 **No database server. No daemon. No database runtime. Just your app and a bucket.**
 
 ```text
-before: browser → app handler → database  (a server)
-after:  browser → app handler → bucket    (just storage)
+before: client → app handler → database server
+after:  client → app handler → S3/R2 bucket
 ```
 
-A document database that _is_ an S3 or Cloudflare R2 bucket — no server
-to run, no idle bill, no migration stack. baerly-storage runs wherever
-the bucket credentials safely live: a Worker, a Node server, a
-Lambda-style handler. When the request ends, baerly-storage is gone. The
-bucket remains.
+baerly-storage is a small document database over AWS S3 or Cloudflare R2.
+The database is the bucket layout plus the commit protocol; this repo
+ships the TypeScript implementation for Workers and Node. Your app runs
+it inside a trusted request handler, and the bucket holds the durable
+state.
+baerly-storage runs wherever the bucket credentials safely live: a
+Worker or Node request handler.
 
-- **An API an LLM can use first try.** No DDL, no raw SQL — 8 verbs and
-  a ~12k-token API surface that fits in context.
-- **Idle rounds to zero.** No $5/mo floors across a fleet of small
-  internal tools. ~$18/mo all-in on R2 at a sustained 30 writes/min.
-- **No exit tax.** `baerly export --target=postgres` dumps any
-  collection to SQL. Crossing the envelope is the success signal, not a
-  hostage situation.
-- **Built like git** — content-addressed documents, an immutable
-  numbered log, one conditional log create as the commit, per collection.
+The load-bearing operation is narrow: one conditional create of the next
+log object commits a write. Backends must make concurrent
+create-if-absent requests resolve to exactly one winner, so the
+production stores are AWS S3 and Cloudflare R2.
+
+Start here when the app's most important screen maps to one collection and
+you want live documents without a resident database service. When the
+request ends, baerly-storage is gone. The bucket remains.
+
+- **A tiny API humans and agents can hold in context.** No DDL, no raw
+  SQL — 8 verbs and a ~12k-token API surface.
+- **Idle rounds to zero.** No database process to keep warm, and no
+  per-app database floor across a fleet of small internal tools.
+- **No data hostage.** `baerly export --target=postgres` gives you a
+  per-collection SQL snapshot. Crossing the envelope is the graduation
+  signal; the data exit is mechanical.
+- **Built like git.** Content-addressed documents, an immutable numbered
+  log, and one conditional log create as the commit, per collection.
 
 <!-- Hero demo: render `docs/assets/demo.gif` from `docs/assets/demo.tape`
      (`vhs docs/assets/demo.tape`) against a real bucket, then uncomment:
@@ -32,17 +43,15 @@ bucket remains.
 
 ```sh
 pnpm create @gusto/baerly-storage@latest -- my-app --target=cloudflare --starter=react
-cd my-app && pnpm install && pnpm dev
+cd my-app
+pnpm install
+pnpm dev
 ```
 
-For the Cloudflare target, `pnpm dev` boots Vite + workerd on `:5173`, so
-`/v1/*` and the React UI share one origin — no S3 creds needed in
-development. For Node, scaffold with `--target=node --starter=react`;
-`pnpm dev` runs on `:5173` through Vite middleware over `LocalFsStorage`,
-and `pnpm start` runs the Node listener on any Node 24+ host —
-local-first by default, promoting to a durable bucket when you set
-`BUCKET` / `R2_ACCOUNT_ID` (required in production; the server fails loud
-rather than silently using local-fs) — Railway, Render, Fly, Docker, bare VMs.
+For the interactive wizard, run `pnpm create @gusto/baerly-storage@latest`.
+Answer the prompts, run the printed dev command, and open the local URL.
+The dev app serves the UI and `/v1/*` from one origin, backed by local
+storage, so first run needs no bucket credentials.
 
 For a runnable multi-tab demo see
 [`examples/react-node/`](./examples/react-node); for the full set of
@@ -50,22 +59,29 @@ production-shaped scaffolds see [`examples/`](./examples).
 
 ## In code
 
-The scaffolds wire `db` on the server and `useQuery` in React; the calls
-look like this:
+In the TypeScript implementation, the protocol shows up as a small
+document API. The scaffolds wire `db` on the server and `useQuery` in
+React; the calls look like this:
 
 ```ts
 // server — writes land in your object-storage bucket
 await db.collection("tickets").insert({ title: "Onboard Alex", status: "open" });
 
-// client — reactive across every open tab
+// client — reactive over your trusted handler, across every open tab
 const open = useQuery((c) => c.collection("tickets").where({ status: "open" }).all(), []);
 // open.status → "loading" | "refreshing" | "ok" | "skipped" | "error"
 // open.data is present for "ok" / "refreshing"
 ```
 
-You keep the request handler, auth boundary, bucket binding or
-credentials, and any frontend you already had. The database service goes
-away:
+Security model: bucket credentials never leave the server. Browsers
+talk only to your trusted handler, which authenticates the caller,
+chooses the tenant prefix, and applies the protocol against the
+bucket. Production recipes support Cloudflare Access and JWKS bearer
+verification; shared-secret auth is for service-to-service calls and dev.
+See [`client-auth.md`](./docs/guide/client-auth.md).
+
+Application auth and tenant choice stay explicit in the handler. What
+disappears is the database service and its surrounding machinery:
 
 ```diff
 - docker-compose.yml
@@ -83,7 +99,7 @@ away:
 +   tenant: "main",
 +   collections: { tickets: {} },
 +   target: "cloudflare",
-+   auth: "shared-secret",
++   auth: "none", // dev; production supplies a verifier
 + });
 ```
 
@@ -101,25 +117,23 @@ able to tell what won. [S3's strong consistency][s3-strong] makes object
 storage usable as shared state; conditional writes supply the
 one-writer-wins operation.
 
-A bucket cannot run a database server, but it _can_ atomically create one
-object. A write drops new immutable objects in the bucket and then
-atomically creates the next numbered log entry for that collection —
-using S3's create-if-absent (`If-None-Match`) so two writers can't claim
-the same slot; the loser reads the winner and retries at the next slot.
-That create _is_ the commit. A read follows `current.json` to the
-snapshot and folds the committed log tail into rows.
+Concretely, a write drops new immutable objects in the bucket and then
+creates the next numbered log entry for that collection with
+create-if-absent (`If-None-Match: "*"`). Two writers racing the same slot
+cannot both win; the loser reads the winner and retries at the next slot.
+That create _is_ the commit. There is no resident coordinator: each
+request reads bucket state, tries that create, and leaves no required
+process behind. A read follows `current.json` to the snapshot and folds
+the committed log tail into rows.
 
 Each collection has its own ordered log, so **writes are per-collection
 linearizable** — the `If-None-Match` log create linearizes every commit.
 Cross-collection writes are unordered and non-atomic; that boundary is
 part of the contract (see [When (not) to use it](#when-not-to-use-it)).
 
-This repo ships TypeScript for Worker and Node apps, but the idea is a
-protocol, not a JavaScript-only database: another language could speak it
-by writing the same bucket layout and using the same conditional-write
-rules. AWS S3 and Cloudflare R2 are the supported production backends;
-other S3-compatible endpoints need a green `baerly doctor --bucket=<uri>`
-and owner validation. See
+The durable contract is the bucket layout plus the conditional-write
+rules. Another language could speak it by writing the same layout and
+honoring the same rules. See
 [`storage-compatibility.md`](./docs/spec/storage-compatibility.md).
 
 [s3-strong]: https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/
@@ -157,10 +171,13 @@ Before you count rows or price reads, ask one question:
 
 > Can the app's most important screen be answered from one collection?
 
-If yes, baerly-storage fits. A todo list, a single board's kanban, an
-event's RSVPs, one channel's chat — each maps to one collection. If the
-core screen is a view _across_ many collections, users, or tenants ("my
-pull requests," "all code search," a cross-org dashboard), baerly-storage
+If yes, baerly-storage may fit; then check query shape, atomicity, size,
+and cost. A todo list, a single board's kanban, an event's RSVPs, one
+channel's chat — each maps to one collection. The shape is narrow on
+purpose: production-shaped for small workloads with a specific access
+pattern, not a general-purpose database. If the core screen is a view
+_across_ many collections, users, or tenants ("my pull requests," "all
+code search," a cross-org dashboard), baerly-storage
 should not be the only query engine for it.
 
 It is **deliberately not** a few things:
@@ -184,11 +201,11 @@ It is **deliberately not** a few things:
 | Per-collection size | ~100–500 docs (~512 KB snapshot) before compaction defers on CF free                                                    | A fold fits the free-tier CPU budget at ~512 KB; erosion, not a cliff — model/estimate, pending real CF-isolate measurement       |
 | Fan-out             | ~100 collections/tenant (soft guideline)                                                                                | Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N   |
 | Storage             | >10 GB/tenant stored = R2 free-tier boundary                                                                            | A cost line, not a protocol ceiling; billing begins above 10 GB-mo on R2                                                          |
-| Cost                | ~$18/mo all-in on R2 (~$13 object-storage ops + $5 Workers Paid floor), ~$26/mo on S3 at M-size                         | At ~30 writes/min/collection; `baerly cost` projects the object-storage-ops portion only (no platform floor)                       |
+| Cost                | ~$18/mo all-in on R2 (~$13 object-storage ops + $5 Workers Paid floor), ~$26/mo on S3 at M-size                         | At ~30 writes/min account-wide aggregate; `baerly cost` projects the object-storage-ops portion only (no platform floor)           |
 
 **Graduation is the success path, not a failure mode.** Crossing any of
 these is the signal to graduate the workload — `baerly export
---target=postgres` makes the exit mechanical. See
+--target=postgres` makes the data exit mechanical. See
 [workload-fit.md](./docs/about/workload-fit.md) for the shape test and
 [graduation.md](./docs/about/graduation.md) for the full envelope.
 
