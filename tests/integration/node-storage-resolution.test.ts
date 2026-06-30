@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { PAAS_MARKERS } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { resolveStorage } from "../../examples/minimal-node/src/server/resolve-storage.ts";
 
@@ -15,16 +16,6 @@ const FULL_AWS_CREDS = {
   AWS_ACCESS_KEY_ID: "ak",
   AWS_SECRET_ACCESS_KEY: "sk",
 } as const;
-
-const PAAS_MARKERS = [
-  "RAILWAY_ENVIRONMENT",
-  "RENDER",
-  "FLY_APP_NAME",
-  "K_SERVICE",
-  "DYNO",
-  "KUBERNETES_SERVICE_HOST",
-  "ECS_CONTAINER_METADATA_URI_V4",
-];
 
 describe("resolveStorage — local dev fallback", () => {
   test("falls back to local-fs when no bucket and not deployed", () => {
@@ -80,6 +71,12 @@ describe("resolveStorage — production fail-loud guard", () => {
     expect(message).toContain("AWS S3");
     expect(message).toContain("Cloudflare R2");
     expect(message).toContain("BUCKET");
+  });
+
+  // Guard against a vacuous pass: if the canonical list were ever emptied,
+  // the marker loop below would iterate zero times and assert nothing.
+  test("the canonical PaaS marker list is non-empty", () => {
+    expect(PAAS_MARKERS.length).toBeGreaterThan(0);
   });
 
   // Every PaaS marker independently trips the guard — a regression that

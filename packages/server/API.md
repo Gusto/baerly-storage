@@ -682,16 +682,18 @@ export default baerlyWorker((env) => ({
   // scheduled?: (controller, env, ctx) => …    // opt-in cron handler
 }));
 
-// Node listener entry (any host that runs `node server.js`)
-// localFsStorage() is the zero-credential default for local/single-node;
-// promote to s3Storage / r2Storage for production.
-import { baerlyNode, localFsStorage, s3Storage } from "@gusto/baerly-storage/node";
-baerlyNode({
-  storage: localFsStorage(),
-  webRoot: "dist/client",                         // optional SPA static-serve
-}).listen(PORT);
+// Node listener entry (any host that runs `node server.js`).
+// resolveStorageFromEnv() is the safe default selector: R2_ACCOUNT_ID → R2,
+// BUCKET → S3, else local-fs (dev only). It REFUSES to start in a detected
+// deployment with no bucket — never a silent in-memory/local-fs fallback,
+// which is how hand-rolled selectors ship data loss to production.
+// (assertStorageReachable(storage) adds an opt-in boot-time CAS probe.)
+import { baerlyNode, resolveStorageFromEnv } from "@gusto/baerly-storage/node";
+const { storage, label } = resolveStorageFromEnv();
+baerlyNode({ storage, webRoot: "dist/client" }).listen(PORT); // webRoot optional
 
-// Production S3 / R2 stores use bucket credentials instead.
+// Or select the store yourself (custom endpoint, MinIO, GCS, …):
+import { s3Storage } from "@gusto/baerly-storage/node";
 baerlyNode({
   storage: s3Storage({ bucket: "…", credentials: { … } }),
   verifier: bearerJwt({ jwks, issuer, audience }),
