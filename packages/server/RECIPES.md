@@ -64,6 +64,23 @@ environment variable is missing or empty at startup.
 **Fix:** set the `SHARED_SECRET` env (`wrangler secret put SHARED_SECRET`
 on Cloudflare, `.dev.vars` for local dev, process env on Node).
 
+### `BaerlyError code="InvalidConfig"` — `Refusing to start: no durable storage configured` / `Refusing to use in-memory storage`
+
+**Cause:** a deployed process (`NODE_ENV=production` or a known PaaS marker)
+reached storage selection with no real bucket configured — or constructed
+`MemoryStorage` there. In-memory "succeeds" into RAM and vanishes on every
+restart; local-fs is single-process with no cross-process CAS. Both are
+refused in a deployment so the failure is loud at boot, not silent data loss
+in production.
+**Fix:** don't hand-roll storage selection — call `resolveStorageFromEnv()`
+from `@gusto/baerly-storage/node` (`R2_ACCOUNT_ID` → R2, `BUCKET` → S3, else
+local-fs in dev) and configure a bucket: `BUCKET` + `AWS_ACCESS_KEY_ID` +
+`AWS_SECRET_ACCESS_KEY` (add `R2_ACCOUNT_ID` for R2). To catch an
+unreachable or CAS-broken bucket at boot rather than on the first write,
+`await assertStorageReachable(storage)`. Intentionally ephemeral (a throwaway
+demo)? Opt in explicitly: `new MemoryStorage({ ephemeral: true })` or
+`BAERLY_ALLOW_EPHEMERAL_STORAGE=true`.
+
 ### `BaerlyError code="UseQueryAwaitedRecorder"`
 
 **Cause:** awaited a terminal (`.get`/`.first`/`.all`/`.count`) inside a
