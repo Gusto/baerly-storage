@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-06-28
+last-reviewed: 2026-06-30
 tags: [architecture, lifecycle, module-map]
 related: ["spec/sync-protocol.md", "contributing/extending.md", "contributing/features.md"]
 ---
@@ -222,25 +222,12 @@ import; anything not listed is forbidden, and self-imports are allowed:
 
 ```mermaid
 flowchart TD
-    create["create-baerly-storage"]
-    cli["cli"]
     client["client"]
     adapterCf["adapter-cloudflare"]
     adapterNode["adapter-node"]
     dev["dev"]
     server["server"]
     protocol["protocol"]
-
-    create --> cli
-    create --> server
-    create --> protocol
-
-    cli --> client
-    cli --> adapterCf
-    cli --> adapterNode
-    cli --> dev
-    cli --> server
-    cli --> protocol
 
     client --> server
     client --> protocol
@@ -260,8 +247,14 @@ flowchart TD
     dev -->|vite-plugin| adapterNode
     adapterNode -->|dev-landing| dev
 
-    linkStyle 19,20 stroke:#d33,stroke-width:2px
+    linkStyle 10,11 stroke:#d33,stroke-width:2px
 ```
+
+The diagram shows the portability core — the layering down to the pure
+`protocol` leaf and the cordoned `dev ↔ adapter-node` cycle. The two
+top-of-stack consumers, `cli` and `create-baerly-storage`, are omitted:
+they import broadly almost by definition and add edges without changing
+the shape. The table above remains the complete, enforced edge set.
 
 The two red edges are an accepted Node-only `dev ↔ adapter-node` cycle:
 `@baerly/dev`'s Vite plugin imports `baerlyNode` as the in-process dev
