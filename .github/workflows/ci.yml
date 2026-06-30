@@ -5,7 +5,11 @@ name: CI
 
 on:
   # PR event covers all feature branches — any push to a branch that has
-  # an open PR triggers this workflow once, not twice.
+  # an open PR triggers this workflow once, not twice. CI runs on EVERY PR
+  # (no path filter): the job always reports a status, which is what lets it
+  # serve as a required status check on main without docs-only PRs hanging on
+  # a check that never runs. Docs validation rides along inside `pnpm verify`
+  # (verify:docs), so a docs-only PR is still gated here.
   pull_request:
   # Push event covers merges to main (direct push or squash-merge).
   # Combined with the PR trigger above, this avoids double-runs on
@@ -104,8 +108,10 @@ jobs:
         run: pnpm test
 
       # Cloudflare adapter tests under @cloudflare/vitest-pool-workers
-      # (miniflare / workerd). No credentials, no external network.
-      # workerd binary is downloaded on first run; caching it is a future
-      # optimization deferred from this v1 workflow.
+      # (miniflare / workerd). No credentials, no external network. The workerd
+      # binary ships inside the `@cloudflare/workerd-<platform>` npm package — a
+      # normal pnpm dependency — so it's already in the pnpm store and restored
+      # by setup-node's `cache: pnpm` above (its restore-keys even cover the
+      # lockfile-changed case). No separate workerd cache buys anything.
       - name: Test (Cloudflare adapter)
         run: pnpm test:adapter-cloudflare
