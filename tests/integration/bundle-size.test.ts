@@ -294,7 +294,22 @@ const BUDGETS: readonly Budget[] = [
   //   → raw +1 KiB (2026-06-25): opaque manifest_pointer digest replaces the
   //     old snapshot/log-tail-shaped cursor. The FNV helper reaches the kernel
   //     query closure (measured 227561 raw); gz/min-gz remain under.
-  { entry: "index.js", raw: 223 * 1024, gz: 70 * 1024, minGz: 19 * 1024 },
+  //   → raw +1 KiB / min-gz +1 KiB (2026-06-30): MemoryStorage fail-closed
+  //     guard — `isDeployedEnv` predicate + the actionable error string ship in
+  //     the kernel closure (measured 229129 raw / 19688 min-gz). Genuinely new
+  //     safety logic (prevents silent in-memory-in-prod data loss); the error
+  //     string survives minification, so min-gz climbs too. Justified.
+  //   → raw +1 KiB (2026-06-30): `isDeployedEnv` now suppresses the PaaS-marker
+  //     branch under CI (so MemoryStorage stays usable in k8s-hosted CI, which
+  //     sets KUBERNETES_SERVICE_HOST). +22 raw over the prior bound (measured
+  //     229398); min-gz is 19724 / 20480 (−756, healthy) — per the POLICY above,
+  //     raw is a creep tripwire, so rebaseline rather than golf the predicate.
+  //   NOTE (2026-06-30): the gz axis is now near-ceiling — measured ~71667 vs
+  //     71680 (70 KiB), ~13 B of headroom. Left un-bumped on purpose (measure-
+  //     then-rebaseline discipline; it passes today). The next kernel change
+  //     that adds gz bytes should expect to trip this and rebaseline gz with a
+  //     measured value, not treat it as a regression.
+  { entry: "index.js", raw: 225 * 1024, gz: 70 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -692,7 +707,10 @@ const BUDGETS: readonly Budget[] = [
   //     follow-up as http.js. The gz axis crossed by 17 B; keep the clear
   //     table rather than byte-golfing policy metadata.
   //     Measured: 414593 raw / 123921 gz; min-gz remains under.
-  { entry: "cloudflare.js", raw: 405 * 1024, gz: 122 * 1024, minGz: 43 * 1024 },
+  //   → raw +2 KiB (2026-06-30): MemoryStorage fail-closed guard pulled through
+  //     the protocol barrel into the Worker aggregator (measured 416161 raw);
+  //     gz/min-gz remain under. Same safety logic as the index.js bump above.
+  { entry: "cloudflare.js", raw: 407 * 1024, gz: 122 * 1024, minGz: 43 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
