@@ -18,9 +18,25 @@ pre-commit:
       glob: "*.{ts,tsx,mjs,cjs}"
       run: pnpm exec oxlint --fix {staged_files}
       stage_fixed: true
+    # Code gate. Runs `verify:code` (the full `verify` chain MINUS
+    # `verify:docs`) so a `.ts`/`.tsx` commit doesn't pay ~3.75s of markdown +
+    # mermaid validation that a code change can't affect. Markdown is covered
+    # by the `docs` command below instead. `pnpm verify` (= verify:code &&
+    # verify:docs) is still what humans/CI run for the whole gate.
     typecheck:
       glob: "*.{ts,tsx}"
-      run: pnpm verify
+      run: pnpm run verify:code
+    # Docs gate. The code commands above are all code-globbed, so before this a
+    # docs-only commit ran ZERO validation locally — a broken cross-link or
+    # malformed mermaid only surfaced in CI. This fires verify:docs (remark
+    # link/anchor + mermaid parse + frontmatter/taxonomy) whenever markdown is
+    # staged, the local mirror of the verify:docs checks `pnpm verify` runs in
+    # CI (there is no separate docs.yml workflow). A mixed code+docs commit
+    # runs verify:code once (typecheck, above) and verify:docs once (here) — no
+    # double-run, because verify:code excludes the docs checks.
+    docs:
+      glob: "*.md"
+      run: pnpm run verify:docs
     # Bundle budgets live in `pnpm test` (bundle-size.test.ts) and CI, NOT
     # in `pnpm verify` above — so a kernel/maintenance edit that blows a
     # budget commits green and only goes red when you finally run the full
