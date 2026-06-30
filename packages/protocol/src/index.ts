@@ -14,6 +14,7 @@ export {
 } from "./coordination/current-json.ts";
 export * from "./coordination/gc-pending.ts";
 export * from "./collection-api.ts";
+export { isDeployedEnv, PAAS_MARKERS } from "./env.ts";
 export * from "./errors.ts";
 export * from "./indexes.ts";
 export * from "./json.ts";

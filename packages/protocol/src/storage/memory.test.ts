@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { PAAS_MARKERS } from "../env.ts";
 import { BaerlyError } from "../errors.ts";
 import { defineStorageConformanceSuite } from "./conformance.ts";
 import { MemoryStorage, getOrCreateMemoryStorageForBucket, resetMemoryStorage } from "./memory.ts";
@@ -267,5 +268,94 @@ describe("getOrCreateMemoryStorageForBucket() and resetMemoryStorage()", () => {
     const after = getOrCreateMemoryStorageForBucket("create-bucket");
     // After reset the shared map is cleared; a new instance is created.
     expect(before).not.toBe(after);
+  });
+});
+
+// --------------------------------------------------------------------
+// MemoryStorage production guard — fail closed in a deployed environment
+// Regression scope: a deployed app silently ran on MemoryStorage because
+// its storage selector fell back to in-memory; writes "succeeded" into
+// RAM and vanished on restart (Gusto/web#24499). The guard makes that
+// fail loud at construction. `vi.stubEnv` simulates a deployment — plain
+// CI (CI=true only) never trips it.
+// --------------------------------------------------------------------
+describe("MemoryStorage production guard", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("constructs without opt-in in a non-deployed env (dev/test default)", () => {
+    expect(() => new MemoryStorage()).not.toThrow();
+  });
+
+  test("throws InvalidConfig with no opt-in when NODE_ENV=production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const construct = (): MemoryStorage => new MemoryStorage();
+    let err: unknown;
+    try {
+      construct();
+    } catch (error) {
+      err = error;
+    }
+    expect(err).toBeInstanceOf(BaerlyError);
+    expect((err as BaerlyError).code).toBe("InvalidConfig");
+    const msg = (err as BaerlyError).message;
+    expect(msg).toContain("in-memory storage");
+    expect(msg).toContain("lost on restart");
+    // Message must name both opt-in mechanisms so the fix is discoverable.
+    expect(msg).toContain("ephemeral: true");
+    expect(msg).toContain("BAERLY_ALLOW_EPHEMERAL_STORAGE=true");
+  });
+
+  test("each PaaS marker alone trips the guard with no opt-in", () => {
+    for (const marker of PAAS_MARKERS) {
+      // Neutralize the ambient CI var (GitHub Actions sets CI=true), which
+      // would otherwise suppress the PaaS-marker branch — see the
+      // "PaaS marker inside CI" case below.
+      vi.stubEnv("CI", "");
+      vi.stubEnv(marker, "1");
+      expect(() => new MemoryStorage()).toThrow(BaerlyError);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a PaaS marker inside CI does not trip the guard", () => {
+    vi.stubEnv("KUBERNETES_SERVICE_HOST", "1");
+    vi.stubEnv("CI", "true");
+    expect(() => new MemoryStorage()).not.toThrow();
+  });
+
+  test("ephemeral:true opt-in allows construction in a deployment", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() => new MemoryStorage({ ephemeral: true })).not.toThrow();
+  });
+
+  test("BAERLY_ALLOW_EPHEMERAL_STORAGE=true opt-in allows construction in a deployment", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BAERLY_ALLOW_EPHEMERAL_STORAGE", "true");
+    expect(() => new MemoryStorage()).not.toThrow();
+  });
+
+  test("a non-'true' value for the env opt-in does not satisfy the guard", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BAERLY_ALLOW_EPHEMERAL_STORAGE", "1");
+    expect(() => new MemoryStorage()).toThrow(BaerlyError);
+  });
+
+  test("opt-in in a deployment logs a one-time data-loss warning", async () => {
+    // Reset the module so the process-level once-flag starts fresh, then
+    // drive a fresh MemoryStorage through the opt-in path twice.
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { MemoryStorage: FreshMemoryStorage } = await import("./memory.ts");
+      expect(new FreshMemoryStorage({ ephemeral: true })).toBeInstanceOf(FreshMemoryStorage);
+      expect(new FreshMemoryStorage({ ephemeral: true })).toBeInstanceOf(FreshMemoryStorage);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain("ALL DATA IS LOST ON RESTART");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

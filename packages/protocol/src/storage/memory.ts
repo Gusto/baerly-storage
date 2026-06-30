@@ -1,3 +1,4 @@
+import { isDeployedEnv } from "../env.ts";
 import { BaerlyError } from "../errors.ts";
 import type {
   Storage,
@@ -15,6 +16,49 @@ interface StoredObject {
 }
 
 const utf8Encoder = new TextEncoder();
+
+const EPHEMERAL_ENV_OPT_IN = "BAERLY_ALLOW_EPHEMERAL_STORAGE";
+
+// Read process env without a `node:` import so protocol stays Workerd-
+// loadable (on Workerd `process` is absent → env is `{}` → not deployed).
+const readProcessEnv = (): Record<string, string | undefined> =>
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
+
+let warnedEphemeralInDeployment = false;
+
+// Fail closed when in-memory storage would silently back a deployed
+// workload (writes "succeed" into RAM, vanish on restart). No-op in
+// dev/test; bypass in a deployment only via an explicit acknowledgement.
+const assertEphemeralAllowed = (explicitOptIn: boolean): void => {
+  const env = readProcessEnv();
+  if (!isDeployedEnv(env)) {
+    return;
+  }
+  if (!explicitOptIn && env[EPHEMERAL_ENV_OPT_IN] !== "true") {
+    throw new BaerlyError(
+      "InvalidConfig",
+      "Refusing to use in-memory storage in a deployed environment — all data is lost on restart. " +
+        "MemoryStorage is for tests/local dev only; configure a durable bucket (AWS S3 / Cloudflare R2). " +
+        `To intentionally opt in: new MemoryStorage({ ephemeral: true }) or ${EPHEMERAL_ENV_OPT_IN}=true.`,
+    );
+  }
+  if (!warnedEphemeralInDeployment) {
+    warnedEphemeralInDeployment = true;
+    console.warn(
+      "[baerly] in-memory storage in a deployed environment — ALL DATA IS LOST ON RESTART.",
+    );
+  }
+};
+
+/** Options for {@link MemoryStorage}. */
+export interface MemoryStorageOptions {
+  /**
+   * Acknowledge the store is intentionally ephemeral — required to
+   * construct in a detected deployment ({@link isDeployedEnv}); ignored in
+   * dev/test. Env equivalent: `BAERLY_ALLOW_EPHEMERAL_STORAGE=true`.
+   */
+  ephemeral?: boolean;
+}
 
 /**
  * Compare two keys by their UTF-8 byte sequences — the order S3 and
@@ -61,6 +105,10 @@ const compareKeysUtf8 = (a: string, b: string): number => {
 export class MemoryStorage implements Storage {
   readonly #objects = new Map<string, StoredObject>();
   #etagCounter = 0;
+
+  constructor(opts?: MemoryStorageOptions) {
+    assertEphemeralAllowed(opts?.ephemeral === true);
+  }
 
   #nextEtag(): string {
     this.#etagCounter += 1;
