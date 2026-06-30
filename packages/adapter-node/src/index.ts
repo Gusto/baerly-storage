@@ -51,6 +51,8 @@ export { localFsStorage } from "./local-fs-storage.ts";
 export type { LocalFsStorageFactoryOptions } from "./local-fs-storage.ts";
 export { resolveStorageFromEnv } from "./resolve-storage.ts";
 export type { ResolvedStorage } from "./resolve-storage.ts";
+export { assertStorageReachable } from "./assert-storage-reachable.ts";
+export type { AssertStorageReachableOptions } from "./assert-storage-reachable.ts";
 export {
   type Credentials,
   type CredentialsProvider,

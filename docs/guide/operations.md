@@ -2,7 +2,7 @@
 title: Operations runbook
 audience: operator
 summary: Production preflight, auth, backup, observability, capacity, and route checks.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-06-30
 tags: [operations, runbook, production]
 related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../about/cost-model.md"]
 ---
@@ -54,6 +54,34 @@ dumped under the old build and restored/reseeded under the current schema
 
 There is no `baerly doctor --target=node` backend today; the bucket
 probe is the Node safety check.
+
+### Readiness check
+
+`GET /v1/healthz` is an anonymous *liveness* probe — it answers "is the
+process up?" without touching storage. `assertStorageReachable` from
+`@gusto/baerly-storage/node` is the application-level *readiness* check:
+it proves the configured bucket is reachable and honors the conditional
+writes (CAS) the protocol depends on. It throws `BaerlyError` —
+`NetworkError` if the bucket is unreachable, `InvalidConfig` if CAS is
+broken — so the process fails closed before serving traffic.
+
+```ts
+import { resolveStorageFromEnv, assertStorageReachable } from "@gusto/baerly-storage/node";
+const { storage, label } = resolveStorageFromEnv();
+await assertStorageReachable(storage); // throws before we serve traffic
+console.log(`[baerly] storage=${label} (reachable)`);
+```
+
+It is opt-in by design: it performs a handful of live round-trips
+(writing and deleting throwaway sentinels), so do not run it on every
+request or wire it into a hot path. Run it once at startup, or behind a
+`/readyz` handler your platform polls. On serverless or edge runtimes
+with frequent cold starts (e.g. Cloudflare isolates) you would not want
+it on every cold start.
+
+It catches an unreachable, access-denied, or non-existent bucket and a
+CAS-broken store, but not a wrong-but-writable bucket — a typo that
+points at another bucket you own boots clean.
 
 ### Auth
 
