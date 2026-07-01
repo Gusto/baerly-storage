@@ -114,13 +114,29 @@ const EVENTUAL_CONSISTENCY_SETTLE_MILLIS = 15_000;
 /** Poll interval while waiting for an eventually-consistent backend to settle. */
 const EVENTUAL_CONSISTENCY_POLL_MILLIS = 250;
 /**
- * Per-test/hook timeout raised for a remote-network backend: each op is a
- * real network round-trip (and, on an eventually-consistent backend,
- * assertions poll), so the 5s default is too tight. Applied as the
- * suite-level `timeout` (cascades to every inner test) and as the explicit
- * `beforeEach` hook timeout.
+ * Per-test/hook timeout for a strongly-consistent remote-network backend
+ * (AWS / GCS): each op is a real network round-trip, so the 5s default is
+ * too tight, but assertions never poll (`settle === 0`, first read is
+ * asserted). Applied as the suite-level `timeout` (cascades to every inner
+ * test) and as the explicit `beforeEach` hook timeout. An
+ * eventually-consistent backend polls and needs the larger budget below.
  */
 const REMOTE_NETWORK_TEST_TIMEOUT_MILLIS = 120_000;
+/**
+ * Per-test/hook timeout for an eventually-consistent backend (R2 over the
+ * S3 HTTP API). Larger than {@link REMOTE_NETWORK_TEST_TIMEOUT_MILLIS}
+ * because each property iteration pays *two* convergence-poll windows —
+ * the `drain()` reset at the top of the iteration and the settle-assert —
+ * each bounded by {@link EVENTUAL_CONSISTENCY_SETTLE_MILLIS}. Worst case is
+ * therefore ~`numRuns × (2 × settle + put-time)` plus the `beforeEach`
+ * drain; at {@link EVENTUAL_CONSISTENCY_PROPERTY_RUNS} runs and a 15s settle
+ * that approaches ~190s, so a flat 120s under-runs the work it bounds
+ * whenever R2 is in a laggy stretch and the property tests time out even
+ * though they would have converged. This ceiling sits comfortably above
+ * that worst case; typical runs still finish in well under half of it — it
+ * only exists so a slow-convergence window can't trip a false timeout.
+ */
+const EVENTUAL_CONSISTENCY_TEST_TIMEOUT_MILLIS = 240_000;
 /**
  * fast-check `numRuns` for property tests on a remote-network backend. The
  * default 100 is hundreds of network round-trips per property — infeasible
@@ -136,9 +152,11 @@ const REMOTE_NETWORK_PROPERTY_RUNS = 10;
  * pays *two* convergence polls (the `drain()` reset and the settle-assert,
  * up to {@link EVENTUAL_CONSISTENCY_SETTLE_MILLIS} each), so an
  * eventually-consistent iteration costs ~2× a strongly-consistent remote
- * one. At 10 runs a slow-convergence window can spill past the raised
- * per-test timeout; halving the runs keeps the property comfortably inside
- * it while still smoke-checking it over the wire.
+ * one. Halving the runs vs. {@link REMOTE_NETWORK_PROPERTY_RUNS} keeps the
+ * wire cost bounded while still smoke-checking the property over the
+ * network; the per-test timeout is separately sized to this run count via
+ * {@link EVENTUAL_CONSISTENCY_TEST_TIMEOUT_MILLIS} so a slow-convergence
+ * window can't trip a false timeout.
  */
 const EVENTUAL_CONSISTENCY_PROPERTY_RUNS = 5;
 
@@ -294,12 +312,20 @@ export function defineStorageConformanceSuite(
   const propParams = isRemote ? { numRuns: propRuns } : undefined;
   // A remote backend does real network round-trips (and, when eventually
   // consistent, polls), so the default 5s per-test/hook timeout is too
-  // tight. `undefined` leaves the runner default for local backends. The
-  // suite-level option cascades to every inner test (including the
-  // fast-check property tests); the per-hook timeout below covers the
-  // `drain()` in `beforeEach`. (`vi.setConfig` in a hook is too late —
-  // vitest binds timeouts at collection time.)
-  const testTimeoutMs = isRemote ? REMOTE_NETWORK_TEST_TIMEOUT_MILLIS : undefined;
+  // tight. `undefined` leaves the runner default for local backends. An
+  // eventually-consistent backend pays two poll windows per property
+  // iteration (drain + settle-assert), so it gets the larger budget; a
+  // strongly-consistent remote backend never polls and stays on the
+  // smaller one. The suite-level option cascades to every inner test
+  // (including the fast-check property tests); the per-hook timeout below
+  // covers the `drain()` in `beforeEach`. (`vi.setConfig` in a hook is too
+  // late — vitest binds timeouts at collection time.)
+  let testTimeoutMs: number | undefined;
+  if (opts.eventuallyConsistentList) {
+    testTimeoutMs = EVENTUAL_CONSISTENCY_TEST_TIMEOUT_MILLIS;
+  } else if (opts.remoteNetwork) {
+    testTimeoutMs = REMOTE_NETWORK_TEST_TIMEOUT_MILLIS;
+  }
 
   describe(`Storage conformance — ${name}`, { timeout: testTimeoutMs }, () => {
     let s: Storage;
