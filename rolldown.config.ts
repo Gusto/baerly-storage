@@ -49,13 +49,14 @@ export default defineConfig({
     "app-config": "packages/protocol/src/app-config.ts",
     cloudflare: "packages/adapter-cloudflare/src/index.ts",
     node: "packages/adapter-node/src/index.ts",
+    s3: "packages/adapter-node/src/s3.ts",
     client: "packages/client/src/index.ts",
     "client-react": "packages/client/src/react/index.ts",
     dev: "packages/dev/src/index.ts",
     "dev-vite": "packages/dev/src/vite-plugin.ts",
   },
   // `fast-xml-parser` and `aws4fetch` are bundled into the library
-  // entries that use them (`dist/node.js` + `dist/dev-vite.js`).
+  // entries that use them (`dist/node.js` + `dist/s3.js` + `dist/dev-vite.js`).
   // They used to be optional peer deps, but pnpm skips optional peers
   // on install, so a fresh `create-baerly-storage` scaffold's
   // `node_modules` had no copy on disk and `vite.config.ts` died on

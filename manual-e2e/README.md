@@ -107,6 +107,45 @@ curl -s "$CF_DEPLOY_URL/v1/c/some-table"
 # Expect: 401 with {"error":{"code":"Unauthorized",...}}
 ```
 
+### Worker-over-S3 (workerd wire check)
+
+The default deploy reads R2 through the in-cell binding, so it does **not**
+exercise the `@gusto/baerly-storage/s3` path inside workerd. To verify that
+path against a real S3-compatible endpoint from inside an isolate, deploy a
+variant whose Worker entry injects `S3HttpStorage` instead of relying on the
+`BUCKET` binding:
+
+```ts
+// src/index.ts of the deployed scaffold — S3 variant
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
+import { S3HttpStorage, sigV4Signer } from "@gusto/baerly-storage/s3";
+import config from "../baerly.config.ts";
+
+export default baerlyWorker((env) => ({
+  config,
+  storage: new S3HttpStorage({
+    endpoint: env.S3_ENDPOINT,
+    bucket: env.S3_BUCKET,
+    sign: sigV4Signer({
+      accessKeyId: env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      region: env.AWS_REGION,
+    }),
+  }),
+}));
+```
+
+Set `S3_ENDPOINT` / `S3_BUCKET` / `AWS_REGION` as `vars` and
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` via `wrangler secret put`,
+then `pnpm baerly deploy`. Point `CF_DEPLOY_URL` at the deployed URL and
+run `pnpm test:manual-e2e`. The conformance cascade now runs end-to-end
+with `S3HttpStorage` executing **inside workerd against a real S3
+endpoint** — the one thing CI cannot cover. (CI already runs
+`S3HttpStorage` in a Workerd isolate via
+`tests/integration/s3-worker-wire.test.ts`, but against an in-memory
+`fetch` stub; only this manual run exercises real TLS + the endpoint's own
+conditional-write semantics from inside workerd.) Tear down when done.
+
 ## Section 2: Deploy the Node host
 
 ### Prerequisites

@@ -314,9 +314,12 @@ const BUDGETS: readonly Budget[] = [
   //     rather than golf the doc/error.
   //   NOTE (2026-07-01): the gz 71 KiB bump above also absorbs CI's cross-
   //     environment gz nondeterminism (~18 B observed) that flaked the axis
-  //     near the old 70 KiB ceiling. The IRSA credential work on this branch
-  //     ships under the separate `node`/adapter-node entry, not the kernel
-  //     barrel, so it does not move this closure.
+  //     near the old 70 KiB ceiling. The IRSA credential work ships under the
+  //     separate `node`/adapter-node entry, not the kernel barrel, so it does
+  //     not move this closure.
+  //   NOTE (2026-07-01): adding the ./s3 rolldown input re-chunks shared modules
+  //     and nudges the index.js gz closure up (measured 72639 vs 72704 budget,
+  //     65 B of headroom) — still under the 71 KiB bound, left un-bumped.
   { entry: "index.js", raw: 227 * 1024, gz: 71 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
@@ -465,7 +468,10 @@ const BUDGETS: readonly Budget[] = [
   //     defaulted switches and prefix-based InvalidConfig exposure with one
   //     exhaustive policy table plus a typed request-boundary marker.
   //     Measured: 346767 raw; gz/min-gz remain under.
-  { entry: "http.js", raw: 339 * 1024, gz: 101 * 1024, minGz: 35 * 1024 },
+  //   → raw +2 KiB (2026-06-30): adding the ./s3 rolldown input re-chunks
+  //     shared modules, nudging this closure over the prior 339 KiB budget.
+  //     Measured: 347346 raw.
+  { entry: "http.js", raw: 341 * 1024, gz: 101 * 1024, minGz: 35 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -595,7 +601,10 @@ const BUDGETS: readonly Budget[] = [
   //   → raw −2 KiB / gz −1 KiB (2026-06-24): W4-5 bundle hygiene — constants chunk no
   //     longer in maintenance closure (moved RESOLUTION constants to leaf; JSDoc trim).
   //     Measured: 124579 raw / 38165 gz / 11113 min-gz.
-  { entry: "maintenance.js", raw: 122 * 1024, gz: 38 * 1024, minGz: 11 * 1024 },
+  //   → raw +2 KiB (2026-06-30): adding the ./s3 rolldown input re-chunks
+  //     shared modules, nudging this closure over the prior 122 KiB budget.
+  //     Measured: 125023 raw.
+  { entry: "maintenance.js", raw: 124 * 1024, gz: 38 * 1024, minGz: 11 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -727,7 +736,18 @@ const BUDGETS: readonly Budget[] = [
   //     closure rather than raise the ceiling. Post-trim measured 418893 raw /
   //     125590 gz / 44028 min-gz; min-gz clears 43 KiB by 4 B. Only the raw/gz
   //     creep tripwires are rebaselined.
-  { entry: "cloudflare.js", raw: 410 * 1024, gz: 123 * 1024, minGz: 43 * 1024 },
+  //   → min-gz +1 KiB (2026-07-01): adding the ./s3 rolldown input re-chunks
+  //     shared modules, and this closure's min-gz — already only 4 B under the
+  //     43 KiB ceiling on main — crosses it (measured 44194). The bytes are real
+  //     shipped code reshuffled across chunk boundaries by a new entry point, not
+  //     golf-able waste, so per the POLICY (cf. the index.js fail-closed bump)
+  //     min-gz rebaselines. raw/gz stay under main's bounds (419336 / 125799).
+  //   → raw +1 KiB / gz +1 KiB (2026-07-01): the injected-storage feature adds
+  //     the resolveWorkerStorage helper + the ResolvedState resolve-once plumbing
+  //     in worker.ts — genuinely new code in the Worker aggregator. raw crosses
+  //     the 410 KiB bound and gz the 123 KiB bound (measured 420142 raw /
+  //     126038 gz); min-gz is 44325, still under the 44 KiB set above.
+  { entry: "cloudflare.js", raw: 411 * 1024, gz: 124 * 1024, minGz: 44 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -865,6 +885,21 @@ const BUDGETS: readonly Budget[] = [
   //     bundle has no min-gz axis, so gz is its tightest tripwire; rebaselined
   //     gz 14→15 KiB rather than golf the doc/error (see the POLICY on index.js).
   { entry: "dev.js", raw: 40 * 1024, gz: 15 * 1024 },
+  // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
+  // `aws4fetch` SigV4 client + `fast-xml-parser` XML parser.
+  // Intended for cross-account R2 / non-R2 S3 from a Cloudflare
+  // Worker; the `./cloudflare` subpath excludes this closure so
+  // R2-binding consumers don't pay for it.
+  // Budget history:
+  //   → 160 KiB raw / 47 KiB gz / 25 KiB min-gz (2026-07-01): initial
+  //     baseline. Closure: S3HttpStorage + sigV4Signer + the aws4fetch SigV4
+  //     client (emitted as its own shared chunk) + fast-xml-parser, plus the
+  //     assertValidStorageKey key-namespace guard from main (the key-* chunk
+  //     reaches the s3-http closure). Measured: 163298 raw / 47023 gz /
+  //     25100 min-gz. raw/gz are sized with headroom over the chunk-boundary
+  //     overhead that the separate aws4fetch chunk carries; min-gz (the hard
+  //     ceiling, the real shipped-to-browser cost) clears 25 KiB.
+  { entry: "s3.js", raw: 160 * 1024, gz: 47 * 1024, minGz: 25 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
