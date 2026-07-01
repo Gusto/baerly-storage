@@ -253,6 +253,72 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 > asserting a single immediate snapshot over the wire. AWS S3, MinIO, and
 > the native R2 binding assert immediately.
 
+### S3 (over HTTP) from a Cloudflare Worker
+
+A Worker normally uses a native R2 binding (`r2BindingStorage`, wired by
+default in `baerlyWorker`). When the approved bucket is AWS S3 or a
+cross-account R2 — i.e. there is no in-account binding — inject
+`S3HttpStorage` instead. Import it from the Worker-safe
+`@gusto/baerly-storage/s3` subpath (its closure has no `node:` builtins;
+`@gusto/baerly-storage/node` does and will not bundle):
+
+```ts
+import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
+import { S3HttpStorage, sigV4Signer } from "@gusto/baerly-storage/s3";
+import config from "../../baerly.config.ts";
+
+export default baerlyWorker((env) => ({
+  config,
+  storage: new S3HttpStorage({
+    endpoint: env.S3_ENDPOINT, // e.g. https://s3.us-east-1.amazonaws.com
+    bucket: env.S3_BUCKET,
+    sign: sigV4Signer({
+      accessKeyId: env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      region: env.AWS_REGION,
+    }),
+  }),
+}));
+```
+
+The commit protocol requires exactly-one-winner create-if-absent
+(`If-None-Match: "*"`) and `If-Match` CAS. Native R2 bindings guarantee
+this; over the S3 HTTP API you inherit the *endpoint's* conditional-write
+and consistency behavior, so this path is only as strong as the backend
+you point it at. Cost trade-off: the `/s3` closure carries `aws4fetch` +
+`fast-xml-parser`; a same-account binding avoids both.
+
+**Support tier.** This path is opt-in and sits at the same tier as
+AWS-via-`S3HttpStorage`: credential-gated, with production validation you
+own. Its wire behavior is verified under Node (against MinIO and, in
+credential-gated runs, real S3 / R2). Under workerd, CI covers it on two
+levels: `tests/integration/s3-worker-safe.test.ts` proves the
+`@gusto/baerly-storage/s3` closure *bundles* `node:`-free (it loads in a
+Worker), and `tests/integration/s3-worker-wire.test.ts` proves it *runs*
+in a real Workerd isolate — `S3HttpStorage` + `sigV4Signer` drive a
+put / get / CAS / list round-trip through an in-memory S3-shaped `fetch`
+stub, exercising aws4fetch's WebCrypto signing, `fast-xml-parser`, and the
+`Request`/`Response` plumbing in-isolate. What CI does **not** do is drive
+a *real* S3 endpoint from workerd (TLS + the endpoint's own
+conditional-write semantics); that is the manual e2e recipe in
+`manual-e2e/README.md`. Run `baerly doctor --bucket=<uri>` against your
+endpoint before relying on it.
+
+**Deploy tooling still assumes R2.** `baerly deploy` and
+`baerly doctor --target=cloudflare` walk `wrangler.jsonc`'s `r2_buckets[]`
+and will flag a missing binding — they do not yet understand an S3-only
+Worker. Keep (or intentionally omit) the R2 binding with that in mind, and
+validate the S3 endpoint with `baerly doctor --bucket=<uri>` rather than
+the target-scoped `doctor`.
+
+**Credentials posture.** A same-account R2 binding needs no secret. This
+path instead requires long-lived static cloud credentials
+(`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) stored as Worker secrets;
+scope them to the one bucket and treat them like any other deployed
+secret. `sigV4Signer` covers static credentials only — for rotating /
+temporary credentials, pass your own `(req) => Promise<Request>` signer to
+`S3HttpStorage`.
+
 ## Per-provider conditional-write matrix
 
 Dated because provider behaviour drifts — re-verify before relying on a
