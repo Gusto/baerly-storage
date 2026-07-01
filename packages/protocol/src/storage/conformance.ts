@@ -656,6 +656,38 @@ export function defineStorageConformanceSuite(
         );
       });
 
+      // Sort order is UTF-8 BYTE order, not the host language's default string
+      // sort. For BMP characters the two agree, but they DIVERGE for
+      // supplementary-plane characters (encoded as surrogate pairs in UTF-16):
+      // a UTF-16 code-unit sort (JS's default, and some languages' `char`
+      // comparator) orders an emoji BEFORE a high-BMP private-use character,
+      // while UTF-8 byte order — what S3/R2 use on the wire, and what
+      // MemoryStorage / LocalFsStorage implement via `compareKeysUtf8` — orders
+      // it AFTER. `keyArb` is ASCII-only, so the property tests below never
+      // exercise this; a port that sorts with its native string comparator will
+      // pass those yet be silently wrong here. This fixed vector is the witness.
+      // @see docs/spec/storage-compatibility.md "Key namespace".
+      test("keys sort by UTF-8 byte order, not UTF-16 (supplementary-plane divergence)", async () => {
+        const enc = new TextEncoder();
+        // Inserted unsorted. Expected UTF-8-byte order is
+        //   "a" (0x61) < "é" (0xC3 0xA9) < "\uE000" (0xEE..) < "🌍" (0xF0..).
+        // A UTF-16 sort would instead place "🌍" (lead surrogate 0xD83C =
+        // 55356) before "\uE000" (0xE000 = 57344).
+        const keys = ["🌍", "\uE000", "é", "a"];
+        const expected = ["a", "é", "\uE000", "🌍"];
+        for (const k of keys) {
+          await s.put(k, enc.encode("v"));
+        }
+        await expectEventuallyEqual(
+          () => collect(s.list("")).then((l) => l.map((e) => e.key)),
+          expected,
+          settle,
+        );
+        // Non-tautology guard: a naive UTF-16 sort of the same keys does NOT
+        // match the expected UTF-8 order, so the assertion above has teeth.
+        expect(keys.toSorted()).not.toEqual(expected);
+      });
+
       // Property: list(prefix) returns lex-sorted keys-with-prefix.
       // `keyArb` is constrained to non-slash characters, so prefixes
       // are simply a leading substring. Uniqueness is enforced by

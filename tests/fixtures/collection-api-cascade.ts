@@ -866,6 +866,11 @@ const runLogEntryShape = async (
     expect(e.lsn).toMatch(LSN_RE);
     expect(typeof e.commit_ts).toBe("string");
     expect(Number.isFinite(new Date(e.commit_ts).getTime())).toBe(true);
+    // `commit_ts` is `Date#toISOString()` — strict UTC ISO-8601 with
+    // millisecond precision and a `Z` suffix. Pin the exact wire form so a
+    // language port emits the same shape (a mere Date.parse-able string is too
+    // loose: "2026" parses but is not the contract).
+    expect(e.commit_ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(typeof e.session).toBe("string");
     expect(e.session.length).toBeGreaterThan(0);
     expect(typeof e.seq).toBe("number");
