@@ -383,6 +383,38 @@ export const runHttpConformanceCascade = (opts: {
         expect(env.error?.code).toBe("NotFound");
       });
 
+      test("PATCH merge-patch returns 200 { modified: 1 } and preserves omitted keys", async () => {
+        // The success path was previously asserted ONLY inside the
+        // `describe.skipIf(!supportsCAS)` CAS block (which never runs —
+        // `supportsCAS` defaults false), so a merge-patch's 200
+        // `{ modified: 1 }` status/body and its JSON-merge semantics
+        // were never exercised over the HTTP wire. This UNGATED test
+        // pins both.
+        const table = await mintTable("patch-merge");
+        const ins = await postDoc(table, { title: "old", tag: "a", count: 1 });
+        expect(ins.status).toBe(201);
+        const id = ins.id!;
+        // Partial patch: touch only `title`. Merge semantics MUST leave
+        // `tag`/`count` intact — this is the merge-vs-replace
+        // distinction (contrast the "PUT replace" block, which drops
+        // omitted keys).
+        const patchRes = await doFetch(
+          authedRequest("PATCH", `/v1/c/${table}/${id}`, { patch: { title: "new" } }),
+        );
+        expect(patchRes.status).toBe(200);
+        const patchBody = (await patchRes.json()) as { readonly modified?: number };
+        expect(patchBody.modified).toBe(1);
+        const getRes = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
+        expect(getRes.status).toBe(200);
+        const { data } = (await getRes.json()) as { readonly data: Record<string, unknown> };
+        const { _id: _stripped, ...rest } = data;
+        void _stripped;
+        // Non-tautology guard: a whole-doc replace would have dropped
+        // `tag`/`count`. Merge-patch keeps them and only mutates
+        // `title`, so the preserved keys prove this wasn't a replace.
+        expect(rest).toEqual({ title: "new", tag: "a", count: 1 });
+      });
+
       test("POST > 1 MiB body returns 413 PayloadTooLarge", async () => {
         const table = await mintTable("rt-big");
         // 1 MiB + 1 bytes — exactly one byte over the cap so we
@@ -810,6 +842,118 @@ export const runHttpConformanceCascade = (opts: {
       });
     });
 
+    // ── Block 9c: routing fallthrough — unknown route + wrong method ─
+    //
+    // A porter re-implementing the wire must know what an unmatched
+    // request returns. DECISION (locked here): the kernel router
+    // (`packages/server/src/http/router.ts`) registers only the eight
+    // CRUD/query routes and an `app.onError` sink (router.ts:265); it
+    // installs NO custom `app.notFound(...)` and NO catch-all `.all()`.
+    // So an unmatched request falls through to Hono's DEFAULT
+    // notFoundHandler, which is `c.text("404 Not Found", 404)` (hono
+    // `hono-base.js`: `notFoundHandler = (c) => c.text("404 Not Found",
+    // 404)`). That is a BARE 404 — `text/plain` body `"404 Not
+    // Found"`, NOT the `HttpErrorEnvelope` JSON shape. The adapters
+    // return the router's Response verbatim (adapter-node
+    // `server.ts:209`; the fallthrough note at `server.ts:129-134`
+    // calls it "the kernel's 404"), so this is exactly what a client
+    // sees on the wire. `onError` fires only for THROWN errors, and no
+    // route throws when nothing matches — hence no envelope.
+    describe("routing fallthrough (unknown route + wrong method)", () => {
+      test("unknown path under /v1/ returns a bare hono 404 (NOT the error envelope)", async () => {
+        const res = await doFetch(authedRequest("GET", `/v1/does-not-exist`));
+        expect(res.status).toBe(404);
+        // Bare hono 404: text/plain "404 Not Found", not JSON.
+        const text = await res.text();
+        expect(text).toBe("404 Not Found");
+        // Non-tautology guard: prove it is NOT the ErrorEnvelope shape a
+        // matched-route 404 (e.g. GET of a missing _id) would carry.
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text) as unknown;
+        } catch {
+          parsed = undefined;
+        }
+        const env = parsed as ErrorEnvelope | undefined;
+        expect(env?.error?.code).toBeUndefined();
+      });
+
+      test("wrong method on a known path returns a bare hono 404 (NOT 405, NOT the error envelope)", async () => {
+        // PATCH is registered on `/v1/c/:collection/:id`, not on the
+        // collection root `/v1/c/:collection` (POST-only). A PATCH to
+        // the collection root matches no route → same default 404
+        // fallthrough. Hono does not emit 405 Method Not Allowed here.
+        const table = freshTable("wrong-method");
+        const res = await doFetch(authedRequest("PATCH", `/v1/c/${table}`, { patch: { x: 1 } }));
+        expect(res.status).toBe(404);
+        const text = await res.text();
+        expect(text).toBe("404 Not Found");
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text) as unknown;
+        } catch {
+          parsed = undefined;
+        }
+        const env = parsed as ErrorEnvelope | undefined;
+        expect(env?.error?.code).toBeUndefined();
+      });
+    });
+
+    // ── Block 9b: GET /v1/spec — the machine-readable contract ──────
+    // /v1/spec IS the porter's contract: a language re-implementation must
+    // serve a compatible document (specVersion, the errorCode→httpStatus map,
+    // httpRoutes, operators). It was previously untested over the wire. The
+    // route is anonymous (bypasses the verifier and stays up when auth/config
+    // is unhealthy); an authed caller additionally gets the declared
+    // collections. @see packages/server/src/spec/runtime-spec.ts.
+    describe("GET /v1/spec (machine-readable contract)", () => {
+      interface SpecErrorCode {
+        readonly code: string;
+        readonly httpStatus: number;
+        readonly retriable: boolean;
+      }
+      interface SpecBody {
+        readonly specVersion?: string;
+        readonly errorCodes?: ReadonlyArray<SpecErrorCode>;
+        readonly httpRoutes?: ReadonlyArray<unknown>;
+        readonly collections?: ReadonlyArray<unknown>;
+      }
+
+      test("anonymous request returns the static contract as JSON, without collections", async () => {
+        // No Authorization header — must still succeed (public infra).
+        const res = await doFetch(new Request(`${BASE}/v1/spec`, { method: "GET" }));
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toContain("application/json");
+        const body = (await res.json()) as SpecBody;
+        expect(typeof body.specVersion).toBe("string");
+        expect(Array.isArray(body.errorCodes)).toBe(true);
+        expect(Array.isArray(body.httpRoutes)).toBe(true);
+        // Collections are gated behind a valid identity — an anonymous probe
+        // must not be able to enumerate tenant collection names.
+        expect(body.collections).toBeUndefined();
+      });
+
+      test("authed request appends the declared collections", async () => {
+        const res = await doFetch(authedRequest("GET", `/v1/spec`));
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SpecBody;
+        expect(Array.isArray(body.collections)).toBe(true);
+      });
+
+      test("served errorCode→httpStatus/retriable map matches the wire behavior tested above", async () => {
+        // Drift gate: the contract a port reads MUST agree with the statuses
+        // the cascade actually observes. NotFound→404 (non-retriable) and
+        // Conflict→409 (retriable) are asserted on live responses elsewhere in
+        // this cascade; pin that the self-described map says the same.
+        const res = await doFetch(new Request(`${BASE}/v1/spec`, { method: "GET" }));
+        const body = (await res.json()) as SpecBody;
+        const byCode = new Map((body.errorCodes ?? []).map((e) => [e.code, e]));
+        expect(byCode.get("NotFound")).toMatchObject({ httpStatus: 404, retriable: false });
+        expect(byCode.get("Conflict")).toMatchObject({ httpStatus: 409, retriable: true });
+        expect(byCode.get("Unauthorized")).toMatchObject({ httpStatus: 401 });
+      });
+    });
+
     // ── Block 10: Long-poll /v1/since ───────────────────────────────
     describe.skipIf(!supportsLongPoll)("long-poll /v1/since", () => {
       test("GET /v1/since after an insert returns the event in the response (fast path)", async () => {
@@ -1048,6 +1192,62 @@ export const runHttpConformanceCascade = (opts: {
         const r2 = (await res2.json()) as MetaBody;
         expect(r2._meta.manifest_pointer).not.toBe(r1._meta.manifest_pointer);
         expect(r2._meta.fresh).toBe(true);
+      });
+    });
+
+    // ── Block 12: response Content-Type contract ────────────────────
+    //
+    // A porter must reproduce the media type across status classes. All
+    // body-bearing responses the router emits go through `c.json(...)`,
+    // which sets `Content-Type: application/json` (hono may append a
+    // `; charset=...` suffix, so match on the prefix). The bodiless
+    // 204 (DELETE success) carries no body. NOT re-tested here: the
+    // `/v1/spec` Content-Type, which Block 9b already pins on the
+    // anonymous probe.
+    describe("response Content-Type contract", () => {
+      const isJsonContentType = (res: Response): boolean =>
+        (res.headers.get("content-type") ?? "").startsWith("application/json");
+
+      test("201 (POST insert) and 200 (GET read) carry application/json", async () => {
+        const table = await mintTable("ct-2xx");
+        const postRes = await doFetch(authedRequest("POST", `/v1/c/${table}`, { doc: { a: 1 } }));
+        expect(postRes.status).toBe(201);
+        expect(isJsonContentType(postRes)).toBe(true);
+        const posted = (await postRes.json()) as { readonly _id: string };
+        const getRes = await doFetch(authedRequest("GET", `/v1/c/${table}/${posted._id}`));
+        expect(getRes.status).toBe(200);
+        expect(isJsonContentType(getRes)).toBe(true);
+      });
+
+      test("400 (malformed ?where=) carries application/json", async () => {
+        const table = freshTable("ct-400");
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}?where=notjson`));
+        expect(res.status).toBe(400);
+        expect(isJsonContentType(res)).toBe(true);
+      });
+
+      test("401 (missing Authorization) carries application/json", async () => {
+        const res = await doFetch(new Request(`${BASE}/v1/c/ct-401`, { method: "GET" }));
+        expect(res.status).toBe(401);
+        expect(isJsonContentType(res)).toBe(true);
+      });
+
+      test("404 (missing _id, matched route) carries application/json", async () => {
+        const table = await mintTable("ct-404");
+        await postDoc(table, { seed: 1 });
+        const res = await doFetch(authedRequest("GET", `/v1/c/${table}/never-existed`));
+        expect(res.status).toBe(404);
+        expect(isJsonContentType(res)).toBe(true);
+      });
+
+      test("204 (DELETE success) carries an empty body", async () => {
+        const table = await mintTable("ct-204");
+        const ins = await postDoc(table, { gone: true });
+        const del = await doFetch(authedRequest("DELETE", `/v1/c/${table}/${ins.id!}`));
+        expect(del.status).toBe(204);
+        // A 204 MUST NOT carry a body. `text()` yields the empty string.
+        const body = await del.text();
+        expect(body).toBe("");
       });
     });
   });
