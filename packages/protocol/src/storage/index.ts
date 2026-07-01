@@ -7,6 +7,7 @@ export type {
   StoragePutResult,
 } from "./types.ts";
 export { MemoryStorage, getOrCreateMemoryStorageForBucket, resetMemoryStorage } from "./memory.ts";
+export { assertValidStorageKey } from "./key.ts";
 export type {
   ConformanceFactory,
   ConformanceFactoryResult,

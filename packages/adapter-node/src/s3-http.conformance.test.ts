@@ -31,12 +31,17 @@ const signer = new AwsClient({
 });
 const sign = (req: Request): Promise<Request> => signer.sign(req);
 
-// Minio's REST gateway rejects request paths whose resource component
-// is `.` or `..` (it validates URL paths as POSIX paths on the backing
-// filesystem) — both `?prefix=.` listing and `PUT /bucket/.` (key=".")
-// surface as `XMinioInvalidResourceName` / `BucketAlreadyOwnedByYou`.
-// AWS S3 and R2 have no such restriction. Pin a `.`-free key + prefix
-// arbitrary for the Minio run only; everything else stays default.
+// A bare `.` / `..` *key* is unaddressable over the S3 HTTP API on every
+// backend (RFC 3986 dot-segment removal rewrites `<bucket>/.` before the
+// request is sent), so the shared `DEFAULT_KEY_ARB` already excludes it
+// and every adapter rejects it with `InvalidConfig` (see the "key
+// namespace" conformance block + docs/spec/storage-compatibility.md).
+// Minio adds a *stricter, Minio-specific* rule the others don't: its REST
+// gateway validates URL paths as POSIX paths on the backing filesystem, so
+// even a `?prefix=.` *listing* (where `.` rides a harmless query param on
+// AWS/R2) surfaces as `XMinioInvalidResourceName`. Pin a `.`-free key +
+// prefix arbitrary for the Minio run to dodge that gateway quirk;
+// everything else stays default.
 const MINIO_KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
 const MINIO_KEY_ARB = fc.string({
   minLength: 1,

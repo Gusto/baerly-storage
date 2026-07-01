@@ -402,6 +402,15 @@ auto-load on matching edits and point at the same files.
 - ❌ Skipping or `.skip()`'ing a test to ship. If a test is wrong, fix it;
   if the code is wrong, fix the code.
 - ❌ Hard-coding new magic numbers. Add to `packages/protocol/src/constants.ts`.
+- ❌ Trimming JSDoc, comments, or error-message text to squeeze under the
+  **raw/gz bundle-size budget**. Those two axes are creep _tripwires_; `min-gz`
+  is the only hard ceiling (it's the real shipped-to-browser cost — see the
+  `POLICY` note in `tests/integration/bundle-size.test.ts`, which the failing
+  assertion now also prints). On an intentional change, rebaseline the KiB line
+  with a dated baseline note — don't golf docs/identifiers/messages. Comments
+  ship un-stripped, but doc + error quality outweigh a few raw bytes. (An axis
+  over on `min-gz` is different: that's a real regression — shrink the closure,
+  don't rebaseline.)
 - ❌ Reintroducing `bun:test`, Rome, or baseUrl imports — all replaced.
 - ❌ Extensionless relative imports (`from "./foo"`). Always write
   `from "./foo.ts"` or `from "./foo/index.ts"`. Node's

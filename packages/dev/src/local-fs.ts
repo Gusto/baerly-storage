@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import {
   BaerlyError,
+  assertValidStorageKey,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -236,9 +237,9 @@ export class LocalFsStorage implements Storage {
    * `BaerlyError("InvalidConfig", …)`.
    */
   #pathFor(key: string): string {
-    if (key.length === 0) {
-      throw new BaerlyError("InvalidConfig", "LocalFsStorage: empty key");
-    }
+    // Shared Storage key grammar (non-empty, no `.`/`..` segments); the
+    // FS-specific guards below add traversal/backslash/empty-segment checks.
+    assertValidStorageKey(key);
     if (key.startsWith("/")) {
       throw new BaerlyError("InvalidConfig", `LocalFsStorage: leading "/" in key: ${key}`);
     }

@@ -3,7 +3,7 @@ title: Storage compatibility
 audience: spec
 doc_type: current-contract
 summary: Which S3-compatible stores baerly-storage supports, and the conditional-write features it depends on.
-last-reviewed: 2026-06-14
+last-reviewed: 2026-06-30
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
 ---
@@ -41,6 +41,58 @@ This is recent. Until **December 2020**, S3 was only eventually consistent for o
 S3 is an immutable key value store for (potentially very large) binary blobs. The keys are limited in size (1kb), but you can to range queries by prefix query in one direction only.
 
 You cannot update objects in-place — every object is immutable once written. Modern S3 _does_, however, support conditional writes (`If-None-Match: "*"` to create-if-absent, and `If-Match: <etag>` to compare-and-swap), and the protocol depends on them: a commit is a single `If-None-Match: "*"` create on the numbered `log/<seq>` object, and the compactor advances `current.json` with `If-Match` CAS (see [the protocol invariants in sync-protocol.md](sync-protocol.md#protocol-invariants)). So it's tricky getting multiplayer out of this system, but possible thanks to those conditional writes plus the strong consistency guarantees.
+
+## Key namespace
+
+baerly-storage addresses objects by string key over `PUT` / `GET` /
+`DELETE <endpoint>/<bucket>/<key>`. A **valid key** is:
+
+- **non-empty**;
+- at most **1024 bytes** of UTF-8 (`MAX_KEY_BYTES` — the S3/R2 hard limit); and
+- `/`-delimited, with **no path segment equal to `.` or `..`**.
+
+The dot-segment rule is a **portability invariant, not a vendor quirk.**
+RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant
+URL parser, so a key whose segment is `.` or `..` is rewritten _before the
+request is signed or sent_: `<endpoint>/<bucket>/.` normalizes to
+`<endpoint>/<bucket>/` (a bucket-root operation) and
+`<endpoint>/<bucket>/..` escapes the bucket entirely. This happens
+identically in TypeScript (`new URL` / `fetch`), Go (`net/url`), Rust
+(`url`), Python (`urllib`), and any other language a `Storage` port
+targets — over the wire it surfaces as a confusing bucket-root
+`403 AccessDenied`, never a clear error. So the contract is to reject such
+keys **at the boundary**, uniformly, rather than emit an unaddressable
+request.
+
+Enforcement is split by layer:
+
+- The **dot-segment / empty-key** rule (the unaddressable cases above) is
+  enforced at the **raw `Storage` boundary**: every adapter validates the
+  key on `get` / `put` / `delete` and rejects a violation with
+  `BaerlyError{code:"InvalidConfig"}` (`assertValidStorageKey` in
+  `@baerly/protocol`). This is the `Storage`-level counterpart to the
+  higher-level `assertPathSegment` guard, which already screens
+  caller-controlled key _segments_ (`_id`, `collection`, `app`, `tenant`).
+  The cross-adapter "key namespace" block in
+  `defineStorageConformanceSuite` asserts each backend rejects `.` and `..`
+  identically — **a language port MUST reproduce that rejection to
+  conform.**
+- The **1024-byte ceiling** is enforced on the **write path**, where
+  multi-segment keys are assembled (`assertKeyWithinLimit` at the writer's
+  PUT sites), rather than at the `Storage` boundary — per-segment caps
+  don't bound the assembled sum, and this keeps the boundary guard free of
+  a UTF-8 length pass on every call.
+
+The kernel itself never _emits_ a `.` / `..` or over-length key; both
+guards exist so a misuse fails fast and identically everywhere instead of
+surfacing as an opaque provider 400/403.
+
+> **A `list` _prefix_ is not a key.** The prefix passed to `Storage.list`
+> rides the `?prefix=` query component, where `.` / `..` are harmless on
+> AWS S3 and R2. (MinIO's gateway is stricter — it validates the prefix as
+> a POSIX path too — which is why the MinIO conformance run pins a
+> `.`-free prefix arbitrary.) Only _keys_, which become path segments, are
+> constrained by the dot-segment rule.
 
 ## Support tiers
 

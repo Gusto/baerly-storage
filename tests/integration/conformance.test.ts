@@ -29,12 +29,18 @@ import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
-// Minio's REST gateway rejects request paths whose resource component
-// is `.` or `..` (it validates URL paths as POSIX paths on the backing
-// filesystem). AWS S3 and R2 have no such restriction. Pin a `.`-free
-// key + prefix arbitrary for the Minio variant only; everything else
-// stays default. Mirror the pattern in
-// `packages/adapter-node/src/s3-http.conformance.test.ts`.
+// A bare `.` / `..` key is unaddressable over the S3 HTTP API on *every*
+// backend — RFC 3986 dot-segment removal (universal across every URL
+// parser) rewrites `<bucket>/.` → `<bucket>/` before the request is sent
+// — so the shared `DEFAULT_KEY_ARB` already excludes it and every adapter
+// rejects it with `InvalidConfig` (see the "key namespace" conformance
+// block + docs/spec/storage-compatibility.md). This extra `.`-free pin is
+// therefore now defense-in-depth for the Minio variant, whose REST gateway
+// additionally validates URL paths as POSIX paths on the backing
+// filesystem. It is redundant with the default arb for bare `.`/`..`;
+// dropping it (letting Minio exercise dot-containing keys like `a.b`) is a
+// safe follow-up once verified against a live `pnpm test:minio` run.
+// Mirror the pattern in `packages/adapter-node/src/s3-http.conformance.test.ts`.
 const MINIO_KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
 const MINIO_KEY_ARB = fc.string({
   minLength: 1,

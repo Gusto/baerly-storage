@@ -304,12 +304,15 @@ const BUDGETS: readonly Budget[] = [
   //     sets KUBERNETES_SERVICE_HOST). +22 raw over the prior bound (measured
   //     229398); min-gz is 19724 / 20480 (−756, healthy) — per the POLICY above,
   //     raw is a creep tripwire, so rebaseline rather than golf the predicate.
-  //   NOTE (2026-06-30): the gz axis is now near-ceiling — measured ~71667 vs
-  //     71680 (70 KiB), ~13 B of headroom. Left un-bumped on purpose (measure-
-  //     then-rebaseline discipline; it passes today). The next kernel change
-  //     that adds gz bytes should expect to trip this and rebaseline gz with a
-  //     measured value, not treat it as a regression.
-  { entry: "index.js", raw: 225 * 1024, gz: 70 * 1024, minGz: 20 * 1024 },
+  //   → raw +2 KiB / gz +1 KiB (2026-06-30): `assertValidStorageKey`
+  //     (storage/key.ts) reaches the MemoryStorage closure — the raw `Storage`
+  //     key-namespace guard, with its full explanatory JSDoc + a self-explaining
+  //     error message. Stacks on top of the fail-closed guard above, which is why
+  //     the gz axis (flagged near-ceiling on that bump) now crosses 70 KiB as
+  //     predicted. Measured 231593 raw / 72425 gz / 19885 min-gz; min-gz stays
+  //     under 20 KiB (−595). Per the POLICY, rebaselined the raw/gz tripwires
+  //     rather than golf the doc/error.
+  { entry: "index.js", raw: 227 * 1024, gz: 71 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -710,7 +713,16 @@ const BUDGETS: readonly Budget[] = [
   //   → raw +2 KiB (2026-06-30): MemoryStorage fail-closed guard pulled through
   //     the protocol barrel into the Worker aggregator (measured 416161 raw);
   //     gz/min-gz remain under. Same safety logic as the index.js bump above.
-  { entry: "cloudflare.js", raw: 407 * 1024, gz: 122 * 1024, minGz: 43 * 1024 },
+  //   → raw +3 KiB / gz +1 KiB (2026-06-30): `assertValidStorageKey` reaches the
+  //     r2-binding + s3-http closures (the raw `Storage` key-namespace guard).
+  //     Stacks on top of the fail-closed guard above; the two guards' minified
+  //     error strings together pushed min-gz +31 B past the 43 KiB HARD ceiling
+  //     (44063), so — per the POLICY, which forbids rebaselining min-gz — the
+  //     key-guard's (test-unasserted) error message was tightened to shrink the
+  //     closure rather than raise the ceiling. Post-trim measured 418893 raw /
+  //     125590 gz / 44028 min-gz; min-gz clears 43 KiB by 4 B. Only the raw/gz
+  //     creep tripwires are rebaselined.
+  { entry: "cloudflare.js", raw: 410 * 1024, gz: 123 * 1024, minGz: 43 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -842,7 +854,12 @@ const BUDGETS: readonly Budget[] = [
   //   → raw −2 KiB (2026-06-24): W4-5 bundle hygiene — constants chunk no longer
   //     in dev closure (moved RESOLUTION constants to leaf; JSDoc trim).
   //     Measured: 37935 raw / 13618 gz.
-  { entry: "dev.js", raw: 38 * 1024, gz: 14 * 1024 },
+  //   → raw +2 KiB (2026-06-30): `assertValidStorageKey` reaches the LocalFsStorage
+  //     closure (the raw `Storage` key-namespace guard) with its full JSDoc +
+  //     self-explaining error message. Measured 40341 raw / 14447 gz. This dev-only
+  //     bundle has no min-gz axis, so gz is its tightest tripwire; rebaselined
+  //     gz 14→15 KiB rather than golf the doc/error (see the POLICY on index.js).
+  { entry: "dev.js", raw: 40 * 1024, gz: 15 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
@@ -1024,9 +1041,21 @@ describe("bundle size", () => {
           return `${a.line}\n    → rebaseline ${a.kind}: ${kib} * 1024 (= ${kib * 1024}, clears ${a.measured})`;
         })
         .join("\n");
+      // Carry the POLICY in the failure output itself, so it is read at the
+      // moment it matters instead of only living in the comments above. The
+      // guidance is axis-aware: min-gz is a hard ceiling, raw/gz are tripwires.
+      const policy = over.some((a) => a.kind === "min-gz")
+        ? "min-gz is the HARD ceiling — the real shipped-to-browser cost after a " +
+          "consumer bundler minifies. Over on min-gz is a genuine regression: " +
+          "investigate the closure and shrink it, do NOT just rebaseline."
+        : "raw/gz are creep tripwires, NOT hard limits. If this size change is " +
+          "intentional, rebaseline the KiB line above with a dated baseline note. " +
+          "Do NOT trim JSDoc / comments / error-message text or golf identifiers " +
+          "to fit — comments ship un-stripped, but doc + error quality outweigh a " +
+          "few bytes.";
       expect(
         over.length,
-        `${over.length} axis/axes over budget for dist/${entry}:\n${report}`,
+        `${over.length} axis/axes over budget for dist/${entry}:\n${report}\n\n  POLICY: ${policy}`,
       ).toBe(0);
     });
   }
