@@ -53,8 +53,9 @@ for "give me an S3 bucket" happened years ago. Adding a managed database
 service triggers a fresh vendor procurement review, a secrets-manager
 integration, and an IT ticket to add a new managed-DB SKU to the catalog —
 and that barrier only grows past roughly 100 people, where the approval
-chain lengthens. As [thesis.md](thesis.md) puts it: the bucket is
-"politically pre-cleared." baerly-storage plugs into what is already cleared.
+chain lengthens. The bucket is already cleared; baerly-storage plugs into
+what your security review closed years ago. See
+[thesis.md](thesis.md#no-new-vendor) for the full argument.
 
 ## Servers that don't exist can't go down
 
