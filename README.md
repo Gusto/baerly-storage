@@ -1,6 +1,6 @@
 # baerly-storage
 
-**A database with no server. No daemon. No database runtime. Just your app and a bucket.**
+**A document database that lives in a bucket you already own — no new vendor to clear, no server to keep running, and an API small enough for an LLM (or a non-engineer) to use zero-shot.**
 
 ```text
 before: client → app handler → database server  (a server)
@@ -23,14 +23,19 @@ log object commits a write. When the request ends, baerly-storage is
 gone.
 
 - **A tiny API humans and agents can hold in context.** No DDL, no raw
-  SQL — 8 verbs and a ~12k-token API surface.
+  SQL — 8 verbs and a ~12k-token API surface small enough to hand to an
+  LLM or a non-engineer and walk away.
 - **Idle rounds to zero.** No database process to keep warm, and no
   per-app database floor across a fleet of small internal tools.
 - **No data hostage.** `baerly export --target=postgres` gives you a
   per-collection SQL snapshot. Crossing the envelope is the graduation
   signal; the data exit is mechanical.
-- **Built like git.** Content-addressed documents, immutable numbered log
-  entries, and one conditional log create as the commit, per collection.
+- **No new vendor.** Your S3/R2 bucket cleared security review years
+  ago; every hosted alternative means a fresh vendor review and an IT
+  ticket for a new managed-DB SKU.
+- **Nothing to go down.** No resident service in your critical path —
+  one fewer failure domain and one fewer vendor in your dependency tree.
+  Servers that don't exist can't go down.
 
 <!-- Hero demo: render `docs/assets/demo.gif` from `docs/assets/demo.tape`
      (`vhs docs/assets/demo.tape`) against a real bucket, then uncomment:
@@ -101,47 +106,6 @@ support Cloudflare Access and JWKS bearer verification; shared-secret
 auth is for service-to-service calls and dev. See
 [`client-auth.md`](./docs/guide/client-auth.md).
 
-## How it works
-
-**Built like git: content-addressed documents, immutable numbered log
-entries, and one conditional log create as the commit, per collection.**
-
-A bucket can store objects; it cannot run a transaction coordinator. The
-hard part is the commit: one writer must win, and every reader must be
-able to tell what won. [S3's strong consistency][s3-strong] makes object
-storage usable as shared state; conditional writes supply the
-one-writer-wins operation.
-
-Concretely, a write drops new immutable objects in the bucket and then
-creates the next numbered log entry for that collection with
-create-if-absent (`If-None-Match: "*"`). Two writers racing the same slot
-cannot both win; the loser reads the winner and retries at the next slot.
-That create _is_ the commit. There is no resident coordinator: each
-request reads bucket state, tries that create, and leaves no required
-process behind. A read follows `current.json` to the snapshot and folds
-the committed log tail into rows.
-
-baerly-storage shares the immutable-artifact foundation of table formats
-like Apache Iceberg and Delta Lake, but commits with a narrower step: one
-conditional create-if-absent log entry per collection, with no
-metadata-pointer swap and no separate coordinator. S3's strong
-read-after-write consistency and conditional writes (`If-None-Match`) make
-that single create safe. See
-[prior art and lineage](docs/spec/prior-art.md) for how it relates to
-Iceberg, Delta Lake, Litestream, and Turbopuffer.
-
-Each collection has its own ordered log, so **writes are per-collection
-linearizable** — the `If-None-Match` log create linearizes every commit.
-Cross-collection writes are unordered and non-atomic; that boundary is
-part of the contract (see [When (not) to use it](#when-not-to-use-it)).
-
-The durable contract is the bucket layout plus the conditional-write
-rules. Another language could speak it by writing the same layout and
-honoring the same rules. See
-[`storage-compatibility.md`](./docs/spec/storage-compatibility.md).
-
-[s3-strong]: https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/
-
 ## Cheat sheet
 
 ```ts
@@ -196,22 +160,53 @@ It is **deliberately not** a few things:
 - **Realtime is long-poll first.** Polling is always correct; a WebSocket
   tier would be a future opt-in.
 
-### Scale at a glance
+None of these are apologies — baerly-storage names its envelope so
+graduation is a feature, not a surprise: `baerly export
+--target=postgres` makes the exit mechanical.
+The shape test lives in
+[workload-fit.md](./docs/about/workload-fit.md); the numeric envelope in
+[graduation.md](./docs/about/graduation.md).
 
-| Dimension           | Number                                                                                                                  | Notes                                                                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Shape               | 1 important screen = 1 collection                                                                                       | The fit test above; fails before size matters                                                                                     |
-| Throughput          | ~30 writes/min/collection sustained                                                                                     | M-size operating point — model/estimate, pending real-infra measurement on Cloudflare R2                                          |
-| Per-collection size | ~100–500 docs (~512 KB snapshot) before compaction defers on CF free                                                    | A fold fits the free-tier CPU budget at ~512 KB; erosion, not a cliff — model/estimate, pending real CF-isolate measurement       |
-| Fan-out             | ~100 collections/tenant (soft guideline)                                                                                | Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N   |
-| Storage             | >10 GB/tenant stored = R2 free-tier boundary                                                                            | A cost line, not a protocol ceiling; billing begins above 10 GB-mo on R2                                                          |
-| Cost                | ~$18/mo all-in on R2 (~$13 object-storage ops + $5 Workers Paid floor), ~$26/mo on S3 at M-size                         | At ~30 writes/min account-wide aggregate; `baerly cost` projects the object-storage-ops portion only (no platform floor)           |
+## How it works
 
-**Graduation is the success path, not a failure mode.** Crossing any of
-these is the signal to graduate the workload — `baerly export
---target=postgres` makes the data exit mechanical. See
-[workload-fit.md](./docs/about/workload-fit.md) for the shape test and
-[graduation.md](./docs/about/graduation.md) for the full envelope.
+**Built like git: content-addressed documents, immutable numbered log
+entries, and one conditional log create as the commit, per collection.**
+
+A bucket can store objects; it cannot run a transaction coordinator. The
+hard part is the commit: one writer must win, and every reader must be
+able to tell what won. [S3's strong consistency][s3-strong] makes object
+storage usable as shared state; conditional writes supply the
+one-writer-wins operation.
+
+Concretely, a write drops new immutable objects in the bucket and then
+creates the next numbered log entry for that collection with
+create-if-absent (`If-None-Match: "*"`). Two writers racing the same slot
+cannot both win; the loser reads the winner and retries at the next slot.
+That create _is_ the commit. There is no resident coordinator: each
+request reads bucket state, tries that create, and leaves no required
+process behind. A read follows `current.json` to the snapshot and folds
+the committed log tail into rows.
+
+baerly-storage shares the immutable-artifact foundation of table formats
+like Apache Iceberg and Delta Lake, but commits with a narrower step: one
+conditional create-if-absent log entry per collection, with no
+metadata-pointer swap and no separate coordinator. S3's strong
+read-after-write consistency and conditional writes (`If-None-Match`) make
+that single create safe. See
+[prior art and lineage](docs/spec/prior-art.md) for how it relates to
+Iceberg, Delta Lake, Litestream, and Turbopuffer.
+
+Each collection has its own ordered log, so **writes are per-collection
+linearizable** — the `If-None-Match` log create linearizes every commit.
+Cross-collection writes are unordered and non-atomic; that boundary is
+part of the contract (see [When (not) to use it](#when-not-to-use-it)).
+
+The durable contract is the bucket layout plus the conditional-write
+rules. Another language could speak it by writing the same layout and
+honoring the same rules. See
+[`storage-compatibility.md`](./docs/spec/storage-compatibility.md).
+
+[s3-strong]: https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/
 
 ## Go deeper
 
