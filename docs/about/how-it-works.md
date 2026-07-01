@@ -136,18 +136,17 @@ adversarial fencing model in
 
 ## The same playbook as Apache Iceberg
 
-This is not a new trick. Table formats like Apache Iceberg commit by
-writing immutable data and then publishing an atomic pointer to it.
-baerly-storage uses the same write-immutable-then-publish pattern,
-applied to a document database instead of analytics tables — but the
-commit point is narrower. Iceberg-style writers prepare new metadata and
-atomically swap the table's current-metadata pointer; baerly-storage
-commits by creating one numbered log object with create-if-absent, and
-there is no metadata pointer to swap (`current.json` is only a
-compaction bookmark, not the authority on state). S3's strong
-read-after-write consistency and conditional writes (`If-None-Match`
-create-if-absent, `If-Match` compare-and-swap) make that publish safe
-without a separate coordinator.
+This is not a new trick. Table formats like Apache Iceberg and Delta
+Lake share the same foundation: write immutable artifacts into object
+storage, then commit. baerly-storage sits in that lineage — but the
+commit step is narrower. Iceberg-style writers prepare new metadata and
+atomically swap a table's current-metadata pointer via a coordinator or
+catalog service; baerly-storage commits by creating one numbered log
+entry with create-if-absent (`If-None-Match: "*"`). There is no
+metadata-pointer swap and no separate coordinator: `current.json` is a
+compactor-owned hint that advances outside the commit path, not the
+authority on committed state. S3's strong read-after-write consistency
+and conditional writes make that single create safe.
 
 Systems like Litestream and Turbopuffer also lean on object storage, but
 they ship long-lived replication or query fleets; baerly-storage keeps

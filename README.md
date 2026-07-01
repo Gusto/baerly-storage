@@ -121,11 +121,12 @@ request reads bucket state, tries that create, and leaves no required
 process behind. A read follows `current.json` to the snapshot and folds
 the committed log tail into rows.
 
-This is the write-immutable-data-then-publish-an-atomic-pointer pattern
-that table formats like Apache Iceberg use, narrowed to a document
-database: the commit is a single conditional create of the next numbered
-log object (`If-None-Match`), made safe by S3's strong read-after-write
-consistency and conditional writes — no separate coordinator. See
+baerly-storage shares the immutable-artifact foundation of table formats
+like Apache Iceberg and Delta Lake, but commits with a narrower step: one
+conditional create-if-absent log entry per collection, with no
+metadata-pointer swap and no separate coordinator. S3's strong
+read-after-write consistency and conditional writes (`If-None-Match`) make
+that single create safe. See
 [prior art and lineage](docs/spec/prior-art.md) for how it relates to
 Iceberg, Delta Lake, Litestream, and Turbopuffer.
 
