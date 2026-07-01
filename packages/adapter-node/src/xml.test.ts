@@ -1,5 +1,10 @@
 import { expect, test, describe } from "vitest";
-import { parseListObjectsV2CommandOutput, parseS3Error } from "./xml.ts";
+import {
+  parseAssumeRoleWithWebIdentity,
+  parseListObjectsV2CommandOutput,
+  parseS3Error,
+  parseStsError,
+} from "./xml.ts";
 describe("XML parser", () => {
   test("parseListObjectsV2CommandOutput example", () => {
     const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
@@ -300,6 +305,98 @@ describe("parseS3Error", () => {
     // runs, so the entity is never expanded. Locks the behavior.
     expect(
       parseS3Error(`<!DOCTYPE Error [<!ENTITY l. "x">]><Error><Code>&lt;</Code></Error>`),
+    ).toBeUndefined();
+  });
+});
+
+describe("parseAssumeRoleWithWebIdentity", () => {
+  test("extracts the <Credentials> block from an STS success body", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+      <AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+        <AssumeRoleWithWebIdentityResult><Credentials>
+          <AccessKeyId>ASIAEXAMPLE</AccessKeyId>
+          <SecretAccessKey>secret</SecretAccessKey>
+          <SessionToken>token</SessionToken>
+          <Expiration>2026-05-28T18:00:00Z</Expiration>
+        </Credentials></AssumeRoleWithWebIdentityResult>
+      </AssumeRoleWithWebIdentityResponse>`;
+    expect(parseAssumeRoleWithWebIdentity(xml)).toEqual({
+      AccessKeyId: "ASIAEXAMPLE",
+      SecretAccessKey: "secret",
+      SessionToken: "token",
+      Expiration: "2026-05-28T18:00:00Z",
+    });
+  });
+
+  test("returns all-undefined fields for a body without <Credentials>", () => {
+    expect(parseAssumeRoleWithWebIdentity("<AssumeRoleWithWebIdentityResponse/>")).toEqual({
+      AccessKeyId: undefined,
+      SecretAccessKey: undefined,
+      SessionToken: undefined,
+      Expiration: undefined,
+    });
+  });
+
+  test("refuses a DTD (XXE guard) by throwing InvalidResponse", () => {
+    expect(() =>
+      parseAssumeRoleWithWebIdentity(
+        `<!DOCTYPE AssumeRoleWithWebIdentityResponse [<!ENTITY l. "x">]><AssumeRoleWithWebIdentityResponse/>`,
+      ),
+    ).toThrow(/DTD/);
+  });
+
+  test("does not echo the response body on unparseable XML (would leak live creds)", () => {
+    // A success-shaped-but-malformed 200 body carries plaintext credentials;
+    // the thrown error must not fold them in (it gets logged).
+    const secret = "SECRET-ACCESS-KEY-DO-NOT-LEAK";
+    // Truncated trailing tag makes fast-xml-parser throw mid-parse; the secret
+    // sits in the (unparseable) body the old code echoed into the error.
+    const malformed = `<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><SecretAccessKey>${secret}</SecretAccessKey><trunc`;
+    let thrown: unknown;
+    try {
+      parseAssumeRoleWithWebIdentity(malformed);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: "InvalidResponse" });
+    expect((thrown as Error).message).not.toContain(secret);
+  });
+});
+
+describe("parseStsError", () => {
+  test("extracts Code and Message from an STS <ErrorResponse> body", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+      <ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+        <Error>
+          <Type>Sender</Type>
+          <Code>InvalidIdentityToken</Code>
+          <Message>The ID Token provided is not a valid JWT.</Message>
+        </Error>
+        <RequestId>abc-123</RequestId>
+      </ErrorResponse>`;
+    expect(parseStsError(xml)).toEqual({
+      Code: "InvalidIdentityToken",
+      Message: "The ID Token provided is not a valid JWT.",
+    });
+  });
+
+  test("extracts Code alone when the STS <Error> carries no <Message>", () => {
+    const xml = `<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+        <Error><Type>Sender</Type><Code>InvalidIdentityToken</Code></Error>
+      </ErrorResponse>`;
+    expect(parseStsError(xml)).toEqual({ Code: "InvalidIdentityToken" });
+  });
+
+  test("returns undefined for a non-error body so callers fall back to the raw status", () => {
+    expect(parseStsError("<AssumeRoleWithWebIdentityResponse/>")).toBeUndefined();
+    expect(parseStsError("")).toBeUndefined();
+  });
+
+  test("refuses a DTD (XXE guard) and returns undefined", () => {
+    expect(
+      parseStsError(
+        `<!DOCTYPE ErrorResponse [<!ENTITY x "y">]><ErrorResponse><Error/></ErrorResponse>`,
+      ),
     ).toBeUndefined();
   });
 });
