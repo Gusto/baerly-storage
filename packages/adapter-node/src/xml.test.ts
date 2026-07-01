@@ -164,6 +164,23 @@ describe("XML parser", () => {
     expect(parsed.Contents?.[0]?.Key).toBe("a\x01b\x1Fc\x7Fd");
   });
 
+  test("NUL byte (%00) in a key round-trips to a literal \\x00", () => {
+    // NUL (0x00) is illegal in XML 1.0 AND 1.1 — it cannot appear even as a
+    // numeric character reference, so encoding-type=url (%00) is the ONLY
+    // representation that can survive a valid ListObjectsV2 body. Pin the
+    // decode: decodeURIComponent("%00") === "\x00", so the parsed key
+    // contains the literal NUL character. Sibling of the ASCII 0–31 cases.
+    const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>a%00b</Key></Contents>
+      </ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents?.[0]?.Key).toBe("a\x00b");
+    // Non-tautology guard: the decoded key must differ from the raw wire form,
+    // proving the percent-escape was actually decoded (not passed through).
+    expect(parsed.Contents?.[0]?.Key).not.toBe("a%00b");
+  });
+
   test("space, %, and unicode in a key round-trip via url-decoding", () => {
     // With encoding-type=url S3 sends a space as `+`, a literal percent as
     // %25, and non-ASCII as percent-encoded UTF-8 (é = %C3%A9).
@@ -173,6 +190,29 @@ describe("XML parser", () => {
       </ListBucketResult>`;
     const parsed = parseListObjectsV2CommandOutput(xml);
     expect(parsed.Contents?.[0]?.Key).toBe("my 50% café");
+  });
+
+  test("malformed percent-escape in a key raises InvalidResponse, not an uncaught URIError", () => {
+    // With encoding-type=url a well-formed key is always valid percent-encoding.
+    // A bare `%` or an invalid pair (`%ZZ`) is a malformed or hostile response:
+    // decodeURIComponent throws a raw URIError. That must be caught and
+    // re-raised as BaerlyError("InvalidResponse") so the storage layer surfaces
+    // a typed, catchable error instead of an unhandled runtime exception.
+    // See docs/spec/s3-xml-escaping-cases.md ("Latent hardening").
+    const bareXml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>bad%key</Key></Contents>
+      </ListBucketResult>`;
+    const invalidPairXml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <ListBucketResult>
+        <Contents><Key>bad%ZZkey</Key></Contents>
+      </ListBucketResult>`;
+    expect(() => parseListObjectsV2CommandOutput(bareXml)).toThrowError(
+      expect.objectContaining({ code: "InvalidResponse" }),
+    );
+    expect(() => parseListObjectsV2CommandOutput(invalidPairXml)).toThrowError(
+      expect.objectContaining({ code: "InvalidResponse" }),
+    );
   });
 
   test("NextContinuationToken is read verbatim — S3 does not url-encode it", () => {
@@ -222,6 +262,32 @@ describe("parseS3Error", () => {
     expect(parseS3Error("plain text 500")).toBeUndefined();
     // <Error> present but no Code/Message → nothing useful to surface.
     expect(parseS3Error("<Error><RequestId>abc</RequestId></Error>")).toBeUndefined();
+  });
+
+  test("decodes builtin XML entities and CDATA in the <Message> text", () => {
+    // DISTINCT from the DOCTYPE <!ENTITY> vector below (which is REJECTED as an
+    // entity-shadow attack): a normal builtin XML entity (&amp;) and a CDATA
+    // block in the Message TEXT are legitimate S3 error content and MUST be
+    // decoded/unwrapped into the plain Message string. fast-xml-parser handles
+    // both (processEntities default + htmlEntities) before rawXmlVal reads the
+    // field, so &amp; → & and <![CDATA[..]]> is unwrapped verbatim.
+    const entityXml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <Error><Code>InvalidArgument</Code><Message>bucket &amp; key are &lt;required&gt;</Message></Error>`;
+    const entityParsed = parseS3Error(entityXml);
+    expect(entityParsed).toEqual({
+      Code: "InvalidArgument",
+      Message: "bucket & key are <required>",
+    });
+    // Non-tautology guard: the decoded Message must differ from the raw
+    // entity-bearing form, proving the entities were actually expanded.
+    expect(entityParsed?.Message).not.toBe("bucket &amp; key are &lt;required&gt;");
+
+    const cdataXml: string = `<?xml version="1.0" encoding="UTF-8"?>
+      <Error><Code>InvalidArgument</Code><Message><![CDATA[a & b <c>]]></Message></Error>`;
+    expect(parseS3Error(cdataXml)).toEqual({
+      Code: "InvalidArgument",
+      Message: "a & b <c>",
+    });
   });
 
   test("refuses a DTD (XXE guard) and returns undefined", () => {
