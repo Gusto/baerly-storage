@@ -152,6 +152,13 @@ const cfHttpConformanceGlob = "packages/adapter-cloudflare/src/http-conformance.
 // `cloudflare-pool`.
 const cfS3WireGlob = "tests/integration/s3-worker-wire.test.ts";
 
+// S3-from-a-Worker end-to-end (Workerd variant). Builds a real
+// `baerlyWorker` with an injected `S3HttpStorage` (no R2 binding) and
+// drives an HTTP insert/read through its `fetch`, proving the factory
+// `storage` option routes traffic to S3 in-isolate. Same placement +
+// project-membership rationale as `cfS3WireGlob` above.
+const cfS3E2eGlob = "tests/integration/s3-worker-e2e.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -191,6 +198,7 @@ export default defineConfig({
             cfCacheTestGlob,
             cfHttpConformanceGlob,
             cfS3WireGlob,
+            cfS3E2eGlob,
             // The check-acceptance fixtures vendor `*.test.ts` files
             // that exist purely so the harness's co-occurrence grep
             // can find `insert` + `<table>` heuristics — they aren't
@@ -260,6 +268,7 @@ export default defineConfig({
             cfCacheTestGlob,
             cfHttpConformanceGlob,
             cfS3WireGlob,
+            cfS3E2eGlob,
           ],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on
