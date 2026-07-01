@@ -223,6 +223,10 @@ these is the signal to graduate the workload — `baerly export
 - 🔧 **Embed by hand** —
   [`packages/server/API.md`](./packages/server/API.md) (embed-by-hand +
   custom-routes recipes; ships as `dist/API.md` in the package)
+- 📊 **Alternatives** —
+  [`docs/about/alternatives.md`](./docs/about/alternatives.md) (how
+  baerly-storage compares to Firebase, Supabase, Convex, and Cloudflare
+  D1)
 
 ## Where things live
 
