@@ -215,6 +215,8 @@ these is the signal to graduate the workload — `baerly export
 
 ## Go deeper
 
+- ✨ **Why baerly-storage** —
+  [`docs/about/why-baerly.md`](./docs/about/why-baerly.md)
 - 🧭 **How it works** —
   [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (bucket +
   conditional log create)
