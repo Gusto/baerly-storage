@@ -4,12 +4,15 @@
  * without SigV4 — the dominant path when your Worker and bucket
  * are in the same Cloudflare account.
  *
- * Cross-cloud or cross-account R2 from a Worker? Import
- * `S3HttpStorage` directly from `@gusto/baerly-storage/node`. That path
- * pulls `aws4fetch` and `fast-xml-parser`, which is why it is not
+ * Cross-cloud, cross-account, or S3-instead-of-R2 from a Worker? Import
+ * `S3HttpStorage` + `sigV4Signer` from the Worker-safe
+ * `@gusto/baerly-storage/s3` subpath and pass the instance as
+ * `baerlyWorker((env) => ({ config, storage }))`. That subpath pulls
+ * `aws4fetch` + `fast-xml-parser` (SigV4 + XML), which is why it is not
  * re-exported here: the closure of `@gusto/baerly-storage/cloudflare`
- * stays peer-free so R2-only consumers don't carry the SigV4 +
- * XML parser bytes.
+ * stays peer-free so same-account R2-binding consumers don't carry those
+ * bytes. Do NOT import from `@gusto/baerly-storage/node` in a Worker —
+ * that barrel drags `node:http` / `node:path`.
  *
  * The `fetch(req, env, ctx)` Worker mount lives at the `/worker`
  * subpath: `import { baerlyWorker } from "@baerly/adapter-cloudflare/worker"`.
