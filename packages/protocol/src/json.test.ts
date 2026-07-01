@@ -219,4 +219,69 @@ describe("JSON Merge Patch (RFC 7386)", () => {
       expect(out).toEqual({ tags: [null, "b"] });
     });
   });
+
+  // Cross-language conformance vectors for the corners a port MUST reproduce.
+  // Some rows align with RFC 7396 Appendix A; two DELIBERATELY diverge from it,
+  // and those divergences are the load-bearing part for a port — get them wrong
+  // and patch coalescing (`fold(merge, undefined, patches)`) silently loses
+  // deletion intent. See docs/spec/json-merge-patch.md, "Log can be coalesced":
+  //   "The `undefined` accumulator is load-bearing. Folding {x:null} from {}
+  //    would produce {} and lose deletion intent. Folding it from `undefined`
+  //    preserves {x:null} as the summary patch."
+  describe("cross-language merge vectors (incl. deliberate RFC 7396 divergences)", () => {
+    // [id, target, patch, expected] — a portable input->output vector table.
+    // `patch` and `expected` are `unknown`: both legitimately carry `null`
+    // (deletion intent / preserved null), which is outside DocumentValue.
+    const rows: Array<[string, DocumentValue | undefined, unknown, unknown]> = [
+      // RFC-aligned (Appendix A row 9): an array patch replaces an array target
+      // wholesale — arrays are opaque, never element-merged.
+      ["array root replaced by array patch (RFC A9)", ["a", "b"], ["c", "d"], ["c", "d"]],
+
+      // RFC-aligned: null deletes an EXISTING key. Contrast with the two
+      // divergent rows below, where the target key is absent.
+      ["null deletes an existing key", { x: 1, y: 2 }, { x: null }, { y: 2 }],
+
+      // DIVERGENCE from RFC A14 ({"a":"b"} strictly): the object patch replaces
+      // the non-object (array) target, but because that target is not a plain
+      // object the patch is taken verbatim — so `c:null` is PRESERVED, not
+      // stripped. A port must preserve it to keep coalescing sound.
+      [
+        "object patch onto array target preserves null (diverges from RFC A14)",
+        [1, 2],
+        {
+          a: "b",
+          c: null,
+        },
+        { a: "b", c: null },
+      ],
+
+      // DIVERGENCE from RFC A15 ({"a":{"bb":{}}} strictly): merging a nested
+      // object into an ABSENT key recurses through `merge(undefined, patch)`,
+      // which returns the patch verbatim — so the deep `ccc:null` is PRESERVED.
+      [
+        "nested null under an absent key is preserved (diverges from RFC A15)",
+        {},
+        {
+          a: { bb: { ccc: null } },
+        },
+        { a: { bb: { ccc: null } } },
+      ],
+
+      // The load-bearing coalescing anchor stated in the spec verbatim:
+      // preserving the null when the accumulator is `undefined`.
+      [
+        "merge(undefined, {x:null}) preserves the delete (spec: undefined accumulator)",
+        undefined,
+        {
+          x: null,
+        },
+        { x: null },
+      ],
+    ];
+    for (const [id, target, patch, expected] of rows) {
+      test(id, () => {
+        expect(merge<DocumentValue>(target, patch as Partial<DocumentValue>)).toEqual(expected);
+      });
+    }
+  });
 });
