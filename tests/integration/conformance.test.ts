@@ -24,7 +24,10 @@ import { fc } from "@fast-check/vitest";
 import { describe } from "vitest";
 
 import { S3HttpStorage } from "@baerly/adapter-node";
-import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
+import {
+  type ConformanceOptions,
+  defineStorageConformanceSuite,
+} from "@baerly/protocol/conformance";
 
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
@@ -130,6 +133,27 @@ describe("conformance", () => {
       const sign = (req: Request): Promise<Request> => signer.sign(req);
 
       const isMinio = ep.name === "node-minio";
+      // Real Cloudflare R2's S3 `ListObjectsV2` is eventually consistent
+      // (list-after-write / list-after-delete lag), unlike AWS S3 (strong
+      // since Dec 2020) and the local Minio dev stack. Flag it so the
+      // conformance harness polls list/read-back assertions instead of
+      // asserting a single immediate snapshot over the wire.
+      const isR2 = ep.name === "cloudflare";
+      // aws / gcs / cloudflare are real remote HTTP endpoints where every
+      // op is a network round-trip, so the fast-check property tests must
+      // run at a reduced `numRuns` under a raised timeout (independent of
+      // the consistency model — AWS S3 is strongly consistent yet still
+      // remote). Without this the properties hammer the network 100× under
+      // the default 5s timeout, time out mid-iteration, and orphan-bleed
+      // writes into later tests. Minio is the local dev stack (127.0.0.1)
+      // and stays on the full local fuzz budget.
+      const isRemote = ep.name === "aws" || ep.name === "gcs" || isR2;
+      let conformanceOptions: ConformanceOptions | undefined;
+      if (isMinio) {
+        conformanceOptions = { keyArb: MINIO_KEY_ARB, prefixCharArb: MINIO_PREFIX_CHAR_ARB };
+      } else if (isRemote) {
+        conformanceOptions = { remoteNetwork: true, eventuallyConsistentList: isR2 };
+      }
       defineStorageConformanceSuite(
         `S3HttpStorage @ ${ep.name}`,
         async () => {
@@ -150,7 +174,7 @@ describe("conformance", () => {
             }),
           };
         },
-        isMinio ? { keyArb: MINIO_KEY_ARB, prefixCharArb: MINIO_PREFIX_CHAR_ARB } : undefined,
+        conformanceOptions,
       );
     });
   }

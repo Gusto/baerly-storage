@@ -18,6 +18,14 @@
     "no-underscore-dangle": ["error", { "allow": ["_id", "_raw", "_clear"] }],
     "eslint/curly": "error",
     "vitest/consistent-test-it": ["error", { "fn": "test" }],
+    // `expectEventuallyEqual` (packages/protocol/src/storage/conformance.ts)
+    // polls an eventually-consistent backend then asserts via `expect`
+    // internally; teach expect-expect to count it as an assertion so the
+    // shared conformance harness keeps the no-assertion safety net.
+    "vitest/expect-expect": [
+      "error",
+      { "assertFunctionNames": ["expect", "expectEventuallyEqual"] }
+    ],
     "unicorn/catch-error-name": "error",
     "vitest/prefer-expect-resolves": "error",
     "unicorn/switch-case-braces": "error",

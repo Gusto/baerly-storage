@@ -138,6 +138,21 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 | **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS documents S3 `If-Match` / `If-None-Match` as read-scoped and baerly-storage does not emit native `x-goog-if-generation-match`, so GCS is unsupported for database use unless a live probe and conformance run prove otherwise. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
+> **R2's `list` is eventually consistent — and that's fine here.** Unlike
+> AWS S3 (strongly consistent for list since Dec 2020) and the local MinIO
+> dev stack, Cloudflare R2's S3 `ListObjectsV2` is *eventually* consistent:
+> list-after-write and list-after-delete can lag by a short window. This
+> does **not** weaken the protocol. The commit/read path never lists — a
+> commit is a conditional `log/<seq>` create, and readers discover the tail
+> by forward-probe `GET` ("first 404 = tail"), both strongly consistent on
+> R2; `list` is used only by idempotent maintenance enumeration (compaction
+> / GC), which re-runs to convergence. The practical consequence is in
+> testing: the credential-gated `pnpm test:conformance` run against real R2
+> exercises `list`/read-back assertions through a bounded poll
+> (`eventuallyConsistentList` in `defineStorageConformanceSuite`) instead of
+> asserting a single immediate snapshot over the wire. AWS S3, MinIO, and
+> the native R2 binding assert immediately.
+
 ## Per-provider conditional-write matrix
 
 Dated because provider behaviour drifts — re-verify before relying on a
