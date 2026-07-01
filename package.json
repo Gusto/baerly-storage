@@ -60,6 +60,10 @@
       "types": "./packages/adapter-node/src/index.ts",
       "import": "./packages/adapter-node/src/index.ts"
     },
+    "./s3": {
+      "types": "./packages/adapter-node/src/s3.ts",
+      "import": "./packages/adapter-node/src/s3.ts"
+    },
     "./maintenance": {
       "types": "./packages/server/src/maintenance.ts",
       "import": "./packages/server/src/maintenance.ts"
@@ -110,6 +114,10 @@
       "./node": {
         "types": "./dist/node.d.ts",
         "import": "./dist/node.js"
+      },
+      "./s3": {
+        "types": "./dist/s3.d.ts",
+        "import": "./dist/s3.js"
       },
       "./maintenance": {
         "types": "./dist/maintenance.d.ts",
