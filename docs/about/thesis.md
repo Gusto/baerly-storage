@@ -127,6 +127,7 @@ The criteria split across two audiences:
 | --- | --- | --- | --- |
 | Agents and authors writing code | #4, LLM-legible API | _Closed vocabulary, types as contract, zero-shot from .d.ts alone_ | The public surface |
 | Platform teams deploying it | #6, zero operator burden | _No cron, no sidecar, no scheduler, no on-call_ | The deployment story and runtime model |
+| Non-engineer builders | #1, #5, no DDL, idle-to-zero | _Ship a shareable app before you know whether it deserves standing infrastructure_ | The scaffold quickstart and cost model |
 
 A design choice that improves one audience without harming the other is
 a win. A choice that improves authoring DX by adding operator chores, or
@@ -143,46 +144,28 @@ bounded. Public API ownership lives in
 lock lives in
 [change-discipline.md](../contributing/conventions/change-discipline.md#api-surface-lock).
 
-## Why not Postgres
+## No new vendor
 
-Criteria #2 and #5 rule out Postgres directly:
+Almost every team already has S3 / R2 / GCS / Azure Blob for exports,
+backups, documents, archives, or analytics drops. That is not
+database-protocol support, but the security review for "give me a
+bucket" happened years ago. Hosted database alternatives (D1, Neon,
+Convex, Supabase, Firebase) are excellent, but each triggers a fresh
+vendor procurement review, secrets-manager integration, and an IT ticket
+to add a new managed-DB SKU to the catalog. The bucket already exists.
 
-1. **Real DBs entail real obligations.** Provisioning, secrets, backups,
-   CVE rotation, migrations, alarms when the disk fills, alarms when the
-   pool is exhausted — none of that becomes free because the app has four
-   users.
-2. **A DB-shaped tool invites DB-shaped ceremony in the codebase.**
-   Schemas to invent and preserve across edits, migrations to author and
-   order, RLS to write — the ceremony stack arrives whether the workload
-   deserves it or not.
-
-Postgres and D1 are graduation targets, not villains. baerly-storage's
-job is to keep production apps cheap and exit-controlled until they
-cross the scale envelope where a database service is the right tool.
-
-## Why object storage
-
-Object storage is chosen for two product reasons: the bucket is usually
-already approved, and the commit path needs exactly one coordination
-primitive from the store. Under concurrent create-if-absent writes to
-the next numbered log object, one writer must win and the rest must get
-a conflict. The precise storage contract, supported backends, and live
-probe rules live in
-[storage-compatibility.md](../spec/storage-compatibility.md).
-
-**Politically pre-cleared.** Almost every team already has S3 / R2 /
-GCS / Azure Blob for exports, backups, documents, archives, or analytics
-drops. That is not database-protocol support, but the security review
-for "give me a bucket" happened years ago. Hosted alternatives (D1,
-Neon, Convex, Supabase, Firebase) are excellent, but each triggers a
-fresh vendor procurement review, secrets-manager integration, and an IT
-ticket to add a new managed-DB SKU to the catalog. The bucket already
-exists.
+That friction is low in a two-person team. In an organisation past
+roughly one hundred people, a new vendor relationship requires a legal
+review, a security questionnaire, and often an IT change request. The
+cost is weeks, not days — for an app with fifteen users. baerly-storage
+skips that entirely: the storage vendor review is already closed.
 
 **Vendor-independent where the contract holds.** Object storage is the
 rare primitive with a common dialect — the S3 API. Your bytes stay in
 your bucket; protocol support belongs to adapters and backends that pass
-the storage contract.
+the storage contract. The precise contract, supported backends, and live
+probe rules live in
+[storage-compatibility.md](../spec/storage-compatibility.md).
 
 ## Runtime model: nothing resident between requests
 
@@ -191,6 +174,11 @@ ends: a server, catalog, lock table, compactor, scheduler, or queue.
 baerly-storage avoids that shape. Each request reads bucket state, tries
 the conditional log create that commits the write, and leaves no
 required process behind.
+
+Servers that don't exist can't go down — nothing resident means a
+smaller availability and supply-chain surface. There is no database
+process to patch, no connection pool to exhaust, and no managed service
+dependency in your critical path.
 
 The kernel holds no in-memory state needed for correctness; a cold start
 reads correctly the same as a warm one. The only persistent data
@@ -203,6 +191,17 @@ convenience rather than a deployment requirement. The mechanism lives in
 [how-it-works.md](how-it-works.md#what-about-the-ever-growing-log), the
 operator limits in [graduation.md](graduation.md), and the rationale in
 [ADR-002](../adr/002-ephemeral-coordination.md).
+
+## Why object storage
+
+The commit path needs exactly one coordination primitive from the store:
+under concurrent create-if-absent writes to the next numbered log
+object, one writer must win and the rest must get a conflict. Object
+storage supplies that primitive and nothing more. (The procurement
+angle — why the bucket is usually pre-cleared — is covered in
+[§ No new vendor](#no-new-vendor) above.) The precise storage contract,
+supported backends, and live probe rules live in
+[storage-compatibility.md](../spec/storage-compatibility.md).
 
 ## Requirements → architecture
 
@@ -272,6 +271,23 @@ ships today; the log shape is intended to keep future incremental exit
 straightforward. The export and exit details live in
 [graduation.md](graduation.md) and
 [log-entry-shape.md](../spec/log-entry-shape.md).
+
+## Why not Postgres
+
+Criteria #2 and #5 rule out Postgres directly:
+
+1. **Real DBs entail real obligations.** Provisioning, secrets, backups,
+   CVE rotation, migrations, alarms when the disk fills, alarms when the
+   pool is exhausted — none of that becomes free because the app has four
+   users.
+2. **A DB-shaped tool invites DB-shaped ceremony in the codebase.**
+   Schemas to invent and preserve across edits, migrations to author and
+   order, RLS to write — the ceremony stack arrives whether the workload
+   deserves it or not.
+
+Postgres and D1 are graduation targets, not villains. baerly-storage's
+job is to keep production apps cheap and exit-controlled until they
+cross the scale envelope where a database service is the right tool.
 
 ## Audience in practice
 
