@@ -45,6 +45,36 @@ export interface ConformanceOptions {
   readonly prefixCharArb?: fc.Arbitrary<string>;
   /** Pinned size-boundary cap. Default: 1 MiB. */
   readonly maxBodyBytes?: number;
+  /**
+   * When true, the backend's `list` is eventually consistent —
+   * list-after-write and list-after-delete may lag, as real Cloudflare
+   * R2's S3 `ListObjectsV2` does (object read-after-write and the
+   * conditional-write verbs stay strong; only the bucket index lags).
+   * List/read-back assertions and the per-test `drain()` reset then poll
+   * until the store converges instead of asserting a single immediate
+   * snapshot. Defaults to false — Memory/LocalFs/Minio/native-R2-binding
+   * are strongly consistent for list and assert the first read.
+   *
+   * This flag is about *consistency* only. The *network-latency*
+   * accommodations (reduced property `numRuns`, raised per-test timeout)
+   * live on {@link remoteNetwork}, which this flag implies — an
+   * eventually-consistent backend is necessarily remote.
+   */
+  readonly eventuallyConsistentList?: boolean;
+  /**
+   * When true, the backend is a real remote HTTP endpoint (AWS S3, GCS,
+   * Cloudflare R2 over the S3 API) where every op is a network
+   * round-trip. Independent of the consistency model: AWS S3 is strongly
+   * consistent yet still remote. Property-test `numRuns` is reduced (the
+   * default 100 is hundreds of round-trips per property — infeasible in
+   * the test budget, and a resulting timeout orphan-bleeds writes into
+   * later tests via the shared handle, see `tests/setup/fast-check.ts`)
+   * and the per-test timeout is raised to absorb network latency.
+   * {@link eventuallyConsistentList} implies this. Defaults to false —
+   * Memory/LocalFs/native-R2-binding and the local Minio dev stack run
+   * the full local fuzz budget under the default timeout.
+   */
+  readonly remoteNetwork?: boolean;
 }
 
 export interface ConformanceFactoryResult {
@@ -73,6 +103,86 @@ const DEFAULT_KEY_ARB = fc
 
 const DEFAULT_BODY_ARB = fc.uint8Array({ minLength: 0, maxLength: 4096 });
 
+/**
+ * Convergence budget for a backend whose `list` is eventually consistent
+ * (`eventuallyConsistentList`). List/read-back assertions and the per-test
+ * `drain()` reset poll up to this long for the store to settle before
+ * asserting. Strongly-consistent backends use `settle === 0` and assert
+ * the first read, so this is never paid by Memory/LocalFs/Minio/R2-binding.
+ */
+const EVENTUAL_CONSISTENCY_SETTLE_MILLIS = 15_000;
+/** Poll interval while waiting for an eventually-consistent backend to settle. */
+const EVENTUAL_CONSISTENCY_POLL_MILLIS = 250;
+/**
+ * Per-test/hook timeout raised for a remote-network backend: each op is a
+ * real network round-trip (and, on an eventually-consistent backend,
+ * assertions poll), so the 5s default is too tight. Applied as the
+ * suite-level `timeout` (cascades to every inner test) and as the explicit
+ * `beforeEach` hook timeout.
+ */
+const REMOTE_NETWORK_TEST_TIMEOUT_MILLIS = 120_000;
+/**
+ * fast-check `numRuns` for property tests on a remote-network backend. The
+ * default 100 is hundreds of network round-trips per property — infeasible
+ * in the test budget, and a resulting timeout orphan-bleeds writes into
+ * later tests via the shared handle (see `tests/setup/fast-check.ts`). The
+ * heavy fuzzing runs on the in-memory / local-fs adapters; this only
+ * smoke-checks the property over the wire.
+ */
+const REMOTE_NETWORK_PROPERTY_RUNS = 10;
+/**
+ * fast-check `numRuns` for property tests on an eventually-consistent
+ * backend — fewer than {@link REMOTE_NETWORK_PROPERTY_RUNS}. Each iteration
+ * pays *two* convergence polls (the `drain()` reset and the settle-assert,
+ * up to {@link EVENTUAL_CONSISTENCY_SETTLE_MILLIS} each), so an
+ * eventually-consistent iteration costs ~2× a strongly-consistent remote
+ * one. At 10 runs a slow-convergence window can spill past the raised
+ * per-test timeout; halving the runs keeps the property comfortably inside
+ * it while still smoke-checking it over the wire.
+ */
+const EVENTUAL_CONSISTENCY_PROPERTY_RUNS = 5;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Read until `ok(value)` holds or the convergence deadline elapses, then
+ * return the last value read. With `settle === 0` (strongly-consistent
+ * backend) this is a single immediate read — behaviourally identical to a
+ * bare `await read()`. On non-convergence it returns the last value so the
+ * caller's assertion produces a meaningful diff rather than a timeout.
+ */
+async function pollUntil<T>(
+  read: () => Promise<T>,
+  ok: (value: T) => boolean,
+  settle: number,
+): Promise<T> {
+  let value = await read();
+  if (settle === 0 || ok(value)) {
+    return value;
+  }
+  const deadline = Date.now() + settle;
+  while (Date.now() < deadline) {
+    await sleep(EVENTUAL_CONSISTENCY_POLL_MILLIS);
+    value = await read();
+    if (ok(value)) {
+      return value;
+    }
+  }
+  return value;
+}
+
+const jsonEq = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** Poll `read` until it deep-equals `expected` (or the deadline), then assert. */
+async function expectEventuallyEqual<T>(
+  read: () => Promise<T>,
+  expected: T,
+  settle: number,
+): Promise<void> {
+  const actual = await pollUntil(read, (v) => jsonEq(v, expected), settle);
+  expect(actual).toEqual(expected);
+}
+
 const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
   const out: T[] = [];
   for await (const x of iter) {
@@ -88,11 +198,33 @@ const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
  * conformance suite already wires a per-test `factory()` for hard
  * isolation between vitest cases.
  */
-const drain = async (s: Storage): Promise<void> => {
-  const listed = await collect(s.list(""));
-  const keys = listed.map((e) => e.key);
-  for (const k of keys) {
-    await s.delete(k);
+const drain = async (s: Storage, settle = 0): Promise<void> => {
+  const deleteAllOnce = async (): Promise<number> => {
+    const listed = await collect(s.list(""));
+    const keys = listed.map((e) => e.key);
+    for (const k of keys) {
+      await s.delete(k);
+    }
+    return keys.length;
+  };
+  if (settle === 0) {
+    await deleteAllOnce();
+    return;
+  }
+  // Eventually-consistent backend: a just-written (or just-deleted) key
+  // may not yet be reflected in `list`, so a single sweep can leave
+  // residue that bleeds into the next test. Sweep until two consecutive
+  // lists come back empty, or the convergence deadline elapses.
+  const deadline = Date.now() + settle;
+  let consecutiveEmpty = 0;
+  while (Date.now() < deadline && consecutiveEmpty < 2) {
+    const removed = await deleteAllOnce();
+    if (removed === 0) {
+      consecutiveEmpty += 1;
+      await sleep(EVENTUAL_CONSISTENCY_POLL_MILLIS);
+    } else {
+      consecutiveEmpty = 0;
+    }
   }
 };
 
@@ -140,9 +272,36 @@ export function defineStorageConformanceSuite(
     bodyArb: options.bodyArb ?? DEFAULT_BODY_ARB,
     prefixCharArb: options.prefixCharArb ?? fc.constantFrom(...KEY_CHARS.split("")),
     maxBodyBytes: options.maxBodyBytes ?? 1 << 20,
+    eventuallyConsistentList: options.eventuallyConsistentList ?? false,
+    remoteNetwork: options.remoteNetwork ?? false,
   };
 
-  describe(`Storage conformance — ${name}`, () => {
+  // An eventually-consistent backend is necessarily remote, so it inherits
+  // the network-latency accommodations below even if the caller only set
+  // the consistency flag.
+  const isRemote = opts.remoteNetwork || opts.eventuallyConsistentList;
+  // Convergence budget (0 = strongly-consistent, assert the first read).
+  // Gated on the *consistency* flag only — a strongly-consistent remote
+  // backend (AWS S3) still asserts the first read.
+  const settle = opts.eventuallyConsistentList ? EVENTUAL_CONSISTENCY_SETTLE_MILLIS : 0;
+  // Reduced property-test fuzzing for a remote-network backend; `undefined`
+  // leaves the global `numRuns` (see fast-check.ts). An eventually-
+  // consistent backend polls twice per iteration (drain + settle-assert),
+  // so it runs fewer iterations still.
+  const propRuns = opts.eventuallyConsistentList
+    ? EVENTUAL_CONSISTENCY_PROPERTY_RUNS
+    : REMOTE_NETWORK_PROPERTY_RUNS;
+  const propParams = isRemote ? { numRuns: propRuns } : undefined;
+  // A remote backend does real network round-trips (and, when eventually
+  // consistent, polls), so the default 5s per-test/hook timeout is too
+  // tight. `undefined` leaves the runner default for local backends. The
+  // suite-level option cascades to every inner test (including the
+  // fast-check property tests); the per-hook timeout below covers the
+  // `drain()` in `beforeEach`. (`vi.setConfig` in a hook is too late —
+  // vitest binds timeouts at collection time.)
+  const testTimeoutMs = isRemote ? REMOTE_NETWORK_TEST_TIMEOUT_MILLIS : undefined;
+
+  describe(`Storage conformance — ${name}`, { timeout: testTimeoutMs }, () => {
     let s: Storage;
     let teardown: (() => Promise<void>) | undefined;
 
@@ -155,8 +314,8 @@ export function defineStorageConformanceSuite(
       // sees the residue of every prior test. Drain on entry so each
       // case starts from an empty namespace. No-op for fresh in-memory
       // / temp-dir factories.
-      await drain(s);
-    });
+      await drain(s, settle);
+    }, testTimeoutMs);
     afterEach(async () => {
       if (teardown) {
         await teardown();
@@ -165,12 +324,16 @@ export function defineStorageConformanceSuite(
     });
 
     describe("get/put round-trip", () => {
-      fcTest.prop({ k: opts.keyArb, body: opts.bodyArb })(
+      fcTest.prop({ k: opts.keyArb, body: opts.bodyArb }, propParams)(
         "get(put(k, body)).body === body and etag matches",
         async ({ k, body }) => {
-          await drain(s);
+          await drain(s, settle);
           const put = await s.put(k, body);
-          const got = await s.get(k);
+          const got = await pollUntil(
+            () => s.get(k),
+            (g) => g !== null && g.etag === put.etag && bytesEqual(g.body, body),
+            settle,
+          );
           expect(got).not.toBeNull();
           expect(bytesEqual(got!.body, body)).toBe(true);
           expect(got!.etag).toBe(put.etag);
@@ -194,7 +357,11 @@ export function defineStorageConformanceSuite(
             body[i] = i & 0xff;
           }
           const { etag } = await s.put("size", body);
-          const got = await s.get("size");
+          const got = await pollUntil(
+            () => s.get("size"),
+            (g) => g !== null && g.etag === etag && g.body.length === size,
+            settle,
+          );
           expect(got).not.toBeNull();
           expect(got!.body.length).toBe(size);
           expect(bytesEqual(got!.body, body)).toBe(true);
@@ -234,11 +401,23 @@ export function defineStorageConformanceSuite(
     describe("CAS — ifMatch", () => {
       test("succeeds and rotates etag on current etag", async () => {
         const first = await s.put("k", new TextEncoder().encode("v1"));
+        // On an eventually-consistent backend the `ifMatch` overwrite can
+        // hit a replica that hasn't seen `first` yet and spuriously 412 —
+        // wait until the first write is observable before the CAS.
+        await pollUntil(
+          () => s.get("k"),
+          (g) => g !== null && g.etag === first.etag,
+          settle,
+        );
         const second = await s.put("k", new TextEncoder().encode("v2"), {
           ifMatch: first.etag,
         });
         expect(second.etag).not.toBe(first.etag);
-        const got = await s.get("k");
+        const got = await pollUntil(
+          () => s.get("k"),
+          (g) => g !== null && g.etag === second.etag,
+          settle,
+        );
         expect(got).not.toBeNull();
         expect(got!.etag).toBe(second.etag);
       });
@@ -284,7 +463,11 @@ export function defineStorageConformanceSuite(
         await expect(
           s.put("k", new TextEncoder().encode("overwrite"), { ifNoneMatch: "*" }),
         ).rejects.toBeInstanceOf(BaerlyError);
-        const got = await s.get("k");
+        const got = await pollUntil(
+          () => s.get("k"),
+          (g) => g !== null && bytesEqual(g.body, original),
+          settle,
+        );
         expect(got).not.toBeNull();
         expect(bytesEqual(got!.body, original)).toBe(true);
       });
@@ -383,12 +566,21 @@ export function defineStorageConformanceSuite(
     describe("conditional get — ifNoneMatch", () => {
       test("returns null when current etag matches ifNoneMatch", async () => {
         const { etag } = await s.put("k", new TextEncoder().encode("v"));
-        await expect(s.get("k", { ifNoneMatch: etag })).resolves.toBeNull();
+        const got = await pollUntil(
+          () => s.get("k", { ifNoneMatch: etag }),
+          (g) => g === null,
+          settle,
+        );
+        expect(got).toBeNull();
       });
 
       test("returns the object when ifNoneMatch is stale", async () => {
         const { etag } = await s.put("k", new TextEncoder().encode("v"));
-        const got = await s.get("k", { ifNoneMatch: '"deadbeef"' });
+        const got = await pollUntil(
+          () => s.get("k", { ifNoneMatch: '"deadbeef"' }),
+          (g) => g !== null && g.etag === etag,
+          settle,
+        );
         expect(got).not.toBeNull();
         expect(got!.etag).toBe(etag);
       });
@@ -398,7 +590,12 @@ export function defineStorageConformanceSuite(
       test("removes a present key", async () => {
         await s.put("k", new TextEncoder().encode("v"));
         await s.delete("k");
-        await expect(s.get("k")).resolves.toBeNull();
+        const got = await pollUntil(
+          () => s.get("k"),
+          (g) => g === null,
+          settle,
+        );
+        expect(got).toBeNull();
       });
 
       test("is idempotent on a missing key", async () => {
@@ -413,40 +610,50 @@ export function defineStorageConformanceSuite(
         await s.put("a/3", new TextEncoder().encode("a3"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("c/0", new TextEncoder().encode("c0"));
-        const listed = await collect(s.list("a/"));
-        const all = listed.map((e) => e.key);
-        expect(all).toEqual(["a/1", "a/2", "a/3"]);
+        await expectEventuallyEqual(
+          () => collect(s.list("a/")).then((l) => l.map((e) => e.key)),
+          ["a/1", "a/2", "a/3"],
+          settle,
+        );
       });
 
       test("startAfter is exclusive", async () => {
         await s.put("a/1", new TextEncoder().encode("a1"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("a/3", new TextEncoder().encode("a3"));
-        const listed = await collect(s.list("a/", { startAfter: "a/1" }));
-        const after = listed.map((e) => e.key);
-        expect(after).toEqual(["a/2", "a/3"]);
+        await expectEventuallyEqual(
+          () => collect(s.list("a/", { startAfter: "a/1" })).then((l) => l.map((e) => e.key)),
+          ["a/2", "a/3"],
+          settle,
+        );
       });
 
       test("maxKeys caps the result", async () => {
         await s.put("a/1", new TextEncoder().encode("a1"));
         await s.put("a/2", new TextEncoder().encode("a2"));
         await s.put("a/3", new TextEncoder().encode("a3"));
-        const listed = await collect(s.list("a/", { maxKeys: 2 }));
-        const capped = listed.map((e) => e.key);
-        expect(capped).toEqual(["a/1", "a/2"]);
+        await expectEventuallyEqual(
+          () => collect(s.list("a/", { maxKeys: 2 })).then((l) => l.map((e) => e.key)),
+          ["a/1", "a/2"],
+          settle,
+        );
       });
 
       test("returns the current etag for each entry", async () => {
         const a = await s.put("a", new TextEncoder().encode("alpha"));
         const b = await s.put("b", new TextEncoder().encode("beta"));
-        const entries = await collect(s.list(""));
         // `StorageListEntry.lastModified` is optional per the type;
         // some adapters (R2 binding, S3) populate it from server-side
         // headers. Project to the load-bearing fields only.
-        expect(entries.map(({ key, etag }) => ({ key, etag }))).toEqual([
-          { key: "a", etag: a.etag },
-          { key: "b", etag: b.etag },
-        ]);
+        await expectEventuallyEqual(
+          () =>
+            collect(s.list("")).then((entries) => entries.map(({ key, etag }) => ({ key, etag }))),
+          [
+            { key: "a", etag: a.etag },
+            { key: "b", etag: b.etag },
+          ],
+          settle,
+        );
       });
 
       // Property: list(prefix) returns lex-sorted keys-with-prefix.
@@ -454,35 +661,43 @@ export function defineStorageConformanceSuite(
       // are simply a leading substring. Uniqueness is enforced by
       // `fc.uniqueArray`; gated on `caseSensitiveKeys` because some
       // stores collapse keys that differ only in case.
-      fcTest.prop({
-        entries: fc.uniqueArray(fc.tuple(opts.keyArb, opts.bodyArb), {
-          minLength: 0,
-          maxLength: 16,
-          selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
-        }),
-        prefixChar: opts.prefixCharArb,
-      })("list(prefix) returns sorted keys-with-prefix", async ({ entries, prefixChar }) => {
-        await drain(s);
+      fcTest.prop(
+        {
+          entries: fc.uniqueArray(fc.tuple(opts.keyArb, opts.bodyArb), {
+            minLength: 0,
+            maxLength: 16,
+            selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
+          }),
+          prefixChar: opts.prefixCharArb,
+        },
+        propParams,
+      )("list(prefix) returns sorted keys-with-prefix", async ({ entries, prefixChar }) => {
+        await drain(s, settle);
         for (const [k, body] of entries) {
           await s.put(k, body);
         }
-        const collected = await collect(s.list(prefixChar));
-        const listed = collected.map((e) => e.key);
         const expected = entries
           .map(([k]) => k)
           .filter((k) => k.startsWith(prefixChar))
           .toSorted();
-        expect(listed).toEqual(expected);
+        await expectEventuallyEqual(
+          () => collect(s.list(prefixChar)).then((c) => c.map((e) => e.key)),
+          expected,
+          settle,
+        );
       });
 
-      fcTest.prop({
-        entries: fc.uniqueArray(fc.tuple(opts.keyArb, opts.bodyArb), {
-          minLength: 1,
-          maxLength: 16,
-          selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
-        }),
-      })("startAfter:k yields strict suffix of lex-sorted keys", async ({ entries }) => {
-        await drain(s);
+      fcTest.prop(
+        {
+          entries: fc.uniqueArray(fc.tuple(opts.keyArb, opts.bodyArb), {
+            minLength: 1,
+            maxLength: 16,
+            selector: ([k]) => (opts.caseSensitiveKeys ? k : k.toLowerCase()),
+          }),
+        },
+        propParams,
+      )("startAfter:k yields strict suffix of lex-sorted keys", async ({ entries }) => {
+        await drain(s, settle);
         for (const [k, body] of entries) {
           await s.put(k, body);
         }
@@ -490,16 +705,23 @@ export function defineStorageConformanceSuite(
         // Use the first key as the cursor — should yield everything
         // strictly greater than it.
         const cursor = sorted[0]!;
-        const collected = await collect(s.list("", { startAfter: cursor }));
-        const listed = collected.map((e) => e.key);
-        expect(listed).toEqual(sorted.filter((k) => k > cursor));
+        const expected = sorted.filter((k) => k > cursor);
+        await expectEventuallyEqual(
+          () => collect(s.list("", { startAfter: cursor })).then((c) => c.map((e) => e.key)),
+          expected,
+          settle,
+        );
       });
     });
 
     describe("binary fidelity", () => {
       test("PNG byte sequence round-trips byte-for-byte", async () => {
         await s.put("img", PNG_FIXTURE);
-        const got = await s.get("img");
+        const got = await pollUntil(
+          () => s.get("img"),
+          (g) => g !== null && bytesEqual(g.body, PNG_FIXTURE),
+          settle,
+        );
         expect(got).not.toBeNull();
         expect(bytesEqual(got!.body, PNG_FIXTURE)).toBe(true);
       });
@@ -508,7 +730,11 @@ export function defineStorageConformanceSuite(
         const original = "héllo🌍";
         const bytes = new TextEncoder().encode(original);
         await s.put("utf8", bytes);
-        const got = await s.get("utf8");
+        const got = await pollUntil(
+          () => s.get("utf8"),
+          (g) => g !== null && new TextDecoder().decode(g.body) === original,
+          settle,
+        );
         expect(got).not.toBeNull();
         expect(new TextDecoder().decode(got!.body)).toBe(original);
       });
