@@ -140,6 +140,18 @@ const cfCacheTestGlob = "packages/adapter-cloudflare/src/cache*.test.ts";
 // default project. Membership rules match the four globs above.
 const cfHttpConformanceGlob = "packages/adapter-cloudflare/src/http-conformance.test.ts";
 
+// S3-over-HTTP wire-execution proof (Workerd variant). Instantiates
+// `S3HttpStorage` + the real `sigV4Signer` and runs a put/get/CAS/list
+// round-trip through an in-memory S3-shaped `fetch` stub INSIDE Workerd,
+// closing the gap the `s3-worker-safe.test.ts` bundle probe can't (load
+// vs. run). Unlike the globs above it lives under `tests/` rather than
+// `packages/adapter-cloudflare/src/`: the package-layer linter forbids
+// `adapter-cloudflare → adapter-node`, so a file that imports
+// `S3HttpStorage` cannot live in the CF package's `src`. Same project
+// membership rules — excluded from the default (Node) project, run under
+// `cloudflare-pool`.
+const cfS3WireGlob = "tests/integration/s3-worker-wire.test.ts";
+
 export default defineConfig({
   test: {
     projects: [
@@ -178,6 +190,7 @@ export default defineConfig({
             cfWorkerTestGlob,
             cfCacheTestGlob,
             cfHttpConformanceGlob,
+            cfS3WireGlob,
             // The check-acceptance fixtures vendor `*.test.ts` files
             // that exist purely so the harness's co-occurrence grep
             // can find `insert` + `<table>` heuristics — they aren't
@@ -246,6 +259,7 @@ export default defineConfig({
             cfWorkerTestGlob,
             cfCacheTestGlob,
             cfHttpConformanceGlob,
+            cfS3WireGlob,
           ],
           // `tests/setup/r2-binding.ts` runs inside Workerd, imports
           // from `cloudflare:test`, and re-publishes `env.BUCKET` on
