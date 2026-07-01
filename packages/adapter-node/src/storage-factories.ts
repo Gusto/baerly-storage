@@ -32,14 +32,14 @@ function buildS3Storage(opts: {
  * });
  * ```
  *
- * @example EKS Pod Identity (refreshing)
+ * @example EKS (refreshing) — auto-detects Pod Identity or IRSA
  * ```ts
- * import { s3Storage, fromEksPodIdentity } from "@gusto/baerly-storage/node";
+ * import { s3Storage, fromEks } from "@gusto/baerly-storage/node";
  *
  * const storage = s3Storage({
  *   region: process.env["AWS_REGION"] ?? "us-east-1",
  *   bucket: process.env["BUCKET"]!,
- *   credentials: fromEksPodIdentity(),
+ *   credentials: fromEks(),
  * });
  * ```
  */

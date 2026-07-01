@@ -312,6 +312,11 @@ const BUDGETS: readonly Budget[] = [
   //     predicted. Measured 231593 raw / 72425 gz / 19885 min-gz; min-gz stays
   //     under 20 KiB (−595). Per the POLICY, rebaselined the raw/gz tripwires
   //     rather than golf the doc/error.
+  //   NOTE (2026-07-01): the gz 71 KiB bump above also absorbs CI's cross-
+  //     environment gz nondeterminism (~18 B observed) that flaked the axis
+  //     near the old 70 KiB ceiling. The IRSA credential work on this branch
+  //     ships under the separate `node`/adapter-node entry, not the kernel
+  //     barrel, so it does not move this closure.
   { entry: "index.js", raw: 227 * 1024, gz: 71 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by

@@ -27,36 +27,41 @@ const storage = s3Storage({
 });
 ```
 
-### EKS Pod Identity — `fromEksPodIdentity()`
+### EKS — `fromEks()` (recommended)
 
-For EKS deployments where the pod's service account is associated
-with an IAM role via the EKS Pod Identity agent (2023+, the
-successor to IRSA), use `fromEksPodIdentity()`. The provider reads
-`AWS_CONTAINER_CREDENTIALS_FULL_URI` + `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`
-(EKS injects both), GETs the node-local agent at
-`169.254.170.23`, and returns short-lived credentials with
-`expiration`.
+For EKS deployments, use `fromEks()`. It auto-detects which credential
+mechanism the cluster injects — **EKS Pod Identity** (2023+) or **IRSA**
+(web-identity token) — so you don't have to know which one is in play:
 
 ```ts
-import { s3Storage, fromEksPodIdentity } from "@gusto/baerly-storage/node";
+import { s3Storage, fromEks } from "@gusto/baerly-storage/node";
 
 const storage = s3Storage({
   region: process.env.AWS_REGION!,
   bucket: process.env.BUCKET!,
-  credentials: fromEksPodIdentity(),
+  credentials: fromEks(),
 });
 ```
 
-Refresh is automatic: the signer caches credentials until 5 minutes
-before `expiration`, then calls the provider again. Concurrent
-refreshes are single-flighted.
+Detection runs per resolve (Pod Identity preferred when both env sets are
+present); it throws `InvalidConfig` when neither is configured.
 
-> **IRSA vs. EKS Pod Identity:** if your cluster still uses IRSA
-> (pre-2023), env vars are `AWS_WEB_IDENTITY_TOKEN_FILE` +
-> `AWS_ROLE_ARN` instead, and the app does the STS dance directly.
-> baerly-storage doesn't ship a native IRSA provider yet — write a small
-> one against the seam, or import `fromTokenFile()` from
-> `@aws-sdk/credential-providers`.
+### Pinning a mechanism — `fromEksPodIdentity()` / `fromWebIdentity()`
+
+Use these directly only if you need to pin one mechanism:
+
+- **`fromEksPodIdentity()`** — EKS Pod Identity agent. Reads
+  `AWS_CONTAINER_CREDENTIALS_FULL_URI` + `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`,
+  GETs the node-local agent at `169.254.170.23`, returns short-lived creds.
+- **`fromWebIdentity()`** — IRSA. Reads `AWS_ROLE_ARN` +
+  `AWS_WEB_IDENTITY_TOKEN_FILE`, exchanges the projected SA token via STS
+  `AssumeRoleWithWebIdentity` (unsigned — the token is the auth), returns
+  short-lived creds. Honors `AWS_ROLE_SESSION_NAME` and `AWS_REGION` /
+  `AWS_DEFAULT_REGION` (regional STS endpoint; falls back to global).
+
+All three report `expiration`, so refresh is automatic: the signer caches
+credentials until 5 minutes before `expiration`, then calls the provider
+again. Concurrent refreshes are single-flighted.
 
 ### Bring your own provider
 

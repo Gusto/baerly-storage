@@ -56,7 +56,9 @@ export type { AssertStorageReachableOptions } from "./assert-storage-reachable.t
 export {
   type Credentials,
   type CredentialsProvider,
+  fromEks,
   fromEksPodIdentity,
+  fromWebIdentity,
 } from "./credentials/index.ts";
 export { baerlyNode } from "./baerly-node.ts";
 export type { BaerlyNodeHandle, BaerlyNodeOptions } from "./baerly-node.ts";
