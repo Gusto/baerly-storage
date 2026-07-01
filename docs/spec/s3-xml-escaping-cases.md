@@ -134,8 +134,13 @@ S3/R2/MinIO/GCS never emit a DOCTYPE here. The runtime `fast-xml-parser`
 floor is pinned `^5.5.6` to cover the no-DOCTYPE numeric-character-reference
 expansion path (CVE-2026-33036) that the DTD guard cannot match.
 
-> Latent hardening (noted as invariants, not yet implemented): a malformed
-> percent-escape (a bare `%` or `%ZZ`) makes `decodeURIComponent` throw a
-> `URIError`; that should be caught and re-raised as
-> `BaerlyError("InvalidResponse")`, and `baerly doctor --bucket` should
-> probe that the backend honors `encoding-type=url`.
+A malformed percent-escape (a bare `%` or `%ZZ`) in a key field makes
+`decodeURIComponent` throw a raw `URIError`. `xmlVal`
+(`packages/adapter-node/src/xml.ts`) catches it and re-raises as
+`BaerlyError("InvalidResponse")` so the storage layer surfaces a typed,
+catchable error rather than an unhandled runtime exception (covered by
+`xml.test.ts`).
+
+> Latent hardening (noted as an invariant, not yet implemented):
+> `baerly doctor --bucket` should probe that the backend honors
+> `encoding-type=url`.

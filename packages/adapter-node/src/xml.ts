@@ -47,7 +47,16 @@ const xmlVal = (obj: Record<string, unknown>, name: string): string | undefined 
   if (typeof v !== "string" || v === "") {
     return undefined;
   }
-  return decodeURIComponent(v.replace(/\+/g, " "));
+  // A well-formed encoding-type=url response only ever contains valid
+  // percent-escapes. A bare `%` or an invalid pair (`%ZZ`) makes
+  // decodeURIComponent throw a raw URIError — catch it and re-raise as a
+  // typed BaerlyError so the storage layer surfaces a catchable error rather
+  // than an unhandled runtime exception. See docs/spec/s3-xml-escaping-cases.md.
+  try {
+    return decodeURIComponent(v.replace(/\+/g, " "));
+  } catch {
+    throw new BaerlyError("InvalidResponse", `Malformed percent-escape in S3 <${name}>: ${v}`);
+  }
 };
 
 // Read a field verbatim. Used for everything S3 does NOT URL-encode:
