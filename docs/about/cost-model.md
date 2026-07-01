@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-07-01
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---
@@ -34,6 +34,12 @@ and
 pages. Re-check before quoting any figure externally; price and cap
 changes land in [pricing-log.md](pricing-log.md), the
 one-line-per-change history, on the day they ship.
+
+> **Portfolio number:** at N≈30 mostly-idle apps, baerly-storage costs
+> ~$5/mo on Cloudflare (one Workers Paid floor, amortized — not ×30) or
+> $0/mo on self-hosted Node. See the
+> [idle × N portfolio comparison](#at-the-audience-operating-point-idle--n-portfolio)
+> further down.
 
 ## Per-line-item rates (Cloudflare R2 + Workers)
 
@@ -363,7 +369,7 @@ floors before quoting totals externally.
 | **baerly-storage (self-hosted Node)** | **$0/mo** (your hardware)                | No platform floor; idle storage-op cost is $0 against an S3-API bucket. See the AWS free-tier caveat above.                                                                                                                                  |
 | Cloudflare D1                 | ~$5/mo                                   | Same single Workers Paid floor amortized across all N apps; ties baerly-storage here, **but only if all N apps are Workers-native**. `wrangler d1 export` gives a SQL dump, but leaving is a dump-and-reload migration, not a zero-cooperation exit. |
 | Supabase Free                 | $0                                       | Two free projects per org; not a fleet posture for N=30.                                                                                                                                                                                     |
-| Supabase Pro                  | ≈ $25/app × 30 ≈ **~$750/mo** _(est.)_   | Paid plans bill per project (each carries its own always-on Postgres compute), so a 30-app fleet pays ~30 per-project floors. Derived from the documented ~$25/project Pro floor; usage on top varies.                                       |
+| Supabase Pro                  | ≈ $25 org + 29 × ~$10 ≈ **~$315/mo** _(est.)_ | Pro bills **per organization**, not per project: one ~$25/mo org fee (includes ~$10 compute credit, ≈ one always-on project), and each additional project adds its own compute from ~$10/mo. A 30-project fleet is the org fee plus 29 more compute instances, not 30 × $25. Compute tier and usage on top vary.                                       |
 | Neon Launch                   | ≈ $5/app × 30 ≈ **~$150/mo** _(est.)_    | Usage-based with no monthly minimum and scale-to-zero, but each intermittently-awake app still meters CU-hours; ~$5/app is a typical small-app monthly figure, so a 30-app fleet lands near ~$150/mo. Varies with how often each app wakes.  |
 | Firebase Spark                | $0 while inside no-cost Firestore quotas | Official quota is 1 GiB stored, 20k writes/day, 50k reads/day, 20k deletes/day, **per project** — a 30-app fleet can stay $0 only while every app stays inside quota.                                                                        |
 
