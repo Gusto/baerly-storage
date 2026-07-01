@@ -53,6 +53,9 @@ Limits are split by the decision they support: shape in workload fit,
 runtime and graduation in graduation thresholds, cost in cost model, and
 backend support in the storage compatibility spec.
 
+- [`about/why-baerly.md`](about/why-baerly.md) — the six things
+  baerly-storage is built to be: LLM-legible API, no ceremony, data in
+  your bucket, no new vendor, no resident service, and a mechanical exit.
 - [`about/thesis.md`](about/thesis.md) — the positioning on-ramp: what
   baerly-storage is, who it fits, and what boundaries it deliberately
   keeps — the _why_.
