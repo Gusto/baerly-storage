@@ -1,5 +1,6 @@
 import { isDeployedEnv } from "../env.ts";
 import { BaerlyError } from "../errors.ts";
+import { assertValidStorageKey } from "./key.ts";
 import type {
   Storage,
   StorageGetOptions,
@@ -116,6 +117,7 @@ export class MemoryStorage implements Storage {
   }
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+    assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     const stored = this.#objects.get(key);
     if (stored === undefined) {
@@ -129,6 +131,7 @@ export class MemoryStorage implements Storage {
   }
 
   async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
+    assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     const existing = this.#objects.get(key);
 
@@ -170,6 +173,7 @@ export class MemoryStorage implements Storage {
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
+    assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     this.#objects.delete(key);
   }

@@ -1,5 +1,6 @@
 import {
   BaerlyError,
+  assertValidStorageKey,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -50,6 +51,7 @@ class R2BindingStorageImpl implements Storage {
   }
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+    assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     const getOpts: R2GetOptions = {};
     if (opts?.ifNoneMatch !== undefined) {
@@ -70,6 +72,7 @@ class R2BindingStorageImpl implements Storage {
   }
 
   async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
+    assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     const putOpts: R2PutOptions = {};
     if (opts?.contentType !== undefined) {
@@ -101,6 +104,7 @@ class R2BindingStorageImpl implements Storage {
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
+    assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     // R2.delete is idempotent — matches the `Storage.delete` contract.
     await this.#callBinding(() => this.#bucket.delete(key), `DELETE ${key}`);

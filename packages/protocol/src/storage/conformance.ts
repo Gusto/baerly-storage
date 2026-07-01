@@ -37,11 +37,10 @@ export interface ConformanceOptions {
   /**
    * Override the arbitrary used as the single-character `prefix`
    * passed to `list(prefix)`. Default: any char from the canonical
-   * `KEY_CHARS` set. Minio's REST gateway rejects URL paths whose
-   * resource component is `.` or `..` (those segments are reserved
-   * by POSIX path semantics on the backing filesystem); Minio-backed
-   * conformance runs pin this to a `.`-free set. AWS S3 and R2 have
-   * no such restriction.
+   * `KEY_CHARS` set (a `list` prefix rides in the `?prefix=` query
+   * component, so `.`/`..` are harmless there — unlike a *key*, which
+   * is a path segment; see {@link keyArb} and the "key namespace"
+   * block). Rarely needs overriding.
    */
   readonly prefixCharArb?: fc.Arbitrary<string>;
   /** Pinned size-boundary cap. Default: 1 MiB. */
@@ -57,11 +56,20 @@ export type ConformanceFactory = () => Promise<ConformanceFactoryResult>;
 
 const KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.";
 
-const DEFAULT_KEY_ARB = fc.string({
-  minLength: 1,
-  maxLength: 32,
-  unit: fc.constantFrom(...KEY_CHARS.split("")),
-});
+// The generated key space is the portable baerly key grammar: a bare `.`
+// or `..` is excluded because it is *not a valid key on any HTTP-S3
+// backend* — RFC 3986 dot-segment removal (universal across every
+// language's URL parser) rewrites `<bucket>/.` → `<bucket>/` before the
+// request is sent, so it can never be addressed. The adapters reject it
+// with `InvalidConfig`; the "key namespace" block below asserts that.
+// @see docs/spec/storage-compatibility.md "Key namespace".
+const DEFAULT_KEY_ARB = fc
+  .string({
+    minLength: 1,
+    maxLength: 32,
+    unit: fc.constantFrom(...KEY_CHARS.split("")),
+  })
+  .filter((k) => k !== "." && k !== "..");
 
 const DEFAULT_BODY_ARB = fc.uint8Array({ minLength: 0, maxLength: 4096 });
 
@@ -191,6 +199,34 @@ export function defineStorageConformanceSuite(
           expect(got!.body.length).toBe(size);
           expect(bytesEqual(got!.body, body)).toBe(true);
           expect(got!.etag).toBe(etag);
+        });
+      }
+    });
+
+    describe("key namespace", () => {
+      // A bare "." or ".." is not a valid key on ANY backend and every
+      // adapter must reject it *identically* with `InvalidConfig`. On the
+      // HTTP-S3 adapters it is physically unaddressable — RFC 3986
+      // dot-segment removal (universal across every language's URL parser)
+      // rewrites `<bucket>/.` → `<bucket>/` before the request is signed,
+      // so a naïve PUT hits the bucket root and 403s. The binding / memory
+      // / local-fs adapters could technically store it, but reject it too
+      // so the portable contract is one rule, not per-backend. This is the
+      // cross-adapter equivalent of `assertPathSegment` one layer up.
+      // @see docs/spec/storage-compatibility.md "Key namespace".
+      const enc = new TextEncoder();
+      for (const badKey of [".", ".."]) {
+        const label = JSON.stringify(badKey);
+        test(`put(${label}) rejects with InvalidConfig`, async () => {
+          const p = s.put(badKey, enc.encode("v"));
+          await expect(p).rejects.toBeInstanceOf(BaerlyError);
+          await expect(p).rejects.toMatchObject({ code: "InvalidConfig" });
+        });
+        test(`get(${label}) rejects with InvalidConfig`, async () => {
+          await expect(s.get(badKey)).rejects.toMatchObject({ code: "InvalidConfig" });
+        });
+        test(`delete(${label}) rejects with InvalidConfig`, async () => {
+          await expect(s.delete(badKey)).rejects.toMatchObject({ code: "InvalidConfig" });
         });
       }
     });

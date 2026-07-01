@@ -4,6 +4,7 @@ import {
   RATE_LIMIT_BACKOFF_MILLIS,
   RETRY_AFTER_MAX_SECONDS,
   S3_REQUEST_MAX_RETRIES,
+  assertValidStorageKey,
   delay,
   type Storage,
   type StorageGetOptions,
@@ -194,6 +195,10 @@ export class S3HttpStorage implements Storage {
   }
 
   #objectUrl(key: string, versionId?: string): string {
+    // Choke point for every key-addressing verb — reject unaddressable
+    // `.`/`..`/empty keys before URL normalization turns them into a
+    // bucket-root 403. @see storage-compatibility.md "Key namespace".
+    assertValidStorageKey(key);
     const base = `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
     return versionId !== undefined ? `${base}?versionId=${encodeURIComponent(versionId)}` : base;
   }
