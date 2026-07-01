@@ -66,6 +66,9 @@ backend support in the storage compatibility spec.
   what to do about it.
 - [`about/pricing-log.md`](about/pricing-log.md) — append-only audit of
   cost commitments.
+- [`about/alternatives.md`](about/alternatives.md) — how baerly-storage
+  compares to Firebase, Supabase, Convex, and Cloudflare D1 on ceremony,
+  vendor commitment, availability surface, and exit path.
 
 ## Build an app
 
