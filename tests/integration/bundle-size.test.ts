@@ -742,7 +742,12 @@ const BUDGETS: readonly Budget[] = [
   //     shipped code reshuffled across chunk boundaries by a new entry point, not
   //     golf-able waste, so per the POLICY (cf. the index.js fail-closed bump)
   //     min-gz rebaselines. raw/gz stay under main's bounds (419336 / 125799).
-  { entry: "cloudflare.js", raw: 410 * 1024, gz: 123 * 1024, minGz: 44 * 1024 },
+  //   → raw +1 KiB / gz +1 KiB (2026-07-01): the injected-storage feature adds
+  //     the resolveWorkerStorage helper + the ResolvedState resolve-once plumbing
+  //     in worker.ts — genuinely new code in the Worker aggregator. raw crosses
+  //     the 410 KiB bound and gz the 123 KiB bound (measured 420142 raw /
+  //     126038 gz); min-gz is 44325, still under the 44 KiB set above.
+  { entry: "cloudflare.js", raw: 411 * 1024, gz: 124 * 1024, minGz: 44 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

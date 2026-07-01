@@ -4,6 +4,7 @@ import {
   CF_FREE_MAX_SAFE_FOLD_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
+  type Storage,
   type Verifier,
 } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
@@ -23,7 +24,7 @@ import {
   runWithContext,
 } from "@baerly/server/observability";
 import { type CacheStatus, invalidateOnWrite, withReadCache } from "./cache.ts";
-import { r2BindingStorage } from "./r2-binding-storage.ts";
+import { resolveWorkerStorage } from "./resolve-storage.ts";
 
 /**
  * Cloudflare Workers have no TTY, so the default sink is always
@@ -84,7 +85,7 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     {@link WorkerScheduledHandler}).
  */
 export interface BaerlyEnv {
-  BUCKET: R2Bucket;
+  BUCKET?: R2Bucket;
   APP: string;
   /**
    * Raise the snapshot-rebuild ceiling `C`. Parsed as a number;
@@ -218,6 +219,16 @@ export interface BaerlyWorkerOptions {
    */
   readonly config: BaerlyAppConfig;
   /**
+   * Request-time `Storage`. **Optional.** When unset, the Worker uses
+   * the same-account R2 binding `env.BUCKET` (the dominant path). Inject
+   * this to talk to S3 / cross-account R2 over the S3 REST API
+   * from a Worker — e.g. `new S3HttpStorage(...)` +
+   * `sigV4Signer(...)` from `@gusto/baerly-storage/s3`. Resolved once
+   * per isolate inside the factory (where `env` is in scope), same as
+   * the R2 binding.
+   */
+  readonly storage?: Storage;
+  /**
    * Cron Trigger handler. When unset, `scheduled()` is a no-op even
    * if `triggers.crons` is declared. See {@link WorkerScheduledHandler}.
    */
@@ -321,6 +332,12 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
   interface ResolvedState {
     readonly options: BaerlyWorkerOptions;
     readonly verifier: Verifier;
+    // Base Storage resolved once per isolate (injected `options.storage`
+    // or the `env.BUCKET` R2 binding), same lifetime as `verifier`. The
+    // per-request `observableStorage(...)` wrap still happens on every
+    // request — it binds to the request's observability bag — but the
+    // underlying handle is no longer reconstructed each time.
+    readonly storage: Storage;
   }
   let resolved: ResolvedState | undefined;
   // Cached so every subsequent fetch re-throws the same error rather
@@ -350,7 +367,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             return typeof value === "string" ? value : undefined;
           },
         });
-        resolved = { options, verifier };
+        resolved = { options, verifier, storage: resolveWorkerStorage(options, env) };
       } catch (error) {
         resolutionError = error;
         throw error;
@@ -419,7 +436,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         });
       }
 
-      const { options, verifier } = await ensureResolved(env);
+      const { options, verifier, storage: baseStorage } = await ensureResolved(env);
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
@@ -487,8 +504,10 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // per-call class A/B counts and per-op duration histograms
         // land in the active per-request bag. Writer / compactor / GC
         // emissions reach the same bag via `getCurrentContext()?.recorder`
-        // — the canonical-line flusher reads it at end-of-request.
-        const storage = observableStorage(r2BindingStorage(env.BUCKET));
+        // — the canonical-line flusher reads it at end-of-request. The
+        // base handle is resolved once per isolate (see `ResolvedState`);
+        // only the observability wrap is per-request.
+        const storage = observableStorage(baseStorage);
         const db = Db.create({
           storage,
           app: env.APP,
