@@ -66,11 +66,13 @@ These positioning lines are load-bearing brand copy and must stay
 recognizable and consistent wherever they appear. If you reword one,
 update every occurrence so they don't silently drift:
 
-- **"No database server. No daemon. No database runtime. Just your app
-  and a bucket."** — the punchy README lead. Explanatory docs may use
-  variants such as **"There is no separate database server."** or
-  **"There is no database server coordinating state."** where the
-  passage is teaching the runtime model.
+- **"A document database that lives in a bucket you already own — no
+  new vendor to clear, no server to keep running, and an API small
+  enough for an LLM (or a non-engineer) to use zero-shot."** — the
+  README tagline. Explanatory docs may use variants such as **"There
+  is no separate database server."** or **"There is no database server
+  coordinating state."** where the passage is teaching the runtime
+  model.
 - **"baerly-storage runs wherever the bucket credentials safely
   live."** — the shortest way to distinguish the TypeScript library
   from a hosted database service.
