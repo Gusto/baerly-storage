@@ -406,15 +406,17 @@ apps or tenancy enforced outside baerly-storage.
   `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optional
   `AWS_REGION`).
 
-- **Switching from static creds to EKS Pod Identity** — in
+- **Switching from static creds to EKS** — in
   `src/server/index.ts`, swap `credentials: { accessKeyId,
-  secretAccessKey }` for `credentials: fromEksPodIdentity()` and add
-  `fromEksPodIdentity` to your import:
-  `import { s3Storage, fromEksPodIdentity } from "@gusto/baerly-storage/node"`.
-  The agent reads `AWS_CONTAINER_CREDENTIALS_FULL_URI` +
-  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` (EKS injects both). For
-  IRSA / ECS / EC2 / other AWS contexts, see
-  `packages/adapter-node/AGENTS.md` — pass any
+  secretAccessKey }` for `credentials: fromEks()` and add `fromEks`
+  to your import:
+  `import { s3Storage, fromEks } from "@gusto/baerly-storage/node"`.
+  `fromEks()` auto-detects the cluster's mechanism — EKS Pod Identity
+  (`AWS_CONTAINER_CREDENTIALS_FULL_URI` +
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) or IRSA (`AWS_ROLE_ARN` +
+  `AWS_WEB_IDENTITY_TOKEN_FILE`), both EKS-injected; to pin one, use
+  `fromEksPodIdentity()` or `fromWebIdentity()`. For ECS / EC2 / other
+  AWS contexts, see `packages/adapter-node/AGENTS.md` — pass any
   `() => Promise<Credentials>` or an `@aws-sdk/credential-providers`
   factory through the seam.
 

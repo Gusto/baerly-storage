@@ -1,6 +1,7 @@
 import { readFile as fsReadFile } from "node:fs/promises";
 import { BaerlyError } from "@baerly/protocol";
 import type { CredentialsProvider } from "./types.ts";
+import { readProjectedToken } from "./token-file.ts";
 
 const FETCH_TIMEOUT_MS = 2_000;
 
@@ -44,14 +45,20 @@ export function fromEksPodIdentity(
       );
     }
 
-    const rawToken = await doReadFile(tokenPath, "utf8");
-    const token = rawToken.trim();
+    const token = await readProjectedToken(doReadFile, tokenPath, {
+      provider: "fromEksPodIdentity",
+      envVar: "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+    });
 
     let res: Response;
     try {
       res = await doFetch(uri, {
         method: "GET",
         headers: { Authorization: token },
+        // The token rides in the Authorization header; a redirect would resend
+        // it to the 3xx target. The node-local agent never redirects — refuse
+        // rather than follow, so a redirect surfaces as a NetworkError.
+        redirect: "error",
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     } catch (error) {
@@ -94,11 +101,20 @@ export function fromEksPodIdentity(
     ) {
       throw new BaerlyError("InvalidResponse", "fromEksPodIdentity: malformed agent response");
     }
+    // A present-but-unparseable Expiration is as malformed as a missing field:
+    // `new Date(bad)` yields an Invalid Date (getTime() → NaN) rather than
+    // throwing, and the signer's `expiresAt - buffer > now()` refresh check is
+    // false for NaN — so a bad timestamp would silently defeat credential
+    // caching/rotation. Reject it here instead.
+    const expiration = new Date(json.Expiration);
+    if (Number.isNaN(expiration.getTime())) {
+      throw new BaerlyError("InvalidResponse", "fromEksPodIdentity: malformed agent response");
+    }
     return {
       accessKeyId: json.AccessKeyId,
       secretAccessKey: json.SecretAccessKey,
       sessionToken: json.Token,
-      expiration: new Date(json.Expiration),
+      expiration,
     };
   };
 }

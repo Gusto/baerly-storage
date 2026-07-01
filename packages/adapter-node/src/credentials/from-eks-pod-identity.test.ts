@@ -107,17 +107,70 @@ describe("fromEksPodIdentity", () => {
     ).rejects.toMatchObject({ code: "InvalidResponse" });
   });
 
-  test("passes AbortSignal.timeout to the agent fetch", async () => {
-    let capturedSignal: AbortSignal | undefined;
+  test("wraps a token-file read failure in a BaerlyError (InvalidConfig)", async () => {
+    const fakeReadFile = vi.fn<(path: string, encoding: "utf8") => Promise<string>>(async () => {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    });
+    await expect(
+      fromEksPodIdentity({ fetch: vi.fn<typeof fetch>(), readFile: fakeReadFile })(),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
+
+  test("throws InvalidConfig when the token file is empty or whitespace", async () => {
+    const fakeFetch = vi.fn<typeof fetch>();
+    await expect(
+      fromEksPodIdentity({ fetch: fakeFetch, readFile: async () => "  \n" })(),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+    expect(fakeFetch).not.toHaveBeenCalled();
+  });
+
+  test("wraps a fetch exception (timeout / DNS / unreachable) as NetworkError", async () => {
+    const fakeFetch = vi.fn<typeof fetch>(async () => {
+      throw Object.assign(new Error("The operation was aborted due to timeout"), {
+        name: "TimeoutError",
+      });
+    });
+    const fakeReadFile = vi.fn<(path: string, encoding: "utf8") => Promise<string>>(
+      async () => "tok",
+    );
+    await expect(
+      fromEksPodIdentity({ fetch: fakeFetch, readFile: fakeReadFile })(),
+    ).rejects.toMatchObject({
+      code: "NetworkError",
+      message: expect.stringContaining("agent fetch failed"),
+    });
+  });
+
+  test("surfaces a malformed Expiration as InvalidResponse", async () => {
+    const badExpiry = JSON.stringify({
+      AccessKeyId: "ASIATESTFROMEKS",
+      SecretAccessKey: "secret-from-agent",
+      Token: "session-token-from-agent",
+      Expiration: "not-a-date",
+    });
+    const fakeFetch = vi.fn<typeof fetch>(async () => new Response(badExpiry, { status: 200 }));
+    const fakeReadFile = vi.fn<(path: string, encoding: "utf8") => Promise<string>>(
+      async () => "tok",
+    );
+    await expect(
+      fromEksPodIdentity({ fetch: fakeFetch, readFile: fakeReadFile })(),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
+  test("passes AbortSignal.timeout and refuses redirects on the agent fetch", async () => {
+    let capturedInit: RequestInit | undefined;
     const fakeFetch = vi.fn<typeof fetch>(async (_url, init) => {
-      capturedSignal = init?.signal as AbortSignal | undefined;
+      capturedInit = init;
       return new Response(AGENT_RESPONSE, { status: 200 });
     });
     const fakeReadFile = vi.fn<(path: string, encoding: "utf8") => Promise<string>>(
       async () => "tok",
     );
     await fromEksPodIdentity({ fetch: fakeFetch, readFile: fakeReadFile })();
-    expect(capturedSignal).toBeInstanceOf(AbortSignal);
-    expect(capturedSignal!.aborted).toBe(false);
+    const signal = capturedInit?.signal as AbortSignal | undefined;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
+    // A redirect would resend the token (Authorization header) to the target.
+    expect(capturedInit?.redirect).toBe("error");
   });
 });
