@@ -94,6 +94,106 @@ surfacing as an opaque provider 400/403.
 > `.`-free prefix arbitrary.) Only _keys_, which become path segments, are
 > constrained by the dot-segment rule.
 
+## Status → `BaerlyErrorCode` mapping
+
+A `Storage` port translates object-store HTTP status codes into the
+kernel's `BaerlyError` codes. The authoritative sources are the
+`errorCodes[]` table in `packages/server/spec/baerly.spec.json` (which
+carries each code's canonical `httpStatus` and `retriable` hint) and the
+S3-status → code mapping in `packages/adapter-node/src/s3-http.ts`. A
+language port MUST reproduce the mapping below to conform.
+
+Two subtleties are load-bearing:
+
+- **`404` on a plain `GET` is _not_ an error.** A missing key resolves to
+  `null` (`Storage.get` returns `Promise<StorageGetResult | null>`), never
+  a thrown `BaerlyError`. The kernel's forward-probe tail discovery ("first
+  `404` = tail") depends on this: a missing `log/<seq>` must surface as
+  `null`, not an exception. (`s3-http.ts` `get`: `case 404: return null`.)
+- **`409` vs `412` on a conditional create diverge by intent.** A `409
+  ConditionalRequestConflict` on an `If-None-Match: "*"` create means the
+  write was _contended_ and may not have landed, so it maps to a
+  **retryable** `NetworkError` — the single-write-commit writer re-probes
+  and either wins or sees `412`. A direct `Conflict` there would adopt-read
+  a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch ===
+  "*"` branch.)
+
+| Condition (over the wire / at the boundary)                    | `BaerlyError.code` | Nominal `httpStatus` | Retriable | Source                                                              |
+| -------------------------------------------------------------- | ------------------ | -------------------- | --------- | ------------------------------------------------------------------- |
+| `GET` / `HEAD` `404` (missing key)                             | _(none — `null`)_  | —                    | —         | `s3-http.ts` `get` `case 404: return null`                          |
+| `PUT` with `If-Match` sees `412`                               | `Conflict`         | 409                  | Yes       | `s3-http.ts` `put` `res.status === 412`; spec.json `Conflict`       |
+| `PUT` with `If-Match` sees `404` (MinIO's stale-CAS shape)     | `Conflict`         | 409                  | Yes       | `s3-http.ts` `put` `404 && ifMatch !== undefined`                   |
+| `PUT` `If-None-Match: "*"` sees `409` (contended create)       | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `put` `409 && ifNoneMatch === "*"`                     |
+| Any verb sees `403`                                            | `AccessDenied`     | 403                  | No        | `s3-http.ts` `403` branches; spec.json `AccessDenied`               |
+| Any verb sees `429` or `5xx` (retries exhausted)               | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `429 \|\| status >= 500` branches; spec.json           |
+| Unparseable / unexpected success body or missing `ETag`        | `InvalidResponse`  | 502                  | No        | `s3-http.ts` `InvalidResponse` branches; spec.json                  |
+| Empty key or a `.` / `..` path segment (rejected pre-request)  | `InvalidConfig`    | 400                  | No        | `assertValidStorageKey`; spec.json `InvalidConfig`; see [Key namespace](#key-namespace) |
+
+The `Conflict` code has a nominal `httpStatus` of `409` and is marked
+`retriable: true` in `baerly.spec.json` (CAS lost — the writer re-reads and
+retries). `NetworkError` is `retriable: true` (`httpStatus` `502`);
+`AccessDenied`, `InvalidResponse`, `NotFound`, and `InvalidConfig` are all
+`retriable: false`. A `DELETE` against a missing key throws nothing at all
+— see clause 1 below.
+
+## Storage behavioral contract
+
+These are the behaviors a `Storage` port MUST honour, as asserted by
+`defineStorageConformanceSuite` in
+`packages/protocol/src/storage/conformance.ts`. They are numbered so a
+porter can cite a specific clause.
+
+1. **`delete` MUST be idempotent.** Deleting a key that does not exist MUST
+   resolve successfully (return `undefined`), NOT throw. (`s3-http.ts`
+   treats `200` / `204` / `404` on `DELETE` as success; conformance:
+   _"delete is idempotent on a missing key"_.)
+2. **`get` of a missing key MUST return `null`.** It MUST NOT throw a
+   `NotFound` / `BaerlyError`. (Conformance: _"get of missing key returns
+   null"_.)
+3. **`list("")` MUST enumerate the entire namespace.** An empty prefix is a
+   whole-bucket scan; every stored key MUST be yielded. (Used by the
+   suite's own `deleteAllOnce` teardown and the _"returns the current etag
+   for each entry"_ case, both listing `""`.)
+4. **`startAfter` MUST be strict-exclusive.** When `list(prefix, {
+   startAfter })` is given, the `startAfter` key itself MUST NOT be
+   returned — only keys strictly greater than it. (Conformance: _"startAfter
+   is exclusive"_ and the _"startAfter:k yields strict suffix of lex-sorted
+   keys"_ property.)
+5. **`list` results MUST be sorted by UTF-8 byte order, NOT UTF-16.** For
+   BMP characters the two agree, but they diverge for supplementary-plane
+   characters (surrogate pairs): a UTF-16 code-unit sort orders an emoji
+   _before_ a high-BMP private-use character, while UTF-8 byte order — what
+   S3 / R2 use on the wire — orders it _after_. A port that sorts with its
+   native string comparator will pass the ASCII property tests yet be
+   silently wrong here. The fixed witness vector is the conformance case
+   _"keys sort by UTF-8 byte order, not UTF-16 (supplementary-plane
+   divergence)"_.
+6. **`maxKeys` MUST cap the yielded count** to the first `maxKeys` keys in
+   sort order. (Conformance: _"maxKeys caps the result"_.)
+7. **Body round-trip MUST be byte-exact at the size boundaries.** A `0`-byte
+   body and a 1 MiB (`1048576`-byte) body MUST `put` then `get` back
+   byte-for-byte. (Conformance: _"round-trip exactly 0 bytes"_ …
+   _"round-trip exactly 1048576 bytes"_, capped by `maxBodyBytes`.)
+
+### Out of scope for a `Storage` port
+
+Range-GET (partial-object reads via `Range:`) and delimiter-based listing
+(`?delimiter=` with `CommonPrefixes`) are intentionally OUT OF SCOPE — the
+kernel never issues them, so "unsupported" here means "deliberately not
+required," not "forgotten."
+
+### ETag opacity
+
+The `ETag` string is **opaque**. A port MUST compare it byte-for-byte —
+**including any surrounding quotes** — and round-trip it unchanged; it MUST
+NOT strip quotes, lowercase, or otherwise normalize the value. The
+`ifMatch` CAS contract (see [conditional writes](#s3-is-an-immutable-key-value-store-with-a-single-index))
+depends on this: the writer passes back the exact `etag` string returned by
+a prior `put`, and the store must match it verbatim. The conformance suite
+pins this by asserting `get(...).etag === put(...).etag` exactly, and by
+passing quoted literals such as `"deadbeef"` (with the quotes) straight
+through the `ifMatch` path.
+
 ## Support tiers
 
 baerly-storage's commit path creates-if-absent the numbered `log/<seq>`
