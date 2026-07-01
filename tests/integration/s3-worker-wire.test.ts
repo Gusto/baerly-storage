@@ -28,94 +28,10 @@
 import { BaerlyError } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { S3HttpStorage, sigV4Signer } from "../../packages/adapter-node/src/s3.ts";
+import { assertAllRequestsSigned, makeS3Stub } from "../fixtures/s3-memory-stub.ts";
 
 const ENDPOINT = "https://s3.us-east-1.amazonaws.com";
 const BUCKET = "wire-test";
-
-interface Stored {
-  body: Uint8Array;
-  etag: string;
-}
-
-interface SeenRequest {
-  method: string;
-  url: string;
-  authorization: string | null;
-}
-
-/**
- * A minimal in-memory S3 over `fetch` — only the verbs `S3HttpStorage`
- * emits: `PUT` (with `If-None-Match: "*"` create-if-absent and `If-Match`
- * CAS), object `GET`, `GET list-type=2` (→ `ListObjectsV2` XML), and
- * `DELETE`. Every inbound request is recorded so a test can assert the
- * real SigV4 `Authorization` header rode along — i.e. the signer ran in
- * the chain and was not silently bypassed.
- */
-function makeS3Stub(): { fetchImpl: typeof fetch; seen: SeenRequest[] } {
-  const store = new Map<string, Stored>();
-  const seen: SeenRequest[] = [];
-  let seq = 0;
-
-  const fetchImpl = (async (input: RequestInfo | URL): Promise<Response> => {
-    const req = input as Request;
-    const url = new URL(req.url);
-    seen.push({
-      method: req.method,
-      url: req.url,
-      authorization: req.headers.get("authorization"),
-    });
-    const key = decodeURIComponent(url.pathname.replace(new RegExp(`^/${BUCKET}/?`), ""));
-
-    if (req.method === "GET" && url.searchParams.get("list-type") === "2") {
-      const prefix = url.searchParams.get("prefix") ?? "";
-      const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).toSorted();
-      const xml =
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>` +
-        keys
-          .map(
-            (k) =>
-              `<Contents><Key>${encodeURIComponent(k)}</Key><ETag>${store.get(k)!.etag}</ETag></Contents>`,
-          )
-          .join("") +
-        `</ListBucketResult>`;
-      return new Response(xml, { status: 200, headers: { "content-type": "application/xml" } });
-    }
-
-    if (req.method === "GET") {
-      const hit = store.get(key);
-      return hit === undefined
-        ? new Response(null, { status: 404 })
-        : // `Uint8Array<ArrayBufferLike>` isn't assignable to the narrowed
-          // lib.dom `BodyInit`, though the runtime accepts it — same cast
-          // `S3HttpStorage#put` makes.
-          new Response(hit.body as BodyInit, { status: 200, headers: { ETag: hit.etag } });
-    }
-
-    if (req.method === "PUT") {
-      const exists = store.has(key);
-      if (req.headers.get("If-None-Match") === "*" && exists) {
-        return new Response(null, { status: 412 });
-      }
-      const ifMatch = req.headers.get("If-Match");
-      if (ifMatch !== null && (!exists || store.get(key)!.etag !== ifMatch)) {
-        return new Response(null, { status: 412 });
-      }
-      const body = new Uint8Array(await req.arrayBuffer());
-      const etag = `"etag-${seq++}"`;
-      store.set(key, { body, etag });
-      return new Response(null, { status: 200, headers: { ETag: etag } });
-    }
-
-    if (req.method === "DELETE") {
-      store.delete(key);
-      return new Response(null, { status: 204 });
-    }
-
-    return new Response(null, { status: 405 });
-  }) as unknown as typeof fetch;
-
-  return { fetchImpl, seen };
-}
 
 const mkStorage = (fetchImpl: typeof fetch): S3HttpStorage =>
   new S3HttpStorage({
@@ -146,7 +62,7 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
   });
 
   test("put → get round-trips bytes through real signed requests", async () => {
-    const { fetchImpl, seen } = makeS3Stub();
+    const { fetchImpl, seen } = makeS3Stub(BUCKET);
     const s = mkStorage(fetchImpl);
 
     const put = await s.put("docs/greeting", new TextEncoder().encode("hello from workerd"), {
@@ -160,14 +76,11 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
 
     // Every request that reached the wire carried a SigV4 header — proof
     // the real aws4fetch signer ran in the chain in-isolate.
-    expect(seen.length).toBeGreaterThan(0);
-    for (const r of seen) {
-      expect(r.authorization).toMatch(/^AWS4-HMAC-SHA256 /);
-    }
+    assertAllRequestsSigned(seen);
   });
 
   test("If-None-Match:'*' create-if-absent conflict maps to Conflict", async () => {
-    const { fetchImpl } = makeS3Stub();
+    const { fetchImpl } = makeS3Stub(BUCKET);
     const s = mkStorage(fetchImpl);
 
     await s.put("log/00000001", new Uint8Array([1]), { ifNoneMatch: "*" });
@@ -179,7 +92,7 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
   });
 
   test("list parses ListObjectsV2 XML with fast-xml-parser in-isolate", async () => {
-    const { fetchImpl } = makeS3Stub();
+    const { fetchImpl } = makeS3Stub(BUCKET);
     const s = mkStorage(fetchImpl);
 
     await s.put("p/a", new Uint8Array([1]), { ifNoneMatch: "*" });
