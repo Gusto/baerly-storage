@@ -52,6 +52,10 @@ export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schem
  * - {@link Query} / {@link Collection}: the locked predicate-AST
  *   interfaces returned by `Db.collection(...)`. Consumers that
  *   destructure the chain need the named types.
+ * - {@link Predicate} / {@link PredicateArg}: the equality-object and
+ *   `.where(...)`-argument shapes. Consumers writing a helper that
+ *   forwards a predicate — or naming a collection handle in a shared
+ *   interface — need these instead of hand-rolling a structural shim.
  * - {@link Storage} + its result types
  *   ({@link StorageGetResult}, {@link StorageListEntry},
  *   {@link StoragePutResult}): the interface every storage adapter
@@ -74,6 +78,8 @@ export {
   type StorageListEntry,
   type StoragePutResult,
   type Collection,
+  type Predicate,
+  type PredicateArg,
   type Verifier,
   type VerifierResult,
 } from "@baerly/protocol";

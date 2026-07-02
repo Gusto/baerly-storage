@@ -34,6 +34,8 @@ import {
   MemoryStorage, // in-memory `Storage`; canonical for tests
   type Collection,
   type Query,
+  type Predicate, // equality-object `.where(...)` form
+  type PredicateArg, // `.where(...)` arg: object or builder callback
   type DocumentData,
   type RowOf,
   type CollectionNames, // row-shape inference from a bound config
@@ -59,6 +61,8 @@ import {
   type ClientQuery,
   type TerminalOptions,
   type Fetcher,
+  type Predicate,
+  type PredicateArg,
 } from "@gusto/baerly-storage/client";
 
 // Auth verifiers
