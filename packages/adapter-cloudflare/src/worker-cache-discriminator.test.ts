@@ -22,6 +22,7 @@ import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
+import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 
 /** Minimal `BaerlyAppConfig` — `verifier:` override wins in every case. */
 const testConfig: BaerlyAppConfig = {
@@ -42,16 +43,9 @@ const getBinding = (): R2Bucket => {
   return bucket;
 };
 
-const makeExec = (): ExecutionContext => ({
-  waitUntil(p: Promise<unknown>): void {
-    // Eagerly await so the test sees `invalidateOnWrite` complete
-    // before the next request fires. Tests don't need the
-    // production runtime's background-task semantics.
-    void p;
-  },
-  passThroughOnException(): void {},
-  props: {},
-});
+// Fire-and-forget waitUntil: tests don't need the production runtime's
+// background-task semantics, so the default (drop the promise) is fine.
+const makeExec = (): ExecutionContext => mockExecutionContext();
 
 /**
  * Captured-records sink. Mirrors `worker.test.ts:77-110`.

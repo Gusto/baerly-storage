@@ -24,6 +24,7 @@ import {
 } from "@baerly/protocol";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
+import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",
@@ -59,11 +60,7 @@ const makeEnv = (bucket: R2Bucket): BaerlyEnv => ({
   APP: "tickets",
 });
 
-const makeCtx = (): ExecutionContext => ({
-  waitUntil(): void {},
-  passThroughOnException(): void {},
-  props: {},
-});
+const makeCtx = (): ExecutionContext => mockExecutionContext();
 
 /**
  * `worker.fetch` is typed against `Request<unknown,

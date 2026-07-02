@@ -34,7 +34,7 @@
     "@baerly/server": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4"
+    "@cloudflare/workers-types": "^4.20260630.1"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "^4"

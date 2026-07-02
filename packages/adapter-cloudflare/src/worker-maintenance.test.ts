@@ -46,6 +46,7 @@ import {
 import { Writer } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
+import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import {
   baerlyWorker,
@@ -134,13 +135,9 @@ const seedTail = async (storage: Storage, key: string, n: number): Promise<void>
  */
 const makeCollectingCtx = (): { ctx: ExecutionContext; drain: () => Promise<void> } => {
   const collected: Array<Promise<unknown>> = [];
-  const ctx: ExecutionContext = {
-    waitUntil(p: Promise<unknown>): void {
-      collected.push(Promise.resolve(p));
-    },
-    passThroughOnException(): void {},
-    props: {},
-  };
+  const ctx = mockExecutionContext((p) => {
+    collected.push(Promise.resolve(p));
+  });
   return {
     ctx,
     drain: async (): Promise<void> => {
@@ -154,13 +151,7 @@ const tenantId = (label: string): string =>
 
 describe("cfMaintenanceDispatch", () => {
   test("threads ctx.waitUntil + CF-free caps + phasesPerTick:single, no env", () => {
-    const ctx: ExecutionContext = {
-      waitUntil(p: Promise<unknown>): void {
-        void p;
-      },
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const ctx = mockExecutionContext();
     const m = cfMaintenanceDispatch(ctx, () => undefined);
 
     // The dispatch hands the task to ctx.waitUntil — fire-and-forget
@@ -183,11 +174,7 @@ describe("cfMaintenanceDispatch", () => {
   });
 
   test("threads BAERLY_MAINTENANCE_MAX_FOLD_BYTES off the env binding (a low ceiling reaches the runner)", () => {
-    const ctx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const ctx = mockExecutionContext();
     const m = cfMaintenanceDispatch(ctx, (k) =>
       k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "4096" : undefined,
     );
@@ -195,11 +182,7 @@ describe("cfMaintenanceDispatch", () => {
   });
 
   test("ignores a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
-    const ctx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const ctx = mockExecutionContext();
     const m = cfMaintenanceDispatch(ctx, (k) =>
       k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "not-a-number" : undefined,
     );
@@ -207,11 +190,7 @@ describe("cfMaintenanceDispatch", () => {
   });
 
   test("threads BAERLY_MAINTENANCE_DISABLE off the env binding; treats falsy values as not-disabled", () => {
-    const ctx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const ctx = mockExecutionContext();
     expect(
       cfMaintenanceDispatch(ctx, (k) => (k === "BAERLY_MAINTENANCE_DISABLE" ? "1" : undefined))
         .disabled,
@@ -226,11 +205,7 @@ describe("cfMaintenanceDispatch", () => {
 });
 
 describe("resolveCfMaintenanceProfile — profile selection from BAERLY_MAINTENANCE_PROFILE", () => {
-  const makeCtx = (): ExecutionContext => ({
-    waitUntil(): void {},
-    passThroughOnException(): void {},
-    props: {},
-  });
+  const makeCtx = (): ExecutionContext => mockExecutionContext();
 
   test("BAERLY_MAINTENANCE_PROFILE=cf-paid selects the paid profile on the write-tick path", () => {
     const ctx = makeCtx();
@@ -289,11 +264,7 @@ describe("write-tick fold under the CF free-tier subrequest budget", () => {
 
     // One bounded pass with the EXACT config the CF adapter threads.
     const counting = wrapCountingStorage(inner);
-    const noopCtx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const noopCtx = mockExecutionContext();
     const m = cfMaintenanceDispatch(noopCtx, () => undefined);
     await runBoundedMaintenance(
       { storage: counting.storage, currentJsonKey: KEY(tenant), prevSeq: 110 },
@@ -424,11 +395,7 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
       BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(CF_FREE_MAX_SAFE_FOLD_BYTES + 1),
     } as unknown as BaerlyEnv;
 
-    const noopCtx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const noopCtx = mockExecutionContext();
     // Two healthz fetches: the warn must fire EXACTLY once (init-scoped).
     await handler.fetch!(
       new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
@@ -465,11 +432,7 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
       BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(CF_FREE_MAX_SAFE_FOLD_BYTES),
     } as unknown as BaerlyEnv;
 
-    const noopCtx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const noopCtx = mockExecutionContext();
     await handler.fetch!(
       new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
       env,
