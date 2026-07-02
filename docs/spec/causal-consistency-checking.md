@@ -3,7 +3,7 @@ title: Causal-consistency property checking
 audience: spec
 doc_type: verification
 summary: Low-complexity verification of causal consistency via a known global timeline.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-07-01
 tags: [protocol, verification, property-testing]
 related: [sync-protocol.md]
 ---
@@ -258,6 +258,47 @@ The contradiction is now explicit. These three clauses cannot all be true:
 /*P1*/ C1 < C2 // Carol's sequential timeline
 /*P3*/ C2 < B1 // When Alice received Bob's message after Carol's
 ```
+
+## Session guarantees
+
+The `P1`/`P2`/`P3` clauses above check causal ordering of *observed*
+events. A document DB is also judged on three **session guarantees** that
+the randomized cascade now asserts directly. Each names the backend class
+it holds on and the assertion in `tests/fixtures/randomized-cascade.ts`
+that witnesses it.
+
+- **SG-1 — No-lost-writes (all backends).** Every `Writer.commit()` that
+  returns success has its `log/<seq>` slot durably present in the
+  collection log. `entry.seq` is that slot (the winning
+  `If-None-Match: "*"` create). This holds even under fault injection: an
+  acked commit is durable regardless of what the network does afterward.
+  *Witness:* the drain-time containment check of the acked-slot set
+  against the listed `log/<seq>` keys.
+
+- **SG-2 — Read-your-writes (strongly-consistent backends).** After a
+  writer's own `commit()` succeeds at slot `S`, that writer's next read
+  resolves a slot `>= S`. Under last-write-wins a later slot may mask the
+  value, but a writer never reads state older than its own committed
+  write. *Witness:* the self-read assertion immediately after a successful
+  commit, gated on `strongConsistency`.
+
+- **SG-3 — Monotonic-reads (strongly-consistent backends).** Within one
+  client, successive reads resolve non-decreasing `log/<seq>` slots — the
+  log is append-only and entries are immutable, so the freshest matching
+  slot only grows. *Witness:* the per-client last-observed-slot check in
+  the poll loop, gated on `strongConsistency`.
+
+SG-2 and SG-3 are gated to strongly-consistent backends (memory,
+local-fs, in-process miniflare-R2) and are **not** asserted on the
+node-minio variant, whose Toxiproxy fault injection deliberately induces
+stale reads (see the `KNOWN FLAKE` note in the cascade driver). SG-1 is
+backend-agnostic and runs everywhere.
+
+Seeded replay: the cascade logs an integer `seed` at start and dumps the
+observed schedule on any causal-consistency violation, so a failing
+interleaving can be inspected and the injected entropy replayed by
+passing the seed back. (Timer-driven interleaving remains wall-clock
+dependent; fully deterministic replay is future work.)
 
 ## Conclusion
 

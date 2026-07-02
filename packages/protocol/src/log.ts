@@ -90,7 +90,14 @@ export interface LogEntry {
    */
   session: string;
 
-  /** Per-session sequence number embedded in the `lsn`. */
+  /**
+   * The `log/<seq>` slot this entry occupies — the integer in its
+   * `log/<seq>.json` key, minted by `Writer.commit` as the forward-probed
+   * collection-log tail (the winning `If-None-Match: "*"` create). One
+   * entry per `session`, so this is a per-collection slot, not a
+   * per-session counter. Also encoded (descending base-32) as the LSN's
+   * third segment — see `lsnParts`.
+   */
   seq: number;
 }
 
