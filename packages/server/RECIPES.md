@@ -110,6 +110,13 @@ inside a `useQuery` callback.
   surface is the `.where(...)` method chain.
 - `.all()` on a hot path — page or cursor-iterate; `.all()` is for
   bounded result sets.
+- Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and
+  `.all()`) returns the **whole collection** — there is no default row
+  cap, and auth pins a tenant, not a row owner. Scope non-owner reads in
+  your own route: inject a `where owner_id = <verified id>` predicate
+  (ideally index-backed) and clamp `limit = min(requested ?? MAX, MAX)`.
+  Rejecting `?limit` backfires — it forces the uncapped path. See
+  `docs/guide/auth.md` § Authorization Boundary.
 
 ## Where to look next
 

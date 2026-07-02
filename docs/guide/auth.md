@@ -2,7 +2,7 @@
 title: Authentication
 audience: operator
 summary: Production auth recipes for Cloudflare and Node, plus tenant pinning and authorization boundaries.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-07-02
 tags: [auth, operations]
 related: ["../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
 ---
@@ -290,6 +290,22 @@ reach `baerlyWorker` / `baerlyNode`:
 - block direct client writes to protected collections before falling
   through to the default `/v1/*` handler.
 
+Reads are symmetric — and easy to overlook. `GET /v1/c/:collection`
+returns the **entire collection** unless you constrain it: there is no
+default row cap, and an authenticated non-owner sees every row under the
+tenant. Two consequences for your interceptor:
+
+- **Scope the rows.** Inject a predicate keyed to the verified identity
+  (`where owner_id = <verified sub>`) before delegating. Prefer a
+  predicate that hits a declared index — the engine then resolves
+  matched rows via an index walk instead of folding the whole
+  collection. A bare `?limit` clamp only bounds what is returned: the
+  engine still folds the whole collection into memory before applying
+  the limit, so a limit alone caps exposure but not read cost.
+- **Do not reject `?limit` to "force" a cap.** It backfires — a request
+  with no `?limit` takes the *uncapped* path and returns everything.
+  Clamp instead: `limit = min(requested ?? MAX, MAX)`.
+
 The trusted-fields recipe in
-[`packages/server/API.md`](../../packages/server/API.md) shows that
-pattern.
+[`packages/server/API.md`](../../packages/server/API.md) shows the
+write half of this pattern.
