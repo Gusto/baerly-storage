@@ -14,4 +14,5 @@ export type {
   LogEntry,
   OrderSpec,
   Predicate,
+  PredicateArg,
 } from "@baerly/protocol";

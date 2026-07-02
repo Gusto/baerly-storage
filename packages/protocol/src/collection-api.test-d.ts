@@ -19,7 +19,7 @@
  * from any barrel — exporting the assertion handles is harmless.
  */
 
-import { type Predicate } from "./collection-api.ts";
+import { type Path, type Predicate } from "./collection-api.ts";
 import type { PredicateArg, PredicateBuilder } from "./query/builder.ts";
 import type { DocumentData } from "./json.ts";
 
@@ -187,3 +187,28 @@ export const _depth6Rejected: Predicate<DeepDoc> = {
 
 export const _builderReturnsSelf = (q: PredicateBuilder<Ticket>): PredicateBuilder<Ticket> =>
   q.eq("status", "open").gt("count", 5);
+
+// --- Optional array/nested fields are Path leaves (regression) -----
+// An OPTIONAL array field must terminate `Path` recursion the same as a
+// required one. The leaf test in `_AllPaths` runs on `NonNullable<T[K]>`;
+// without that guard, `T["tags"]` was `string[] | undefined`, whose
+// `undefined` arm defeated the `ReadonlyArray` leaf check, so `_AllPaths`
+// descended into `Array.prototype` and synthesized `tags.map.${string}:
+// undefined`. That bogus path broke structural assignability for consumers
+// whose predicate parameter is an index signature (e.g. a hand-rolled
+// `collection(name: string)` shim over a config whose row union contains an
+// optional array field). See the matching changeset.
+type OptArrayDoc = DocumentData & { kind: string; tags?: string[] };
+
+// The optional array field itself is the only path it contributes.
+export const _optArrayIsLeafPath: Path<OptArrayDoc> = "tags";
+export const _optArraySiblingPath: Path<OptArrayDoc> = "kind";
+
+// No `Array.prototype` members leak into `Path<T>`.
+// @ts-expect-error — `tags.map` is Array.prototype, not a document path.
+export const _noArrayPrototypeMap: Path<OptArrayDoc> = "tags.map";
+// @ts-expect-error — nor any deeper synthetic prototype path.
+export const _noArrayPrototypeDeep: Path<OptArrayDoc> = "tags.map.length";
+
+// Predicate-level: the optional array remains a queryable leaf value.
+export const _optArrayLeafValue: Predicate<OptArrayDoc> = { tags: ["x"] };

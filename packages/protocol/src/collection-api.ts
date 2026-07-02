@@ -220,7 +220,12 @@ type _AllPaths<T, D extends _PathDepth[number] = 4> = [D] extends [never]
     ? keyof _StripIndex<T> & string extends never
       ? string
       : {
-          [K in keyof _StripIndex<T> & string]: _IsPathLeaf<T[K]> extends true
+          // Leaf test runs on `NonNullable<T[K]>`: for an optional field the raw
+          // `T[K]` is `V | undefined`, and the `undefined` arm defeats the
+          // array-is-a-leaf check in `_IsPathLeaf` (a union doesn't extend
+          // `ReadonlyArray`), which would otherwise make an optional `string[]`
+          // descend into `Array.prototype` and synthesize `foo.map.${string}`.
+          [K in keyof _StripIndex<T> & string]: _IsPathLeaf<NonNullable<T[K]>> extends true
             ? K
             : K | `${K}.${_AllPaths<NonNullable<T[K]>, _PathDepth[D]>}`;
         }[keyof _StripIndex<T> & string]
