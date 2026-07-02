@@ -296,6 +296,56 @@ const buildInstances = async (
 };
 
 /**
+ * Run a storage-touching read under bounded retry on transient
+ * `NetworkError`. The node-minio variant flips its Toxiproxy proxy every
+ * 100 ms, so a read landing in a dead window rejects with a
+ * {@link BaerlyError} whose `code` is `"NetworkError"`; Minio / S3 are
+ * strongly consistent, so once a window opens the value is complete and
+ * the retry only rides out the dead window. Non-`NetworkError` failures
+ * (and genuine assertion failures) propagate immediately. The whole `op`
+ * re-runs per attempt, so consumers that accumulate (e.g. draining an
+ * async list into a set) must build their result fresh inside `op`.
+ */
+export const MAX_NETWORK_RETRIES = 5;
+export const withNetworkRetry = async <T>(op: () => Promise<T>): Promise<T> => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await op();
+    } catch (error) {
+      if (
+        error instanceof BaerlyError &&
+        error.code === "NetworkError" &&
+        attempt < MAX_NETWORK_RETRIES
+      ) {
+        await new Promise<void>((r) => setTimeout(r, 10 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+};
+
+/**
+ * Collect the set of committed `log/<seq>.json` slot numbers under a
+ * collection's log prefix. Matches ONLY `<logPrefix>/log/<digits>.json`
+ * slot keys — ignoring `current.json`, index subdirs, etc. — and rides
+ * out transient network windows via {@link withNetworkRetry}.
+ */
+const collectCommittedSlots = async (inst: Instance): Promise<Set<number>> => {
+  const slotKeyPattern = new RegExp(`^${escapeRegExp(`${inst.logPrefix}/log/`)}(\\d+)\\.json$`);
+  return withNetworkRetry(async () => {
+    const slots = new Set<number>();
+    for await (const listed of inst.storage.list(`${inst.logPrefix}/log/`)) {
+      const m = slotKeyPattern.exec(listed.key);
+      if (m !== null) {
+        slots.add(Number.parseInt(m[1]!, 10));
+      }
+    }
+    return slots;
+  });
+};
+
+/**
  * Run the all-to-all single-key cascade. Returns when `MAX_STEPS`
  * observations have been recorded by the {@link CentralisedOfflineFirstCausalSystem}
  * (success) or rejects on assertion failure / unexpected error.
@@ -353,6 +403,11 @@ export const runCausalConsistencyCascade = (opts: {
           sender: number;
           send_time: number;
         }> = [];
+        // No-lost-writes ledger: every commit that RETURNS success records
+        // its won slot here; at drain, each MUST be present in the durable
+        // log-slot set. `entry.seq` is the `log/<seq>` slot (writer mints
+        // `logObjectKey(logPrefix, seq)` at that seq).
+        const ackedSeqs = new Set<number>();
         const declaredIndexes: ReadonlyArray<IndexDefinition> = opts.injectFilteredIndex
           ? [FILTERED_INDEX]
           : [];
@@ -454,12 +509,13 @@ export const runCausalConsistencyCascade = (opts: {
                 await new Promise<void>((r) => setTimeout(r, delayMs));
               }
               try {
-                await instances[client_id]!.writer.commit({
+                const result = await instances[client_id]!.writer.commit({
                   op: "U",
                   collection: COLLECTION,
                   docId: COLLECTION,
                   body: message,
                 });
+                ackedSeqs.add(result.entry.seq);
               } catch (error) {
                 // Transient Conflict under contention is fine — the
                 // peer will re-broadcast on its next observe. Other
@@ -479,6 +535,15 @@ export const runCausalConsistencyCascade = (opts: {
             void (async () => {
               try {
                 await Promise.allSettled(commitQueues);
+                // No-lost-writes (SG-1): every acked commit's slot is durable.
+                const committed = await collectCommittedSlots(instances[0]!);
+                const missing = [...ackedSeqs].filter((s) => !committed.has(s));
+                expect(
+                  missing,
+                  `no-lost-writes: acked commits missing from the durable log-slot set ${JSON.stringify(
+                    [...committed].toSorted((a, b) => a - b),
+                  )}`,
+                ).toEqual([]);
                 if (opts.injectFilteredIndex) {
                   await assertFilteredIndexConsistent(instances[0]!);
                 }
@@ -676,24 +741,16 @@ export const runMultiDocCascade = async (opts: {
   // from an array index — otherwise the "contiguous / gap-free / no-dup"
   // assertions on it are tautological (a forward probe is dense by
   // construction, so synthesizing `start + i` can NEVER witness a gap or
-  // duplicate the storage might actually hold). Enumerate the live slots
-  // under the collection's `log/` prefix and parse the integer `<N>` out
-  // of each `log/<N>.json` key; the resulting set is the real committed
-  // range the collection-total-order property exists to witness.
+  // duplicate the storage might actually hold). `collectCommittedSlots`
+  // enumerates the live `log/<N>.json` slots — and rides out the
+  // node-minio Toxiproxy flips this cascade also runs under — so the
+  // resulting set is the real committed range the collection-total-order
+  // property exists to witness.
   const inst = instances[0]!;
   const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
   const start = read === null ? 0 : read.json.log_seq_start;
 
-  // Match ONLY `<logPrefix>/log/<digits>.json` slot keys — ignore any
-  // non-slot keys under that prefix (`current.json`, index subdirs, …).
-  const slotKeyPattern = new RegExp(`^${escapeRegExp(`${inst.logPrefix}/log/`)}(\\d+)\\.json$`);
-  const committedSeqs: number[] = [];
-  for await (const listed of inst.storage.list(`${inst.logPrefix}/log/`)) {
-    const m = slotKeyPattern.exec(listed.key);
-    if (m !== null) {
-      committedSeqs.push(Number.parseInt(m[1]!, 10));
-    }
-  }
+  const committedSeqs = [...(await collectCommittedSlots(inst))];
 
   // Walk the committed entries in ascending seq order for the per-doc
   // projection — `observedPerDoc[docId]` is that doc's committed-value
@@ -893,30 +950,12 @@ export const runRangeWalkParityCascade = async (opts: {
     const wire = normalizePredicateArg<ParityDoc>(predicate);
     const expected = seeded.filter((d) => matchesWire(wire, d));
 
-    // Bounded retry on transient I/O — under Toxiproxy the network
-    // flips every 100ms during the node-minio variant, and a `.all()`
-    // that lands in a dead window rejects with a BaerlyError whose
-    // code === "NetworkError". The parity assertion is unaffected:
-    // it only runs after a successful read. Non-transient errors and
-    // genuine parity mismatches propagate immediately.
-    const MAX_PARITY_READ_RETRIES = 5;
-    let actual: ParityDoc[];
-    for (let attempt = 0; ; attempt++) {
-      try {
-        actual = await table.where(predicate).all();
-        break;
-      } catch (error) {
-        if (
-          error instanceof BaerlyError &&
-          error.code === "NetworkError" &&
-          attempt < MAX_PARITY_READ_RETRIES
-        ) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
-          continue;
-        }
-        throw error;
-      }
-    }
+    // Bounded retry on transient I/O — under Toxiproxy the network flips
+    // every 100ms during the node-minio variant, and a `.all()` that lands
+    // in a dead window rejects with a NetworkError. The parity assertion
+    // is unaffected: it only runs after a successful read, and genuine
+    // parity mismatches (a plain assertion failure) propagate immediately.
+    const actual = await withNetworkRetry(() => table.where(predicate).all());
     expect(
       actual.map((r) => r._id).toSorted(),
       `range-walk parity mismatch for wire ${JSON.stringify(wire)}`,
