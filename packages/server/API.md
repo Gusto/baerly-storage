@@ -913,7 +913,8 @@ export default {
 
 The client reads via the normal `GET /v1/c/messages` route and tails
 via `GET /v1/since?collection=messages&cursor=…` — both still served by
-`inner`. Only writes go through `/api/messages`.
+`inner`. Only writes go through `/api/messages`. Reads stay uncapped and
+tenant-wide — scope and clamp them in your route too (see RECIPES.md).
 
 **Known limitations of this recipe.** The custom-route `Db.create` is
 a second instance — it doesn't share `baerlyWorker`'s
