@@ -20,6 +20,7 @@ import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
+import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 
 /**
  * Minimal-shape `BaerlyAppConfig` for tests that aren't exercising
@@ -54,11 +55,7 @@ const makeScheduledEvent = (): ScheduledController => ({
   noRetry(): void {},
 });
 
-const makeNoopCtx = (): ExecutionContext => ({
-  waitUntil(): void {},
-  passThroughOnException(): void {},
-  props: {},
-});
+const makeNoopCtx = (): ExecutionContext => mockExecutionContext();
 
 describe("baerlyWorker scheduled", () => {
   test("no-ops when `options.scheduled` is unset", async () => {
@@ -149,11 +146,7 @@ describe("baerlyWorker observability", () => {
       observability: { level: "debug", sink },
     }));
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
-    const ctx: ExecutionContext = {
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    };
+    const ctx = mockExecutionContext();
 
     const res = await handler.fetch!(
       new Request("https://x/v1/c/c", {
@@ -197,11 +190,7 @@ describe("baerlyWorker observability", () => {
     });
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
-    const makeExec = (): ExecutionContext => ({
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    });
+    const makeExec = (): ExecutionContext => mockExecutionContext();
 
     // Seed one doc via a sink-less handler so the GET below has a
     // body to fetch (per-doc URLs are the only cached shape).
@@ -269,11 +258,7 @@ describe("baerlyWorker observability", () => {
     });
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
-    const makeExec = (): ExecutionContext => ({
-      waitUntil(): void {},
-      passThroughOnException(): void {},
-      props: {},
-    });
+    const makeExec = (): ExecutionContext => mockExecutionContext();
 
     // Seed one doc, then warm the cache via a sink-less handler so
     // its canonical lines don't pollute the assertion below.

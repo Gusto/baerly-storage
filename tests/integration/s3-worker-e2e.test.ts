@@ -25,6 +25,7 @@ import { describe, expect, test } from "vitest";
 import { S3HttpStorage, sigV4Signer } from "../../packages/adapter-node/src/s3.ts";
 import { baerlyWorker, type BaerlyEnv } from "../../packages/adapter-cloudflare/src/worker.ts";
 import { assertAllRequestsSigned, makeS3Stub } from "../fixtures/s3-memory-stub.ts";
+import { mockExecutionContext } from "../fixtures/mock-execution-context.ts";
 
 const ENDPOINT = "https://s3.us-east-1.amazonaws.com";
 const BUCKET = "e2e-test";
@@ -39,11 +40,7 @@ const config: BaerlyAppConfig = {
   collections: {},
 };
 
-const makeExec = (): ExecutionContext => ({
-  waitUntil(): void {},
-  passThroughOnException(): void {},
-  props: {},
-});
+const makeExec = (): ExecutionContext => mockExecutionContext();
 
 const asCfRequest = (req: Request): Request<unknown, IncomingRequestCfProperties> =>
   req as Request<unknown, IncomingRequestCfProperties>;

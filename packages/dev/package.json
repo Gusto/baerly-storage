@@ -32,7 +32,7 @@
     "@baerly/adapter-node": "workspace:*",
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
-    "@hono/node-server": "^2.0.4",
+    "@hono/node-server": "^2.0.6",
     "picocolors": "^1.1.1"
   },
   "peerDependencies": {

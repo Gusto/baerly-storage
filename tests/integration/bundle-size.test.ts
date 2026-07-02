@@ -471,7 +471,12 @@ const BUDGETS: readonly Budget[] = [
   //   → raw +2 KiB (2026-06-30): adding the ./s3 rolldown input re-chunks
   //     shared modules, nudging this closure over the prior 339 KiB budget.
   //     Measured: 347346 raw.
-  { entry: "http.js", raw: 341 * 1024, gz: 101 * 1024, minGz: 35 * 1024 },
+  //   → raw +3 KiB / gz +1 KiB / min-gz +1 KiB (2026-07-01): pre-release dep
+  //     sweep to latest — @logtape/logtape 2.1.3→2.2.2 (via the observability
+  //     chunk) + hono 4.12.25→4.12.27. Deliberate upstream upgrades, not code
+  //     creep; the min-gz bump is the honest cost of the newer logtape closure.
+  //     Measured: 352012 raw / 104287 gz / 35958 min-gz.
+  { entry: "http.js", raw: 344 * 1024, gz: 102 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -517,7 +522,12 @@ const BUDGETS: readonly Budget[] = [
   //   → raw −1 KiB (2026-06-24): WS4.1 T5 A1 JSDoc trim (CODE_RESOLUTIONS comment) sheds
   //     bytes from the observability closure; tighten to the smallest KiB that clears.
   //     Measured: 93936 raw (92*1024 = 94208 ≥ 93936). // WS4.1
-  { entry: "observability.js", raw: 92 * 1024, gz: 26 * 1024, minGz: 12 * 1024 },
+  //   → raw +5 KiB / gz +1 KiB / min-gz +1 KiB (2026-07-01): pre-release dep
+  //     sweep — @logtape/logtape 2.1.3→2.2.2. This subpath is the thinnest
+  //     wrapper over logtape, so the newer logtape closure lands here most
+  //     visibly. Deliberate upstream upgrade, not code creep.
+  //     Measured: 98776 raw / 27034 gz / 12477 min-gz.
+  { entry: "observability.js", raw: 97 * 1024, gz: 27 * 1024, minGz: 13 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (storage decorator + logger config + canonical
@@ -747,7 +757,11 @@ const BUDGETS: readonly Budget[] = [
   //     in worker.ts — genuinely new code in the Worker aggregator. raw crosses
   //     the 410 KiB bound and gz the 123 KiB bound (measured 420142 raw /
   //     126038 gz); min-gz is 44325, still under the 44 KiB set above.
-  { entry: "cloudflare.js", raw: 411 * 1024, gz: 124 * 1024, minGz: 44 * 1024 },
+  //   → raw +4 KiB / gz +1 KiB (2026-07-01): pre-release dep sweep —
+  //     @logtape/logtape 2.1.3→2.2.2 (via the observability chunk) + hono
+  //     4.12.25→4.12.27, both in this aggregator's closure. Only the raw/gz
+  //     creep tripwires move; min-gz (measured 45027) stays under 44 KiB.
+  { entry: "cloudflare.js", raw: 415 * 1024, gz: 125 * 1024, minGz: 44 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -899,7 +913,15 @@ const BUDGETS: readonly Budget[] = [
   //     25100 min-gz. raw/gz are sized with headroom over the chunk-boundary
   //     overhead that the separate aws4fetch chunk carries; min-gz (the hard
   //     ceiling, the real shipped-to-browser cost) clears 25 KiB.
-  { entry: "s3.js", raw: 160 * 1024, gz: 47 * 1024, minGz: 25 * 1024 },
+  //   → raw +7 KiB / gz +2 KiB / min-gz +1 KiB (2026-07-01): pre-release dep
+  //     sweep floated fast-xml-parser's transitive deps — strnum 2.3.0→2.4.1
+  //     and @nodable/entities 2.1.0→2.2.0. (fast-xml-parser itself is held at
+  //     5.8.0: 5.9.3 inflated this closure's min-gz ~25%, over the hard ceiling,
+  //     and we can't shrink a third-party closure — see the exact pin in
+  //     packages/adapter-node/package.json.) The residual here is the honest
+  //     cost of the newer strnum/entities; min-gz clears 26 KiB by 661 B.
+  //     Measured: 170745 raw / 49358 gz / 25963 min-gz.
+  { entry: "s3.js", raw: 167 * 1024, gz: 49 * 1024, minGz: 26 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
