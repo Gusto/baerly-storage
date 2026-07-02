@@ -44,6 +44,12 @@ import {
   type Knowledge,
 } from "./consistency.ts";
 import { logStateCurrentJson } from "./log-state.ts";
+import {
+  isMonotonicRead,
+  isReadYourWrite,
+  isTransientReadError,
+  missingAckedSlots,
+} from "./session-guarantees.ts";
 
 /**
  * Causal-consistency check without `eval()`. Workerd disallows code
@@ -416,6 +422,11 @@ export const runCausalConsistencyCascade = (opts: {
         // log-slot set. `entry.seq` is the `log/<seq>` slot (writer mints
         // `logObjectKey(logPrefix, seq)` at that seq).
         const ackedSeqs = new Set<number>();
+        // Monotonic-reads (SG-3): per client, the resolved read slot never
+        // goes backward on a strongly-consistent backend (the log is
+        // append-only and entries are immutable, so the freshest matching
+        // slot only grows).
+        const lastObservedSeq: number[] = Array.from({ length: N }, () => -1);
         const declaredIndexes: ReadonlyArray<IndexDefinition> = opts.injectFilteredIndex
           ? [FILTERED_INDEX]
           : [];
@@ -530,7 +541,7 @@ export const runCausalConsistencyCascade = (opts: {
                 if (opts.strongConsistency === true) {
                   const own = await readLatest(instances[client_id]!, COLLECTION);
                   expect(
-                    own !== undefined && own.seq >= result.entry.seq,
+                    isReadYourWrite(own?.seq, result.entry.seq),
                     `read-your-writes: client ${client_id} committed log/${result.entry.seq} but a self-read resolved ${own?.seq ?? "nothing"}`,
                   ).toBe(true);
                 }
@@ -555,7 +566,7 @@ export const runCausalConsistencyCascade = (opts: {
                 await Promise.allSettled(commitQueues);
                 // No-lost-writes (SG-1): every acked commit's slot is durable.
                 const committed = await collectCommittedSlots(instances[0]!);
-                const missing = [...ackedSeqs].filter((s) => !committed.has(s));
+                const missing = missingAckedSlots(ackedSeqs, committed);
                 expect(
                   missing,
                   `no-lost-writes: acked commits missing from the durable log-slot set ${JSON.stringify(
@@ -587,6 +598,13 @@ export const runCausalConsistencyCascade = (opts: {
               }
               try {
                 const latest = await readLatest(inst);
+                if (opts.strongConsistency === true && latest !== undefined) {
+                  expect(
+                    isMonotonicRead(latest.seq, lastObservedSeq[client_id]!),
+                    `monotonic-reads: client ${client_id} observed log/${latest.seq} after log/${lastObservedSeq[client_id]}`,
+                  ).toBe(true);
+                  lastObservedSeq[client_id] = latest.seq;
+                }
                 const val = latest?.value;
                 const serialized = JSON.stringify(val);
                 if (serialized !== prev) {
@@ -603,10 +621,11 @@ export const runCausalConsistencyCascade = (opts: {
                 // Swallow transient read failures — under Toxiproxy the
                 // network flips every 100ms during the Minio variant,
                 // and under R2 propagation jitter we may briefly see
-                // stale state. The next tick retries.
-                // Re-throw assertion errors (e.g. monotonic-reads) so
-                // they surface as failures rather than timing out.
-                if (!(error instanceof BaerlyError)) {
+                // stale state. The next tick retries. Anything else (e.g.
+                // a failed SG-3 monotonic-reads assertion) is fatal and
+                // must surface as a rejection rather than time out — see
+                // `isTransientReadError`.
+                if (!isTransientReadError(error)) {
                   finished = true;
                   reject(error);
                   return;
