@@ -103,6 +103,27 @@ const COLLECTION = "k"; // single-key cascade — `collection === docId`
 const MAX_STEPS = 100;
 
 /**
+ * Small seeded LCG (same constants as the range-walk parity cascade's
+ * inline RNG) so the causal cascade's injected entropy is reproducible
+ * across runs — and, critically, across languages. `Math.random()` cannot
+ * be regenerated outside JS; a logged integer seed can.
+ *
+ * NOTE: this seeds only the INJECTED entropy (per-client clock offsets).
+ * Real `setTimeout` timers still make the observed interleaving
+ * wall-clock dependent, so replaying a seed reproduces the offsets, not a
+ * byte-identical schedule. Full deterministic replay (virtual clock +
+ * scripted storage) is deferred — see the determinism track of the
+ * cross-language conformance program.
+ */
+export const makeLcg = (seed: number): (() => number) => {
+  let state = seed | 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) | 0;
+    return ((state >>> 0) % 1_000_000) / 1_000_000;
+  };
+};
+
+/**
  * Shape of one client's broadcast — kept in sync with the legacy
  * `Message` type. Doubles as the `LogEntry.after` body.
  */
@@ -307,13 +328,31 @@ export const runCausalConsistencyCascade = (opts: {
    * miss→match and match→miss U-quadrants under live contention.
    */
   injectFilteredIndex?: boolean;
+  /**
+   * Seed for the per-client clock-offset entropy. When omitted a seed is
+   * derived from `Math.random()` and logged at start, so a flake can be
+   * replayed by passing the logged value back as `{ seed }`.
+   */
+  seed?: number;
 }): Promise<void> =>
   new Promise<void>((done, reject) => {
     void (async () => {
       try {
         const N = opts.storages.length;
+        const seed = opts.seed ?? Math.floor(Math.random() * 0x7fffffff);
+        const rand = makeLcg(seed);
+        console.log(`[cascade] seed=${seed} N=${N} pollTickMs=${opts.pollTickMs}`);
         const clockOffsets =
-          opts.clockOffsetsMs ?? Array.from({ length: N }, () => Math.random() * 2000 - 1000);
+          opts.clockOffsetsMs ?? Array.from({ length: N }, () => rand() * 2000 - 1000);
+        // Portable failing-schedule artifact: every observation is
+        // appended here and dumped (with the seed) if a causal-consistency
+        // clause fails, so the interleaving can be inspected / replayed.
+        const schedule: Array<{
+          tick: number;
+          receiver: number;
+          sender: number;
+          send_time: number;
+        }> = [];
         const declaredIndexes: ReadonlyArray<IndexDefinition> = opts.injectFilteredIndex
           ? [FILTERED_INDEX]
           : [];
@@ -350,6 +389,12 @@ export const runCausalConsistencyCascade = (opts: {
               ]!} rcvd ${system.client_labels[val.sender]}@${val.send_time}`,
             );
             system.observe({ ...val, receiver: client_id });
+            schedule.push({
+              tick: system.global_time,
+              receiver: client_id,
+              sender: val.sender,
+              send_time: val.send_time,
+            });
           }
 
           // KNOWN FLAKE (node-minio only): a 9h/102-iteration overnight fuzz
@@ -366,8 +411,10 @@ export const runCausalConsistencyCascade = (opts: {
           if (system.global_time < MAX_STEPS && !testFailed) {
             testFailed = !causallyConsistent(system.grounding, system.knowledge_base);
             if (testFailed) {
+              console.error(`[cascade] CAUSAL VIOLATION seed=${seed}`);
               console.error(system.grounding);
               console.error(system.knowledge_base);
+              console.error(`[cascade] schedule=${JSON.stringify(schedule)}`);
             }
             expect(testFailed).toBe(false);
 
@@ -779,17 +826,15 @@ export const runRangeWalkParityCascade = async (opts: {
   });
   const table = db.collection(collection) as Collection<ParityDoc>;
 
-  // Deterministic pseudo-random for reproducibility (LCG seeded
-  // off tenant). Spec doesn't require cryptographic randomness;
-  // we just want decent coverage of bound combinations.
-  let rngState = 0;
+  // Deterministic pseudo-random for reproducibility (the shared
+  // `makeLcg` seeded off a cheap hash of the tenant). Spec doesn't
+  // require cryptographic randomness; we just want decent coverage of
+  // bound combinations.
+  let seed = 0;
   for (let i = 0; i < tenant.length; i++) {
-    rngState = (rngState * 31 + tenant.charCodeAt(i)) | 0;
+    seed = (seed * 31 + tenant.charCodeAt(i)) | 0;
   }
-  const rand = (): number => {
-    rngState = (rngState * 1664525 + 1013904223) | 0;
-    return ((rngState >>> 0) % 1_000_000) / 1_000_000;
-  };
+  const rand = makeLcg(seed);
   const pick = <U>(arr: ReadonlyArray<U>): U => arr[Math.floor(rand() * arr.length)]!;
 
   for (let iter = 0; iter < iterations; iter++) {
