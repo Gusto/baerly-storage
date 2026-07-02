@@ -170,7 +170,7 @@ const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
 const readLatest = async (
   inst: Instance,
   docId: string = COLLECTION,
-): Promise<CascadeMessage | undefined> => {
+): Promise<{ value: CascadeMessage; seq: number } | undefined> => {
   const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
   if (read === null) {
     return undefined;
@@ -190,7 +190,7 @@ const readLatest = async (
       continue;
     }
     if (entry.doc_id === docId && entry.op === "U" && entry.after !== undefined) {
-      return entry.after as CascadeMessage;
+      return { value: entry.after as CascadeMessage, seq: s };
     }
   }
   return undefined;
@@ -221,7 +221,8 @@ const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
   // `allIndexKeysFor` and is filter-aware via T4's projector
   // change).
   await rebuildIndex(inst.storage, inst.currentJsonKey, FILTERED_INDEX);
-  const live = await readLatest(inst, COLLECTION);
+  const latest = await readLatest(inst, COLLECTION);
+  const live = latest?.value;
   const expected = new Set(allIndexKeysFor(inst.logPrefix, [FILTERED_INDEX], live, COLLECTION));
   const actual = new Set<string>();
   for await (const entry of inst.storage.list(`${inst.logPrefix}/index/${FILTERED_INDEX.name}/`)) {
@@ -384,6 +385,13 @@ export const runCausalConsistencyCascade = (opts: {
    * replayed by passing the logged value back as `{ seed }`.
    */
   seed?: number;
+  /**
+   * When `true`, additionally assert read-your-writes (SG-2) and
+   * monotonic-reads (SG-3). Enable only on strongly-consistent backends
+   * (memory / local-fs / miniflare-R2); leave off for node-minio, whose
+   * Toxiproxy fault injection deliberately induces stale reads.
+   */
+  strongConsistency?: boolean;
 }): Promise<void> =>
   new Promise<void>((done, reject) => {
     void (async () => {
@@ -516,6 +524,16 @@ export const runCausalConsistencyCascade = (opts: {
                   body: message,
                 });
                 ackedSeqs.add(result.entry.seq);
+                // Read-your-writes (SG-2): a self-read right after a
+                // successful commit must resolve a slot >= the one we won
+                // (LWW: we never read state older than our own write).
+                if (opts.strongConsistency === true) {
+                  const own = await readLatest(instances[client_id]!, COLLECTION);
+                  expect(
+                    own !== undefined && own.seq >= result.entry.seq,
+                    `read-your-writes: client ${client_id} committed log/${result.entry.seq} but a self-read resolved ${own?.seq ?? "nothing"}`,
+                  ).toBe(true);
+                }
               } catch (error) {
                 // Transient Conflict under contention is fine — the
                 // peer will re-broadcast on its next observe. Other
@@ -568,7 +586,8 @@ export const runCausalConsistencyCascade = (opts: {
                 return;
               }
               try {
-                const val = await readLatest(inst);
+                const latest = await readLatest(inst);
+                const val = latest?.value;
                 const serialized = JSON.stringify(val);
                 if (serialized !== prev) {
                   prev = serialized;

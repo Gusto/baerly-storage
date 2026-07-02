@@ -57,6 +57,7 @@ describe("randomized (Db + Writer)", () => {
           // than memory; 25ms keeps the poll loop responsive without
           // burning CPU.
           pollTickMs: 25,
+          strongConsistency: true,
           // T4: assert the filtered-index invariant at the end of
           // the cascade.
           injectFilteredIndex: true,

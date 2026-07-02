@@ -92,6 +92,8 @@ interface Variant {
   readonly requiresMinio?: boolean;
   /** Per-tick poll cadence; tuned per backend. */
   readonly pollTickMs: number;
+  /** Strongly consistent backend → assert read-your-writes + monotonic-reads. */
+  readonly strongConsistency: boolean;
   /** Build N {@link Storage} handles sharing one backing store. */
   readonly makeStorages: (bucket: string, n: number) => Promise<Storage[]>;
   /** Best-effort cleanup for ephemeral resources. */
@@ -104,6 +106,7 @@ const allVariants: Variant[] = [
   {
     label: "memory",
     pollTickMs: 5,
+    strongConsistency: true,
     // Process-singleton: same bucket → same underlying MemoryStorage.
     // Same mechanism the legacy `memory` variant used.
     makeStorages: async (bucket, n): Promise<Storage[]> =>
@@ -112,6 +115,7 @@ const allVariants: Variant[] = [
   {
     label: "local-fs",
     pollTickMs: 10,
+    strongConsistency: true,
     // Atomic `writeFile(temp)+rename` keeps concurrent writes safe;
     // cross-instance visibility is the file system.
     makeStorages: async (_bucket, n): Promise<Storage[]> => {
@@ -133,6 +137,7 @@ const allVariants: Variant[] = [
     label: "node-minio",
     requiresMinio: true,
     pollTickMs: 50,
+    strongConsistency: false,
     makeStorages: async (bucket, n): Promise<Storage[]> => {
       const signer = new AwsClient({
         accessKeyId: stableConfig.credentials.accessKeyId,
@@ -192,6 +197,7 @@ describe("randomized (Db + Writer)", () => {
           await runCausalConsistencyCascade({
             storages,
             pollTickMs: variant.pollTickMs,
+            strongConsistency: variant.strongConsistency,
             // T4: assert the filtered-index invariant at the end of
             // the cascade. The CAS path is unaffected by filtered
             // projection, so causal-consistency stays green; the
