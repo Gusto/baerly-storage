@@ -604,7 +604,13 @@ export const runCausalConsistencyCascade = (opts: {
                 // network flips every 100ms during the Minio variant,
                 // and under R2 propagation jitter we may briefly see
                 // stale state. The next tick retries.
-                void error;
+                // Re-throw assertion errors (e.g. monotonic-reads) so
+                // they surface as failures rather than timing out.
+                if (!(error instanceof BaerlyError)) {
+                  finished = true;
+                  reject(error);
+                  return;
+                }
               }
             }
           })();
