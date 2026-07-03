@@ -26,6 +26,7 @@ import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runCost } from "./cost.ts";
 import type { Trajectory } from "./cost/project.ts";
+import { captureStream } from "./_internal/testing.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -83,23 +84,6 @@ const seedEntriesDeterministic = async (storage: Storage, count: number): Promis
     );
     await storage.put(logObjectKey(TABLE_PREFIX, seq), body);
   }
-};
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
 };
 
 describe("baerly cost", () => {

@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { GitRunner } from "./git.ts";
 import { runCreateBaerly } from "./runner.ts";
+import { captureStream } from "@baerly/cli/_internal/testing";
 
 // This whole file is real-subprocess + full-template-copy integration:
 // `runCreateBaerly` copies ~129 template files and shells out to git. In
@@ -44,23 +45,6 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
  * explicit so the file passes on a barebones host.
  */
 const hasGit = spawnSync("git", ["--version"]).status === 0;
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
-};
 
 describe("create-baerly-storage runner (non-TTY)", () => {
   let outRoot: string;

@@ -19,29 +19,13 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { casUpdateCurrentJson, readCurrentJson } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { runRestore } from "./restore.ts";
+import { captureStream } from "../_internal/testing.ts";
 
 const APP = "app";
 const TENANT = "tenant";
 const COLL = "tickets";
 const CURRENT_JSON_KEY = `app/${APP}/tenant/${TENANT}/manifests/${COLL}/current.json`;
 const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
-};
 
 const CANONICAL_NDJSON =
   `{"_id":"t-1","status":"open","title":"first"}\n` +

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AppConfig } from "../config.ts";
 import type { ProcessRunner } from "../deploy/cloudflare.ts";
 import { doctorCloudflare, type DoctorFinding } from "./cloudflare.ts";
+import { captureStream } from "../_internal/testing.ts";
 
 const PROD_WRANGLER = `{
   "name": "x",
@@ -23,23 +24,6 @@ interface CannedReply {
   readonly stdout?: string;
   readonly stderr?: string;
 }
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
-};
 
 const makeRunner = (overrides: { readonly [key: string]: CannedReply } = {}) => {
   const calls: string[][] = [];

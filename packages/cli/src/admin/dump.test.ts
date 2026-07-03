@@ -21,6 +21,7 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@b
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runDump, canonicalStringify } from "./dump.ts";
+import { captureStream } from "../_internal/testing.ts";
 
 /**
  * Open a write-stream sink and return a `{ stream, finish }` pair.
@@ -55,23 +56,6 @@ const provision = async (storage: Storage): Promise<void> => {
     snapshot_bytes: 0,
     snapshot_rows: 0,
   });
-};
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
 };
 
 describe("canonicalStringify", () => {

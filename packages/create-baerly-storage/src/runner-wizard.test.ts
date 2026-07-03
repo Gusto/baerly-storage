@@ -11,6 +11,7 @@ import type * as ScaffoldModule from "./scaffold.ts";
 import { runWizard } from "./prompts.ts";
 import { scaffold } from "./scaffold.ts";
 import { runCreateBaerly } from "./runner.ts";
+import { captureStream } from "@baerly/cli/_internal/testing";
 
 vi.mock("./prompts.ts", () => ({
   runWizard: vi.fn<typeof runWizard>(),
@@ -25,30 +26,6 @@ vi.mock("./scaffold.ts", async () => {
 
 const runWizardMock = vi.mocked(runWizard);
 const scaffoldMock = vi.mocked(scaffold);
-
-/**
- * Silence a write stream for the duration of a call, capturing what
- * would have been written. The wizard branch forces `isTTY = true`, so
- * `runCreateBaerly` takes the interactive `outro(...)` path and emits a
- * clack banner (`✓ … / Next steps`) — without this it would bleed onto
- * the test tty. Mirrors the helper in `index.test.ts` / `cost.test.ts`.
- */
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
-};
 
 describe("runner wizard → scaffold plumbing", () => {
   let originalIsTTY: boolean | undefined;
