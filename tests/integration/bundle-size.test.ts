@@ -761,7 +761,20 @@ const BUDGETS: readonly Budget[] = [
   //     @logtape/logtape 2.1.3→2.2.2 (via the observability chunk) + hono
   //     4.12.25→4.12.27, both in this aggregator's closure. Only the raw/gz
   //     creep tripwires move; min-gz (measured 45027) stays under 44 KiB.
-  { entry: "cloudflare.js", raw: 415 * 1024, gz: 125 * 1024, minGz: 44 * 1024 },
+  //   → min-gz +1 KiB (2026-07-03): the snapshot `body.docs` array-shape guard
+  //     in snapshot.ts (`loadSnapshotAsMap` → BaerlyError("InvalidResponse", …),
+  //     added in 95648be2) reaches this closure via the maintenance/compactor
+  //     subgraph. Measured 45063, +7 past the 44 KiB min-gz line. Bisect
+  //     confirmed this guard is the sole cause (every commit after it is
+  //     docs/changeset-only and byte-neutral); it slipped onto main because CI
+  //     runs min-gz report-only. The bytes are a real, intentional validation
+  //     guard whose actionable error message is kept verbatim per the repo's
+  //     error-quality UX bar — golfing the string is a dead end anyway (gzip
+  //     already dedupes the shared `compact: snapshot …` prefix; the cost is the
+  //     guard's control flow, not its text). So the tripwire rebaselines rather
+  //     than degrade the message. raw/gz remain comfortably under their 415/125
+  //     KiB bounds (only min-gz crossed).
+  { entry: "cloudflare.js", raw: 415 * 1024, gz: 125 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
