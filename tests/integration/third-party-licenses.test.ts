@@ -27,7 +27,7 @@ const manifestPath = resolve(distDir, "THIRD-PARTY-LICENSES.txt");
 const EXPECTED_LIBS = [
   // root library entries
   "aws4fetch",
-  "fast-xml-parser",
+  "@rgrove/parse-xml",
   "hono",
   "@hono/node-server",
   "jose",

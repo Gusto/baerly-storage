@@ -124,7 +124,7 @@ describe("XML parser", () => {
 
   test("DOCTYPE entity-definition vector is rejected before the parser runs", () => {
     // CVE-2026-25896 shadowing shape: a DOCTYPE defining an entity. The DTD
-    // guard must reject the body BEFORE fast-xml-parser sees the bytes, so
+    // guard must reject the body BEFORE the parser sees the bytes, so
     // the entity is never expanded/shadowed. Locks the guard so a future
     // parser-option change can't silently regress this.
     const xml: string = `<?xml version="1.0" encoding="UTF-8"?>
@@ -245,6 +245,26 @@ describe("XML parser", () => {
     const parsed = parseListObjectsV2CommandOutput(xml);
     expect(parsed.Contents?.[0]?.ETag).toBe('"a+b%2Bc"');
   });
+
+  test("returns {} when the root element is not <ListBucketResult>", () => {
+    // A non-list body (e.g. an S3 <Error> response mis-routed here) must hit the
+    // root-name guard and return {} rather than attempting to parse Contents.
+    // Exercises the `localName(root.name) !== "ListBucketResult"` branch directly.
+    expect(parseListObjectsV2CommandOutput("<Error><Code>AccessDenied</Code></Error>")).toEqual({});
+  });
+
+  test("collects namespace-prefixed <s3:Contents> children (namespace-agnostic)", () => {
+    // The whitespace-free minio example uses a default xmlns (no prefix), so it
+    // never exercises localName()'s prefix-stripping path. This body carries an
+    // explicit `s3:` prefix on every element, proving the namespace-agnostic
+    // traversal claim: <s3:ListBucketResult> matches the root guard and
+    // <s3:Contents>/<s3:Key>/<s3:ETag> are collected and read.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><s3:ListBucketResult xmlns:s3="http://s3.amazonaws.com/doc/2006-03-01/"><s3:Contents><s3:Key>k</s3:Key><s3:ETag>"e"</s3:ETag></s3:Contents><s3:NextContinuationToken>tok</s3:NextContinuationToken></s3:ListBucketResult>`;
+    expect(parseListObjectsV2CommandOutput(xml)).toEqual({
+      Contents: [{ Key: "k", ETag: '"e"', LastModified: undefined }],
+      NextContinuationToken: "tok",
+    });
+  });
 });
 
 describe("parseS3Error", () => {
@@ -269,13 +289,22 @@ describe("parseS3Error", () => {
     expect(parseS3Error("<Error><RequestId>abc</RequestId></Error>")).toBeUndefined();
   });
 
+  test("returns undefined when <Error> is nested but the root element is not <Error>", () => {
+    // The `/<Error\b/i` prefilter matches (the inner <Error> tag is present), so
+    // this body reaches — and must be rejected by — the root-name guard
+    // (`localName(root.name) !== "Error"`), not the prefilter short-circuit that
+    // the "<ListBucketResult>" case above hits. Guards against mis-parsing an
+    // STS-shaped or wrapped body as a bare S3 error.
+    expect(parseS3Error("<Wrapper><Error><Code>X</Code></Error></Wrapper>")).toBeUndefined();
+  });
+
   test("decodes builtin XML entities and CDATA in the <Message> text", () => {
     // DISTINCT from the DOCTYPE <!ENTITY> vector below (which is REJECTED as an
     // entity-shadow attack): a normal builtin XML entity (&amp;) and a CDATA
     // block in the Message TEXT are legitimate S3 error content and MUST be
-    // decoded/unwrapped into the plain Message string. fast-xml-parser handles
-    // both (processEntities default + htmlEntities) before rawXmlVal reads the
-    // field, so &amp; → & and <![CDATA[..]]> is unwrapped verbatim.
+    // decoded/unwrapped into the plain Message string. @rgrove/parse-xml handles
+    // both (predefined + numeric entity refs, plus CDATA merged into text) before
+    // rawXmlVal reads the field, so &amp; → & and <![CDATA[..]]> is unwrapped verbatim.
     const entityXml: string = `<?xml version="1.0" encoding="UTF-8"?>
       <Error><Code>InvalidArgument</Code><Message>bucket &amp; key are &lt;required&gt;</Message></Error>`;
     const entityParsed = parseS3Error(entityXml);
@@ -306,6 +335,34 @@ describe("parseS3Error", () => {
     expect(
       parseS3Error(`<!DOCTYPE Error [<!ENTITY l. "x">]><Error><Code>&lt;</Code></Error>`),
     ).toBeUndefined();
+  });
+});
+
+describe("whitespace contract: @rgrove/parse-xml preserves surrounding whitespace", () => {
+  // These tests document a deliberate divergence from the old fast-xml-parser
+  // behavior (which trimmed leading/trailing whitespace by default via
+  // `trimValues: true`). Real S3/R2/MinIO/GCS backends emit compact XML and
+  // never pad field values with surrounding whitespace, so this difference does
+  // not affect production behavior. The contract is pinned here so any future
+  // change to whitespace handling (e.g. a new parser or an explicit trim step)
+  // is a conscious, reviewed decision rather than a silent regression.
+
+  test("parseS3Error preserves surrounding whitespace in <Message>", () => {
+    // Empirically determined: @rgrove/parse-xml concatenates raw text node
+    // content, preserving the spaces on both sides of the message text.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><Error><Code>SomeError</Code><Message>  padded message  </Message></Error>`;
+    expect(parseS3Error(xml)).toEqual({
+      Code: "SomeError",
+      Message: "  padded message  ",
+    });
+  });
+
+  test("parseListObjectsV2CommandOutput preserves surrounding whitespace in <ETag>", () => {
+    // Empirically determined: @rgrove/parse-xml concatenates raw text node
+    // content, preserving the spaces on both sides of the ETag value.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Contents><Key>my%2Bkey</Key><ETag>  "etag-value"  </ETag></Contents></ListBucketResult>`;
+    const parsed = parseListObjectsV2CommandOutput(xml);
+    expect(parsed.Contents?.[0]?.ETag).toBe('  "etag-value"  ');
   });
 });
 
@@ -349,7 +406,7 @@ describe("parseAssumeRoleWithWebIdentity", () => {
     // A success-shaped-but-malformed 200 body carries plaintext credentials;
     // the thrown error must not fold them in (it gets logged).
     const secret = "SECRET-ACCESS-KEY-DO-NOT-LEAK";
-    // Truncated trailing tag makes fast-xml-parser throw mid-parse; the secret
+    // Truncated trailing tag makes the parser throw mid-parse; the secret
     // sits in the (unparseable) body the old code echoed into the error.
     const malformed = `<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><SecretAccessKey>${secret}</SecretAccessKey><trunc`;
     let thrown: unknown;

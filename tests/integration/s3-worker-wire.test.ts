@@ -14,7 +14,7 @@
  * Workerd, and which the docs flag as otherwise only covered by the
  * manual e2e (see `manual-e2e/README.md`):
  *   - aws4fetch SigV4 signing under Workerd's WebCrypto (not `node:crypto`),
- *   - `fast-xml-parser` parsing a `ListObjectsV2` body in-isolate,
+ *   - `@rgrove/parse-xml` parsing a `ListObjectsV2` body in-isolate,
  *   - the `Request` body / `Response.arrayBuffer` plumbing under Workerd.
  *
  * Runs under the `cloudflare-pool` vitest project (Workerd/miniflare) via
@@ -91,7 +91,7 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
     expect((conflict as BaerlyError).code).toBe("Conflict");
   });
 
-  test("list parses ListObjectsV2 XML with fast-xml-parser in-isolate", async () => {
+  test("list parses ListObjectsV2 XML with @rgrove/parse-xml in-isolate", async () => {
     const { fetchImpl } = makeS3Stub(BUCKET);
     const s = mkStorage(fetchImpl);
 

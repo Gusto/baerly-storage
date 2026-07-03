@@ -7,7 +7,7 @@
  * Worker. Reach for it when a Worker must talk to S3 / cross-account
  * R2 over the S3 REST API instead of a native R2 binding.
  *
- * Bundle cost: pulls `aws4fetch` (SigV4) + `fast-xml-parser`. Workers
+ * Bundle cost: pulls `aws4fetch` (SigV4) + `@rgrove/parse-xml` (XML). Workers
  * that use a same-account R2 binding should stay on
  * `@gusto/baerly-storage/cloudflare`, whose closure carries neither.
  *
