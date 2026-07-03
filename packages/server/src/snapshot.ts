@@ -14,6 +14,7 @@ import {
   type DocumentData,
   encodeJsonBytes,
   snapshotHash,
+  SNAPSHOT_SCHEMA_VERSION,
   type Storage,
 } from "@baerly/protocol";
 
@@ -70,7 +71,7 @@ export const snapshotKey = (
  * leaves an orphan.
  */
 export interface SnapshotBody {
-  readonly schema_version: 1;
+  readonly schema_version: typeof SNAPSHOT_SCHEMA_VERSION;
   readonly min_seq: number;
   readonly max_seq: number;
   readonly collection: string;
@@ -153,7 +154,7 @@ export const loadSnapshotAsMap = async (
     throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not an object`);
   }
   const body = parsed as SnapshotBody;
-  if (body.schema_version !== 1) {
+  if (body.schema_version !== SNAPSHOT_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
       `compact: snapshot ${key} has unsupported schema_version ${String(body.schema_version)}`,
@@ -164,6 +165,9 @@ export const loadSnapshotAsMap = async (
       "InvalidResponse",
       `compact: snapshot ${key} carries collection ${body.collection}, expected ${expectedCollection}`,
     );
+  }
+  if (!Array.isArray(body.docs)) {
+    throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body.docs is not an array`);
   }
   const out = new Map<string, DocumentData>();
   for (const row of body.docs) {

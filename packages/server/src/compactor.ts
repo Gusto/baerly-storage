@@ -43,6 +43,7 @@ import {
   BaerlyError,
   noopMetricsRecorder,
   readCurrentJson,
+  SNAPSHOT_SCHEMA_VERSION,
   snapshotHash,
   type Storage,
   type StoragePutOptions,
@@ -328,7 +329,7 @@ export const compact = async (
     })
     .map(([id, body]) => ({ _id: id, body }));
   const snapshotBody: SnapshotBody = {
-    schema_version: 1,
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
     min_seq: 0,
     max_seq: foldEnd,
     collection: collectionName,

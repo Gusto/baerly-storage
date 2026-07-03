@@ -196,6 +196,19 @@ export const CURRENT_JSON_CONTENT_TYPE: string = "application/json";
 export const GC_PENDING_SCHEMA_VERSION = 1 as const;
 
 /**
+ * Current major version of the snapshot control-object schema
+ * ({@link SnapshotBody}). Readers MUST reject unknown versions with
+ * `BaerlyError{code:"InvalidResponse"}` rather than try to coerce.
+ *
+ * Bump only on a breaking change to `SnapshotBody` field semantics.
+ * Adding a new optional field is NOT breaking; renaming or removing
+ * a field IS breaking.
+ *
+ * @see packages/server/src/snapshot.ts
+ */
+export const SNAPSHOT_SCHEMA_VERSION = 1 as const;
+
+/**
  * MIME type written for `gc/pending.json` PUTs.
  *
  * @see packages/protocol/src/coordination/gc-pending.ts
