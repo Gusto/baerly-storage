@@ -224,27 +224,41 @@ describe("baerly export — SQL dump + sidecar plan generation", () => {
   test("bad --target → InvalidConfig (exit 1)", async () => {
     await provision(storage);
     await seedRows(storage);
-    const exitCode = await runExport([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--target=oracle",
-      `--output=${outFile}`,
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runExport([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--target=oracle",
+        `--output=${outFile}`,
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("--target");
   });
 
   test("missing current.json → InvalidConfig (exit 1)", async () => {
-    const exitCode = await runExport([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--target=sqlite",
-      `--output=${outFile}`,
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runExport([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--target=sqlite",
+        `--output=${outFile}`,
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("not provisioned");
   });
 
   test("default --output writes SQL to stdout", async () => {
@@ -271,14 +285,21 @@ describe("baerly export — SQL dump + sidecar plan generation", () => {
 
   test("unknown flag rejected with exit 1", async () => {
     await provision(storage);
-    const exitCode = await runExport([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--target=sqlite",
-      "--unknown=oops",
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runExport([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--target=sqlite",
+        "--unknown=oops",
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("unknown flag");
   });
 });

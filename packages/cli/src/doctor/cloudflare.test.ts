@@ -24,6 +24,23 @@ interface CannedReply {
   readonly stderr?: string;
 }
 
+const captureStream = (
+  stream: NodeJS.WriteStream,
+): { restore: () => void; readonly captured: string[] } => {
+  const captured: string[] = [];
+  const original = stream.write.bind(stream);
+  stream.write = ((chunk: unknown): boolean => {
+    captured.push(typeof chunk === "string" ? chunk : String(chunk));
+    return true;
+  }) as typeof stream.write;
+  return {
+    captured,
+    restore: () => {
+      stream.write = original;
+    },
+  };
+};
+
 const makeRunner = (overrides: { readonly [key: string]: CannedReply } = {}) => {
   const calls: string[][] = [];
   const lookup = (args: readonly string[]): CannedReply => {
@@ -135,7 +152,12 @@ describe("doctorCloudflare", () => {
     // because we only mocked the failing path. The intent of this
     // test is just to assert `r2 bucket create x` was issued.
     void infoCalls;
-    await doctorCloudflare(makeConfig(repoRoot), { runner, fix: true });
+    const stderr = captureStream(process.stderr);
+    try {
+      await doctorCloudflare(makeConfig(repoRoot), { runner, fix: true });
+    } finally {
+      stderr.restore();
+    }
     expect(calls).toContainEqual(["wrangler", "r2", "bucket", "info", "x"]);
     expect(calls).toContainEqual(["wrangler", "r2", "bucket", "create", "x"]);
   });

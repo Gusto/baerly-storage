@@ -30,6 +30,12 @@ const runOnFixture = (source: string): { exitCode: number; stderr: string } => {
     execFileSync("node", [SCRIPT], {
       cwd: REPO_ROOT,
       encoding: "utf8",
+      // Capture stderr explicitly. `execFileSync`'s default stdio
+      // inherits the child's stderr to the parent, so the scanner's
+      // `console.error` findings would leak into the test terminal
+      // (and `e.stderr` on the thrown error would be empty). Piping
+      // stdin/stdout/stderr keeps every stream captured.
+      stdio: ["ignore", "pipe", "pipe"],
     });
     return { exitCode: 0, stderr: "" };
   } catch (error) {

@@ -437,24 +437,38 @@ describe("baerly admin fsck — consistency check and corruption findings", () =
   });
 
   test("missing current.json surfaces InvalidConfig (exit 1)", async () => {
-    const exitCode = await runFsck([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runFsck([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("current.json not found");
   });
 
   test("unknown flag rejected with exit 1", async () => {
     await provision(storage);
-    const exitCode = await runFsck([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--unknown=oops",
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runFsck([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--unknown=oops",
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("unknown flag");
   });
 });

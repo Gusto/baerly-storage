@@ -25,6 +25,23 @@ import { allIndexKeysFor } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runRebuildIndex } from "./rebuild-index.ts";
 
+const captureStream = (
+  stream: NodeJS.WriteStream,
+): { restore: () => void; readonly captured: string[] } => {
+  const captured: string[] = [];
+  const original = stream.write.bind(stream);
+  stream.write = ((chunk: unknown): boolean => {
+    captured.push(typeof chunk === "string" ? chunk : String(chunk));
+    return true;
+  }) as typeof stream.write;
+  return {
+    captured,
+    restore: () => {
+      stream.write = original;
+    },
+  };
+};
+
 const APP = "app";
 const TENANT = "tenant";
 const COLL = "tickets";
@@ -172,27 +189,41 @@ describe("baerly admin rebuild-index — orphan index-key reconciliation", () =>
 
   test("missing --on / --config surfaces InvalidConfig (exit 1)", async () => {
     await provision(storage);
-    const exitCode = await runRebuildIndex([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--index=by_status",
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRebuildIndex([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--index=by_status",
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("is required");
   });
 
   test("unknown flag rejected with exit 1", async () => {
     await provision(storage);
-    const exitCode = await runRebuildIndex([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--index=by_status",
-      "--on=status",
-      "--unknown=oops",
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRebuildIndex([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--index=by_status",
+        "--on=status",
+        "--unknown=oops",
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("unknown flag");
   });
 });

@@ -26,6 +26,30 @@ vi.mock("./scaffold.ts", async () => {
 const runWizardMock = vi.mocked(runWizard);
 const scaffoldMock = vi.mocked(scaffold);
 
+/**
+ * Silence a write stream for the duration of a call, capturing what
+ * would have been written. The wizard branch forces `isTTY = true`, so
+ * `runCreateBaerly` takes the interactive `outro(...)` path and emits a
+ * clack banner (`✓ … / Next steps`) — without this it would bleed onto
+ * the test tty. Mirrors the helper in `index.test.ts` / `cost.test.ts`.
+ */
+const captureStream = (
+  stream: NodeJS.WriteStream,
+): { restore: () => void; readonly captured: string[] } => {
+  const captured: string[] = [];
+  const original = stream.write.bind(stream);
+  stream.write = ((chunk: unknown): boolean => {
+    captured.push(typeof chunk === "string" ? chunk : String(chunk));
+    return true;
+  }) as typeof stream.write;
+  return {
+    captured,
+    restore: () => {
+      stream.write = original;
+    },
+  };
+};
+
 describe("runner wizard → scaffold plumbing", () => {
   let originalIsTTY: boolean | undefined;
 
@@ -66,7 +90,15 @@ describe("runner wizard → scaffold plumbing", () => {
       git: false,
     });
     // Omitting the positional `projectName` forces wantWizard=true.
-    const code = await runCreateBaerly([]);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    let code: number;
+    try {
+      code = await runCreateBaerly([]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
     expect(code).toBe(0);
     expect(scaffoldMock).toHaveBeenCalledTimes(1);
     const opts = scaffoldMock.mock.calls[0]?.[0];
@@ -87,7 +119,14 @@ describe("runner wizard → scaffold plumbing", () => {
     });
     // projectName missing → wizard fires; --starter=react is forwarded
     // as wizard input so the prompt can be skipped.
-    await runCreateBaerly(["--starter=react", "--target=cloudflare"]);
+    const stdout = captureStream(process.stdout);
+    const stderr = captureStream(process.stderr);
+    try {
+      await runCreateBaerly(["--starter=react", "--target=cloudflare"]);
+    } finally {
+      stdout.restore();
+      stderr.restore();
+    }
     expect(runWizardMock).toHaveBeenCalledTimes(1);
     const input = runWizardMock.mock.calls[0]?.[0];
     expect(input?.starter).toBe("react");

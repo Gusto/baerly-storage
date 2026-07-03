@@ -333,15 +333,22 @@ describe("baerly cost", () => {
   });
 
   test("unknown flag rejected with exit 1", async () => {
-    const exitCode = await runCost([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--provider=r2",
-      "--unknown=oops",
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=r2",
+        "--unknown=oops",
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("unknown flag");
   });
 
   // Advisory render tests: 3 entries at 10ms spacing → very high write rate
