@@ -81,11 +81,18 @@ describe("baerly admin restore", () => {
       { streams: { stdin: createReadStream(stdinPath) } },
     );
     expect(first).toBe(0);
-    const second = await runRestore(
-      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
-      { streams: { stdin: createReadStream(stdinPath) } },
-    );
+    const stderr = captureStream(process.stderr);
+    let second: number;
+    try {
+      second = await runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
     expect(second).toBe(3);
+    expect(stderr.captured.join("")).toContain("pass --force to truncate");
   });
 
   test("re-running with --force truncates and reseeds", async () => {
@@ -318,13 +325,20 @@ describe("baerly admin restore", () => {
   });
 
   test("unknown flag rejected with exit 1", async () => {
-    const exitCode = await runRestore([
-      `--bucket=file://${root}`,
-      `--app=${APP}`,
-      `--tenant=${TENANT}`,
-      `--collection=${COLL}`,
-      "--unknown=oops",
-    ]);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--unknown=oops",
+      ]);
+    } finally {
+      stderr.restore();
+    }
     expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("unknown flag");
   });
 });
