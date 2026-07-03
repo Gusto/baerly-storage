@@ -286,7 +286,7 @@ The commit protocol requires exactly-one-winner create-if-absent
 this; over the S3 HTTP API you inherit the *endpoint's* conditional-write
 and consistency behavior, so this path is only as strong as the backend
 you point it at. Cost trade-off: the `/s3` closure carries `aws4fetch` +
-`fast-xml-parser`; a same-account binding avoids both.
+`@rgrove/parse-xml`; a same-account binding avoids both.
 
 **Support tier.** This path is opt-in and sits at the same tier as
 AWS-via-`S3HttpStorage`: credential-gated, with production validation you
@@ -297,7 +297,7 @@ levels: `tests/integration/s3-worker-safe.test.ts` proves the
 Worker), and `tests/integration/s3-worker-wire.test.ts` proves it *runs*
 in a real Workerd isolate — `S3HttpStorage` + `sigV4Signer` drive a
 put / get / CAS / list round-trip through an in-memory S3-shaped `fetch`
-stub, exercising aws4fetch's WebCrypto signing, `fast-xml-parser`, and the
+stub, exercising aws4fetch's WebCrypto signing, `@rgrove/parse-xml`, and the
 `Request`/`Response` plumbing in-isolate. What CI does **not** do is drive
 a *real* S3 endpoint from workerd (TLS + the endpoint's own
 conditional-write semantics); that is the manual e2e recipe in

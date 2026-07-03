@@ -31,7 +31,7 @@ set, S3 returns the key family — `Key` / `Prefix` / `Delimiter` /
 
 So the XML parser only ever sees `[A-Za-z0-9%+._-]` in the key family —
 never a raw `<`, `&`, `]]>`, or control byte. The parser reverses both
-steps in `packages/adapter-node/src/xml.ts:50`:
+steps in the `xmlVal` helper (`packages/adapter-node/src/xml.ts`):
 
 ```ts
 decodeURIComponent(v.replace(/\+/g, " "))
@@ -104,7 +104,7 @@ that branch on the response field to decide whether to decode.
 baerly-storage dodges this entirely: `xml.ts` **never reads the
 `EncodingType` element**.
 It url-decodes the key family *unconditionally*
-(`packages/adapter-node/src/xml.ts:45-51`). This is a deliberate
+(the `xmlVal` helper in `packages/adapter-node/src/xml.ts`). This is a deliberate
 portability invariant — *decode unconditionally, never branch on the
 response flag* — matching the fix
 [minio-go landed](https://github.com/minio/minio-go/issues/1410). Fields S3
@@ -127,12 +127,16 @@ unconditionally and never inspects the response marker.
 baerly-storage only ever **parses** S3 XML, never **builds** it, so
 builder-side CDATA/comment-injection CVEs are out of scope. On the parse
 side, both `parseS3Error` and `parseListObjectsV2CommandOutput`
-(`packages/adapter-node/src/xml.ts:72,115`) reject any body containing a
+(`packages/adapter-node/src/xml.ts`) reject any body containing a
 `<!DOCTYPE` *before* the parser sees the bytes — a deliberate
 XXE / billion-laughs / entity-shadow (CVE-2026-25896) defense, since
-S3/R2/MinIO/GCS never emit a DOCTYPE here. The runtime `fast-xml-parser`
-floor is pinned `^5.5.6` to cover the no-DOCTYPE numeric-character-reference
-expansion path (CVE-2026-33036) that the DTD guard cannot match.
+S3/R2/MinIO/GCS never emit a DOCTYPE here.
+
+The runtime parser is `@rgrove/parse-xml`, which parses and discards DTDs
+without resolving custom entities — so the entity-expansion CVE class cannot
+recur even if the regex guard above ever regressed. The `<!DOCTYPE` guard is
+parser-independent defense-in-depth that makes entity-expansion vectors
+unreachable regardless of which parser is in use.
 
 A malformed percent-escape (a bare `%` or `%ZZ`) in a key field makes
 `decodeURIComponent` throw a raw `URIError`. `xmlVal`

@@ -384,7 +384,7 @@ auto-load on matching edits and point at the same files.
 
 - ❌ Adding **runtime** dependencies to anything that ships to user
   apps. The runtime footprint of `baerly-storage` and the adapters
-  is intentionally small (`aws4fetch`, `fast-xml-parser`, `hono`,
+  is intentionally small (`aws4fetch`, `@rgrove/parse-xml`, `hono`,
   `jose`); every additional dep widens the kernel bundle
   and the audit surface for users. Justify any addition.
 - ✅ **Build-time / CLI / dev-tooling deps are fair game.** Inside
