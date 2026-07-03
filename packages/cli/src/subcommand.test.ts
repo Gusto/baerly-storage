@@ -14,23 +14,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { BaerlyError } from "@baerly/protocol";
 import { defineBaerlySubcommand } from "./subcommand.ts";
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
-};
+import { captureStream } from "./_internal/testing.ts";
 
 describe("defineBaerlySubcommand", () => {
   let originalCwd: string;

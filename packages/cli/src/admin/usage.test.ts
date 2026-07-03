@@ -24,6 +24,7 @@ import {
   estimateWritesPerMin,
   runUsage,
 } from "./usage.ts";
+import { captureStream } from "../_internal/testing.ts";
 
 interface SeedOpts {
   readonly count: number;
@@ -220,23 +221,6 @@ describe("discoverCollections", () => {
 });
 
 describe("baerly admin usage — query-cost reporting", () => {
-  const captureStream = (
-    stream: NodeJS.WriteStream,
-  ): { restore: () => void; readonly captured: string[] } => {
-    const captured: string[] = [];
-    const original = stream.write.bind(stream);
-    stream.write = ((chunk: unknown): boolean => {
-      captured.push(typeof chunk === "string" ? chunk : String(chunk));
-      return true;
-    }) as typeof stream.write;
-    return {
-      captured,
-      restore: () => {
-        stream.write = original;
-      },
-    };
-  };
-
   // Helper that bypasses MemoryStorage (which lives in a separate
   // process from runUsage's parseBucketUri lookup) and uses a temp
   // file:// bucket instead.

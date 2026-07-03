@@ -27,6 +27,7 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@b
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runExport } from "./export.ts";
+import { captureStream } from "./_internal/testing.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -65,23 +66,6 @@ const seedRows = async (storage: Storage): Promise<void> => {
     docId: "t-3",
     body: { _id: "t-3", status: "open", title: "third" },
   });
-};
-
-const captureStream = (
-  stream: NodeJS.WriteStream,
-): { restore: () => void; readonly captured: string[] } => {
-  const captured: string[] = [];
-  const original = stream.write.bind(stream);
-  stream.write = ((chunk: unknown): boolean => {
-    captured.push(typeof chunk === "string" ? chunk : String(chunk));
-    return true;
-  }) as typeof stream.write;
-  return {
-    captured,
-    restore: () => {
-      stream.write = original;
-    },
-  };
 };
 
 describe("baerly export — SQL dump + sidecar plan generation", () => {

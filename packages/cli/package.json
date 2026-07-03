@@ -9,7 +9,8 @@
   ],
   "type": "module",
   "exports": {
-    "./wrangler-patch": "./src/wrangler-patch.ts"
+    "./wrangler-patch": "./src/wrangler-patch.ts",
+    "./_internal/testing": "./src/_internal/testing.ts"
   },
   "scripts": {
     "build": "rolldown -c",
