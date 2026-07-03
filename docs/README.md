@@ -139,6 +139,7 @@ For people changing the code in this repo.
   - [`contributing/conventions/docs.md`](contributing/conventions/docs.md)
   - [`contributing/conventions/observability.md`](contributing/conventions/observability.md)
   - [`contributing/conventions/change-discipline.md`](contributing/conventions/change-discipline.md)
+  - [`contributing/conventions/versioning.md`](contributing/conventions/versioning.md)
 
 ## Protocol & decisions
 
@@ -149,7 +150,7 @@ single-sourced in the doc type that owns it:
   today, grouped by role: current contracts, semantic references,
   verification, adapter edge cases, and historical/rationale/evidence.
 - [`adr/`](adr/) — **durable rationale and rejected paths.** A flat
-  index of the four load-bearing protocol/architecture decisions, plus a
+  index of the load-bearing protocol/architecture decisions, plus a
   "decisions that live elsewhere" pointer for rules that now live next
   to the code or doc they govern.
 - [`contributing/`](contributing/) — **how to change things.** Local

@@ -6,13 +6,13 @@ import { str2uintDesc } from "./types.ts";
 /**
  * Debezium-style JSON CDC envelope using pgoutput's message-tag (`I`/`U`/`D`) vocabulary. One per mutation.
  *
- * `LogEntry` is now a public wire contract: 0.3.0 is the public
- * early-access baseline. It is still pre-1.0 and soaking, so breaking
- * changes remain possible, but only through an explicit compatibility
- * decision, changelog/migration notes, and a versioned release. Assume
- * external consumers may exist; do not silently rename, remove, or
- * repurpose fields. New optional fields can be added in compatible
- * releases.
+ * `LogEntry` is now a public, versionless/additive-only wire contract:
+ * 0.3.0 is the public early-access baseline. It is still pre-1.0 and
+ * soaking, so breaking changes remain possible, but only through an
+ * explicit compatibility decision, changelog/migration notes, and a
+ * versioned release. Assume external consumers may exist; do not
+ * silently rename, remove, or repurpose fields. Consumers must ignore
+ * unknown keys; new optional fields can be added in compatible releases.
  *
  * Field requirement matrix:
  * - Always: `lsn`, `commit_ts`, `op`, `collection`, `session`,

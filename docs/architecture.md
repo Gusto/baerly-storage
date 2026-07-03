@@ -502,8 +502,8 @@ adapter package. Platform-specific code belongs in adapters.
   RFC 7386 with the array-replacement convention; see
   [spec/json-merge-patch.md](spec/json-merge-patch.md).
 - **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire
-  `LogEntry` interface and its 0.3.0 public-baseline / 0.x stability
-  rules. See
+  `LogEntry` interface and its versionless/additive-only 0.3.0
+  public-baseline / 0.x stability rules. See
   [spec/log-entry-shape.md](spec/log-entry-shape.md).
 
 ## Key types (where the contracts live)

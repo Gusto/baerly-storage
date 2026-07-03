@@ -2,10 +2,10 @@
 title: LogEntry wire shape
 audience: spec
 doc_type: current-contract
-summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; 0.3.0 public early-access baseline with compatibility-managed pre-1.0 changes."
+summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; versionless, additive-only 0.3.0 public early-access baseline."
 last-reviewed: 2026-06-23
 tags: [protocol, log, cdc, contract]
-related: [sync-protocol.md]
+related: [sync-protocol.md, "../adr/005-logentry-versionless.md"]
 ---
 
 # Log entry shape
@@ -20,11 +20,13 @@ what we deliberately did not, and the stability rules for future
 change.
 
 **0.3.0 public early-access baseline.** `LogEntry` is now a public
-wire contract. It is still pre-1.0 and soaking, so breaking changes
-remain possible, but only through an explicit compatibility decision,
-changelog/migration notes, and a versioned release. Assume external
-consumers may exist: do not silently rename, remove, or repurpose
-fields. New optional fields can be added in compatible releases.
+wire contract and is versionless/additive-only by
+[ADR-005](../adr/005-logentry-versionless.md). It is still pre-1.0 and
+soaking, so breaking changes remain possible, but only through an
+explicit compatibility decision, changelog/migration notes, and a
+versioned release. Assume external consumers may exist: do not silently
+rename, remove, or repurpose fields. Consumers must ignore unknown keys;
+new optional fields can be added in compatible releases.
 
 The canonical TypeScript definition lives in
 [`packages/protocol/src/log.ts`](../../packages/protocol/src/log.ts).
@@ -327,9 +329,12 @@ into the snapshot.
 
 ## Stability
 
+> The versionless + additive-only policy is ratified in
+> [ADR-005](../adr/005-logentry-versionless.md).
+
 - **0.3.0 is the public early-access baseline.** Breaking changes are
-  still possible before 1.0, but renaming a field, repurposing a
-  value, or removing a field requires an explicit compatibility
+  still possible before 1.0, but renaming a field, repurposing a value,
+  removing a field, or widening `op` requires an explicit compatibility
   decision, changelog/migration notes, and a versioned release.
 - **Assume external consumers may exist.** New optional fields can be
   added in compatible releases. The `LogEntry` type is `interface`
