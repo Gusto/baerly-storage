@@ -36,6 +36,8 @@ rejected designs.
   — _tolerant-reader rule in [contributing/extending.md](../contributing/extending.md#forward-only-migration)._
 - [004 — Single-write commit](./004-single-write-commit.md)
   — _live protocol in [spec/sync-protocol.md](../spec/sync-protocol.md)._
+- [005 — LogEntry is versionless and additive-only](./005-logentry-versionless.md)
+  — _wire contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md)._
 
 ## Decisions that live elsewhere
 

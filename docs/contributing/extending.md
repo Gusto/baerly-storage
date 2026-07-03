@@ -296,8 +296,9 @@ newer writers can make explicit accept/reject decisions. Do not confuse the two:
   readers must reject unknown major versions with
   `BaerlyError{code:"InvalidResponse"}`. Adding a new optional field to
   `CurrentJson` is non-breaking.
-- **`LogEntry`** has a separate forward/backward-compatibility policy documented
-  in [`docs/spec/log-entry-shape.md`](../../docs/spec/log-entry-shape.md). New
+- **`LogEntry`** is versionless/additive-only and has a separate
+  forward/backward-compatibility policy documented in
+  [`docs/spec/log-entry-shape.md`](../../docs/spec/log-entry-shape.md). New
   optional fields are additive; renaming, removing, repurposing, or narrowing a
   field is a breaking wire change. Since 0.3.0, `LogEntry` is a public
   early-access baseline; it is still pre-1.0 and soaking, but those changes
