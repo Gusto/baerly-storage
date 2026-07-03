@@ -44,7 +44,24 @@ linkWorkspacePackages: true
 #     via @cloudflare/vite-plugin + miniflare + wrangler on ws@8.20.1.
 #     8.21.0 is a patch bump (already in the tree via happy-dom) and
 #     dedupes ws to a single version.
+#   - undici >= 7.28.0: GHSA-hm92-r4w5-c3mj + GHSA-vmh5-mc38-953g
+#     (SOCKS5 proxy high-sev), plus four medium/low Set-Cookie/cache
+#     issues, pulled via @cloudflare/vitest-pool-workers -> wrangler +
+#     miniflare on undici@7.24.8. The example apps' newer miniflare
+#     already resolves 7.28.0; the version-scoped selector lifts only
+#     the stale copy. 7.x-internal patch bump.
+#   - dompurify >= 3.4.11: GHSA-cmwh-pvxp-8882 (ALLOWED_ATTR
+#     pollution), pulled via mermaid on dompurify@3.4.10 (docs mermaid
+#     validation only). mermaid accepts ^3, so a 3.x patch bump.
+#   - js-yaml >= 3.15.0: GHSA-h67p-54hq-rp68 (quadratic-complexity
+#     merge-key DoS), pulled via read-yaml-file -> @manypkg ->
+#     changesets on js-yaml@3.14.2 (release tooling). The 3.x-scoped
+#     selector patches that copy while leaving the separate 4.2.0
+#     copy untouched.
 overrides:
   esbuild: ^0.28.1
   qs: ">=6.15.2"
   ws: ">=8.21.0"
+  undici@<7.28.0: "^7.28.0"
+  dompurify@<3.4.11: "^3.4.11"
+  js-yaml@<3.15.0: "^3.15.0"
