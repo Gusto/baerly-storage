@@ -208,7 +208,7 @@ The published `@gusto/baerly-storage` bundle ships a
 exists and how it's produced.
 
 **Why.** rolldown _inlines_ our runtime deps (`aws4fetch`,
-`fast-xml-parser`, `hono`, `@hono/node-server`, `jose`,
+`@rgrove/parse-xml`, `hono`, `@hono/node-server`, `jose`,
 `@logtape/logtape`, `picocolors`, plus the CLI's `citty` + `jsonc-parser`)
 into `dist/`. Those deps are MIT/ISC/BSD/Apache-2.0; every one of those
 licenses requires its copyright + permission notice to travel with any
