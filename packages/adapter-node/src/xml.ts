@@ -1,5 +1,5 @@
 import { BaerlyError } from "@baerly/protocol";
-import { XMLParser } from "fast-xml-parser";
+import { parseXml, type XmlDocument, type XmlElement, type XmlText } from "@rgrove/parse-xml";
 
 /**
  * Subset of S3's `ListObjectsV2CommandOutput` produced by
@@ -23,18 +23,60 @@ export interface ParsedS3Error {
   Message?: string;
 }
 
-const xmlParser = new XMLParser({
-  ignoreAttributes: true,
-  // Keep numeric-looking strings as strings — S3 keys can be all-digits.
-  parseTagValue: false,
-  // Force `<Contents>` to an array even when only one is present.
-  isArray: (name) => name === "Contents",
-  // Decode numeric character refs (`&#34;` → `"`). fast-xml-parser's
-  // `processEntities` only handles the 5 predefined XML entities by
-  // default; the HTML entity table covers numeric refs too. Minio
-  // emits `&#34;` around ETags, so this is load-bearing.
-  htmlEntities: true,
-});
+// --- parse-xml helpers ---
+
+// Strip any namespace prefix: "s3:Contents" -> "Contents", "Contents" -> "Contents".
+// The `includes(":")` guard makes the `split(":")[1]!` non-null assertion safe.
+const localName = (name: string): string => (name.includes(":") ? name.split(":")[1]! : name);
+
+// Type predicates narrowing an XmlNode child to a concrete node class.
+// @rgrove/parse-xml types the `type` discriminant as `string` (not a string
+// literal), so `node.type === "element"` does NOT narrow the child union on its
+// own. These localize the one unavoidable assertion behind a checked predicate
+// instead of scattering `as XmlElement` / `as XmlText` casts at each use site.
+const isElement = (node: XmlElement["children"][number]): node is XmlElement =>
+  node.type === "element";
+const isText = (node: XmlElement["children"][number]): node is XmlText => node.type === "text";
+
+// Return the first XmlElement child of a document or element whose local name
+// (after any namespace prefix) matches `name`. This makes traversal
+// namespace-agnostic: both `<Error>` and `<ns:Error>` match name "Error".
+const child = (el: XmlElement, name: string): XmlElement | undefined => {
+  for (const node of el.children) {
+    if (isElement(node) && localName(node.name) === name) {
+      return node;
+    }
+  }
+  return undefined;
+};
+
+// Concatenate the direct text child node text values of an element.
+// @rgrove/parse-xml resolves the 5 predefined XML entities (&amp; &lt; &gt;
+// &quot; &apos;) and decimal/hex numeric character references (e.g. Minio's
+// &#34; ETags) by default. Under the default `preserveCdata: false` (which is
+// how we call parseXml), any CDATA section is merged into the element's adjacent
+// text nodes and surfaces as an XmlText (type "text"), so the "text" branch
+// captures it — there is never a standalone "cdata" node. Entities inside a
+// CDATA section are NOT decoded (CDATA is literal), which is the correct S3
+// behavior. We intentionally do NOT decode HTML named entities (&nbsp; etc.) —
+// S3 wire data is XML, not HTML, so this is more spec-correct.
+const textOf = (el: XmlElement | undefined): string | undefined => {
+  if (el === undefined) {
+    return undefined;
+  }
+  let result = "";
+  for (const node of el.children) {
+    if (isText(node)) {
+      result += node.text;
+    }
+  }
+  return result === "" ? undefined : result;
+};
+
+// Return the first-element-child of an XmlDocument. Unlike `XmlDocument.root`
+// (which is an XmlElement | null getter), this avoids potential null handling
+// confusion by returning undefined on an empty document.
+const docRoot = (doc: XmlDocument): XmlElement | undefined => doc.root ?? undefined;
 
 // The list request sets `encoding-type=url`, so S3 URL-encodes the **key
 // family only** (Key/Prefix/Delimiter/StartAfter) in the response,
@@ -42,9 +84,9 @@ const xmlParser = new XMLParser({
 // to ETag or NextContinuationToken — S3 leaves those verbatim, and a
 // continuation token routinely contains literal `+` that the `.replace`
 // step would mangle into a space (corrupting pagination on large buckets).
-const xmlVal = (obj: Record<string, unknown>, name: string): string | undefined => {
-  const v = obj[name];
-  if (typeof v !== "string" || v === "") {
+const xmlVal = (el: XmlElement | undefined, name: string): string | undefined => {
+  const v = el !== undefined ? textOf(child(el, name)) : undefined;
+  if (v === undefined || v === "") {
     return undefined;
   }
   // A well-formed encoding-type=url response only ever contains valid
@@ -63,9 +105,8 @@ const xmlVal = (obj: Record<string, unknown>, name: string): string | undefined 
 // error-body `Code`/`Message`, list `ETag`/`LastModified`, and
 // `NextContinuationToken` — running any of these through `xmlVal`'s
 // `decodeURIComponent` / `+`→space would corrupt literal `+` and `%`.
-const rawXmlVal = (obj: Record<string, unknown>, name: string): string | undefined => {
-  const v = obj[name];
-  return typeof v === "string" && v !== "" ? v : undefined;
+const rawXmlVal = (el: XmlElement | undefined, name: string): string | undefined => {
+  return el !== undefined ? textOf(child(el, name)) : undefined;
 };
 
 /**
@@ -81,14 +122,17 @@ export const parseS3Error = (xml: string): ParsedS3Error | undefined => {
   if (!/<Error\b/i.test(xml) || /<!DOCTYPE\b/i.test(xml)) {
     return undefined;
   }
-  let result: { Error?: Record<string, unknown> };
+  let root: XmlElement | undefined;
   try {
-    result = xmlParser.parse(xml) as { Error?: Record<string, unknown> };
+    root = docRoot(parseXml(xml));
   } catch {
     return undefined;
   }
-  const root = result.Error;
+  // The root element must be <Error> (possibly namespace-prefixed).
   if (root === undefined) {
+    return undefined;
+  }
+  if (localName(root.name) !== "Error") {
     return undefined;
   }
   const code = rawXmlVal(root, "Code");
@@ -117,18 +161,22 @@ export const parseStsError = (xml: string): ParsedS3Error | undefined => {
   if (!/<Error\b/i.test(xml) || /<!DOCTYPE\b/i.test(xml)) {
     return undefined;
   }
-  let result: { ErrorResponse?: { Error?: Record<string, unknown> } };
+  let root: XmlElement | undefined;
   try {
-    result = xmlParser.parse(xml) as typeof result;
+    root = docRoot(parseXml(xml));
   } catch {
     return undefined;
   }
-  const root = result.ErrorResponse?.Error;
   if (root === undefined) {
     return undefined;
   }
-  const code = rawXmlVal(root, "Code");
-  const message = rawXmlVal(root, "Message");
+  // STS wraps <Error> inside <ErrorResponse>; locate the inner <Error> child.
+  const errorEl = child(root, "Error");
+  if (errorEl === undefined) {
+    return undefined;
+  }
+  const code = rawXmlVal(errorEl, "Code");
+  const message = rawXmlVal(errorEl, "Message");
   if (code === undefined && message === undefined) {
     return undefined;
   }
@@ -153,7 +201,7 @@ export interface ParsedWebIdentityCredentials {
 
 /**
  * Parse an STS `AssumeRoleWithWebIdentity` success body, returning the
- * `<Credentials>` block. Reuses the hardened, DTD-guarded {@link xmlParser};
+ * `<Credentials>` block. Reuses the hardened, DTD-guarded parser;
  * throws `InvalidResponse` on a DTD or unparseable XML. Missing fields come
  * back `undefined` so the caller can map them to its own `InvalidResponse`.
  *
@@ -166,24 +214,23 @@ export const parseAssumeRoleWithWebIdentity = (xml: string): ParsedWebIdentityCr
   if (/<!DOCTYPE\b/i.test(xml)) {
     throw new BaerlyError("InvalidResponse", "DTD not allowed in STS XML responses");
   }
-  let result: {
-    AssumeRoleWithWebIdentityResponse?: {
-      AssumeRoleWithWebIdentityResult?: { Credentials?: Record<string, unknown> };
-    };
-  };
+  let root: XmlElement | undefined;
   try {
-    result = xmlParser.parse(xml) as typeof result;
+    root = docRoot(parseXml(xml));
   } catch {
     // No body in the message — see the note above; it may contain live creds.
     throw new BaerlyError("InvalidResponse", "unparseable STS credentials response");
   }
-  const creds =
-    result.AssumeRoleWithWebIdentityResponse?.AssumeRoleWithWebIdentityResult?.Credentials ?? {};
+  // Traverse: <AssumeRoleWithWebIdentityResponse>
+  //             <AssumeRoleWithWebIdentityResult>
+  //               <Credentials>
+  const resultEl = root !== undefined ? child(root, "AssumeRoleWithWebIdentityResult") : undefined;
+  const credsEl = resultEl !== undefined ? child(resultEl, "Credentials") : undefined;
   return {
-    AccessKeyId: rawXmlVal(creds, "AccessKeyId"),
-    SecretAccessKey: rawXmlVal(creds, "SecretAccessKey"),
-    SessionToken: rawXmlVal(creds, "SessionToken"),
-    Expiration: rawXmlVal(creds, "Expiration"),
+    AccessKeyId: rawXmlVal(credsEl, "AccessKeyId"),
+    SecretAccessKey: rawXmlVal(credsEl, "SecretAccessKey"),
+    SessionToken: rawXmlVal(credsEl, "SessionToken"),
+    Expiration: rawXmlVal(credsEl, "Expiration"),
   };
 };
 
@@ -199,31 +246,44 @@ const parseLastModified = (lm: string | undefined): Date | undefined => {
   return Number.isNaN(d.getTime()) ? undefined : d;
 };
 
-// DTD guard: reject any DOCTYPE before fast-xml-parser sees the bytes. S3/R2/
+// DTD guard: reject any DOCTYPE before @rgrove/parse-xml sees the bytes. S3/R2/
 // MinIO/GCS never emit a DOCTYPE here, so one is always a bug or an attack —
 // this defangs the DOCTYPE entity vectors (XXE, billion-laughs, the
-// CVE-2026-25896 entity-shadow). The no-DOCTYPE numeric-ref expansion path
-// (CVE-2026-33036) it cannot match is covered by the `^5.5.6` floor in
-// package.json. `htmlEntities: true` (above) stays default-safe given both.
+// CVE-2026-25896 entity-shadow). @rgrove/parse-xml is safe-by-design (refuses
+// DTD entity definitions), but the regex guard is parser-independent
+// defense-in-depth and independently covers the entity-expansion CVE class.
 export const parseListObjectsV2CommandOutput = (xml: string): ParsedListObjectsV2Output => {
   if (/<!DOCTYPE\b/i.test(xml)) {
     throw new BaerlyError("InvalidResponse", "DTD not allowed in S3 XML responses");
   }
-  let result: { ListBucketResult?: Record<string, unknown> };
+  let root: XmlElement | undefined;
   try {
-    result = xmlParser.parse(xml) as { ListBucketResult?: Record<string, unknown> };
+    root = docRoot(parseXml(xml));
   } catch {
     throw new BaerlyError("InvalidResponse", `Invalid XML: ${xml}`);
   }
-  const root = result.ListBucketResult ?? {};
-  const contents = (root["Contents"] as Array<Record<string, unknown>> | undefined) ?? [];
+  if (root === undefined) {
+    return {};
+  }
+  // The root element must be <ListBucketResult> (possibly namespace-prefixed).
+  // This restores main's `result.ListBucketResult ?? {}` structural guard and
+  // matches the sibling error parsers' root checks: a non-list body returns {}.
+  if (localName(root.name) !== "ListBucketResult") {
+    return {};
+  }
+  // Force-array for Contents: collect all direct <Contents> element children.
+  // This replaces the old `isArray: (name) => name === "Contents"` config.
+  // Namespace-agnostic (matches `child()`), so `<s3:Contents>` also collects.
+  const contentEls = root.children
+    .filter(isElement)
+    .filter((c) => localName(c.name) === "Contents");
 
   return {
-    Contents: contents.map((content) => {
+    Contents: contentEls.map((contentEl) => {
       return {
-        ETag: rawXmlVal(content, "ETag"),
-        Key: xmlVal(content, "Key"),
-        LastModified: parseLastModified(rawXmlVal(content, "LastModified")),
+        ETag: rawXmlVal(contentEl, "ETag"),
+        Key: xmlVal(contentEl, "Key"),
+        LastModified: parseLastModified(rawXmlVal(contentEl, "LastModified")),
       };
     }),
     NextContinuationToken: rawXmlVal(root, "NextContinuationToken"),

@@ -83,7 +83,7 @@ import { IS_CI } from "../setup/ci.ts";
 // ships in a user app bundle, and Node startup dwarfs any sub-MB
 // parse cost — so cold-start size here is not a useful signal. The
 // `BUNDLED_OPTIONAL_PEERS` check further down still walks
-// `dist/baerly.js` to catch live imports of `@xmldom/xmldom` /
+// `dist/baerly.js` to catch live imports of `@rgrove/parse-xml` /
 // `aws4fetch` (the original agent-struggle #14 regression class);
 // that's a behavioural guard, not a byte budget.
 
@@ -900,7 +900,7 @@ const BUDGETS: readonly Budget[] = [
   //     gz 14→15 KiB rather than golf the doc/error (see the POLICY on index.js).
   { entry: "dev.js", raw: 40 * 1024, gz: 15 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
-  // `aws4fetch` SigV4 client + `fast-xml-parser` XML parser.
+  // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare
   // Worker; the `./cloudflare` subpath excludes this closure so
   // R2-binding consumers don't pay for it.
@@ -921,7 +921,13 @@ const BUDGETS: readonly Budget[] = [
   //     packages/adapter-node/package.json.) The residual here is the honest
   //     cost of the newer strnum/entities; min-gz clears 26 KiB by 661 B.
   //     Measured: 170745 raw / 49358 gz / 25963 min-gz.
-  { entry: "s3.js", raw: 167 * 1024, gz: 49 * 1024, minGz: 26 * 1024 },
+  //   → raw −87 KiB / gz −24 KiB / min-gz −14 KiB (2026-07-02): replaced
+  //     fast-xml-parser with @rgrove/parse-xml (adapter-node). @rgrove/parse-xml
+  //     is a zero-dep, safe-by-design XML parser (no entity-expansion surface);
+  //     it is dramatically smaller than fast-xml-parser + its transitive closure
+  //     (strnum, @nodable/entities). Measured: 81041 raw / 25085 gz / 11421 min-gz.
+  //     All three axes rebaselined for the parser swap.
+  { entry: "s3.js", raw: 81 * 1024, gz: 25 * 1024, minGz: 12 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
@@ -1153,7 +1159,7 @@ describe("bundle size", () => {
   // rolldown `external`/bundling slip. A heavy dep that gets bundled
   // INLINE won't show as a bare import here; the raw creep tripwire
   // below is what catches that vector.
-  const RUNTIME_DEP_ALLOWLIST = new Set(["aws4fetch", "fast-xml-parser", "hono", "jose"]);
+  const RUNTIME_DEP_ALLOWLIST = new Set(["@rgrove/parse-xml", "aws4fetch", "hono", "jose"]);
   // Extract the package name from a bare specifier. `hono/tiny` →
   // `hono`; `@scope/name/sub` → `@scope/name`.
   const packageName = (spec: string): string => {
@@ -1210,11 +1216,11 @@ describe("bundle size", () => {
     });
   }
 
-  // Scaffolded apps install only `baerly-storage`. `fast-xml-parser`
+  // Scaffolded apps install only `baerly-storage`. `@rgrove/parse-xml`
   // and `aws4fetch` are bundled into the published library + bin
   // chunks that use them (see `rolldown.config.ts` and
   // `packages/cli/rolldown.config.ts`); no dist closure may leave a
-  // live `import "fast-xml-parser"` or `import "aws4fetch"` for the
+  // live `import "@rgrove/parse-xml"` or `import "aws4fetch"` for the
   // host's module resolver to chase, because the host doesn't have
   // those packages on disk.
   //
@@ -1225,7 +1231,10 @@ describe("bundle size", () => {
   // S3 client and emitted a live `import "@xmldom/xmldom"`, which
   // killed `vite` on scaffolded Cloudflare apps. This test now walks
   // every entry in the published `exports` map plus the bin.
-  const BUNDLED_OPTIONAL_PEERS = new Set(["fast-xml-parser", "aws4fetch"]);
+  // (2026-07-02): `fast-xml-parser` removed from this set — it is gone
+  // from the tree entirely (neither a runtime nor a dev dependency) and
+  // `@rgrove/parse-xml` added as the new runtime XML parser.
+  const BUNDLED_OPTIONAL_PEERS = new Set(["@rgrove/parse-xml", "aws4fetch"]);
   const pkgRoot = resolve(__dirname, "../..");
   const distDir = resolve(pkgRoot, "dist");
   const rootPkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) as {

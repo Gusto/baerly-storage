@@ -8,7 +8,7 @@
  * `S3HttpStorage` + `sigV4Signer` from the Worker-safe
  * `@gusto/baerly-storage/s3` subpath and pass the instance as
  * `baerlyWorker((env) => ({ config, storage }))`. That subpath pulls
- * `aws4fetch` + `fast-xml-parser` (SigV4 + XML), which is why it is not
+ * `aws4fetch` + `@rgrove/parse-xml` (SigV4 + XML), which is why it is not
  * re-exported here: the closure of `@gusto/baerly-storage/cloudflare`
  * stays peer-free so same-account R2-binding consumers don't carry those
  * bytes. Do NOT import from `@gusto/baerly-storage/node` in a Worker —
