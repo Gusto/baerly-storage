@@ -3,14 +3,18 @@ title: Storage capabilities — required vs optional
 audience: spec
 doc_type: current-contract
 summary: What a backend MUST support to certify as full Storage (CAS, exactly-one-winner), what is optional, and the planned read-only ReaderStorage tier.
-last-reviewed: 2026-06-27
+last-reviewed: 2026-07-03
 tags: [storage, conformance, capabilities, cas, contract]
 related: ["sync-protocol.md", "storage-compatibility.md"]
 ---
 
 # Storage capabilities — required vs optional
 
-Certification splits capabilities into two groups. The executable
+Certification splits capabilities into two groups by what depends on
+them: **required** capabilities are the ones the commit protocol's
+correctness rests on — get them wrong and two writers can both believe
+they won the same log slot — while **optional** capabilities are
+conveniences a backend can lack and still be correct. The executable
 enforcement is `defineStorageConformanceSuite`
 (`packages/protocol/src/storage/conformance.ts`); the deploy-time live
 probe is `probeCas` (`packages/protocol/src/storage/probe-cas.ts`,
