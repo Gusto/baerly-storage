@@ -3,7 +3,7 @@ title: Protocol & contracts index
 audience: meta
 doc_type: index
 summary: "Stable specs and protocol-adjacent analyses: sync protocol, causal-consistency checking, merge patch, log shape, S3 surface, fencing, and prior art."
-last-reviewed: 2026-06-23
+last-reviewed: 2026-06-27
 tags: [index, protocol, spec]
 related: [sync-protocol.md, log-entry-shape.md]
 ---
@@ -25,10 +25,13 @@ Binding descriptions of how the live protocol behaves today.
   [ADR-004](../adr/004-single-write-commit.md).
 - [storage-compatibility.md](storage-compatibility.md) — the minimal S3 API
   surface the protocol depends on.
+- [capabilities.md](capabilities.md) — required-vs-optional storage
+  capability split (CAS mandatory; supportsAbort optional; ReaderStorage
+  tier planned).
 - [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire
-  contract. Debezium-style CDC envelope; `0.3.0` is the public
-  early-access baseline, and pre-1.0 breaks follow the compatibility
-  policy recorded there.
+  contract. Debezium-style CDC envelope; versionless/additive-only
+  `0.3.0` public early-access baseline, with pre-1.0 breaks following
+  the compatibility policy recorded there.
 
 ## Semantic references
 
