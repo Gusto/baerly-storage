@@ -2,16 +2,20 @@
 title: Versioning and compatibility
 audience: maintainer
 summary: The five version axes, where each lives, and the wire/schema/layout compatibility rules under semver. The machine-readable source is version-matrix.json.
-last-reviewed: 2026-06-27
+last-reviewed: 2026-07-03
 tags: [versioning, compatibility, governance, contract]
 related: [change-discipline.md, "../../adr/003-layout-versioning-cordon.md", "../../adr/005-logentry-versionless.md", "../publishing.md", "../../spec/log-entry-shape.md"]
 ---
 
 # Versioning and compatibility
 
-baerly-storage has **five independent version axes**. Use these names
-everywhere — docs, code, fixtures, and any second-language
-implementation. The machine-readable source of truth is
+baerly-storage has **five independent version axes**. Each answers a
+different question — *which npm train is this?* vs. *has the wire
+contract changed?* vs. *did a durable on-bucket schema change?* — and
+they move independently, so no single version number can stand in for
+the others. Conflating them, by bumping or trusting the wrong one, is
+the mistake this table prevents. Use these names everywhere — docs,
+code, fixtures, and any second-language implementation. The machine-readable source of truth is
 [`../version-matrix.json`](../version-matrix.json), guarded against
 code drift by `scripts/check-version-matrix.ts` on every `pnpm verify`.
 
