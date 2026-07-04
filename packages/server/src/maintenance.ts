@@ -583,3 +583,31 @@ export interface MaintenanceDispatch {
   /** Per-tier caps forwarded to {@link runBoundedMaintenance}. */
   readonly options?: BoundedMaintenanceOptions;
 }
+
+/**
+ * Parse the two host-agnostic ops-plane env vars into the
+ * {@link MaintenanceDispatch} overrides. Shared by every host adapter so the
+ * cross-host contract has one source of truth: `maxFoldBytes` (`C`) is the
+ * finite `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` or undefined; `disabled` is
+ * `BAERLY_MAINTENANCE_DISABLE` truthy (set, non-empty, not `"0"`/`"false"`).
+ */
+export const parseMaintenanceEnv = (
+  readEnv: (key: string) => string | undefined,
+): { maxFoldBytes?: number; disabled?: boolean } => {
+  const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
+  const parsedFoldBytes =
+    rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
+  const maxFoldBytes = Number.isFinite(parsedFoldBytes) ? parsedFoldBytes : undefined;
+
+  const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");
+  const disabled =
+    rawDisable !== undefined &&
+    rawDisable !== "" &&
+    rawDisable !== "0" &&
+    rawDisable.toLowerCase() !== "false";
+
+  return {
+    ...(maxFoldBytes !== undefined && { maxFoldBytes }),
+    disabled,
+  };
+};

@@ -10,7 +10,7 @@ import {
 import { Db, resolveVerifier } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { handleSpecRequest } from "@baerly/server/spec";
-import type { MaintenanceDispatch } from "@baerly/server/maintenance";
+import { type MaintenanceDispatch, parseMaintenanceEnv } from "@baerly/server/maintenance";
 import {
   CATEGORY,
   type ObservabilityConfig,
@@ -159,17 +159,7 @@ export const cfMaintenanceDispatch = (
   ctx: ExecutionContext,
   readEnv: (key: string) => string | undefined,
 ): MaintenanceDispatch => {
-  const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
-  const parsedFoldBytes =
-    rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
-  const maxFoldBytes = Number.isFinite(parsedFoldBytes) ? parsedFoldBytes : undefined;
-
-  const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");
-  const disabled =
-    rawDisable !== undefined &&
-    rawDisable !== "" &&
-    rawDisable !== "0" &&
-    rawDisable.toLowerCase() !== "false";
+  const { maxFoldBytes, disabled } = parseMaintenanceEnv(readEnv);
 
   return {
     // CF dispatches the fold off the ack via `ctx.waitUntil` — the
@@ -403,18 +393,20 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       const rawFoldBytes = (env as unknown as Record<string, unknown>)[
         "BAERLY_MAINTENANCE_MAX_FOLD_BYTES"
       ];
-      if (typeof rawFoldBytes === "string" && rawFoldBytes !== "") {
-        const parsed = Number(rawFoldBytes);
-        if (Number.isFinite(parsed) && parsed > CF_FREE_MAX_SAFE_FOLD_BYTES) {
-          console.warn(
-            `[baerly] BAERLY_MAINTENANCE_MAX_FOLD_BYTES=${rawFoldBytes} exceeds the ` +
-              `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
-              `Worker a fold this large risks a mid-rebuild CPU kill (the ~10 ms limit): the ` +
-              `current.json CAS never lands, so the fold silently does NOT advance and the tail ` +
-              `grows unbounded. Safe remedies: run on CF PAID (raised CPU limits), self-host on ` +
-              `NODE, or wait for §11 chunked snapshots. Leave this var unset on free CF.`,
-          );
-        }
+      const { maxFoldBytes } = parseMaintenanceEnv((k) =>
+        typeof rawFoldBytes === "string" && k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES"
+          ? rawFoldBytes
+          : undefined,
+      );
+      if (maxFoldBytes !== undefined && maxFoldBytes > CF_FREE_MAX_SAFE_FOLD_BYTES) {
+        console.warn(
+          `[baerly] BAERLY_MAINTENANCE_MAX_FOLD_BYTES=${rawFoldBytes} exceeds the ` +
+            `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
+            `Worker a fold this large risks a mid-rebuild CPU kill (the ~10 ms limit): the ` +
+            `current.json CAS never lands, so the fold silently does NOT advance and the tail ` +
+            `grows unbounded. Safe remedies: run on CF PAID (raised CPU limits), self-host on ` +
+            `NODE, or wait for §11 chunked snapshots. Leave this var unset on free CF.`,
+        );
       }
     }
     return resolved;
