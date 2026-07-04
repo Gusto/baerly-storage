@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@gusto/baerly-storage": "workspace:*",
-    "aws4fetch": "^1.0.20",
+    "aws4fetch": "1.0.20",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zod": "^4.4.3"
