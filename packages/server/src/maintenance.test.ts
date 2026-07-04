@@ -42,6 +42,7 @@ import {
   dispatchInlineAwaited,
   estimateTailBytes,
   type InternalMaintenanceOptions,
+  parseMaintenanceEnv,
   runBoundedMaintenance,
   runScheduledMaintenance,
   shouldFireMaintenance,
@@ -806,6 +807,48 @@ describe("runBoundedMaintenance", () => {
     });
     expect(rejected).toBe(false); // swallowed, did NOT reject
     expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBeGreaterThan(0);
+  });
+});
+
+describe("parseMaintenanceEnv", () => {
+  // Build a reader over a fixed map so a key that's absent returns undefined.
+  const reader =
+    (env: Record<string, string>) =>
+    (k: string): string | undefined =>
+      env[k];
+
+  test("unset env yields no maxFoldBytes and disabled=false", () => {
+    expect(parseMaintenanceEnv(reader({}))).toEqual({ disabled: false });
+  });
+
+  test("empty-string BAERLY_MAINTENANCE_MAX_FOLD_BYTES is ignored (no maxFoldBytes)", () => {
+    expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "" }))).toEqual({
+      disabled: false,
+    });
+  });
+
+  test("valid numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES parses to maxFoldBytes", () => {
+    expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "1048576" }))).toEqual({
+      maxFoldBytes: 1_048_576,
+      disabled: false,
+    });
+  });
+
+  test("non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES is ignored (NaN → undefined)", () => {
+    expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "lots" }))).toEqual({
+      disabled: false,
+    });
+  });
+
+  test("BAERLY_MAINTENANCE_DISABLE truthiness matches the documented rules", () => {
+    // Falsy: unset / "" / "0" / "false" / "FALSE" (case-insensitive).
+    for (const v of ["", "0", "false", "FALSE"]) {
+      expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v })).disabled).toBe(false);
+    }
+    // Truthy: any other non-empty value.
+    for (const v of ["1", "true", "TRUE", "yes", "on"]) {
+      expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v })).disabled).toBe(true);
+    }
   });
 });
 

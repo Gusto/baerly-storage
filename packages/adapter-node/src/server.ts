@@ -7,7 +7,7 @@ import {
 import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
 import { handleSpecRequest } from "@baerly/server/spec";
-import type { MaintenanceDispatch } from "@baerly/server/maintenance";
+import { type MaintenanceDispatch, parseMaintenanceEnv } from "@baerly/server/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
   type ObservabilityConfig,
@@ -99,17 +99,7 @@ export interface CreateFetchHandlerOptions {
 export const nodeMaintenanceDispatch = (
   readEnv: (key: string) => string | undefined = (k) => process.env[k],
 ): MaintenanceDispatch => {
-  const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
-  const parsedFoldBytes =
-    rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
-  const maxFoldBytes = Number.isFinite(parsedFoldBytes) ? parsedFoldBytes : undefined;
-
-  const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");
-  const disabled =
-    rawDisable !== undefined &&
-    rawDisable !== "" &&
-    rawDisable !== "0" &&
-    rawDisable.toLowerCase() !== "false";
+  const { maxFoldBytes, disabled } = parseMaintenanceEnv(readEnv);
 
   return {
     // No `dispatch` override: inline on serverful Node (the writer
