@@ -55,8 +55,9 @@ Publishing goes through `pnpm release`, which builds first and passes
    ```
 
    `pnpm release` runs `pnpm build` (which copies the updated `CHANGELOG.md`
-   into `dist/CHANGELOG.md`) and publishes both packages with
-   `--access public`.
+   into `dist/CHANGELOG.md`), validates both packages with `check:exports`
+   + `check:publint` (a finding aborts before publishing), then publishes
+   both with `--access public`.
 
 > **Prefer `pnpm release` over `changeset publish`.** `pnpm release`
 > (`scripts/publish.mjs`) builds first, so `dist/` is fresh and
@@ -134,17 +135,35 @@ Confirm: `package/dist/index.js` and
 `package/dist/templates/{minimal,react}-{cloudflare,node}/package.json`
 are present. Cleanup the local `.tgz` files when done.
 
+To validate the published manifests and type resolution without a full
+release, run the same two checks `pnpm release` gates on, standalone:
+
+```sh
+pnpm check:exports   # attw — entry points resolve for consumers
+pnpm check:publint   # publint — both published manifests are well-formed
+```
+
+Both build first, then pack with `pnpm pack` (so `publishConfig.exports`
+applies). Neither is wired into `verify`/CI — the build + packs belong at
+release time, not on every PR.
+
 ## Publish via `pnpm release`
 
 `pnpm release` (`scripts/publish.mjs`) is the sanctioned path. It:
 
 1. builds,
-2. publishes both packages with an **explicit** `--access public`
+2. **validates both published packages** as a pre-publish gate —
+   `check:exports` (attw: every entry point resolves for consumers) and
+   `check:publint` (publint: both manifests are well-formed). A finding
+   aborts the release closed, before any bytes reach npm; nothing is
+   published. This runs on `--dry-run` too. The gate reuses the build
+   from step 1 (`BAERLY_SKIP_BUILD=1`), so it doesn't rebuild `dist/`.
+3. publishes both packages with an **explicit** `--access public`
    (pnpm has historically dropped `publishConfig.access` on the wire,
    so the flag is passed by hand to be safe).
 
 ```sh
-pnpm release --dry-run     # build + pack + report current visibility, no writes
+pnpm release --dry-run     # build + validate + pack + report visibility, no writes
 pnpm release               # the real thing
 pnpm release --otp=123456  # forward a 2FA one-time code if prompted
 ```

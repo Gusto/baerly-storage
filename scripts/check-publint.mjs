@@ -12,9 +12,12 @@
 // `exports` point at `dist/` rather than the excluded `src/*.ts` dev
 // paths — the same reason check-exports.mjs uses `pnpm pack`.
 //
-// Manual gate, not wired into verify. Covers both published packages
-// (attw covers only the root library; publint's bin/files checks are
-// just as relevant to the create-baerly-storage CLI).
+// Run standalone as `pnpm check:publint`; also run as a pre-publish gate
+// by scripts/publish.mjs. Not wired into verify. Covers both published
+// packages (attw covers only the root library; publint's bin/files
+// checks are just as relevant to the create-baerly-storage CLI). Set
+// BAERLY_SKIP_BUILD=1 to reuse an existing dist/ (publish.mjs builds
+// once, then sets it).
 import { spawnSync } from "node:child_process";
 
 function run(cmd, args, extraOpts = {}) {
@@ -26,7 +29,9 @@ function run(cmd, args, extraOpts = {}) {
 }
 
 // publint reads `files: ["dist"]`, so dist/ must exist and be current.
-run("pnpm", ["run", "build"]);
+if (!process.env.BAERLY_SKIP_BUILD) {
+  run("pnpm", ["run", "build"]);
+}
 
 // [directory, human label] for each published package.
 const PACKAGES = [
