@@ -1,5 +1,4 @@
 /* eslint-disable no-console -- bench script prints results */
-/* eslint-disable no-underscore-dangle -- `_id` is the locked PK field */
 /**
  * STRESS companion to bench/amortized-write-cost.ts. Drives pathological
  * workloads — extreme churn, insert bursts with large bodies, full-set
@@ -14,37 +13,7 @@
  * trigger decision in docs/about/{cost-model,graduation}.md.
  */
 import { writeFile } from "node:fs/promises";
-import {
-  MAINTENANCE_PROFILE_CF_FREE,
-  MAINTENANCE_PROFILE_NODE,
-  MemoryStorage,
-} from "@baerly/protocol";
-import { type BoundedMaintenanceOptions } from "@baerly/server/maintenance";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
-import { Writer } from "@baerly/server/_internal/testing";
-import { wrapCountingStorage } from "../tests/fixtures/counting-storage.ts";
-import { bootstrap, COLLECTION, CURRENT_JSON_KEY } from "../tests/fixtures/maintenance-harness.ts";
-
-const CF_FREE: BoundedMaintenanceOptions = {
-  profile: MAINTENANCE_PROFILE_CF_FREE,
-  minEntriesToCompact: 50,
-  phasesPerTick: "single",
-  gcGraceMillis: 0,
-};
-const NODE: BoundedMaintenanceOptions = {
-  profile: MAINTENANCE_PROFILE_NODE,
-  minEntriesToCompact: 50,
-  phasesPerTick: "both",
-  gcGraceMillis: 0,
-};
-
-interface Workload {
-  label: string;
-  writes: number;
-  workingSet: number;
-  bodyBytes: number;
-  updateRatio: number;
-}
+import { CF_FREE, measure, NODE, type Workload } from "./lib/write-cost-measure.ts";
 
 // Pathological shapes chosen to maximise each maintenance cost driver:
 //  - extreme-churn:  tiny set, 100% updates  -> fold fires constantly
@@ -76,36 +45,6 @@ const WORKLOADS: Workload[] = [
   },
 ];
 
-async function measure(opts: BoundedMaintenanceOptions, wl: Workload) {
-  const inner = new MemoryStorage();
-  await bootstrap(inner, "stress-bench", Math.max(128, wl.bodyBytes));
-  const counting = wrapCountingStorage(inner);
-  const writer = new Writer({ storage: counting.storage, currentJsonKey: CURRENT_JSON_KEY });
-  counting.reset();
-  const blob = "x".repeat(wl.bodyBytes);
-  await runWithContext(createObservabilityContext({ maintenance: { options: opts } }), async () => {
-    for (let i = 0; i < wl.writes; i++) {
-      const isUpdate = wl.workingSet > 0 && i >= wl.workingSet && i % 100 < wl.updateRatio * 100;
-      const id = wl.workingSet > 0 ? `d${i % wl.workingSet}` : `d${i}`;
-      await writer.commit({
-        op: isUpdate ? "U" : "I",
-        collection: COLLECTION,
-        docId: id,
-        body: { _id: id, n: i, blob },
-      });
-    }
-  });
-  return {
-    writes: wl.writes,
-    puts: counting.puts,
-    lists: counting.lists,
-    deletesFree: counting.deletes,
-    putsPerWrite: Number((counting.puts / wl.writes).toFixed(3)),
-    listsPerWrite: Number((counting.lists / wl.writes).toFixed(3)),
-    billableClassAPerWrite: Number((counting.billableClassAOps / wl.writes).toFixed(3)),
-  };
-}
-
 async function main() {
   const rows = [];
   let peak = 0;
@@ -114,7 +53,18 @@ async function main() {
     ["node", NODE],
   ] as const) {
     for (const wl of WORKLOADS) {
-      const r = await measure(opts, wl);
+      const base = await measure(opts, wl, "stress-bench");
+      // Preserve the original baseline JSON key order: the per-write
+      // ratios sit before billableClassAPerWrite.
+      const r = {
+        writes: base.writes,
+        puts: base.puts,
+        lists: base.lists,
+        deletesFree: base.deletesFree,
+        putsPerWrite: Number((base.puts / wl.writes).toFixed(3)),
+        listsPerWrite: Number((base.lists / wl.writes).toFixed(3)),
+        billableClassAPerWrite: base.billableClassAPerWrite,
+      };
       peak = Math.max(peak, r.billableClassAPerWrite);
       rows.push({ profile, workload: wl.label, ...r });
       console.log(
