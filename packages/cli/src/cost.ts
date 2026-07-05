@@ -37,33 +37,21 @@ import { emitSuccess, isJsonMode } from "./output.ts";
 import { detectProvider, pricingFor, type ProviderTag } from "./cost/provider.ts";
 import { project, type Trajectory } from "./cost/project.ts";
 import { estimateWritesPerMin } from "./admin/usage.ts";
-import { assertCollectionArg, defineBaerlySubcommand } from "./subcommand.ts";
+import {
+  APP_ARG,
+  assertCollectionArg,
+  BUCKET_ARG,
+  COLLECTION_ARG,
+  defineBaerlySubcommand,
+  JSON_ARG,
+  TENANT_ARG,
+} from "./subcommand.ts";
 
 const COST_ARGS = {
-  bucket: {
-    type: "string",
-    required: true,
-    description: "Bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
-    valueHint: "bucket-uri",
-  },
-  app: {
-    type: "string",
-    required: false,
-    description: "Application name segment (defaults to baerly.config.ts).",
-    valueHint: "app",
-  },
-  tenant: {
-    type: "string",
-    required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts).",
-    valueHint: "tenant",
-  },
-  collection: {
-    type: "string",
-    required: true,
-    description: "Collection name.",
-    valueHint: "name",
-  },
+  bucket: BUCKET_ARG,
+  app: APP_ARG,
+  tenant: TENANT_ARG,
+  collection: COLLECTION_ARG,
   provider: {
     type: "string",
     required: false,
@@ -71,10 +59,7 @@ const COST_ARGS = {
       "Override pricing provider (r2|aws-s3|self-hosted|dev). Auto-detected from bucket URI + BAERLY_S3_ENDPOINT.",
     valueHint: "r2|aws-s3|self-hosted|dev",
   },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  json: JSON_ARG,
 } as const satisfies ArgsDef;
 
 /** Compact "1.5M" / "22k" / "842" rendering for Class A op counts. */

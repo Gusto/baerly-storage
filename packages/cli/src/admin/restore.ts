@@ -58,7 +58,13 @@ import {
 import { Writer } from "@baerly/server/_internal/testing";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
-import { assertCollectionArg, defineBaerlySubcommand } from "../subcommand.ts";
+import {
+  APP_ARG,
+  assertCollectionArg,
+  defineBaerlySubcommand,
+  JSON_ARG,
+  TENANT_ARG,
+} from "../subcommand.ts";
 
 const RESTORE_OWNER = "baerly-restore";
 
@@ -69,18 +75,8 @@ const RESTORE_ARGS = {
     description: "Target bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
     valueHint: "bucket-uri",
   },
-  app: {
-    type: "string",
-    required: false,
-    description: "Application name segment (defaults to baerly.config.ts).",
-    valueHint: "app",
-  },
-  tenant: {
-    type: "string",
-    required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts).",
-    valueHint: "tenant",
-  },
+  app: APP_ARG,
+  tenant: TENANT_ARG,
   collection: {
     type: "string",
     required: true,
@@ -91,10 +87,7 @@ const RESTORE_ARGS = {
     type: "boolean",
     description: "Truncate the target if it exists (bump fence + reseed current.json).",
   },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  json: JSON_ARG,
 } as const satisfies ArgsDef;
 
 const tailFromListedLogKeys = async (

@@ -43,34 +43,22 @@ import { rebuildIndex } from "@baerly/server/maintenance";
 import { loadCollectionIndexes } from "../config.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
-import { assertCollectionArg, defineBaerlySubcommand } from "../subcommand.ts";
+import {
+  APP_ARG,
+  assertCollectionArg,
+  BUCKET_ARG,
+  COLLECTION_ARG,
+  defineBaerlySubcommand,
+  JSON_ARG,
+  TENANT_ARG,
+} from "../subcommand.ts";
 
 /** citty arg shape. Kebab-case so --help and parsed-object keys line up. */
 const REBUILD_INDEX_ARGS = {
-  bucket: {
-    type: "string",
-    required: true,
-    description: "Bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
-    valueHint: "bucket-uri",
-  },
-  app: {
-    type: "string",
-    required: false,
-    description: "Application name segment (defaults to baerly.config.ts).",
-    valueHint: "app",
-  },
-  tenant: {
-    type: "string",
-    required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts).",
-    valueHint: "tenant",
-  },
-  collection: {
-    type: "string",
-    required: true,
-    description: "Collection name",
-    valueHint: "name",
-  },
+  bucket: BUCKET_ARG,
+  app: APP_ARG,
+  tenant: TENANT_ARG,
+  collection: COLLECTION_ARG,
   index: {
     type: "string",
     required: true,
@@ -89,10 +77,7 @@ const REBUILD_INDEX_ARGS = {
     description: "Path to baerly.config.{js,mjs,json} — used to resolve the index's `on` field.",
     valueHint: "path",
   },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  json: JSON_ARG,
   verbose: {
     type: "boolean",
     description: "Emit a one-line summary to stdout in addition to the JSON envelope.",

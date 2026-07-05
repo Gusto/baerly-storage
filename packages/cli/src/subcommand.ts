@@ -43,6 +43,49 @@ import { loadAppConfig } from "./config.ts";
 import { emitError, setJsonMode } from "./output.ts";
 
 /**
+ * Shared citty arg fragments for the flags every operator command
+ * takes with identical wording. Each subcommand spreads the ones it
+ * needs into its own `... as const satisfies ArgsDef` literal, so the
+ * `--bucket` / `--app` / `--tenant` / `--collection` / `--json`
+ * descriptions can't drift copy-to-copy (they did: `--collection` had
+ * both "Collection name" and "Collection name." variants). Bespoke
+ * flags (`--config`, `--indexes`, `--provider`, `--verbose`, …) stay
+ * inline in the command that owns them.
+ */
+export const BUCKET_ARG = {
+  type: "string",
+  required: true,
+  description: "Bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
+  valueHint: "bucket-uri",
+} as const;
+
+export const APP_ARG = {
+  type: "string",
+  required: false,
+  description: "Application name segment (defaults to baerly.config.ts).",
+  valueHint: "app",
+} as const;
+
+export const TENANT_ARG = {
+  type: "string",
+  required: false,
+  description: "Tenant name segment (defaults to baerly.config.ts).",
+  valueHint: "tenant",
+} as const;
+
+export const COLLECTION_ARG = {
+  type: "string",
+  required: true,
+  description: "Collection name.",
+  valueHint: "name",
+} as const;
+
+export const JSON_ARG = {
+  type: "boolean",
+  description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
+} as const;
+
+/**
  * Optional stdin / stdout streams that a programmatic caller (today:
  * `runDump` / `runRestore` tests, and the export round-trip
  * integration test) can divert in place of `process.stdin` /

@@ -41,7 +41,7 @@ import { doctorCas } from "./doctor/cas.ts";
 import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare.ts";
 import { defaultRunner } from "./runner.ts";
 import { color, isJsonMode } from "./output.ts";
-import { defineBaerlySubcommand } from "./subcommand.ts";
+import { defineBaerlySubcommand, JSON_ARG } from "./subcommand.ts";
 
 const DOCTOR_ARGS = {
   target: {
@@ -61,10 +61,7 @@ const DOCTOR_ARGS = {
     description:
       "Remediate auto-fixable findings (R2 bucket creation; secret prompts stay manual).",
   },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  json: JSON_ARG,
 } as const satisfies ArgsDef;
 
 const SEVERITY_GLYPH: Record<string, string> = {
