@@ -110,6 +110,26 @@ const rawXmlVal = (el: XmlElement | undefined, name: string): string | undefined
 };
 
 /**
+ * Build a {@link ParsedS3Error} from the element that directly carries
+ * the `<Code>` / `<Message>` children — `<Error>` for S3, the inner
+ * `<Error>` for STS. Returns `undefined` when neither child is present
+ * so callers can fall back to the raw status. Shared by
+ * {@link parseS3Error} and {@link parseStsError}, which differ only in
+ * how they locate that element.
+ */
+const codeMessageFrom = (el: XmlElement): ParsedS3Error | undefined => {
+  const code = rawXmlVal(el, "Code");
+  const message = rawXmlVal(el, "Message");
+  if (code === undefined && message === undefined) {
+    return undefined;
+  }
+  return {
+    ...(code !== undefined && { Code: code }),
+    ...(message !== undefined && { Message: message }),
+  };
+};
+
+/**
  * Parse an S3 `<Error><Code>…</Code><Message>…</Message></Error>`
  * body. Returns `undefined` when the body is not a recognizable S3
  * error document (empty, HTML, a success payload, or a DTD), so
@@ -135,15 +155,7 @@ export const parseS3Error = (xml: string): ParsedS3Error | undefined => {
   if (localName(root.name) !== "Error") {
     return undefined;
   }
-  const code = rawXmlVal(root, "Code");
-  const message = rawXmlVal(root, "Message");
-  if (code === undefined && message === undefined) {
-    return undefined;
-  }
-  return {
-    ...(code !== undefined && { Code: code }),
-    ...(message !== undefined && { Message: message }),
-  };
+  return codeMessageFrom(root);
 };
 
 /**
@@ -175,15 +187,7 @@ export const parseStsError = (xml: string): ParsedS3Error | undefined => {
   if (errorEl === undefined) {
     return undefined;
   }
-  const code = rawXmlVal(errorEl, "Code");
-  const message = rawXmlVal(errorEl, "Message");
-  if (code === undefined && message === undefined) {
-    return undefined;
-  }
-  return {
-    ...(code !== undefined && { Code: code }),
-    ...(message !== undefined && { Message: message }),
-  };
+  return codeMessageFrom(errorEl);
 };
 
 /**
