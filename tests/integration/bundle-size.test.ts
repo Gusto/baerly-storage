@@ -320,7 +320,11 @@ const BUDGETS: readonly Budget[] = [
   //   NOTE (2026-07-01): adding the ./s3 rolldown input re-chunks shared modules
   //     and nudges the index.js gz closure up (measured 72639 vs 72704 budget,
   //     65 B of headroom) — still under the 71 KiB bound, left un-bumped.
-  { entry: "index.js", raw: 227 * 1024, gz: 71 * 1024, minGz: 20 * 1024 },
+  //   → 229 KiB raw / 72 KiB gz (2026-07-04): maintenance env-parse
+  //     consolidation moved `parseMaintenanceEnv` into the shared bundled
+  //     `maintenance` chunk (now in this closure), plus rolldown 1.1.0→1.1.3
+  //     pulled by `pnpm dedupe`. Measured 234242 raw / 73263 gz; min-gz under.
+  { entry: "index.js", raw: 229 * 1024, gz: 72 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -348,7 +352,9 @@ const BUDGETS: readonly Budget[] = [
   //     RESOLUTION constants to zero-import leaf auth-resolution.ts; constants chunk
   //     no longer in auth closure. Trimmed verbose JSDoc. Measured: 57120 raw /
   //     15182 gz / 9164 min-gz.
-  { entry: "auth.js", raw: 56 * 1024, gz: 15 * 1024, minGz: 9 * 1024 },
+  //   → 57 KiB raw (2026-07-04): rolldown 1.1.0→1.1.3 toolchain bump pulled
+  //     by `pnpm dedupe`. Measured 57403 raw; gz/min-gz under.
+  { entry: "auth.js", raw: 57 * 1024, gz: 15 * 1024, minGz: 9 * 1024 },
   // `BaerlyAppConfig` types + the identity `defineConfig` helper.
   // No runtime closure — the types erase entirely and the function
   // is `<C>(c: C) => c`. Measured: 162 raw / 141 gz. Budget is a
@@ -476,7 +482,11 @@ const BUDGETS: readonly Budget[] = [
   //     chunk) + hono 4.12.25→4.12.27. Deliberate upstream upgrades, not code
   //     creep; the min-gz bump is the honest cost of the newer logtape closure.
   //     Measured: 352012 raw / 104287 gz / 35958 min-gz.
-  { entry: "http.js", raw: 344 * 1024, gz: 102 * 1024, minGz: 36 * 1024 },
+  //   → 346 KiB raw / 103 KiB gz (2026-07-04): maintenance env-parse
+  //     consolidation into the shared `maintenance` chunk + rolldown
+  //     1.1.0→1.1.3 from `pnpm dedupe`. Measured 354182 raw / 104921 gz;
+  //     min-gz under.
+  { entry: "http.js", raw: 346 * 1024, gz: 103 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -614,7 +624,15 @@ const BUDGETS: readonly Budget[] = [
   //   → raw +2 KiB (2026-06-30): adding the ./s3 rolldown input re-chunks
   //     shared modules, nudging this closure over the prior 122 KiB budget.
   //     Measured: 125023 raw.
-  { entry: "maintenance.js", raw: 124 * 1024, gz: 38 * 1024, minGz: 11 * 1024 },
+  //   → 125 KiB raw / 39 KiB gz / 12 KiB min-gz (2026-07-04): the
+  //     consolidated cross-host `parseMaintenanceEnv` helper now lives in
+  //     this shared chunk (previously 3 copies across the host adapters).
+  //     The min-gz +34 is genuinely-new justified code, NOT creep — per the
+  //     POLICY above min-gz is the hard ceiling, and this is a real single-
+  //     source-of-truth win for the BAERLY_MAINTENANCE_* contract. Also
+  //     rolldown 1.1.0→1.1.3 from `pnpm dedupe`. Measured 127151 raw /
+  //     38915 gz / 11298 min-gz.
+  { entry: "maintenance.js", raw: 125 * 1024, gz: 39 * 1024, minGz: 12 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -774,7 +792,10 @@ const BUDGETS: readonly Budget[] = [
   //     guard's control flow, not its text). So the tripwire rebaselines rather
   //     than degrade the message. raw/gz remain comfortably under their 415/125
   //     KiB bounds (only min-gz crossed).
-  { entry: "cloudflare.js", raw: 415 * 1024, gz: 125 * 1024, minGz: 45 * 1024 },
+  //   → 417 KiB raw (2026-07-04): maintenance env-parse consolidation into
+  //     the shared `maintenance` chunk + rolldown 1.1.0→1.1.3 from `pnpm
+  //     dedupe`. Measured 426799 raw; gz/min-gz under.
+  { entry: "cloudflare.js", raw: 417 * 1024, gz: 125 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
