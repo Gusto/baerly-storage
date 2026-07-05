@@ -275,7 +275,7 @@ http://localhost:5173/<path>`) before declaring the task complete.
   (without the `doc` wrapper) returns
   `400 SchemaError "Request body must be { doc: object }"` — the
   wording is locked by `assertJsonBodyField` in the kernel. Canonical
-  reference: the `Routes` type and the JSDoc on `createRouter` in
+  reference: the JSDoc on `createRouter` in
   `baerly-storage`.
 
 - **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`:

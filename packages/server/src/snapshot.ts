@@ -22,7 +22,7 @@ import {
  * Single-level snapshot at L9; the level prefix is forward-compatible
  * with future L0..L9 rolling merges without a wire change.
  */
-export const SNAPSHOT_LEVEL = 9 as const;
+const SNAPSHOT_LEVEL = 9 as const;
 
 /**
  * `minSeq` and `maxSeq` are padded to {@link SEQ_DIGITS} digits so
@@ -30,7 +30,7 @@ export const SNAPSHOT_LEVEL = 9 as const;
  * parse the filename. 12 digits caps at ~10^12 entries per collection;
  * a real bucket hits S3's per-prefix QPS ceiling long before that.
  */
-export const SEQ_DIGITS = 12 as const;
+const SEQ_DIGITS = 12 as const;
 
 const MAX_SEQ = 10 ** SEQ_DIGITS - 1;
 

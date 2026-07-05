@@ -38,7 +38,7 @@ const BLOCK_END = "<!-- baerly:end -->";
  * Wrapped in `BLOCK_START` / `BLOCK_END` so a second run replaces
  * in place.
  */
-export const AGENT_RULES_BLOCK = `${BLOCK_START}
+const AGENT_RULES_BLOCK = `${BLOCK_START}
 ## @gusto/baerly-storage
 
 This repo uses @gusto/baerly-storage. Before writing or modifying storage code:
@@ -69,7 +69,7 @@ Anti-patterns that compile but are wrong:
 ${BLOCK_END}
 `;
 
-export type AgentRulesAction = "created" | "appended" | "replaced";
+type AgentRulesAction = "created" | "appended" | "replaced";
 
 export interface AgentRulesResult {
   /** Absolute path of the file written. */
@@ -81,7 +81,7 @@ export interface AgentRulesResult {
  * Target-file resolution. Exported for tests; callers should use
  * `writeAgentRulesBlock` directly.
  */
-export interface AgentRulesTarget {
+interface AgentRulesTarget {
   /** Absolute path. */
   readonly path: string;
   /**
@@ -111,7 +111,7 @@ const dirExists = async (path: string): Promise<boolean> => {
   }
 };
 
-export const detectAgentRulesTarget = async (outDir: string): Promise<AgentRulesTarget> => {
+const detectAgentRulesTarget = async (outDir: string): Promise<AgentRulesTarget> => {
   if (await dirExists(resolve(outDir, ".claude", "rules"))) {
     return { path: resolve(outDir, ".claude", "rules", "baerly.md"), mode: "dedicated" };
   }

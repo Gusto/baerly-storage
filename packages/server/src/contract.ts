@@ -73,7 +73,7 @@ export const errorEnvelope = (
  *   pointer (cold path); `false` iff it served from the cached view
  *   (cached pointer was unchanged).
  */
-export interface HttpOkMeta {
+interface HttpOkMeta {
   readonly manifest_pointer: string;
   readonly fresh: boolean;
 }
@@ -95,26 +95,6 @@ export interface SinceResponse {
   readonly events: ReadonlyArray<LogEntry>;
   readonly next_cursor: string;
 }
-
-/**
- * URL contract. Path segments are typed as template literals so
- * the router gets compile-time route-table checks. The
- * `tenant` derives from the `Verifier`'s output, not the URL —
- * URLs carry `app` / `table` / `id` only.
- */
-export type Routes =
-  /** Read one document. → `HttpOkEnvelope<DocumentData>` | 404. */
-  | { method: "GET"; path: `/v1/c/${string}/${string}` }
-  /** List rows matching a predicate (in query string). */
-  | { method: "GET"; path: `/v1/c/${string}` }
-  /** Insert. Body: `{ doc: DocumentData }`. */
-  | { method: "POST"; path: `/v1/c/${string}` }
-  /** JSON-merge-patch. Body: `{ patch: DocumentData }`. Response: `{ modified: number }`. */
-  | { method: "PATCH"; path: `/v1/c/${string}/${string}` }
-  /** Delete row by id. */
-  | { method: "DELETE"; path: `/v1/c/${string}/${string}` }
-  /** Long-poll log. Query: `?cursor=<opaque>`. Response: `SinceResponse`. */
-  | { method: "GET"; path: `/v1/since` };
 
 /**
  * Status-code policy. Listed here so the client SDK and the

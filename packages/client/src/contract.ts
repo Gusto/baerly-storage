@@ -19,7 +19,7 @@ import type { BaerlyErrorCode, LogEntry } from "@baerly/protocol";
  *   pointer on the server (cold path); `false` iff it served from the
  *   cached view.
  */
-export interface HttpOkMeta {
+interface HttpOkMeta {
   readonly manifest_pointer: string;
   readonly fresh: boolean;
 }

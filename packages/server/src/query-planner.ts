@@ -81,7 +81,7 @@ export interface IndexWalkPlan {
  * field is diagnostic only — it is NOT part of the public API and
  * is consumed by the planner's tests / future observability.
  */
-export interface FullScanPlan {
+interface FullScanPlan {
   readonly kind: "full-scan";
   /** Diagnostic — not part of the public API. */
   readonly reason:

@@ -23,12 +23,12 @@
  * extension parsing.
  */
 
-export interface ManifestRename {
+interface ManifestRename {
   readonly from: string;
   readonly fromKey: string;
 }
 
-export interface ManifestCopy {
+interface ManifestCopy {
   readonly from: string;
   readonly to: string;
 }
