@@ -32,6 +32,8 @@ const otpArg = args.find((a) => a.startsWith("--otp="));
 const otpFlag = otpArg ? ` --otp=${otpArg.split("=")[1]}` : "";
 
 const run = (cmd) => execSync(cmd, { stdio: "inherit" });
+const runWithEnv = (cmd, env) =>
+  execSync(cmd, { stdio: "inherit", env: { ...process.env, ...env } });
 
 // `npm access get status <pkg>` prints e.g. "@gusto/x: public".
 function statusOf(name) {
@@ -59,6 +61,23 @@ const problems = [];
 
 console.log("\n▶ Building…");
 run("pnpm run build");
+
+// Pre-publish gate: fail closed before any bytes hit npm. Runs in
+// --dry-run too. Reuses the build above via BAERLY_SKIP_BUILD so the
+// two pack-based validators don't rebuild dist/ twice more.
+//   - check:exports  — attw: every entry point resolves for consumers
+//   - check:publint  — publint: both published manifests are well-formed
+console.log("\n▶ Validating published packages…");
+try {
+  runWithEnv("pnpm run check:exports", { BAERLY_SKIP_BUILD: "1" });
+  runWithEnv("pnpm run check:publint", { BAERLY_SKIP_BUILD: "1" });
+} catch {
+  console.error(
+    "\n✗ RELEASE ABORTED — pre-publish validation failed; nothing published. " +
+      "Fix the findings above and re-run.",
+  );
+  process.exit(1);
+}
 
 for (const pkg of PACKAGES) {
   const where = pkg.filter ? `--filter ${pkg.filter} ` : "";

@@ -11,6 +11,10 @@
 // `--profile esm-only` ignores the expected node10 / CJS-require cases:
 // this is a deliberately ESM-only package (no CJS build), so a CJS
 // `require()` resolving to ESM is correct, not a defect.
+//
+// Run standalone as `pnpm check:exports`; also run as a pre-publish gate
+// by scripts/publish.mjs. Not wired into verify. Set BAERLY_SKIP_BUILD=1
+// to reuse an existing dist/ (publish.mjs builds once, then sets it).
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +28,9 @@ function run(cmd, args, extraOpts = {}) {
   return result;
 }
 
-run("pnpm", ["run", "build"]);
+if (!process.env.BAERLY_SKIP_BUILD) {
+  run("pnpm", ["run", "build"]);
+}
 
 const outDir = mkdtempSync(join(tmpdir(), "baerly-attw-"));
 run("pnpm", ["pack", "--pack-destination", outDir]);
