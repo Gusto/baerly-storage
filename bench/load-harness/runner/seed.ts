@@ -13,11 +13,11 @@
  * runner only captures per-phase metrics.
  */
 
-import type { Storage } from "@baerly/protocol";
-import { Db, type BaerlyConfig } from "@baerly/server";
+import type { BaerlyConfig } from "@baerly/server";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 import type { Dataset } from "../generators/dataset.ts";
+import { makeDbFactory } from "./db-factory.ts";
 
 export interface SeedOpts {
   readonly storage: CountingStorage;
@@ -46,24 +46,8 @@ export async function runSeed(opts: SeedOpts): Promise<SeedResult> {
   const t0 = performance.now();
   let inserted = 0;
 
-  // One `Db` per (app, tenant) — same lifecycle as production. The
-  // map is small (≤ N tenants per preset) and constructing a `Db` is
-  // cheap (no I/O).
-  const dbs = new Map<string, Db>();
-  const dbFor = (tenantId: string): Db => {
-    let db = dbs.get(tenantId);
-    if (db === undefined) {
-      const tenant = tenantId.length === 0 ? opts.defaultTenant : tenantId;
-      db = Db.create({
-        storage: opts.storage as unknown as Storage,
-        app: opts.app,
-        tenant,
-        ...(opts.config !== undefined && { config: opts.config }),
-      });
-      dbs.set(tenantId, db);
-    }
-    return db;
-  };
+  // One `Db` per (app, tenant) — same lifecycle as production.
+  const dbFor = makeDbFactory(opts);
 
   for (const tenant of opts.dataset.tenants) {
     const db = dbFor(tenant.tenantId);

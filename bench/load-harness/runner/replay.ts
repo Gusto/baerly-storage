@@ -7,11 +7,11 @@
  * runner only captures per-phase metrics.
  */
 
-import type { Storage } from "@baerly/protocol";
 import { Db, type BaerlyConfig } from "@baerly/server";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 import type { Op } from "../generators/ops.ts";
+import { makeDbFactory } from "./db-factory.ts";
 
 export type ReplayPhase = "ingest" | "query-pre" | "query-post" | "mixed";
 
@@ -48,21 +48,7 @@ export async function runReplay(opts: ReplayOpts): Promise<ReplayResult> {
   let processed = 0;
   const perKindCounts: Record<string, number> = {};
 
-  const dbs = new Map<string, Db>();
-  const dbFor = (tenantId: string): Db => {
-    let db = dbs.get(tenantId);
-    if (db === undefined) {
-      const tenant = tenantId.length === 0 ? opts.defaultTenant : tenantId;
-      db = Db.create({
-        storage: opts.storage as unknown as Storage,
-        app: opts.app,
-        tenant,
-        ...(opts.config !== undefined && { config: opts.config }),
-      });
-      dbs.set(tenantId, db);
-    }
-    return db;
-  };
+  const dbFor = makeDbFactory(opts);
 
   for (const op of opts.ops) {
     const db = dbFor(op.tenantId);
