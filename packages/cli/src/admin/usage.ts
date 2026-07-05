@@ -49,7 +49,7 @@ import { BaerlyError, decodeJsonBytes, type LogEntry, type Storage } from "@baer
 import { parseBucketUri } from "../bucket-uri.ts";
 import { loadAppConfig } from "../config.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
-import { defineBaerlySubcommand } from "../subcommand.ts";
+import { APP_ARG, defineBaerlySubcommand, JSON_ARG, TENANT_ARG } from "../subcommand.ts";
 
 /**
  * Verdict-shaped finding the scan emits. Mirrors the
@@ -437,22 +437,9 @@ const USAGE_ARGS = {
     description: 'Override `baerly.config.ts:target`. One of "cloudflare" | "node".',
     valueHint: "target",
   },
-  app: {
-    type: "string",
-    required: false,
-    description: "Application name segment (defaults to baerly.config.ts).",
-    valueHint: "app",
-  },
-  tenant: {
-    type: "string",
-    required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts).",
-    valueHint: "tenant",
-  },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  app: APP_ARG,
+  tenant: TENANT_ARG,
+  json: JSON_ARG,
 } as const satisfies ArgsDef;
 
 const SEVERITY_GLYPH: Record<UsageFinding["severity"], string> = {

@@ -56,33 +56,21 @@ import {
 } from "./export/index.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess } from "./output.ts";
-import { assertCollectionArg, defineBaerlySubcommand } from "./subcommand.ts";
+import {
+  APP_ARG,
+  assertCollectionArg,
+  BUCKET_ARG,
+  COLLECTION_ARG,
+  defineBaerlySubcommand,
+  JSON_ARG,
+  TENANT_ARG,
+} from "./subcommand.ts";
 
 const EXPORT_ARGS = {
-  bucket: {
-    type: "string",
-    required: true,
-    description: "Bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
-    valueHint: "bucket-uri",
-  },
-  app: {
-    type: "string",
-    required: false,
-    description: "Application name segment (defaults to baerly.config.ts).",
-    valueHint: "app",
-  },
-  tenant: {
-    type: "string",
-    required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts).",
-    valueHint: "tenant",
-  },
-  collection: {
-    type: "string",
-    required: true,
-    description: "Collection name.",
-    valueHint: "name",
-  },
+  bucket: BUCKET_ARG,
+  app: APP_ARG,
+  tenant: TENANT_ARG,
+  collection: COLLECTION_ARG,
   target: {
     type: "enum",
     options: ["postgres", "sqlite", "d1"],
@@ -112,10 +100,7 @@ const EXPORT_ARGS = {
     default: true,
     description: "Emit a <output>.plan.json sidecar (default true; pass --no-sidecar to skip).",
   },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  json: JSON_ARG,
 } as const satisfies ArgsDef;
 
 const parseWherePredicate = (raw: string): PredicateWire => {

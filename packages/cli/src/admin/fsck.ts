@@ -57,33 +57,21 @@ import { loadSnapshotAsMap } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
-import { assertCollectionArg, defineBaerlySubcommand } from "../subcommand.ts";
+import {
+  APP_ARG,
+  assertCollectionArg,
+  BUCKET_ARG,
+  COLLECTION_ARG,
+  defineBaerlySubcommand,
+  JSON_ARG,
+  TENANT_ARG,
+} from "../subcommand.ts";
 
 const FSCK_ARGS = {
-  bucket: {
-    type: "string",
-    required: true,
-    description: "Bucket URI (s3://<bucket>[/<prefix>], file:///<abs>, memory://<bucket>)",
-    valueHint: "bucket-uri",
-  },
-  app: {
-    type: "string",
-    required: false,
-    description: "Application name segment (defaults to baerly.config.ts).",
-    valueHint: "app",
-  },
-  tenant: {
-    type: "string",
-    required: false,
-    description: "Tenant name segment (defaults to baerly.config.ts).",
-    valueHint: "tenant",
-  },
-  collection: {
-    type: "string",
-    required: true,
-    description: "Collection name.",
-    valueHint: "name",
-  },
+  bucket: BUCKET_ARG,
+  app: APP_ARG,
+  tenant: TENANT_ARG,
+  collection: COLLECTION_ARG,
   config: {
     type: "string",
     required: false,
@@ -101,10 +89,7 @@ const FSCK_ARGS = {
     description:
       "With --indexes, rebuild drifted indexes (PUT missing keys, DELETE orphans). Rejected without --indexes.",
   },
-  json: {
-    type: "boolean",
-    description: "Emit a structured JSON envelope to stdout (success) or stderr (error)",
-  },
+  json: JSON_ARG,
 } as const satisfies ArgsDef;
 
 type Severity = "ok" | "info" | "warning" | "finding";
