@@ -67,7 +67,7 @@ export const readLogEntry = async (
  *
  * Same error semantics as {@link readLogEntry}.
  */
-export const readLogEntryWithBytes = async (
+const readLogEntryWithBytes = async (
   storage: Storage,
   key: string,
   opts?: { signal?: AbortSignal },

@@ -102,7 +102,7 @@ export interface SubcommandStreams {
  * resolution. Kept narrow so the handler signature stays load-bearing
  * (the helper isn't a god object).
  */
-export interface SubcommandContext {
+interface SubcommandContext {
   /**
    * Returns `{ app, tenant }` resolved from explicit flags or
    * `baerly.config.{ts,js,mjs,json}` in the cwd.

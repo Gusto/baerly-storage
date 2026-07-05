@@ -14,7 +14,7 @@ import { noAuthVerifier } from "./none-verifier.ts";
  * (`process.env`). Returns `undefined` for an unset OR empty string —
  * both branches mean "operator forgot to set it".
  */
-export type EnvAccessor = (name: string) => string | undefined;
+type EnvAccessor = (name: string) => string | undefined;
 
 /**
  * Inputs to {@link resolveVerifier}. `factoryVerifier` is the

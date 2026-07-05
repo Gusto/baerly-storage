@@ -1,7 +1,6 @@
-export type { ColumnPlan, ExportPlan, ExportRow, SqlTarget, SqlType } from "./types.ts";
+export type { ExportPlan, ExportRow, SqlTarget } from "./types.ts";
 export { inferPlanForCollection, loadMaterialisedView } from "./plan.ts";
 export { emitCreateTable } from "./ddl.ts";
 export { emitInsertStatements } from "./rows.ts";
-export { quoteIdentifier, quoteValue } from "./sql-escape.ts";
-export { translatePredicateWireToSql, type WhereTranslation } from "./where.ts";
+export { translatePredicateWireToSql } from "./where.ts";
 export { serializeExportPlan, deserializeExportPlan } from "./plan-sidecar.ts";

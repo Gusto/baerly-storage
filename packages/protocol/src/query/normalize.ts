@@ -16,7 +16,6 @@
 
 import { BaerlyError } from "../errors.ts";
 import type { DocumentData } from "../json.ts";
-import type { Predicate } from "../collection-api.ts";
 
 import { type PredicateArg, type PredicateBuilder, wireFromBuilder } from "./builder.ts";
 import type { PredicateClause, PredicateWire } from "./wire.ts";
@@ -119,11 +118,3 @@ export const normalizePredicateArg = <T extends DocumentData>(
   }
   return { clauses: normalizeObject(arg as DocumentData, []) };
 };
-
-/**
- * Re-export the public `Predicate<T>` so callers downstream of this
- * module don't need a separate import. Mirrors the old
- * `./_internals.ts:PredicateOp` re-export the kernel used to lean
- * on.
- */
-export type { Predicate };

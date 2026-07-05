@@ -194,7 +194,7 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
   }
 };
 
-export const handleCreateBaerly = async (
+const handleCreateBaerly = async (
   args: ParsedArgs<typeof CREATE_BAERLY_ARGS>,
   opts: { readonly installer?: Installer; readonly gitRunner?: GitRunner } = {},
 ): Promise<number> => {

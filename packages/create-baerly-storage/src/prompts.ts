@@ -88,7 +88,7 @@ export interface ScaffoldWizardOutput {
   readonly git: boolean;
 }
 
-export interface BoltOnWizardOutput {
+interface BoltOnWizardOutput {
   readonly mode: "bolt-on";
   readonly projectName: string;
   readonly tenant: string;
