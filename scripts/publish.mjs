@@ -59,21 +59,15 @@ function statusOf(name) {
 
 const problems = [];
 
-console.log("\n▶ Building…");
-run("pnpm run build");
-
-// Pre-publish gate: fail closed before any bytes hit npm. Runs in
-// --dry-run too. Reuses the build above via BAERLY_SKIP_BUILD so the
-// two pack-based validators don't rebuild dist/ twice more.
-//   - check:exports  — attw: every entry point resolves for consumers
-//   - check:publint  — publint: both published manifests are well-formed
-console.log("\n▶ Validating published packages…");
+// Build once and run the packaging-contract gate (attw + publint on the
+// packed tarball) before any bytes hit npm. verify:package builds via
+// build-if-needed (BAERLY_SKIP_BUILD is unset here, so it builds).
+console.log("\n▶ Building & validating published packages…");
 try {
-  runWithEnv("pnpm run check:exports", { BAERLY_SKIP_BUILD: "1" });
-  runWithEnv("pnpm run check:publint", { BAERLY_SKIP_BUILD: "1" });
+  run("pnpm run verify:package");
 } catch {
   console.error(
-    "\n✗ RELEASE ABORTED — pre-publish validation failed; nothing published. " +
+    "\n✗ RELEASE ABORTED — build or pre-publish validation failed; nothing published. " +
       "Fix the findings above and re-run.",
   );
   process.exit(1);
@@ -86,7 +80,11 @@ for (const pkg of PACKAGES) {
     `${dryRun ? " --dry-run" : ""}${otpFlag}`;
   console.log(`\n▶ ${dryRun ? "Dry-run publish" : "Publishing"} ${pkg.name}…`);
   try {
-    run(cmd);
+    // Pass BAERLY_SKIP_BUILD so a future prepack/prepublishOnly hook doesn't
+    // rebuild the dist/ that verify:package just produced. Today, pnpm publish
+    // triggers the `prepare` hook which still rebuilds unconditionally (that
+    // deduplication is deferred).
+    runWithEnv(cmd, { BAERLY_SKIP_BUILD: "1" });
   } catch {
     console.warn(`  ⚠ publish exited non-zero for ${pkg.name}`);
     problems.push(`${pkg.name}: publish step failed — see output above`);
