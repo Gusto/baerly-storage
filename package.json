@@ -1,6 +1,6 @@
 {
   "name": "@gusto/baerly-storage",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "Document database for S3 and Cloudflare R2 that runs in your request handler — tiny, LLM-friendly TypeScript API, no database server",
   "keywords": [
     "append-only-log",
@@ -165,7 +165,7 @@
     "baerly": "node dist/baerly.js",
     "release": "node scripts/publish.mjs",
     "changeset": "changeset",
-    "changeset:version": "changeset version && rm -f packages/create-baerly-storage/CHANGELOG.md",
+    "changeset:version": "changeset version && node scripts/gen-spec.ts && rm -f packages/create-baerly-storage/CHANGELOG.md",
     "prepare": "node scripts/prepare.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",

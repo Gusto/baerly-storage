@@ -1,7 +1,7 @@
 {
   "$schema": "https://baerly.dev/spec/ir-schema.json",
   "specVersion": "1",
-  "kernelVersion": "0.3.0",
+  "kernelVersion": "0.4.1",
   "errorCodes": [
     {
       "code": "InvalidConfig",
