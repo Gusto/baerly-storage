@@ -453,7 +453,7 @@ async function main(): Promise<void> {
     // alone does NOT create it (same pattern as the integration tests).
     for (const tenant of dataset.tenants) {
       const key = `app/${app}/tenant/${tenant.tenantId}/manifests/${collection}/current.json`;
-      await createCurrentJson(counting as unknown as Storage, key, {
+      await createCurrentJson(counting, key, {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
         tail_hint: 0,

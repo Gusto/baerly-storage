@@ -15,7 +15,6 @@
  * runner only captures per-phase metrics.
  */
 
-import type { Storage } from "@baerly/protocol";
 import {
   runScheduledMaintenance,
   CLOUDFLARE_FREE_TIER,
@@ -53,7 +52,7 @@ export async function runCompact(opts: CompactOpts): Promise<CompactResult> {
 
   for (const key of opts.currentJsonKeys) {
     const res = await runScheduledMaintenance(
-      { storage: opts.storage as unknown as Storage, currentJsonKey: key },
+      { storage: opts.storage, currentJsonKey: key },
       PROFILES[opts.profile],
     );
     perTableEntriesFolded[key] = res.compact.entriesFolded;
