@@ -1273,10 +1273,13 @@ describe("bundle size", () => {
   const distDir = resolve(pkgRoot, "dist");
   const rootPkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) as {
     bin?: Record<string, string>;
-    exports?: Record<string, { import?: string }>;
+    publishConfig?: { exports?: Record<string, { import?: string }> };
   };
   const entries: string[] = [];
-  for (const cond of Object.values(rootPkg.exports ?? {})) {
+  // Walk the PUBLISHED exports (dist/*.js), not the dev exports
+  // (packages/*/src/*.ts): the dev targets end in `.ts`, so filtering for
+  // `.js` there matched nothing and this guard silently checked only `bin`.
+  for (const cond of Object.values(rootPkg.publishConfig?.exports ?? {})) {
     if (cond.import?.endsWith(".js")) {
       entries.push(resolve(pkgRoot, cond.import));
     }
@@ -1284,6 +1287,12 @@ describe("bundle size", () => {
   for (const binPath of Object.values(rootPkg.bin ?? {})) {
     entries.push(resolve(pkgRoot, binPath));
   }
+  test("entry enumeration is non-empty (guards against a dead no-live-import walk)", () => {
+    // 13 published exports + 1 bin. If this collapses to ~1 the exports
+    // enumeration has silently broken again — fail loud instead of
+    // generating zero closure tests below.
+    expect(entries.length).toBeGreaterThan(10);
+  });
   for (const entryAbs of entries) {
     const label = entryAbs.replace(`${pkgRoot}/`, "");
     test(`${label} closure has no live import of bundled optional peers`, () => {
