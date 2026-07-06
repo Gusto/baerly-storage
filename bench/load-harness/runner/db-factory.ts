@@ -7,7 +7,6 @@
  * runners, so the factory lives here and each runner calls it.
  */
 
-import type { Storage } from "@baerly/protocol";
 import { Db, type BaerlyConfig } from "@baerly/server";
 import type { CountingStorage } from "../../storage.ts";
 
@@ -36,7 +35,7 @@ export function makeDbFactory(opts: DbFactoryOpts): (tenantId: string) => Db {
     if (db === undefined) {
       const tenant = tenantId.length === 0 ? opts.defaultTenant : tenantId;
       db = Db.create({
-        storage: opts.storage as unknown as Storage,
+        storage: opts.storage,
         app: opts.app,
         tenant,
         ...(opts.config !== undefined && { config: opts.config }),
