@@ -59,9 +59,10 @@ function statusOf(name) {
 
 const problems = [];
 
-// Build once and run the packaging-contract gate (attw + publint on the
-// packed tarball) before any bytes hit npm. verify:package builds via
+// Build once and run the packaging-contract gate (publint on the packed
+// tarball) before any bytes hit npm. verify:package builds via
 // build-if-needed (BAERLY_SKIP_BUILD is unset here, so it builds).
+// (attw joins this gate once @arethetypeswrong/cli clears security review.)
 console.log("\n▶ Building & validating published packages…");
 try {
   run("pnpm run verify:package");

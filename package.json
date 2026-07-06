@@ -185,9 +185,8 @@
     "gen:spec": "node scripts/gen-spec.ts",
     "gen:version-matrix": "node scripts/check-version-matrix.ts --write",
     "bundle-sizes": "node scripts/bundle-sizes.mjs",
-    "check:exports": "node scripts/check-exports.mjs",
     "check:publint": "node scripts/check-publint.mjs",
-    "verify:package": "node scripts/build-if-needed.mjs && BAERLY_SKIP_BUILD=1 pnpm run check:exports && BAERLY_SKIP_BUILD=1 pnpm run check:publint",
+    "verify:package": "node scripts/build-if-needed.mjs && BAERLY_SKIP_BUILD=1 pnpm run check:publint",
     "verify:rest": "pnpm run verify:examples && pnpm run format:check && node scripts/add-ts-extensions.mjs --check && node scripts/lint-use-query.mjs && node scripts/lint-package-layers.mjs && node scripts/lint-format-coverage.mjs && node scripts/check-spec-drift.ts && node scripts/check-version-matrix.ts",
     "verify:code": "pnpm run typecheck && pnpm run lint && pnpm run verify:rest",
     "verify": "pnpm run verify:code && pnpm run verify:docs",
@@ -219,7 +218,6 @@
     "@logtape/logtape": "2.2.2"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.4",
     "@baerly/adapter-cloudflare": "workspace:*",
     "@baerly/adapter-node": "workspace:*",
     "@baerly/client": "workspace:*",
