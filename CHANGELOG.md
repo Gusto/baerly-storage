@@ -1,5 +1,11 @@
 # @gusto/baerly-storage
 
+## 0.4.1
+
+### Patch Changes
+
+- Stamp the correct kernelVersion into the served /v1/spec. 0.4.0 shipped kernelVersion "0.3.0" because changeset:version did not regenerate baerly.spec.json; gen:spec now runs on every bump.
+
 ## 0.4.0
 
 ### Minor Changes
