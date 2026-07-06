@@ -593,7 +593,7 @@ export interface MaintenanceDispatch {
  */
 export const parseMaintenanceEnv = (
   readEnv: (key: string) => string | undefined,
-): { maxFoldBytes?: number; disabled?: boolean } => {
+): { maxFoldBytes?: number; disabled: boolean } => {
   const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
   const parsedFoldBytes =
     rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
