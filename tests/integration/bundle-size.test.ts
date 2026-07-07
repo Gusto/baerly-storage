@@ -486,12 +486,15 @@ const BUDGETS: readonly Budget[] = [
   //     consolidation into the shared `maintenance` chunk + rolldown
   //     1.1.0→1.1.3 from `pnpm dedupe`. Measured 354182 raw / 104921 gz;
   //     min-gz under.
-  //   → 348 KiB raw (2026-07-06): host-config coexistence — configureObservability
-  //     now checks getConfig() and skips (with a meta notice) rather than reset a
-  //     host app's LogTape config; flows through the observability chunk. Measured
-  //     355598 raw; gz (104xxx) + min-gz (−640) still under. Per the POLICY, raw is
-  //     a creep tripwire → rebaseline rather than golf the guard.
-  { entry: "http.js", raw: 348 * 1024, gz: 103 * 1024, minGz: 36 * 1024 },
+  //   → 348 KiB raw / 104 KiB gz (2026-07-06): host-config coexistence —
+  //     configureObservability now checks getConfig() and skips (with a meta
+  //     notice) rather than reset a host app's LogTape config, and the
+  //     ownership marker is namespaced to "@gusto/baerly-storage" (un-guessable
+  //     so a host can't trip the destructive reset). Flows through the
+  //     observability chunk; the namespaced literal + guard JSDoc nudge gz over.
+  //     Measured 355931 raw / 105574 gz; min-gz (−659) under. Per the POLICY,
+  //     raw/gz are creep tripwires → rebaseline rather than golf the guard.
+  { entry: "http.js", raw: 348 * 1024, gz: 104 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -542,10 +545,12 @@ const BUDGETS: readonly Budget[] = [
   //     wrapper over logtape, so the newer logtape closure lands here most
   //     visibly. Deliberate upstream upgrade, not code creep.
   //     Measured: 98776 raw / 27034 gz / 12477 min-gz.
-  //   → raw +1 KiB (2026-07-06): host-config coexistence — the getConfig()
-  //     ownership check + skip-and-warn path in configureObservability. Measured
-  //     100235 raw; gz (27xxx) + min-gz (−683) under. Rebaseline the raw tripwire.
-  { entry: "observability.js", raw: 98 * 1024, gz: 27 * 1024, minGz: 13 * 1024 },
+  //   → raw +2 KiB / gz +1 KiB (2026-07-06): host-config coexistence — the
+  //     getConfig() ownership check + skip-and-warn path in configureObservability,
+  //     plus the namespaced "@gusto/baerly-storage" marker literal and its guard
+  //     JSDoc (comments ship un-stripped). Measured 100568 raw / 27690 gz; min-gz
+  //     (−701) under. Rebaseline the raw/gz creep tripwires per the POLICY.
+  { entry: "observability.js", raw: 99 * 1024, gz: 28 * 1024, minGz: 13 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (storage decorator + logger config + canonical
