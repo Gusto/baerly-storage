@@ -256,3 +256,9 @@ global; a leaked sink in test A poisons test B with stale records.
 - ❌ Don't read `process.env` directly for level / sample rate.
   Pass through the typed `ObservabilityConfig` option so the
   envvar fallback lives in one place (the logger config).
+- ❌ Don't make `configureObservability` unconditionally
+  `reset`-configure. baerly is a library; an embedding app may own
+  LogTape. `configureObservability` checks `getConfig()` and skips
+  (with one meta-logger notice) when a non-baerly config is already
+  installed, and the adapters honor `observability: false` to opt out
+  entirely. Preserve both when touching the boot path.

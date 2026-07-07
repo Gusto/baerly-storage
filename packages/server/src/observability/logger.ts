@@ -28,16 +28,19 @@
  * the rest of the project's vocabulary; we translate at the
  * configure boundary.
  *
- * ## Idempotency
+ * ## Idempotency & host-config coexistence
  *
- * `configureObservability` is safe to call multiple times. LogTape's
- * own `configure` will reject re-configuration without `reset: true`;
- * we always pass `reset: true` so the last call wins and operators
- * can hot-swap config in dev without restarting.
+ * Safe to call repeatedly: over baerly's own config (or none) we
+ * reconfigure with `reset: true` so the last call wins. But baerly is
+ * a library — an embedding app may own LogTape. To avoid clobbering a
+ * host config, we skip (with one meta-logger notice) when {@link
+ * getConfig} shows a config we didn't install. Embedders opt out fully
+ * via the adapter's `observability: false`.
  */
 
 import {
   configure,
+  getConfig,
   getLogger as logtapeGetLogger,
   type Logger,
   type LogLevel,
@@ -94,28 +97,58 @@ export interface ObservabilityConfig {
 }
 
 /**
+ * Sink id baerly registers under. Doubles as our config-ownership
+ * marker: a LogTape config carrying a sink under this key is one we
+ * installed, so re-running {@link configureObservability} may safely
+ * reset it. A config *without* this key belongs to the host app and
+ * we must not clobber it.
+ */
+const BAERLY_SINK_ID = "baerly";
+
+/**
  * Wire LogTape's global config.
  *
- * Idempotent — call as many times as you like. The adapter boot
- * path calls it once at init; tests call it once per
- * `beforeEach`.
+ * Idempotent over baerly's own config — call as many times as you
+ * like and the last call wins. The adapter boot path calls it once at
+ * init; tests call it once per `beforeEach`. When LogTape is already
+ * configured by the host application (see the module doc), this is a
+ * no-op apart from a one-line meta-logger notice.
  */
 export const configureObservability = async (config: ObservabilityConfig = {}): Promise<void> => {
+  const existing = getConfig();
+  if (existing !== null && !isBaerlyOwnedConfig(existing)) {
+    // Host app already configured LogTape — libraries must not reset
+    // another app's config. Leave it; baerly's categories fall through
+    // to the host's routing.
+    logtapeGetLogger(["logtape", "meta"]).warn(
+      "LogTape already configured by the host; baerly left it intact. Add a " +
+        '["baerly"] logger to route baerly logs, or pass observability:false.',
+    );
+    return;
+  }
+
   const level = resolveLevel(config.level);
   const sink = resolveSink(config.sink);
 
   await configure({
     reset: true,
-    sinks: { primary: sink },
+    sinks: { [BAERLY_SINK_ID]: sink },
     loggers: [
       // Bind every `baerly.*` category to our sink at the chosen level.
-      { category: "baerly", sinks: ["primary"], lowestLevel: level },
+      { category: "baerly", sinks: [BAERLY_SINK_ID], lowestLevel: level },
       // LogTape itself logs to a meta category; route it to the same
       // sink at `error` so we see config issues without spamming.
-      { category: ["logtape", "meta"], sinks: ["primary"], lowestLevel: "error" },
+      { category: ["logtape", "meta"], sinks: [BAERLY_SINK_ID], lowestLevel: "error" },
     ],
   });
 };
+
+/**
+ * Is this LogTape config one baerly installed? Detected by the marker
+ * sink id — see {@link BAERLY_SINK_ID}.
+ */
+const isBaerlyOwnedConfig = (cfg: ReturnType<typeof getConfig> & object): boolean =>
+  Object.prototype.hasOwnProperty.call(cfg.sinks, BAERLY_SINK_ID);
 
 /**
  * Thin re-export. Identical shape to `@logtape/logtape`'s `getLogger`.
