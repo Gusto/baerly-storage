@@ -246,8 +246,9 @@ export interface BaerlyWorkerOptions {
    * Worker calls {@link configureObservability} lazily on first
    * `fetch` / `scheduled` invocation (CF Worker modules can't
    * `await` at the top level). `configureObservability` is
-   * idempotent — passing `{ reset: true }` to LogTape — so
-   * re-invocation is harmless.
+   * idempotent over baerly's own config — it re-runs with
+   * `{ reset: true }`, last call wins — and skips over a host config
+   * it detects, so re-invocation is harmless.
    *
    * - `level` falls through to `env.LOG_LEVEL` (when typed option
    *   is undefined).

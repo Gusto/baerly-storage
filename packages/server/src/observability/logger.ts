@@ -102,8 +102,14 @@ export interface ObservabilityConfig {
  * installed, so re-running {@link configureObservability} may safely
  * reset it. A config *without* this key belongs to the host app and
  * we must not clobber it.
+ *
+ * Deliberately namespaced rather than a bare `"baerly"`: this key
+ * gates a destructive `reset`, so a host must never be able to trip it
+ * by coincidentally naming one of its own sinks the same thing. The id
+ * is internal (never surfaced on the wire) and depends only on
+ * LogTape's documented `Config.sinks` shape.
  */
-const BAERLY_SINK_ID = "baerly";
+const BAERLY_SINK_ID = "@gusto/baerly-storage";
 
 /**
  * Wire LogTape's global config.
