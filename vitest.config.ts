@@ -205,14 +205,7 @@ export default defineConfig({
             // real test suites and would fail to even import.
             "tests/fixtures/check-acceptance/**/*.test.ts",
           ],
-          setupFiles: [
-            "tests/setup/fast-check.ts",
-            // Silence the upstream LogTape `MaxListenersExceededWarning`
-            // exit-listener leak across the many `configureObservability`
-            // calls the suite makes in one forked worker. See the file
-            // header for the full root-cause writeup.
-            "tests/setup/logtape-exit-listener-leak.ts",
-          ],
+          setupFiles: ["tests/setup/fast-check.ts"],
           testTimeout: vitestTestTimeoutMs,
           hookTimeout: vitestTestTimeoutMs,
           // Process isolation. Vitest 4's default `pool: 'threads'` with

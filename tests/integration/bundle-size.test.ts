@@ -494,7 +494,12 @@ const BUDGETS: readonly Budget[] = [
   //     observability chunk; the namespaced literal + guard JSDoc nudge gz over.
   //     Measured 355931 raw / 105574 gz; min-gz (−659) under. Per the POLICY,
   //     raw/gz are creep tripwires → rebaseline rather than golf the guard.
-  { entry: "http.js", raw: 348 * 1024, gz: 104 * 1024, minGz: 36 * 1024 },
+  //   → 349 KiB raw (2026-07-07): @logtape/logtape 2.2.2→2.2.4 — upstream fix
+  //     for the configure() exit-listener leak (dahlia/logtape#192, issue #40)
+  //     now unregisters the prior dispose hook before registering a new one,
+  //     adding a few hundred bytes to the observability closure. Deliberate
+  //     dep bump, not code creep. Measured 356664 raw; gz/min-gz under.
+  { entry: "http.js", raw: 349 * 1024, gz: 104 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -812,7 +817,11 @@ const BUDGETS: readonly Budget[] = [
   //     configureObservability skip-and-warn path (observability chunk) plus the
   //     worker's `observability: false` opt-out guard + JSDoc. Measured 428259 raw
   //     / 128281 gz; min-gz (−811) stays under. Rebaseline the raw/gz tripwires.
-  { entry: "cloudflare.js", raw: 419 * 1024, gz: 126 * 1024, minGz: 45 * 1024 },
+  //   → 420 KiB raw (2026-07-07): @logtape/logtape 2.2.2→2.2.4 — upstream fix
+  //     for the configure() exit-listener leak (dahlia/logtape#192, issue #40)
+  //     adds the dispose-hook unregister path to the observability closure.
+  //     Deliberate dep bump, not code creep. Measured 429325 raw; gz/min-gz under.
+  { entry: "cloudflare.js", raw: 420 * 1024, gz: 126 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
