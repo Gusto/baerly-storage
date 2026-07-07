@@ -47,15 +47,19 @@ export interface CreateFetchHandlerOptions {
   readonly config?: BaerlyConfig;
   /**
    * LogTape config (level/sink) with `LOG_LEVEL` envvar fallback.
-   * When the field is unset, the default sink is auto-selected: the
-   * local `prettyConsoleSink()` when `process.stdout.isTTY === true`
-   * (developer terminals), `"console-json"` otherwise (production
-   * hosts where stdout is piped to a log aggregator). The typed
-   * `sink` field always wins. Pass `{}` to opt into TTY
-   * auto-detection at default level. Pass `undefined` (the field's
-   * absence) to skip `configureObservability` entirely.
+   * When the field is unset (or `{}`), baerly auto-configures LogTape:
+   * the default sink is the local `prettyConsoleSink()` when
+   * `process.stdout.isTTY === true` (developer terminals),
+   * `"console-json"` otherwise (production hosts where stdout is piped
+   * to a log aggregator). The typed `sink` field always wins.
+   *
+   * Pass `false` to skip `configureObservability` entirely — the
+   * escape hatch for apps that embed baerly and own the process-wide
+   * LogTape configuration themselves. (baerly also never clobbers a
+   * host config it detects at boot; `false` additionally suppresses the
+   * boot-time configure attempt and its meta-logger notice.)
    */
-  readonly observability?: ObservabilityConfig;
+  readonly observability?: ObservabilityConfig | false;
   /** Override the long-poll budget. Forwarded to `createRouter`. */
   readonly sinceTimeoutMs?: number;
   /** Override the long-poll inner-poll cadence. Forwarded to `createRouter`. */
@@ -132,8 +136,12 @@ export const nodeMaintenanceDispatch = (
 export function createFetchHandler(
   opts: CreateFetchHandlerOptions,
 ): (req: Request) => Promise<Response> {
-  // Factory-time, idempotent.
-  void configureObservability(resolveDefaultSink(opts.observability ?? {}));
+  // Factory-time, idempotent. `observability: false` opts out entirely
+  // (embedder owns LogTape config); otherwise auto-configure — this is a
+  // no-op when a host config is already present (see configureObservability).
+  if (opts.observability !== false) {
+    void configureObservability(resolveDefaultSink(opts.observability ?? {}));
+  }
   const wrappedStorage = observableStorage(opts.storage);
 
   return async (request: Request): Promise<Response> => {

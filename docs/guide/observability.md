@@ -284,6 +284,33 @@ const datadogSink: Sink = (record) => {
 };
 ```
 
+## Embedding baerly in an app that already uses LogTape
+
+baerly is a library, and [LogTape's guidance](https://logtape.org/manual/library)
+is that only the *application* configures LogTape — a library must not
+reset another app's logging config. The adapters auto-configure at boot
+for the common zero-config case (a scaffolded standalone server), but
+they will **never clobber a config you installed first**:
+
+- If your app calls `configure()` (or `configureSync()`) before
+  `baerlyNode` / `baerlyWorker` boots, baerly detects the existing
+  config, leaves it untouched, and emits one `["logtape", "meta"]`
+  notice. baerly's `["baerly", …]` categories then route through
+  whatever sinks your config wired for them (its root/catch-all sink,
+  or nowhere). To capture baerly's logs, add a logger for the
+  `["baerly"]` category in your own `configure()` call.
+- To stop baerly from touching LogTape at all — even when it boots
+  first — pass **`observability: false`**:
+
+  ```ts
+  baerlyNode({ config, storage, verifier, observability: false });
+  // or, on Cloudflare:
+  baerlyWorker((env) => ({ config, observability: false }));
+  ```
+
+  Your app then owns the process-wide (isolate-wide on Workers) LogTape
+  configuration end to end.
+
 ## Cost-ballooning anti-patterns
 
 - ❌ **Don't log request bodies.** baerly-storage stores arbitrary
@@ -316,7 +343,9 @@ const datadogSink: Sink = (record) => {
 - [`docs/about/cost-model.md`](../about/cost-model.md) — how class-A counts map to
   S3 / R2 spend.
 - Public API: JSDoc on `baerlyNode` (Node) and `baerlyWorker`
-  (Cloudflare). Both expose `observability?: ObservabilityConfig`.
+  (Cloudflare). Both expose `observability?: ObservabilityConfig | false`
+  (`false` opts out of auto-configuration — see "Embedding baerly"
+  above).
 - LogTape itself: <https://logtape.org/>. The kernel uses LogTape's
   `Sink` / `Logger` types directly; anything in the LogTape ecosystem
   works as a drop-in.

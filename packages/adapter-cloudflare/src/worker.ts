@@ -254,12 +254,14 @@ export interface BaerlyWorkerOptions {
    * - `sink` defaults to `"console-json"` (Cloudflare's stdout is
    *   ingested by Workers Logs as JSON-shaped records).
    *
-   * Leave the field unset to skip configuration entirely — the
-   * default LogTape configuration is a no-op sink. Adapters that
-   * skip configuration still emit through the bag/operator pipe; only
-   * the LogTape `console.log` side becomes silent.
+   * When the field is unset (or `{}`), baerly auto-configures on first
+   * `fetch`. Pass `false` to skip configuration entirely — the escape
+   * hatch for Workers that embed baerly and own the isolate-wide
+   * LogTape configuration themselves. (baerly also never clobbers a
+   * host config it detects; `false` additionally suppresses the
+   * configure attempt and its meta-logger notice.)
    */
-  readonly observability?: ObservabilityConfig;
+  readonly observability?: ObservabilityConfig | false;
   /**
    * Opt-in dev affordance. When set, `GET /` returns a small
    * human-readable HTML page that links to {@link DevLandingOptions.uiUrl},
@@ -368,7 +370,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     // scheduled invocation runs the configure. LogTape's `configure`
     // is idempotent (we always pass `reset: true`); a thundering-herd
     // race on the cold-start tick just re-runs the same config.
-    if (!observabilityConfigured) {
+    if (!observabilityConfigured && resolved.options.observability !== false) {
       await configureObservability(resolveCfSink(resolved.options.observability));
       observabilityConfigured = true;
       // Emit the auth=none startup banner exactly once per isolate.

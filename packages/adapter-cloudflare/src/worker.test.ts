@@ -16,7 +16,7 @@ import {
   SHARED_SECRET_MISSING_MESSAGE,
   type Verifier,
 } from "@baerly/protocol";
-import { reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
@@ -343,6 +343,37 @@ describe("baerlyWorker observability", () => {
     );
     expect(warn).toBeDefined();
     expect(warn!.level).toBe("warning");
+  });
+});
+
+describe("baerlyWorker observability opt-out", () => {
+  afterEach(async () => {
+    await reset();
+  });
+
+  const healthzRequest = (): Request<unknown, IncomingRequestCfProperties> =>
+    new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>;
+
+  test("observability:false skips lazy configuration on first fetch", async () => {
+    await reset();
+    const handler = baerlyWorker(() => ({ config: testConfig, observability: false }));
+    const env: BaerlyEnv = { BUCKET: getBinding(), APP: "t" };
+
+    await handler.fetch!(healthzRequest(), env, mockExecutionContext());
+
+    // The worker never called configureObservability: LogTape stays
+    // unconfigured so the embedding Worker can own configuration.
+    expect(getConfig()).toBeNull();
+  });
+
+  test("observability omitted auto-configures on first fetch (default-on)", async () => {
+    await reset();
+    const handler = baerlyWorker(() => ({ config: testConfig }));
+    const env: BaerlyEnv = { BUCKET: getBinding(), APP: "t" };
+
+    await handler.fetch!(healthzRequest(), env, mockExecutionContext());
+
+    expect(getConfig()).not.toBeNull();
   });
 });
 

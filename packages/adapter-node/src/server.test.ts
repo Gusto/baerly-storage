@@ -29,10 +29,46 @@ import {
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
 import { configureObservability } from "@baerly/server/observability";
-import { reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createApp, type CreateAppOptions } from "./app.ts";
 import { createFetchHandler, nodeMaintenanceDispatch, resolveDefaultSink } from "./server.ts";
+
+describe("createFetchHandler observability opt-out", () => {
+  afterEach(async () => {
+    await reset();
+  });
+
+  // configureObservability runs fire-and-forget at factory time; draining a
+  // macrotask lets its async configure() land before we assert.
+  const drain = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  test("observability:false skips auto-configuration, leaving LogTape untouched", async () => {
+    await reset();
+    expect(getConfig()).toBeNull();
+
+    const verifier: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
+    createFetchHandler({
+      app: "t",
+      storage: new MemoryStorage(),
+      verifier,
+      observability: false,
+    });
+
+    // The factory did NOT call configureObservability: LogTape stays
+    // unconfigured, so an embedder can own configuration entirely.
+    await drain();
+    expect(getConfig()).toBeNull();
+  });
+
+  test("observability omitted still auto-configures (default-on)", async () => {
+    await reset();
+    const verifier: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
+    createFetchHandler({ app: "t", storage: new MemoryStorage(), verifier });
+    await drain();
+    expect(getConfig()).not.toBeNull();
+  });
+});
 
 describe("nodeMaintenanceDispatch", () => {
   test("runs inline (no dispatch override) with Node-tier caps + phasesPerTick:both", () => {

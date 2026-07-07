@@ -486,7 +486,12 @@ const BUDGETS: readonly Budget[] = [
   //     consolidation into the shared `maintenance` chunk + rolldown
   //     1.1.0→1.1.3 from `pnpm dedupe`. Measured 354182 raw / 104921 gz;
   //     min-gz under.
-  { entry: "http.js", raw: 346 * 1024, gz: 103 * 1024, minGz: 36 * 1024 },
+  //   → 348 KiB raw (2026-07-06): host-config coexistence — configureObservability
+  //     now checks getConfig() and skips (with a meta notice) rather than reset a
+  //     host app's LogTape config; flows through the observability chunk. Measured
+  //     355598 raw; gz (104xxx) + min-gz (−640) still under. Per the POLICY, raw is
+  //     a creep tripwire → rebaseline rather than golf the guard.
+  { entry: "http.js", raw: 348 * 1024, gz: 103 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -537,7 +542,10 @@ const BUDGETS: readonly Budget[] = [
   //     wrapper over logtape, so the newer logtape closure lands here most
   //     visibly. Deliberate upstream upgrade, not code creep.
   //     Measured: 98776 raw / 27034 gz / 12477 min-gz.
-  { entry: "observability.js", raw: 97 * 1024, gz: 27 * 1024, minGz: 13 * 1024 },
+  //   → raw +1 KiB (2026-07-06): host-config coexistence — the getConfig()
+  //     ownership check + skip-and-warn path in configureObservability. Measured
+  //     100235 raw; gz (27xxx) + min-gz (−683) under. Rebaseline the raw tripwire.
+  { entry: "observability.js", raw: 98 * 1024, gz: 27 * 1024, minGz: 13 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (storage decorator + logger config + canonical
@@ -795,7 +803,11 @@ const BUDGETS: readonly Budget[] = [
   //   → 417 KiB raw (2026-07-04): maintenance env-parse consolidation into
   //     the shared `maintenance` chunk + rolldown 1.1.0→1.1.3 from `pnpm
   //     dedupe`. Measured 426799 raw; gz/min-gz under.
-  { entry: "cloudflare.js", raw: 417 * 1024, gz: 125 * 1024, minGz: 45 * 1024 },
+  //   → 419 KiB raw / 126 KiB gz (2026-07-06): host-config coexistence — the
+  //     configureObservability skip-and-warn path (observability chunk) plus the
+  //     worker's `observability: false` opt-out guard + JSDoc. Measured 428259 raw
+  //     / 128281 gz; min-gz (−811) stays under. Rebaseline the raw/gz tripwires.
+  { entry: "cloudflare.js", raw: 419 * 1024, gz: 126 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

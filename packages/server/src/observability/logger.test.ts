@@ -1,4 +1,4 @@
-import { reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { configure, getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CATEGORY, configureObservability, getLogger } from "./logger.ts";
 
@@ -87,6 +87,61 @@ describe("configureObservability + getLogger", () => {
     getLogger(CATEGORY.http).info("event");
     expect(r1).toHaveLength(0);
     expect(r2).toHaveLength(1);
+  });
+});
+
+describe("configureObservability — host-config coexistence", () => {
+  afterEach(async () => {
+    await reset();
+  });
+
+  test("does not clobber a foreign LogTape config already installed by the host", async () => {
+    const host = collectingSink();
+    await configure({
+      reset: true,
+      sinks: { host: host.sink },
+      loggers: [{ category: "host", sinks: ["host"], lowestLevel: "info" }],
+    });
+
+    // baerly boots into an app that already owns LogTape.
+    await configureObservability({ level: "info", sink: () => {} });
+
+    // The host's config survived untouched: its logger still routes to
+    // its sink, and baerly did not register its own sink.
+    getLogger(["host"]).info("still-here");
+    expect(host.records.map((r) => r.message.join(""))).toContain("still-here");
+    const cfg = getConfig();
+    expect(cfg && Object.keys(cfg.sinks)).toEqual(["host"]);
+  });
+
+  test("warns via the meta logger when it declines to configure over a host config", async () => {
+    const host = collectingSink();
+    await configure({
+      reset: true,
+      sinks: { host: host.sink },
+      loggers: [
+        { category: "host", sinks: ["host"], lowestLevel: "info" },
+        { category: ["logtape", "meta"], sinks: ["host"], lowestLevel: "warning" },
+      ],
+    });
+
+    await configureObservability({});
+
+    expect(
+      host.records.some((r) => r.category.join(".") === "logtape.meta" && r.level === "warning"),
+    ).toBe(true);
+  });
+
+  test("still reconfigures its own prior config (last call wins)", async () => {
+    const first = collectingSink();
+    await configureObservability({ level: "info", sink: first.sink });
+    const second = collectingSink();
+    // Second baerly call over baerly's own config must still take effect.
+    await configureObservability({ level: "info", sink: second.sink });
+
+    getLogger(CATEGORY.http).info("event");
+    expect(first.records).toHaveLength(0);
+    expect(second.records).toHaveLength(1);
   });
 });
 

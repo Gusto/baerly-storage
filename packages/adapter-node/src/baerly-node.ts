@@ -46,7 +46,7 @@ export interface BaerlyNodeOptions {
    * `GET /v1/healthz` always bypasses the verifier.
    */
   readonly verifier?: Verifier;
-  readonly observability?: ObservabilityConfig;
+  readonly observability?: ObservabilityConfig | false;
   readonly dev?: DevLandingOptions;
   readonly webRoot?: string;
   readonly sinceTimeoutMs?: number;
