@@ -216,7 +216,7 @@
     "bench:collection-fanout": "node --import ./bench/register-hooks.mjs bench/collection-fanout.ts"
   },
   "dependencies": {
-    "@logtape/logtape": "2.2.2"
+    "@logtape/logtape": "2.2.4"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",
