@@ -7,10 +7,12 @@ import {
 } from "@baerly/protocol";
 // Read the ROOT package.json version: `@gusto/baerly-storage` is published
 // from the monorepo root under changesets lockstep, so the root version is
-// the kernel/published version — deliberately NOT server's internal
-// workspace version. buildSpecIR is build/test-time only (never bundled), so
-// the path reach is contained; a moved/restructured root fails loudly at
-// `pnpm gen:spec` rather than silently emitting a wrong version.
+// the published server package version stamped as `serverVersion` —
+// deliberately NOT server's internal workspace version. `serverVersion` is
+// build provenance, not a contract axis: consumers key on `specVersion`.
+// buildSpecIR is build/test-time only (never bundled), so the path reach is
+// contained; a moved/restructured root fails loudly at `pnpm gen:spec`
+// rather than silently emitting a wrong version.
 import pkg from "../../../../package.json" with { type: "json" };
 import { ERROR_TO_STATUS, errorMessagePolicyFor, type ErrorMessagePolicy } from "../http/router.ts";
 
@@ -18,7 +20,7 @@ import { ERROR_TO_STATUS, errorMessagePolicyFor, type ErrorMessagePolicy } from 
 export interface SpecIR {
   readonly $schema: string;
   readonly specVersion: string;
-  readonly kernelVersion: string;
+  readonly serverVersion: string;
   readonly errorCodes: ReadonlyArray<{
     readonly code: BaerlyErrorCode;
     // `null` for codes raised only in the client runtime (they never
@@ -225,7 +227,7 @@ export function buildSpecIR(): SpecIR {
   return {
     $schema: "https://baerly.dev/spec/ir-schema.json",
     specVersion: "1",
-    kernelVersion: pkg.version,
+    serverVersion: pkg.version,
     errorCodes: ERROR_CODES.map((code) => ({
       code,
       // Mapped status if the HTTP layer has one; otherwise `null` for

@@ -65,8 +65,8 @@ describe("buildSpecIR", () => {
     expect(ir.operators.map((o) => o.name).toSorted()).toEqual([...PREDICATE_OPS].toSorted());
   });
 
-  test("kernelVersion matches the root package version", () => {
-    expect(ir.kernelVersion).toMatch(/^\d+\.\d+\.\d+/);
+  test("serverVersion matches the root package version", () => {
+    expect(ir.serverVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   test("declares the /v1 routes including the new /v1/spec", () => {
