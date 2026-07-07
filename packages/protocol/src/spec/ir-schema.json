@@ -7,7 +7,7 @@
   "required": [
     "$schema",
     "specVersion",
-    "kernelVersion",
+    "serverVersion",
     "errorCodes",
     "operators",
     "collectionMethods",
@@ -20,7 +20,7 @@
   "properties": {
     "$schema": { "type": "string" },
     "specVersion": { "type": "string" },
-    "kernelVersion": { "type": "string" },
+    "serverVersion": { "type": "string" },
     "errorCodes": {
       "type": "array",
       "items": {

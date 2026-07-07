@@ -2,7 +2,7 @@
 title: Versioning and compatibility
 audience: maintainer
 summary: The five version axes, where each lives, and the wire/schema/layout compatibility rules under semver. The machine-readable source is version-matrix.json.
-last-reviewed: 2026-07-03
+last-reviewed: 2026-07-06
 tags: [versioning, compatibility, governance, contract]
 related: [change-discipline.md, "../../adr/003-layout-versioning-cordon.md", "../../adr/005-logentry-versionless.md", "../publishing.md", "../../spec/log-entry-shape.md"]
 ---
@@ -33,6 +33,21 @@ code drift by `scripts/check-version-matrix.ts` on every `pnpm verify`.
 additive-only by decision — see
 [ADR-005](../../adr/005-logentry-versionless.md).
 
+## Provenance annotations (not axes)
+
+`GET /v1/spec` also carries `serverVersion` — the published server
+package `version` (equal to **Package semver** / `packageSemver`). It is
+**build provenance, not a governed compatibility axis**: it is not a
+sixth row, `check-spec-drift` does not gate its value, and it changes on
+every release by construction. Consumers must key contract decisions off
+`specVersion`, never `serverVersion`. (It was formerly named
+`kernelVersion`, which wrongly implied a separate "kernel" contract axis;
+the value and meaning are unchanged.) `specVersion` stays `"1"` across
+that rename: pre-1.0, the served shape may change without forcing a
+`specVersion` bump (see the compatibility rules below), and the
+counter's first bump is reserved for a shape change a consumer or corpus
+can actually observe.
+
 ## Compatibility rules
 
 Public TS API compatibility is governed by the
@@ -45,12 +60,15 @@ layout** compatibility *promise under semver*, which the API lock and
 ADR-003's versioning mechanism do not by themselves state.
 
 **Before a first production/external consumer, conformance corpus, or
-second implementation exists** (today), the project moves fast: pre-1.0
-semver owes consumers no compat guarantee, exactly as
+second implementation exists**, the project moves fast: pre-1.0 semver
+owes consumers no compat guarantee, exactly as
 [`publishing.md`](../publishing.md#versioning) states for the package
-axis. Wire/schema/layout may change on a patch, except where a narrower
-artifact policy already applies (for example ADR-005's versionless
-additive-only `LogEntry` rule).
+axis and as the GitHub release notes reiterate. Wire/schema/layout may
+change on a patch, except where a narrower artifact policy already
+applies (for example ADR-005's versionless additive-only `LogEntry`
+rule). A first consumer/corpus/second-implementation may already exist
+in small numbers; the pre-1.0 latitude is what still permits change,
+and those are the signals to tighten as it approaches.
 
 **After the first production/external consumer, conformance corpus, or
 second implementation exists:**
