@@ -1,5 +1,48 @@
 # @gusto/baerly-storage
 
+## 0.5.0
+
+### Minor Changes
+
+- 5afe09a: Observability: coexist with a host app's LogTape config instead of clobbering it.
+
+  baerly-storage is a library, and LogTape's guidance is that only the application
+  configures LogTape. Previously the Node and Cloudflare adapters called
+  `configure({ reset: true })` at boot unconditionally, which silently wiped
+  the sinks and loggers of any app that had already configured LogTape (and,
+  depending on boot order, could itself be wiped). The documented "leave the
+  field unset to skip configuration" escape hatch never actually worked.
+
+  Now:
+
+  - `configureObservability` checks `getConfig()` first. When LogTape is
+    already configured by something other than baerly-storage, it leaves that config
+    intact and emits a single `["logtape", "meta"]` notice rather than
+    resetting it. baerly-storage's own config is still reconfigured last-call-wins, so
+    standalone servers and dev hot-reload are unchanged.
+  - `baerlyNode` / `baerlyWorker` accept `observability: false` to skip
+    auto-configuration entirely, for apps that own the process-wide
+    (isolate-wide on Workers) LogTape configuration themselves.
+
+### Patch Changes
+
+- d94b57b: Rename the `/v1/spec` field `kernelVersion` → `serverVersion`.
+
+  `kernelVersion` was a build-provenance stamp (= the published package
+  version) whose name wrongly implied a separate "kernel" contract axis.
+  `serverVersion` names it honestly. The value and meaning are unchanged,
+  and `specVersion` stays `"1"`: the wire-contract axis is `specVersion`,
+  and pre-consumer wire shape may change without bumping it (see
+  `docs/contributing/conventions/versioning.md`).
+
+  **Migration — agents: if you read the LEFT, read the RIGHT:**
+
+      GET /v1/spec → { "specVersion": "1", "kernelVersion": "0.4.1", ... }   // before
+      GET /v1/spec → { "specVersion": "1", "serverVersion": "0.4.1", ... }   // after
+
+  Key contract decisions off `specVersion`, never off `serverVersion` — the
+  latter is build provenance, equal to the package version.
+
 ## 0.4.1
 
 ### Patch Changes
