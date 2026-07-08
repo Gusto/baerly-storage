@@ -1,6 +1,7 @@
 # CI gate: credential-free, infra-free. Runs on PRs and merges to main.
-# Infra-required tiers (Minio, Postgres, cloud conformance) are deferred
-# to a future workflow that provisions service containers.
+# Infra-required tiers (Minio, Postgres, cloud conformance) live in the
+# separate `test-infra.yml` workflow (docker-compose stack, dispatch-only),
+# kept off the PR hot path.
 name: CI
 
 on:
@@ -76,11 +77,11 @@ jobs:
       # pinned Node — not the runner's default.
       - run: corepack enable
 
-      # `pnpm install` triggers the `prepare` lifecycle hook
-      # (scripts/prepare.mjs), which runs `pnpm run build` — so dist/ is
-      # already built by the time later steps run. `pnpm test`'s `pretest`
-      # hook also builds, but that's a quick no-op rebuild of an already-
-      # current dist/. No explicit build step is needed here.
+      # `pnpm install` triggers the `prepare` hook (scripts/prepare.mjs),
+      # which builds dist/. The Test and Verify-package steps below set
+      # BAERLY_SKIP_BUILD=1 so their build-if-needed hooks reuse that dist/
+      # instead of re-bundling (rolldown has no output cache, so a second
+      # build is a full rebuild, not a no-op).
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -103,8 +104,11 @@ jobs:
           git config --global user.email "ci@baerly.invalid"
 
       # Default vitest project: memory + local-fs suites under pool: forks.
-      # Zero infra, no credentials. The pretest hook rebuilds dist/ here.
+      # Zero infra, no credentials. dist/ is already current from install's
+      # prepare build, so skip pretest's rebuild.
       - name: Test
+        env:
+          BAERLY_SKIP_BUILD: "1"
         run: pnpm test
 
       # Cloudflare adapter tests under @cloudflare/vitest-pool-workers
@@ -115,3 +119,12 @@ jobs:
       # lockfile-changed case). No separate workerd cache buys anything.
       - name: Test (Cloudflare adapter)
         run: pnpm test:adapter-cloudflare
+
+      # Packaging-contract gate: attw (every entry point resolves for
+      # consumers post-publishConfig rewrite) + publint (both published
+      # manifests are well-formed), run against the packed tarball. dist/ is
+      # current from install, so skip the rebuild.
+      - name: Verify published packages (attw + publint)
+        env:
+          BAERLY_SKIP_BUILD: "1"
+        run: pnpm run verify:package
