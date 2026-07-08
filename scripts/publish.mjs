@@ -80,10 +80,9 @@ for (const pkg of PACKAGES) {
     `${dryRun ? " --dry-run" : ""}${otpFlag}`;
   console.log(`\n▶ ${dryRun ? "Dry-run publish" : "Publishing"} ${pkg.name}…`);
   try {
-    // Pass BAERLY_SKIP_BUILD so a future prepack/prepublishOnly hook doesn't
-    // rebuild the dist/ that verify:package just produced. Today, pnpm publish
-    // triggers the `prepare` hook which still rebuilds unconditionally (that
-    // deduplication is deferred).
+    // Pass BAERLY_SKIP_BUILD so the `prepare` hook — which pnpm publish
+    // triggers, and which honors this flag as of the build-dedup change —
+    // reuses the dist/ that verify:package just produced instead of rebuilding.
     runWithEnv(cmd, { BAERLY_SKIP_BUILD: "1" });
   } catch {
     console.warn(`  ⚠ publish exited non-zero for ${pkg.name}`);
