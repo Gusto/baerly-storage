@@ -1,0 +1,86 @@
+name: test-infra
+
+# Deterministic local-container suites (Minio + Postgres + SQLite) that are
+# too heavy for the PR hot path but too valuable to leave manual-only.
+# Run ON DEMAND via workflow_dispatch. NOT triggered on pull_request — the PR
+# gate stays the cheap `ci` job.
+#
+# NIGHTLY (opt-in): uncomment the `schedule:` block below to promote this to
+# an enforced nightly. A failing scheduled run then surfaces via GitHub's
+# native scheduled-failure notification to the workflow owner (whoever last
+# edited the cron) — no bespoke issue-creation step.
+on:
+  # schedule:
+  #   - cron: "0 7 * * *" # 07:00 UTC nightly
+  workflow_dispatch: {}
+
+# No cancel-in-progress: for infra runs we want the result, not a
+# cancellation (two overlapping manual dispatches — or a manual run
+# overlapping the nightly, if enabled — should not silently kill either run,
+# and a cancelled run reads as a failure).
+concurrency:
+  group: test-infra
+  cancel-in-progress: false
+
+permissions:
+  contents: read # read-only: no issue-creation, so no issues: write needed
+
+jobs:
+  test-infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - run: corepack enable
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # Re-enable against the Node 24 setup-node just prepended to PATH
+      # (mirrors the `ci` job's two-enable pattern).
+      - run: corepack enable
+
+      # sqlite3 CLI: test:export-round-trip auto-skips (runIf) without it —
+      # the one silent-skip vector the compose healthchecks can't cover.
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `--wait` blocks until every service's healthcheck passes (Minio's
+      # /minio/health/live, Postgres's in-container `pg_isready`), so an
+      # unhealthy container fails HERE — no separate infra probe needed.
+      - name: Start storage stack
+        run: pnpm dev:storage
+
+      # The suites gate on describe.runIf(...), which SILENTLY SKIPS (green)
+      # when its condition is false. But test:adapter-node self-sets MINIO=1
+      # and test:export-smoke self-sets EXPORT_SMOKE=1 (both in their npm
+      # scripts), and `--wait` above already guaranteed the containers —
+      # so the ONLY remaining silent-skip vector is a missing sqlite3.
+      # Assert just that; the rest of a full preflight would be theater.
+      - name: Preflight (sqlite3 present)
+        run: command -v sqlite3 >/dev/null || { echo "::error::sqlite3 missing — export round-trip would silently skip"; exit 1; }
+
+      - name: Test (adapter-node S3 conformance vs Minio)
+        run: pnpm test:adapter-node
+
+      # test:export-smoke self-sets EXPORT_SMOKE=1 in its npm script.
+      - name: Test (export smoke → Postgres)
+        run: pnpm test:export-smoke
+
+      - name: Test (export round-trip → SQLite)
+        run: pnpm test:export-round-trip
+
+      - name: Stop storage stack
+        if: always()
+        run: pnpm dev:storage:stop
+
+      # No issue-creation step: a failed manual run surfaces to whoever
+      # triggered the workflow_dispatch (they are watching it), and — if the
+      # nightly schedule above is enabled — a failed scheduled run notifies the
+      # workflow owner via GitHub's built-in scheduled-failure notification. Add
+      # a deduped tracking issue or Slack ping only if that proves missable
+      # (see Deferred) — don't build the durable version before the free one
+      # has failed.
