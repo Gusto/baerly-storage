@@ -2,7 +2,7 @@
 title: Publishing
 audience: maintainer
 summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage publicly to npmjs.com."
-last-reviewed: 2026-06-16
+last-reviewed: 2026-07-10
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -17,8 +17,12 @@ Apache-2.0, so anyone can install them without auth.
 ## Cutting a release
 
 Versioning and the changelog are driven by [Changesets](https://github.com/changesets/changesets).
-Publishing goes through `pnpm release`, which builds first and passes
+Publishing goes through `pnpm release`, which gates on artifact freshness, builds, validates packaging, and passes
 `--access public` explicitly.
+
+Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be
+fresh at publish time. `pnpm changeset:version` regenerates both
+automatically; `pnpm release` refuses to publish a stale one.
 
 1. **While developing** — for any user-facing change, add a changeset:
 
@@ -54,13 +58,15 @@ Publishing goes through `pnpm release`, which builds first and passes
    pnpm release
    ```
 
-   `pnpm release` runs `pnpm build` (which copies the updated `CHANGELOG.md`
-   into `dist/CHANGELOG.md`), validates both packages with `check:exports`
+   `pnpm release` first checks that generated artifacts are fresh
+   (`verify:artifacts`, aborting closed on any drift), then runs
+   `pnpm build` (which copies the updated `CHANGELOG.md` into
+   `dist/CHANGELOG.md`), validates both packages with `check:exports`
    + `check:publint` (a finding aborts before publishing), then publishes
    both with `--access public`.
 
 > **Prefer `pnpm release` over `changeset publish`.** `pnpm release`
-> (`scripts/publish.mjs`) builds first, so `dist/` is fresh and
+> (`scripts/publish.mjs`) builds before packing, so `dist/` is fresh and
 > `dist/CHANGELOG.md` is current before the tarball is cut.
 
 | Package                        | Path                              | Bin                     |
@@ -151,14 +157,18 @@ release time, not on every PR.
 
 `pnpm release` (`scripts/publish.mjs`) is the sanctioned path. It:
 
-1. builds,
-2. **validates both published packages** as a pre-publish gate —
+1. **checks generated artifacts are fresh** — `verify:artifacts`
+   (`check-spec-drift` + `check-version-matrix`). A stale checked-in
+   `baerly.spec.json` or `version-matrix.json` aborts the release
+   closed, before the build even runs. This runs on `--dry-run` too.
+2. builds,
+3. **validates both published packages** as a pre-publish gate —
    `check:exports` (attw: every entry point resolves for consumers) and
    `check:publint` (publint: both manifests are well-formed). A finding
    aborts the release closed, before any bytes reach npm; nothing is
    published. This runs on `--dry-run` too. The gate reuses the build
-   from step 1 (`BAERLY_SKIP_BUILD=1`), so it doesn't rebuild `dist/`.
-3. publishes both packages with an **explicit** `--access public`
+   from step 2 (`BAERLY_SKIP_BUILD=1`), so it doesn't rebuild `dist/`.
+4. publishes both packages with an **explicit** `--access public`
    (pnpm has historically dropped `publishConfig.access` on the wire,
    so the flag is passed by hand to be safe).
 
@@ -185,11 +195,28 @@ ls node_modules/@gusto/baerly-storage/dist/
 
 Expected: `dist/index.js`, `dist/API.md`, `dist/baerly.js` present.
 
+Presence isn't enough — assert the published tarball's content matches
+the published version too. This catches drift that any local gate
+missed, e.g. a manual `pnpm publish` bypassing `publish.mjs` entirely.
+Run from the repo root, so `package.json` reflects the version you
+just published:
+
+```sh
+V=$(node -p "require('./package.json').version")
+npm pack "@gusto/baerly-storage@$V"            # downloads the published tarball
+tar -xzOf "gusto-baerly-storage-$V.tgz" package/dist/baerly.spec.json \
+  | node -e 'const s=JSON.parse(require("fs").readFileSync(0));const v=process.argv[1];if(s.serverVersion!==v){console.error(`FAIL: published spec serverVersion ${s.serverVersion} != ${v}`);process.exit(1)}console.log("ok:",s.serverVersion)' "$V"
+rm -f "gusto-baerly-storage-$V.tgz"
+```
+
+Expected: `ok: <version>`. A hand-corrupted or stale tarball makes it
+exit 1.
+
 Scaffold smoke:
 
 ```sh
 cd /tmp
-pnpm create @gusto/baerly-storage@latest -- baerly-smoke-app --target=cloudflare
+pnpm create @gusto/baerly-storage@latest baerly-smoke-app --target=cloudflare
 cd baerly-smoke-app
 pnpm install
 pnpm baerly doctor --target=cloudflare
