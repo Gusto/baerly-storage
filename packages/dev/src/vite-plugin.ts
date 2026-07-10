@@ -50,9 +50,13 @@ export interface BaerlyDevOptions {
    * when `verifier` is supplied (the operator owns the auth seam).
    *
    * Throwing the symmetric `InvalidConfig` on a misconfig matches
-   * production behaviour: forgetting `SHARED_SECRET` in dev fails
-   * fast at `vite dev` startup with the same locked wording the
-   * adapter would emit.
+   * production behaviour: forgetting `SHARED_SECRET` in dev throws
+   * with the same locked wording the adapter would emit. With an
+   * explicit `config` object this fails fast at `vite dev` startup
+   * (factory-time resolution); when the config is loaded lazily
+   * (`configPath` / convention) the throw is deferred to dev-server
+   * startup and surfaces as a per-request 503 rather than aborting
+   * the Vite process.
    */
   readonly secret?: string;
   /**
@@ -340,11 +344,7 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           // (or a misnamed) default export would otherwise silently become
           // `undefined` here, surfacing later as a bare `TypeError` on the first
           // `config.app` read with no hint that the real problem is the export.
-          if (
-            mod.default === undefined ||
-            typeof mod.default !== "object" ||
-            mod.default === null
-          ) {
+          if (typeof mod.default !== "object" || mod.default === null) {
             throw new BaerlyError(
               "InvalidConfig",
               `baerly-dev: ${configPath} must default-export a BaerlyAppConfig object`,

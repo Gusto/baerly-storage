@@ -360,6 +360,28 @@ describe("baerlyDev — config loading", () => {
     }
   });
 
+  test("lazily-loaded shared-secret config injects Bearer before the listener runs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-lazy-secret-"));
+    try {
+      const { captured, server } = makeServer(root, async () => ({
+        default: baseConfig("shared-secret"),
+      }));
+      // No explicit `config` → auth resolves lazily once the config loads.
+      // The bearer isn't known at middleware-registration time, so injection
+      // must happen inside the `ready.then`, still before `listener(req, res)`.
+      start(baerlyDev({ secret: "lazy-secret", dataDir: root, banner: false }), server);
+      const req = makeReq("/v1/healthz");
+      captured[0]!(req, makeRes(), () => {});
+      for (let i = 0; i < 50 && req.headers["authorization"] === undefined; i += 1) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(req.headers["authorization"]).toBe("Bearer lazy-secret");
+      expect(headersFromRaw(req).get("authorization")).toBe("Bearer lazy-secret");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("explicit config object never calls ssrLoadModule", async () => {
     const root = await mkdtemp(join(tmpdir(), "baerly-explicit-"));
     try {
