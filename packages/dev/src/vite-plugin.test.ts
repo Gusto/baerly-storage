@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -372,6 +373,60 @@ describe("baerlyDev — config loading", () => {
       // The /v1 request routed (config came from the object), but the loader
       // was never consulted.
       expect(requested).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("config module with no default export surfaces a clear InvalidConfig message, not a bare TypeError", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-nodefault-"));
+    try {
+      const { captured, server } = makeServer(root, async () => ({}));
+      start(baerlyDev({ banner: false }), server);
+      const res = makeRes();
+      captured[0]!(makeReq("/v1/healthz"), res, () => {
+        throw new Error("next should not be called");
+      });
+      for (let i = 0; i < 50 && res.statusCode === 0; i += 1) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(res.statusCode).toBe(503);
+      const body = JSON.parse(res.written.join("")) as { message: string };
+      expect(body.message).toContain("must default-export a BaerlyAppConfig object");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("banner does not crash the process when lazy config load rejects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-bannerfail-"));
+    try {
+      const httpServer = new EventEmitter() as EventEmitter & { address: () => null };
+      httpServer.address = () => null;
+      const server = {
+        middlewares: { use: () => {} },
+        httpServer,
+        config: { root },
+        ssrLoadModule: async () => {
+          throw new Error("boom");
+        },
+      };
+      const rejections: unknown[] = [];
+      const onRejection = (reason: unknown): void => {
+        rejections.push(reason);
+      };
+      process.on("unhandledRejection", onRejection);
+      try {
+        start(baerlyDev({ banner: true }), server);
+        httpServer.emit("listening");
+        await new Promise((r) => setTimeout(r, 100));
+        // Before the fix, the banner's `ready.then` had no rejection handler:
+        // a distinct derived promise from the same rejected `ready` would go
+        // unhandled here even though the setup failure is already logged.
+        expect(rejections).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onRejection);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

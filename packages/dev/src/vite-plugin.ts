@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
 import { baerlyNode } from "@baerly/adapter-node";
-import type { BaerlyAppConfig, Verifier } from "@baerly/protocol";
+import { BaerlyError, type BaerlyAppConfig, type Verifier } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { type DevBannerHint, printDevBanner } from "./dev-banner.ts";
 import { ensureTable } from "./ensure-table.ts";
@@ -270,12 +270,12 @@ export function loadDevVars<K extends string>(
  * `baerlyNode` / `baerlyWorker`):
  *
  *   1. `opts.verifier` set → use as-is.
- *   2. else `opts.config.auth === "shared-secret"` → require
+ *   2. else `config.auth === "shared-secret"` → require
  *      `opts.secret`; build `sharedSecret({ secret, tenantPrefix:
  *      config.tenant })`. Throws `BaerlyError("InvalidConfig", ...)`
- *      at Vite startup when `opts.secret` is empty/unset — same
- *      locked wording the production adapter would emit.
- *   3. else `opts.config.auth === "none"` → pin every request to
+ *      when `opts.secret` is empty/unset — same locked wording the
+ *      production adapter would emit.
+ *   3. else `config.auth === "none"` → pin every request to
  *      `config.tenant`; no header check.
  *
  * Bearer injection on `/v1/*` only fires in branch 2 (and only when
@@ -330,13 +330,28 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
       const ready = (async () => {
         // Resolution order for the config source: explicit `config` object →
         // explicit `configPath` → convention `<viteRoot>/src/baerly.config.ts`.
-        const config: BaerlyAppConfig =
-          opts.config ??
-          (
-            (await server.ssrLoadModule(
-              opts.configPath ?? resolve(server.config.root, "src/baerly.config.ts"),
-            )) as { default: BaerlyAppConfig }
-          ).default;
+        let config: BaerlyAppConfig;
+        if (opts.config !== undefined) {
+          config = opts.config;
+        } else {
+          const configPath = opts.configPath ?? resolve(server.config.root, "src/baerly.config.ts");
+          const mod = (await server.ssrLoadModule(configPath)) as { default?: unknown };
+          // Mirrors packages/cli/src/config.ts's loadAppConfig: a module with no
+          // (or a misnamed) default export would otherwise silently become
+          // `undefined` here, surfacing later as a bare `TypeError` on the first
+          // `config.app` read with no hint that the real problem is the export.
+          if (
+            mod.default === undefined ||
+            typeof mod.default !== "object" ||
+            mod.default === null
+          ) {
+            throw new BaerlyError(
+              "InvalidConfig",
+              `baerly-dev: ${configPath} must default-export a BaerlyAppConfig object`,
+            );
+          }
+          config = mod.default as BaerlyAppConfig;
+        }
 
         // Reuse the eager (factory-time) auth resolution when a `config` object
         // was passed; otherwise resolve now that the loaded config is available.
@@ -410,13 +425,20 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
               ? (address as AddressInfo).port
               : undefined;
           const url = port !== undefined ? `http://localhost:${port}/` : "http://localhost/";
-          ready.then(({ appName }) => {
-            printDevBanner({
-              name: appName,
-              primaryUrl: { label: "App", url },
-              ...(opts.hints !== undefined && { hints: opts.hints }),
-            });
-          });
+          ready
+            .then(({ appName }) => {
+              printDevBanner({
+                name: appName,
+                primaryUrl: { label: "App", url },
+                ...(opts.hints !== undefined && { hints: opts.hints }),
+              });
+            })
+            // A rejected `ready` is already logged by the `ready.catch` above.
+            // Each `.then()`/`.catch()` call creates its own derived promise,
+            // so without this, a config-load failure here would be a SECOND,
+            // unguarded rejection — the exact "unhandled rejection kills the
+            // dev server" failure that catch was added to prevent.
+            .catch(() => {});
         });
       }
     },
