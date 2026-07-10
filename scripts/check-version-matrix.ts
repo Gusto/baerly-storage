@@ -28,6 +28,7 @@ export type MatrixShape = {
 
 /** The live code-derived axes the matrix must not diverge from. */
 export type CodeVersions = {
+  packageVersion: string;
   specVersion: string;
   currentJson: number;
   gcPending: number;
@@ -49,10 +50,13 @@ export type PackageIdentity = {
  * edit, so a mismatch blocks even regeneration. Returns human-readable
  * violation messages ([] = clean).
  *
- * Package semver is intentionally NOT here: `package.json#version` is
- * its own source of truth, it changes every release, and nothing
- * consumes the matrix's copy — gating it as drift would only red CI on
- * every version bump. `--write` still refreshes the recorded value.
+ * Package semver's *value* is a governed drift axis (see
+ * `collectDriftViolations`), not a structural one: `changeset:version`
+ * regenerates it via `--write` on every bump, so a green tree always has
+ * `matrix.packageSemver.value === package.json#version` — drift only
+ * fires when a bump happened but regeneration didn't run. The lockstep
+ * *shape* (which packages, and that they move together) is still
+ * structural and lives here.
  */
 export const collectStructuralViolations = (
   matrix: MatrixShape,
@@ -116,6 +120,7 @@ export const collectStructuralViolations = (
  */
 export const collectDriftViolations = (matrix: MatrixShape, code: CodeVersions): string[] => {
   const checks: Array<[path: string, expected: string | number, actual: unknown]> = [
+    ["packageSemver.value", code.packageVersion, matrix.packageSemver.value],
     ["specVersion.value", code.specVersion, matrix.specVersion.value],
     [
       "schemaVersions.current.json.value",
@@ -169,6 +174,7 @@ const runCli = (): void => {
   const rootPkg = readPackage(pkgPath, fail);
   const createPkg = readPackage(createPkgPath, fail);
   const code: CodeVersions = {
+    packageVersion: rootPkg.version,
     specVersion: buildSpecIR().specVersion,
     currentJson: CURRENT_JSON_SCHEMA_VERSION,
     gcPending: GC_PENDING_SCHEMA_VERSION,

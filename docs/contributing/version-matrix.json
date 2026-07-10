@@ -2,7 +2,7 @@
   "$comment": "Single machine-readable source of baerly-storage's version axes. Human guide: docs/contributing/conventions/versioning.md. Do NOT hand-edit code-derived values — run `pnpm gen:version-matrix` and commit. Guarded by scripts/check-version-matrix.ts in `pnpm verify`.",
   "matrixVersion": 1,
   "packageSemver": {
-    "value": "0.4.1",
+    "value": "0.5.0",
     "source": "package.json#version",
     "lockstep": ["@gusto/baerly-storage", "@gusto/create-baerly-storage"]
   },
