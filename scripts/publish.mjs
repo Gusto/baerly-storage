@@ -59,6 +59,21 @@ function statusOf(name) {
 
 const problems = [];
 
+// Fail fast on stale generated artifacts (spec / version matrix) before
+// even building — no point packaging a checked-in artifact that no longer
+// matches the code it was generated from.
+console.log("\n▶ Checking generated artifacts are fresh…");
+try {
+  run("pnpm run verify:artifacts");
+} catch {
+  console.error(
+    "\n✗ RELEASE ABORTED — a checked-in generated artifact is stale " +
+      "(spec-drift or version-matrix). Run `pnpm gen:spec` / " +
+      "`pnpm gen:version-matrix`, commit, and re-run. Nothing published.",
+  );
+  process.exit(1);
+}
+
 // Build once and run the packaging-contract gate (attw + publint on the
 // packed tarball) before any bytes hit npm. verify:package builds via
 // build-if-needed (BAERLY_SKIP_BUILD is unset here, so it builds).
