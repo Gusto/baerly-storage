@@ -37,6 +37,18 @@ pre-commit:
     docs:
       glob: "*.md"
       run: pnpm run verify:docs
+    # Generated-artifact freshness. The other code commands are `.ts`-globbed,
+    # so a release commit that stages only package.json / .changeset / the
+    # version bump runs zero artifact validation locally otherwise. Fire the
+    # drift checks whenever a file that can move a generated artifact is staged.
+    artifacts:
+      glob:
+        - "package.json"
+        - "packages/create-baerly-storage/package.json"
+        - ".changeset/*.md"
+        - "packages/server/spec/baerly.spec.json"
+        - "docs/contributing/version-matrix.json"
+      run: pnpm run verify:artifacts
     # Bundle budgets live in `pnpm test` (bundle-size.test.ts) and CI, NOT
     # in `pnpm verify` above — so a kernel/maintenance edit that blows a
     # budget commits green and only goes red when you finally run the full
