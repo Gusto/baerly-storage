@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import type { Plugin } from "vite";
 import { baerlyNode } from "@baerly/adapter-node";
-import type { BaerlyAppConfig, Verifier } from "@baerly/protocol";
+import { BaerlyError, type BaerlyAppConfig, type Verifier } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
 import { type DevBannerHint, printDevBanner } from "./dev-banner.ts";
 import { ensureTable } from "./ensure-table.ts";
@@ -16,8 +16,29 @@ export interface BaerlyDevOptions {
    * table set (`Object.keys(config.collections)`) are derived from it.
    * Per-collection schemas/indexes flow through to the in-process
    * listener the same way `baerlyNode` / `baerlyWorker` pipe them.
+   *
+   * **Optional.** If omitted, the config is loaded at dev-server startup
+   * from `configPath`, or — if that's also omitted — by convention from
+   * `<viteRoot>/src/baerly.config.ts`.
+   *
+   * Prefer omitting it (convention or `configPath`). Passing the object
+   * means the caller's `vite.config` must `import` the config module,
+   * which forces Nx's `@nx/vite` / `@nx/vitest` inference plugins to
+   * bundle that module — and its transitive imports — while creating the
+   * project graph. That pulls unresolved imports into the config bundle
+   * and forces the app into the root `nx.json` inference-exclusion lists.
+   * Letting `baerlyDev` load the config itself (below) keeps the caller's
+   * `vite.config` import-free, the same way `reactRouter()` loads
+   * `react-router.config.ts` by convention.
    */
-  readonly config: BaerlyAppConfig;
+  readonly config?: BaerlyAppConfig;
+  /**
+   * Absolute path to the `baerly.config` module (its default export is
+   * the `BaerlyAppConfig`). Loaded lazily via Vite's `ssrLoadModule` at
+   * dev-server startup. Overrides the `<viteRoot>/src/baerly.config.ts`
+   * convention. Ignored when `config` is provided.
+   */
+  readonly configPath?: string;
   /**
    * Shared-secret token. **Optional.** Required only when
    * `config.auth === "shared-secret"` and `verifier` is unset — in
@@ -29,9 +50,13 @@ export interface BaerlyDevOptions {
    * when `verifier` is supplied (the operator owns the auth seam).
    *
    * Throwing the symmetric `InvalidConfig` on a misconfig matches
-   * production behaviour: forgetting `SHARED_SECRET` in dev fails
-   * fast at `vite dev` startup with the same locked wording the
-   * adapter would emit.
+   * production behaviour: forgetting `SHARED_SECRET` in dev throws
+   * with the same locked wording the adapter would emit. With an
+   * explicit `config` object this fails fast at `vite dev` startup
+   * (factory-time resolution); when the config is loaded lazily
+   * (`configPath` / convention) the throw is deferred to dev-server
+   * startup and surfaces as a per-request 503 rather than aborting
+   * the Vite process.
    */
   readonly secret?: string;
   /**
@@ -249,12 +274,12 @@ export function loadDevVars<K extends string>(
  * `baerlyNode` / `baerlyWorker`):
  *
  *   1. `opts.verifier` set → use as-is.
- *   2. else `opts.config.auth === "shared-secret"` → require
+ *   2. else `config.auth === "shared-secret"` → require
  *      `opts.secret`; build `sharedSecret({ secret, tenantPrefix:
  *      config.tenant })`. Throws `BaerlyError("InvalidConfig", ...)`
- *      at Vite startup when `opts.secret` is empty/unset — same
- *      locked wording the production adapter would emit.
- *   3. else `opts.config.auth === "none"` → pin every request to
+ *      when `opts.secret` is empty/unset — same locked wording the
+ *      production adapter would emit.
+ *   3. else `config.auth === "none"` → pin every request to
  *      `config.tenant`; no header check.
  *
  * Bearer injection on `/v1/*` only fires in branch 2 (and only when
@@ -262,40 +287,79 @@ export function loadDevVars<K extends string>(
  * the listener without putting the secret in the browser bundle.
  * Branch 3 leaves the `Authorization` header alone.
  *
- * Verifier resolution happens eagerly at factory time so a misconfig
- * fails Vite startup, not the first `/v1/*` round-trip.
+ * When an explicit `config` object is passed, verifier resolution happens
+ * eagerly at factory time so a misconfig fails Vite startup, not the first
+ * `/v1/*` round-trip. When the config is loaded lazily (`configPath` or the
+ * `<viteRoot>/src/baerly.config.ts` convention), that resolution is deferred
+ * to dev-server startup, once the config is available.
  */
-export function baerlyDev(opts: BaerlyDevOptions): Plugin {
+function resolveAuth(opts: BaerlyDevOptions, config: BaerlyAppConfig) {
   // Resolution order: opts.verifier → config.auth.shared-secret →
-  // config.auth.none → throw. Mirrors `baerlyWorker` / `baerlyNode`.
-  // The synthetic `readEnv` hoists `opts.secret` to `SHARED_SECRET`
-  // so the same resolver works — `baerlyDev` takes the secret as a
-  // typed option rather than reading `process.env` directly.
+  // config.auth.none → throw. Mirrors `baerlyWorker` / `baerlyNode`. The
+  // synthetic `readEnv` hoists `opts.secret` to `SHARED_SECRET` so the same
+  // resolver works — `baerlyDev` takes the secret as a typed option rather
+  // than reading `process.env` directly.
   const verifier = resolveVerifier({
     factoryVerifier: opts.verifier,
-    config: opts.config,
+    config,
     readEnv: (k) => (k === "SHARED_SECRET" ? opts.secret : process.env[k]),
   });
-
-  // Bearer injection only matters in the shared-secret branch (and
-  // only when no override owns auth). For "none" or any custom
-  // verifier, the `Authorization` header reaches the listener
-  // unchanged.
+  // Bearer injection only matters in the shared-secret branch (and only when
+  // no override owns auth). For "none" or any custom verifier, the
+  // `Authorization` header reaches the listener unchanged.
   const bearerForInjection: string | undefined =
-    opts.verifier === undefined && opts.config.auth === "shared-secret" ? opts.secret : undefined;
+    opts.verifier === undefined && config.auth === "shared-secret" ? opts.secret : undefined;
+  return { verifier, bearerForInjection };
+}
 
+export function baerlyDev(opts: BaerlyDevOptions): Plugin {
+  // Eager, factory-time auth resolution when a `config` object is passed —
+  // preserves fail-fast startup on misconfig. When `config` is omitted it's
+  // loaded lazily in `configureServer` (see below) and auth resolves there.
+  const eagerAuth = opts.config !== undefined ? resolveAuth(opts, opts.config) : undefined;
   return {
     name: "baerly-dev",
     apply: "serve",
     configureServer(server) {
-      // Mount in the configureServer body (not a post-hook) so the
-      // middleware runs BEFORE Vite's internal SPA history fallback.
-      // Otherwise /v1/* requests get caught by the SPA fallback and
-      // served the index.html shell.
-      const app = opts.config.app;
-      const tenant = opts.config.tenant;
-      const tables = Object.keys(opts.config.collections);
+      // Everything below runs at dev-server startup, NOT at plugin-factory
+      // time. That lets callers omit `config` and instead have us load
+      // `baerly.config` here (via `configPath`, or by convention) — so their
+      // `vite.config` never imports the config module. Resolving it here
+      // rather than in the factory is what keeps baerly apps out of Nx's
+      // inference-plugin exclusion lists (see `BaerlyDevOptions.config`).
+      //
+      // Mount the middleware in the configureServer body (not a post-hook) so
+      // it runs BEFORE Vite's internal SPA history fallback; otherwise /v1/*
+      // requests get caught by the fallback and served the index.html shell.
       const ready = (async () => {
+        // Resolution order for the config source: explicit `config` object →
+        // explicit `configPath` → convention `<viteRoot>/src/baerly.config.ts`.
+        let config: BaerlyAppConfig;
+        if (opts.config !== undefined) {
+          config = opts.config;
+        } else {
+          const configPath = opts.configPath ?? resolve(server.config.root, "src/baerly.config.ts");
+          const mod = (await server.ssrLoadModule(configPath)) as { default?: unknown };
+          // Mirrors packages/cli/src/config.ts's loadAppConfig: a module with no
+          // (or a misnamed) default export would otherwise silently become
+          // `undefined` here, surfacing later as a bare `TypeError` on the first
+          // `config.app` read with no hint that the real problem is the export.
+          if (typeof mod.default !== "object" || mod.default === null) {
+            throw new BaerlyError(
+              "InvalidConfig",
+              `baerly-dev: ${configPath} must default-export a BaerlyAppConfig object`,
+            );
+          }
+          config = mod.default as BaerlyAppConfig;
+        }
+
+        // Reuse the eager (factory-time) auth resolution when a `config` object
+        // was passed; otherwise resolve now that the loaded config is available.
+        const { verifier, bearerForInjection } = eagerAuth ?? resolveAuth(opts, config);
+
+        const app = config.app;
+        const tenant = config.tenant;
+        const tables = Object.keys(config.collections);
         const storage = new LocalFsStorage({
           root: opts.dataDir ?? resolve(server.config.root, ".baerly-data"),
         });
@@ -303,15 +367,15 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           await ensureTable(storage, { app, tenant, table });
         }
         if (opts.seed !== undefined) {
-          const db = Db.create({ storage, app, tenant, config: opts.config });
+          const db = Db.create({ storage, app, tenant, config });
           await opts.seed(db);
         }
-        const requestHandler = baerlyNode({
-          config: opts.config,
-          storage,
-          verifier,
-        }).fetch;
-        return getRequestListener(requestHandler);
+        const requestHandler = baerlyNode({ config, storage, verifier }).fetch;
+        return {
+          listener: getRequestListener(requestHandler),
+          bearerForInjection,
+          appName: config.app,
+        };
       })();
 
       // Surface setup failures eagerly; without this an unhandled
@@ -326,17 +390,23 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
           next();
           return;
         }
-        // Inject the bearer token server-side so the SPA never sees
-        // the secret. Only runs for `config.auth === "shared-secret"`
-        // without a `verifier:` override — otherwise the header
-        // reaches the listener unchanged. Mutates both `req.headers`
-        // and `req.rawHeaders` — see `injectAuthorizationHeader`'s
-        // JSDoc.
-        if (bearerForInjection !== undefined) {
-          injectAuthorizationHeader(req, `Bearer ${bearerForInjection}`);
+        // Inject the bearer token server-side so the SPA never sees the secret.
+        // Only for `config.auth === "shared-secret"` without a `verifier:`
+        // override — otherwise the header reaches the listener unchanged.
+        // Mutates both `req.headers` and `req.rawHeaders` (see
+        // `injectAuthorizationHeader`'s JSDoc). When auth resolved eagerly
+        // (explicit `config`), inject synchronously here — before the async
+        // listener resolves — preserving the pre-lazy-load timing. When the
+        // config is loaded lazily, the bearer isn't known yet, so injection
+        // happens in the `ready.then` below (still before the listener runs).
+        if (eagerAuth?.bearerForInjection !== undefined) {
+          injectAuthorizationHeader(req, `Bearer ${eagerAuth.bearerForInjection}`);
         }
         ready.then(
-          (listener) => {
+          ({ listener, bearerForInjection }) => {
+            if (eagerAuth === undefined && bearerForInjection !== undefined) {
+              injectAuthorizationHeader(req, `Bearer ${bearerForInjection}`);
+            }
             listener(req as never, res as never);
           },
           (error: unknown) => {
@@ -355,11 +425,20 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
               ? (address as AddressInfo).port
               : undefined;
           const url = port !== undefined ? `http://localhost:${port}/` : "http://localhost/";
-          printDevBanner({
-            name: opts.config.app,
-            primaryUrl: { label: "App", url },
-            ...(opts.hints !== undefined && { hints: opts.hints }),
-          });
+          ready
+            .then(({ appName }) => {
+              printDevBanner({
+                name: appName,
+                primaryUrl: { label: "App", url },
+                ...(opts.hints !== undefined && { hints: opts.hints }),
+              });
+            })
+            // A rejected `ready` is already logged by the `ready.catch` above.
+            // Each `.then()`/`.catch()` call creates its own derived promise,
+            // so without this, a config-load failure here would be a SECOND,
+            // unguarded rejection — the exact "unhandled rejection kills the
+            // dev server" failure that catch was added to prevent.
+            .catch(() => {});
         });
       }
     },

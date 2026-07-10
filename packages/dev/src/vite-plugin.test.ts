@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -284,6 +285,170 @@ describe("baerlyDev — default dataDir", () => {
         await new Promise((r) => setTimeout(r, 20));
       }
       expect(existsSync(join(root, ".baerly-data"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("baerlyDev — config loading", () => {
+  // Fake server exposing the bits the config loader touches: `config.root`
+  // (for the convention path + default dataDir) and a capturing `ssrLoadModule`.
+  const makeServer = (
+    root: string,
+    loader: (id: string) => Promise<Record<string, unknown>>,
+  ): { captured: CapturedMw[]; server: unknown } => {
+    const captured: CapturedMw[] = [];
+    return {
+      captured,
+      server: {
+        middlewares: { use: (mw: CapturedMw) => captured.push(mw) },
+        httpServer: null,
+        config: { root },
+        ssrLoadModule: loader,
+      },
+    };
+  };
+
+  const start = (plugin: ReturnType<typeof baerlyDev>, server: unknown): void => {
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer !== "function") {
+      throw new Error("configureServer must be a function");
+    }
+    configureServer.call(null as never, server as never);
+  };
+
+  // Kick a /v1 request and wait until `requested` is populated (the async
+  // config load happens off the middleware's first matching request).
+  const driveAndWait = async (captured: CapturedMw[], requested: string[]): Promise<void> => {
+    captured[0]!(makeReq("/v1/healthz"), makeRes(), () => {});
+    for (let i = 0; i < 50 && requested.length === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+
+  test("loads config by convention from <root>/src/baerly.config.ts when config omitted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-conv-"));
+    try {
+      const requested: string[] = [];
+      const { captured, server } = makeServer(root, async (id) => {
+        requested.push(id);
+        return { default: baseConfig("none") };
+      });
+      start(baerlyDev({ banner: false }), server);
+      await driveAndWait(captured, requested);
+      expect(requested).toEqual([join(root, "src/baerly.config.ts")]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("loads config from configPath override when provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-cfgpath-"));
+    try {
+      const requested: string[] = [];
+      const custom = join(root, "elsewhere", "baerly.config.ts");
+      const { captured, server } = makeServer(root, async (id) => {
+        requested.push(id);
+        return { default: baseConfig("none") };
+      });
+      start(baerlyDev({ configPath: custom, banner: false }), server);
+      await driveAndWait(captured, requested);
+      expect(requested).toEqual([custom]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("lazily-loaded shared-secret config injects Bearer before the listener runs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-lazy-secret-"));
+    try {
+      const { captured, server } = makeServer(root, async () => ({
+        default: baseConfig("shared-secret"),
+      }));
+      // No explicit `config` → auth resolves lazily once the config loads.
+      // The bearer isn't known at middleware-registration time, so injection
+      // must happen inside the `ready.then`, still before `listener(req, res)`.
+      start(baerlyDev({ secret: "lazy-secret", dataDir: root, banner: false }), server);
+      const req = makeReq("/v1/healthz");
+      captured[0]!(req, makeRes(), () => {});
+      for (let i = 0; i < 50 && req.headers["authorization"] === undefined; i += 1) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(req.headers["authorization"]).toBe("Bearer lazy-secret");
+      expect(headersFromRaw(req).get("authorization")).toBe("Bearer lazy-secret");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit config object never calls ssrLoadModule", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-explicit-"));
+    try {
+      const requested: string[] = [];
+      const { captured, server } = makeServer(root, async (id) => {
+        requested.push(id);
+        return { default: baseConfig("none") };
+      });
+      start(baerlyDev({ config: baseConfig("none"), banner: false }), server);
+      await driveAndWait(captured, requested);
+      // The /v1 request routed (config came from the object), but the loader
+      // was never consulted.
+      expect(requested).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("config module with no default export surfaces a clear InvalidConfig message, not a bare TypeError", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-nodefault-"));
+    try {
+      const { captured, server } = makeServer(root, async () => ({}));
+      start(baerlyDev({ banner: false }), server);
+      const res = makeRes();
+      captured[0]!(makeReq("/v1/healthz"), res, () => {
+        throw new Error("next should not be called");
+      });
+      for (let i = 0; i < 50 && res.statusCode === 0; i += 1) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(res.statusCode).toBe(503);
+      const body = JSON.parse(res.written.join("")) as { message: string };
+      expect(body.message).toContain("must default-export a BaerlyAppConfig object");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("banner does not crash the process when lazy config load rejects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "baerly-bannerfail-"));
+    try {
+      const httpServer = new EventEmitter() as EventEmitter & { address: () => null };
+      httpServer.address = () => null;
+      const server = {
+        middlewares: { use: () => {} },
+        httpServer,
+        config: { root },
+        ssrLoadModule: async () => {
+          throw new Error("boom");
+        },
+      };
+      const rejections: unknown[] = [];
+      const onRejection = (reason: unknown): void => {
+        rejections.push(reason);
+      };
+      process.on("unhandledRejection", onRejection);
+      try {
+        start(baerlyDev({ banner: true }), server);
+        httpServer.emit("listening");
+        await new Promise((r) => setTimeout(r, 100));
+        // Before the fix, the banner's `ready.then` had no rejection handler:
+        // a distinct derived promise from the same rejected `ready` would go
+        // unhandled here even though the setup failure is already logged.
+        expect(rejections).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onRejection);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
