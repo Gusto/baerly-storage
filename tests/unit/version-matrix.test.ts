@@ -29,6 +29,7 @@ const baseMatrix = (): MatrixShape => ({
 });
 
 const baseCode = (): CodeVersions => ({
+  packageVersion: "0.3.0",
   specVersion: "1",
   currentJson: 3,
   gcPending: 1,
@@ -81,14 +82,13 @@ describe("check-version-matrix: drift", () => {
     ]);
   });
 
-  // A package-version bump alone must NOT trip the drift gate: package.json
-  // is that axis's own source of truth and it moves every release. Lockstep
-  // is enforced structurally instead (see below).
-  test("package semver is not a drift axis", () => {
+  test("a stale packageSemver is caught", () => {
     const matrix = baseMatrix(); // still records the old 0.3.0
-    const bumpedCode = baseCode();
-    // Even though the released version moved on, no drift is reported.
-    expect(collectDriftViolations(matrix, bumpedCode)).toEqual([]);
+    const code = baseCode();
+    code.packageVersion = "0.4.0"; // package.json moved on; matrix wasn't regenerated
+    expect(collectDriftViolations(matrix, code)).toEqual([
+      expect.stringContaining("packageSemver.value"),
+    ]);
   });
 });
 

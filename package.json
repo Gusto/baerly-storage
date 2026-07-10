@@ -165,7 +165,7 @@
     "baerly": "node dist/baerly.js",
     "release": "node scripts/publish.mjs",
     "changeset": "changeset",
-    "changeset:version": "changeset version && node scripts/gen-spec.ts && rm -f packages/create-baerly-storage/CHANGELOG.md",
+    "changeset:version": "changeset version && node scripts/gen-spec.ts && node scripts/check-version-matrix.ts --write && rm -f packages/create-baerly-storage/CHANGELOG.md",
     "prepare": "node scripts/prepare.mjs",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
