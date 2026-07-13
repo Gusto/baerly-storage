@@ -3,7 +3,7 @@ title: Storage compatibility
 audience: spec
 doc_type: current-contract
 summary: Which S3-compatible stores baerly-storage supports, and the conditional-write features it depends on.
-last-reviewed: 2026-06-30
+last-reviewed: 2026-07-13
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md]
 ---
@@ -235,7 +235,7 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 | ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Tier 1**        | Cloudflare R2, AWS S3         | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI.                                                                                            |
 | **Tier 1.5**      | MinIO                         | Dev / local conformance harness (`pnpm dev:storage`, `pnpm test:minio`, `pnpm test:adapter-node`). Conditional writes — including bare-`*` create-if-absent — are verified against the pinned local MinIO; not a production target we promise.                                                                               |
-| **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS documents S3 `If-Match` / `If-None-Match` as read-scoped and baerly-storage does not emit native `x-goog-if-generation-match`, so GCS is unsupported for database use unless a live probe and conformance run prove otherwise. Azure Blob is not an S3 API and has no adapter. |
+| **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so the S3-interop path **cannot** linearize the commit log and is unsupported for database use. `baerly doctor --bucket` reports it red, and no configuration changes that. Linearizing GCS would require a native adapter driving `x-goog-if-generation-match` (create-if-absent + CAS) against the GCS XML API, which does not exist. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
 > **R2's `list` is eventually consistent — and that's fine here.** Unlike
@@ -332,12 +332,13 @@ non-Tier-1 row.
 | GCS (S3-interop) | Not over the S3 path — the header is read-scoped; writes need `x-goog-if-generation-match` | Same — read-scoped on S3 interop | Factory exists; provider XML-API docs; unsupported    | 2026-06  |
 | Azure Blob       | n/a (not an S3 API)                                                                        | n/a                              | No adapter                                            | 2026-06  |
 
-> **Tracking note (GCS):** because GCS scopes `If-None-Match` to reads
-> over the S3 path, its **concurrent** create-if-absent
-> exactly-one-winner behavior is moot and **unverified** — if a future
-> native GCS adapter ever emits `x-goog-if-generation-match`, that
-> adapter must pass the `ifNoneMatch-concurrent` probe before GCS can
-> leave the Unsupported tier.
+> **Tracking note (GCS):** the S3-interop path cannot support database
+> use — read-scoped conditional headers mean **concurrent**
+> create-if-absent admits multiple winners (split-brain commit), so no
+> live probe can promote it out of Unsupported. Linearizing GCS would
+> require a native adapter emitting `x-goog-if-generation-match`
+> (returning `412` on precondition failure, with the opaque `generation`
+> as the version token); no such adapter exists today.
 
 > Conditional writes are also subject to **per-object / per-prefix
 > write-rate limits**. Under single-write commit the high-frequency
