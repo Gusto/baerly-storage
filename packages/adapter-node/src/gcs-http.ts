@@ -15,31 +15,24 @@ import {
 import { parseRetryAfter, retry, retryAfterCause, xmlErrorDetail } from "./http-transport.ts";
 import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
+/** Default GCS native XML API endpoint. */
+const DEFAULT_GCS_ENDPOINT = "https://storage.googleapis.com";
+
 /**
- * Construction-time options for {@link S3HttpStorage}. Everything is
- * optional except `endpoint` and `bucket`; the consumer chooses how
- * to satisfy `fetch` (browser/Node global vs. injected) and `sign`
- * (anonymous Minio vs. SigV4-signed via aws4fetch).
+ * Construction-time options for {@link GcsHttpStorage}. Everything is
+ * optional except `bucket`; `endpoint` defaults to the GCS native XML
+ * API host. `sign` is injected — `gcsStorage` wires in the
+ * GOOG4-HMAC-SHA256 signer ({@link goog4Signer}); unit tests pass a
+ * passthrough.
  */
-export interface S3HttpStorageOptions {
-  /**
-   * S3 endpoint URL, e.g. `https://s3.us-east-1.amazonaws.com` or
-   * `http://127.0.0.1:9102` (Minio). Trailing slashes are trimmed.
-   */
-  endpoint: string;
-  /** S3 bucket name. */
+export interface GcsHttpStorageOptions {
+  /** GCS endpoint. Defaults to `https://storage.googleapis.com`. */
+  endpoint?: string;
+  /** GCS bucket name. */
   bucket: string;
-  /**
-   * `fetch` implementation. Defaults to `globalThis.fetch.bind(globalThis)`.
-   * Tests pass a `vi.fn()` stub.
-   */
+  /** `fetch` implementation. Defaults to `globalThis.fetch.bind(globalThis)`. */
   fetch?: typeof fetch;
-  /**
-   * Signs requests before send. Pass `undefined` for anonymous
-   * (Minio without creds). The seam is `(req) => Promise<req>` so
-   * SigV4 implementations like `aws4fetch.AwsClient.sign` plug in
-   * directly.
-   */
+  /** Signs requests before send. GOOG4-HMAC-SHA256 in production. */
   sign?: (req: Request) => Promise<Request>;
   /** Max retries for transient (non-permanent) failures. */
   retries?: number;
@@ -48,17 +41,17 @@ export interface S3HttpStorageOptions {
 }
 
 /**
- * `Storage` impl that speaks the S3 REST API directly. Works against
- * any S3-compatible endpoint — AWS S3, R2 (S3-compat), Minio. Does not
- * depend on any AWS SDK. GCS is NOT supported over this S3-interop path
- * (its conditional-write semantics can't linearize the commit log); use
- * the native `GcsHttpStorage` adapter instead.
+ * `Storage` impl that speaks the GCS native XML API and drives GCS's own
+ * `x-goog-if-generation-match` conditional writes. Unlike GCS's S3-interop
+ * endpoint (which treats `If-Match`/`If-None-Match` as read-scoped and can
+ * never linearize the log), the native API returns 412 on any precondition
+ * miss and the object `generation` in `x-goog-generation`. That generation
+ * is carried verbatim in the opaque `Storage` etag.
  *
- * Authentication is plugged in via the `sign` callback; this class
- * itself does no SigV4. For Cloudflare Workers, the R2 binding fast
- * path lives in `@baerly/adapter-cloudflare`.
+ * Authentication is plugged in via `sign` (GOOG4-HMAC-SHA256); this class
+ * does no signing itself.
  */
-export class S3HttpStorage implements Storage {
+export class GcsHttpStorage implements Storage {
   readonly #endpoint: string;
   readonly #bucket: string;
   readonly #fetch: typeof fetch;
@@ -66,8 +59,8 @@ export class S3HttpStorage implements Storage {
   readonly #retries: number;
   readonly #backoffMs: number;
 
-  constructor(options: S3HttpStorageOptions) {
-    this.#endpoint = options.endpoint.replace(/\/+$/, "");
+  constructor(options: GcsHttpStorageOptions) {
+    this.#endpoint = (options.endpoint ?? DEFAULT_GCS_ENDPOINT).replace(/\/+$/, "");
     this.#bucket = options.bucket;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#sign = options.sign;
@@ -75,13 +68,16 @@ export class S3HttpStorage implements Storage {
     this.#backoffMs = options.backoffMs ?? 100;
   }
 
-  #objectUrl(key: string, versionId?: string): string {
+  #objectUrl(key: string, generation?: string): string {
     // Choke point for every key-addressing verb — reject unaddressable
     // `.`/`..`/empty keys before URL normalization turns them into a
     // bucket-root 403. @see storage-compatibility.md "Key namespace".
     assertValidStorageKey(key);
     const base = `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
-    return versionId !== undefined ? `${base}?versionId=${encodeURIComponent(versionId)}` : base;
+    // GCS's native equivalent of S3 ?versionId= is ?generation=. Not
+    // exercised by the kernel (which never pins a historical version),
+    // but threaded for parity with the Storage interface.
+    return generation !== undefined ? `${base}?generation=${encodeURIComponent(generation)}` : base;
   }
 
   async #dispatch(req: Request): Promise<Response> {
@@ -104,23 +100,36 @@ export class S3HttpStorage implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
     const url = this.#objectUrl(key, opts?.versionId);
-    const headers = new Headers();
-    if (opts?.ifNoneMatch !== undefined) {
-      headers.set("If-None-Match", opts.ifNoneMatch);
-    }
+    // DELTA 4: no conditional read. GCS's native XML API has no
+    // generation-based conditional GET. `x-goog-if-generation-{match,
+    // not-match}` ARE honored against the `generation` this adapter carries
+    // as the opaque etag — but only as write-style CAS preconditions that
+    // 412 on failure, never as a 304-when-unchanged read. Empirically
+    // confirmed on a real bucket under GOOG4 signing:
+    // `if-generation-match: <stale>` → 412, and
+    // `if-generation-not-match: <live-gen>` → 200 with the full body (not
+    // 304); no header combination yields a conditional-read 304.
+    // `opts.ifNoneMatch` is therefore intentionally ignored; the conformance
+    // suite opts GCS out via `supportsConditionalGet: false`. Safe for
+    // baerly: the kernel never issues a conditional read — every
+    // `ifNoneMatch` it sends is `put(…, { ifNoneMatch: "*" })`
+    // create-if-absent.
     return this.#retry(async () => {
       const res = await this.#dispatch(
-        new Request(url, { method: "GET", headers, signal: opts?.signal ?? null }),
+        new Request(url, { method: "GET", signal: opts?.signal ?? null }),
       );
       switch (res.status) {
         case 200: {
-          const etag = res.headers.get("ETag");
+          // DELTA 2: version token is x-goog-generation. No ETag fallback —
+          // GCS's ETag is a quoted-MD5, not a generation; a fallback value
+          // would poison the next x-goog-if-generation-match CAS. Fail loud
+          // if absent (it is present on every GCS PUT/GET).
+          const etag = res.headers.get("x-goog-generation");
           if (etag === null) {
-            throw new BaerlyError("InvalidResponse", `GET ${key}: missing ETag`);
+            throw new BaerlyError("InvalidResponse", `GET ${key}: missing x-goog-generation`);
           }
           const body = new Uint8Array(await res.arrayBuffer());
-          const versionId = res.headers.get("x-amz-version-id") ?? undefined;
-          return versionId !== undefined ? { body, etag, versionId } : { body, etag };
+          return { body, etag };
         }
         case 304:
         case 404: {
@@ -150,49 +159,28 @@ export class S3HttpStorage implements Storage {
     const url = this.#objectUrl(key);
     const headers = new Headers();
     headers.set("Content-Type", opts?.contentType ?? "application/octet-stream");
-    if (opts?.ifMatch !== undefined) {
-      headers.set("If-Match", opts.ifMatch);
-    }
+    // DELTA 1: native generation precondition, not S3 If-Match/If-None-Match.
+    // ifNoneMatch:"*" => create-if-absent (:0); ifMatch => CAS (:<generation>).
     if (opts?.ifNoneMatch === "*") {
-      headers.set("If-None-Match", "*");
+      headers.set("x-goog-if-generation-match", "0");
+    } else if (opts?.ifMatch !== undefined) {
+      headers.set("x-goog-if-generation-match", opts.ifMatch);
     }
     return this.#retry(async () => {
       const res = await this.#dispatch(
         new Request(url, {
           method: "PUT",
           headers,
-          // TS lib.dom narrows BodyInit and a generic `Uint8Array<ArrayBufferLike>`
-          // is not assignable; the runtime accepts it.
+          // TS lib.dom narrows BodyInit; the runtime accepts Uint8Array.
           body: body as BodyInit,
           signal: opts?.signal ?? null,
         }),
       );
+      // DELTA 3: 412 is the ONLY precondition-failure status on GCS, for
+      // BOTH create-collision and stale-CAS. No S3-style 409-contended
+      // branch, no 404-with-ifMatch branch.
       if (res.status === 412) {
         throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
-      }
-      // AWS S3 returns 409 ConditionalRequestConflict when a concurrent
-      // conditional create (If-None-Match:"*") races; Minio returns 412.
-      // 409 means the write was contended and may NOT have landed, so it
-      // maps to a retryable NetworkError — the single-write-commit writer
-      // re-issues the same-seq PUT, which resolves deterministically to 200
-      // (we win) or 412 (key now present → Conflict → adopt/re-probe). A
-      // direct Conflict here would adopt-read a possibly-absent entry.
-      if (res.status === 409 && opts?.ifNoneMatch === "*") {
-        throw new BaerlyError(
-          "NetworkError",
-          `PUT ${key}: 409 ConditionalRequestConflict (contended conditional create; retryable)`,
-          { status: res.status, ...retryAfterCause(res) },
-        );
-      }
-      // S3-compatible servers diverge on `If-Match` against a missing
-      // key: AWS S3 returns 412, Minio returns 404 (NoSuchKey). Map
-      // 404-with-ifMatch to the same `Conflict` semantic so consumers
-      // don't have to special-case the wire reply.
-      if (res.status === 404 && opts?.ifMatch !== undefined) {
-        throw new BaerlyError(
-          "Conflict",
-          `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
-        );
       }
       if (res.status === 403) {
         throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);
@@ -209,18 +197,18 @@ export class S3HttpStorage implements Storage {
           `PUT ${key}: ${xmlErrorDetail(res.status, await res.text())}`,
         );
       }
-      const etag = res.headers.get("ETag");
+      // DELTA 2: version token is x-goog-generation, returned as etag. No
+      // ETag fallback — GCS's ETag is a quoted-MD5, not a generation; a
+      // fallback value would poison the next x-goog-if-generation-match CAS.
+      // Fail loud if absent (it is present on every GCS PUT/GET).
+      const etag = res.headers.get("x-goog-generation");
       if (etag === null) {
-        throw new BaerlyError("InvalidResponse", `PUT ${key}: missing ETag`);
+        throw new BaerlyError("InvalidResponse", `PUT ${key}: missing x-goog-generation`);
       }
       const dateStr = res.headers.get("Date");
-      const versionId = res.headers.get("x-amz-version-id") ?? undefined;
-      const result: { etag: string; serverDate?: Date; versionId?: string } = { etag };
+      const result: { etag: string; serverDate?: Date } = { etag };
       if (dateStr !== null) {
         result.serverDate = new Date(dateStr);
-      }
-      if (versionId !== undefined) {
-        result.versionId = versionId;
       }
       return result;
     });
@@ -259,11 +247,6 @@ export class S3HttpStorage implements Storage {
       const params = new URLSearchParams();
       params.set("list-type", "2");
       params.set("prefix", prefix);
-      // Force S3 to URL-encode object keys in the response so keys
-      // containing XML-hostile or whitespace bytes survive the round trip.
-      // The XML parser (`xmlVal` in ./xml.ts) reverses this on `Key`; only
-      // the key family (Key/Prefix/Delimiter/StartAfter) is encoded — ETag
-      // and NextContinuationToken come back verbatim.
       params.set("encoding-type", "url");
       if (continuationToken !== undefined) {
         params.set("continuation-token", continuationToken);
@@ -276,10 +259,6 @@ export class S3HttpStorage implements Storage {
       }
       const url = `${this.#endpoint}/${this.#bucket}/?${params.toString()}`;
 
-      // Per-page 429 retry budget separate from the inner #retry budget:
-      // 429 means "rate-limited, back off and retry the same page", and
-      // a single hot page shouldn't burn the overall transient-failure
-      // budget.
       let parsed: Awaited<ReturnType<typeof parseListObjectsV2CommandOutput>> | undefined;
       let lastHint: number | undefined;
       for (let attempt = 0; attempt < LIST_OBJECT_MAX_RETRIES; attempt++) {
@@ -303,7 +282,10 @@ export class S3HttpStorage implements Storage {
             throw new BaerlyError(
               "NetworkError",
               `LIST ${prefix}: ${res.status} ${await res.text()}`,
-              { status: res.status, ...retryAfterCause(res) },
+              {
+                status: res.status,
+                ...retryAfterCause(res),
+              },
             );
           }
           throw new BaerlyError(
@@ -332,8 +314,13 @@ export class S3HttpStorage implements Storage {
           continue;
         }
         yield {
+          // The version token is the generation, not the MD5 `<ETag>`, so the
+          // list etag matches what get/put return for the same object (the
+          // universal list-etag == version-token contract). GCS emits
+          // `<Generation>` for every object; the `?? ""` is a defensive floor
+          // for a malformed row and, like every list etag, is CAS-unused.
           key: entry.Key,
-          etag: entry.ETag ?? "",
+          etag: entry.Generation ?? "",
           ...(entry.LastModified !== undefined && { lastModified: entry.LastModified }),
         };
         yielded += 1;
