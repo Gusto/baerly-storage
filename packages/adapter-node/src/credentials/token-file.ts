@@ -8,7 +8,7 @@ import { BaerlyError } from "@baerly/protocol";
  *
  * A missing / unreadable / empty projected token is a deploy misconfig, not a
  * transient fault — so every failure is `InvalidConfig`, which short-circuits
- * the retry loop (see `PERMANENT_ERROR_CODES` in `s3-http.ts`) instead of
+ * the retry loop (see `PERMANENT_ERROR_CODES` in `http-transport.ts`) instead of
  * hammering the credential source. Error messages name the specific env var
  * so the misconfig is debuggable.
  */

@@ -96,7 +96,7 @@ export function fromWebIdentity(
     // 5xx + 429 are transient — NetworkError so callers / chained providers can
     // retry. Other 4xx (expired/invalid token, role trust mismatch) are
     // permanent — AccessDenied so retry loops short-circuit (see
-    // PERMANENT_ERROR_CODES in s3-http.ts). Either way, fold the STS
+    // PERMANENT_ERROR_CODES in http-transport.ts). Either way, fold the STS
     // <ErrorResponse> Code/Message into the message — a bare status turns the
     // exact misconfig this provider exists to debug (bad role trust policy,
     // token audience mismatch, clock skew, expired token) into a guessing game.

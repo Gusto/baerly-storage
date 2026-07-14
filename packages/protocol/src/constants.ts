@@ -115,7 +115,7 @@ export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
  * proxy a denial-of-service primitive. 60s covers any plausible S3-
  * compatible throttle while keeping the worst-case bounded.
  *
- * @see packages/protocol/src/storage/s3-http.ts (`parseRetryAfter`)
+ * @see packages/adapter-node/src/http-transport.ts (`parseRetryAfter`)
  */
 export const RETRY_AFTER_MAX_SECONDS: number = 60;
 
