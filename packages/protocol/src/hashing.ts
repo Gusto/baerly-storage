@@ -1,3 +1,4 @@
+import { sha256Hex } from "./sha256.ts";
 import type { ContentVersionId } from "./types.ts";
 
 /**
@@ -32,16 +33,6 @@ const VERSION_HEX_LENGTH = 32;
  * @see docs/spec/log-entry-shape.md §"Content body layout"
  */
 export const versionFromContent = async (body: Uint8Array): Promise<ContentVersionId> => {
-  // Copy via fresh ArrayBuffer: tsgo narrows `Uint8Array` to
-  // `Uint8Array<ArrayBufferLike>`, which `crypto.subtle.digest` rejects
-  // (wants `ArrayBufferView<ArrayBuffer>`). See microsoft/TypeScript#61375.
-  const view = new Uint8Array(body.byteLength);
-  view.set(body);
-  const digest = await crypto.subtle.digest("SHA-256", view);
-  const bytes = new Uint8Array(digest);
-  let hex = "";
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i]!.toString(16).padStart(2, "0");
-  }
+  const hex = await sha256Hex(body);
   return hex.slice(0, VERSION_HEX_LENGTH) as ContentVersionId;
 };

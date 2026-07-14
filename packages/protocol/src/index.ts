@@ -20,6 +20,7 @@ export * from "./indexes.ts";
 export * from "./json.ts";
 export * from "./query/index.ts";
 export * from "./schema.ts";
+export * from "./sha256.ts";
 export * from "./storage/index.ts";
 export * from "./time.ts";
 export * from "./types.ts";

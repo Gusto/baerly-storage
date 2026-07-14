@@ -1,3 +1,4 @@
+import { sha256Hex } from "@baerly/protocol";
 import type { Credentials, CredentialsProvider } from "./types.ts";
 
 /** GOOG4 signing-key prefix (vs AWS SigV4's "AWS4"). @see https://docs.cloud.google.com/storage/docs/authentication/signatures */
@@ -13,20 +14,15 @@ const GOOG4_REGION = "auto";
 
 const encoder = new TextEncoder();
 
+// SHA-256 hex comes from `@baerly/protocol` (shared with snapshotHash /
+// versionFromContent). `toHex` stays local: `sigV4Signature` still needs to
+// hex-encode raw HMAC output, which is not a SHA-256 digest.
 function toHex(bytes: Uint8Array): string {
   let hex = "";
   for (let i = 0; i < bytes.length; i++) {
     hex += bytes[i]!.toString(16).padStart(2, "0");
   }
   return hex;
-}
-
-async function sha256Hex(data: Uint8Array): Promise<string> {
-  // Copy into a fresh ArrayBuffer — see hashing.ts / microsoft/TypeScript#61375.
-  const view = new Uint8Array(data.byteLength);
-  view.set(data);
-  const digest = await crypto.subtle.digest("SHA-256", view);
-  return toHex(new Uint8Array(digest));
 }
 
 /** RFC-3986-strict percent-encoding for canonical query components: encodes
@@ -172,6 +168,10 @@ export function goog4Signer(opts: {
     const scope = `${yyyymmdd}/${GOOG4_REGION}/${GOOG4_SERVICE}/${GOOG4_REQUEST}`;
 
     const body = new Uint8Array(await req.clone().arrayBuffer());
+    // `body` already owns a fresh ArrayBuffer, so `sha256Hex`'s defensive copy
+    // is redundant for this caller — but the shared helper keeps it for callers
+    // whose Uint8Array may be a view over a larger buffer (TS#61375). Not worth
+    // special-casing the shared helper; correctness over one avoided copy.
     const payloadHash = await sha256Hex(body);
 
     const url = new URL(req.url);
