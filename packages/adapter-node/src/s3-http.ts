@@ -2,7 +2,6 @@ import {
   BaerlyError,
   LIST_OBJECT_MAX_RETRIES,
   RATE_LIMIT_BACKOFF_MILLIS,
-  RETRY_AFTER_MAX_SECONDS,
   S3_REQUEST_MAX_RETRIES,
   assertValidStorageKey,
   delay,
@@ -13,128 +12,8 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { parseListObjectsV2CommandOutput, parseS3Error } from "./xml.ts";
-
-/**
- * Permanent {@link BaerlyError} codes that must short-circuit `retry`.
- * These represent caller- or environment-level faults where retrying
- * cannot succeed: `AccessDenied` (403 — credentials/policy),
- * `InvalidConfig` (bad bucket / unsupported credential type),
- * `InvalidResponse` (server returned unparseable data), and
- * `Conflict` (CAS guard lost — retrying would just re-lose against
- * the same state). `NetworkError` is intentionally absent — it covers
- * transient transport faults and stays retryable.
- *
- * Transport-layer set, distinct from `RETRIABLE_CODES` in `@baerly/protocol`'s
- * `errors.ts` (the default wire `retriable` hint). `Conflict` is "permanent"
- * here (a blind re-PUT re-loses the CAS race) yet retryable for logical CAS
- * callers that can fresh-read + re-apply. Same code, two different questions.
- */
-const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
-  "AccessDenied",
-  "InvalidConfig",
-  "InvalidResponse",
-  "Conflict",
-]);
-
-/**
- * Parse an HTTP `Retry-After` header into a non-negative seconds value,
- * clamped to {@link RETRY_AFTER_MAX_SECONDS}. Returns `undefined` if
- * the header is absent, malformed, or whitespace.
- *
- * RFC 7231 §7.1.3 admits two forms: delta-seconds (non-negative
- * integer) and HTTP-date. Both are accepted; dates in the past return
- * `0`. Fractional seconds, negatives, and arbitrary strings reject.
- *
- * The `now` injection point exists for the unit test; production
- * callers should pass nothing.
- */
-function parseRetryAfter(header: string | null, now: () => number = Date.now): number | undefined {
-  if (header === null) {
-    return undefined;
-  }
-  const trimmed = header.trim();
-  if (trimmed === "") {
-    return undefined;
-  }
-  if (/^\d+$/.test(trimmed)) {
-    const n = Number.parseInt(trimmed, 10);
-    return Number.isFinite(n) ? Math.min(n, RETRY_AFTER_MAX_SECONDS) : undefined;
-  }
-  // RFC 7231 §7.1.1.1 HTTP-date formats (IMF-fixdate, RFC 850, asctime)
-  // all contain alphabetic month/day-of-week tokens. Gating on a letter
-  // avoids V8's lenient `Date.parse` accepting things like "5.5".
-  if (!/[a-z]/i.test(trimmed)) {
-    return undefined;
-  }
-  const t = Date.parse(trimmed);
-  if (Number.isNaN(t)) {
-    return undefined;
-  }
-  const seconds = Math.max(0, Math.ceil((t - now()) / 1000));
-  return Math.min(seconds, RETRY_AFTER_MAX_SECONDS);
-}
-
-const retryAfterCause = (res: Response): { retryAfterSeconds?: number } => {
-  const hint = parseRetryAfter(res.headers.get("Retry-After"));
-  return hint !== undefined ? { retryAfterSeconds: hint } : {};
-};
-
-// Detail suffix for a non-status-mapped S3 error response. When the
-// body is a parseable `<Error><Code>…</Error>` document, surface S3's
-// own error code (and message) instead of concatenating the raw XML
-// blob into the thrown message; otherwise fall back to the raw text.
-const s3ErrorDetail = (status: number, body: string): string => {
-  const parsed = parseS3Error(body);
-  if (parsed !== undefined) {
-    const code = parsed.Code ?? "UnknownError";
-    return parsed.Message !== undefined
-      ? `${status} ${code}: ${parsed.Message}`
-      : `${status} ${code}`;
-  }
-  return `${status} ${body}`;
-};
-
-const retry = async <T>(
-  fn: () => Promise<T>,
-  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, maxDelayMs = 10_000 } = {},
-): Promise<T> => {
-  let wait = backoffMs;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      if (error instanceof BaerlyError && PERMANENT_ERROR_CODES.has(error.code)) {
-        throw error;
-      }
-      if (attempt === retries) {
-        throw error;
-      }
-      const hintMs = retryAfterHintMs(error, maxDelayMs);
-      await delay(hintMs ?? wait);
-      if (hintMs === undefined) {
-        wait = Math.min(wait * 1.5, maxDelayMs);
-      } else {
-        // A server-driven pause is new information about server state;
-        // reset the exponential ladder so a subsequent non-hinted
-        // transient starts fresh from `backoffMs`.
-        wait = backoffMs;
-      }
-    }
-  }
-  throw new BaerlyError("Internal", "s3-http retry loop exited without returning or throwing");
-};
-
-const retryAfterHintMs = (e: unknown, maxDelayMs: number): number | undefined => {
-  if (!(e instanceof BaerlyError)) {
-    return undefined;
-  }
-  const cause = e.cause as { retryAfterSeconds?: number } | undefined;
-  if (cause?.retryAfterSeconds === undefined) {
-    return undefined;
-  }
-  return Math.min(cause.retryAfterSeconds * 1000, maxDelayMs);
-};
+import { parseRetryAfter, retry, retryAfterCause, xmlErrorDetail } from "./http-transport.ts";
+import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
 /**
  * Construction-time options for {@link S3HttpStorage}. Everything is
@@ -257,7 +136,7 @@ export class S3HttpStorage implements Storage {
           }
           throw new BaerlyError(
             "InvalidResponse",
-            `GET ${key}: ${s3ErrorDetail(res.status, await res.text())}`,
+            `GET ${key}: ${xmlErrorDetail(res.status, await res.text())}`,
           );
         }
       }
@@ -325,7 +204,7 @@ export class S3HttpStorage implements Storage {
       if (res.status !== 200 && res.status !== 204) {
         throw new BaerlyError(
           "InvalidResponse",
-          `PUT ${key}: ${s3ErrorDetail(res.status, await res.text())}`,
+          `PUT ${key}: ${xmlErrorDetail(res.status, await res.text())}`,
         );
       }
       const etag = res.headers.get("ETag");
@@ -427,7 +306,7 @@ export class S3HttpStorage implements Storage {
           }
           throw new BaerlyError(
             "InvalidResponse",
-            `LIST ${prefix}: ${s3ErrorDetail(res.status, await res.text())}`,
+            `LIST ${prefix}: ${xmlErrorDetail(res.status, await res.text())}`,
           );
         });
         if (outcome.kind === "ok") {

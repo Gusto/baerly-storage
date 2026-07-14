@@ -71,7 +71,7 @@ export function fromEksPodIdentity(
     // 5xx + 429 are transient — bucket as NetworkError so callers /
     // chained providers can retry. Other 4xx are permanent —
     // AccessDenied so retry loops short-circuit (see
-    // PERMANENT_ERROR_CODES in s3-http.ts).
+    // PERMANENT_ERROR_CODES in http-transport.ts).
     if (res.status >= 500 || res.status === 429) {
       throw new BaerlyError("NetworkError", `fromEksPodIdentity: agent responded ${res.status}`);
     }
