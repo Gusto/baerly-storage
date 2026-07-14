@@ -8,7 +8,7 @@ import { parseXml, type XmlDocument, type XmlElement, type XmlText } from "@rgro
  * over the wire format.
  */
 export interface ParsedListObjectsV2Output {
-  Contents?: Array<{ ETag?: string; Key?: string; LastModified?: Date }>;
+  Contents?: Array<{ ETag?: string; Key?: string; LastModified?: Date; Generation?: string }>;
   NextContinuationToken?: string;
 }
 
@@ -288,6 +288,12 @@ export const parseListObjectsV2CommandOutput = (xml: string): ParsedListObjectsV
         ETag: rawXmlVal(contentEl, "ETag"),
         Key: xmlVal(contentEl, "Key"),
         LastModified: parseLastModified(rawXmlVal(contentEl, "LastModified")),
+        // GCS's list XML carries a `<Generation>` element per object (its
+        // opaque version token) that S3/R2 never emit — undefined there, so
+        // this is inert for the S3 path. `GcsHttpStorage.list` prefers it as
+        // the entry etag so a list etag equals the generation `get`/`put`
+        // return, matching the universal list-etag == version-token contract.
+        Generation: rawXmlVal(contentEl, "Generation"),
       };
     }),
     NextContinuationToken: rawXmlVal(root, "NextContinuationToken"),
