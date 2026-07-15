@@ -51,10 +51,11 @@ export type { GcsHttpStorageOptions } from "./gcs-http.ts";
 export { gcsVersioningStatus } from "./gcs-admin.ts";
 export type { GcsVersioningStatus } from "./gcs-admin.ts";
 // `goog4Signer` is intentionally NOT re-exported here, mirroring how the
-// analogous `sigV4Signer` stays off this `/node` barrel (it lives on the
-// `@gusto/baerly-storage/s3` subpath). The factories below construct the
-// signer internally; the only direct consumer is the conformance suite,
-// which imports it by module path.
+// analogous `sigV4Signer` stays off this `/node` barrel: each signer lives
+// on its curated family subpath (`sigV4Signer` on `@gusto/baerly-storage/s3`,
+// `goog4Signer` on `@gusto/baerly-storage/gcs`). The factories below
+// construct the signer internally; the conformance suite consumes it from
+// the `/gcs` barrel (`src/gcs.ts`), as the s3-worker suites do via `s3.ts`.
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
 export { localFsStorage } from "./local-fs-storage.ts";
 export type { LocalFsStorageFactoryOptions } from "./local-fs-storage.ts";

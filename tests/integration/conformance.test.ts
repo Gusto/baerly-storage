@@ -22,8 +22,10 @@ import { describe } from "vitest";
 
 import { DEFAULT_GCS_ENDPOINT, GcsHttpStorage, S3HttpStorage } from "@baerly/adapter-node";
 // `goog4Signer` is not on the `/node` barrel (see adapter-node/src/index.ts);
-// reach it by module path, as the s3-worker suites do for `sigV4Signer`.
-import { goog4Signer } from "../../packages/adapter-node/src/credentials/goog4-signer.ts";
+// import it from the curated GCS family barrel `gcs.ts` — the `@gusto/
+// baerly-storage/gcs` subpath source — exactly as the s3-worker suites
+// import `sigV4Signer` from `s3.ts` (the `/s3` subpath source).
+import { goog4Signer } from "../../packages/adapter-node/src/gcs.ts";
 import {
   type ConformanceOptions,
   defineStorageConformanceSuite,
