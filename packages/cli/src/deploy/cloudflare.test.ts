@@ -5,12 +5,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { BaerlyError } from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import {
+  casProbeStaleEtag,
   type CasProbe,
+  defaultCasProbe,
   deployCloudflare,
   ensureBindings,
   parseR2Bindings,
   type ProcessRunner,
 } from "./cloudflare.ts";
+import { GCS_STALE_GENERATION_PROBE_VALUE } from "../doctor/gcs.ts";
 
 const WRANGLER_JSONC = `{
   // Production manifest comment.
@@ -354,5 +357,37 @@ describe("ensureBindings", () => {
     expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "info", "need-it"]);
     expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "create", "need-it"]);
     expect(h.calls).not.toContainEqual(["wrangler", "r2", "bucket", "create", "have-it"]);
+  });
+});
+
+describe("casProbeStaleEtag", () => {
+  // Regression: the deploy preflight's default probe must feed native GCS
+  // a well-formed generation sentinel, or `baerly deploy --probe-bucket
+  // gcs://…` spuriously fails CAS (GCS answers 400-malformed, not
+  // 412-conflict, to the default S3/R2 quoted-string sentinel).
+  test("returns the GCS generation sentinel for a gcs:// parse result", () => {
+    const staleEtag = casProbeStaleEtag({
+      gcs: {
+        endpoint: "https://storage.googleapis.com",
+        bucket: "b",
+        credentials: { accessKeyId: "k", secretAccessKey: "s" },
+      },
+    });
+    expect(staleEtag).toBe(GCS_STALE_GENERATION_PROBE_VALUE);
+  });
+
+  test("returns undefined for a non-GCS parse result (probeCas default applies)", () => {
+    expect(casProbeStaleEtag({})).toBeUndefined();
+    expect(casProbeStaleEtag({ gcs: undefined })).toBeUndefined();
+  });
+});
+
+describe("defaultCasProbe", () => {
+  // End-to-end through the real parse → doctorCas → probeCas path (no
+  // mock) against MemoryStorage, which honours conditional writes.
+  test("passes a conformant backend (memory://)", async () => {
+    const report = await defaultCasProbe("memory://deploy-preflight");
+    expect(report.status).toBe("ok");
+    expect(report.findings.every((f) => f.severity === "ok")).toBe(true);
   });
 });

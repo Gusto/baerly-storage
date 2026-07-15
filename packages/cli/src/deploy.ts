@@ -36,8 +36,8 @@ const DEPLOY_ARGS = {
   probeBucket: {
     type: "string",
     description:
-      "Run a live CAS preflight against this bucket URI before deploying (s3://, file:///, memory://); aborts non-zero if the backend fails the conditional-write / exactly-one-winner probe. Same check as `baerly doctor --bucket`.",
-    valueHint: "s3://bucket/prefix",
+      "Run a live CAS preflight against this bucket URI before deploying (s3://, gcs://, file:///, memory://); aborts non-zero if the backend fails the conditional-write / exactly-one-winner probe. Same CAS check as `baerly doctor --bucket` (doctor additionally runs GCS cost advisories).",
+    valueHint: "s3://bucket/prefix | gcs://bucket",
   },
 } as const satisfies ArgsDef;
 
