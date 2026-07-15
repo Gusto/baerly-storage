@@ -140,6 +140,16 @@ const captureMiddleware = (plugin: ReturnType<typeof baerlyDev>): CapturedMw => 
   return captured[0]!;
 };
 
+/**
+ * Await a plugin's background setup (exposed as `api.whenSettled`) so a
+ * throwaway data dir isn't `rm`'d out from under the un-awaited
+ * `ensureTable`/`storage.put` that `configureServer` kicks off — which
+ * otherwise surfaces a misleading `[baerly-dev] setup failed: ENOENT`
+ * stack and races teardown against setup.
+ */
+const whenSettled = (plugin: ReturnType<typeof baerlyDev>): Promise<void> =>
+  (plugin.api as { whenSettled: Promise<void> }).whenSettled;
+
 let tmp: string;
 let middlewares: CapturedMw[];
 
@@ -404,17 +414,27 @@ describe("baerlyDev — config loading", () => {
     const root = await mkdtemp(join(tmpdir(), "baerly-nodefault-"));
     try {
       const { captured, server } = makeServer(root, async () => ({}));
-      start(baerlyDev({ banner: false }), server);
-      const res = makeRes();
-      captured[0]!(makeReq("/v1/healthz"), res, () => {
-        throw new Error("next should not be called");
-      });
-      for (let i = 0; i < 50 && res.statusCode === 0; i += 1) {
-        await new Promise((r) => setTimeout(r, 20));
+      // The invalid-config rejection is surfaced to the developer via
+      // `console.error("[baerly-dev] setup failed:", …)` (vite-plugin.ts).
+      // Capture that expected stack instead of letting it dump to stderr,
+      // and assert it fired — mirrors the "banner does not crash" test.
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        start(baerlyDev({ banner: false }), server);
+        const res = makeRes();
+        captured[0]!(makeReq("/v1/healthz"), res, () => {
+          throw new Error("next should not be called");
+        });
+        for (let i = 0; i < 50 && res.statusCode === 0; i += 1) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(res.statusCode).toBe(503);
+        const body = JSON.parse(res.written.join("")) as { message: string };
+        expect(body.message).toContain("must default-export a BaerlyAppConfig object");
+        expect(errorSpy).toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
       }
-      expect(res.statusCode).toBe(503);
-      const body = JSON.parse(res.written.join("")) as { message: string };
-      expect(body.message).toContain("must default-export a BaerlyAppConfig object");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -474,7 +494,7 @@ describe("baerlyDev — auth resolution", () => {
   };
 
   test('auth: "none" → middleware does NOT inject Authorization on /v1/*', async () => {
-    await withDataDir((dir) => {
+    await withDataDir(async (dir) => {
       const plugin = baerlyDev({
         config: baseConfig("none"),
         dataDir: dir,
@@ -485,11 +505,12 @@ describe("baerlyDev — auth resolution", () => {
       mw(req, makeRes(), () => {});
       expect(req.headers["authorization"]).toBeUndefined();
       expect(headersFromRaw(req).get("authorization")).toBeNull();
+      await whenSettled(plugin);
     });
   });
 
   test('auth: "shared-secret" + secret → middleware injects Bearer <secret>', async () => {
-    await withDataDir((dir) => {
+    await withDataDir(async (dir) => {
       const plugin = baerlyDev({
         config: baseConfig("shared-secret"),
         secret: "s3cr3t",
@@ -501,6 +522,7 @@ describe("baerlyDev — auth resolution", () => {
       mw(req, makeRes(), () => {});
       expect(req.headers["authorization"]).toBe("Bearer s3cr3t");
       expect(headersFromRaw(req).get("authorization")).toBe("Bearer s3cr3t");
+      await whenSettled(plugin);
     });
   });
 
@@ -517,7 +539,7 @@ describe("baerlyDev — auth resolution", () => {
   });
 
   test("verifier override wins over config.auth + does NOT inject Bearer", async () => {
-    await withDataDir((dir) => {
+    await withDataDir(async (dir) => {
       const plugin = baerlyDev({
         config: baseConfig("shared-secret"),
         secret: "ignored",
@@ -533,6 +555,7 @@ describe("baerlyDev — auth resolution", () => {
       mw(req, makeRes(), () => {});
       // Override owns the auth seam — no bearer injection.
       expect(req.headers["authorization"]).toBeUndefined();
+      await whenSettled(plugin);
     });
   });
 });
