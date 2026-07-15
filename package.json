@@ -208,6 +208,7 @@
     "bench:r2:interpret": "node --import ./bench/register-hooks.mjs bench/r2-contention-interpret.ts",
     "bench:load": "node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts",
     "bench:load:minio": "MINIO=1 node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts --variant=node-minio",
+    "bench:load:gcs": "GCS=1 node --import ./bench/register-hooks.mjs bench/load-harness/cli.ts --variant=node-gcs",
     "bench:load:matrix": "node --import ./bench/register-hooks.mjs bench/load-harness/matrix.ts",
     "bench:lsn-reverse-walk": "node --import ./bench/register-hooks.mjs bench/lsn-reverse-walk.ts",
     "bench:fold-cost": "node --import ./bench/register-hooks.mjs bench/fold-cost.ts",

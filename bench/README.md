@@ -14,7 +14,7 @@ Two harnesses live under `bench/`:
 | Harness | What it measures | When to run |
 |---|---|---|
 | `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/writer.ts`, coordination primitives, or retry policy |
-| `bench/load-harness/` | S3 ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
+| `bench/load-harness/` | Object-storage ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model. `--variant=node-gcs` (gated on `GCS=1` + `credentials/gcs.json`) is the source of the measured GCS write-amp behind the GCS row in [docs/about/cost-model.md](../docs/about/cost-model.md#cost-vs-scale-table) | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 | `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/about/graduation.md](../docs/about/graduation.md) |
 | `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + snapshot-over-ceiling minutes) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. Verdict is per-axis (tail + objects) then combined. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
 | `bench/amortized-write-cost.ts` | Amortized BILLABLE Class A ops (PUT+LIST; DeleteObject is $0) per logical write, INCLUDING in-band maintenance (folds + GC), across workload shapes × profile (cf-free / node). Source of truth for the write-amp constants in the cost CLI + the effective-write-amp claim in docs/about/cost-model.md. No infra (MemoryStorage). MEASURES ONLY. | When revisiting the write-amplification claim or the cost-CLI projection |
@@ -50,9 +50,9 @@ gate in `tests/integration/maintenance-e2e.test.ts`.
 ## bench/load-harness/
 
 Seven workload presets driven through the public `Db.table(...)` API
-on three storage backends (memory / local-fs / node-minio) with four
-manifest-cache modes (cold / metadata-warm / data-warm / tiny-cache).
-Each run writes one JSON file to `bench/results/load/`.
+on four storage backends (memory / local-fs / node-minio / node-gcs)
+with four manifest-cache modes (cold / metadata-warm / data-warm /
+tiny-cache). Each run writes one JSON file to `bench/results/load/`.
 
 ```sh
 # Smoke check — memory backend, default preset, small scale
@@ -60,6 +60,15 @@ pnpm bench:load --preset=recent-first-crud --records=1000 --ops=1000
 
 # Minio backend (requires pnpm dev:storage to be running)
 pnpm bench:load:minio --preset=recent-first-crud
+
+# Real GCS bucket (requires GCS=1 + credentials/gcs.json; the eval
+# bucket is shared bring-your-own — always pass a unique --app so
+# the run's cleanup() sweeps only its own app/<app>/ prefix).
+# Keep the scale small: the shared eval bucket sustains only sub-1
+# write/s under this harness, so larger --records/--ops (e.g. 200/400)
+# can run for many minutes without completing.
+GCS=1 pnpm bench:load:gcs --preset=recent-first-crud --records=15 \
+  --ops=30 --seed=42 --app=bench-gcs-$(uuidgen)
 
 # Full sweep — all presets × variants × cache modes
 pnpm bench:load:matrix

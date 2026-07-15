@@ -267,11 +267,14 @@ Three cost differences from the R2 baseline matter:
   egress; a host outside GCP does. This flips the compression default —
   see the BYO-Node-to-remote-bucket case in
   [Compression default](#compression-default-decision-for-gustobaerly-storageclient).
-- **Op pricing is comparable in shape, not identical.** GCS bills Class A
-  operations (writes, lists) and Class B operations (reads) like S3/R2;
-  rates depend on storage class and region. baerly's Class A meter (the
-  `log/<seq>` commit PUT plus maintenance folds/LISTs) is the driver here
-  too. Re-check the official
+- **Op pricing tracks S3's model.** GCS bills Class A operations
+  (writes, lists) and Class B operations (reads) just like S3/R2. On GCS
+  Standard the flat rate matches AWS S3 Standard's (see the
+  [Cost-vs-scale table](#cost-vs-scale-table)), so the GCS column reuses
+  the S3 numbers — but that parity is a same-tier coincidence, not a
+  guarantee: it doesn't hold across other storage classes or regions.
+  baerly's Class A meter (the `log/<seq>` commit PUT plus maintenance
+  folds/LISTs) is the driver here too. Re-check the official
   [GCS pricing](https://cloud.google.com/storage/pricing) before quoting
   a figure.
 - **Soft-delete retention is billed.** New GCS buckets enable
@@ -292,9 +295,39 @@ rather than beginning at peak QPS. The commit path contends distinct
 single-writer collection, but a high-fan-in collection hammering one
 `log/` prefix hits the same [hot-prefix cliff](#hot-prefix-cliff-at-high-write-fan-in)
 S3 has, plus a prefix ramp-up on cold buckets. GCS's **hierarchical
-namespace (HNS)** buckets raise the initial QPS ceiling (~8× the
-flat-namespace default) and are the lever when the `log/` prefix is the
-bottleneck.
+namespace (HNS)** buckets start at a materially higher initial QPS
+ceiling than flat-namespace buckets (see the
+[request-rate guidelines](https://cloud.google.com/storage/docs/request-rate))
+and are the lever when the `log/` prefix is the bottleneck.
+
+**Measured, not just qualitative.** `pnpm bench:load:gcs` (gated on
+`GCS=1` + `credentials/gcs.json`, the `node-gcs` variant of the load
+harness at `bench/load-harness/cli.ts`) drives a single sequential
+writer against the real `baerly-storage-eval` bucket. Two findings from
+live runs against that bucket:
+
+- **Op-count parity with the backend-agnostic profile.** The `Db` +
+  `Writer` op sequence (PUT/LIST counts per logical op) measured on
+  `node-gcs` is byte-for-byte identical to the same preset/seed run on
+  the in-memory backend — GCS introduces zero _additional_ Class A ops
+  versus any other `Storage` implementation. The effective write-amp
+  `A` is therefore a property of the host maintenance profile (Node
+  ≈4×, already established by `bench:amortized-write-cost`), not of
+  the object-storage provider — consistent with the 2026-06-26
+  [pricing-log.md](pricing-log.md) entry. This is what the GCS column
+  in the [Cost-vs-scale table](#cost-vs-scale-table) uses.
+- **Latency and rate-limiting are real, but the counter has a blind
+  spot.** `gcsStorage()` retries a `429`/`5xx` internally (default 8
+  attempts, `RATE_LIMIT_BACKOFF_MILLIS`-floored exponential backoff)
+  before surfacing anything to the caller, so `object_store.rate_limit_429`
+  in the load-harness result JSON only counts *retry-budget-exhausted*
+  429s, not each individual one absorbed in a retry loop — a single
+  small-fan-in run against the eval bucket measured `rate_limit_429: 0`
+  while p95/p99 logical-op latency ran into the 1–3 second range (vs.
+  sub-millisecond on `memory`), and a larger run's log-tail writes
+  visibly slowed as sustained load continued — the cold-prefix ramp in
+  practice. Elevated latency, not the 429 counter, is the reliable
+  signal of GCS rate-limiting on this variant.
 
 ### Cost-vs-scale table
 
@@ -305,20 +338,29 @@ exclude the $5/mo Workers Paid platform floor — add it for the all-in
 cost on Cloudflare Workers Paid. These figures are what `baerly cost`
 projects. Storage: assume ~100 MB for S-size, scaling proportionally.
 
-| Writes/min (sustained, account-wide) | Class A/mo (Worker+R2, A≈3) | R2 $/mo (object-storage ops) | Class A/mo (Node+S3, A≈4) | S3 $/mo (object-storage ops) | Notes |
-| --- | --- | --- | --- | --- | --- |
-| 1 | 130k | $0 | 173k | ~$0.86 | Inside R2 free tier (1M/mo) |
-| 10 | 1.3M | ~$1 | 1.7M | ~$9 | R2: small Class A overage (+ $5 Workers Paid floor) |
-| **30 (M-size)** | **3.9M** | **~$13** | **5.2M** | **~$26** | **~$18/mo all-in on R2 incl. floor — see M-size breakdown below** |
-| **100** | **13.0M** | **~$54** | **17.3M** | **~$86** | **Advisory crossing: `baerly cost` prints eyes-open advisory** |
-| 390 | 50.5M | ~$223 | 67.4M | ~$337 | ≈ 50M Class A/mo R2 graduation trigger |
-| 1000 | 129.6M | ~$579 | 172.8M | ~$864 | Well past graduation |
+| Writes/min (sustained, account-wide) | Class A/mo (Worker+R2, A≈3) | R2 $/mo (object-storage ops) | Class A/mo (Node+S3, A≈4) | S3 $/mo (object-storage ops) | GCS $/mo (Node+GCS, A≈4) | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 130k | $0 | 173k | ~$0.86 | ~$0.84 | Inside R2 free tier (1M/mo); GCS free tier is only 5,000 Class A/mo |
+| 10 | 1.3M | ~$1 | 1.7M | ~$9 | ~$9 | R2: small Class A overage (+ $5 Workers Paid floor) |
+| **30 (M-size)** | **3.9M** | **~$13** | **5.2M** | **~$26** | **~$26** | **~$18/mo all-in on R2 incl. floor — see M-size breakdown below** |
+| **100** | **13.0M** | **~$54** | **17.3M** | **~$86** | **~$86** | **Advisory crossing: `baerly cost` prints eyes-open advisory** |
+| 390 | 50.5M | ~$223 | 67.4M | ~$337 | ~$337 | ≈ 50M Class A/mo R2 graduation trigger |
+| 1000 | 129.6M | ~$579 | 172.8M | ~$864 | ~$864 | Well past graduation |
+
+The GCS column shares the Node+S3 column's Class A/mo figures — both
+run the Node maintenance profile (`A≈4`, see the measured-parity note
+above) and GCS Standard's Class A rate ($0.005/1,000 = $5.00/1M,
+[GCS pricing](https://cloud.google.com/storage/pricing)) happens to
+equal AWS S3 Standard's. The only difference is GCS's much smaller
+Always-Free allotment (5,000 Class A ops/mo vs. S3's none and R2's 1M),
+which only moves the number at the lowest row — every row from 10
+writes/min up rounds to the same figure as the S3 column.
 
 The 390 writes/min row is the 50M Class A/mo graduation trigger at the
 default Worker+R2 write amp (`A≈3`): R2 costs **~$223/mo** and the
-Node+S3 default path costs **~$337/mo** in object-storage ops. The
-Node-profile path reaches the same 50M op envelope at ~290 writes/min
-(`A≈4`).
+Node+S3 / Node+GCS default path costs **~$337/mo** in object-storage
+ops. The Node-profile path reaches the same 50M op envelope at ~290
+writes/min (`A≈4`).
 
 ### M-size $/mo breakdown
 
@@ -351,6 +393,20 @@ Class A/mo = 1,296,000 × 4 = 5,184,000
 Object-storage ops:  5,184,000 / 1,000,000 × $5.00 = ~$26/mo
   (no platform floor — serverful Node / S3)
 ```
+
+**Node+GCS default (`A≈4`, derived from `pnpm bench:load:gcs`'s op-count-parity check — see above):**
+
+```
+Class A/mo = 1,296,000 × 4 = 5,184,000
+Free tier:   5,000 Class A/mo (GCS Always Free tier — negligible at this volume)
+Overage:     5,179,000 Class A ops
+Object-storage ops:  5,179,000 / 1,000,000 × $5.00 = ~$26/mo
+  (no platform floor — serverful Node / GCS)
+```
+
+GCS and S3 land at the same ~$26/mo object-storage-ops figure here:
+same $5.00/1M Class A rate, same Node `A≈4` profile. GCS's 5,000-op
+free tier is 0.1% of this volume and doesn't move the rounded number.
 
 `baerly cost` surfaces the **object-storage ops** figure (~$13/mo on R2
 here) as `projectedUsdPerMonth` in the inspect footer. It uses the
