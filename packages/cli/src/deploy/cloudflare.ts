@@ -26,9 +26,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { BaerlyError } from "@baerly/protocol";
-import { parseBucketUri } from "../bucket-uri.ts";
+import { parseBucketUri, type ParsedBucketUri } from "../bucket-uri.ts";
 import type { AppConfig } from "../config.ts";
 import { doctorCas } from "../doctor/cas.ts";
+import { GCS_STALE_GENERATION_PROBE_VALUE } from "../doctor/gcs.ts";
 import type { DoctorReport } from "../doctor/cloudflare.ts";
 import { defaultRunner, type ProcessRunner } from "../runner.ts";
 import {
@@ -48,9 +49,30 @@ export type { R2BindingDeclaration };
  */
 export type CasProbe = (probeBucketUri: string) => Promise<DoctorReport>;
 
-const defaultCasProbe: CasProbe = async (probeBucketUri) => {
-  const { storage, keyPrefix } = await parseBucketUri(probeBucketUri);
-  return doctorCas(storage, keyPrefix);
+/**
+ * The CAS-probe `staleEtag` override for a parsed bucket URI. Native GCS
+ * rejects `doctorCas`'s default S3/R2-shaped quoted-string sentinel as a
+ * malformed precondition (400) instead of a conflict (412), so the gcs://
+ * path must feed a well-formed-but-stale generation; every other backend
+ * uses `probeCas`'s default. Mirrors `doctor.ts`'s `--bucket=gcs://`
+ * branch — kept as a pure function so the decision is unit-testable
+ * without a live bucket.
+ */
+export const casProbeStaleEtag = (parsed: Pick<ParsedBucketUri, "gcs">): string | undefined =>
+  parsed.gcs !== undefined ? GCS_STALE_GENERATION_PROBE_VALUE : undefined;
+
+export const defaultCasProbe: CasProbe = async (probeBucketUri) => {
+  const parsed = await parseBucketUri(probeBucketUri);
+  const staleEtag = casProbeStaleEtag(parsed);
+  // Only the CAS correctness probe runs here, not doctor's GCS config
+  // advisories (Object Versioning / soft-delete): those are cost-only
+  // warnings, and this preflight aborts the deploy on any non-ok status
+  // (see below), so a cost warning must not block a deploy.
+  return doctorCas(
+    parsed.storage,
+    parsed.keyPrefix,
+    staleEtag !== undefined ? { staleEtag } : undefined,
+  );
 };
 
 /** Path to `wrangler.jsonc` at the package root. */
