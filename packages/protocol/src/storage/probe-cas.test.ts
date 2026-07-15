@@ -406,6 +406,29 @@ describe("probeCas", () => {
     expect(ifNoneMatchValues.every((v) => v === "*")).toBe(true);
   });
 
+  test("opts.staleEtag overrides the default stale-ifMatch sentinel", async () => {
+    // Locks in the GCS override seam: a caller whose backend rejects the
+    // default S3/R2-shaped quoted-string sentinel as malformed (rather
+    // than as a conflict) can supply its own well-formed-but-stale value.
+    const storage = new MemoryStorage();
+    const ifMatchValues: Array<string | undefined> = [];
+    const wrapped: Storage = {
+      put: (key, body, opts) => {
+        if (opts?.ifMatch !== undefined) {
+          ifMatchValues.push(opts.ifMatch);
+        }
+        return storage.put(key, body, opts);
+      },
+      delete: storage.delete.bind(storage),
+      get: storage.get.bind(storage),
+      list: storage.list.bind(storage),
+    };
+
+    const result = await probeCas(wrapped, { staleEtag: "1" });
+    expect(ifMatchValues).toEqual(["1"]);
+    expect(result.checks.find((c) => c.name === "ifMatch-stale")?.ok).toBe(true);
+  });
+
   test("check names are exactly ifMatch-stale, ifNoneMatch-exists, and ifNoneMatch-concurrent", async () => {
     // Kills any StringLiteral → "" mutant on check name fields.
     const result = await probeCas(new MemoryStorage());

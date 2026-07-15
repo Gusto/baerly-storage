@@ -7,6 +7,12 @@
  *     vars (`BAERLY_S3_ENDPOINT`, `BAERLY_S3_ACCESS_KEY_ID`,
  *     `BAERLY_S3_SECRET_ACCESS_KEY`, `BAERLY_S3_REGION` — region
  *     defaults to `us-east-1`).
+ *   - `gcs://<bucket>[/<prefix>]` — native GCS XML API. Creds via
+ *     env vars `BAERLY_GCS_HMAC_ACCESS_KEY_ID` + `BAERLY_GCS_HMAC_SECRET`
+ *     (GCS HMAC interop keys: Console → Cloud Storage → Settings →
+ *     Interoperability). Drives GCS's native generation-precondition
+ *     path (`x-goog-if-generation-match`); the S3-interop endpoint is
+ *     NOT supported (it treats If-Match/If-None-Match as read-only).
  *   - `file:///<absolute-path>` — `LocalFsStorage` rooted at the path.
  *     Relative paths are rejected by the three-slash prefix.
  *   - `memory://<bucket>` — `MemoryStorage` keyed via
@@ -14,7 +20,13 @@
  */
 
 import { LocalFsStorage } from "@baerly/dev";
-import { minioStorage, r2Storage, s3Storage } from "@baerly/adapter-node";
+import {
+  DEFAULT_GCS_ENDPOINT,
+  gcsStorage,
+  minioStorage,
+  r2Storage,
+  s3Storage,
+} from "@baerly/adapter-node";
 import { BaerlyError, getOrCreateMemoryStorageForBucket, type Storage } from "@baerly/protocol";
 
 /**
@@ -27,6 +39,16 @@ export interface ParsedBucketUri {
   storage: Storage;
   /** Empty for no-prefix; non-empty always ends with "/". */
   keyPrefix: string;
+  /**
+   * Present only for gcs:// URIs. Lets `baerly doctor` run GCS-specific
+   * bucket-config checks (Object Versioning) that need a signer + endpoint,
+   * beyond the backend-agnostic CAS probe. Other consumers ignore it.
+   */
+  gcs?: {
+    endpoint: string;
+    bucket: string;
+    credentials: { accessKeyId: string; secretAccessKey: string };
+  };
 }
 
 /**
@@ -34,7 +56,7 @@ export interface ParsedBucketUri {
  * key prefix.
  *
  * @throws BaerlyError code="InvalidConfig" — unsupported scheme, or an
- *   `s3://` URI with a missing env var.
+ *   `s3://` / `gcs://` URI with a missing env var.
  */
 export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
   if (uri.startsWith("s3://")) {
@@ -69,6 +91,33 @@ export const parseBucketUri = async (uri: string): Promise<ParsedBucketUri> => {
     return {
       storage,
       keyPrefix: normalizeKeyPrefix(prefix),
+    };
+  }
+  if (uri.startsWith("gcs://")) {
+    const rest = uri.slice(6);
+    const slash = rest.indexOf("/");
+    const bucket = slash === -1 ? rest : rest.slice(0, slash);
+    const prefix = slash === -1 ? "" : rest.slice(slash + 1);
+    if (bucket.length === 0) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `bucket URI: gcs:// URI requires a bucket name (got ${JSON.stringify(uri)})`,
+      );
+    }
+    const accessKeyId = requireEnv("BAERLY_GCS_HMAC_ACCESS_KEY_ID");
+    const secretAccessKey = requireEnv("BAERLY_GCS_HMAC_SECRET");
+    // Single source of truth for the endpoint: the same value drives both
+    // the storage handle and the `gcs` probe field, so `doctor`'s
+    // versioning probe can never sign against a different host than the
+    // handle writes to. If a gcs:// endpoint override lands later, it
+    // flows to both from here.
+    const endpoint = DEFAULT_GCS_ENDPOINT;
+    const credentials = { accessKeyId, secretAccessKey };
+    const storage = gcsStorage({ endpoint, bucket, credentials });
+    return {
+      storage,
+      keyPrefix: normalizeKeyPrefix(prefix),
+      gcs: { endpoint, bucket, credentials },
     };
   }
   if (uri.startsWith("file:///")) {

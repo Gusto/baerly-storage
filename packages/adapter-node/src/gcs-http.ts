@@ -16,7 +16,7 @@ import { parseRetryAfter, retry, retryAfterCause, xmlErrorDetail } from "./http-
 import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
 /** Default GCS native XML API endpoint. */
-const DEFAULT_GCS_ENDPOINT = "https://storage.googleapis.com";
+export const DEFAULT_GCS_ENDPOINT = "https://storage.googleapis.com";
 
 /**
  * Construction-time options for {@link GcsHttpStorage}. Everything is

@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AppConfig } from "../config.ts";
 import type { ProcessRunner } from "../deploy/cloudflare.ts";
-import { doctorCloudflare, type DoctorFinding } from "./cloudflare.ts";
+import {
+  doctorCloudflare,
+  type DoctorFinding,
+  type DoctorReport,
+  mergeReports,
+} from "./cloudflare.ts";
 import { captureStream } from "../_internal/testing.ts";
 
 const PROD_WRANGLER = `{
@@ -310,5 +315,36 @@ describe("doctorCloudflare — config.auth", () => {
       runner,
     });
     expect(findingFor(report.findings, "auth.cf-access-inert")).toBeUndefined();
+  });
+});
+
+// mergeReports is the glue `doctor.ts`'s gcs:// branch uses to fold the
+// backend-agnostic CAS report together with the GCS bucket-config report.
+describe("mergeReports", () => {
+  const report = (...findings: DoctorFinding[]): DoctorReport => ({
+    findings,
+    status: "ok",
+  });
+  const ok: DoctorFinding = { severity: "ok", check: "cas", message: "" };
+  const warn: DoctorFinding = { severity: "warning", check: "gcs-object-versioning", message: "" };
+  const err: DoctorFinding = { severity: "error", check: "cas", message: "" };
+
+  test("concatenates findings from all reports in order", () => {
+    const merged = mergeReports([report(ok), report(warn)]);
+    expect(merged.findings).toEqual([ok, warn]);
+  });
+
+  test("ok CAS + warning GCS config → overall warning (deployable)", () => {
+    // Mirrors gcs:// with versioning enabled: CAS passes, config warns.
+    expect(mergeReports([report(ok), report(warn)]).status).toBe("warning");
+  });
+
+  test("error CAS + ok GCS config → overall error (exit 2)", () => {
+    // Mirrors gcs:// where the CAS probe itself fails.
+    expect(mergeReports([report(err), report(ok)]).status).toBe("error");
+  });
+
+  test("empty input → ok with no findings", () => {
+    expect(mergeReports([])).toEqual({ findings: [], status: "ok" });
   });
 });

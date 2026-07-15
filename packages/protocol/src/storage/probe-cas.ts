@@ -52,12 +52,21 @@ export interface CasProbeResult {
  */
 export const probeCas = async (
   storage: Storage,
-  opts?: { keyPrefix?: string; signal?: AbortSignal },
+  opts?: { keyPrefix?: string; signal?: AbortSignal; staleEtag?: string },
 ): Promise<CasProbeResult> => {
   const prefix = opts?.keyPrefix ?? "";
   const key = `${prefix}__baerly_cas_probe__/${uuid()}`;
   const enc = new TextEncoder();
   const signal = opts?.signal;
+  // A well-formed etag guaranteed *not* to be the current version of any
+  // key. Defaults to the S3/R2-shaped quoted-string sentinel, which every
+  // ETag-versioned backend treats as a non-matching-but-valid token. GCS's
+  // version token is an int64 generation, so a quoted-string value is a
+  // *malformed* precondition there (400 InvalidArgument, not a 412
+  // conflict) — callers on the native GCS path must override this with a
+  // well-formed-but-stale generation (mirrors the conformance suite's
+  // `staleEtag` option; see `storage/conformance.ts`).
+  const staleEtag = opts?.staleEtag ?? '"baerly-cas-probe-stale"';
 
   const checks: CasProbeCheck[] = [];
   try {
@@ -66,7 +75,7 @@ export const probeCas = async (
     // ── Check 1: a stale ifMatch must be rejected. ──────────────────
     try {
       // Stryker disable next-line StringLiteral: body content is irrelevant to CAS probe; only the conditional header is tested
-      await storage.put(key, enc.encode("v2"), { ifMatch: '"baerly-cas-probe-stale"', signal });
+      await storage.put(key, enc.encode("v2"), { ifMatch: staleEtag, signal });
       checks.push({
         name: "ifMatch-stale",
         ok: false,

@@ -6,6 +6,10 @@
  *     support (the protocol's load-bearing backend prerequisite). This
  *     mode WRITES + deletes one throwaway sentinel; see
  *     {@link doctorCas}. Independent of `baerly.config.ts` / `--target`.
+ *     For `gcs://` URIs, also runs the GCS-specific bucket-config checks
+ *     in {@link doctorGcsConfig} (an active Object Versioning probe plus
+ *     a static soft-delete advisory) and merges their findings into the
+ *     same report.
  *   - otherwise — reads `baerly.config.ts:target` and routes to
  *     {@link doctorCloudflare} (read-only deploy-invariant checks). The
  *     Node target self-validates at scaffold time — the example IS the
@@ -38,7 +42,8 @@ import { BaerlyError } from "@baerly/protocol";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { loadAppConfig } from "./config.ts";
 import { doctorCas } from "./doctor/cas.ts";
-import { doctorCloudflare, type DoctorReport } from "./doctor/cloudflare.ts";
+import { doctorCloudflare, mergeReports, type DoctorReport } from "./doctor/cloudflare.ts";
+import { doctorGcsConfig, GCS_STALE_GENERATION_PROBE_VALUE } from "./doctor/gcs.ts";
 import { defaultRunner } from "./runner.ts";
 import { color, isJsonMode } from "./output.ts";
 import { defineBaerlySubcommand, JSON_ARG } from "./subcommand.ts";
@@ -53,8 +58,8 @@ const DOCTOR_ARGS = {
   bucket: {
     type: "string",
     description:
-      "Live-probe a bucket's CAS support (writes + deletes one sentinel; verifies If-Match / If-None-Match are honoured). s3://, file:///, or memory:// URI. Independent of --target.",
-    valueHint: "s3://bucket/prefix",
+      "Live-probe a bucket's CAS support (writes + deletes one sentinel; verifies If-Match / If-None-Match are honoured). s3://, gcs://, file:///, or memory:// URI. For gcs://, also runs GCS-specific bucket-config checks (Object Versioning probe + soft-delete advisory). Independent of --target.",
+    valueHint: "s3://bucket/prefix | gcs://bucket",
   },
   fix: {
     type: "boolean",
@@ -128,7 +133,20 @@ const bundle = defineBaerlySubcommand({
     // --bucket is a standalone live-probe mode: it connects to a real
     // bucket and checks CAS, independent of baerly.config.ts / --target.
     if (args.bucket !== undefined) {
-      const { storage, keyPrefix } = await parseBucketUri(args.bucket);
+      const { storage, keyPrefix, gcs } = await parseBucketUri(args.bucket);
+      if (gcs !== undefined) {
+        // Native GCS's generation-based preconditions reject the CAS
+        // probe's default S3/R2-shaped stale-etag sentinel as malformed
+        // (400) rather than as a conflict (412) — override with a
+        // well-formed-but-stale generation. See doctor/gcs.ts.
+        const report = await doctorCas(storage, keyPrefix, {
+          staleEtag: GCS_STALE_GENERATION_PROBE_VALUE,
+        });
+        const gcsReport = await doctorGcsConfig(gcs);
+        const merged = mergeReports([report, gcsReport]);
+        renderReport({ kind: "bucket", value: args.bucket }, merged);
+        return merged.status === "error" ? 2 : 0;
+      }
       const report = await doctorCas(storage, keyPrefix);
       renderReport({ kind: "bucket", value: args.bucket }, report);
       return report.status === "error" ? 2 : 0;
