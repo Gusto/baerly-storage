@@ -38,6 +38,8 @@ rejected designs.
   — _live protocol in [spec/sync-protocol.md](../spec/sync-protocol.md)._
 - [005 — LogEntry is versionless and additive-only](./005-logentry-versionless.md)
   — _wire contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md)._
+- [006 — Native GCS adapter over the XML API](./006-native-gcs-adapter.md)
+  — _live contract in [spec/storage-compatibility.md](../spec/storage-compatibility.md#native-gcs-xml-api)._
 
 ## Decisions that live elsewhere
 

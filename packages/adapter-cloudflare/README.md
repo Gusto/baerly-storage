@@ -10,9 +10,11 @@ Cloudflare Workers adapter for Baerly. Ships two `Storage` flavors and a
   protocol. Pick this when the Worker and bucket live in the same
   Cloudflare account.
 - **HTTP S3 fallback** — use `S3HttpStorage` from
-  `@gusto/baerly-storage/node` when a Node host talks to AWS S3, GCS,
-  Minio, or cross-account R2 over the S3-compatible HTTP API. Workers
-  should prefer `r2BindingStorage` when an R2 binding is available.
+  `@gusto/baerly-storage/node` when a Node host talks to AWS S3, Minio,
+  or cross-account R2 over the S3-compatible HTTP API (GCS uses the
+  native `gcsStorage` adapter instead — its S3-interop path can't
+  linearize the log). Workers should prefer `r2BindingStorage` when an
+  R2 binding is available.
 - **`baerlyWorker((env) => options)`** — env-lazy factory; resolves
   once on first `fetch` / `scheduled` and caches for the isolate.
   Returns the `fetch(req, env, ctx)` module-default export. When

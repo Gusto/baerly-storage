@@ -12,6 +12,13 @@ All four storage factories (`s3Storage`, `r2Storage`, `minioStorage`,
 `@smithy/types`' `AwsCredentialIdentity` so `@aws-sdk/credential-providers`
 output works as-is.
 
+> **GCS uses HMAC interop keys.** `gcsStorage` signs with
+> GOOG4-HMAC-SHA256 (native GCS XML API), not SigV4 — but the credential
+> _shape_ is the same. Mint a GCS HMAC key (Cloud Console → Cloud Storage
+> → Settings → Interoperability), then pass the access key as
+> `accessKeyId` and the secret as `secretAccessKey`. Service-account
+> (GOOG4-RSA) / OAuth / ADC are not supported in v1.
+
 ### Static credentials
 
 ```ts

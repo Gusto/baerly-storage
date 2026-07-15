@@ -1,7 +1,8 @@
 /**
  * Object-storage abstraction. The protocol kernel writes through
  * this and only this. Implementations: in-memory (testing), S3 HTTP
- * (production), R2 binding (deferred), local-fs (deferred).
+ * and native GCS HTTP (production), R2 binding (production), local-fs
+ * (dev).
  *
  * Cancellation: every method accepts an optional AbortSignal.
  * Implementations should respect it where feasible; consumers may
