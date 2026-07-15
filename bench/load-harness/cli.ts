@@ -7,13 +7,25 @@
  * shape locked in this file's `type RunResult` declaration.
  *
  * Backend gating mirrors `pnpm test:minio` — `--variant=node-minio`
- * requires `MINIO=1` and `pnpm dev:storage` running.
+ * requires `MINIO=1` and `pnpm dev:storage` running. `--variant=node-gcs`
+ * requires `GCS=1` and a readable `credentials/gcs.json`; it runs
+ * against the shared bring-your-own bucket, so pass a unique `--app=`
+ * per run — `cleanup()` sweeps exactly that `app/<app>/` prefix.
  *
  * @example
  * ```sh
  * pnpm bench:load --preset=recent-first-crud --variant=memory \
  *   --records=100 --ops=200 --seed=42
  * ```
+ *
+ * ```sh
+ * GCS=1 pnpm bench:load:gcs --preset=recent-first-crud \
+ *   --records=15 --ops=30 --seed=42 --app=bench-gcs-<uuid>
+ * ```
+ *
+ * Keep the scale small: the shared eval bucket sustains only
+ * sub-1 write/s under this harness, so larger `--records`/`--ops`
+ * (e.g. 200/400) can run for many minutes without completing.
  *
  * Result JSON shape locked at ticket 54 §2. Run an analysis pass via:
  *
@@ -24,7 +36,7 @@
  * ```
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
@@ -34,7 +46,8 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type Storage,
 } from "@baerly/protocol";
-import { S3HttpStorage } from "@baerly/adapter-node";
+import { S3HttpStorage, gcsStorage } from "@baerly/adapter-node";
+import type { EndpointCreds } from "../../tests/fixtures/endpoint-creds.ts";
 import type { BaerlyConfig } from "@baerly/server";
 import { LocalFsStorage } from "@baerly/dev";
 import { CountingStorage } from "../storage.ts";
@@ -68,12 +81,12 @@ import "./presets/chat-conversation-store.ts";
 // Types
 // ---------------------------------------------------------------------------
 
-type Variant = "memory" | "local-fs" | "node-minio" | "cloudflare-r2";
+type Variant = "memory" | "local-fs" | "node-minio" | "cloudflare-r2" | "node-gcs";
 
 export type RunResult = {
   run: {
     preset: string;
-    variant: "memory" | "local-fs" | "node-minio" | "cloudflare-r2";
+    variant: "memory" | "local-fs" | "node-minio" | "cloudflare-r2" | "node-gcs";
     cache_mode: "cold" | "metadata-warm" | "data-warm" | "tiny-cache";
     records: number;
     ops: number;
@@ -172,6 +185,12 @@ const BENCH_BUCKET_NAME = "baerly-bench-load";
 const S3_RETRIES = 8;
 const HEALTH_CHECK_ENDPOINT = "http://127.0.0.1:9102/minio/health/ready";
 
+// Best-effort cleanup deadline for the `node-gcs` bring-your-own-bucket
+// sweep — a bench-internal timeout, not a measured result, so it lives
+// here rather than in `packages/protocol/src/constants.ts`. Mirrors the
+// `GCS_CLEANUP_BUDGET_MS` pattern in `tests/integration/randomized.test.ts`.
+const GCS_CLEANUP_BUDGET_MS = 20_000;
+
 interface VariantBuild {
   readonly inner: Storage;
   readonly backendDetails: Record<string, string>;
@@ -237,6 +256,57 @@ async function buildVariant(v: Variant): Promise<VariantBuild> {
       throw new Error(
         `bench:load: --variant=cloudflare-r2 is deferred. Run the miniflare-pool variant under a future ticket.`,
       );
+    }
+    case "node-gcs": {
+      if (process.env["GCS"] !== "1") {
+        throw new Error(
+          `bench:load: --variant=node-gcs requires GCS=1 and a readable credentials/gcs.json. Run 'GCS=1 pnpm bench:load:gcs …'.`,
+        );
+      }
+      let creds: EndpointCreds;
+      try {
+        const raw = await readFile(join("credentials", "gcs.json"), "utf8");
+        creds = JSON.parse(raw) as EndpointCreds;
+      } catch (error) {
+        throw new Error(
+          `bench:load: --variant=node-gcs requires a readable credentials/gcs.json (${(error as Error).message}).`,
+          { cause: error },
+        );
+      }
+      // Bring-your-own-bucket: `baerly-storage-eval` is a shared,
+      // pre-existing bucket, not one this run creates or owns
+      // exclusively. Every run's keys live under `app/<app>/…` (the
+      // `--app` flag) so `cleanup()` can sweep exactly this run's
+      // prefix without touching other concurrent runs or the
+      // conformance/cascade suites' `app/randomized/` / `app/conformance/`
+      // prefixes.
+      const sweepPrefix = `app/${app}/`;
+      // creds.endpoint/region are for the S3-family variants; gcsStorage
+      // pins the native GCS host, so only bucket + credentials are read.
+      return {
+        inner: gcsStorage({ bucket: creds.bucket, credentials: creds.credentials }),
+        backendDetails: { kind: "node-gcs", bucket: creds.bucket, sweep_prefix: sweepPrefix },
+        cleanup: async (): Promise<void> => {
+          try {
+            const sweeper = gcsStorage({ bucket: creds.bucket, credentials: creds.credentials });
+            // Internal best-effort deadline so a slow/soft-delete-laden
+            // sweep never hangs the process exit. GCS soft-delete
+            // retains deletes for ~7d regardless of how promptly this
+            // sweep issues them — expected, not a bug.
+            const deadline = Date.now() + GCS_CLEANUP_BUDGET_MS;
+            for await (const entry of sweeper.list(sweepPrefix)) {
+              if (Date.now() > deadline) {
+                break;
+              }
+              await sweeper.delete(entry.key).catch(() => {
+                // Best-effort — a single failed delete must not fail the run.
+              });
+            }
+          } catch {
+            // Best-effort — sweep failures must never fail the run.
+          }
+        },
+      };
     }
   }
 }
