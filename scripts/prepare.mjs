@@ -21,9 +21,28 @@ function isSecondaryWorktree() {
   }
 }
 
-function run(cmd, args) {
-  const result = spawnSync(cmd, args, { stdio: "inherit" });
+function run(cmd, args, { quiet = false } = {}) {
+  // `quiet` captures stdout/stderr instead of inheriting it: the rolldown
+  // build prints a ~125-line per-asset/chunk size table that has no clean
+  // CLI suppress flag and is pure noise on a green `pnpm install` (it runs
+  // via this hook on every CI install). On failure the captured output is
+  // replayed so nothing is lost. Same capture-and-replay-on-failure shape as
+  // scripts/check-exports.mjs, but that one inherits stderr (its noise is on
+  // stdout); here we also capture stderr to fully silence a green build, which
+  // means build warnings that don't fail the build are dropped on success.
+  const result = spawnSync(cmd, args, {
+    stdio: quiet ? ["inherit", "pipe", "pipe"] : "inherit",
+    ...(quiet ? { encoding: "utf8" } : {}),
+  });
   if (result.status !== 0) {
+    if (quiet) {
+      if (result.stdout) {
+        process.stdout.write(result.stdout);
+      }
+      if (result.stderr) {
+        process.stderr.write(result.stderr);
+      }
+    }
     process.exit(result.status ?? 1);
   }
 }
@@ -34,5 +53,5 @@ if (!isSecondaryWorktree()) {
 if (process.env.BAERLY_SKIP_BUILD) {
   console.log("prepare: BAERLY_SKIP_BUILD set — reusing current dist/, skipping build.");
 } else {
-  run("pnpm", ["run", "build"]);
+  run("pnpm", ["run", "build"], { quiet: true });
 }
