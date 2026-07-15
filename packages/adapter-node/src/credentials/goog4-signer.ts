@@ -154,10 +154,19 @@ function amzDateFrom(ms: number): { amzDate: string; yyyymmdd: string } {
   return { amzDate, yyyymmdd: amzDate.slice(0, 8) };
 }
 
-export function goog4Signer(opts: {
+/**
+ * Inputs for {@link goog4Signer}. Named for parity with
+ * `SigV4SignerOptions` so both signer families read the same on the
+ * curated `/s3` + `/gcs` subpaths.
+ */
+export interface Goog4SignerOptions {
+  /** GCS HMAC interoperability credentials (static) or an async resolver. */
   credentials: Credentials | CredentialsProvider;
+  /** Clock seam for deterministic tests; defaults to `Date.now`. */
   now?: () => number;
-}): (req: Request) => Promise<Request> {
+}
+
+export function goog4Signer(opts: Goog4SignerOptions): (req: Request) => Promise<Request> {
   const now = opts.now ?? (() => Date.now());
   const resolve = async (): Promise<Credentials> =>
     typeof opts.credentials === "function" ? opts.credentials() : opts.credentials;

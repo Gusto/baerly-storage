@@ -324,7 +324,12 @@ const BUDGETS: readonly Budget[] = [
   //     consolidation moved `parseMaintenanceEnv` into the shared bundled
   //     `maintenance` chunk (now in this closure), plus rolldown 1.1.0→1.1.3
   //     pulled by `pnpm dedupe`. Measured 234242 raw / 73263 gz; min-gz under.
-  { entry: "index.js", raw: 229 * 1024, gz: 72 * 1024, minGz: 20 * 1024 },
+  //   → 230 KiB raw (2026-07-15): adding the ./gcs rolldown input re-chunks
+  //     shared modules and nudges the index.js raw closure up by ~70 B
+  //     (measured 234566 vs the old 234496 ceiling), the same class of
+  //     shared-chunk boundary shift the ./s3 note above records. gz/min-gz
+  //     unaffected; this is a tripwire rebaseline, not a shipped-cost change.
+  { entry: "index.js", raw: 230 * 1024, gz: 72 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -992,7 +997,24 @@ const BUDGETS: readonly Budget[] = [
   //     it is dramatically smaller than fast-xml-parser + its transitive closure
   //     (strnum, @nodable/entities). Measured: 81041 raw / 25085 gz / 11421 min-gz.
   //     All three axes rebaselined for the parser swap.
-  { entry: "s3.js", raw: 81 * 1024, gz: 25 * 1024, minGz: 12 * 1024 },
+  //   → gz 26 KiB (2026-07-15): adding the ./gcs rolldown input re-chunks the
+  //     shared modules s3.js and gcs.js now co-own (http-transport, key, time,
+  //     constants, errors) and nudges the s3.js gz closure up ~625 B (measured
+  //     26225 vs the old 25600 ceiling). Same shared-chunk boundary shift the
+  //     ./s3 notes on other entries record; raw/min-gz unaffected — a tripwire
+  //     rebaseline, not a shipped-cost change.
+  { entry: "s3.js", raw: 81 * 1024, gz: 26 * 1024, minGz: 12 * 1024 },
+  // gcs.js: the curated `@gusto/baerly-storage/gcs` family barrel
+  // (GcsHttpStorage + goog4Signer). Closure = the GCS native-XML `Storage`
+  // impl + GOOG4 signer + shared http-transport / key-namespace / time /
+  // constants / errors chunks + `@rgrove/parse-xml` (list-response parsing).
+  //   → baseline (2026-07-15): new subpath. Measured 76506 raw / 24902 gz /
+  //     9636 min-gz. Smaller than s3.js (81/26/12) because the GOOG4 signer
+  //     uses WebCrypto + the shared `sha256` helper rather than pulling
+  //     `aws4fetch` — confirmed aws4fetch-free in this closure. Budgets set
+  //     at the next KiB boundary above each measured axis; min-gz (the hard
+  //     ceiling) clears 10 KiB.
+  { entry: "gcs.js", raw: 75 * 1024, gz: 25 * 1024, minGz: 10 * 1024 },
 ];
 
 // Static-import specifiers only. Dynamic `import(...)` is intentionally
@@ -1319,7 +1341,7 @@ describe("bundle size", () => {
     entries.push(resolve(pkgRoot, binPath));
   }
   test("entry enumeration is non-empty (guards against a dead no-live-import walk)", () => {
-    // 13 published exports + 1 bin. If this collapses to ~1 the exports
+    // 14 published exports + 1 bin. If this collapses to ~1 the exports
     // enumeration has silently broken again — fail loud instead of
     // generating zero closure tests below.
     expect(entries.length).toBeGreaterThan(10);
