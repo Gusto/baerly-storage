@@ -11,11 +11,14 @@
  * Every HTTP request emits a line; level is computed from
  * status/error.
  *
- * Level mapping at emit time:
+ * Level mapping at emit time (wire status is authoritative):
  *
- * - `error` present → `error`
  * - `status >= 500` → `error`
- * - `status >= 400` → `warn`
+ * - `status >= 400` → `warn` (client error — a 4xx is the caller's
+ *   fault, not a server fault; an attached structured error, including
+ *   a 409 Conflict, does NOT escalate it)
+ * - `status` 2xx/3xx with an attached `error` → `error` (anomalous)
+ * - no `status`, `error` present → `error`
  * - otherwise → `info`
  */
 
@@ -211,9 +214,16 @@ export const flushUnauthorizedAndRespond = (
 type Level = "info" | "warn" | "error";
 
 const pickLevel = (opts: FlushCanonicalLineOptions): Level => {
-  if (opts.error !== undefined) {
-    return "error";
-  }
+  // Wire status is authoritative when present. A client error (4xx) is a
+  // `warn` even when a structured error is attached (as
+  // `withHttpObservability` reconstructs one for every non-2xx). This is
+  // deliberate: a 4xx is the caller's fault, not a server fault. The
+  // reachable 409 is a duplicate-`_id` insert (a reused id or a
+  // double-submitted POST); ordinary write contention is absorbed by the
+  // log forward-probe as a 412 counter, not a client 409. 401/404/400 are
+  // likewise the caller's fault. Escalating any of them to `error` would
+  // burn error budget and page on-call for normal operation. `error` is
+  // reserved for genuine server faults.
   if (opts.status !== undefined) {
     if (opts.status >= 500) {
       return "error";
@@ -221,8 +231,13 @@ const pickLevel = (opts: FlushCanonicalLineOptions): Level => {
     if (opts.status >= 400) {
       return "warn";
     }
+    // A 2xx/3xx that still carries an error is anomalous (a throw that
+    // resolved a success status) — surface it.
+    return opts.error !== undefined ? "error" : "info";
   }
-  return "info";
+  // No wire status to classify by (e.g. an escaped throw before a
+  // Response existed): an attached error is all we have to go on.
+  return opts.error !== undefined ? "error" : "info";
 };
 
 const buildProperties = (

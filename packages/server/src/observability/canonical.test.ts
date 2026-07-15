@@ -108,12 +108,49 @@ describe("flushCanonicalLine", () => {
       expect(records[0]!.level).toBe("info");
     });
 
-    test("error present → error level (overrides status)", () => {
+    test("client error (4xx) with an attached error → warning, not error", () => {
+      // A 4xx is the caller's fault, not a server fault. The
+      // reconstructed structured error that `withHttpObservability`
+      // attaches to every non-2xx line must NOT escalate it to `error`:
+      // status is authoritative for classification. Escalating routine
+      // validation/auth rejections to `error` would pollute error
+      // budgets and page responders. See the `pickLevel` doc.
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
+        unit: "http",
+        outcome: "client_error",
+        status: 400,
+        error: new BaerlyError("SchemaError", "field failed validation"),
+      });
+      expect(records[0]!.level).toBe("warning");
+    });
+
+    test("409 Conflict with an attached error → warning (client-attributable, routine)", () => {
+      // A 409 is client-attributable and routine — no operator action.
+      // It stays `warn`.
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
+        unit: "http",
+        outcome: "conflict",
+        status: 409,
+        error: new BaerlyError("Conflict", "write conflict"),
+      });
+      expect(records[0]!.level).toBe("warning");
+    });
+
+    test("error present on a 2xx status → error level (anomalous)", () => {
       flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",
         outcome: "internal_error",
         status: 200,
         error: new BaerlyError("Internal", "boom"),
+      });
+      expect(records[0]!.level).toBe("error");
+    });
+
+    test("error present without a classifying status → error level", () => {
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
+        unit: "http",
+        outcome: "internal_error",
+        error: new BaerlyError("Internal", "escaped throw, no wire status"),
       });
       expect(records[0]!.level).toBe("error");
     });

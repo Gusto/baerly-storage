@@ -555,7 +555,12 @@ const BUDGETS: readonly Budget[] = [
   //     plus the namespaced "@gusto/baerly-storage" marker literal and its guard
   //     JSDoc (comments ship un-stripped). Measured 100568 raw / 27690 gz; min-gz
   //     (−701) under. Rebaseline the raw/gz creep tripwires per the POLICY.
-  { entry: "observability.js", raw: 99 * 1024, gz: 28 * 1024, minGz: 13 * 1024 },
+  //   → raw +1 KiB (2026-07-14): pickLevel now classifies canonical lines by
+  //     wire status (4xx incl. a lost-CAS 409 Conflict → warn, not error), and
+  //     its contract comment + the level-mapping docstring ship un-stripped.
+  //     Measured 101630 raw; gz (−726) and min-gz (−622) both comfortably under.
+  //     Rebaseline the raw creep tripwire per the POLICY (don't golf comments).
+  { entry: "observability.js", raw: 100 * 1024, gz: 28 * 1024, minGz: 13 * 1024 },
   // Maintenance loop — compactor + GC + sweep driver. Pulls
   // compactor.ts + gc.ts + the observability subgraph
   // transitively (storage decorator + logger config + canonical
