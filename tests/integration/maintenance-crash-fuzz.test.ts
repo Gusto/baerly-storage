@@ -41,7 +41,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fc, test as propTest } from "@fast-check/vitest";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   BaerlyError,
   type Collection,
@@ -64,6 +64,22 @@ import {
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
+
+// Every suite in this file injects storage faults (`abortingStorage`).
+// The maintenance runner's intentional operator-facing stack dump
+// (`console.error(error)` in maintenance.ts) then fires once per
+// injected abort — ~150 lines of *expected*-error noise on a green run.
+// Suppress it file-wide: correctness here is asserted through the
+// `expect(...)` invariants, never through console output, and no test
+// inspects `console.error`. A genuinely unexpected error still surfaces
+// as an assertion failure. Per-test spy + restore keeps other suites
+// (and a failing run's real diagnostics) untouched.
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /**
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default

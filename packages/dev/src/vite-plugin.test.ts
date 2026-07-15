@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import type { BaerlyAppConfig } from "@baerly/protocol";
 import { baerlyDev, baerlyDevAuth, loadDevVars } from "./vite-plugin.ts";
 
@@ -438,6 +438,12 @@ describe("baerlyDev — config loading", () => {
         rejections.push(reason);
       };
       process.on("unhandledRejection", onRejection);
+      // The injected `ssrLoadModule` rejection is surfaced to the developer
+      // via `console.error("[baerly-dev] setup failed:", …)` (vite-plugin.ts).
+      // Capture that expected stack instead of letting it print, and assert
+      // it fired — this test's point is that setup failure is *logged*, not
+      // crashed on.
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         start(baerlyDev({ banner: true }), server);
         httpServer.emit("listening");
@@ -446,7 +452,9 @@ describe("baerlyDev — config loading", () => {
         // a distinct derived promise from the same rejected `ready` would go
         // unhandled here even though the setup failure is already logged.
         expect(rejections).toEqual([]);
+        expect(errorSpy).toHaveBeenCalled();
       } finally {
+        errorSpy.mockRestore();
         process.off("unhandledRejection", onRejection);
       }
     } finally {

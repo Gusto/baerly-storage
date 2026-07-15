@@ -796,17 +796,28 @@ describe("runBoundedMaintenance", () => {
       list: inner.list.bind(inner),
     };
     let rejected = false;
-    const recorder = await withRecorder(async () => {
-      await runBoundedMaintenance({
-        storage: boom,
-        currentJsonKey: KEY,
-        prevSeq: 0,
-      }).catch(() => {
-        rejected = true;
+    // The runner surfaces an unexpected error's stack via `console.error`
+    // (maintenance.ts — the one intentional operator sink) since the
+    // caller swallows the throw. This test injects that error on purpose,
+    // so capture the dump instead of letting ~6 lines of expected-error
+    // noise print, and assert it fired — turning the noise into a signal.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const recorder = await withRecorder(async () => {
+        await runBoundedMaintenance({
+          storage: boom,
+          currentJsonKey: KEY,
+          prevSeq: 0,
+        }).catch(() => {
+          rejected = true;
+        });
       });
-    });
-    expect(rejected).toBe(false); // swallowed, did NOT reject
-    expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBeGreaterThan(0);
+      expect(rejected).toBe(false); // swallowed, did NOT reject
+      expect(errorSpy).toHaveBeenCalled(); // operator-facing stack was surfaced
+      expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBeGreaterThan(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 
