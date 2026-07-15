@@ -48,6 +48,11 @@ export { S3HttpStorage } from "./s3-http.ts";
 export type { S3HttpStorageOptions } from "./s3-http.ts";
 export { GcsHttpStorage } from "./gcs-http.ts";
 export type { GcsHttpStorageOptions } from "./gcs-http.ts";
+// `goog4Signer` is intentionally NOT re-exported here, mirroring how the
+// analogous `sigV4Signer` stays off this `/node` barrel (it lives on the
+// `@gusto/baerly-storage/s3` subpath). The factories below construct the
+// signer internally; the only direct consumer is the conformance suite,
+// which imports it by module path.
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
 export { localFsStorage } from "./local-fs-storage.ts";
 export type { LocalFsStorageFactoryOptions } from "./local-fs-storage.ts";

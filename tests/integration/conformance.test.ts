@@ -16,20 +16,21 @@
  * `Storage` assertions, and live in
  * `tests/integration/randomized.test.ts` per the cascade.
  */
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { AwsClient } from "aws4fetch";
 import { fc } from "@fast-check/vitest";
 import { describe } from "vitest";
 
-import { S3HttpStorage } from "@baerly/adapter-node";
+import { DEFAULT_GCS_ENDPOINT, GcsHttpStorage, S3HttpStorage } from "@baerly/adapter-node";
+// `goog4Signer` is not on the `/node` barrel (see adapter-node/src/index.ts);
+// reach it by module path, as the s3-worker suites do for `sigV4Signer`.
+import { goog4Signer } from "../../packages/adapter-node/src/credentials/goog4-signer.ts";
 import {
   type ConformanceOptions,
   defineStorageConformanceSuite,
 } from "@baerly/protocol/conformance";
 
 import { createBucket } from "../fixtures/s3-fixtures.ts";
+import { type EndpointCreds, loadEndpointCreds } from "../fixtures/endpoint-creds.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
 // A bare `.` / `..` key is unaddressable over the S3 HTTP API on *every*
@@ -51,22 +52,6 @@ const MINIO_KEY_ARB = fc.string({
   unit: fc.constantFrom(...MINIO_KEY_CHARS.split("")),
 });
 const MINIO_PREFIX_CHAR_ARB = fc.constantFrom(...MINIO_KEY_CHARS.split(""));
-
-interface EndpointCreds {
-  endpoint: string;
-  region: string;
-  bucket: string;
-  credentials: { accessKeyId: string; secretAccessKey: string };
-}
-
-async function loadCreds(file: string): Promise<EndpointCreds | null> {
-  try {
-    const raw = await readFile(join("credentials", file), "utf8");
-    return JSON.parse(raw) as EndpointCreds;
-  } catch {
-    return null;
-  }
-}
 
 const MINIO = process.env["MINIO"] === "1";
 const CONFORMANCE = process.env["CONFORMANCE"] === "1";
@@ -109,7 +94,7 @@ for (const ep of endpoints) {
   if (ep.builtIn) {
     creds = ep.builtIn;
   } else if (ep.file && CONFORMANCE) {
-    creds = await loadCreds(ep.file);
+    creds = await loadEndpointCreds(ep.file);
   }
   resolvedEndpoints.push({ name: ep.name, creds });
 }
@@ -130,7 +115,15 @@ describe("conformance", () => {
         region: c.region,
         service: "s3",
       });
-      const sign = (req: Request): Promise<Request> => signer.sign(req);
+      const isGcs = ep.name === "gcs";
+      // GCS native is the sanctioned path: SigV4 (`AwsClient`) can't carry
+      // `x-goog-if-generation-match` (GCS rejects mixed `x-amz-*`/`x-goog-*`
+      // with 400 ExcessHeaderValues), so GCS signs with GOOG4-HMAC-SHA256 and
+      // drives `GcsHttpStorage`. Every other endpoint stays on the shared
+      // SigV4 `AwsClient` → `S3HttpStorage` path untouched.
+      const sign: (req: Request) => Promise<Request> = isGcs
+        ? goog4Signer({ credentials: c.credentials })
+        : (req: Request): Promise<Request> => signer.sign(req);
 
       const isMinio = ep.name === "node-minio";
       // Real Cloudflare R2's S3 `ListObjectsV2` is eventually consistent
@@ -152,10 +145,22 @@ describe("conformance", () => {
       if (isMinio) {
         conformanceOptions = { keyArb: MINIO_KEY_ARB, prefixCharArb: MINIO_PREFIX_CHAR_ARB };
       } else if (isRemote) {
-        conformanceOptions = { remoteNetwork: true, eventuallyConsistentList: isR2 };
+        conformanceOptions = {
+          remoteNetwork: true,
+          eventuallyConsistentList: isR2,
+          // GCS's version token is an int64 `generation`, not an ETag: a
+          // quoted-hex CAS value is a *malformed* precondition (400
+          // InvalidArgument), so feed a well-formed-but-stale generation that
+          // no live object carries (→ 412 → Conflict). And GCS's native XML
+          // API honors the generation preconditions only as 412-CAS writes,
+          // never as a 304-when-unchanged read, so a version-token conditional
+          // read can't 304 — opt out (the kernel never issues one). Both are
+          // no-ops for aws/R2.
+          ...(isGcs && { staleEtag: "1", supportsConditionalGet: false }),
+        };
       }
       defineStorageConformanceSuite(
-        `S3HttpStorage @ ${ep.name}`,
+        `${isGcs ? "GcsHttpStorage" : "S3HttpStorage"} @ ${ep.name}`,
         async () => {
           // `createBucket` tolerates 409 BucketAlreadyOwnedByYou, so
           // re-runs against persistent buckets (Minio dev stack, real
@@ -166,13 +171,16 @@ describe("conformance", () => {
           if (isMinio) {
             await createBucket(signer, c.endpoint, c.bucket);
           }
-          return {
-            storage: new S3HttpStorage({
-              endpoint: c.endpoint,
-              bucket: c.bucket,
-              sign,
-            }),
-          };
+          // The classes share {bucket, sign} but diverge on `endpoint`. The
+          // native GcsHttpStorage pins the GCS XML-API host and deliberately
+          // ignores the creds-file `endpoint` (an S3-interop URL); construct
+          // it off DEFAULT_GCS_ENDPOINT to match the `gcsStorage` factory
+          // rather than threading `c.endpoint` through. Only the S3 family
+          // (aws / minio / R2) consumes the creds endpoint.
+          const storage = isGcs
+            ? new GcsHttpStorage({ endpoint: DEFAULT_GCS_ENDPOINT, bucket: c.bucket, sign })
+            : new S3HttpStorage({ endpoint: c.endpoint, bucket: c.bucket, sign });
+          return { storage };
         },
         conformanceOptions,
       );
