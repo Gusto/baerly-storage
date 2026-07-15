@@ -54,7 +54,7 @@ export interface DoctorReport {
   readonly status: "ok" | "warning" | "error";
 }
 
-const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"] => {
+export const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"] => {
   let worst: DoctorReport["status"] = "ok";
   for (const f of findings) {
     if (f.severity === "error") {
@@ -65,6 +65,17 @@ const rollupStatus = (findings: readonly DoctorFinding[]): DoctorReport["status"
     }
   }
   return worst;
+};
+
+/**
+ * Combine several `DoctorReport`s (in order) into one: concatenate their
+ * findings and re-roll the overall status. Used where a single `doctor`
+ * run walks more than one check family — e.g. `gcs://` runs the
+ * backend-agnostic CAS probe plus GCS-specific bucket-config checks.
+ */
+export const mergeReports = (reports: readonly DoctorReport[]): DoctorReport => {
+  const findings = reports.flatMap((r) => [...r.findings]);
+  return { findings, status: rollupStatus(findings) };
 };
 
 /**

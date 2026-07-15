@@ -20,20 +20,33 @@ import { probeCas, type Storage } from "@baerly/protocol";
 import type { DoctorFinding, DoctorReport } from "./cloudflare.ts";
 
 const CAS_FIX =
-  "Point baerly at an S3-compatible store that honours conditional writes " +
-  "(If-Match + If-None-Match). AWS S3 and Cloudflare R2 honour them. Some " +
-  "S3-compatible endpoints don't enforce them on writes — notably GCS's " +
-  "interop endpoint, which documents these headers as read-only — and a " +
-  "custom gateway / proxy may strip them; this probe exists to catch " +
-  "exactly that. A conformant backend returns 412 on a stale If-Match.";
+  "Point baerly at a store that honours conditional writes (If-Match + " +
+  "If-None-Match). AWS S3 and Cloudflare R2 honour them natively; for " +
+  "Google Cloud Storage use the native gcs:// path (baerly's GcsHttpStorage " +
+  "drives x-goog-if-generation-match) — GCS's S3-interop endpoint documents " +
+  "these headers as read-only and is not supported. A custom gateway or " +
+  "proxy may also strip them; this probe exists to catch exactly that. A " +
+  "conformant backend returns 412 on a stale If-Match.";
 
 /**
  * Run the live CAS round-trip against `storage` and shape the result
  * as a {@link DoctorReport}. Status is `error` iff any sub-check failed
  * (a non-conformant backend is a hard blocker, not a warning).
+ *
+ * `opts.staleEtag` overrides `probeCas`'s default S3/R2-shaped stale-etag
+ * sentinel — required on the native GCS path, whose generation-based
+ * preconditions reject a quoted-string value as malformed (400) rather
+ * than as a conflict (412). See `doctor.ts`'s `--bucket=gcs://` branch.
  */
-export const doctorCas = async (storage: Storage, keyPrefix: string): Promise<DoctorReport> => {
-  const result = await probeCas(storage, { keyPrefix });
+export const doctorCas = async (
+  storage: Storage,
+  keyPrefix: string,
+  opts?: { staleEtag?: string },
+): Promise<DoctorReport> => {
+  const result = await probeCas(storage, {
+    keyPrefix,
+    ...(opts?.staleEtag !== undefined && { staleEtag: opts.staleEtag }),
+  });
   const findings: DoctorFinding[] = result.checks.map((c) => ({
     severity: c.ok ? "ok" : "error",
     check: `cas-${c.name}`,
