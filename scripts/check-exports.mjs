@@ -23,6 +23,11 @@ import { join } from "node:path";
 function run(cmd, args, extraOpts = {}) {
   const result = spawnSync(cmd, args, { stdio: "inherit", ...extraOpts });
   if (result.status !== 0) {
+    // A quiet call (stdout captured) has nothing on the console — replay
+    // the captured stdout so a failure keeps its full detail.
+    if (result.stdout) {
+      process.stderr.write(result.stdout);
+    }
     process.exit(result.status ?? 1);
   }
   return result;
@@ -33,7 +38,15 @@ if (!process.env.BAERLY_SKIP_BUILD) {
 }
 
 const outDir = mkdtempSync(join(tmpdir(), "baerly-attw-"));
-run("pnpm", ["pack", "--pack-destination", outDir]);
+// Capture pack's stdout rather than inheriting it: `pnpm pack` prints
+// the full "Tarball Contents" file listing (~200 lines) on every run,
+// which is pure noise on a green CI gate. We only need the .tgz path
+// (read from outDir below); on failure `run` replays the captured
+// output so nothing is lost.
+run("pnpm", ["pack", "--pack-destination", outDir], {
+  stdio: ["ignore", "pipe", "inherit"],
+  encoding: "utf8",
+});
 
 const tarball = readdirSync(outDir).find((f) => f.endsWith(".tgz"));
 if (!tarball) {

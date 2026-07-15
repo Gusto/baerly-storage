@@ -220,6 +220,19 @@ export default defineConfig({
           // behind --js-base-64 in current V8 (Node 24 / V8 13.6). Drop this
           // once Node ships the methods unflagged.
           execArgv: ["--js-base-64"],
+          // Quiet the observability logger for the default suite. Many
+          // integration tests boot a full HTTP app; its canonical
+          // per-request line logs at `info` through the console-json
+          // sink, flooding a green CI run with ~600 lines of pure noise
+          // (one JSON object per request). `warn` drops the per-request
+          // info lines while still surfacing client-error (4xx) and
+          // server-error (5xx) canonical lines — the ones worth reading.
+          // Tests that assert on log output reconfigure LogTape with
+          // their own explicit level + capturing sink (`reset: true`,
+          // last-call-wins), so this default never reaches them. Scoped
+          // to the default project; the `cloudflare-pool` project is
+          // unaffected (Workerd doesn't route this sink to a console).
+          env: { LOG_LEVEL: "warn" },
           // Default truncates assertion diffs at ~40 chars — useless for
           // fast-check shrinking failures on document trees. Full diffs only
           // print on failure, so log size is bounded.
