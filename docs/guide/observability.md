@@ -29,7 +29,10 @@ you need the exact field list; use this page when a deployment is live.
 The threshold idea: baerly logs the request, not every internal step.
 At the end of each HTTP request, the kernel emits **one canonical log
 line**. More precisely, the line is `info` by default, rises to `warn`
-on 4xx, and rises to `error` on 5xx or a thrown error. It carries a
+on any 4xx — a client error is the caller's fault, not a server fault,
+so a `409 Conflict` (a duplicate-`_id` insert) stays `warn` — and rises
+to `error` only on a 5xx or an otherwise-unclassified thrown error. It
+carries a
 `request_id`, an `outcome` (`read` / `committed` / `conflict` /
 `error`), and the per-request `db.*` counters.
 

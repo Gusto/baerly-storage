@@ -299,12 +299,14 @@ describe("observability middleware", () => {
     expect(p["duration_ms"] as number).toBeGreaterThanOrEqual(0);
   });
 
-  test("failed request emits one canonical ERROR line (Conflict → 409)", async () => {
+  test("failed request emits one canonical WARN line (Conflict → 409)", async () => {
     // Register a route AFTER `createRouter` that throws Conflict
     // synthetically. Hono's compose catches the throw and routes it
     // through `onError`; the helper reconstructs the BaerlyError from
-    // the wire envelope so the canonical line's `error` property
-    // forces level = "error" via the canonical-line level picker.
+    // the wire envelope onto the canonical line's `error` property.
+    // A 409 is client-attributable and routine — so the line is `warn`,
+    // not `error`: status is authoritative and an attached error does not
+    // escalate a 4xx.
     const db = Db.create({
       storage: new MemoryStorage(),
       app: "router-test",
@@ -325,7 +327,7 @@ describe("observability middleware", () => {
     const lines = canonical();
     expect(lines).toHaveLength(1);
     const line = lines[0]!;
-    expect(line.level).toBe("error");
+    expect(line.level).toBe("warning");
     const p = line.properties;
     expect(p["status"]).toBe(409);
     expect(p["outcome"]).toBe("conflict");

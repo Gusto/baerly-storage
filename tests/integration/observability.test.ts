@@ -240,7 +240,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(proxy.counts.list).toBe(0);
   });
 
-  test("duplicate-_id Conflict emits an error-level line with the canonical totals", async () => {
+  test("duplicate-_id Conflict emits a warning-level line with the canonical totals", async () => {
     const memory = new MemoryStorage();
     await bootstrap(memory);
 
@@ -295,9 +295,10 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(records).toHaveLength(1);
     const record = records[0]!;
     const props = record.properties;
-    // Level mapping: any thrown error escalates to `error` level,
-    // overriding the 409 → warn mapping.
-    expect(record.level).toBe("error");
+    // Level mapping: this 409 is a duplicate-`_id` insert —
+    // client-attributable and routine — so it stays `warn`. Status is
+    // authoritative; an attached error does not escalate a 4xx to `error`.
+    expect(record.level).toBe("warning");
     expect(props["outcome"]).toBe("conflict");
     const err = props["error"] as { code: string };
     expect(err.code).toBe("Conflict");
