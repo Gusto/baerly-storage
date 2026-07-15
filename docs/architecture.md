@@ -455,13 +455,20 @@ injected at `Db.create({ storage, app, tenant })` time; the kernel
 never picks an impl itself.
 
 - `S3HttpStorage` (`packages/adapter-node/src/s3-http.ts`) for any
-  HTTP endpoint from a Node host. Authentication plugs in via an
-  injected `sign(req)` callback — `S3HttpStorage` imports no signer
-  itself; the `s3Storage` / `r2Storage` / `minioStorage` /
-  `gcsStorage` factories exported from `@gusto/baerly-storage/node`
-  wire `aws4fetch`'s SigV4 in for you. Production callers should use
-  AWS S3 or Cloudflare R2; MinIO is the local conformance target, and
-  GCS S3-interop is unsupported for database use today.
+  S3-compatible HTTP endpoint from a Node host. Authentication plugs in
+  via an injected `sign(req)` callback — `S3HttpStorage` imports no
+  signer itself; the `s3Storage` / `r2Storage` / `minioStorage`
+  factories exported from `@gusto/baerly-storage/node` wire `aws4fetch`'s
+  SigV4 in for you. Production callers should use AWS S3 or Cloudflare R2;
+  MinIO is the local conformance target.
+- `GcsHttpStorage` (`packages/adapter-node/src/gcs-http.ts`) for Google
+  Cloud Storage from a Node host, over GCS's **native** XML API — the
+  `gcsStorage` factory wires a GOOG4-HMAC-SHA256 signer and drives
+  generation preconditions (`x-goog-if-generation-match`), carrying the
+  object `generation` as the opaque etag. GCS's S3-interop endpoint
+  scopes the conditional headers to reads and cannot linearize the log,
+  so the native path is the only supported one (see
+  [storage-compatibility.md](spec/storage-compatibility.md#native-gcs-xml-api)).
 - `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for
   the `memory:` endpoint, partitioned per bucket via a
   process-singleton map so multiple `Db` instances share state by

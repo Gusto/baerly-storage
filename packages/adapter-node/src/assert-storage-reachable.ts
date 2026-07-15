@@ -62,7 +62,9 @@ export const assertStorageReachable = async (
     throw new BaerlyError(
       "InvalidConfig",
       "Storage readiness check failed — the backend does not honour the conditional writes baerly " +
-        `requires (data corruption risk). Use a fully S3-conditional-compatible store:\n${failed}`,
+        "requires (data corruption risk). Use a store that honours them: AWS S3 or Cloudflare R2 " +
+        "(If-Match / If-None-Match), or native Google Cloud Storage via `gcsStorage` " +
+        `(x-goog-if-generation-match). GCS's S3-interop endpoint is not supported.\n${failed}`,
     );
   }
 };

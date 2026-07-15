@@ -2,17 +2,20 @@
 title: Storage compatibility
 audience: spec
 doc_type: current-contract
-summary: Which S3-compatible stores baerly-storage supports, and the conditional-write features it depends on.
-last-reviewed: 2026-07-13
+summary: Which object-storage backends baerly-storage supports (AWS S3, Cloudflare R2, and GCS's native XML API), and the conditional-write features it depends on.
+last-reviewed: 2026-07-14
 tags: [protocol, s3]
-related: [s3-xml-escaping-cases.md]
+related: [s3-xml-escaping-cases.md, "../adr/006-native-gcs-adapter.md"]
 ---
 
 # Storage compatibility
 
-Which S3-compatible stores baerly-storage supports (see
-[Support tiers](#support-tiers) below), and the minimal S3 API surface
-the protocol depends on.
+Which object-storage backends baerly-storage supports (see
+[Support tiers](#support-tiers) below) — AWS S3 and Cloudflare R2 over
+the S3 API, plus GCS over its [native XML API](#native-gcs-xml-api) — and
+the minimal storage API surface the protocol depends on. Most of that
+surface is the common S3 dialect; the conditional-write header is the one
+axis where the native GCS path differs.
 
 ## S3 API surface used
 
@@ -233,9 +236,9 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 
 | Tier              | Stores                        | What it means                                                                                                                                                                                                                                                                                                                |
 | ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tier 1**        | Cloudflare R2, AWS S3         | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI.                                                                                            |
+| **Tier 1**        | Cloudflare R2, AWS S3, GCS (native XML API) | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI. GCS is supported through the **native** `gcsStorage` adapter (`x-goog-if-generation-match`, not S3-interop — see [Native GCS](#native-gcs-xml-api)), Node-only and credential-gated the same way (conformance + the `node-gcs` cascade); its one caveat is GCS's ~1-write/s-per-object rate limit on the `log/<seq>` tail (see the [per-provider matrix](#per-provider-conditional-write-matrix)).                                                                                            |
 | **Tier 1.5**      | MinIO                         | Dev / local conformance harness (`pnpm dev:storage`, `pnpm test:minio`, `pnpm test:adapter-node`). Conditional writes — including bare-`*` create-if-absent — are verified against the pinned local MinIO; not a production target we promise.                                                                               |
-| **Unsupported**   | GCS (S3-interop), Azure Blob  | `gcsStorage` exists as an S3-interop factory, but GCS scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so the S3-interop path **cannot** linearize the commit log and is unsupported for database use. `baerly doctor --bucket` reports it red, and no configuration changes that. Linearizing GCS would require a native adapter driving `x-goog-if-generation-match` (create-if-absent + CAS) against the GCS XML API, which does not exist. Azure Blob is not an S3 API and has no adapter. |
+| **Unsupported**   | GCS via S3-interop, Azure Blob  | GCS's **S3-interop** endpoint scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so that path **cannot** linearize the commit log. Use the native `gcsStorage` adapter (Tier 1) instead; do not point `S3HttpStorage` at GCS. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
 > **R2's `list` is eventually consistent — and that's fine here.** Unlike
@@ -319,6 +322,59 @@ secret. `sigV4Signer` covers static credentials only — for rotating /
 temporary credentials, pass your own `(req) => Promise<Request>` signer to
 `S3HttpStorage`.
 
+## Native GCS (XML API)
+
+GCS is a Tier-1 backend through the **native** `gcsStorage` adapter, not
+the S3-interop endpoint. GCS scopes the S3 `If-Match` / `If-None-Match`
+headers to _reads_, so an S3-interop client cannot linearize the commit
+log. The native adapter instead drives GCS's own generation
+preconditions against the XML API at `https://storage.googleapis.com`:
+
+- create-if-absent (the commit) → `x-goog-if-generation-match: 0`
+- CAS (compactor / `restore`) → `x-goog-if-generation-match: <generation>`
+
+Both return **412** on a lost write, which the adapter maps to
+`BaerlyError{code:"Conflict"}` — there is no S3-style `409`-contended
+branch. The object `generation` (from the `x-goog-generation` response
+header) is carried verbatim as the opaque `Storage` etag; nothing parses,
+orders, or compares it.
+
+```ts
+import { baerlyNode, gcsStorage } from "@gusto/baerly-storage/node";
+
+baerlyNode({
+  storage: gcsStorage({
+    bucket: process.env.BUCKET!,
+    credentials: {
+      accessKeyId: process.env.GCS_HMAC_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.GCS_HMAC_SECRET!,
+    },
+  }),
+}).listen(PORT);
+```
+
+**Credentials — HMAC interop keys.** v1 authenticates with a GCS **HMAC
+key** (GOOG4-HMAC-SHA256 signing, dependency-free — AWS SigV4 cannot be
+reused because GCS rejects a request that carries both `x-amz-*` and
+`x-goog-*` headers). Mint one in the Cloud Console under _Cloud Storage →
+Settings → Interoperability → Create a key_ (for a service account); put
+the access key in `credentials.accessKeyId` and the secret in
+`credentials.secretAccessKey`. This is a setup step, not a deploy-time
+surprise. Service-account (GOOG4-RSA) and OAuth/ADC are a future line,
+gated on a dependency-free RSA story.
+
+**Scope (v1).** Node host, HMAC-key credentials, bring-your-own-bucket.
+There is no GCP deploy target and no Worker `/gcs` subpath — GCS from a
+Worker is deferred.
+
+**Cost posture.** Unlike R2 (zero egress), GCS bills egress, and new
+buckets default to **soft-delete** (deleted objects retained ~7 days,
+billed) — baerly's GC `DELETE`s then become billed retained objects.
+`baerly doctor --bucket` actively probes Object Versioning (warns when
+enabled); soft-delete isn't readable over the HMAC/XML API, so the doctor
+emits a static advisory to check it instead. See
+[cost-model.md](../about/cost-model.md#google-cloud-storage-gcs).
+
 ## Per-provider conditional-write matrix
 
 Dated because provider behaviour drifts — re-verify before relying on a
@@ -329,16 +385,18 @@ non-Tier-1 row.
 | AWS S3           | Yes                                                                                        | Yes                              | Credential-gated `pnpm test:conformance`; S3 docs     | 2026-06  |
 | Cloudflare R2    | Yes                                                                                        | Yes                              | PR-CI native R2 adapter; credential-gated S3-HTTP run | 2026-06  |
 | MinIO            | Yes (baerly-storage emits a bare `*`)                                                      | Yes                              | Local dev-stack conformance (`MINIO=1`)               | 2026-06  |
-| GCS (S3-interop) | Not over the S3 path — the header is read-scoped; writes need `x-goog-if-generation-match` | Same — read-scoped on S3 interop | Factory exists; provider XML-API docs; unsupported    | 2026-06  |
+| GCS (native XML API) | Yes — adapter maps to `x-goog-if-generation-match: 0`; 412 on collision | Yes — maps to `x-goog-if-generation-match: <generation>`; 412 on stale | Credential-gated `pnpm test:conformance` + `node-gcs` cascade; live-probed | 2026-07  |
+| GCS (S3-interop) | No — S3 conditional headers are read-scoped; use the native adapter | No — read-scoped on S3 interop | Provider XML-API docs; unsupported (see [Native GCS](#native-gcs-xml-api)) | 2026-07  |
 | Azure Blob       | n/a (not an S3 API)                                                                        | n/a                              | No adapter                                            | 2026-06  |
 
-> **Tracking note (GCS):** the S3-interop path cannot support database
-> use — read-scoped conditional headers mean **concurrent**
-> create-if-absent admits multiple winners (split-brain commit), so no
-> live probe can promote it out of Unsupported. Linearizing GCS would
-> require a native adapter emitting `x-goog-if-generation-match`
-> (returning `412` on precondition failure, with the opaque `generation`
-> as the version token); no such adapter exists today.
+> **GCS path note.** The **native** `gcsStorage` adapter is the sanctioned
+> GCS path: it emits `x-goog-if-generation-match` (create-if-absent + CAS),
+> returns `412` on precondition failure, and carries the opaque
+> `generation` as the version token. Credential-gated conformance and the
+> `node-gcs` cascade confirm exactly-one-winner under concurrent create.
+> The **S3-interop** path stays Unsupported — its conditional headers are
+> read-scoped, so concurrent create-if-absent admits multiple winners
+> (split-brain commit), and no live probe can promote it.
 
 > Conditional writes are also subject to **per-object / per-prefix
 > write-rate limits**. Under single-write commit the high-frequency
@@ -346,8 +404,10 @@ non-Tier-1 row.
 > prefix (see the hot-prefix cliff in
 > [cost-model.md](../about/cost-model.md)); `current.json` is now only
 > compactor-written. GCS documents a limit of roughly one write per
-> second to a single object name, which would bottleneck conditional
-> writes even if its verbs were honoured over the S3 path. Treat any
+> second to a single object name; on the native adapter this is the live
+> Tier-1 caveat. The cascade contends distinct `log/<seq>` keys (distinct
+> objects), so the per-object cap does not bite the commit path, but a
+> workload hotspotting one object draws retryable `429`s. Treat any
 > per-object/per-prefix write-rate figure as provider-specific and
 > re-verify against the provider's quota docs.
 

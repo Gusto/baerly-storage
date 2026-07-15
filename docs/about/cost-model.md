@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-07-01
+last-reviewed: 2026-07-14
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---
@@ -255,6 +255,47 @@ against `db.write.class_a_ops_per_logical_write`. The 12-month
 new-account free tier was retired in 2025; these figures apply to paid
 accounts.
 
+### Google Cloud Storage (GCS)
+
+GCS is a Tier-1 backend via the native `gcsStorage` adapter (see
+[storage-compatibility.md](../spec/storage-compatibility.md#native-gcs-xml-api)).
+Three cost differences from the R2 baseline matter:
+
+- **Egress is billed.** R2's zero-egress is a Cloudflare-specific perk;
+  GCS charges for data read out to the internet at tiered general network
+  egress rates. A Node host in the same GCP region as the bucket pays no
+  egress; a host outside GCP does. This flips the compression default —
+  see the BYO-Node-to-remote-bucket case in
+  [Compression default](#compression-default-decision-for-gustobaerly-storageclient).
+- **Op pricing is comparable in shape, not identical.** GCS bills Class A
+  operations (writes, lists) and Class B operations (reads) like S3/R2;
+  rates depend on storage class and region. baerly's Class A meter (the
+  `log/<seq>` commit PUT plus maintenance folds/LISTs) is the driver here
+  too. Re-check the official
+  [GCS pricing](https://cloud.google.com/storage/pricing) before quoting
+  a figure.
+- **Soft-delete retention is billed.** New GCS buckets enable
+  **soft-delete** by default: deleted objects are retained (and billed)
+  for a ~7-day window. baerly's GC issues real `DELETE`s, so on a
+  soft-delete bucket those become billed retained objects until the
+  window elapses — `DeleteObject` is _not_ free-and-immediate the way it
+  is on R2/S3. `baerly doctor --bucket` actively probes Object Versioning
+  (and warns when it's on); soft-delete isn't readable over the HMAC/XML
+  API, so the doctor can only emit a static advisory to check it. Disable
+  soft-delete (or shorten the retention window) if GC churn dominates the
+  bill.
+
+**Write-rate ceiling.** GCS caps a single object name at roughly **one
+write per second**, and per-prefix throughput ramps up from a cold start
+rather than beginning at peak QPS. The commit path contends distinct
+`log/<seq>` keys (distinct objects), so the per-object cap does not bite a
+single-writer collection, but a high-fan-in collection hammering one
+`log/` prefix hits the same [hot-prefix cliff](#hot-prefix-cliff-at-high-write-fan-in)
+S3 has, plus a prefix ramp-up on cold buckets. GCS's **hierarchical
+namespace (HNS)** buckets raise the initial QPS ceiling (~8× the
+flat-namespace default) and are the lever when the `log/` prefix is the
+bottleneck.
+
 ### Cost-vs-scale table
 
 Representative write rates and their projected monthly costs.
@@ -430,16 +471,18 @@ Read this as positioning, not a provider quote:
   Postgres Pro plan. Read-heavy traffic on a per-doc fan-out protocol is
   disproportionately expensive compared with a B-tree lookup.
 - **Portability / switching cost:** baerly-storage keeps this advantage
-  across workload sizes. AWS S3 and Cloudflare R2 are the
-  production-supported stores; MinIO is the local conformance target;
-  other S3-compatible endpoints require `baerly doctor --bucket` plus
-  owner validation (see
+  across workload sizes. AWS S3, Cloudflare R2, and GCS (through the
+  native `gcsStorage` adapter — see the
+  [GCS section](#google-cloud-storage-gcs)) are the production-supported
+  stores; MinIO is the local conformance target; other S3-compatible
+  endpoints require `baerly doctor --bucket` plus owner validation (see
   [storage-compatibility.md](../spec/storage-compatibility.md) and
-  [ADR-002](../adr/002-ephemeral-coordination.md)). Azure Blob is not an
-  S3 dialect, and GCS's S3-interop endpoint exposes conditional writes
-  as read-only, so both need dedicated adapters that do not exist yet.
-  D1, Supabase, Neon, and Firebase are proprietary runtimes; choosing
-  one is a switching-cost decision.
+  [ADR-002](../adr/002-ephemeral-coordination.md)). GCS's S3-interop
+  endpoint exposes conditional writes as read-only and stays unsupported
+  (use the native adapter); Azure Blob is not an S3 dialect and needs a
+  dedicated adapter that does not exist yet. D1, Supabase, Neon, and
+  Firebase are proprietary runtimes; choosing one is a switching-cost
+  decision.
 
 The axes are per-write price, idle × portfolio cost, and portability /
 switching cost. baerly-storage loses per-write price at M-size and

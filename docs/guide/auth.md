@@ -2,7 +2,7 @@
 title: Authentication
 audience: operator
 summary: Production auth recipes for Cloudflare and Node, plus tenant pinning and authorization boundaries.
-last-reviewed: 2026-07-02
+last-reviewed: 2026-07-14
 tags: [auth, operations]
 related: ["../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md"]
 ---
@@ -233,7 +233,7 @@ Required runtime env for the AWS S3 snippet:
 
 | Env var | Purpose |
 |---|---|
-| `BUCKET` | AWS S3 bucket name. Use `r2Storage` for Cloudflare R2. MinIO is a local/dev conformance target; GCS S3-interop is unsupported for database use today. |
+| `BUCKET` | AWS S3 bucket name. Use `r2Storage` for Cloudflare R2, or `gcsStorage` for Google Cloud Storage (native XML API, HMAC interop keys). MinIO is a local/dev conformance target; GCS via S3-interop is unsupported — use the native `gcsStorage` adapter. |
 | `AWS_REGION` | Bucket region; default in the snippet is `us-east-1`. |
 | `AWS_ACCESS_KEY_ID` | S3-compatible access key. |
 | `AWS_SECRET_ACCESS_KEY` | S3-compatible secret key. |

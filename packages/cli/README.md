@@ -67,9 +67,20 @@ Any `s3://` bucket URI requires:
 | `BAERLY_S3_REGION`            | optional, defaults to `us-east-1`                   |
 | `NO_COLOR`                    | optional, disables ANSI in human output             |
 
+Any `gcs://` bucket URI requires a GCS HMAC interop key (Console → Cloud
+Storage → Settings → Interoperability):
+
+| Var                             | Notes    |
+| ------------------------------- | -------- |
+| `BAERLY_GCS_HMAC_ACCESS_KEY_ID` | required |
+| `BAERLY_GCS_HMAC_SECRET`        | required |
+
 ## URI grammar
 
 - `s3://<bucket>[/<prefix>]` — S3-compatible HTTP via the Node adapter
   storage factories.
+- `gcs://<bucket>[/<prefix>]` — native GCS XML API via the Node adapter
+  (`gcsStorage`, `x-goog-if-generation-match`). GCS's S3-interop endpoint
+  is not supported for database use; use this scheme instead.
 - `file:///<absolute-path>` — `LocalFsStorage` rooted at the path.
 - `memory://<bucket>` — `MemoryStorage` keyed by bucket; test-only.

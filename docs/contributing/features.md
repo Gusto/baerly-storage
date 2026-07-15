@@ -76,6 +76,33 @@ own.
 - Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md),
   [`docs/spec/s3-xml-escaping-cases.md`](../spec/s3-xml-escaping-cases.md)
 
+## Native GCS client
+
+Google Cloud Storage over its **native** XML API — not the S3-interop
+endpoint, which scopes `If-Match` / `If-None-Match` to reads and cannot
+linearize the commit log. `GcsHttpStorage` drives GCS's own generation
+preconditions (`x-goog-if-generation-match`), signs with GOOG4-HMAC-SHA256
+(dependency-free WebCrypto, not `aws4fetch`), and carries the object
+`generation` as the opaque `Storage` etag. Reached via the `gcsStorage`
+factory (Node-only, HMAC interop keys) and the `gcs://` CLI bucket URI.
+
+- Implementation: [`packages/adapter-node/src/gcs-http.ts`](../../packages/adapter-node/src/gcs-http.ts)
+  (`GcsHttpStorage`), [`packages/adapter-node/src/storage-factories.ts`](../../packages/adapter-node/src/storage-factories.ts)
+  (`gcsStorage` factory), [`packages/adapter-node/src/gcs.ts`](../../packages/adapter-node/src/gcs.ts)
+  (curated `@gusto/baerly-storage/gcs` barrel), [`packages/adapter-node/src/credentials/goog4-signer.ts`](../../packages/adapter-node/src/credentials/goog4-signer.ts)
+  (GOOG4-HMAC signer), [`packages/adapter-node/src/gcs-admin.ts`](../../packages/adapter-node/src/gcs-admin.ts)
+  (Object Versioning probe for `doctor`)
+- Tests: [`packages/adapter-node/src/gcs-http.test.ts`](../../packages/adapter-node/src/gcs-http.test.ts)
+  (pure-unit, vi.fn-stubbed fetch),
+  [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts)
+  (`gcs` variant, needs credentials),
+  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts)
+  (`node-gcs` multi-writer causal cascade)
+- CLI: [`packages/cli/src/doctor/gcs.ts`](../../packages/cli/src/doctor/gcs.ts)
+  (`baerly doctor --bucket=gcs://` config checks)
+- Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md#native-gcs-xml-api),
+  [`docs/adr/006-native-gcs-adapter.md`](../adr/006-native-gcs-adapter.md)
+
 ## Time / clock-skew tolerance
 
 The protocol assumes loosely-synchronized clocks for log timestamps
