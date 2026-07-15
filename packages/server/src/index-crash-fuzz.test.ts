@@ -34,7 +34,7 @@
  */
 
 import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, vi } from "vitest";
 
 /**
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default
@@ -97,6 +97,18 @@ const provision = async (storage: Storage): Promise<void> => {
     snapshot_rows: 0,
   });
 };
+
+// This suite injects storage faults (`abortingStorage`). A crashed
+// commit's internal write-tick maintenance surfaces the injected abort
+// via the runner's intentional `console.error(error)` stack dump
+// (maintenance.ts) — expected-error noise on a green run. Suppress it;
+// the property asserts index parity via `expect`, never via console.
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("index emission survives a single crash anywhere in the commit", () => {
   test.prop({
