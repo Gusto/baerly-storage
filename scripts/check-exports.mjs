@@ -54,4 +54,8 @@ if (!tarball) {
   process.exit(1);
 }
 
-run("pnpm", ["exec", "attw", join(outDir, tarball), "--profile", "esm-only"]);
+// `-f table` forces attw's compact grid (one row per subpath). Without it,
+// a non-TTY run (CI) falls back to the `ascii` format, which prints a
+// ~6-line block per entry point — ~90 lines that repeat the same ignored
+// node10/node16-CJS resolutions across all 13 subpaths.
+run("pnpm", ["exec", "attw", join(outDir, tarball), "--profile", "esm-only", "-f", "table"]);

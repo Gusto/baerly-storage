@@ -405,7 +405,15 @@ export const runCausalConsistencyCascade = (opts: {
         const N = opts.storages.length;
         const seed = opts.seed ?? Math.floor(Math.random() * 0x7fffffff);
         const rand = makeLcg(seed);
-        console.log(`[cascade] seed=${seed} N=${N} pollTickMs=${opts.pollTickMs}`);
+        // Progress trace of the causal-consistency broadcast simulation.
+        // Off by default — on a green run it emits ~200 lines of pure
+        // debug noise per suite. Set CASCADE_TRACE=1 to replay a failing
+        // interleaving. The failure-only CAUSAL VIOLATION dump below is
+        // always printed. (The seed also lands in that dump for replay.)
+        const traceCascade = !!process.env["CASCADE_TRACE"];
+        if (traceCascade) {
+          console.log(`[cascade] seed=${seed} N=${N} pollTickMs=${opts.pollTickMs}`);
+        }
         const clockOffsets =
           opts.clockOffsetsMs ?? Array.from({ length: N }, () => rand() * 2000 - 1000);
         // Portable failing-schedule artifact: every observation is
@@ -457,11 +465,13 @@ export const runCausalConsistencyCascade = (opts: {
         const handle = (client_id: number, val: CascadeMessage | undefined): void => {
           const label = system.client_labels[client_id];
           if (val !== undefined) {
-            console.log(
-              `${system.global_time}: ${label}@${system.client_clocks[
-                client_id
-              ]!} rcvd ${system.client_labels[val.sender]}@${val.send_time}`,
-            );
+            if (traceCascade) {
+              console.log(
+                `${system.global_time}: ${label}@${system.client_clocks[
+                  client_id
+                ]!} rcvd ${system.client_labels[val.sender]}@${val.send_time}`,
+              );
+            }
             system.observe({ ...val, receiver: client_id });
             schedule.push({
               tick: system.global_time,
@@ -501,7 +511,9 @@ export const runCausalConsistencyCascade = (opts: {
             expect(testFailed).toBe(false);
 
             const send_time = system.client_clocks[client_id]! - 1;
-            console.log(`${system.global_time}: ${label}@${send_time} broadcast`);
+            if (traceCascade) {
+              console.log(`${system.global_time}: ${label}@${send_time} broadcast`);
+            }
 
             // Drive the new write loop directly. Writer mints the
             // LogEntry; clock skew is per-instance and unused by the

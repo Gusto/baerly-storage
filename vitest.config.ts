@@ -229,9 +229,10 @@ export default defineConfig({
           // server-error (5xx) canonical lines — the ones worth reading.
           // Tests that assert on log output reconfigure LogTape with
           // their own explicit level + capturing sink (`reset: true`,
-          // last-call-wins), so this default never reaches them. Scoped
-          // to the default project; the `cloudflare-pool` project is
-          // unaffected (Workerd doesn't route this sink to a console).
+          // last-call-wins), so this default never reaches them. The
+          // `cloudflare-pool` project sets the same level via its
+          // miniflare `bindings` below — the console-json sink DOES reach
+          // miniflare stdout, so it needs identical quieting.
           env: { LOG_LEVEL: "warn" },
           // Default truncates assertion diffs at ~40 chars — useless for
           // fast-check shrinking failures on document trees. Full diffs only
@@ -265,7 +266,17 @@ export default defineConfig({
             // exist on the env shape.
             miniflare: {
               r2Buckets: ["BUCKET"],
-              bindings: { APP: "http-conf", TENANT: "" },
+              // `LOG_LEVEL: "warn"` mirrors the default project's env
+              // (above): every booted worker logs a canonical per-request
+              // `info` line through the console-json sink, which miniflare
+              // routes to stdout and vitest captures — ~300 JSON lines of
+              // pure noise on a green run. `warn` drops them while keeping
+              // the 4xx/5xx canonical lines. The kernel logger reads the level
+              // from `globalThis.process.env.LOG_LEVEL` (not the `env` param),
+              // which Workerd populates from this text binding only because
+              // `nodejs_compat` is set below — drop that flag and the level
+              // silently falls back to `info`.
+              bindings: { APP: "http-conf", TENANT: "", LOG_LEVEL: "warn" },
               compatibilityDate: "2026-05-01",
               compatibilityFlags: ["nodejs_compat"],
             },
