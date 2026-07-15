@@ -12,7 +12,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { parseRetryAfter, retry, retryAfterCause, xmlErrorDetail } from "./http-transport.ts";
+import { mapStorageError, parseRetryAfter, retry, retryAfterCause } from "./http-transport.ts";
 import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
 /**
@@ -126,20 +126,8 @@ export class S3HttpStorage implements Storage {
         case 404: {
           return null;
         }
-        case 403: {
-          throw new BaerlyError("AccessDenied", `GET ${key}: 403`);
-        }
         default: {
-          if (res.status === 429 || res.status >= 500) {
-            throw new BaerlyError("NetworkError", `GET ${key}: ${res.status} ${await res.text()}`, {
-              status: res.status,
-              ...retryAfterCause(res),
-            });
-          }
-          throw new BaerlyError(
-            "InvalidResponse",
-            `GET ${key}: ${xmlErrorDetail(res.status, await res.text())}`,
-          );
+          throw await mapStorageError(res, "GET", key);
         }
       }
     });
@@ -194,20 +182,8 @@ export class S3HttpStorage implements Storage {
           `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
         );
       }
-      if (res.status === 403) {
-        throw new BaerlyError("AccessDenied", `PUT ${key}: 403`);
-      }
-      if (res.status === 429 || res.status >= 500) {
-        throw new BaerlyError("NetworkError", `PUT ${key}: ${res.status} ${await res.text()}`, {
-          status: res.status,
-          ...retryAfterCause(res),
-        });
-      }
       if (res.status !== 200 && res.status !== 204) {
-        throw new BaerlyError(
-          "InvalidResponse",
-          `PUT ${key}: ${xmlErrorDetail(res.status, await res.text())}`,
-        );
+        throw await mapStorageError(res, "PUT", key);
       }
       const etag = res.headers.get("ETag");
       if (etag === null) {
@@ -233,16 +209,12 @@ export class S3HttpStorage implements Storage {
       const res = await this.#dispatch(
         new Request(url, { method: "DELETE", signal: opts?.signal ?? null }),
       );
-      if (res.status === 403) {
-        throw new BaerlyError("AccessDenied", `DELETE ${key}: 403`);
+      // 200 / 204 / 404 → success (idempotent); any other status is a real
+      // failure (403 → AccessDenied, 429/≥500 → retryable NetworkError, else
+      // InvalidResponse) rather than a silently-swallowed non-2xx.
+      if (res.status !== 200 && res.status !== 204 && res.status !== 404) {
+        throw await mapStorageError(res, "DELETE", key);
       }
-      if (res.status === 429 || res.status >= 500) {
-        throw new BaerlyError("NetworkError", `DELETE ${key}: ${res.status} ${await res.text()}`, {
-          status: res.status,
-          ...retryAfterCause(res),
-        });
-      }
-      // 200 / 204 / 404 → success (idempotent).
     });
   }
 
@@ -296,20 +268,7 @@ export class S3HttpStorage implements Storage {
               retryAfterSeconds: parseRetryAfter(res.headers.get("Retry-After")),
             };
           }
-          if (res.status === 403) {
-            throw new BaerlyError("AccessDenied", `LIST ${prefix}: 403`);
-          }
-          if (res.status >= 500) {
-            throw new BaerlyError(
-              "NetworkError",
-              `LIST ${prefix}: ${res.status} ${await res.text()}`,
-              { status: res.status, ...retryAfterCause(res) },
-            );
-          }
-          throw new BaerlyError(
-            "InvalidResponse",
-            `LIST ${prefix}: ${xmlErrorDetail(res.status, await res.text())}`,
-          );
+          throw await mapStorageError(res, "LIST", prefix);
         });
         if (outcome.kind === "ok") {
           parsed = parseListObjectsV2CommandOutput(outcome.body);

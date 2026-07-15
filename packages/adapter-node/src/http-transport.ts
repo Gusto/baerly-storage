@@ -90,6 +90,35 @@ export const xmlErrorDetail = (status: number, body: string): string => {
   return `${status} ${body}`;
 };
 
+/**
+ * Shared status→{@link BaerlyError} mapping for the S3/GCS XML adapters, so
+ * the retryable set (`429`/`≥500`) can't drift between them. Store-specific
+ * statuses (GCS `412`; S3 `409`/`404`-with-`If-Match`) are handled inline
+ * first; the rest route here: `403`→AccessDenied (permanent), `429`/`≥500`→
+ * retryable NetworkError carrying `{status, retryAfterSeconds?}`, else
+ * InvalidResponse. Callers `throw` the result; consumes `res.text()` on the
+ * non-`403` paths.
+ */
+export const mapStorageError = async (
+  res: Response,
+  verb: string,
+  key: string,
+): Promise<BaerlyError> => {
+  if (res.status === 403) {
+    return new BaerlyError("AccessDenied", `${verb} ${key}: 403`);
+  }
+  if (res.status === 429 || res.status >= 500) {
+    return new BaerlyError("NetworkError", `${verb} ${key}: ${res.status} ${await res.text()}`, {
+      status: res.status,
+      ...retryAfterCause(res),
+    });
+  }
+  return new BaerlyError(
+    "InvalidResponse",
+    `${verb} ${key}: ${xmlErrorDetail(res.status, await res.text())}`,
+  );
+};
+
 export const retry = async <T>(
   fn: () => Promise<T>,
   { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, maxDelayMs = 10_000 } = {},

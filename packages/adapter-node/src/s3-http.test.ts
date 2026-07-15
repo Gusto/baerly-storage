@@ -283,6 +283,16 @@ describe("S3HttpStorage.delete", () => {
       cause: { status: 429, retryAfterSeconds: 4 },
     });
   });
+
+  // An unexpected non-2xx/404 is a real failure, not a silently-swallowed
+  // success: it routes through mapStorageError → InvalidResponse.
+  test("400 → InvalidResponse (not silently swallowed)", async () => {
+    const fetchFn = vi.fn<typeof fetch>(
+      async (_req) => new Response("<Error><Code>BadRequest</Code></Error>", { status: 400 }),
+    );
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    await expect(s.delete("k")).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
 });
 
 describe("S3HttpStorage.list", () => {
