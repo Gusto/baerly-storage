@@ -234,6 +234,91 @@ describe("GcsHttpStorage", () => {
   });
 });
 
+// get()/put()/delete() route every non-store-specific status through the
+// shared mapStorageError helper (http-transport.ts). These lock the
+// contract-relevant branches at parity with the sibling S3HttpStorage tests:
+// 403 → AccessDenied (permanent) and 429/≥500 → retryable NetworkError carrying
+// {status, retryAfterSeconds?}. retries:0 keeps the transient cases from
+// spending real backoff.
+describe("GcsHttpStorage error-status mapping", () => {
+  const mk = (handler: (req: Request) => Response) =>
+    new GcsHttpStorage({ bucket: "b", sign: passthroughSign, retries: 0, fetch: stub(handler) });
+
+  test("get 403 → AccessDenied", async () => {
+    await expect(mk(() => new Response(null, { status: 403 })).get("k")).rejects.toMatchObject({
+      code: "AccessDenied",
+    });
+  });
+
+  test("get 429 → retryable NetworkError with retryAfterSeconds", async () => {
+    await expect(
+      mk(() => new Response("slow down", { status: 429, headers: { "Retry-After": "5" } })).get(
+        "k",
+      ),
+    ).rejects.toMatchObject({ code: "NetworkError", cause: { status: 429, retryAfterSeconds: 5 } });
+  });
+
+  test("get 503 → retryable NetworkError", async () => {
+    await expect(mk(() => new Response("boom", { status: 503 })).get("k")).rejects.toMatchObject({
+      code: "NetworkError",
+      cause: { status: 503 },
+    });
+  });
+
+  test("put 429 → retryable NetworkError with retryAfterSeconds", async () => {
+    // GCS's documented ~1-write/s ceiling makes 429 the most realistic
+    // write-path failure, so this branch must be exercised.
+    await expect(
+      mk(() => new Response("slow down", { status: 429, headers: { "Retry-After": "2" } })).put(
+        "log/1",
+        new Uint8Array([1]),
+        { ifNoneMatch: "*" },
+      ),
+    ).rejects.toMatchObject({ code: "NetworkError", cause: { status: 429, retryAfterSeconds: 2 } });
+  });
+
+  test("put 503 → retryable NetworkError", async () => {
+    await expect(
+      mk(() => new Response("boom", { status: 503 })).put("current.json", new Uint8Array([1])),
+    ).rejects.toMatchObject({ code: "NetworkError", cause: { status: 503 } });
+  });
+
+  test("delete 403 → AccessDenied", async () => {
+    await expect(mk(() => new Response(null, { status: 403 })).delete("k")).rejects.toMatchObject({
+      code: "AccessDenied",
+    });
+  });
+
+  test("delete 429 → retryable NetworkError with retryAfterSeconds", async () => {
+    await expect(
+      mk(() => new Response(null, { status: 429, headers: { "Retry-After": "4" } })).delete("k"),
+    ).rejects.toMatchObject({ code: "NetworkError", cause: { status: 429, retryAfterSeconds: 4 } });
+  });
+
+  test("delete 503 → retryable NetworkError", async () => {
+    await expect(mk(() => new Response("boom", { status: 503 })).delete("k")).rejects.toMatchObject(
+      {
+        code: "NetworkError",
+        cause: { status: 503 },
+      },
+    );
+  });
+
+  test("delete 204 → resolves (idempotent success)", async () => {
+    await expect(
+      mk(() => new Response(null, { status: 204 })).delete("k"),
+    ).resolves.toBeUndefined();
+  });
+
+  // delete() no longer silently swallows an unexpected non-2xx/404: a stray
+  // 400 surfaces as InvalidResponse instead of a false success.
+  test("delete 400 → InvalidResponse (not silently swallowed)", async () => {
+    await expect(
+      mk(() => new Response("<Error><Code>BadRequest</Code></Error>", { status: 400 })).delete("k"),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+});
+
 // The single-page happy path is covered above. GcsHttpStorage.list carries a
 // bespoke continuation-token pagination loop and a 429 rate-limit retry
 // (Retry-After honoring + budget-exhaustion throw) that the happy-path test
