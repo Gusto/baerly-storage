@@ -1,6 +1,8 @@
 import type { Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "./s3-http.ts";
+import { GcsHttpStorage } from "./gcs-http.ts";
 import { refreshingSigner } from "./credentials/signer.ts";
+import { goog4Signer } from "./credentials/goog4-signer.ts";
 import type { Credentials, CredentialsProvider } from "./credentials/types.ts";
 
 function buildS3Storage(opts: {
@@ -129,20 +131,19 @@ export function minioStorage(opts: {
 }
 
 /**
- * Google Cloud Storage `Storage` factory via the S3-compat endpoint
- * at `https://storage.googleapis.com`. Authentication uses GCS HMAC
- * keys (Console → Settings → Interoperability) — the HMAC access key
- * goes into `credentials.accessKeyId` and the HMAC secret goes into
- * `credentials.secretAccessKey`. Region is pinned to `"auto"`.
+ * Google Cloud Storage `Storage` factory over the native GCS XML API
+ * at `https://storage.googleapis.com`. Wraps {@link GcsHttpStorage} with
+ * a GOOG4-HMAC-SHA256 signer, driving GCS's own generation-precondition
+ * conditional writes (`x-goog-if-generation-match: 0` for create-if-absent,
+ * `x-goog-if-generation-match: <generation>` for compare-and-swap), which
+ * return `412` on a lost write. The object `generation` is carried verbatim
+ * as the opaque `Storage` etag. This is the sanctioned GCS path — the
+ * S3-interop endpoint treats `If-Match`/`If-None-Match` as read-scoped only
+ * and cannot linearize the log, so it is not supported.
  *
- * GCS's S3-compat surface covers the four `Storage` methods
- * (`get`/`put`/`delete`/`list`), but Google documents the
- * `If-Match`/`If-None-Match` headers this kernel coordinates on as
- * read-only (native conditional writes use `x-goog-if-generation-match`).
- * Whether GCS's interop layer enforces S3-style conditional *writes* is
- * unverified — run `baerly doctor --bucket=<your-gcs-bucket>` before
- * relying on it; a backend that fails the CAS probe is not a safe baerly
- * store. See ADR-002.
+ * Authentication uses GCS HMAC keys (Console → Settings → Interoperability)
+ * — mint an interop key, put the HMAC access key in `credentials.accessKeyId`
+ * and the HMAC secret in `credentials.secretAccessKey`.
  *
  * @example
  * ```ts
@@ -160,11 +161,13 @@ export function minioStorage(opts: {
 export function gcsStorage(opts: {
   bucket: string;
   credentials: Credentials | CredentialsProvider;
+  /** GCS endpoint. Defaults to `https://storage.googleapis.com`. */
+  endpoint?: string;
 }): Storage {
-  return buildS3Storage({
-    endpoint: "https://storage.googleapis.com",
-    region: "auto",
+  const sign = goog4Signer({ credentials: opts.credentials });
+  return new GcsHttpStorage({
     bucket: opts.bucket,
-    credentials: opts.credentials,
+    sign,
+    ...(opts.endpoint !== undefined && { endpoint: opts.endpoint }),
   });
 }

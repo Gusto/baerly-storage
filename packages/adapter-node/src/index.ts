@@ -46,6 +46,8 @@
  */
 export { S3HttpStorage } from "./s3-http.ts";
 export type { S3HttpStorageOptions } from "./s3-http.ts";
+export { GcsHttpStorage } from "./gcs-http.ts";
+export type { GcsHttpStorageOptions } from "./gcs-http.ts";
 export { s3Storage, r2Storage, minioStorage, gcsStorage } from "./storage-factories.ts";
 export { localFsStorage } from "./local-fs-storage.ts";
 export type { LocalFsStorageFactoryOptions } from "./local-fs-storage.ts";

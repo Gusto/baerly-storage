@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { GcsHttpStorage } from "./gcs-http.ts";
 import { gcsStorage, minioStorage, r2Storage, s3Storage } from "./storage-factories.ts";
 
 describe("storage factories", () => {
@@ -31,4 +32,12 @@ describe("storage factories", () => {
       expect(typeof s.list).toBe("function");
     });
   }
+
+  test("gcsStorage returns a native GcsHttpStorage over storage.googleapis.com", () => {
+    const s = gcsStorage({
+      bucket: "b",
+      credentials: { accessKeyId: "id", secretAccessKey: "secret" },
+    });
+    expect(s).toBeInstanceOf(GcsHttpStorage);
+  });
 });
