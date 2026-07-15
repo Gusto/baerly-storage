@@ -317,9 +317,21 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
   // preserves fail-fast startup on misconfig. When `config` is omitted it's
   // loaded lazily in `configureServer` (see below) and auth resolves there.
   const eagerAuth = opts.config !== undefined ? resolveAuth(opts, opts.config) : undefined;
+  // Readiness handle: resolves once configureServer's async setup settles
+  // (success OR failure). The setup runs un-awaited in the background (Vite
+  // doesn't await configureServer's internal promises), so without this
+  // there is no way to know it has finished touching the data dir. Exposed
+  // via Vite's `api` field so a caller — or a test that provisions a
+  // throwaway data dir — can await settle before tearing that dir down,
+  // rather than racing the in-flight `ensureTable`/`storage.put`.
+  let markSettled!: () => void;
+  const whenSettled = new Promise<void>((settle) => {
+    markSettled = settle;
+  });
   return {
     name: "baerly-dev",
     apply: "serve",
+    api: { whenSettled },
     configureServer(server) {
       // Everything below runs at dev-server startup, NOT at plugin-factory
       // time. That lets callers omit `config` and instead have us load
@@ -383,6 +395,10 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
       ready.catch((error: unknown) => {
         console.error("[baerly-dev] setup failed:", error);
       });
+      // Settle the exposed readiness handle regardless of outcome — a
+      // failed setup is still "done", and awaiters (see `api.whenSettled`)
+      // only need to know the background work has stopped touching storage.
+      void ready.then(markSettled, markSettled);
 
       server.middlewares.use((req, res, next) => {
         const url = req.url;
