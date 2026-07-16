@@ -2,7 +2,7 @@
 title: Publishing
 audience: maintainer
 summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage publicly to npmjs.com."
-last-reviewed: 2026-07-10
+last-reviewed: 2026-07-15
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -45,14 +45,32 @@ automatically; `pnpm release` refuses to publish a stale one.
    deletes the scaffolder's generated changelog (we don't ship one for it).
    Review the diff — the generated changelog is an editable draft.
 
-3. **Commit + tag** the release:
+3. **Open a release PR.** `main` is protected (a ruleset requires a PR,
+   passing `ci`, and linear history), so the release commit **cannot** be
+   pushed directly — it lands through a PR like any other change:
 
    ```sh
-   git add -A && git commit -m "chore(release): v$(node -p "require('./package.json').version")"
-   git tag "v$(node -p "require('./package.json').version")"
+   V=$(node -p "require('./package.json').version")
+   git switch -c "release/v$V"
+   git add -A && git commit -m "chore(release): v$V"
+   git push -u origin "release/v$V"
+   gh pr create --base main --title "chore(release): v$V" \
+     --body "Release v$V — see CHANGELOG.md."
    ```
 
-4. **Publish:**
+   Wait for `ci` to pass, then **squash- or rebase-merge** it. A merge
+   commit is rejected by the linear-history rule.
+
+4. **Tag the merged commit.** Tags are unrestricted (no tag ruleset), so
+   the tag pushes directly once the release commit is on `main`:
+
+   ```sh
+   git switch main && git pull --ff-only
+   V=$(node -p "require('./package.json').version")
+   git tag "v$V" && git push origin "v$V"
+   ```
+
+5. **Publish** from the tagged `main`:
 
    ```sh
    pnpm release
@@ -98,12 +116,15 @@ root cause of agents inventing a "Gusto private registry."
 
 ```sh
 pnpm verify            # typecheck + lint + examples typecheck
-pnpm test:agent        # full unit + integration suite
 pnpm build             # rolldown bundle to dist/
+pnpm test:agent        # full unit + integration suite
 ```
 
-All three must be green. The build is required for any test that
-reads `dist/`, and for the publish to ship a valid bundle.
+All three must be green. **Build before `test:agent`** — `test:agent`
+skips the `pretest` build hook, so dist-consuming tests (e.g.
+`dist-docs.test.ts`) read a stale `dist/` and fail spuriously if the
+bundle wasn't just rebuilt. The build is also required for the publish
+to ship a valid bundle.
 
 `dist/API.md` is bundled into the published package and is the LLM
 zero-shot anchor for installed engineers. Sanity-check it after the
