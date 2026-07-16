@@ -41,9 +41,7 @@ export interface BenchStorageOpts {
  * 8 bytes/double = ~4 MB max memory per `CountingStorage`. Multi-
  * million-op runs hit this ceiling; nearest-rank p50/p95/p99 stay
  * stable under FIFO drop for the quasi-stationary workloads the
- * load-harness presets produce. If a future workload class needs full-
- * run latency retention, switch this file to a reservoir sampler —
- * out of scope for ticket 50.
+ * load-harness presets produce.
  */
 const MAX_LATENCY_SAMPLES_PER_OP = 100_000;
 

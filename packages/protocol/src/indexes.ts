@@ -51,10 +51,7 @@ export interface IndexDefinition {
    * clause on the final indexed field beyond that equality prefix.
    *
    * Top-level fields only — dotted-path `on` values throw
-   * `SchemaError` from `projectIndexValues`. A future change widens
-   * the projector to dotted paths (mirroring what
-   * `packages/server/src/query.ts` already does on the predicate
-   * side).
+   * `SchemaError` from `projectIndexValues`.
    */
   readonly on: string | readonly string[];
 
