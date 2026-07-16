@@ -47,7 +47,7 @@ introduce one.
 
 ## Consequences
 
-- The conformance corpus (Tier B) may freeze `LogEntry` fixtures under
+- The conformance corpus may freeze `LogEntry` fixtures under
   the "versionless v1" label without waiting on a field addition.
 - `version-matrix.json` records `LogEntry` as
   `{ value: null, policy: "versionless-additive-only" }`; the drift
