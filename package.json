@@ -237,8 +237,8 @@
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "@changesets/cli": "^2.31.0",
-    "@cloudflare/vitest-pool-workers": "0.16.14",
-    "@cloudflare/workers-types": "^4.20260630.1",
+    "@cloudflare/vitest-pool-workers": "0.18.4",
+    "@cloudflare/workers-types": "^5.20260715.1",
     "@fast-check/vitest": "^0.4.1",
     "@hono/node-server": "^2.0.9",
     "@stryker-mutator/core": "9.6.1",
@@ -275,7 +275,7 @@
     "yaml": "2.9.0"
   },
   "peerDependencies": {
-    "@cloudflare/workers-types": "^4",
+    "@cloudflare/workers-types": "^4 || ^5",
     "react": "^18 || ^19",
     "vite": "^5 || ^6 || ^7 || ^8"
   },
