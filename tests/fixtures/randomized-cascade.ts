@@ -467,9 +467,9 @@ export const runCausalConsistencyCascade = (opts: {
           if (val !== undefined) {
             if (traceCascade) {
               console.log(
-                `${system.global_time}: ${label}@${system.client_clocks[
-                  client_id
-                ]!} rcvd ${system.client_labels[val.sender]}@${val.send_time}`,
+                `${system.global_time}: ${label}@${
+                  system.client_clocks[client_id]!
+                } rcvd ${system.client_labels[val.sender]}@${val.send_time}`,
               );
             }
             system.observe({ ...val, receiver: client_id });
