@@ -1,5 +1,87 @@
 # @gusto/baerly-storage
 
+## 0.6.0
+
+### Minor Changes
+
+- c806852: `baerlyDev` can now load `baerly.config` itself instead of requiring the caller
+  to import it and pass the object.
+
+  `BaerlyDevOptions.config` is now optional; two new resolution modes:
+
+  - `configPath` — absolute path to the config module, loaded lazily at
+    dev-server startup via Vite's `ssrLoadModule`.
+  - **convention** (nothing passed) — loads `<viteRoot>/src/baerly.config.ts`,
+    mirroring how `reactRouter()` loads `react-router.config.ts`.
+
+  Passing an explicit `config` object still works and is unchanged, including
+  fail-fast verifier resolution at factory time.
+
+  **Why:** when an app's `vite.config.ts` imports its `baerly.config` to pass the
+  object in, Nx's `@nx/vite` / `@nx/vitest` inference plugins bundle that config
+  during project-graph creation, dragging the config module's transitive imports
+  (`@gusto/baerly-storage/config`, `zod`) into the config bundle. Those fail to
+  resolve in CI and crash graph creation, forcing every baerly app into the root
+  `nx.json` inference-plugin exclusion lists — a global edit that marks the whole
+  monorepo affected. Letting `baerlyDev` load the config itself keeps the caller's
+  `vite.config` import-free, so the exclusion is no longer needed.
+
+- 6336a06: Native Google Cloud Storage adapter: `gcsStorage` now drives GCS's own
+  generation-precondition conditional writes over the native XML API
+  (`x-goog-if-generation-match`), promoting GCS to a Tier-1 backend.
+
+  **Migration.** The `gcsStorage({ bucket, credentials })` signature is
+  unchanged, so existing callers keep compiling. What changes is the wire
+  behavior: the factory previously produced an S3-interop client whose
+  conditional headers GCS silently ignored on writes (it could not
+  linearize the commit log and was unsupported); it now speaks the native
+  GCS XML API and gains real create-if-absent + CAS, returning `412` →
+  `Conflict` on a lost write. Credentials remain GCS HMAC interop keys
+  (`accessKeyId` / `secretAccessKey`). Node host only — no Worker `/gcs`
+  subpath and no GCP deploy target in v1.
+
+### Patch Changes
+
+- 8322ce2: Canonical HTTP log lines now classify by wire status alone: any 4xx is
+  `warn`, not `error`, even when a structured error is attached. Previously
+  an attached error forced `error` level regardless of status, so a
+  `409 Conflict` logged at `error`.
+
+  **Why:** a 4xx is the caller's fault, not a server fault. The reachable
+  409 is a duplicate-`_id` insert (a reused id or a double-submitted POST);
+  ordinary storage write contention is absorbed internally by the log
+  forward-probe and never reaches the client as a 409. Logging these at
+  `error` polluted error budgets and could page on-call for normal
+  operation. `error` is now reserved for genuine server faults: 5xx, a
+  2xx/3xx that anomalously carries an error, or a thrown error with no wire
+  status to classify by. The line still carries the structured
+  `{ code, message }` on the failure path; only the stack (unneeded for a
+  routine client error) drops off at `warn`.
+
+- a1cd0a3: Bump `@logtape/logtape` 2.2.2 → 2.2.4 to pick up the upstream fix for the
+  `configure()` process exit-listener leak ([dahlia/logtape#192](https://github.com/dahlia/logtape/issues/192)).
+  Previously each `configure()` registered a new `process.on("exit", …)` hook
+  without removing the prior one; 2.2.4 unregisters the previous dispose hook
+  before registering a new one. Production adapters call `configureObservability`
+  once so nothing shipped broken, but repeated reconfiguration in one process
+  (test suites, hot-reload) no longer leaks listeners. No public API changes.
+
+- 3387380: S3/GCS adapter `delete()` now surfaces an unexpected non-2xx/404 status
+  as an error instead of silently treating it as success. `200`/`204`/`404`
+  stay a success (delete is idempotent; a `404` is a no-op); anything else
+  maps through the shared classifier (`403` → `AccessDenied`; `429` and
+  `≥500` → retryable `NetworkError`; anything else → `InvalidResponse`).
+
+  **Why:** the previous inline path swallowed every non-2xx as success, so
+  a `403` on delete during GC/compaction looked like it removed an object
+  it never touched — the bucket would grow while maintenance reported
+  success. Surfacing the status is a correctness fix. It is safe on the
+  write path: GC deletes in parallel and a thrown delete aborts only the
+  rest of that sweep (landed deletes are durable, `pending.json` is
+  CAS-merged), and the maintenance runner already swallows every
+  non-`Conflict` throw after counting + logging it, so a delete error never
+  propagates to crash a write-tick.
+
 ## 0.5.0
 
 ### Minor Changes

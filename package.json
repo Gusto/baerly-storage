@@ -1,6 +1,6 @@
 {
   "name": "@gusto/baerly-storage",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Document database for S3 and Cloudflare R2 that runs in your request handler — tiny, LLM-friendly TypeScript API, no database server",
   "keywords": [
     "append-only-log",
