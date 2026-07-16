@@ -1,6 +1,6 @@
 {
   "name": "@gusto/create-baerly-storage",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Create an app with a document database on S3 or Cloudflare R2 — TypeScript scaffold for Workers and Node",
   "keywords": [
     "boilerplate",
