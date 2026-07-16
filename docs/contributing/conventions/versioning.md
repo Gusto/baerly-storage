@@ -27,7 +27,7 @@ code drift by `scripts/check-version-matrix.ts` on every `pnpm verify`.
 | **`specVersion`** | `/v1/spec` IR + HTTP/API contract shape — NOT bucket layout | `buildSpecIR().specVersion` (`packages/server/src/spec/ir.ts`) | `"1"` |
 | **Per-artifact `schema_version`** | durable control-object schema (`current.json`, `gc/pending.json`, snapshot) | the `*_SCHEMA_VERSION` constants in `packages/protocol/src/constants.ts` | 3 / 1 / 1 |
 | **`layout_version`** | bucket key-layout axis only | deferred; reserved namespace per [ADR-003](../../adr/003-layout-versioning-cordon.md) | implicit 1 (absent) |
-| **Conformance corpus version** | checked-in fixture/test-data artifact | not yet introduced (Tier B) | — |
+| **Conformance corpus version** | checked-in fixture/test-data artifact | not yet introduced | — |
 
 `LogEntry` carries **no** `schema_version`. It is versionless and
 additive-only by decision — see
@@ -79,8 +79,7 @@ second implementation exists:**
 - After `1.0`: it requires a **major** bump (aligns with the API surface
   lock's v1.0 hardening trigger — there is one hardening story, not two).
 - Fixture regeneration requires a changeset, a schema/version impact
-  note, and a fixture-diff summary (a future Tier B drift gate is
-  planned to enforce the mechanics).
+  note, and a fixture-diff summary.
 - Keep at least one previous-corpus readback fixture after the first
   compatibility promise.
 
@@ -96,5 +95,5 @@ second implementation exists:**
   both gate it.
 - **`layout_version`**: do not add until a real key-layout change
   exists; that is an ADR-003 amendment, not a silent matrix edit.
-- **Corpus version**: introduced by Tier B; until then the matrix
-  records `null` / `not-yet-introduced`.
+- **Corpus version**: not yet introduced; the matrix records `null` /
+  `not-yet-introduced`.
