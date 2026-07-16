@@ -144,7 +144,3 @@ A malformed percent-escape (a bare `%` or `%ZZ`) in a key field makes
 `BaerlyError("InvalidResponse")` so the storage layer surfaces a typed,
 catchable error rather than an unhandled runtime exception (covered by
 `xml.test.ts`).
-
-> Latent hardening (noted as an invariant, not yet implemented):
-> `baerly doctor --bucket` should probe that the backend honors
-> `encoding-type=url`.
