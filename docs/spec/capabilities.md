@@ -2,8 +2,8 @@
 title: Storage capabilities — required vs optional
 audience: spec
 doc_type: current-contract
-summary: What a backend MUST support to certify as full Storage (CAS, exactly-one-winner), what is optional, and the planned read-only ReaderStorage tier.
-last-reviewed: 2026-07-03
+summary: What a backend MUST support to certify as full Storage (CAS, exactly-one-winner), and what is optional.
+last-reviewed: 2026-07-16
 tags: [storage, conformance, capabilities, cas, contract]
 related: ["sync-protocol.md", "storage-compatibility.md"]
 ---
@@ -62,14 +62,3 @@ Until the suite grows structured waiver metadata, any **new** optional
 skip MUST carry an **owner and an expiry** in the call-site comment next
 to the opt-out. A bare boolean opt-out with no owner/expiry trail is a
 review defect.
-
-## Planned: `ReaderStorage` (read-only tier)
-
-A read-only implementation (e.g. an analytics-only Python client) need
-not implement conditional writes. The planned `ReaderStorage` interface
-exposes only `get` + `list` and certifies against a read-only subset of
-the conformance suite. **Not yet implemented** — there is one monolithic
-`Storage` today. When introduced, write certification stays gated on the
-full CAS/race blocks above; `ReaderStorage` certification covers reads
-only. This tier is the home for the roadmap's read-only Python
-milestones (Tier E, M1–M3).
