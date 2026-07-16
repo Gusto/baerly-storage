@@ -13,10 +13,6 @@ Currently:
   cross-`Baerly`-instance visibility without standing up Minio. Single-
   process design center; multi-process scenarios should use Minio.
 
-Planned (stubs):
-
-- miniflare runner for Worker-side dev.
-
 Dependency direction is one-way: `@baerly/dev` → `@baerly/protocol`.
 Never import the other way around.
 
