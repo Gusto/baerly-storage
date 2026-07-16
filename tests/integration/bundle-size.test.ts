@@ -504,7 +504,10 @@ const BUDGETS: readonly Budget[] = [
   //     now unregisters the prior dispose hook before registering a new one,
   //     adding a few hundred bytes to the observability closure. Deliberate
   //     dep bump, not code creep. Measured 356664 raw; gz/min-gz under.
-  { entry: "http.js", raw: 349 * 1024, gz: 104 * 1024, minGz: 36 * 1024 },
+  //   → 350 KiB raw (2026-07-15): dep sweep — hono 4.12.27→4.12.30 patch.
+  //     Deliberate upstream bump, not code creep. Measured 358079 raw;
+  //     gz/min-gz under.
+  { entry: "http.js", raw: 350 * 1024, gz: 104 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -831,7 +834,11 @@ const BUDGETS: readonly Budget[] = [
   //     for the configure() exit-listener leak (dahlia/logtape#192, issue #40)
   //     adds the dispose-hook unregister path to the observability closure.
   //     Deliberate dep bump, not code creep. Measured 429325 raw; gz/min-gz under.
-  { entry: "cloudflare.js", raw: 420 * 1024, gz: 126 * 1024, minGz: 45 * 1024 },
+  //   → 421 KiB raw / 127 KiB gz (2026-07-15): dep sweep — hono 4.12.27→4.12.30
+  //     patch in this aggregator's closure. Deliberate upstream bump, not code
+  //     creep. Measured 430785 raw / 129071 gz; min-gz under. Only the raw/gz
+  //     creep tripwires move.
+  { entry: "cloudflare.js", raw: 421 * 1024, gz: 127 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
