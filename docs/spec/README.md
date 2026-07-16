@@ -26,8 +26,7 @@ Binding descriptions of how the live protocol behaves today.
 - [storage-compatibility.md](storage-compatibility.md) — the minimal S3 API
   surface the protocol depends on.
 - [capabilities.md](capabilities.md) — required-vs-optional storage
-  capability split (CAS mandatory; supportsAbort optional; ReaderStorage
-  tier planned).
+  capability split (CAS mandatory; supportsAbort optional).
 - [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire
   contract. Debezium-style CDC envelope; versionless/additive-only
   `0.3.0` public early-access baseline, with pre-1.0 breaks following
