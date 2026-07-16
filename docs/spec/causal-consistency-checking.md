@@ -298,7 +298,7 @@ Seeded replay: the cascade logs an integer `seed` at start and dumps the
 observed schedule on any causal-consistency violation, so a failing
 interleaving can be inspected and the injected entropy replayed by
 passing the seed back. (Timer-driven interleaving remains wall-clock
-dependent; fully deterministic replay is future work.)
+dependent, so replay is not fully deterministic.)
 
 ## Conclusion
 

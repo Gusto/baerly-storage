@@ -9,12 +9,11 @@
  *   - **snapshot row count** (the per-entry parse / merge / serialize
  *     axis — many tiny docs).
  *
- * This is the bench that will eventually REPLACE the *modelled* numbers
- * in `docs/about/graduation.md` ("≈ 11 ms CPU per MB of snapshot
- * rebuilt", and the PROVISIONAL `E = 2048` row ceiling) with *measured*
- * ones, so the snapshot ceilings `C` / `E` can rise on a more capable
- * host later (paid Cloudflare is MEMORY-bound where free is CPU-bound,
- * so BOTH axes are reported). This bench MEASURES ONLY — it changes no
+ * This bench MEASURES the actual CPU/memory cost of a snapshot fold, to
+ * compare against the *modelled* numbers in `docs/about/graduation.md`
+ * ("≈ 11 ms CPU per MB of snapshot rebuilt", and the PROVISIONAL
+ * `E = 2048` row ceiling). It reports BOTH axes because paid Cloudflare
+ * is MEMORY-bound where free is CPU-bound. MEASURES ONLY — it changes no
  * production behaviour and no constant.
  *
  * What a "fold" is here: each iteration runs the real
