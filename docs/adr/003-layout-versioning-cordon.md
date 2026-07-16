@@ -3,7 +3,7 @@ title: Layout versioning and the reserved-namespace cordon
 audience: adr
 doc_type: adr
 summary: ADR 003 — schema_version is a per-artifact shape sentinel; the bucket key-layout axis is distinct and deferred (layout_version, additive-optional); the leading-underscore namespace is reserved now. The tolerant-reader rule lives in extending.md; this record keeps the reservation and the rejected upcaster/cordon paths.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-07-16
 tags: [decision, adr, runtime-model]
 related: [README.md, "../about/thesis.md", "../contributing/extending.md", 001-tenant-cas-isolation.md, 002-ephemeral-coordination.md]
 ---
@@ -12,8 +12,7 @@ related: [README.md, "../about/thesis.md", "../contributing/extending.md", 001-t
 
 ## Status
 
-Accepted (2026-06-01). The "Likely v2 shape" note below is **non-binding**,
-pending real v2 requirements; everything else is firm.
+Accepted (2026-06-01).
 
 ## Decision
 
@@ -73,9 +72,3 @@ coordination request-bounded in [ADR-002](002-ephemeral-coordination.md).
   reservation, which subsumes `_v<N>` and matches the Mongo/Firestore
   convention.
 
-## Likely v2 shape — non-binding
-
-An incompatible future change is expected to introduce `layout_version`
-and cordon bulk data under `_v<N>/`. How a reader detects the layout, how
-migration runs, and whether a `migrate` verb returns are **deferred to
-v2's real requirements** — no mechanism is specified here.
