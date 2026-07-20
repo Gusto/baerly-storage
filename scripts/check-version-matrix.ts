@@ -23,7 +23,7 @@ export type MatrixShape = {
     LogEntry: { value: null; policy: string };
   };
   layoutVersion: { value: number; implicit: boolean; deferred: boolean };
-  corpusVersion: { value: null; status: "not-yet-introduced" | "introduced"; introducedBy: string };
+  corpusVersion: { value: null; status: "not-yet-introduced" | "introduced"; source: string };
 };
 
 /** The live code-derived axes the matrix must not diverge from. */
@@ -46,9 +46,10 @@ export type PackageIdentity = {
 /**
  * Structural invariants `--write` must NOT auto-fix: the package
  * lockstep, and the doc-only sentinels (LogEntry / layout / corpus).
- * Each names a conscious decision that needs an ADR, not a silent matrix
- * edit, so a mismatch blocks even regeneration. Returns human-readable
- * violation messages ([] = clean).
+ * Each names a conscious decision governed by an owning doc (an ADR for
+ * LogEntry / layout, the versioning guide for the not-yet-introduced
+ * corpus axis), not a silent matrix edit, so a mismatch blocks even
+ * regeneration. Returns human-readable violation messages ([] = clean).
  *
  * Package semver's *value* is a governed drift axis (see
  * `collectDriftViolations`), not a structural one: `changeset:version`
@@ -101,13 +102,9 @@ export const collectStructuralViolations = (
       "layoutVersion sentinel changed; this needs an ADR-003 amendment, not a silent matrix edit",
     );
   }
-  if (
-    matrix.corpusVersion.value !== null ||
-    matrix.corpusVersion.status !== "not-yet-introduced" ||
-    matrix.corpusVersion.introducedBy !== "Tier B golden bucket fixtures"
-  ) {
+  if (matrix.corpusVersion.value !== null || matrix.corpusVersion.status !== "not-yet-introduced") {
     out.push(
-      "corpusVersion sentinel changed; introduce the Tier B corpus gate before changing the matrix",
+      "corpusVersion sentinel changed; the corpus version is not yet introduced — do not add it via a silent matrix edit",
     );
   }
   return out;

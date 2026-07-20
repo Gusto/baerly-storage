@@ -24,7 +24,7 @@ const baseMatrix = (): MatrixShape => ({
   corpusVersion: {
     value: null,
     status: "not-yet-introduced",
-    introducedBy: "Tier B golden bucket fixtures",
+    source: "docs/contributing/conventions/versioning.md",
   },
 });
 
