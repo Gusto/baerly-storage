@@ -2,7 +2,7 @@
 title: Conventions for changing code
 audience: coder
 summary: How to make non-trivial changes — fix at the root, understand before changing, hold the surface to a best-in-class DX bar, no silent compat shims, one canonical form per operation, types over JSDoc.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-07-17
 tags: [conventions, discipline]
 related: [docs.md, tests.md, "../../about/thesis.md"]
 ---
@@ -168,6 +168,25 @@ one-canonical-form test _but_ satisfies one of these three tests stays:
    happy-path PaaS audience doesn't need (Dockerfile, `healthz`,
    explicit Node start entry) stay if they unblock a real
    deploy population.
+
+## Where speculative work goes
+
+The checked-in tree describes what *is* — present tense, so an LLM reads it
+zero-shot without mistaking aspiration for contract. Future-work prose does not
+belong inline in specs, reference docs, or source comments. When an idea surfaces,
+route it by its commitment level; commitment is signaled by an affirmative act
+(filing, labeling, merging), never by the mere existence of a written note.
+
+- **Present-tense decision** (a real boundary the project holds) → stays in the
+  tree. Non-goals (thesis § "What this deliberately is not", README § "When (not)
+  to use it") and ADR "deferred axis" *decisions* are "what is" and belong here.
+  Keep the decision; drop the speculative *mechanism* — record that an axis is
+  deferred, not the shape it might one day take.
+- **Concrete, would-probably-accept-a-PR** → a GitHub Issue, `backlog` label, no
+  milestone. An open issue means "intent," not "scheduled."
+- **Fuzzy / strategic / "wouldn't it be nice"** → GitHub Discussions, off the
+  tree. Keep it out of the repo so a written note is never mistaken for a
+  commitment the project has made.
 
 ## Operator-burden test for new mechanisms
 
