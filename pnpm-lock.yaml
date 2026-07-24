@@ -55,7 +55,7 @@ importers:
         version: 0.4.1(vitest@4.1.10)
       '@hono/node-server':
         specifier: ^2.0.9
-        version: 2.0.9(hono@4.12.30)
+        version: 2.0.10(hono@4.12.30)
       '@stryker-mutator/core':
         specifier: 9.6.1
         version: 9.6.1(@types/node@26.1.1)
@@ -330,7 +330,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.0.9
-        version: 2.0.9(hono@4.12.30)
+        version: 2.0.10(hono@4.12.30)
       '@rgrove/parse-xml':
         specifier: 4.2.2
         version: 4.2.2
@@ -360,7 +360,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.0.9
-        version: 2.0.9(hono@4.12.30)
+        version: 2.0.10(hono@4.12.30)
       citty:
         specifier: ^0.2.2
         version: 0.2.2
@@ -415,7 +415,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.0.9
-        version: 2.0.9(hono@4.12.30)
+        version: 2.0.10(hono@4.12.30)
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -931,8 +931,8 @@ packages:
     peerDependencies:
       vitest: ^4.1.0
 
-  '@hono/node-server@2.0.9':
-    resolution: {integrity: sha512-cNMw3ziCdDcx0+ldta60zvUL5XO0OLt521n2hjPp0PB0ugczDCEczXsf33qQbkKIXWGFQ03f0LC85u6YK8pCLA==}
+  '@hono/node-server@2.0.10':
+    resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
@@ -5247,7 +5247,7 @@ snapshots:
       fast-check: 4.9.0
       vitest: 4.1.10(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.6)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(yaml@2.9.0))
 
-  '@hono/node-server@2.0.9(hono@4.12.30)':
+  '@hono/node-server@2.0.10(hono@4.12.30)':
     dependencies:
       hono: 4.12.30
 
