@@ -46,7 +46,7 @@ jobs:
       # `github_owned_allowed` policy); pnpm is provisioned via Corepack
       # below rather than a third-party setup action, so nothing in this
       # workflow needs an org Actions allow-list entry.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Provision pnpm with Corepack (bundled with Node) from the version
       # pinned in package.json's `packageManager` field (pnpm@11.1.2) — the
