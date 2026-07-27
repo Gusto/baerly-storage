@@ -54,5 +54,7 @@ updates:
       prefix: "ci"
       include: "scope"
     labels:
+      # npm version updates are disabled (see header), so every Dependabot PR
+      # here is a GitHub Actions bump — `dependencies` alone identifies them.
+      # A separate `github-actions` label added no filter value, so it's gone.
       - "dependencies"
-      - "github-actions"
