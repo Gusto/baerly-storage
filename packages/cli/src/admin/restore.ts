@@ -162,9 +162,46 @@ const bundle = defineBaerlySubcommand({
       const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
       const truncatedNext = await tailFromListedLogKeys(bucket.storage, collectionPrefix);
       baseSeq = truncatedNext;
+      // FLOOR EXEMPTION — deliberate. `casUpdateCurrentJson` rejects any
+      // write that lowers `log_seq_start`; this PUT is not routed through
+      // it, so `--force` can reseed BELOW the old floor. (The compactor's
+      // fold CAS also bypasses that helper, but it is monotone by
+      // construction — it validates its seq-arithmetic options at the
+      // seam rather than asserting the floor at the fold. `--force` is
+      // the only path that intentionally lowers the floor.)
+      //
+      // Why lowering is sound. `truncatedNext` is strictly greater than
+      // every log object still on the bucket, so the writer's committing
+      // `log/<seq>` create cannot collide with an old-generation object —
+      // that 412 hazard is the whole point of the reseed (see above). It
+      // can land below the old floor whenever GC has swept the objects at
+      // the top of the old range but not all of them: the sweep is
+      // budget-bounded and walks `log/` in lex order (`0,1,10,11,2,...`),
+      // so sub-floor objects routinely survive a pass. Old floor 12 with
+      // `log/8`, `log/9` left behind yields `truncatedNext` 10 < 12.
+      //
+      // Nothing is lost by that. GC decides content liveness by
+      // reachability, not by the floor: it keeps a hash iff the hash is
+      // reachable from the current snapshot or from `[log_seq_start,
+      // tail)` (see `collectLiveContentHashes` in `gc.ts`). Resetting
+      // `snapshot` to `null` here makes the whole old generation
+      // unreachable, so its content is marked `orphan-content` and swept
+      // after the grace period — which is precisely what truncating
+      // means. Readers never see the survivors: they walk from the new
+      // floor, and `fsck` bounds itself by listed keys, so orphans below
+      // it produce no findings.
+      //
+      // Do not "repair" this with `Math.max`; that reseeds a floor above
+      // `tail_hint`, trips `assertCurrentJson`, and breaks truncate.
+      // `restore.test.ts` pins both the empty-prefix and partial-sweep
+      // cases.
       const reseeded: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
+        // Also resets `tail_hint` unclamped, so an over-claimed old hint
+        // moves DOWN here (unlike the final stamp below, which clamps).
+        // Safe: the hint is a non-authoritative lower bound, and the
+        // forward-probe finds the true tail regardless.
         tail_hint: truncatedNext,
         log_seq_start: truncatedNext,
         writer_fence: {

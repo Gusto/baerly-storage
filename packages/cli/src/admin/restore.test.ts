@@ -114,6 +114,117 @@ describe("baerly admin restore", () => {
     expect(head?.json.writer_fence.epoch).toBeGreaterThanOrEqual(1);
   });
 
+  test("--force may reset log_seq_start below the old floor — the deliberate admin exemption", async () => {
+    // `casUpdateCurrentJson` rejects any floor regression. `--force` is the
+    // one path that lowers the floor on purpose, and it reaches storage by
+    // its own If-Match PUT rather than through that helper. This test pins
+    // the exemption so it cannot be closed by accident.
+    //
+    // Why it is sound: the reseed floor is `max(listed log seq) + 1`, so it
+    // is strictly above every log object still present and the committing
+    // `log/<seq>` create cannot collide with the old generation. GC decides
+    // content liveness by reachability rather than by the floor, and the
+    // reseed sets `snapshot: null`, so the old generation becomes
+    // unreachable and is swept as `orphan-content` — the intent of
+    // truncating. See the FLOOR EXEMPTION comment in `restore.ts`.
+    //
+    // This case is the empty-prefix extreme (floor → 0); the next test
+    // covers the partial-sweep case, which is what actually happens under
+    // a budget-bounded GC.
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    // Drive the collection to the post-compaction steady state: floor
+    // advanced to the tail, every stale log object swept by GC.
+    await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
+      ...c,
+      log_seq_start: c.tail_hint,
+    }));
+    for await (const entry of storage.list(`${TABLE_PREFIX}/log/`)) {
+      await storage.delete(entry.key);
+    }
+    const before = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(before?.json.log_seq_start).toBe(2);
+
+    await writeFile(stdinPath, `{"_id":"v-1","x":1}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    // The floor legitimately went 2 → 0: the log prefix was empty, so there
+    // was nothing to skip past.
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.log_seq_start).toBe(0);
+    expect(head?.json.tail_hint).toBe(1);
+  });
+
+  test("--force reseeds above surviving log objects even when that lowers the floor", async () => {
+    // The realistic shape, and the one the exemption's soundness argument
+    // actually rests on. GC's sweep is budget-bounded and walks `log/` in
+    // lex order, so it routinely clears the TOP of the old range while
+    // leaving sub-floor objects behind. The reseed must then land strictly
+    // above the highest survivor — which can be below the old floor.
+    //
+    // Here: fold the whole range (floor → 2), then sweep only `log/1`.
+    // `log/0` survives, so `truncatedNext` is 1 — below the old floor of 2,
+    // with an old-generation object still on the bucket. That refutes any
+    // "the floor only drops once every entry beneath it is gone" reading.
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
+      ...c,
+      log_seq_start: c.tail_hint,
+    }));
+    await storage.delete(`${TABLE_PREFIX}/log/1.json`);
+    const before = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(before?.json.log_seq_start).toBe(2);
+
+    await writeFile(stdinPath, `{"_id":"v-1","x":1}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    // Floor 2 → 1: strictly above the surviving `log/0`, and below the old
+    // floor. The survivor is still on the bucket — GC sweeps it later as an
+    // unreachable orphan, and readers never walk below the new floor.
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.log_seq_start).toBe(1);
+    const survivors: string[] = [];
+    for await (const entry of storage.list(`${TABLE_PREFIX}/log/`)) {
+      survivors.push(entry.key);
+    }
+    expect(survivors).toContain(`${TABLE_PREFIX}/log/0.json`);
+  });
+
   test("--force chooses old tail from log keys without decoding malformed old entries", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const first = await runRestore(
