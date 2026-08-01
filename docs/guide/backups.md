@@ -167,7 +167,14 @@ restore performs only the initial `current.json` seed/reseed write.
 
 For production recovery, treat restore as a cutover to a proven copy,
 not as an overwrite of the live prefix. Do not restore over the live
-prefix while writers are still active. The safe cutover shape is:
+prefix while writers are still active. Drain or disconnect long-poll
+readers too, not just writers: a `--force` reseed can lower the
+collection's live log floor (`log_seq_start`), and long-poll clients
+detect a folded-away cursor by testing it against that floor, so a
+lowered floor lets a stale pre-restore cursor pass the check. Such a
+client silently resumes into the new generation instead of getting the
+re-bootstrap error, and misses restored rows below its cursor. The safe
+cutover shape is:
 
 1. Pause writers or put the app in read-only mode.
 2. Restore into a separate recovery bucket or tenant prefix.
