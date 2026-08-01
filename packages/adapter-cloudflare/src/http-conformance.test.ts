@@ -64,6 +64,9 @@ describe("HTTP conformance", () => {
         writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
         snapshot_bytes: 0,
         snapshot_rows: 0,
+        // Match the Node-side seed: exercise the composite
+        // `<generation>.<lsn>` cursor shape, not just the bare LSN.
+        generation: "0123456789ab",
       });
     },
     options: {

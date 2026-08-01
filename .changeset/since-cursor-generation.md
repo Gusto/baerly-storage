@@ -16,7 +16,9 @@ generation, and skipped every restored row beneath it — with no error.
 Gapped, not broken, which a sync client cannot detect for itself.
 
 `current.json` now carries an opaque `generation` nonce, and the cursor
-handed to a client is `<generation>.<lsn>` instead of a bare LSN. A
+handed to a client is `<generation>.<lsn>` once that nonce exists. A
+collection with no generation keeps handing out a bare LSN, so the
+wire-shape change is confined to collections that carry one. A
 resume whose generation no longer matches is rejected with
 `BaerlyError{code:"SchemaError"}` (HTTP 400). The nonce is re-minted by
 the writers that _replace_ a collection (both `restore` seeds, writer
@@ -39,4 +41,7 @@ re-bootstraps, which also repairs that older case.
 
 Cursors are opaque on the wire and always were; no client action is
 required. Custom `/v1/since` consumers should treat a `400 SchemaError`
-as "restart with an empty cursor" rather than retrying.
+as "back off, then restart with an empty cursor" rather than retrying.
+Backing off first matters: if a server ever hands back a cursor it then
+refuses — a mixed-version fleet mid-rolling-deploy is the reachable
+case — re-bootstrapping without a delay turns that into a hot loop.

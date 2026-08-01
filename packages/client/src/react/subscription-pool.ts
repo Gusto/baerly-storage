@@ -189,24 +189,29 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
             // entry was folded into a snapshot and GC'd, or the cursor
             // was minted in a generation `restore --force` has since
             // truncated. Retrying the same cursor can never clear
-            // either one, so the backoff below would spin at 1 req/s
-            // forever with the table frozen.
+            // either one, so without this the loop would retry it at
+            // 1 req/s forever with the table frozen.
             //
-            // Re-bootstrap instead: `""` restarts from `log_seq_start`,
-            // which is what the server's error text asks for. The
-            // invalidate refetches the visible queries so subscribers
-            // converge on the post-restore state rather than sitting on
-            // pre-restore data.
+            // Re-bootstrap: `""` restarts from `log_seq_start`, which
+            // is what the server's error text asks for. The invalidate
+            // refetches the visible queries so subscribers converge on
+            // the post-restore state rather than sitting on pre-restore
+            // data.
             //
-            // Guarded on a non-empty cursor so this can only fire once
-            // per bootstrap. `/v1/since` short-circuits `cursor === ""`
-            // before any validation, so an empty cursor cannot produce
-            // this code — but if it ever did, `continue` skips the
-            // backoff below and we would spin. Falling through to the
-            // backoff is the safe direction.
+            // We deliberately do NOT `continue` past the backoff below.
+            // The `poll.cursor !== ""` guard bounds a same-iteration
+            // respin, but not a two-iteration oscillation: if the
+            // server rejects a cursor it just minted — a mixed-version
+            // fleet mid-rolling-deploy is the reachable case, where one
+            // replica issues a shape the other refuses — then `""`
+            // succeeds, hands back a fresh cursor, and that cursor is
+            // rejected again. Skipping the backoff would make that
+            // cycle run at network speed, with an `invalidateForTable`
+            // refetch storm on every lap. Falling through costs one
+            // second of recovery latency and bounds the pathological
+            // case at 1 cycle/s.
             poll.cursor = "";
             invalidateForTable(table);
-            continue;
           }
           // 1-second backoff on error to avoid hot-spinning on a
           // persistent failure; downstream subscribers' next fetch

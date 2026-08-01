@@ -11,8 +11,11 @@ describe("formatCursor", () => {
     expect(formatCursor(GEN, LSN)).toBe(`${GEN}.${LSN}`);
   });
 
-  test("emits the sentinel when the manifest has no generation", () => {
-    expect(formatCursor(undefined, LSN)).toBe(`${NO_GENERATION}.${LSN}`);
+  test("emits a bare lsn when the manifest has no generation", () => {
+    // Deliberately NOT `-.<lsn>`. A collection with no generation has
+    // nothing to discriminate, so it keeps the pre-composite wire
+    // shape — which a peer still running the previous build accepts.
+    expect(formatCursor(undefined, LSN)).toBe(LSN);
   });
 });
 

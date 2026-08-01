@@ -518,14 +518,14 @@ interface LogEntry {
 
 **Cursor priming.** First call: pass `cursor=` (empty string). The
 server's fast path returns immediately _iff_ the log already has
-entries for this collection — you get `events: [...]` and the
-last entry's `lsn` as `next_cursor`. **If the collection is empty,
+entries for this collection — you get `events: [...]` and an opaque
+`next_cursor`. **If the collection is empty,
 the first call blocks for the full long-poll budget (~25 s) before
 returning `events: []` with `next_cursor: ''`.** Either prime by
 inserting one row first if you need an immediate response, or budget
 your client / test for the full timeout. Subsequent calls pass the
-returned cursor back — the cursor is opaque, treat it as a string,
-and `events` is empty iff the budget elapsed with no new writes
+returned cursor back — treat it as an opaque string, and
+`events` is empty iff the budget elapsed with no new writes
 (`next_cursor` unchanged).
 
 **Test-mode tuning.** Vitest's default per-test timeout is 5 s; the
@@ -548,13 +548,15 @@ factory sees `number | undefined` without runtime coercion. Don't
 shrink `sinceTimeoutMs` in production code paths — it multiplies the
 R2 class-A op count per idle long-poll connection.
 
-React applications use `@gusto/baerly-storage/client/react` (see next
-section) instead of poking `/v1/since` by hand. Hand-rolled
-subscribers in other UI frameworks `fetch` this endpoint directly:
-loop, `fetch`-ing with `cursor=` (empty) first, then threading the
-returned `next_cursor` back as `cursor` on each subsequent call (the
-cursor is opaque — treat it as a string). The wire shape above is the
-public contract; there is no exported cursor-tailing helper.
+React apps use `@gusto/baerly-storage/client/react` (see next
+section) instead of poking `/v1/since` by hand; hand-rolled
+subscribers in other frameworks `fetch` it directly. The wire shape
+above is the public contract; there is no cursor-tailing helper.
+
+**Handle `400 SchemaError` or your loop will spin.** On resume it
+means the cursor is permanently dead — folded into a snapshot and
+GC'd, or truncated by `restore --force`. It never clears on retry:
+back off, then restart with `cursor=` (empty).
 
 ## React: `createBaerlyReact`
 

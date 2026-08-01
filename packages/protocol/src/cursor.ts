@@ -48,11 +48,16 @@ export const NO_GENERATION = "-";
 
 /**
  * Build the wire cursor for an entry's `lsn` under a manifest's
- * `generation`. `undefined` generation (a manifest predating the field)
- * emits {@link NO_GENERATION}.
+ * `generation`.
+ *
+ * A manifest predating the field emits the LSN **bare**, not
+ * `-.<lsn>` — {@link parseCursor} maps both to {@link NO_GENERATION},
+ * so the comparison is unchanged either way. Keeping it bare confines
+ * the wire-shape change to collections that actually carry a nonce,
+ * instead of changing every cursor in the bucket on upgrade.
  */
 export const formatCursor = (generation: string | undefined, lsn: string): string =>
-  `${generation ?? NO_GENERATION}${CURSOR_SEPARATOR}${lsn}`;
+  generation === undefined ? lsn : `${generation}${CURSOR_SEPARATOR}${lsn}`;
 
 /**
  * Split a wire cursor into its generation and LSN halves.

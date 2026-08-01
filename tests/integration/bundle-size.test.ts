@@ -1067,7 +1067,15 @@ const BUDGETS: readonly Budget[] = [
   //     `mintGeneration` (which `ensureTable` now calls). Measured 42789 raw
   //     / 15304 gz; gz stays 56 B under — tight, so the next dev-closure
   //     change should expect to move it. Comment-dominated rebaseline.
-  { entry: "dev.js", raw: 42 * 1024, gz: 15 * 1024 },
+  //   → 43 KiB raw / 16 KiB gz (2026-08-01): review follow-up on the same
+  //     change — `assertCurrentJson`'s `generation` guard now pins the
+  //     lowercase-hex charset (matching `/v1/since`'s `GENERATION_RE`, so
+  //     the manifest validator and the wire validator cannot drift) and
+  //     carries the rationale comment for it. Measured 43032 raw /
+  //     15400 gz — the +56 B the note above predicted, plus the guard.
+  //     No min-gz axis on this entry; comment-dominated, per POLICY not
+  //     golfed to fit.
+  { entry: "dev.js", raw: 43 * 1024, gz: 16 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare

@@ -296,6 +296,11 @@ for (const variant of variants) {
           writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
           snapshot_bytes: 0,
           snapshot_rows: 0,
+          // Seed a generation so the cascade's cursor round-trips
+          // exercise the composite `<generation>.<lsn>` shape. Without
+          // it every backend would only ever see a bare LSN, and a
+          // regression in the composite path would pass on all four.
+          generation: "0123456789ab",
         });
       },
       options: {
@@ -325,6 +330,7 @@ for (const variant of variants) {
             writer_fence: { epoch: 0, owner: "http-conformance-test", claimed_at: "" },
             snapshot_bytes: 0,
             snapshot_rows: 0,
+            generation: "0123456789ab",
           });
         },
       },

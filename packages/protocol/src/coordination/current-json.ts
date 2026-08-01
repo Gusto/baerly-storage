@@ -278,6 +278,13 @@ export async function readCurrentJson(
 export const mintGeneration = (): string => crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 
 /**
+ * The charset {@link mintGeneration} emits and `/v1/since` accepts in
+ * the generation half of a cursor. Pinned so the manifest validator
+ * and the wire validator cannot drift.
+ */
+const GENERATION_RE = /^[0-9a-f]+$/;
+
+/**
  * Create `current.json` if-and-only-if it does not exist (S3
  * `If-None-Match: "*"`). Use this once per collection at provisioning
  * time; subsequent updates go through {@link casUpdateCurrentJson}.
@@ -649,16 +656,18 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   }
   if (
     r["generation"] !== undefined &&
-    (typeof r["generation"] !== "string" || r["generation"].length === 0)
+    (typeof r["generation"] !== "string" || !GENERATION_RE.test(r["generation"]))
   ) {
-    // Non-empty matters, not just the type: `""` would format a cursor
-    // as `.<lsn>`, which `parseCursor` reads as generation `""` rather
-    // than as the `NO_GENERATION` sentinel — so the two spellings of
-    // "no generation" would stop comparing equal and every resume on
-    // this collection would be rejected.
+    // Charset, not just type. `""` would format a cursor as `.<lsn>`,
+    // which `parseCursor` reads as generation `""` rather than as the
+    // `NO_GENERATION` sentinel. Anything outside `[0-9a-f]` (a `.`
+    // worst of all) would mint a cursor `/v1/since` then refuses on
+    // resume — the server rejecting a token it issued, which a client
+    // reads as a permanently dead cursor. Matching the wire charset
+    // means a manifest that reads clean here always round-trips.
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: generation must be a non-empty string if present`,
+      `current.json at ${key}: generation must be a non-empty lowercase-hex string if present`,
     );
   }
   return parsed as CurrentJson;

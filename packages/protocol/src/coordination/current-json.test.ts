@@ -2004,6 +2004,24 @@ describe("assertCurrentJson — generation guard", () => {
       message: expect.stringMatching(/generation/),
     });
   });
+
+  plainTest.each(["gen-1", "ABCDEF", "0123456789ab.x", "0123 456"])(
+    "rejects a non-hex generation: %j",
+    async (generation) => {
+      // The manifest validator and `/v1/since`'s `GENERATION_RE` must
+      // accept the same charset. If a manifest carrying one of these
+      // read clean, the server would mint a cursor from it and then
+      // refuse that same cursor on resume — which a client reads as a
+      // permanently dead cursor and re-bootstraps on, forever. A `.`
+      // is the worst case: it also mis-splits in `parseCursor`.
+      const s = new MemoryStorage();
+      await putRaw(s, "k", { ...rawSeed(), generation });
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringMatching(/generation/),
+      });
+    },
+  );
 });
 
 describe("mintGeneration", () => {

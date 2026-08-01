@@ -784,7 +784,7 @@ export class Writer {
    *
    * The seed shape (`snapshot: null`, `tail_hint: 0`, `log_seq_start:
    * 0`, `writer_fence: { epoch: 0, owner: "", claimed_at: "" }`)
-   * matches `ensureTable` and `baerly deploy`'s pre-warm path, so an
+   * matches `ensureTable`, so an
    * operator who pre-provisions and a writer who auto-creates land on
    * equivalent state. NOT byte-identical any more: `generation` is a
    * fresh nonce per provisioner. That is harmless — `If-None-Match`
