@@ -12,6 +12,7 @@ import {
   type GcPending,
   type Storage,
   type StorageGetOptions,
+  GC_GRACE_PERIOD_MILLIS,
   GC_PENDING_SCHEMA_VERSION,
   MAX_PARALLEL_LOG_READS,
   MemoryStorage,
@@ -162,6 +163,74 @@ describe("runGc", () => {
     const pending = await readGcPending(s, PENDING_KEY);
     expect(pending?.json.candidates).toEqual([]);
     expect(pending?.json.last_swept_at).toBe(new Date(nowMs).toISOString());
+  });
+
+  // ── grace anchoring ──────────────────────────────────────────────
+  // `due_at` measures the writer-retry window from the MARK, never
+  // from the listed object's write time. That distinction is
+  // invisible to every backend this file runs on: `lastModified` is
+  // optional on `StorageListEntry`, and `MemoryStorage` /
+  // `LocalFsStorage` — the two the default suite covers — omit it,
+  // so they take the `now()` path and always saw the full window.
+  // The S3, GCS and R2 adapters populate it from server headers, so
+  // anchoring there would give an effective grace of
+  // `max(0, grace − object age)` — zero for anything older than the
+  // 7-day default, which stale-log and orphan candidates typically
+  // are. `pnpm test:parity` cannot see it either: the storage
+  // conformance suite projects `lastModified` out of its comparison
+  // as adapter-optional. This wrapper is the only way to reach the
+  // production shape from `MemoryStorage`.
+  const withListedLastModified = (inner: Storage, lastModified: Date): Storage => ({
+    get: (key, opts) => inner.get(key, opts),
+    put: (key, body, opts) => inner.put(key, body, opts),
+    delete: (key, opts) => inner.delete(key, opts),
+    list: async function* (prefix, opts) {
+      for await (const entry of inner.list(prefix, opts)) {
+        yield { ...entry, lastModified };
+      }
+    },
+  });
+
+  test("grants full grace from the mark even when listed objects are older than it", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const writer = new Writer({ storage: inner, currentJsonKey: KEY });
+    for (let i = 0; i < 12; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    // Folds [0, 10) ⇒ ten stale-log candidates. The snapshot it writes
+    // is the live one and every content blob stays reachable (snapshot
+    // rows + the live tail), so stale-log is the only category marked.
+    await compact({ storage: inner, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: 10,
+    } as InternalCompactOptions);
+
+    const markedAt = new Date("2026-01-08T00:00:00.000Z");
+    // A month old — comfortably past the 7-day default, which is what
+    // makes an age-anchored horizon land in the past at mark time.
+    const storage = withListedLastModified(inner, new Date("2025-12-08T00:00:00.000Z"));
+
+    // Default grace (no `graceMillis` override) — the production knob.
+    const r = await runGc({ storage, currentJsonKey: KEY }, {
+      now: () => markedAt,
+    } as InternalRunGcOptions);
+    expect(r.marked.stale_log).toBe(10);
+    // The absorber must still be armed: nothing is due in the pass
+    // that marked it, however old the objects are.
+    expect(r.swept).toBe(0);
+
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates).toHaveLength(10);
+    const dueAts = new Set((pending?.json.candidates ?? []).map((c) => c.due_at));
+    expect(dueAts).toEqual(
+      new Set([new Date(markedAt.getTime() + GC_GRACE_PERIOD_MILLIS).toISOString()]),
+    );
   });
 
   test("marks the replaced snapshot after a second compaction run", async () => {

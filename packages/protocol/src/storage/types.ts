@@ -110,11 +110,10 @@ export interface StorageListEntry {
   readonly etag: string;
   /**
    * Server's `Last-Modified` for the listed object, when the backend
-   * surfaces it. GC uses it to anchor a tombstone's `due_at` to the
-   * object's server-side write time (`gc.ts`); when absent, GC falls
-   * back to the local clock (`now()`). It is therefore an optional
-   * precision hint, never load-bearing for correctness — impls
+   * surfaces it. Informational: no kernel path reads it, and impls
    * without a server clock (e.g. {@link MemoryStorage}) may omit it.
+   * GC's `due_at` deliberately does not — see `computeDueAt` in
+   * `gc.ts` for why anchoring on it is a bug.
    *
    * The protocol's clock-skew handling rides on
    * {@link StoragePutResult.serverDate} (the write-time server clock),

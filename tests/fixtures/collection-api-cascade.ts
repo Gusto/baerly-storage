@@ -515,15 +515,16 @@ const runGcCascade = async (
     graceMillis: 0,
     maxSweepsPerRun: 50,
     maxMarksPerRun: 50,
-    // grace=0 sets each candidate's due_at to its storage `lastModified`.
-    // On S3-like backends (node-minio) `lastModified` is the *server*
-    // clock at *second* resolution, which can sit a beat ahead of the
-    // local clock (container/VM skew, worse under load). That left 1-3 of
-    // the 30 just-written entries with a due_at in the local future, so a
-    // single grace=0 pass swept 27-29 not 30 — a real flake under load
-    // (memory/local-fs use a local ms clock and never hit it). Pin `now`
-    // a day ahead so the sweep threshold dominates any plausible skew; the
-    // pass still marks + sweeps all 30, just independent of clock alignment.
+    // Pinned a day ahead, belt-and-braces. grace=0 now sets due_at to
+    // this same injected `now` on every backend, and the sweep test is
+    // `due_at <= now`, so the pass marks + sweeps all 30 regardless.
+    // The offset used to be load-bearing: `due_at` was anchored to the
+    // storage `lastModified`, which on node-minio is the *server* clock
+    // at *second* resolution and could sit a beat ahead of the local
+    // one, leaving 1-3 of the 30 just-written entries due in the local
+    // future and sweeping 27-29. `gc.ts` anchoring on the mark removed
+    // that skew coupling; keeping the offset costs nothing and holds
+    // the assertion independent of clock alignment.
     now: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
   } as InternalRunGcOptions);
   expect(gcRes.marked.stale_log).toBe(30);

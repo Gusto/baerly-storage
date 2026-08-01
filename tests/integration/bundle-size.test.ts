@@ -338,7 +338,16 @@ const BUDGETS: readonly Budget[] = [
   //     (min-gz 228 B under). Deliberate doc-quality spend, not code creep —
   //     per the POLICY above, raw/gz are creep tripwires and are rebaselined
   //     rather than paid for by golfing comments.
-  { entry: "index.js", raw: 231 * 1024, gz: 73 * 1024, minGz: 20 * 1024 },
+  //   → 232 KiB raw (2026-08-01): GC grace-period anchoring fix —
+  //     `computeDueAt` drops its `entry.lastModified` anchor, plus the
+  //     do-not-reinstate rationale on it and on the `StorageListEntry`
+  //     field. Pure comment bytes: the code got SMALLER (one parameter
+  //     and one `??` gone), and min-gz — the minified hard ceiling, where
+  //     comments are stripped — measured 20239, DOWN 13 B from the 20252
+  //     recorded in the note above. Measured 236768 raw / 74313 gz (gz
+  //     still 439 B under). Rebaselined per the POLICY rather than golfing
+  //     the warning that keeps the bug from being reintroduced.
+  { entry: "index.js", raw: 232 * 1024, gz: 73 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
