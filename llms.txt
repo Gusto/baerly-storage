@@ -11,7 +11,7 @@ S3-compatible endpoints require `baerly doctor --bucket` plus owner
 validation, and GCS S3-interop is unsupported for database use today.
 Browsers and other clients talk to it over HTTP via the typed
 `@gusto/baerly-storage/client`. The change-feed is a long-poll on
-`/v1/since?cursor=<lsn>` — there is no client-side polling of the
+`/v1/since?cursor=<opaque>` — there is no client-side polling of the
 storage layer.
 
 Day-1 deploy targets, both first-class:

@@ -30,8 +30,11 @@ export interface LogEntry {
    * `<base32-time>_<session>_<seq>` — minted inside
    * `Writer.commit` (see
    * `packages/server/src/writer.ts`) from `timestamp()` +
-   * the per-commit `session` + `countKey(seq)`. Consumers ack and
-   * resume from this string.
+   * the per-commit `session` + `countKey(seq)`.
+   *
+   * This is NOT what a `/v1/since` client acks: that boundary pairs
+   * the LSN with the manifest's `generation` (see `cursor.ts`), so the
+   * token may be `<generation>.<lsn>`. Treat `next_cursor` as opaque.
    *
    * When you have a `LogEntry` in hand, prefer the structured
    * `session` / `seq` fields below over parsing this string. The

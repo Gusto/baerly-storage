@@ -67,6 +67,17 @@ export interface HttpErrorEnvelope {
  * the request's `cursor` and `next_cursor`. Client passes
  * `next_cursor` back on the next call. Empty `events` + same
  * `next_cursor` means "nothing changed within the budget".
+ *
+ * `next_cursor` is **opaque**: echo it back verbatim, never parse it.
+ * `""` means "start from the collection's log floor" and is always
+ * valid.
+ *
+ * A `400 SchemaError` on resume means the cursor is permanently dead —
+ * the entry was folded into a snapshot and GC'd, or its generation was
+ * truncated by `baerly admin restore --force`. Neither clears on
+ * retry: restart with `cursor: ""`. Retrying the rejected cursor loops
+ * forever. Back off before re-bootstrapping so a cursor rejected on
+ * every lap cannot become a hot loop.
  */
 export interface SinceResponse {
   readonly events: ReadonlyArray<LogEntry>;

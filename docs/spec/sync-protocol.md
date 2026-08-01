@@ -498,10 +498,16 @@ These are the load-bearing rules.
 13. **A `/v1/since` cursor is valid only within the generation that
     minted it.** `current.json` carries an opaque `generation` nonce,
     and the cursor the server hands a long-poll client is
-    `<generation>.<lsn>` — not a bare LSN. On resume, a generation that
-    does not match the manifest's is rejected with
+    `<generation>.<lsn>` whenever that nonce is present. On resume, a
+    generation that does not match the manifest's is rejected with
     `BaerlyError{code:"SchemaError"}` (HTTP 400) and the client must
     re-bootstrap.
+
+    A manifest with no `generation` keeps handing out a **bare** LSN
+    rather than `-.<lsn>`. Both decode to the same sentinel, so the
+    comparison below is unaffected; emitting the bare form confines the
+    wire-shape change to collections that actually carry a nonce,
+    instead of changing every cursor in the bucket on upgrade.
 
     This exists because invariant 12's `--force` exemption makes a seq
     comparison alone unsound. A seq identifies a `log/<seq>` slot, and
@@ -526,7 +532,7 @@ These are the load-bearing rules.
     shape both decode to the sentinel `-`, so one string comparison
     covers every case with no fail-open branch:
 
-    | Manifest      | Cursor  | Result | Why                                                       |
+    | Manifest      | Cursor (decoded) | Result | Why                                            |
     | ------------- | ------- | ------ | --------------------------------------------------------- |
     | no generation | `-`     | pass   | Nothing was truncated.                                      |
     | no generation | nonce   | reject | Manifest replaced by an older build; treat as unknown.      |
