@@ -36,13 +36,9 @@ import {
   readCurrentJson,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
-import {
-  compact,
-  type CompactOptions,
-  type CompactResult,
-  type InternalCompactOptions,
-} from "./compactor.ts";
-import { runGc, type InternalRunGcOptions, type RunGcOptions, type RunGcResult } from "./gc.ts";
+import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
+import { runGc, type InternalRunGcOptions, type RunGcResult } from "./gc.ts";
+import type { InternalMaintenanceOptions, MaintenanceOptions } from "./maintenance-options.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
@@ -55,35 +51,15 @@ export {
   type RebuildIndexResult,
   rebuildIndex,
 } from "./rebuild-index.ts";
+// Public half only. `InternalMaintenanceOptions` is declared alongside
+// it but deliberately NOT re-exported here — this is a published entry,
+// and re-exporting the widening is exactly the leak being fixed.
+export type { MaintenanceOptions } from "./maintenance-options.ts";
 
 export interface MaintenanceArgs {
   readonly storage: Storage;
   /** Full bucket-relative key of the CAS pointer for the target collection. */
   readonly currentJsonKey: string;
-}
-
-export interface MaintenanceOptions {
-  /** Forwarded to `compact()`. */
-  readonly compact?: CompactOptions;
-  /** Forwarded to `runGc()`. */
-  readonly gc?: RunGcOptions;
-  /** Forwarded to both primitives. */
-  readonly signal?: AbortSignal;
-}
-
-/**
- * Internal-only widening of {@link MaintenanceOptions}. Surfaced via
- * the `@baerly/server/_internal/testing` subpath (NOT in the
- * published `publishConfig.exports`); production callers should use
- * {@link MaintenanceOptions}.
- *
- * @internal
- */
-export interface InternalMaintenanceOptions extends MaintenanceOptions {
-  /** @internal Internal compact options (budget caps). */
-  readonly compact?: InternalCompactOptions;
-  /** @internal Internal GC options (budget caps + clock seam + grace). */
-  readonly gc?: InternalRunGcOptions;
 }
 
 export interface MaintenanceResult {
