@@ -495,6 +495,44 @@ These are the load-bearing rules.
     place. That is sound because the reseed value is strictly greater
     than every log object still present, so the committing `log/<seq>`
     create cannot collide with the old generation.
+13. **A `/v1/since` cursor is valid only within the generation that
+    minted it.** `current.json` carries an opaque `generation` nonce,
+    and the cursor the server hands a long-poll client is
+    `<generation>.<lsn>` — not a bare LSN. On resume, a generation that
+    does not match the manifest's is rejected with
+    `BaerlyError{code:"SchemaError"}` (HTTP 400) and the client must
+    re-bootstrap.
+
+    This exists because invariant 12's `--force` exemption makes a seq
+    comparison alone unsound. A seq identifies a `log/<seq>` slot, and
+    slots are reused: after a truncating reseed that lands below the old
+    floor, a pre-restore cursor clears the `cursorSeq < log_seq_start`
+    check and resumes into the new generation, silently skipping every
+    restored row beneath it — gapped, not broken, which a sync client
+    cannot detect for itself.
+
+    The nonce is re-minted by the writers that *replace* a collection
+    (both `baerly admin restore` seeds, writer auto-provision,
+    `ensureTable`) and carried through untouched by the writers that
+    *advance* one (the compactor's fold CAS, `claimWriter`, every
+    `casUpdateCurrentJson` mutator). It is deliberately not
+    `writer_fence.epoch`: the fresh-target restore branch seeds
+    `epoch: 0`, so a truncate-to-empty would be indistinguishable from a
+    genuine epoch-0 collection. A counter that resets cannot
+    discriminate generations.
+
+    Absent is a defined state, not a degraded one. A `current.json`
+    predating the field and a bare-LSN cursor predating the composite
+    shape both decode to the sentinel `-`, so one string comparison
+    covers every case with no fail-open branch:
+
+    | Manifest      | Cursor  | Result | Why                                                       |
+    | ------------- | ------- | ------ | --------------------------------------------------------- |
+    | no generation | `-`     | pass   | Nothing was truncated.                                      |
+    | no generation | nonce   | reject | Manifest replaced by an older build; treat as unknown.      |
+    | nonce `A`     | `-`     | reject | Only a mint adds the field, and a mint means replacement.   |
+    | nonce `A`     | `A`     | pass   | Same generation.                                            |
+    | nonce `B`     | `A`     | reject | Truncated.                                                  |
 
 ## LSNs, wall clocks, and downstream consumers
 
