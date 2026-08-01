@@ -52,6 +52,7 @@ import {
   type CurrentJson,
   type DocumentData,
   encodeJsonBytes,
+  mintGeneration,
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
@@ -211,6 +212,13 @@ const bundle = defineBaerlySubcommand({
         },
         snapshot_bytes: 0,
         snapshot_rows: 0,
+        // New generation. This is the one write in the system that
+        // lowers `log_seq_start`, so it is the one write that can leave
+        // a live `/v1/since` cursor pointing above the floor but into a
+        // dead generation. Re-minting here is what lets the next resume
+        // on that cursor fail loudly (`SchemaError` → re-bootstrap)
+        // instead of silently skipping the restored rows beneath it.
+        generation: mintGeneration(),
       };
       try {
         await bucket.storage.put(currentJsonKey, encodeJsonBytes(reseeded), {
@@ -236,6 +244,13 @@ const bundle = defineBaerlySubcommand({
         writer_fence: { epoch: 0, owner: RESTORE_OWNER, claimed_at: "" },
         snapshot_bytes: 0,
         snapshot_rows: 0,
+        // Mint here too, even though there is no old generation at this
+        // key right now. A client can still hold a cursor from a
+        // previous incarnation of this collection (dropped, then
+        // restored), and `writer_fence.epoch` resets to 0 on this branch
+        // — which is exactly why the epoch cannot serve as the
+        // discriminator and a nonce can.
+        generation: mintGeneration(),
       };
       await createCurrentJson(bucket.storage, currentJsonKey, seed);
     }

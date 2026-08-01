@@ -38,6 +38,35 @@ describe("compact", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
 
+  test("a fold preserves current.json's generation", async () => {
+    // `/v1/since` rejects a resume whose cursor generation no longer
+    // matches the manifest, so a fold that DROPPED the field would
+    // silently invalidate every live long-poll cursor on the next poll
+    // — and, because absent decodes to the NO_GENERATION sentinel,
+    // would do it without any read path erroring. The compactor gets
+    // this right by spreading `...current` into its CAS; this pins that
+    // it keeps doing so.
+    const s = new MemoryStorage();
+    await createCurrentJson(s, KEY, logStateCurrentJson({ generation: "0123456789ab" }));
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 12; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+
+    const res = await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 1 });
+    expect(res.written).toBe(true);
+    expect(res.entriesFolded).toBeGreaterThan(0);
+
+    const after = await readCurrentJson(s, KEY);
+    expect(after!.json.log_seq_start).toBeGreaterThan(0);
+    expect(after!.json.generation).toBe("0123456789ab");
+  });
+
   test("returns current-json-missing when current.json doesn't exist", async () => {
     const s = new MemoryStorage();
     const res = await compact({ storage: s, currentJsonKey: KEY });

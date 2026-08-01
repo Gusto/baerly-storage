@@ -17,9 +17,9 @@
  * so the suite stays well inside the 30 s default budget.
  */
 
-import { type CurrentJson, createCurrentJson, MemoryStorage } from "@baerly/protocol";
+import { type CurrentJson, createCurrentJson, formatCursor, MemoryStorage } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
+import { LOG_STATE_GENERATION, logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
 import { Db } from "../db.ts";
 import { listEventsSince, longPollSince } from "./since.ts";
 
@@ -115,7 +115,9 @@ describe("longPollSince — fake-timer cases", () => {
     });
 
     expect(result.events).toHaveLength(2);
-    expect(result.next_cursor).toBe(result.events[result.events.length - 1]!.lsn);
+    expect(result.next_cursor).toBe(
+      formatCursor(LOG_STATE_GENERATION, result.events[result.events.length - 1]!.lsn),
+    );
   });
 
   test("blocks then unblocks: insert lands on the next poll tick", async () => {
@@ -142,7 +144,7 @@ describe("longPollSince — fake-timer cases", () => {
     const result = await pollPromise;
     expect(result.events).toHaveLength(1);
     expect(result.events[0]!.op).toBe("I");
-    expect(result.next_cursor).toBe(result.events[0]!.lsn);
+    expect(result.next_cursor).toBe(formatCursor(LOG_STATE_GENERATION, result.events[0]!.lsn));
   });
 
   test("idle timeout: returns empty events + same cursor at deadline", async () => {
@@ -219,7 +221,11 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
       pollIntervalMs: 25,
     });
     expect(seed.events).toHaveLength(1);
-    const cursor = seed.events[0]!.lsn;
+    // The full composite cursor, NOT the bare `lsn`. A bare lsn decodes
+    // to the `NO_GENERATION` sentinel and would trip the generation
+    // check instead — leaving this test green while no longer
+    // exercising the folded-cursor path it exists to cover.
+    const cursor = seed.next_cursor;
 
     // Bump current.json.log_seq_start past the seed entry (which lands
     // at seq 0) to mark it as "folded" (the test takes the shortcut; the
@@ -245,7 +251,145 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
     await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
       name: "BaerlyError",
       code: "SchemaError",
+      // Pin WHICH rejection fired: `/v1/since` has two SchemaError
+      // paths and a bare `code` assertion cannot tell them apart.
+      message: expect.stringContaining("folded into a snapshot"),
     });
+  });
+});
+
+describe("listEventsSince — truncated generation → SchemaError", () => {
+  /**
+   * Seed one entry, take a real cursor for it, then rewrite
+   * `current.json` the way `baerly admin restore --force` does:
+   * `snapshot: null`, a new `generation`, and `log_seq_start` /
+   * `tail_hint` reseeded to one past the highest SURVIVING log object.
+   *
+   * `--force` takes the reseed from LISTed log keys, so a
+   * budget-bounded GC sweep that cleared the top of the old range
+   * leaves the floor BELOW where it was. That is the deliberate floor
+   * exemption (invariant 12) and the reason a bare seq comparison
+   * cannot detect this.
+   */
+  const truncateTo = async (
+    storage: MemoryStorage,
+    args: { floor: number; generation: string | undefined },
+  ): Promise<void> => {
+    const cjKey = currentJsonKey(TABLE);
+    const cj = await storage.get(cjKey);
+    expect(cj).not.toBeNull();
+    const parsed = JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
+    const reseeded: CurrentJson = {
+      ...parsed,
+      snapshot: null,
+      tail_hint: args.floor,
+      log_seq_start: args.floor,
+      ...(args.generation === undefined
+        ? { generation: undefined }
+        : { generation: args.generation }),
+    };
+    await storage.put(cjKey, new TextEncoder().encode(JSON.stringify(reseeded)));
+  };
+
+  /**
+   * Commit one entry (it lands at the probed tail, i.e. the current
+   * floor) and return the composite cursor a client would hold for it.
+   */
+  const seedCursor = async (db: Db): Promise<string> => {
+    const { _id } = await db.collection(TABLE).insert({ title: "pre-restore" });
+    expect(_id).toBeDefined();
+    const seed = await longPollSince({
+      db,
+      collection: TABLE,
+      cursor: "",
+      timeoutMs: 500,
+      pollIntervalMs: 25,
+    });
+    expect(seed.events).toHaveLength(1);
+    return seed.next_cursor;
+  };
+
+  test("the issue #73 scenario: reseed BELOW the old floor is rejected", async () => {
+    const { db, storage } = makeDb();
+    // Old floor 12, so the cursor's entry sits at seq 12 — above the
+    // floor the truncate is about to install.
+    await createCurrentJson(
+      storage,
+      currentJsonKey(TABLE),
+      logStateCurrentJson({ tail_hint: 12, log_seq_start: 12 }),
+    );
+    const cursor = await seedCursor(db);
+
+    // GC left `log/8` and `log/9` behind (lex order `0,1,10,11,2,…`),
+    // so `--force` reseeds to 10 — BELOW the old floor of 12.
+    await truncateTo(storage, { floor: 10, generation: "ffffffffffff" });
+
+    // Before this change the cursor's seq (12) cleared `12 < 10 === false`
+    // and the stream resumed at 13, silently skipping the restored rows
+    // in [10, 13). Now it is rejected outright.
+    await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "SchemaError",
+      message: expect.stringContaining("generation that no longer exists"),
+    });
+  });
+
+  test("reseed landing exactly ON the old floor is still rejected", async () => {
+    const { db, storage } = makeDb();
+    await createCurrentJson(
+      storage,
+      currentJsonKey(TABLE),
+      logStateCurrentJson({ tail_hint: 12, log_seq_start: 12 }),
+    );
+    const cursor = await seedCursor(db);
+
+    // The case a floor-regression check would miss: the floor does not
+    // move, so nothing about the seq arithmetic looks wrong. Only the
+    // generation distinguishes the old collection from the new one.
+    await truncateTo(storage, { floor: 12, generation: "ffffffffffff" });
+
+    await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "SchemaError",
+      message: expect.stringContaining("generation that no longer exists"),
+    });
+  });
+
+  test("a manifest with no generation accepts a bare-lsn cursor", async () => {
+    const { db, storage } = makeDb();
+    // Both sides read as `NO_GENERATION`: a manifest written before the
+    // field existed, resumed with a cursor minted before the composite
+    // shape existed. Nothing was truncated, so this must NOT reject.
+    await createCurrentJson(
+      storage,
+      currentJsonKey(TABLE),
+      logStateCurrentJson({ generation: undefined }),
+    );
+    const { _id } = await db.collection(TABLE).insert({ title: "legacy" });
+    expect(_id).toBeDefined();
+
+    const seed = await longPollSince({
+      db,
+      collection: TABLE,
+      cursor: "",
+      timeoutMs: 500,
+      pollIntervalMs: 25,
+    });
+    expect(seed.events).toHaveLength(1);
+    expect(seed.next_cursor).toBe(formatCursor(undefined, seed.events[0]!.lsn));
+
+    // A pre-upgrade client echoing the bare lsn keeps working.
+    await expect(
+      listEventsSince({ db, collection: TABLE, cursor: seed.events[0]!.lsn }),
+    ).resolves.toEqual([]);
+  });
+
+  test("a cursor round-trips against an unchanged generation", async () => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    const cursor = await seedCursor(db);
+
+    await expect(listEventsSince({ db, collection: TABLE, cursor })).resolves.toEqual([]);
   });
 });
 
@@ -282,7 +426,7 @@ describe("longPollSince — cursor advances past the digit boundary", () => {
     });
     expect(first.events).toHaveLength(12);
     const cursor = first.next_cursor;
-    expect(cursor).toBe(first.events[11]!.lsn);
+    expect(cursor).toBe(formatCursor(LOG_STATE_GENERATION, first.events[11]!.lsn));
 
     // Second poll: nothing new committed, so the handler must hit
     // its deadline with an empty batch and the SAME cursor. Today's

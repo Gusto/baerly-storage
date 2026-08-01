@@ -41,8 +41,10 @@ const physicalPrefixFor = (app: string, tenant: string): string => `app/${app}/t
  * Class A PUT on the very first write per collection and zero
  * thereafter. There is no `ensureCollection` method on this class. For
  * eager pre-warm (seed scripts, deploy-time provisioning, CI fixtures
- * that want byte-identical bytes before the first request), use
- * {@link "@gusto/baerly-storage/dev".ensureTable}.
+ * that want the manifest in place before the first request), use
+ * {@link "@gusto/baerly-storage/dev".ensureTable}. The two seeds are
+ * equivalent, not byte-identical: each mints its own `generation`
+ * nonce. Harmless — `If-None-Match` means exactly one lands.
  *
  * @example
  * ```ts

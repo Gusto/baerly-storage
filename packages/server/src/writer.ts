@@ -54,6 +54,7 @@ import {
   encodeJsonBytes,
   logObjectKey,
   logSeqStartOf,
+  mintGeneration,
   BaerlyError,
   noopMetricsRecorder,
   type Storage,
@@ -784,8 +785,11 @@ export class Writer {
    * The seed shape (`snapshot: null`, `tail_hint: 0`, `log_seq_start:
    * 0`, `writer_fence: { epoch: 0, owner: "", claimed_at: "" }`)
    * matches `ensureTable` and `baerly deploy`'s pre-warm path, so an
-   * operator who pre-provisions and a writer who auto-creates land
-   * on byte-identical bytes.
+   * operator who pre-provisions and a writer who auto-creates land on
+   * equivalent state. NOT byte-identical any more: `generation` is a
+   * fresh nonce per provisioner. That is harmless — `If-None-Match`
+   * means exactly one of them ever lands, and no reader compares a
+   * generation across provisioners, only against the cursor it minted.
    *
    * @throws BaerlyError code="InvalidResponse" — the post-recover
    *   re-read also returned null. Defensive guard; in practice
@@ -800,6 +804,7 @@ export class Writer {
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       snapshot_bytes: 0,
       snapshot_rows: 0,
+      generation: mintGeneration(),
     };
     try {
       return await createCurrentJson(this.#storage, this.#currentJsonKey, initial);

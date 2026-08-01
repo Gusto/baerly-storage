@@ -2,6 +2,7 @@ import {
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
+  mintGeneration,
   type Storage,
 } from "@baerly/protocol";
 
@@ -19,9 +20,12 @@ import {
  * (`app/<app>/tenant/<tenant>/manifests/<table>/current.json`) and
  * swallows `BaerlyError{code:"Conflict"}` so re-runs are safe. An
  * existing manifest is preserved verbatim — this function never
- * overwrites a populated manifest. The seed shape matches the
- * kernel's auto-create exactly, so a pre-warm and an
- * auto-provisioned bucket are byte-identical.
+ * overwrites a populated manifest. The seed shape matches the kernel's
+ * auto-create, with one deliberate exception: `generation` is a fresh
+ * nonce, so a pre-warm and an auto-provision are equivalent rather than
+ * byte-identical. Only one of them can win the `If-None-Match` create,
+ * and a generation is only ever compared against a cursor minted from
+ * it, so the difference is unobservable.
  *
  * @example
  * ```ts
@@ -47,6 +51,7 @@ export const ensureTable = async (
       writer_fence: { epoch: 0, owner: "", claimed_at: "" },
       snapshot_bytes: 0,
       snapshot_rows: 0,
+      generation: mintGeneration(),
     });
   } catch (error) {
     if (error instanceof BaerlyError && error.code === "Conflict") {
