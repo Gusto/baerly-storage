@@ -124,8 +124,8 @@ export interface InternalRunGcOptions extends RunGcOptions {
   /**
    * @internal Clock injection for tests. Defaults to
    * `() => new Date()`. The function is invoked at mark time (to
-   * compute `due_at` when `lastModified` is absent) and at sweep
-   * time (to compare against candidate `due_at`).
+   * compute every candidate's `due_at`) and at sweep time (to
+   * compare against candidate `due_at`).
    */
   readonly now?: () => Date;
 }
@@ -243,7 +243,7 @@ export const runGc = async (
       }
       newCandidates.push({
         key: entry.key,
-        due_at: computeDueAt(entry, now, grace),
+        due_at: computeDueAt(now, grace),
         reason: "stale-log",
       });
       markedStaleLog++;
@@ -269,7 +269,7 @@ export const runGc = async (
     }
     newCandidates.push({
       key: entry.key,
-      due_at: computeDueAt(entry, now, grace),
+      due_at: computeDueAt(now, grace),
       reason: "orphan-snapshot",
     });
     markedOrphanSnapshot++;
@@ -322,7 +322,7 @@ export const runGc = async (
     }
     newCandidates.push({
       key: entry.key,
-      due_at: computeDueAt(entry, now, grace),
+      due_at: computeDueAt(now, grace),
       reason: "orphan-content",
     });
     markedOrphanContent++;
@@ -483,15 +483,22 @@ const parseHashFromContentKey = (key: string): string | null => {
 };
 
 /**
- * Anchor `due_at` to `lastModified` when the storage adapter
- * surfaces it; fall back to the injected `now` so a Storage impl
- * without a server clock still GCs after `grace` from the mark
- * moment.
+ * Anchor `due_at` on the MARK: `now() + graceMs`. Grace measures the
+ * writer-retry window from when we judged a key dead, which is
+ * unrelated to when the object was written.
+ *
+ * Do NOT reinstate the old `entry.lastModified ?? now()` anchor.
+ * Only the S3/GCS/R2 adapters populate that field, so it made the
+ * effective grace `max(0, graceMs − object age)` — zero past the
+ * 7-day default, for exactly the old objects GC marks — while the
+ * backends the suite runs omit it and showed the full window.
+ * `gc.test.ts` pins this against a stub that surfaces it.
+ *
+ * Called per candidate, not hoisted per pass, so the local-clock
+ * backends keep their exact previous horizon.
  */
-const computeDueAt = (entry: StorageListEntry, now: () => Date, graceMs: number): string => {
-  const base = entry.lastModified ?? now();
-  return new Date(base.getTime() + graceMs).toISOString();
-};
+const computeDueAt = (now: () => Date, graceMs: number): string =>
+  new Date(now().getTime() + graceMs).toISOString();
 
 /**
  * Build the live content-hash set. The set covers every live
