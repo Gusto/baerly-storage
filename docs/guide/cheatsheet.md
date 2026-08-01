@@ -120,6 +120,13 @@ all optional and composable — always
 The JS SDK (`createBaerlyClient`) and the React hooks build these for
 you; reach for raw URLs only when scripting.
 
+`/v1/since`'s `cursor` is opaque — echo `next_cursor` back verbatim and
+never parse it. Start with `cursor=` (empty) to read from the
+collection's log floor. A `400 SchemaError` means the cursor is
+permanently dead (folded away, or its collection was truncated by
+`restore --force`); restart with an empty cursor rather than retrying,
+which would loop forever. The React hooks do this for you.
+
 ## Where to look next
 
 - Full API reference —
