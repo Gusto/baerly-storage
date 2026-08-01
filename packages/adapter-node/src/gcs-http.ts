@@ -277,7 +277,6 @@ export class GcsHttpStorage implements Storage {
           // for a malformed row and, like every list etag, is CAS-unused.
           key: entry.Key,
           etag: entry.Generation ?? "",
-          ...(entry.LastModified !== undefined && { lastModified: entry.LastModified }),
         };
         yielded += 1;
         if (opts?.maxKeys !== undefined && yielded >= opts.maxKeys) {

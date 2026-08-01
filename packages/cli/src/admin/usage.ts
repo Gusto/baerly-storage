@@ -30,13 +30,14 @@
  * wired" finding pending the follow-up work in
  * `docs/followups/agent-friendliness.md` entry 10.
  *
- * Why GET each entry instead of relying on list-time
- * `Last-Modified`: `MemoryStorage` (the test backend) intentionally
- * does NOT surface `lastModified` on `list()`, and the
- * cross-backend story stays uniform if we always read `commit_ts`
- * from the `LogEntry` body. Sample size is bounded (`SAMPLE_SIZE`
- * GETs per collection), so the cost is acceptable for an opt-in
- * operator command.
+ * Why GET each entry instead of relying on a list-time
+ * `Last-Modified`: `StorageListEntry` carries no timestamp — it is
+ * `key` + `etag` only — and the cross-backend story stays uniform if
+ * we always read `commit_ts` from the `LogEntry` body. (This command
+ * declined the field back when it existed, for the same reason; it
+ * was removed once GC stopped anchoring on it.) Sample size is
+ * bounded (`SAMPLE_SIZE` GETs per collection), so the cost is
+ * acceptable for an opt-in operator command.
  *
  * @see docs/about/thesis.md — M-size ceiling rationale.
  * @see docs/spec/log-entry-shape.md — `LogEntry.commit_ts` contract.

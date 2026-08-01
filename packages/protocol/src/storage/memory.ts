@@ -165,8 +165,7 @@ export class MemoryStorage implements Storage {
     });
     // `serverDate` is intentionally returned — the kernel's adaptive
     // clock-skew loop consumes the write-time server clock. `list()`
-    // deliberately omits `lastModified`: the in-memory impl has no
-    // independent server clock, and no kernel path reads the field.
+    // needs no such clock: `StorageListEntry` is `key` + `etag` only.
     return { etag, serverDate: new Date() };
   }
 

@@ -240,8 +240,14 @@ export const parseAssumeRoleWithWebIdentity = (xml: string): ParsedWebIdentityCr
 
 // `new Date(badString)` yields an Invalid Date (a non-null Date whose
 // getTime() is NaN) rather than throwing — surface `undefined` for a
-// malformed `LastModified` so it never leaks into a `StorageListEntry`.
-// GC then falls back to `now()` for the tombstone `due_at` anchor.
+// malformed `LastModified` rather than propagating a NaN-valued Date.
+//
+// Nothing downstream reads this today: `StorageListEntry` is `key` +
+// `etag` only, so both `S3HttpStorage.list` and `GcsHttpStorage.list`
+// drop the parsed value on the floor. It is retained only as a faithful
+// mirror of the S3 list-response shape. If you are here to add a
+// consumer, read the `StorageListEntry` JSDoc first — GC used to anchor
+// its `due_at` on this and that was a bug.
 const parseLastModified = (lm: string | undefined): Date | undefined => {
   if (lm === undefined) {
     return undefined;

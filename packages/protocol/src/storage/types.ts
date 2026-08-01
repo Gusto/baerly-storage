@@ -105,19 +105,24 @@ export interface StoragePutOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * A listed object. `key` + `etag` only — deliberately not a mirror of
+ * whatever the backend's LIST response happens to carry.
+ *
+ * There is no `lastModified`. One existed, populated from server-side
+ * headers by the S3/GCS/R2 adapters and omitted by the clock-less
+ * impls. Its only consumer anchored GC's `due_at` on it, which made
+ * the grace period `max(0, grace − object age)` on exactly the
+ * adapters that populated it — see `computeDueAt` in `gc.ts`. With
+ * that anchor corrected the field had no reader, and a server clock
+ * per listed entry is not something the protocol should carry
+ * speculatively. Wall-clock needs are served by
+ * {@link StoragePutResult.serverDate} (the write-time server clock,
+ * which drives the adaptive clock-skew loop) or by reading
+ * `LogEntry.commit_ts`, which is what `baerly admin usage` does and
+ * documents as the cross-backend-uniform choice.
+ */
 export interface StorageListEntry {
   readonly key: string;
   readonly etag: string;
-  /**
-   * Server's `Last-Modified` for the listed object, when the backend
-   * surfaces it. Informational: no kernel path reads it, and impls
-   * without a server clock (e.g. {@link MemoryStorage}) may omit it.
-   * GC's `due_at` deliberately does not — see `computeDueAt` in
-   * `gc.ts` for why anchoring on it is a bug.
-   *
-   * The protocol's clock-skew handling rides on
-   * {@link StoragePutResult.serverDate} (the write-time server clock),
-   * not on this field.
-   */
-  readonly lastModified?: Date;
 }

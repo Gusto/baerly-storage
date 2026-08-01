@@ -487,12 +487,13 @@ const parseHashFromContentKey = (key: string): string | null => {
  * writer-retry window from when we judged a key dead, which is
  * unrelated to when the object was written.
  *
- * Do NOT reinstate the old `entry.lastModified ?? now()` anchor.
- * Only the S3/GCS/R2 adapters populate that field, so it made the
+ * Never anchor on the object's own timestamp. Doing so made the
  * effective grace `max(0, graceMs − object age)` — zero past the
- * 7-day default, for exactly the old objects GC marks — while the
- * backends the suite runs omit it and showed the full window.
- * `gc.test.ts` pins this against a stub that surfaces it.
+ * 7-day default, for exactly the old objects GC marks. It read a
+ * `lastModified` that only the S3/GCS/R2 adapters populated, so the
+ * suite's backends showed a full window and no test could see it.
+ * `StorageListEntry` no longer carries a timestamp; `gc.test.ts`
+ * still pins the behaviour against an entry that fakes one.
  *
  * Called per candidate, not hoisted per pass, so the local-clock
  * backends keep their exact previous horizon.

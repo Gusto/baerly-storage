@@ -697,15 +697,20 @@ export function defineStorageConformanceSuite(
         );
       });
 
-      test("returns the current etag for each entry", async () => {
+      test("returns the current etag for each entry, and nothing else", async () => {
         const a = await s.put("a", new TextEncoder().encode("alpha"));
         const b = await s.put("b", new TextEncoder().encode("beta"));
-        // `StorageListEntry.lastModified` is optional per the type;
-        // some adapters (R2 binding, S3) populate it from server-side
-        // headers. Project to the load-bearing fields only.
+        // Compared WHOLE, not projected to `{ key, etag }`: `toEqual`
+        // fails on extra own properties, so this pins the entry shape
+        // exactly. `StorageListEntry` used to carry an optional
+        // `lastModified` that the S3/GCS/R2 adapters populated and
+        // this assertion projected away as adapter-optional — which
+        // is why the suite could not see GC anchoring its grace
+        // period on it (see `computeDueAt` in `gc.ts`). The field is
+        // gone; keep the comparison strict so a backend-specific
+        // field cannot be reintroduced without a conformance failure.
         await expectEventuallyEqual(
-          () =>
-            collect(s.list("")).then((entries) => entries.map(({ key, etag }) => ({ key, etag }))),
+          () => collect(s.list("")),
           [
             { key: "a", etag: a.etag },
             { key: "b", etag: b.etag },

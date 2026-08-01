@@ -147,7 +147,6 @@ class R2BindingStorageImpl implements Storage {
         yield {
           key: obj.key,
           etag: quoteEtag(obj.etag),
-          lastModified: obj.uploaded,
         };
         yielded += 1;
       }
@@ -202,8 +201,9 @@ class R2BindingStorageImpl implements Storage {
  *    binding returns bare hex. CAS round-trips strip and re-apply
  *    the quotes.
  *  - `serverDate` from `R2Object.uploaded` — a real server clock,
- *    suitable for the kernel's adaptive-clock-skew loop.
- *  - `StorageListEntry.lastModified` from the same clock.
+ *    suitable for the kernel's adaptive-clock-skew loop. `list()`
+ *    yields `key` + `etag` only; `StorageListEntry` carries no
+ *    per-entry timestamp.
  *
  * Errors map to `BaerlyError` via the same convention as
  * `S3HttpStorage`: `AccessDenied` for binding-level permission

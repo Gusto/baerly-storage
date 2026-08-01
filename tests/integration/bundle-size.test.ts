@@ -696,7 +696,22 @@ const BUDGETS: readonly Budget[] = [
   //     `casUpdateCurrentJson` guard, plus JSDoc on both. Measured 129227 raw
   //     / 39688 gz / 11471 min-gz; gz (248 B) and min-gz (817 B) both stay
   //     under, only the raw tripwire moves.
-  { entry: "maintenance.js", raw: 127 * 1024, gz: 39 * 1024, minGz: 12 * 1024 },
+  //   → gz 39→40 KiB (2026-08-01): dropping `StorageListEntry.lastModified`
+  //     replaced the field with a longer do-not-reinstate JSDoc block on the
+  //     type, and `computeDueAt` likewise. Both are `/** */` blocks, which
+  //     rolldown ships; the CODE shrank (a parameter, a `??`, and three
+  //     adapter assignments gone). Measured 129693 raw / 39898 gz / 11454
+  //     min-gz. That left gz 38 B under a hard-gated axis — a hair-trigger
+  //     for whoever edits a comment near this closure next — so the gz
+  //     tripwire moves even though it had not tripped. min-gz, the real
+  //     shipped-cost ceiling where comments are stripped, is 834 B under and
+  //     FELL 17 B on this change. Per the POLICY above: comment-dominated,
+  //     so rebaseline rather than golf the warning that keeps a
+  //     seven-day-grace bug from being reintroduced.
+  //     Same commit, no budget move needed: index.js 236837 raw (731 B
+  //     under), http.js 360265 (183 B), cloudflare.js 432978 (174 B),
+  //     dev.js unchanged.
+  { entry: "maintenance.js", raw: 127 * 1024, gz: 40 * 1024, minGz: 12 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
