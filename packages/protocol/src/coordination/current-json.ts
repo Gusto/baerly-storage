@@ -133,6 +133,36 @@ export interface CurrentJson {
    * `last_warned_seq` to the observed/probed tail. Absent → 0.
    */
   last_warned_seq?: number;
+
+  /**
+   * Opaque non-empty generation nonce, re-minted by every writer that
+   * *replaces* this collection rather than advancing it — the two
+   * `baerly admin restore` seeds and the writer/dev auto-provision
+   * paths. Steady-state writers (the compactor's fold CAS,
+   * {@link claimWriter}, every {@link casUpdateCurrentJson} mutator)
+   * carry it through untouched, so it changes only on truncate or
+   * re-provision. Mint with {@link mintGeneration}.
+   *
+   * `/v1/since` pairs it with each entry's `lsn` to build the cursor it
+   * hands clients, then rejects a resume whose generation no longer
+   * matches. Without it, a `restore --force` that reseeds
+   * `log_seq_start` BELOW the old floor (the deliberate floor exemption
+   * — invariant 12 in `docs/spec/sync-protocol.md`) lets a pre-restore
+   * cursor clear the `cursorSeq < log_seq_start` gate and silently skip
+   * every restored row beneath it.
+   *
+   * Deliberately NOT `writer_fence.epoch`: the fresh-target restore
+   * branch seeds `epoch: 0`, so a truncate-to-empty is indistinguishable
+   * from a genuine epoch-0 collection. A counter that resets cannot
+   * discriminate generations; a nonce can.
+   *
+   * Optional because it postdates `schema_version: 3` and buckets
+   * written by earlier builds do not carry it. Absent is a well-defined
+   * state, not a degraded one — it decodes to `NO_GENERATION` on both
+   * sides of the comparison (see `../cursor.ts`), so a collection that
+   * was never truncated keeps resuming normally.
+   */
+  generation?: string;
 }
 
 /**
@@ -228,6 +258,24 @@ export async function readCurrentJson(
   }
   return { json: assertCurrentJson(parsed, key), etag: got.etag };
 }
+
+/**
+ * Mint a fresh {@link CurrentJson.generation} nonce.
+ *
+ * Twelve lowercase hex characters (≈2.8 × 10¹⁴ values) — sized so the
+ * birthday bound is unreachable across the truncates a bucket sees in
+ * its lifetime, while costing only twelve bytes on every `/v1/since`
+ * response. A collision would let a stale cursor resume into a
+ * truncated generation, which is the exact failure this field exists to
+ * prevent, so the margin is deliberate.
+ *
+ * `crypto.randomUUID` is universally available (Node 19+, Workerd, Bun,
+ * browsers) — the same source `uuid()` in `../types.ts` uses.
+ *
+ * Call this only where a collection is REPLACED, never where one is
+ * advanced; see {@link CurrentJson.generation} for the writer split.
+ */
+export const mintGeneration = (): string => crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 
 /**
  * Create `current.json` if-and-only-if it does not exist (S3
@@ -597,6 +645,20 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: mean_entry_bytes must be a non-negative integer if present`,
+    );
+  }
+  if (
+    r["generation"] !== undefined &&
+    (typeof r["generation"] !== "string" || r["generation"].length === 0)
+  ) {
+    // Non-empty matters, not just the type: `""` would format a cursor
+    // as `.<lsn>`, which `parseCursor` reads as generation `""` rather
+    // than as the `NO_GENERATION` sentinel — so the two spellings of
+    // "no generation" would stop comparing equal and every resume on
+    // this collection would be rejected.
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: generation must be a non-empty string if present`,
     );
   }
   return parsed as CurrentJson;

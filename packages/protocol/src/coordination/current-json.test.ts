@@ -11,6 +11,7 @@ import {
   encodeJsonBytes,
   logSeqStartOf,
   MemoryStorage,
+  mintGeneration,
   readCurrentJson,
 } from "../index.ts";
 import { claimWriter } from "./current-json.ts";
@@ -1964,4 +1965,60 @@ describe("casUpdateCurrentJson — assertCurrentJson on mutated output", () => {
       expect((err as BaerlyError).message).toContain("my-key");
     },
   );
+});
+
+describe("assertCurrentJson — generation guard", () => {
+  plainTest("accepts a record with generation absent (pre-field manifest)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.generation).toBeUndefined();
+  });
+
+  plainTest("accepts a minted generation", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), generation: "0123456789ab" });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.generation).toBe("0123456789ab");
+  });
+
+  plainTest("rejects generation: '' (empty string)", async () => {
+    // Not just a type guard. An empty generation formats a cursor as
+    // `.<lsn>`, which parseCursor reads as generation "" rather than as
+    // the NO_GENERATION sentinel — so the two spellings of "no
+    // generation" would stop comparing equal and every resume on this
+    // collection would be rejected.
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), generation: "" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/generation/),
+    });
+  });
+
+  plainTest("rejects generation: 7 (not a string)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), generation: 7 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/generation/),
+    });
+  });
+});
+
+describe("mintGeneration", () => {
+  plainTest("mints a non-empty lowercase-hex token", () => {
+    // Lowercase hex matters on the wire: `/v1/since` validates the
+    // generation half of a cursor against `[0-9a-f]+`.
+    expect(mintGeneration()).toMatch(/^[0-9a-f]{12}$/);
+    return Promise.resolve();
+  });
+
+  plainTest("mints a distinct value each call", () => {
+    // A collision would let a stale cursor resume into a truncated
+    // generation — the exact failure the field exists to prevent.
+    const minted = new Set(Array.from({ length: 200 }, () => mintGeneration()));
+    expect(minted.size).toBe(200);
+    return Promise.resolve();
+  });
 });
