@@ -1,4 +1,9 @@
-import { type DevLandingOptions, renderDevLanding } from "@baerly/dev";
+// Imported from the leaf module, NOT the `@baerly/dev` barrel. The barrel
+// re-exports `LocalFsStorage`, and pulling this through it chunks the
+// whole Node-only local-fs closure — `node:fs`, `node:crypto`,
+// `node:path` and the per-key write lock — into the Worker bundle for
+// the sake of one HTML string. `dev-landing.ts` has no imports at all.
+import { type DevLandingOptions, renderDevLanding } from "@baerly/dev/dev-landing";
 import {
   type BaerlyAppConfig,
   CF_FREE_MAX_SAFE_FOLD_BYTES,

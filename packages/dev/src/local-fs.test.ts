@@ -1,13 +1,15 @@
 import {
   accessSync,
   constants,
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fc } from "@fast-check/vitest";
@@ -65,6 +67,22 @@ const findForeignFilesystem = (): string | null => {
 };
 
 const FOREIGN_FS = findForeignFilesystem();
+
+/**
+ * Whether the filesystem backing `os.tmpdir()` folds case — true on a
+ * stock macOS (APFS, case-insensitive by default), false on Linux ext4.
+ * Probed rather than assumed from `process.platform`, since either OS can
+ * be configured the other way.
+ */
+const CASE_INSENSITIVE_FS = ((): boolean => {
+  const probe = mkdtempSync(join(tmpdir(), "baerly-case-probe-"));
+  try {
+    writeFileSync(join(probe, "probe"), "x");
+    return existsSync(join(probe, "PROBE"));
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 // LocalFsStorage-specific key arbitrary:
 //   - Lowercase only. Case-insensitive filesystems (default macOS
@@ -165,6 +183,12 @@ describe("LocalFsStorage — impl-specific", () => {
     await s.put("nested/real", utf8("v"));
     writeFileSync(join(root, ".baerly-tmp-99999-0-deadbeef"), "leftover");
     writeFileSync(join(root, "nested", ".baerly-tmp-99999-0-cafebabe"), "leftover");
+    // A *directory* in the reserved namespace is skipped wholesale rather
+    // than descended into. Nothing here creates one, but were its children
+    // yielded they would be keys that `#pathFor` rejects, and `list` would
+    // throw part-way through iteration instead of returning.
+    mkdirSync(join(root, ".baerly-tmp-99999-0-straydir"));
+    writeFileSync(join(root, ".baerly-tmp-99999-0-straydir", "child"), "leftover");
     const listed = await collect(s.list(""));
     expect(listed.map((e) => e.key)).toEqual(["nested/real", "real"]);
   });
@@ -184,6 +208,39 @@ describe("LocalFsStorage — impl-specific", () => {
         code: "InvalidConfig",
       });
     }
+  });
+
+  test("keys in the reserved temp namespace are rejected", async () => {
+    // `walk` skips TEMP_PREFIX so staging temps never surface as keys —
+    // which means a real key there would be writable and readable but
+    // invisible to list(), silently violating put-then-list. The namespace
+    // is reserved rather than left as a hole for `tempPathFor` alone to
+    // avoid.
+    for (const bad of [".baerly-tmp-mine", "nested/.baerly-tmp-mine", ".baerly-tmp-"]) {
+      await expect(s.put(bad, utf8("v"))).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(s.get(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(s.delete(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
+    }
+  });
+
+  test("list() tolerates a key deleted mid-iteration", async () => {
+    // `list` walks names, then reads each file to hash its etag. A delete
+    // landing in that window used to escape as a raw Node ENOENT rather
+    // than a BaerlyError — reachable in the maintenance fold, where runGc
+    // deletes while the compactor walks the same prefixes. A key vanishing
+    // mid-listing is legal on a real object store, so it is skipped.
+    for (const k of ["a", "b", "c", "d"]) {
+      await s.put(k, utf8("v"));
+    }
+    const seen: string[] = [];
+    for await (const entry of s.list("")) {
+      seen.push(entry.key);
+      if (entry.key === "a") {
+        await s.delete("b");
+        await s.delete("c");
+      }
+    }
+    expect(seen).toEqual(["a", "d"]);
   });
 
   // --- The write path must never leave the bucket root (EXDEV) ---
@@ -276,5 +333,151 @@ describe("LocalFsStorage — impl-specific", () => {
     } finally {
       await rm(concRoot, { recursive: true, force: true });
     }
+  });
+
+  // --- ifMatch CAS is read-compare-write and must be serialized ---
+  //
+  // The compare reads the on-disk etag, but the write that follows is two
+  // more awaited fs ops away, and `node:fs/promises` yields the event loop
+  // at each one. Without a lock, every racer reads the same base etag,
+  // every racer passes the compare, and every racer renames — N "successful"
+  // CAS writes against one base version, which is the one thing CAS exists
+  // to prevent. `Storage`'s contract (and every caller: the compactor's
+  // fold, `casUpdateCurrentJson`, `casUpdateGcPending`) requires exactly one.
+
+  test("concurrent ifMatch on the same etag has exactly one winner", async () => {
+    const base = await s.put("k", utf8("v0"));
+    const RACERS = 16;
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: RACERS }, (_, i) => s.put("k", utf8(`r${i}`), { ifMatch: base.etag })),
+    );
+    const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+    const conflicts = outcomes.filter(
+      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+    ).length;
+    expect(winners).toBe(1);
+    expect(conflicts).toBe(RACERS - 1);
+  });
+
+  test("concurrent ifMatch across separate instances on one root has exactly one winner", async () => {
+    // The load-bearing arm. `localFsStorage()` mints a fresh instance per
+    // call over the same default root, and the randomized cascade builds N
+    // instances over one `mkdtemp` root specifically to make them contend
+    // (`tests/integration/randomized.test.ts` → `makeStorages`). A lock
+    // scoped to the instance would serialize nothing in exactly the harness
+    // built to catch this, so the lock is keyed by resolved root + key.
+    const RACERS = 16;
+    const instances = Array.from({ length: RACERS }, () => new LocalFsStorage({ root }));
+    const base = await instances[0]!.put("k", utf8("v0"));
+    const outcomes = await Promise.allSettled(
+      instances.map((inst, i) => inst.put("k", utf8(`r${i}`), { ifMatch: base.etag })),
+    );
+    const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+    const conflicts = outcomes.filter(
+      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+    ).length;
+    expect(winners).toBe(1);
+    expect(conflicts).toBe(RACERS - 1);
+    // The survivor must be one of the racers' bodies, not a torn mix.
+    const body = fromBytes((await s.get("k"))!.body);
+    expect(body).toMatch(/^r\d+$/);
+  });
+
+  test("concurrent ifMatch through a symlinked root has exactly one winner", async () => {
+    // Two instances over ONE directory reached by two different path
+    // spellings. `resolve()` collapses `.`/`..` but not symlinks, so
+    // before the lock keyed on `realpath` these took separate locks and
+    // both published over the same base etag — measured, 2 winners.
+    //
+    // This is the portable arm of the aliasing guard: it needs no
+    // case-insensitive filesystem, so unlike the case variant below it
+    // actually runs on Linux CI, which is the only platform gating merges.
+    // `/tmp` -> `/private/tmp` on macOS makes this an ordinary
+    // misconfiguration, not a contrived one.
+    const base = await mkdtemp(join(tmpdir(), "baerly-localfs-symlink-"));
+    try {
+      await mkdir(join(base, "real"));
+      await symlink(join(base, "real"), join(base, "link"));
+      const viaReal = new LocalFsStorage({ root: join(base, "real") });
+      const viaLink = new LocalFsStorage({ root: join(base, "link") });
+      const seed = await viaReal.put("k", utf8("v0"));
+      const outcomes = await Promise.allSettled([
+        ...Array.from({ length: 8 }, (_, i) =>
+          viaReal.put("k", utf8(`real-${i}`), { ifMatch: seed.etag }),
+        ),
+        ...Array.from({ length: 8 }, (_, i) =>
+          viaLink.put("k", utf8(`link-${i}`), { ifMatch: seed.etag }),
+        ),
+      ]);
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const nonConflict = outcomes.filter(
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+      );
+      expect(nonConflict).toEqual([]);
+      expect(winners).toBe(1);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CASE_INSENSITIVE_FS)(
+    "concurrent ifMatch on case-variant keys has exactly one winner",
+    async () => {
+      // The case/normalization arm. It only means anything where the
+      // filesystem folds case — on a case-sensitive one these spellings
+      // are genuinely different objects and the assertion would hold
+      // trivially — so it skips honestly rather than passing for free and
+      // looking like coverage it is not providing. The symlink arm above
+      // is what guards the same mechanism on Linux CI.
+      const seed = await s.put("alias", utf8("v0"));
+      const spellings = ["alias", "ALIAS", "Alias", "aLiAs"];
+      const outcomes = await Promise.allSettled(
+        spellings.flatMap((spelling) =>
+          Array.from({ length: 4 }, (_, j) =>
+            s.put(spelling, utf8(`w-${spelling}-${j}`), { ifMatch: seed.etag }),
+          ),
+        ),
+      );
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const nonConflict = outcomes.filter(
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+      );
+      expect(nonConflict).toEqual([]);
+      expect(winners).toBe(1);
+    },
+  );
+
+  test("distinct keys are not serialized against each other", async () => {
+    // The lock must be per key, not global — serializing the whole adapter
+    // would be a "correctness fix" that quietly turns the dev server
+    // single-file. Asserting that N distinct puts all landed would NOT
+    // catch that (they land either way); this deadlocks under a global
+    // lock, because neither put can finish until the other has started.
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const aStarted = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const bStarted = new Promise<void>((r) => {
+      releaseB = r;
+    });
+    const bodyA = utf8("a");
+    const bodyB = utf8("b");
+    await Promise.all([
+      (async () => {
+        const p = s.put("key-a", bodyA);
+        releaseA();
+        await bStarted;
+        await p;
+      })(),
+      (async () => {
+        const p = s.put("key-b", bodyB);
+        releaseB();
+        await aStarted;
+        await p;
+      })(),
+    ]);
+    expect(fromBytes((await s.get("key-a"))!.body)).toBe("a");
+    expect(fromBytes((await s.get("key-b"))!.body)).toBe("b");
   });
 });

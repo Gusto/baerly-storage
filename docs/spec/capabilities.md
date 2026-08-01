@@ -3,7 +3,7 @@ title: Storage capabilities — required vs optional
 audience: spec
 doc_type: current-contract
 summary: What a backend MUST support to certify as full Storage (CAS, exactly-one-winner), and what is optional.
-last-reviewed: 2026-07-16
+last-reviewed: 2026-08-01
 tags: [storage, conformance, capabilities, cas, contract]
 related: ["sync-protocol.md", "storage-compatibility.md"]
 ---
@@ -43,11 +43,14 @@ failure fails certification — full stop.
 
 The in-tree dev adapters run the same suite under their documented
 topology. `LocalFsStorage` is a local/single-process development
-adapter: its `ifMatch` behavior is in-process TOCTOU only, so a green
-dev conformance run does **not** certify it for multi-process production
-use. Production certification means the required capabilities hold
-across the backend's real concurrency boundary (processes, isolates, or
-regions as applicable).
+adapter: it satisfies the CAS blocks — including the two
+exactly-one-winner races — by serializing mutations of a key within the
+process, across however many instances address the directory. That
+guarantee stops at the process boundary, where its read-compare-write
+`ifMatch` is unsynchronized, so a green dev conformance run does **not**
+certify it for multi-process production use. Production certification
+means the required capabilities hold across the backend's real
+concurrency boundary (processes, isolates, or regions as applicable).
 
 ## Optional
 

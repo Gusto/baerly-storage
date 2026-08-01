@@ -14,12 +14,12 @@ import { LocalFsStorage } from "./local-fs.ts";
 
 /**
  * Single-process smoke for the current.json CAS protocol against the
- * directory-tree storage adapter. `LocalFsStorage` documents that
- * `ifMatch`/`ifNoneMatch` are NOT cross-process safe (see
- * `local-fs.ts` class JSDoc) — this file only covers the
- * single-process case where the in-process TOCTOU window is narrow
- * enough that the CAS protocol is observably correct. Multi-process
- * safety is delegated to S3 / R2 / Minio.
+ * directory-tree storage adapter. `LocalFsStorage` serializes mutations
+ * of a key within a process, so the CAS protocol is correct here — but
+ * it documents no cross-process guarantee for `ifMatch`/`ifNoneMatch`
+ * (see `local-fs.ts` class JSDoc), so this file covers only the
+ * single-process case. Multi-process safety is delegated to S3 / R2 /
+ * Minio.
  */
 describe("current.json on LocalFsStorage", () => {
   let root: string;
@@ -62,14 +62,15 @@ describe("current.json on LocalFsStorage", () => {
   });
 
   test("stale-etag update surfaces as Conflict", async () => {
-    // True multi-writer races on LocalFsStorage have a TOCTOU window
-    // even within a single process — two `casUpdateCurrentJson`
-    // calls that read the same etag can both pass the ifMatch guard
-    // because the content-addressed etag depends only on the body
-    // written. Cross-process CAS is delegated to S3/R2 (see
-    // `local-fs.ts` class JSDoc). What we DO verify here is that
-    // when the storage layer observes a stale etag, it surfaces
-    // `Conflict` directly — no string-sentinel translation needed.
+    // In-process multi-writer races are covered directly in
+    // `local-fs.test.ts` ("concurrent ifMatch … exactly one winner") and
+    // by the shared storage conformance suite; `LocalFsStorage`
+    // serializes mutations of a key, so two `casUpdateCurrentJson` calls
+    // reading the same etag cannot both pass the ifMatch guard. Across
+    // processes there is still no such guarantee — that is delegated to
+    // S3/R2 (see `local-fs.ts` class JSDoc). What we verify HERE is
+    // narrower: when the storage layer observes a stale etag, it
+    // surfaces `Conflict` directly — no string-sentinel translation.
     await createCurrentJson(storage, "k", seed);
     // Stage a stale read by snapshotting etag, then landing a
     // separate update that bumps it.

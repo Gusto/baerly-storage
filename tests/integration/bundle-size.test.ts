@@ -929,7 +929,25 @@ const BUDGETS: readonly Budget[] = [
   //     `dev.js` under its own line, and cutting further would delete the
   //     reason the code is shaped this way. Measured 440712 raw; gz (132345,
   //     −775) and min-gz (45839, −241) both stay under.
-  { entry: "cloudflare.js", raw: 431 * 1024, gz: 130 * 1024, minGz: 45 * 1024 },
+  //   → 418 KiB raw / 126 KiB gz / 44 KiB min-gz (2026-08-01): budgets move
+  //     DOWN. `packages/adapter-cloudflare/src/worker.ts` imported
+  //     `renderDevLanding` from the `@baerly/dev` barrel, and the barrel
+  //     re-exports `LocalFsStorage`, so rolldown chunked the entire
+  //     Node-only local-fs closure — `node:fs`, `node:crypto`, `node:path`,
+  //     and now the per-key write lock — into the Worker bundle for one
+  //     HTML string. `dev-landing.ts` has no imports at all, so giving it
+  //     its own `@baerly/dev/dev-landing` subpath drops the whole closure
+  //     out of this aggregator.
+  //
+  //     Found because `LocalFsStorage`'s atomicity fixes pushed min-gz
+  //     46150 past the 45 KiB HARD ceiling. Per the POLICY that is a
+  //     regression to shrink, not a line to raise — and shrinking it
+  //     correctly turned out to mean removing code that was never supposed
+  //     to ship to a Worker. Measured 427462 raw / 128919 gz / 44093
+  //     min-gz, i.e. below the pre-branch 439542 / 132296 / 45841 on every
+  //     axis. Budgets tighten to lock the win in rather than bank it as
+  //     silent headroom.
+  { entry: "cloudflare.js", raw: 418 * 1024, gz: 126 * 1024, minGz: 44 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -1085,7 +1103,18 @@ const BUDGETS: readonly Budget[] = [
   //     15400 gz — the +56 B the note above predicted, plus the guard.
   //     No min-gz axis on this entry; comment-dominated, per POLICY not
   //     golfed to fit.
-  { entry: "dev.js", raw: 43 * 1024, gz: 16 * 1024 },
+  //   → 49 KiB raw / 18 KiB gz (2026-08-01): `LocalFsStorage`'s two `put`
+  //     atomicity fixes — the shared `tempPathFor` staging helper (EXDEV),
+  //     the `key-lock.ts` per-key async mutex that makes the `ifMatch`
+  //     read-compare-write atomic, `realpath` canonicalization of the lock
+  //     key, the reserved-prefix guard in `#pathFor`, and `list`'s
+  //     deleted-mid-iteration tolerance — plus the JSDoc scoping the
+  //     single-process guarantee. Unlike most rebaselines above this is NOT
+  //     comment-dominated: it is real shipped control flow. This closure is
+  //     the right place for it to land — the same change REMOVED it from
+  //     `cloudflare.js` (see that entry). Measured 49869 raw / 17866 gz; no
+  //     min-gz axis on this entry.
+  { entry: "dev.js", raw: 49 * 1024, gz: 18 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare
