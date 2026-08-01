@@ -355,7 +355,20 @@ const BUDGETS: readonly Budget[] = [
   //     `cursor.ts` imports only `errors.ts`, already present in every
   //     closure, so no new module was dragged in. Measured 238198 raw /
   //     74840 gz / 20304 min-gz.
-  { entry: "index.js", raw: 233 * 1024, gz: 74 * 1024, minGz: 20 * 1024 },
+  //   → 235 KiB raw (2026-08-01): the rewritten `Writer#readPreImage`
+  //     docstring (#74). The old docstring claimed a `log_seq_start` bound
+  //     the loop never had; the replacement carries the subrequest
+  //     derivation for the new descent budget and states plainly which
+  //     stale keys the walk no longer cleans up. Almost pure comment
+  //     bytes — the code delta is one `Math.max` and one loop bound.
+  //     `PREIMAGE_SCAN_MAX_GETS` itself contributes 0 B to every closure:
+  //     it is tree-shaken and the folded literal is inlined at the use
+  //     site. gz (75716, 60 B under) and min-gz (20340, 140 B under — the
+  //     hard ceiling, comments stripped) both stayed UNDER, the signature
+  //     of a comment-dominated change. Measured 240194 raw / 75716 gz /
+  //     20340 min-gz. Rebaselined per the POLICY rather than golfing the
+  //     prose that stops the false bound from being reintroduced.
+  { entry: "index.js", raw: 235 * 1024, gz: 74 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -552,7 +565,31 @@ const BUDGETS: readonly Budget[] = [
   //     under, but only by 43 B — the next change through this closure should
   //     expect to argue about it rather than assume headroom. Measured
   //     366541 raw / 109305 gz / 36821 min-gz.
-  { entry: "http.js", raw: 359 * 1024, gz: 107 * 1024, minGz: 36 * 1024 },
+  //   → 361 KiB raw / 108 KiB gz (2026-08-01): the rewritten
+  //     `Writer#readPreImage` docstring and its descent budget (#74).
+  //     This closure pulls in the writer via `constants.ts` + the server
+  //     barrel, so it takes the whole delta. Measured 368659 raw / 110218
+  //     gz / 36858 min-gz.
+  //     min-gz did NOT move, and that was the deciding constraint on the
+  //     change rather than an afterthought. An earlier draft counted the
+  //     walk's give-up on `db.write.index_cleanup_errors_total`; that
+  //     `if` plus its labelled `ctxMetrics().counter` call measured +15 B
+  //     min-gz, which put this closure 13 B OVER the 36 KiB hard ceiling.
+  //     Golfing was measured and does not reach — the label string, a
+  //     shorter `step` value, and hoisting the floor are all 0 B, because
+  //     the metric name already appears 3x in the chunk and deflate
+  //     absorbs the rest. The counter was dropped instead of rebaselining
+  //     min-gz, and it was the right call on its own merits: at a budget
+  //     this small the give-up path is the COMMON case, so the counter
+  //     was noise that would have swamped the two steps on that series
+  //     that do signal a failure.
+  //     ⚠️ min-gz now clears by 6 B (36858 / 36864). The 43 B note above
+  //     is now a 6 B note. This is a hair-trigger: the next change
+  //     through this closure — including one that only adds a
+  //     `console.warn` string — will trip it, and the honest fix at that
+  //     point is to shrink the closure, not to take the KiB. Do not read
+  //     the surviving 36 KiB line as headroom.
+  { entry: "http.js", raw: 361 * 1024, gz: 108 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -919,7 +956,16 @@ const BUDGETS: readonly Budget[] = [
   //     discriminator (#73) — same change as http.js above, reaching this
   //     aggregator through the shared http + current-json chunks. min-gz
   //     stays 239 B under. Measured 439542 raw / 132296 gz / 45841 min-gz.
-  { entry: "cloudflare.js", raw: 430 * 1024, gz: 130 * 1024, minGz: 45 * 1024 },
+  //   → 432 KiB raw / 131 KiB gz (2026-08-01): the rewritten
+  //     `Writer#readPreImage` docstring and its descent budget (#74) —
+  //     same change as http.js above, reaching this aggregator through the
+  //     shared constants + server chunks. Measured 441808 raw / 133274 gz /
+  //     45878 min-gz. min-gz clears by 202 B here, so only the raw/gz creep
+  //     tripwires move. This closure has more slack than http.js because
+  //     the delta is comment-dominated and it carries more non-kernel code
+  //     to amortise it against — do not infer http.js is comfortable from
+  //     this line; see its own ⚠️ note above.
+  { entry: "cloudflare.js", raw: 432 * 1024, gz: 131 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

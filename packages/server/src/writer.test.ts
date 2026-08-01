@@ -1,6 +1,7 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  type DocumentData,
   type LogEntry,
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
@@ -8,6 +9,7 @@ import {
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MemoryStorage,
   BaerlyError,
+  PREIMAGE_SCAN_MAX_GETS,
   resetMemoryStorage,
   str2uintDesc,
   type StoragePutOptions,
@@ -17,7 +19,7 @@ import {
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
-import type { IndexDefinition } from "./indexes.ts";
+import { allIndexKeysFor, encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import type { MaintenanceDispatch } from "./maintenance.ts";
 import {
   createObservabilityContext,
@@ -1451,5 +1453,230 @@ describe("Writer — write-tick maintenance dispatch", () => {
     await expect(
       writer.commit({ op: "I", collection: COLL, docId: badId, body: { _id: badId } }),
     ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
+});
+
+describe("Writer — pre-image scan depth", () => {
+  /**
+   * `#readPreImage` walks the log backwards from the committing seq to
+   * find the doc's prior post-image, so Step 5b can DELETE the index
+   * keys that image produced. The walk is 404-tolerant by necessity (a
+   * folded-and-swept entry and a peer mid-CAS are indistinguishable),
+   * which means it cannot use a missing object as a stop signal.
+   *
+   * Without an explicit budget that makes the walk O(seq): once GC has
+   * swept a doc's last I/U (7-day grace, `GC_GRACE_PERIOD_MILLIS`),
+   * every later `U`/`D` on that doc issues one SEQUENTIAL GET per seq
+   * all the way to 0 — then returns `undefined` and deletes nothing.
+   * That is the only unbounded log walk in the kernel and it runs
+   * inline on the write path, after the commit.
+   *
+   * These tests pin the budget from both sides: the exact GET count it
+   * spends on swept history (the cost bound is the whole point of the
+   * fix, so it is asserted as an equality — a self-referential
+   * `<= PREIMAGE_SCAN_MAX_GETS` would stay green if the constant were
+   * raised back to an unsafe value), and the depth it still reaches,
+   * including the last seq inside the budget and the first one outside.
+   */
+  const SCAN_CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
+  const SCAN_LOG_PREFIX = `app/test/tenant/t/manifests/${COLL}`;
+  const by_assignee: IndexDefinition = { name: "by_assignee", on: "assignee" };
+
+  /** Counts `/log/` GETs issued after the committing log create. */
+  class PostCommitLogGetCountingStorage extends MemoryStorage {
+    postCommitLogGets = 0;
+    #armed = false;
+
+    override async put(
+      key: string,
+      body: Uint8Array,
+      opts?: StoragePutOptions,
+    ): Promise<StoragePutResult> {
+      const result = await super.put(key, body, opts);
+      if (key.includes("/log/") && key.endsWith(".json") && opts?.ifNoneMatch !== undefined) {
+        this.#armed = true;
+      }
+      return result;
+    }
+
+    override async get(
+      key: string,
+      opts?: { ifNoneMatch?: string; versionId?: string; signal?: AbortSignal },
+    ): Promise<{ body: Uint8Array; etag: string; versionId?: string } | null> {
+      if (this.#armed && key.includes("/log/")) {
+        this.postCommitLogGets++;
+      }
+      return super.get(key, opts);
+    }
+  }
+
+  /**
+   * PUT the index keys a prior post-image would have left on the
+   * bucket. Without this the stale-key assertions are vacuous: seeding
+   * only a `log/<seq>` entry gives the walk something to FIND but
+   * nothing to DELETE, so "the old key is gone" passes whether or not
+   * the walk ever ran. Mirrors the writer's own emission at
+   * `writer.ts:531` (empty body, `application/json`).
+   */
+  const seedPreImageIndexKeys = async (
+    storage: MemoryStorage,
+    body: DocumentData,
+    docId: string,
+  ): Promise<void> => {
+    for (const key of allIndexKeysFor(SCAN_LOG_PREFIX, [by_assignee], body, docId)) {
+      await storage.put(key, new Uint8Array(), { contentType: "application/json" });
+    }
+  };
+
+  const listAssigneeKeys = async (storage: MemoryStorage): Promise<string[]> => {
+    const out: string[] = [];
+    for await (const entry of storage.list(`${SCAN_LOG_PREFIX}/index/${by_assignee.name}/`)) {
+      out.push(entry.key);
+    }
+    return out.toSorted();
+  };
+
+  test("bounds the backwards walk when the doc's last entry was folded and swept", async () => {
+    // Post-sweep steady state: the floor has advanced to 400 and every
+    // sub-floor `log/<seq>.json` is gone, so no entry for this doc
+    // survives anywhere on the bucket.
+    const FLOOR = 400;
+    const storage = new PostCommitLogGetCountingStorage();
+    await createCurrentJson(
+      storage,
+      SCAN_CURRENT_KEY,
+      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
+    );
+    const writer = new Writer({
+      storage,
+      currentJsonKey: SCAN_CURRENT_KEY,
+      options: { indexes: [by_assignee] },
+    });
+
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "d-old",
+      body: { _id: "d-old", assignee: "bob" },
+    });
+
+    // Asserted as a LITERAL, not against `PREIMAGE_SCAN_MAX_GETS`.
+    // The constant's value is the fix — it is sized against the
+    // Cloudflare free-tier 50-subrequest wall, most of which a `U`
+    // commit has already spent. A self-referential assertion would
+    // stay green if someone raised it back to a value that blows that
+    // wall, which is exactly the regression this test exists to catch.
+    // On `main` this walk cost 400 GETs.
+    expect(storage.postCommitLogGets).toBe(8);
+  });
+
+  test("reaches an entry at exactly the deepest seq inside the budget", async () => {
+    // The walk covers `[S - PREIMAGE_SCAN_MAX_GETS, S - 1]`, so the
+    // deepest reachable seq is `S - PREIMAGE_SCAN_MAX_GETS`. Pins the
+    // off-by-one in the `Math.max(0, currentNextSeq - N)` floor.
+    const FLOOR = 300;
+    const storage = new MemoryStorage();
+    await createCurrentJson(
+      storage,
+      SCAN_CURRENT_KEY,
+      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
+    );
+    await seedLogEntry(storage, SCAN_LOG_PREFIX, FLOOR - PREIMAGE_SCAN_MAX_GETS, {
+      op: "I",
+      collection: COLL,
+      doc_id: "d-old",
+      after: { _id: "d-old", assignee: "amy" },
+    });
+    await seedPreImageIndexKeys(storage, { _id: "d-old", assignee: "amy" }, "d-old");
+    const writer = new Writer({
+      storage,
+      currentJsonKey: SCAN_CURRENT_KEY,
+      options: { indexes: [by_assignee] },
+    });
+
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "d-old",
+      body: { _id: "d-old", assignee: "bob" },
+    });
+
+    const keys = await listAssigneeKeys(storage);
+    expect(keys.some((k) => k.includes(`/${encodeIndexValue("amy")}/`))).toBe(false);
+  });
+
+  test("leaves the stale key when the pre-image is one seq past the budget", async () => {
+    // The accepted trade, pinned so it is a deliberate choice rather
+    // than a surprise: one seq deeper than the budget and the old key
+    // survives. That is benign — an extra index key is a false
+    // positive the read path drops, never a missing candidate — and
+    // `rebuildIndex` / `fsck --indexes` is the reconciler.
+    const FLOOR = 300;
+    const storage = new MemoryStorage();
+    await createCurrentJson(
+      storage,
+      SCAN_CURRENT_KEY,
+      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
+    );
+    await seedLogEntry(storage, SCAN_LOG_PREFIX, FLOOR - PREIMAGE_SCAN_MAX_GETS - 1, {
+      op: "I",
+      collection: COLL,
+      doc_id: "d-old",
+      after: { _id: "d-old", assignee: "amy" },
+    });
+    await seedPreImageIndexKeys(storage, { _id: "d-old", assignee: "amy" }, "d-old");
+    const writer = new Writer({
+      storage,
+      currentJsonKey: SCAN_CURRENT_KEY,
+      options: { indexes: [by_assignee] },
+    });
+
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "d-old",
+      body: { _id: "d-old", assignee: "bob" },
+    });
+
+    const keys = await listAssigneeKeys(storage);
+    expect(keys.some((k) => k.includes(`/${encodeIndexValue("amy")}/`))).toBe(true);
+    expect(keys.some((k) => k.includes(`/${encodeIndexValue("bob")}/`))).toBe(true);
+  });
+
+  test("still reaches a surviving entry just below log_seq_start", async () => {
+    // Normal post-fold, pre-GC-sweep state: the floor advanced past the
+    // doc's last write, but the object is still on the bucket during the
+    // 7-day grace. The walk must reach it, or the stale index key leaks.
+    const FLOOR = 300;
+    const storage = new MemoryStorage();
+    await createCurrentJson(
+      storage,
+      SCAN_CURRENT_KEY,
+      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
+    );
+    await seedLogEntry(storage, SCAN_LOG_PREFIX, FLOOR - 5, {
+      op: "I",
+      collection: COLL,
+      doc_id: "d-old",
+      after: { _id: "d-old", assignee: "amy" },
+    });
+    await seedPreImageIndexKeys(storage, { _id: "d-old", assignee: "amy" }, "d-old");
+    const writer = new Writer({
+      storage,
+      currentJsonKey: SCAN_CURRENT_KEY,
+      options: { indexes: [by_assignee] },
+    });
+
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "d-old",
+      body: { _id: "d-old", assignee: "bob" },
+    });
+
+    const keys = await listAssigneeKeys(storage);
+    expect(keys.filter((k) => k.endsWith("/d-old.json"))).toHaveLength(1);
+    expect(keys.some((k) => k.includes(`/${encodeIndexValue("amy")}/`))).toBe(false);
+    expect(keys.some((k) => k.includes(`/${encodeIndexValue("bob")}/`))).toBe(true);
   });
 });
