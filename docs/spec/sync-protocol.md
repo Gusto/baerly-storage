@@ -442,7 +442,9 @@ These are the load-bearing rules.
    than backend-guaranteed.
 5. **Snapshots cover a prefix.** If `log_seq_start > 0`,
    `current.snapshot` names a snapshot that covers
-   `[0, log_seq_start)`.
+   `[0, log_seq_start)` (carve-out: `baerly admin restore --force`
+   leaves `snapshot: null` with a possibly-positive floor, because a
+   truncate drops those entries rather than folding them).
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.
@@ -474,6 +476,25 @@ These are the load-bearing rules.
     commit/read path uses the field for authority. Readers decide
     visibility from `seq`, the snapshot, the trusted log range, and the
     forward-probe.
+12. **The fold floor is monotone.** `current.json`'s `log_seq_start`
+    never decreases in steady state. `casUpdateCurrentJson`
+    (`packages/protocol/src/coordination/current-json.ts`) rejects a
+    mutator that lowers it with `BaerlyError{code:"Internal"}`; equality
+    is permitted, so a `tail_hint` refresh or a `last_warned_seq` stamp
+    holds the floor fixed. Two floor writers bypass that helper
+    (invariant 6 names the `current.json` writers). The compactor's fold
+    CAS (`packages/server/src/compactor.ts`) must CAS on the etag of the
+    read it folded from, so it issues its own `If-Match` PUT; it stays
+    monotone by construction instead, because its fold end is
+    `min(probedTail, log_seq_start + maxEntriesPerRun)` and both the
+    probed tail and the validated budget are `>= 0` relative to the
+    pre-fold floor. `baerly admin restore --force` is the deliberate
+    operator exemption: it reseeds a truncated collection to one past
+    the highest _surviving_ log object, which can sit below the old
+    floor when a bounded GC sweep has left sub-floor log objects in
+    place. That is sound because the reseed value is strictly greater
+    than every log object still present, so the committing `log/<seq>`
+    create cannot collide with the old generation.
 
 ## LSNs, wall clocks, and downstream consumers
 
