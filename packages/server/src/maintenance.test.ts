@@ -41,12 +41,12 @@ import {
   crossesGcBoundary,
   dispatchInlineAwaited,
   estimateTailBytes,
-  type InternalMaintenanceOptions,
   parseMaintenanceEnv,
   runBoundedMaintenance,
   runScheduledMaintenance,
   shouldFireMaintenance,
 } from "./maintenance.ts";
+import type { InternalMaintenanceOptions } from "./maintenance-options.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
