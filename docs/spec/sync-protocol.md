@@ -278,7 +278,8 @@ _before_ the commit, so a committed doc is always index-findable, and
 stale-key DELETEs land only _after_ the commit, so an uncommitted write
 can never remove a key a committed value depends on. The residual is
 safe: an extra key is a false-positive. It can be healed by the doc's
-next write; `rebuildIndex` is the whole-collection operator backstop. (A
+next write when the capped pre-image walk still reaches the prior image
+(see invariant 7); `rebuildIndex` is the whole-collection backstop. (A
 bounded in-tick reconcile slice was considered and deferred — see
 [ADR-004](../adr/004-single-write-commit.md#closed-paths).)
 
@@ -459,8 +460,13 @@ These are the load-bearing rules.
    index keys are emitted _before_ the commit and stale keys deleted
    _after_, so a committed value is never de-indexed by a write that did
    not commit. The only residual is a benign false-positive (an extra
-   key) dropped by `matchesWire`; it self-heals on the doc's next write,
-   with `rebuildIndex` as the operator backstop.
+   key) dropped by `matchesWire`. It self-heals on the doc's next write
+   only when that write can still read the doc's prior post-image: the
+   backwards pre-image walk is capped at `PREIMAGE_SCAN_MAX_GETS` log
+   GETs to stay inside the Cloudflare free-tier subrequest wall, so a
+   doc not rewritten within that many log entries keeps its stale key.
+   `rebuildIndex` / `baerly admin fsck --indexes` is the authoritative
+   backstop, not merely an operator convenience.
 8. **Reads are pure.** Reads load state; they never compact, GC, or
    tick maintenance. The tail forward-probe is Class B (GETs), so the
    idle-reader cost bound is untouched.

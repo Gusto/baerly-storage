@@ -59,6 +59,7 @@ import {
   noopMetricsRecorder,
   type Storage,
   LOG_FORWARD_PROBE_CAP,
+  PREIMAGE_SCAN_MAX_GETS,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   S3_REQUEST_MAX_RETRIES,
@@ -881,27 +882,55 @@ export class Writer {
   }
 
   /**
-   * Read the pre-image content body for a doc by walking the live log
+   * Read the pre-image content body for a doc by walking the log
    * backwards from `currentNextSeq` looking for the most-recent I/U
    * entry on this `(collection, docId)`. Returns `undefined` when:
    *
    *   - the doc's most-recent op was `D` (tombstone — no live body);
-   *   - no entry for this doc lives inside the visible log range
-   *     `[log_seq_start, currentNextSeq)` (a fresh-insert race or the
-   *     doc has been folded into the snapshot but is no longer
-   *     referenced).
+   *   - no entry for this doc is found within the descent budget
+   *     (a fresh-insert race, or the doc's last write has been folded
+   *     into the snapshot and swept off the bucket).
    *
    * Used ONLY by the index-emission path's stale-key half (Step 5b, on
-   * `U` / `D`) to compute which OLD-value keys to DELETE. Bounded by
-   * `log_seq_start`: entries below have been folded into the snapshot
-   * and may already be swept off the bucket — a snapshot fold is the
-   * rebuild command's job (see `./rebuild-index.ts`), not the writer's.
+   * `U` / `D`) to compute which OLD-value keys to DELETE.
    *
-   * **Cost note:** linear walk, O(snapshot lag). For helpdesk-shape
-   * collections (100s of docs, <10k log entries) this is fine — the
-   * compactor folds the live tail every ~100 entries
-   * (`packages/server/src/compactor.ts`). A follow-up ticket caches
-   * per-doc index head in `current.json` for O(1) lookup.
+   * **Not bounded by `log_seq_start`.** GC only marks sub-floor
+   * entries and sweeps them a {@link GC_GRACE_PERIOD_MILLIS} (7-day)
+   * grace later, so a doc's last I/U often survives below the floor
+   * and is worth reading. The walk is 404-tolerant for a related
+   * reason: a swept entry and a peer mid-CAS look identical from
+   * here, so a hole cannot be a stop signal.
+   *
+   * **Cost, and what it buys.** One SEQUENTIAL GET per seq, hard-
+   * capped at {@link PREIMAGE_SCAN_MAX_GETS}. The cap is load-bearing,
+   * not a tuning knob: `seq` grows monotonically forever, so an
+   * uncapped walk is O(seq) on the write path (post-commit but inline,
+   * before the response) for any doc whose last entry GC has swept.
+   * The cap is sized against the Cloudflare free-tier 50-subrequest
+   * wall, which a `U` commit has already largely spent — the
+   * derivation is on the constant. At that size the walk reaches a doc
+   * rewritten within the last few log entries and nothing colder, so
+   * on any collection with more than a handful of active docs it
+   * normally finds nothing.
+   *
+   * That is the accepted trade, not a silent failure. Giving up is
+   * benign by construction: the caller computes no stale keys, and an
+   * extra index key is a false positive the read path drops
+   * (`matchesWire`), never a missing candidate — `docs/spec/sync-
+   * protocol.md` invariant 7. `rebuildIndex` (`./rebuild-index.ts`)
+   * and `baerly admin fsck --indexes` are the authoritative
+   * reconcilers. The give-up is deliberately NOT counted on
+   * `db.write.index_cleanup_errors_total`: at this budget it is the
+   * common path, so it would swamp the two entries on that counter
+   * that do mean something went wrong (`"pre-image-read"` — the read
+   * threw; `"delete"` — a stale-key DELETE failed).
+   *
+   * Reading below the floor cannot delete a LIVE index key: keys are
+   * docId-scoped (`./indexes.ts`), and on `U` the caller diffs
+   * `oldKeys \ newKeys`, so anything still live is in `newKeys`. The
+   * residual hazard is the pre-existing compute-then-delete-after-
+   * commit ABA (a peer may re-PUT a key between the diff and the
+   * DELETE), which the cap narrows but does not close.
    */
   async #readPreImage(
     logPrefix: string,
@@ -910,16 +939,19 @@ export class Writer {
     currentNextSeq: number,
   ): Promise<DocumentData | undefined> {
     // Walk newest-to-oldest so we hit the most-recent op first.
-    // `s = -1` is the natural empty-bucket sentinel.
-    for (let s = currentNextSeq - 1; s >= 0; s--) {
+    // `s = -1` is the natural empty-bucket sentinel; `floor` is the
+    // budget guard, NOT `log_seq_start` (see the docstring above).
+    const floor = Math.max(0, currentNextSeq - PREIMAGE_SCAN_MAX_GETS);
+    for (let s = currentNextSeq - 1; s >= floor; s--) {
       const logKey = logObjectKey(logPrefix, s);
       const got = await this.#storage.get(logKey);
       if (got === null) {
-        // A hole below the visible range — either we walked past
-        // `log_seq_start` (the entry was folded + swept) or a peer
-        // is mid-CAS on a write we don't see yet. Bail; the
-        // rebuild command (`rebuildIndex`) handles holes by
-        // re-projecting from the snapshot.
+        // A hole — either the entry was folded and swept, or a peer
+        // is mid-CAS on a write we don't see yet. Indistinguishable
+        // from here, so a hole cannot be a stop signal: keep
+        // descending until the budget runs out. The rebuild command
+        // (`rebuildIndex`) handles holes by re-projecting from the
+        // snapshot.
         continue;
       }
       let entry: LogEntry;
@@ -941,6 +973,10 @@ export class Writer {
         return entry.after;
       }
     }
+    // Fell through: either the budget stopped the walk or the doc
+    // genuinely has no prior image. Both are reported the same way and
+    // neither is counted — see the docstring on why a give-up counter
+    // would be noise at this budget.
     return undefined;
   }
 

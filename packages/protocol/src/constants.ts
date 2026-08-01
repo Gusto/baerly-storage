@@ -140,10 +140,13 @@ export const S3_REQUEST_MAX_RETRIES: number = 8;
  * tier profile), and a contended writer multiplies that by the CAS
  * retry budget ({@link S3_REQUEST_MAX_RETRIES}).
  *
- * 16 keeps the worst-case under retry to `16 * 8 = 128` concurrent
- * GETs — comfortably under the Workers subrequest cap (50 concurrent
- * / 1000 total) and leaving headroom for the writer's content / index
- * / log / CAS PUTs sharing the same isolate.
+ * 16 bounds CONCURRENCY, not the per-request total. `16 * 8 = 128` is
+ * the whole-request worst case across the retry budget, which fits the
+ * Cloudflare PAID subrequest cap (10,000/request since 2026-02-11) but
+ * not the free cap (50/request) — see `docs/about/graduation.md`
+ * §Per-tier bounds. A free-tier reader relies on the compactor keeping
+ * the live tail short enough that the walk never approaches it. Do not
+ * cite this 128 as a per-request budget for anything else.
  *
  * @see packages/server/src/log-walk.ts (`walkLogRange`)
  */
@@ -159,6 +162,65 @@ export const MAX_PARALLEL_LOG_READS: number = 16;
  * @see packages/server/src/log-tail.ts (`probeTailFrom`)
  */
 export const LOG_FORWARD_PROBE_CAP: number = 100_000;
+
+/**
+ * Descent budget on the writer's backwards pre-image walk
+ * (`Writer#readPreImage`): max `log/<seq>` GETs below the committing
+ * seq before the walk gives up and reports "pre-image unknown".
+ *
+ * The walk MUST be 404-tolerant — a folded-and-swept entry and a peer
+ * mid-CAS are indistinguishable from a missing object — so it cannot
+ * use a hole as a stop signal, and `seq` grows monotonically forever.
+ * Without this budget the walk is O(seq): once GC sweeps a doc's last
+ * I/U past the {@link GC_GRACE_PERIOD_MILLIS} grace, every later
+ * `U` / `D` on that doc issues one SEQUENTIAL GET per seq down to 0,
+ * then returns "unknown" and deletes nothing. That is unbounded
+ * opportunistic work on the request path — the shape
+ * `docs/contributing/conventions/change-discipline.md` rules out.
+ *
+ * Deliberately NOT floored at `log_seq_start`: sub-floor entries
+ * survive the 7-day GC grace, so a post-fold `U` / `D` can still find
+ * its pre-image below the floor. The budget is anchored at the
+ * committing seq instead, which makes the cost unconditional.
+ *
+ * **Sized by the subrequest wall, not by coverage.** Cloudflare free
+ * allows 50 subrequests per request total
+ * (`docs/about/graduation.md` §Per-tier bounds); R2 binding ops count
+ * 1:1, and a `ctx.waitUntil` maintenance continuation draws on the
+ * same per-invocation budget. One `op:"U"` commit on a single-index
+ * collection already costs ~15 before this walk — 1 GET
+ * `current.json`, ~10 sequential GETs for `findLogTail`'s gallop over
+ * a one-fold-interval `tail_hint` lag, 1 content PUT, 1 index
+ * `newKey` PUT, the `log/<seq>` create, 1 stale-key DELETE — and the
+ * write-tick fold branch it may dispatch costs ~26 more (1 runner GET
+ * + `compact()`'s 3 + {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS} log
+ * GETs + 2 PUTs). `50 - 15 - 26 = 9`, so 8 leaves one subrequest of
+ * slack. The walk is strictly SEQUENTIAL, so this is a hard
+ * per-request cost, not a fan-out bound like
+ * {@link MAX_PARALLEL_LOG_READS}.
+ *
+ * **What that budget actually covers.** The pre-image sits roughly
+ * one working-set of seqs back, so 8 reaches a doc rewritten within
+ * the last few log entries — a form re-save, a retry, a two-phase
+ * update — and nothing colder. On a collection with more than ~8
+ * actively-written docs the walk normally gives up. That is accepted:
+ * the residual is a benign extra index key (a false positive dropped
+ * by `matchesWire`, never a missing candidate — see
+ * `docs/spec/sync-protocol.md` invariant 7), and `rebuildIndex` /
+ * `baerly admin fsck --indexes` is the authoritative reconciler. The
+ * give-up is deliberately NOT counted: at this budget it is the
+ * common path, not an anomaly, so a counter would be noise rather
+ * than signal.
+ *
+ * A per-tier budget on `MaintenanceProfile` (free 8, Node / CF-paid
+ * far higher — the same commit leaves ~9,780 of a 10,000 subrequest
+ * budget there) would buy real coverage back on the larger tiers.
+ * Not built: it widens the profile surface for a best-effort cleanup
+ * path whose backstop already exists.
+ *
+ * @see packages/server/src/writer.ts (`Writer#readPreImage`)
+ */
+export const PREIMAGE_SCAN_MAX_GETS: number = 8;
 
 /**
  * Current major version of the `current.json` control-object schema.
