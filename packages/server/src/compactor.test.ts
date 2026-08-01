@@ -21,7 +21,7 @@ import {
 import { describe, expect, test } from "vitest";
 import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
-import { loadSnapshotAsMap } from "./snapshot.ts";
+import { loadSnapshotAsMap, snapshotKey } from "./snapshot.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { runGc } from "./gc.ts";
 import { Writer } from "./writer.ts";
@@ -92,6 +92,97 @@ describe("compact", () => {
     expect(res.newSnapshotKey).toBeDefined();
     // L9/<12-digit min>-<12-digit max>-<64 hex>.json under collectionPrefix.
     expect(res.newSnapshotKey).toMatch(/\/snapshot\/L9\/0{12}-0{10}40-[0-9a-f]{64}\.json$/);
+  });
+
+  // The seq-arithmetic options ride an unvalidated seam
+  // (`InternalCompactOptions`), reached by JS callers, in-repo casts,
+  // and the `@baerly/server/_internal/testing` subpath. NaN is
+  // the dangerous one and the reason this check exists rather than a
+  // fold-floor assertion: NaN is false under every `<`/`>` guard in
+  // `compact()`, so it would reach the fold, write a snapshot at a
+  // `…-00000000000NaN-…` key, and CAS `log_seq_start: null` — bricking
+  // the collection against every read path, `restore --force` included.
+  // A negative value is the benign case (it would merely lower the floor).
+  describe.each([
+    ["maxEntriesPerRun", "negative", { maxEntriesPerRun: -1 }],
+    ["maxEntriesPerRun", "NaN", { maxEntriesPerRun: Number.NaN }],
+    ["maxEntriesPerRun", "Infinity", { maxEntriesPerRun: Number.POSITIVE_INFINITY }],
+    ["maxEntriesPerRun", "fractional", { maxEntriesPerRun: 1.5 }],
+    ["knownTail", "NaN", { knownTail: Number.NaN }],
+    ["knownTail", "negative", { knownTail: -1 }],
+  ])("rejects %s = %s at the seam", (_option, _shape, overrides) => {
+    test("fails closed before touching storage", async () => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      const writer = new Writer({ storage: s, currentJsonKey: KEY });
+      for (let i = 0; i < 20; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: `d${i}`,
+          body: { _id: `d${i}`, n: i },
+        });
+      }
+      const before = await readCurrentJson(s, KEY);
+
+      await expect(
+        compact({ storage: s, currentJsonKey: KEY }, {
+          minEntriesToCompact: 1,
+          ...overrides,
+        } as InternalCompactOptions),
+      ).rejects.toMatchObject({ code: "InvalidConfig" });
+
+      // Nothing moved: the floor is intact, no snapshot pointer, and no
+      // orphan snapshot object was left on the bucket.
+      const after = await readCurrentJson(s, KEY);
+      expect(after?.json.log_seq_start).toBe(before?.json.log_seq_start);
+      expect(after?.json.snapshot).toBeNull();
+      const snapshots: string[] = [];
+      for await (const entry of s.list(`${KEY.slice(0, KEY.lastIndexOf("/"))}/snapshot/`)) {
+        snapshots.push(entry.key);
+      }
+      expect(snapshots).toEqual([]);
+    });
+  });
+
+  test("snapshotKey rejects a non-finite seq rather than padding it into the key", () => {
+    // Defense in depth one layer under the seam check above: every
+    // comparison in the range guard is false against NaN, so without an
+    // explicit integer test `pad(NaN)` yields a `000000000NaN` filename.
+    const hash = "a".repeat(64);
+    expect(() => snapshotKey("p/c", 0, Number.NaN, hash)).toThrowError(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    expect(() => snapshotKey("p/c", Number.NaN, 10, hash)).toThrowError(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    expect(() => snapshotKey("p/c", 0, Number.POSITIVE_INFINITY, hash)).toThrowError(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    // The valid case still builds the zero-padded key.
+    expect(snapshotKey("p/c", 0, 40, hash)).toBe(
+      `p/c/snapshot/L9/${"0".repeat(12)}-${"0".repeat(10)}40-${hash}.json`,
+    );
+  });
+
+  test("a validated fold still advances the floor from a healthy default", async () => {
+    // Guards the guard: the seam check must not reject the ordinary
+    // no-overrides call, where `maxEntriesPerRun` defaults to
+    // MAX_SAFE_INTEGER and `knownTail` is absent.
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 5; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const res = await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 1 });
+    expect(res.written).toBe(true);
+    expect(res.logSeqStartAfter).toBeGreaterThan(res.logSeqStartBefore);
   });
 
   test("is idempotent: re-running with no new writes is a no-op", async () => {

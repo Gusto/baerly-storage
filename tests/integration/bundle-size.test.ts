@@ -329,7 +329,16 @@ const BUDGETS: readonly Budget[] = [
   //     (measured 234566 vs the old 234496 ceiling), the same class of
   //     shared-chunk boundary shift the ./s3 note above records. gz/min-gz
   //     unaffected; this is a tripwire rebaseline, not a shipped-cost change.
-  { entry: "index.js", raw: 230 * 1024, gz: 72 * 1024, minGz: 20 * 1024 },
+  //   → 231 KiB raw / 73 KiB gz (2026-08-01): floor-monotonicity work on
+  //     `current.json` — the `casUpdateCurrentJson` admission guard plus the
+  //     expanded `@throws` contract and `CurrentJson.log_seq_start` invariant
+  //     JSDoc. Almost entirely comment/JSDoc bytes, which rolldown ships
+  //     un-stripped: min-gz (the minified hard ceiling, where comments are
+  //     gone) barely moved. Measured 236371 raw / 74129 gz / 20252 min-gz
+  //     (min-gz 228 B under). Deliberate doc-quality spend, not code creep —
+  //     per the POLICY above, raw/gz are creep tripwires and are rebaselined
+  //     rather than paid for by golfing comments.
+  { entry: "index.js", raw: 231 * 1024, gz: 73 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -507,7 +516,17 @@ const BUDGETS: readonly Budget[] = [
   //   → 350 KiB raw (2026-07-15): dep sweep — hono 4.12.27→4.12.30 patch.
   //     Deliberate upstream bump, not code creep. Measured 358079 raw;
   //     gz/min-gz under.
-  { entry: "http.js", raw: 350 * 1024, gz: 104 * 1024, minGz: 36 * 1024 },
+  //   → 352 KiB raw / 105 KiB gz (2026-08-01): floor-monotonicity admission
+  //     guard in `casUpdateCurrentJson` — rejects a CAS that lowers
+  //     `log_seq_start`, which `assertCurrentJson` cannot see (it needs both
+  //     sides of the transition) — plus `compact()`'s seq-option validation
+  //     covering the fold CAS that bypasses that helper, and the JSDoc for
+  //     both. gz needed the bump: it sat 260 B under before this change, so
+  //     the mostly-comment delta crossed the axis. min-gz (the hard ceiling,
+  //     comments stripped) stays 315 B under. Measured 359799 raw / 106796 gz
+  //     / 36549 min-gz. Deliberate safety + doc change; raw/gz rebaselined
+  //     rather than golfing the comments.
+  { entry: "http.js", raw: 352 * 1024, gz: 105 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -663,7 +682,12 @@ const BUDGETS: readonly Budget[] = [
   //     source-of-truth win for the BAERLY_MAINTENANCE_* contract. Also
   //     rolldown 1.1.0→1.1.3 from `pnpm dedupe`. Measured 127151 raw /
   //     38915 gz / 11298 min-gz.
-  { entry: "maintenance.js", raw: 125 * 1024, gz: 39 * 1024, minGz: 12 * 1024 },
+  //   → 127 KiB raw (2026-08-01): floor-monotonicity work — `compact()`'s
+  //     seq-option validation (this closure owns the compactor) and the
+  //     `casUpdateCurrentJson` guard, plus JSDoc on both. Measured 129227 raw
+  //     / 39688 gz / 11471 min-gz; gz (248 B) and min-gz (817 B) both stay
+  //     under, only the raw tripwire moves.
+  { entry: "maintenance.js", raw: 127 * 1024, gz: 39 * 1024, minGz: 12 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -838,7 +862,13 @@ const BUDGETS: readonly Budget[] = [
   //     patch in this aggregator's closure. Deliberate upstream bump, not code
   //     creep. Measured 430785 raw / 129071 gz; min-gz under. Only the raw/gz
   //     creep tripwires move.
-  { entry: "cloudflare.js", raw: 421 * 1024, gz: 127 * 1024, minGz: 45 * 1024 },
+  //   → 423 KiB raw (2026-08-01): floor-monotonicity admission guard in
+  //     `casUpdateCurrentJson` plus `compact()`'s seq-option validation
+  //     (same change as http.js above; shared current-json + maintenance
+  //     chunks). Measured 432505 raw / 129632 gz / 45580 min-gz; gz (416 B)
+  //     and min-gz (500 B) both stay under, only raw moves. Deliberate
+  //     safety change.
+  { entry: "cloudflare.js", raw: 423 * 1024, gz: 127 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -975,7 +1005,12 @@ const BUDGETS: readonly Budget[] = [
   //     self-explaining error message. Measured 40341 raw / 14447 gz. This dev-only
   //     bundle has no min-gz axis, so gz is its tightest tripwire; rebaselined
   //     gz 14→15 KiB rather than golf the doc/error (see the POLICY on index.js).
-  { entry: "dev.js", raw: 40 * 1024, gz: 15 * 1024 },
+  //   → 41 KiB raw (2026-08-01): floor-monotonicity work — this closure pulls
+  //     the `current-json` chunk, so it carries the `casUpdateCurrentJson`
+  //     guard and its expanded JSDoc. Measured 41442 raw / 14808 gz; gz stays
+  //     552 B under (no min-gz axis on this entry). Comment-dominated
+  //     rebaseline, not code creep.
+  { entry: "dev.js", raw: 41 * 1024, gz: 15 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare

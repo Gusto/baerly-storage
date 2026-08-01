@@ -87,11 +87,17 @@ export interface CurrentJson {
    * {@link createCurrentJson} set this to `0`; the compactor advances
    * it on every fold.
    *
-   * Invariants the compactor maintains:
+   * Invariants:
    *   - `0 <= log_seq_start <= tail_hint`
-   *   - `log_seq_start` advances monotonically (never decreases)
+   *   - `log_seq_start` advances monotonically (never decreases).
+   *     {@link casUpdateCurrentJson} rejects a mutator that lowers it;
+   *     `compact()` is monotone by construction once its seq-arithmetic
+   *     options are validated at the seam; `baerly admin restore
+   *     --force` is the deliberate truncate exemption.
    *   - `log_seq_start > 0` implies `snapshot !== null` (the snapshot
-   *     covers `[0, log_seq_start)`)
+   *     covers `[0, log_seq_start)`) — except after a `--force`
+   *     truncate, which resets `snapshot` to `null` while reseeding
+   *     the floor above any surviving old-generation log object.
    */
   log_seq_start: number;
 
@@ -272,6 +278,19 @@ export async function createCurrentJson(
  * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist
  *         (use {@link createCurrentJson} instead) or body doesn't
  *         parse / fails the shape guard.
+ * @throws BaerlyError{code:"Internal"} — the mutator lowered
+ *         `log_seq_start`. The floor is monotone non-decreasing;
+ *         equality is permitted (a `tail_hint` refresh or
+ *         `last_warned_seq` stamp holds it fixed). No *production*
+ *         mutator writes the floor, so no shipping caller can regress
+ *         it; this guards future ones, and the protocol suite
+ *         exercises the branch directly. Two floor writers bypass this
+ *         function and are NOT covered by it: `compact()`, which must
+ *         CAS on the etag of the read it folded from and so issues its
+ *         own If-Match PUT (its fold end cannot dip below the pre-fold
+ *         floor once its options are validated at the seam), and
+ *         `baerly admin restore --force`, the deliberate truncate
+ *         exemption.
  */
 export async function casUpdateCurrentJson(
   storage: Storage,
@@ -292,6 +311,20 @@ export async function casUpdateCurrentJson(
   // targets Node ≥24 so it is safe.
   const next = mutator(structuredClone(existing.json));
   assertCurrentJson(next, key);
+  // Floor monotonicity is an admission-control invariant, not a shape
+  // one: it needs both sides of the transition, so `assertCurrentJson`
+  // cannot see it. A regressed floor makes a stale pre-fold reader
+  // cursor pass the `cursorSeq < log_seq_start` re-bootstrap check
+  // (http/since.ts) instead of failing it. `Internal`, not
+  // `InvalidResponse`: the fault is a local caller's mutator, not a
+  // malformed storage response. See `CurrentJson.log_seq_start` and
+  // docs/spec/sync-protocol.md invariant 12.
+  if (next.log_seq_start < existing.json.log_seq_start) {
+    throw new BaerlyError(
+      "Internal",
+      `current.json at ${key}: log_seq_start must not decrease (${String(existing.json.log_seq_start)} → ${String(next.log_seq_start)})`,
+    );
+  }
   const body = encodeJson(next);
   const putOpts: StoragePutOptions = {
     ifMatch: existing.etag,

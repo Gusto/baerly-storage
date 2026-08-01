@@ -167,6 +167,11 @@ const APPLICATION_JSON = "application/json";
  * `./maintenance.ts`) decides whether to schedule another run. The
  * orphan snapshot file just written will be swept by `runGc()`.
  *
+ * @throws BaerlyError code="InvalidConfig" — `maxEntriesPerRun` or
+ *   `knownTail` (the `InternalCompactOptions` seam) is not a
+ *   non-negative integer. Checked before any I/O: a non-finite value
+ *   would otherwise slip the range guards and write an unreadable
+ *   `current.json`.
  * @throws BaerlyError code="InvalidResponse" — `current.json` is
  *   present but malformed, or a snapshot body fails its schema /
  *   collection cross-check.
@@ -207,6 +212,36 @@ export const compact = async (
   const ceilingEntries = internal.ceilingEntries ?? Number.POSITIVE_INFINITY;
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+
+  // Validate the options that feed seq arithmetic, before any I/O.
+  // `InternalCompactOptions` is an unvalidated seam — reached by JS
+  // callers, in-repo casts, and the `_internal/testing` subpath. A
+  // non-finite value must never reach the fold: NaN slips
+  // every `<`/`>` guard below (`Math.min(nextSeq, NaN)` is NaN), lands a
+  // snapshot at a `…-00000000000NaN-…` key, and CASes
+  // `log_seq_start: null` — JSON.stringify renders NaN as null — after
+  // which every read path throws InvalidResponse, including
+  // `admin restore --force`, which reads `current.json` before reaching
+  // its own floor exemption. Nothing shipped can repair that.
+  //
+  // Validating here rather than asserting the floor at the fold also
+  // buys the monotonicity invariant outright: with `maxPerRun >= 0` and
+  // `nextSeq >= logSeqStartBefore` (guaranteed by `probeFloor`),
+  // `foldEnd >= logSeqStartBefore` holds by construction, so the floor
+  // cannot regress here — and a rejected run costs no orphan snapshot,
+  // because nothing has been written yet. The ceilings are deliberately
+  // not checked: a NaN there fails the viability comparisons closed
+  // (defer), which is the safe direction.
+  const requireSeqOption = (name: string, value: number): void => {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `compact(${collectionName}): ${name} must be a non-negative integer, got ${String(value)}`,
+      );
+    }
+  };
+  requireSeqOption("maxEntriesPerRun", maxPerRun);
+  requireSeqOption("knownTail", internal.knownTail ?? 0);
 
   // ── Step 1. Read current.json fresh. ────────────────────────────
   const read = await readCurrentJson(
@@ -257,6 +292,11 @@ export const compact = async (
     };
   }
 
+  // `foldEnd >= logSeqStartBefore` by construction: `maxPerRun` is a
+  // validated non-negative integer and `nextSeq >= logSeqStartBefore`
+  // via `probeFloor`. Step 7's CAS bypasses `casUpdateCurrentJson`'s
+  // floor guard (it must If-Match the etag we folded from), so that
+  // construction is what keeps this writer monotone.
   const foldEnd = Math.min(nextSeq, logSeqStartBefore + maxPerRun);
 
   // ── Step 2. Load the previous snapshot (if any) as the fold base.

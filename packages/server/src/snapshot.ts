@@ -50,7 +50,17 @@ export const snapshotKey = (
   maxSeq: number,
   sha256: string,
 ): string => {
-  if (minSeq < 0 || maxSeq < 0 || minSeq > maxSeq || maxSeq > MAX_SEQ) {
+  // `Number.isInteger` first: every `<`/`>` below is false against NaN,
+  // so a non-finite seq would sail through and `pad()` it into a
+  // `000000000NaN` filename.
+  if (
+    !Number.isInteger(minSeq) ||
+    !Number.isInteger(maxSeq) ||
+    minSeq < 0 ||
+    maxSeq < 0 ||
+    minSeq > maxSeq ||
+    maxSeq > MAX_SEQ
+  ) {
     throw new BaerlyError("InvalidConfig", `snapshotKey: invalid range [${minSeq}, ${maxSeq})`);
   }
   if (!/^[0-9a-f]{64}$/.test(sha256)) {

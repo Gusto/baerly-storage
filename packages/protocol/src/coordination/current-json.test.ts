@@ -176,6 +176,29 @@ describe("casUpdateCurrentJson", () => {
       code: "InvalidResponse",
     });
   });
+
+  plainTest("rejects a mutator that lowers log_seq_start", async () => {
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson({ tail_hint: 5000, log_seq_start: 5000 }));
+    await expect(
+      casUpdateCurrentJson(s, "k", (c) => ({ ...c, log_seq_start: 0 })),
+    ).rejects.toMatchObject({ code: "Internal" });
+    // The rejection must happen before the PUT — the floor on disk is intact.
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_seq_start).toBe(5000);
+  });
+
+  plainTest("permits a re-write that holds log_seq_start steady", async () => {
+    // The boundary: monotone means non-decreasing. A compactor pass that
+    // advances `tail_hint` without folding anything leaves the floor equal,
+    // and must not be rejected. Fails if the guard is written `<=`.
+    const s = new MemoryStorage();
+    await createCurrentJson(s, "k", seedJson({ tail_hint: 5000, log_seq_start: 5000 }));
+    await casUpdateCurrentJson(s, "k", (c) => ({ ...c, tail_hint: 6000 }));
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_seq_start).toBe(5000);
+    expect(got!.json.tail_hint).toBe(6000);
+  });
 });
 
 /**
@@ -308,6 +331,34 @@ describe("CurrentJson schema (PBT)", () => {
       snapshot_bytes: fc.integer({ min: 0, max: 1_000_000 }),
       snapshot_rows: fc.integer({ min: 0, max: 10_000 }),
     }),
+  );
+
+  test.prop({
+    initial: validCurrentJson,
+    delta: fc.integer({ min: -1000, max: 1000 }),
+  })(
+    "floor admission: the CAS accepts a floor move iff it does not decrease",
+    async ({ initial, delta }) => {
+      const s = new MemoryStorage();
+      await createCurrentJson(s, "k", initial);
+      const target = initial.log_seq_start + delta;
+      // Only exercise floors `assertCurrentJson` already accepts
+      // (`0 <= log_seq_start <= tail_hint`), so the sole possible
+      // rejection reason is the monotonicity admission check. This
+      // covers the whole ordering, not the two sampled points above.
+      if (target < 0 || target > initial.tail_hint) {
+        return;
+      }
+      const attempt = casUpdateCurrentJson(s, "k", (c) => ({ ...c, log_seq_start: target }));
+      const shouldReject = target < initial.log_seq_start;
+      if (shouldReject) {
+        await expect(attempt).rejects.toMatchObject({ code: "Internal" });
+      } else {
+        await attempt;
+      }
+      const got = await readCurrentJson(s, "k");
+      expect(got!.json.log_seq_start).toBe(shouldReject ? initial.log_seq_start : target);
+    },
   );
 
   test.prop({
