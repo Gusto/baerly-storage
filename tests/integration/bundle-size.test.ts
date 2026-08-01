@@ -919,7 +919,17 @@ const BUDGETS: readonly Budget[] = [
   //     discriminator (#73) — same change as http.js above, reaching this
   //     aggregator through the shared http + current-json chunks. min-gz
   //     stays 239 B under. Measured 439542 raw / 132296 gz / 45841 min-gz.
-  { entry: "cloudflare.js", raw: 430 * 1024, gz: 130 * 1024, minGz: 45 * 1024 },
+  //   → 431 KiB raw (2026-08-01): `LocalFsStorage`'s EXDEV fix — the shared
+  //     `tempPathFor` helper and the rewritten staging comments in
+  //     `packages/dev/src/local-fs.ts`, which reaches this aggregator via the
+  //     same `src-*` chunk `dev.js` uses. Comments ship un-stripped, so the
+  //     +392 B is almost entirely the corrected prose explaining why the temp
+  //     must be a sibling of its destination. Per the POLICY that is a
+  //     rebaseline, not a trim — the JSDoc was already tightened once to keep
+  //     `dev.js` under its own line, and cutting further would delete the
+  //     reason the code is shaped this way. Measured 440712 raw; gz (132345,
+  //     −775) and min-gz (45839, −241) both stay under.
+  { entry: "cloudflare.js", raw: 431 * 1024, gz: 130 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:

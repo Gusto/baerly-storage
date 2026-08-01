@@ -1,4 +1,12 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +28,43 @@ const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
 
 // sha-256("hello") — quoted to match the wire ETag format.
 const ETAG_HELLO = `"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"`;
+
+/**
+ * A writable directory on a filesystem *other* than `os.tmpdir()`'s, or
+ * `null` when the host has only one. Identified by a differing `st_dev`,
+ * which is exactly the condition `rename(2)` rejects with `EXDEV`.
+ *
+ * `/dev/shm` is a separate tmpfs mount on essentially every Linux distro,
+ * so the cross-device arm runs for real in CI. macOS has no equivalent
+ * (`/Volumes` holds only removable/network mounts, usually absent or
+ * read-only), so it typically skips there — hence the always-runs
+ * `TMPDIR` proxy alongside it.
+ */
+const findForeignFilesystem = (): string | null => {
+  const tmpDev = statSync(tmpdir()).dev;
+  const candidates = ["/dev/shm", "/run/shm"];
+  try {
+    for (const volume of readdirSync("/Volumes")) {
+      candidates.push(join("/Volumes", volume));
+    }
+  } catch {
+    // No /Volumes (non-darwin) — the Linux candidates above are enough.
+  }
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).dev === tmpDev) {
+        continue;
+      }
+      accessSync(candidate, constants.W_OK);
+      return candidate;
+    } catch {
+      // Missing, unreadable, or read-only — not usable as a foreign root.
+    }
+  }
+  return null;
+};
+
+const FOREIGN_FS = findForeignFilesystem();
 
 // LocalFsStorage-specific key arbitrary:
 //   - Lowercase only. Case-insensitive filesystems (default macOS
@@ -109,14 +154,19 @@ describe("LocalFsStorage — impl-specific", () => {
     expect(entries).toEqual(["x/y/z"]);
   });
 
-  test("list() excludes internal create-if-absent temp files", async () => {
-    // The link(2)-based create-if-absent writes a `.baerly-tmp-*` file under
-    // the bucket root; a crash mid-create (or a concurrent list during a
-    // create) can leave one behind. It must never surface as a key.
+  test("list() excludes internal temp files at every depth", async () => {
+    // BOTH write paths stage a `.baerly-tmp-*` file next to their
+    // destination — the link(2) create-if-absent and the write+rename that
+    // serves unconditional and `ifMatch` puts. A crash between staging and
+    // publishing (or a concurrent list during one) can leave one behind at
+    // any depth, and it must never surface as a key. This is what makes
+    // staging inside the bucket root safe; see `tempPathFor`.
     await s.put("real", utf8("v"));
+    await s.put("nested/real", utf8("v"));
     writeFileSync(join(root, ".baerly-tmp-99999-0-deadbeef"), "leftover");
+    writeFileSync(join(root, "nested", ".baerly-tmp-99999-0-cafebabe"), "leftover");
     const listed = await collect(s.list(""));
-    expect(listed.map((e) => e.key)).toEqual(["real"]);
+    expect(listed.map((e) => e.key)).toEqual(["nested/real", "real"]);
   });
 
   test("path-traversal keys are rejected", async () => {
@@ -135,6 +185,76 @@ describe("LocalFsStorage — impl-specific", () => {
       });
     }
   });
+
+  // --- The write path must never leave the bucket root (EXDEV) ---
+  //
+  // `rename(2)` and `link(2)` fail with `EXDEV` across filesystems, so a
+  // temp staged outside the root breaks every write whenever the root and
+  // `os.tmpdir()` are on different volumes. That is the *normal* production
+  // shape, not an exotic one: the default root is `<cwd>/.baerly-data`
+  // (`packages/adapter-node/src/local-fs-storage.ts`), which in a container
+  // is a mounted data volume while `/tmp` is a tmpfs or the image layer.
+  //
+  // A genuine EXDEV needs a second filesystem, which no test can assume, so
+  // the guard is split: the first test always runs and pins the invariant
+  // that actually matters (the write path does not depend on `os.tmpdir()`),
+  // and the second exercises real EXDEV wherever a second volume exists.
+
+  test("put does not depend on os.tmpdir() being usable", async () => {
+    // The portable proxy for EXDEV. If `put` stages its temp outside the
+    // bucket root, it inherits every failure mode of that other directory —
+    // a different volume (EXDEV), a read-only `/tmp`, a tmpfs too small for
+    // the body, or, as here, a `TMPDIR` that does not resolve. A `put` that
+    // stages same-dir is immune to all of them, so pointing `TMPDIR` at a
+    // missing directory is a deterministic, dependency-free stand-in for
+    // "the temp escaped the root". `os.tmpdir()` re-reads `TMPDIR` on every
+    // call, so this takes effect without reloading the module.
+    const original = process.env["TMPDIR"];
+    process.env["TMPDIR"] = join(root, "..", "baerly-tmpdir-does-not-exist");
+    try {
+      await expect(s.put("unconditional", utf8("v1"))).resolves.toMatchObject({
+        etag: expect.any(String),
+      });
+      const created = await s.put("cas", utf8("v1"), { ifNoneMatch: "*" });
+      await expect(s.put("cas", utf8("v2"), { ifMatch: created.etag })).resolves.toMatchObject({
+        etag: expect.any(String),
+      });
+      expect(fromBytes((await s.get("unconditional"))!.body)).toBe("v1");
+      expect(fromBytes((await s.get("cas"))!.body)).toBe("v2");
+    } finally {
+      if (original === undefined) {
+        delete process.env["TMPDIR"];
+      } else {
+        process.env["TMPDIR"] = original;
+      }
+    }
+  });
+
+  test.skipIf(FOREIGN_FS === null)(
+    "put succeeds when the bucket root is on a different filesystem",
+    async () => {
+      // The real thing. Skips rather than lies when the host has only one
+      // writable filesystem — on Linux CI `/dev/shm` is a separate tmpfs mount
+      // (hence a distinct `st_dev`, hence a genuine EXDEV against `/tmp`), so
+      // this arm does run where it counts.
+      const foreignRoot = mkdtempSync(join(FOREIGN_FS!, "baerly-localfs-exdev-"));
+      try {
+        const storage = new LocalFsStorage({ root: foreignRoot });
+        expect(statSync(foreignRoot).dev).not.toBe(statSync(tmpdir()).dev);
+        await expect(storage.put("k", utf8("v1"))).resolves.toMatchObject({
+          etag: expect.any(String),
+        });
+        const created = await storage.put("cas", utf8("v1"), { ifNoneMatch: "*" });
+        await expect(
+          storage.put("cas", utf8("v2"), { ifMatch: created.etag }),
+        ).resolves.toMatchObject({ etag: expect.any(String) });
+        expect(fromBytes((await storage.get("k"))!.body)).toBe("v1");
+        expect(fromBytes((await storage.get("cas"))!.body)).toBe("v2");
+      } finally {
+        rmSync(foreignRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("concurrent create-if-absent on a fresh key has exactly one winner", async () => {
     const concRoot = await mkdtemp(join(tmpdir(), "baerly-localfs-race-"));
