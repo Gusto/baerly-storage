@@ -106,4 +106,69 @@ describe("subscription-pool", () => {
     const client = makeClient(mock);
     expect(poolFor(client)).toBe(poolFor(client));
   });
+
+  test("SchemaError re-bootstraps the cursor instead of retrying it", async () => {
+    // `/v1/since` returns SchemaError (400) for two permanent cursor
+    // states: the entry was folded into a snapshot and GC'd, or the
+    // cursor was minted in a generation `restore --force` truncated.
+    // Neither clears on retry, so the pool must drop the cursor and
+    // re-bootstrap. Before this behaviour existed the loop retried the
+    // same rejected cursor at 1 req/s forever with the table frozen.
+    const cursors: (string | null)[] = [];
+    let servedEvent = false;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req: Request) => {
+      const url = new URL(req.url);
+      const cursor = url.searchParams.get("cursor");
+      cursors.push(cursor);
+      if (cursor !== null && cursor.length > 0) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: "SchemaError", message: "cursor … generation that no longer exists" },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      if (servedEvent) {
+        // Subsequent bootstraps idle. One-shot so the cursor is adopted
+        // exactly once and the count below is deterministic — otherwise
+        // the pool would legitimately re-adopt it every cycle.
+        return Promise.resolve(
+          new Response(JSON.stringify({ events: [], next_cursor: "" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      servedEvent = true;
+      // Bootstrap poll: hand back one event so the pool adopts a cursor.
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ events: [{ lsn: "aaa_bbb_ccc" }], next_cursor: "deadbeef.aaa_bbb_ccc" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    });
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const fetcher = vi.fn<() => Promise<unknown>>().mockResolvedValue([]);
+    const unsubscribe = pool.attach(
+      "gen",
+      ["notes"],
+      new Set(["notes"]),
+      fetcher,
+      vi.fn<() => void>(),
+    );
+
+    await waitMicrotasks(40);
+    unsubscribe();
+
+    // The rejected cursor must not be retried: after the 400 the pool
+    // goes back to "" rather than sending `deadbeef.…` a second time.
+    const rejected = cursors.filter((c) => c === "deadbeef.aaa_bbb_ccc");
+    expect(rejected).toHaveLength(1);
+    expect(cursors.filter((c) => c === "" || c === null).length).toBeGreaterThan(1);
+  });
 });
