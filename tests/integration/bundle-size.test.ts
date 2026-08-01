@@ -347,7 +347,15 @@ const BUDGETS: readonly Budget[] = [
   //     recorded in the note above. Measured 236768 raw / 74313 gz (gz
   //     still 439 B under). Rebaselined per the POLICY rather than golfing
   //     the warning that keeps the bug from being reintroduced.
-  { entry: "index.js", raw: 232 * 1024, gz: 73 * 1024, minGz: 20 * 1024 },
+  //   → 233 KiB raw / 74 KiB gz (2026-08-01): `/v1/since` cursor generation
+  //     discriminator (#73) — the `cursor.ts` codec, `CurrentJson.generation`
+  //     and its `assertCurrentJson` guard, and `mintGeneration`.
+  //     Comment/JSDoc dominated, as the axis split shows: raw and gz crossed
+  //     while min-gz (the hard ceiling, comments stripped) stayed 176 B under.
+  //     `cursor.ts` imports only `errors.ts`, already present in every
+  //     closure, so no new module was dragged in. Measured 238198 raw /
+  //     74840 gz / 20304 min-gz.
+  { entry: "index.js", raw: 233 * 1024, gz: 74 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -535,7 +543,16 @@ const BUDGETS: readonly Budget[] = [
   //     comments stripped) stays 315 B under. Measured 359799 raw / 106796 gz
   //     / 36549 min-gz. Deliberate safety + doc change; raw/gz rebaselined
   //     rather than golfing the comments.
-  { entry: "http.js", raw: 352 * 1024, gz: 105 * 1024, minGz: 36 * 1024 },
+  //   → 359 KiB raw / 107 KiB gz (2026-08-01): `/v1/since` cursor generation
+  //     discriminator (#73). This closure owns the handler, so it takes the
+  //     whole change: the `cursor.ts` codec, `decodeCursor` shape validation,
+  //     the generation comparison and its rationale comment, and the
+  //     `pollOnce` split that carries the manifest generation out to
+  //     `next_cursor` without a second `current.json` read. min-gz stays
+  //     under, but only by 43 B — the next change through this closure should
+  //     expect to argue about it rather than assume headroom. Measured
+  //     366541 raw / 109305 gz / 36821 min-gz.
+  { entry: "http.js", raw: 359 * 1024, gz: 107 * 1024, minGz: 36 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -711,7 +728,13 @@ const BUDGETS: readonly Budget[] = [
   //     Same commit, no budget move needed: index.js 236837 raw (731 B
   //     under), http.js 360265 (183 B), cloudflare.js 432978 (174 B),
   //     dev.js unchanged.
-  { entry: "maintenance.js", raw: 127 * 1024, gz: 40 * 1024, minGz: 12 * 1024 },
+  //   → 128 KiB raw (2026-08-01): `/v1/since` cursor generation discriminator
+  //     (#73). This closure does not touch cursors; it moves only because it
+  //     shares `current-json.js`, which gained the `generation` field, its
+  //     guard, and `mintGeneration`. gz (695 B) and min-gz (776 B) both stay
+  //     under; only the raw tripwire moves. Measured 130752 raw / 40265 gz /
+  //     11512 min-gz.
+  { entry: "maintenance.js", raw: 128 * 1024, gz: 40 * 1024, minGz: 12 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -892,7 +915,11 @@ const BUDGETS: readonly Budget[] = [
   //     chunks). Measured 432505 raw / 129632 gz / 45580 min-gz; gz (416 B)
   //     and min-gz (500 B) both stay under, only raw moves. Deliberate
   //     safety change.
-  { entry: "cloudflare.js", raw: 423 * 1024, gz: 127 * 1024, minGz: 45 * 1024 },
+  //   → 430 KiB raw / 130 KiB gz (2026-08-01): `/v1/since` cursor generation
+  //     discriminator (#73) — same change as http.js above, reaching this
+  //     aggregator through the shared http + current-json chunks. min-gz
+  //     stays 239 B under. Measured 439542 raw / 132296 gz / 45841 min-gz.
+  { entry: "cloudflare.js", raw: 430 * 1024, gz: 130 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -1034,7 +1061,13 @@ const BUDGETS: readonly Budget[] = [
   //     guard and its expanded JSDoc. Measured 41442 raw / 14808 gz; gz stays
   //     552 B under (no min-gz axis on this entry). Comment-dominated
   //     rebaseline, not code creep.
-  { entry: "dev.js", raw: 41 * 1024, gz: 15 * 1024 },
+  //   → 42 KiB raw (2026-08-01): `/v1/since` cursor generation discriminator
+  //     (#73). This closure pulls the `current-json` chunk, so it carries the
+  //     `generation` field, its `assertCurrentJson` guard, and
+  //     `mintGeneration` (which `ensureTable` now calls). Measured 42789 raw
+  //     / 15304 gz; gz stays 56 B under — tight, so the next dev-closure
+  //     change should expect to move it. Comment-dominated rebaseline.
+  { entry: "dev.js", raw: 42 * 1024, gz: 15 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare

@@ -10,6 +10,7 @@ export {
   casUpdateCurrentJson,
   createCurrentJson,
   logSeqStartOf,
+  mintGeneration,
   readCurrentJson,
 } from "./coordination/current-json.ts";
 export * from "./coordination/gc-pending.ts";
@@ -26,6 +27,7 @@ export * from "./time.ts";
 export * from "./types.ts";
 export * from "./verifier.ts";
 export * from "./hashing.ts";
+export * from "./cursor.ts";
 export * from "./log.ts";
 export * from "./log-key.ts";
 export * from "./metrics.ts";
