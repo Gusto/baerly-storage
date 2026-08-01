@@ -35,13 +35,25 @@ import {
 } from "@baerly/protocol";
 
 /**
+ * Fixed stand-in for the random nonce `mintGeneration()` produces at
+ * provisioning time. Pinned rather than minted so `/v1/since` cursor
+ * assertions stay deterministic; must be lowercase hex, since that is
+ * what the cursor validator accepts on the wire.
+ *
+ * Pass `{ generation: undefined }` to `logStateCurrentJson` to model a
+ * manifest written before the field existed.
+ */
+export const LOG_STATE_GENERATION = "0123456789ab";
+
+/**
  * Build a `CurrentJson` with launch defaults. Every field is
  * overridable — pass the ones a given test cares about (commonly
  * `tail_hint` / `log_seq_start` / `writer_fence.owner`) and inherit the
  * rest.
  *
  * Defaults match a freshly-provisioned collection: no snapshot, an empty
- * log tail at seq 0, and a zero-epoch fence. Pass the result to
+ * log tail at seq 0, a zero-epoch fence, and a generation nonce. Pass
+ * the result to
  * `createCurrentJson(storage, key, logStateCurrentJson(...))`.
  */
 export const logStateCurrentJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
@@ -52,6 +64,7 @@ export const logStateCurrentJson = (overrides: Partial<CurrentJson> = {}): Curre
   writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
   snapshot_bytes: 0,
   snapshot_rows: 0,
+  generation: LOG_STATE_GENERATION,
   ...overrides,
 });
 

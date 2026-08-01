@@ -29,9 +29,12 @@ import {
   type BaerlyConfig,
   BaerlyError,
   COUNT_BIT_WIDTH,
+  formatCursor,
   type LogEntry,
   logSeqStartOf,
   lsnParts,
+  NO_GENERATION,
+  parseCursor,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
@@ -51,6 +54,33 @@ import type { SinceResponse } from "../contract.ts";
 // COUNT_BIT_WIDTH is 53; Math.ceil(53 / 5) = 11.
 const SEQ_CHARS = Math.ceil(COUNT_BIT_WIDTH / 5); // 11
 const LSN_RE = new RegExp(`^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{${SEQ_CHARS}}$`);
+
+/**
+ * Generation half of a cursor: lowercase hex as minted by
+ * `mintGeneration`, or the `NO_GENERATION` sentinel for a manifest that
+ * predates the field.
+ */
+const GENERATION_RE = /^(?:[0-9a-f]+|-)$/;
+
+/**
+ * Reject a malformed cursor before it reaches storage, and return its
+ * decoded halves.
+ *
+ * Shape validation lives here rather than in the codec because the
+ * codec is a protocol leaf with no opinion about which LSN dialect a
+ * given build mints — `LSN_RE` is that opinion, and it is derived from
+ * `COUNT_BIT_WIDTH`.
+ */
+const decodeCursor = (cursor: string): { generation: string; lsn: string } => {
+  const parts = parseCursor(cursor);
+  if (!GENERATION_RE.test(parts.generation) || !LSN_RE.test(parts.lsn)) {
+    throw new BaerlyError(
+      "SchemaError",
+      `cursor: invalid shape (expected a cursor returned by a prior SinceResponse); got ${JSON.stringify(cursor)}`,
+    );
+  }
+  return parts;
+};
 
 /**
  * Hard cap on log entries returned in a single poll cycle. 1024 is
@@ -120,17 +150,14 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
 
   // Up-front cursor-shape validation. `listEventsSince` also checks,
   // but doing it here short-circuits the fast-path read on bad input.
-  if (cursor.length > 0 && !LSN_RE.test(cursor)) {
-    throw new BaerlyError(
-      "SchemaError",
-      `cursor: invalid shape (expected an lsn returned by a prior SinceResponse); got ${JSON.stringify(cursor)}`,
-    );
+  if (cursor.length > 0) {
+    decodeCursor(cursor);
   }
 
   // Fast path: the first poll already sees new events.
-  const initial = await listEventsSince({ db, collection, cursor, signal });
-  if (initial.length > 0) {
-    return { events: initial, next_cursor: initial[initial.length - 1]!.lsn };
+  const initial = await pollOnce({ db, collection, cursor, signal });
+  if (initial.events.length > 0) {
+    return { events: initial.events, next_cursor: nextCursor(initial) };
   }
 
   // No events yet. Race a timeout against a polling loop.
@@ -188,12 +215,12 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
         return;
       }
       try {
-        const events = await listEventsSince({ db, collection, cursor, signal });
+        const polled = await pollOnce({ db, collection, cursor, signal });
         if (settled) {
           return;
         }
-        if (events.length > 0) {
-          settleResolve({ events, next_cursor: events[events.length - 1]!.lsn });
+        if (polled.events.length > 0) {
+          settleResolve({ events: polled.events, next_cursor: nextCursor(polled) });
           return;
         }
         const remaining = deadline - Date.now();
@@ -236,24 +263,41 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  * free — `seq` is monotonic across writer sessions.
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
- * collection without erroring). Cursor inside `[0, log_seq_start)` →
- * `BaerlyError{code:"SchemaError"}`.
+ * collection without erroring). Cursor inside `[0, log_seq_start)`, or
+ * minted in a truncated generation → `BaerlyError{code:"SchemaError"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
+  const polled = await pollOnce(opts);
+  return polled.events;
+}
+
+/**
+ * The body of {@link listEventsSince}, additionally surfacing the
+ * manifest `generation` the poll read.
+ *
+ * `longPollSince` needs that generation to mint `next_cursor`, and
+ * re-reading `current.json` to get it would add a Class A op to every
+ * poll — the idle-reader cost bound this protocol is built around.
+ * {@link listEventsSince} is public surface pinned by
+ * `tests/integration/public-surface.test.ts`, so it keeps returning a
+ * bare array and this internal variant carries the extra field.
+ *
+ * `generation` is `undefined` when the collection has no `current.json`
+ * (no events either, so it is never consumed) or when the manifest
+ * predates the field.
+ */
+async function pollOnce(
+  opts: ListEventsSinceOptions,
+): Promise<{ events: LogEntry[]; generation: string | undefined }> {
   const { db, collection, cursor, signal } = opts;
 
-  if (cursor.length > 0 && !LSN_RE.test(cursor)) {
-    throw new BaerlyError(
-      "SchemaError",
-      `cursor: invalid shape (expected an lsn returned by a prior SinceResponse); got ${JSON.stringify(cursor)}`,
-    );
-  }
+  const decoded = cursor.length > 0 ? decodeCursor(cursor) : undefined;
 
   const read = await db.getCurrentJson(collection, signalOpt(signal));
   if (read === null) {
     // No collection provisioned yet. Clients polling for a collection that
     // doesn't exist see an empty stream, NOT an error.
-    return [];
+    return { events: [], generation: undefined };
   }
   const logSeqStart = logSeqStartOf(read.json);
   // End bound is the DISCOVERED tail (probe past a stale-low hint).
@@ -269,15 +313,36 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
 
   // Derive the seq range to scan. Empty cursor → start at
   // `log_seq_start` (the first un-snapshotted entry). Non-empty
-  // cursor → start at `cursorSeq + 1`. A cursor whose seq is below
-  // `log_seq_start` references an entry the compactor has folded
-  // into the snapshot and the GC sweep has deleted; the client must
-  // re-bootstrap from a snapshot read before resuming.
+  // cursor → start at `cursorSeq + 1`, after two rejections.
   let startSeq: number;
-  if (cursor.length === 0) {
+  if (decoded === undefined) {
     startSeq = logSeqStart;
   } else {
-    const cursorSeq = lsnParts(cursor).seq;
+    const { generation, lsn } = decoded;
+    // (1) Wrong generation. A seq identifies a `log/<seq>` slot, and
+    // slots are REUSED: `restore --force` truncates and reseeds
+    // `log_seq_start` to one past the highest surviving log object,
+    // which can land below the old floor (the floor exemption —
+    // invariant 12 in `docs/spec/sync-protocol.md`). A pre-restore
+    // cursor would then clear check (2) below and resume into the new
+    // generation, silently skipping every restored row beneath it —
+    // gapped, not broken, which is the failure mode a sync client can't
+    // detect for itself.
+    //
+    // Both spellings of "no generation" — a manifest predating the
+    // field and a bare-LSN cursor predating the composite shape —
+    // decode to `NO_GENERATION`, so this stays one comparison with no
+    // fail-open branch. See the truth table in `sync-protocol.md`.
+    const currentGeneration = read.json.generation ?? NO_GENERATION;
+    if (generation !== currentGeneration) {
+      throw new BaerlyError(
+        "SchemaError",
+        `cursor ${JSON.stringify(cursor)} was minted in a generation that no longer exists (the collection has been truncated and restored); re-bootstrap from a snapshot read before resuming`,
+      );
+    }
+    // (2) Folded away. The entry is below the floor, so the compactor
+    // folded it into the snapshot and the GC sweep deleted it.
+    const cursorSeq = lsnParts(lsn).seq;
     if (cursorSeq < logSeqStart) {
       throw new BaerlyError(
         "SchemaError",
@@ -306,8 +371,19 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
     entries.push(entry);
   }
 
-  return entries;
+  return { events: entries, generation: read.json.generation };
 }
+
+/**
+ * Mint the `next_cursor` for a poll that produced events: the last
+ * entry's `lsn`, paired with the generation the poll read it under.
+ *
+ * Only called when `events` is non-empty, which is exactly when the
+ * poll saw a `current.json` — so the generation here is the manifest's,
+ * not a stand-in.
+ */
+const nextCursor = (polled: { events: LogEntry[]; generation: string | undefined }): string =>
+  formatCursor(polled.generation, polled.events[polled.events.length - 1]!.lsn);
 
 /** Pack an optional `signal` into the `{ signal? }` shape callers expect. */
 const signalOpt = (signal: AbortSignal | undefined): { signal?: AbortSignal } | undefined =>

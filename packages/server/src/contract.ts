@@ -90,6 +90,19 @@ export interface HttpOkEnvelope<T> {
  * `next_cursor` back on the next call. Empty `events` + same
  * `next_cursor` means "nothing changed within the budget"
  * (default budget: ~25s).
+ *
+ * `next_cursor` is **opaque**: echo it back verbatim, never parse it.
+ * It pairs the last entry's `lsn` with the collection generation the
+ * poll read, so a cursor from a collection that `baerly admin restore
+ * --force` has since truncated can be rejected instead of silently
+ * resuming into the new generation. `""` means "start from the
+ * collection's log floor" and is always valid.
+ *
+ * A `400 SchemaError` on resume means the cursor is permanently dead —
+ * the entry was folded into a snapshot and GC'd, or its generation was
+ * truncated. Neither clears on retry: restart with `cursor: ""`.
+ * Retrying the rejected cursor loops forever. See invariant 13 in
+ * `docs/spec/sync-protocol.md`.
  */
 export interface SinceResponse {
   readonly events: ReadonlyArray<LogEntry>;

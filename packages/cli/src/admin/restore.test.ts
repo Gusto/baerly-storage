@@ -225,6 +225,46 @@ describe("baerly admin restore", () => {
     expect(survivors).toContain(`${TABLE_PREFIX}/log/0.json`);
   });
 
+  test("both restore branches mint a generation, and --force re-mints a different one", async () => {
+    // The generation nonce is what lets `/v1/since` reject a cursor from
+    // the truncated collection. Two things have to hold: the fresh-target
+    // seed writes one at all, and `--force` writes a DIFFERENT one —
+    // re-using it would leave a pre-restore cursor looking valid and the
+    // stream silently gapped, which is issue #73.
+    //
+    // Note this is exactly what `writer_fence.epoch` cannot do: the
+    // fresh-target branch below seeds `epoch: 0`, so a truncate-to-empty
+    // is indistinguishable from a genuine epoch-0 collection.
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    const seeded = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(seeded?.json.generation).toMatch(/^[0-9a-f]{12}$/);
+
+    await writeFile(stdinPath, `{"_id":"g-1","x":1}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    const truncated = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(truncated?.json.generation).toMatch(/^[0-9a-f]{12}$/);
+    expect(truncated?.json.generation).not.toBe(seeded?.json.generation);
+  });
+
   test("--force chooses old tail from log keys without decoding malformed old entries", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const first = await runRestore(
