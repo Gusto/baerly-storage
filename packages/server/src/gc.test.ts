@@ -12,6 +12,7 @@ import {
   type GcPending,
   type Storage,
   type StorageGetOptions,
+  type StorageListEntry,
   GC_GRACE_PERIOD_MILLIS,
   GC_PENDING_SCHEMA_VERSION,
   MAX_PARALLEL_LOG_READS,
@@ -167,26 +168,27 @@ describe("runGc", () => {
 
   // ── grace anchoring ──────────────────────────────────────────────
   // `due_at` measures the writer-retry window from the MARK, never
-  // from the listed object's write time. That distinction is
-  // invisible to every backend this file runs on: `lastModified` is
-  // optional on `StorageListEntry`, and `MemoryStorage` /
-  // `LocalFsStorage` — the two the default suite covers — omit it,
-  // so they take the `now()` path and always saw the full window.
-  // The S3, GCS and R2 adapters populate it from server headers, so
-  // anchoring there would give an effective grace of
-  // `max(0, grace − object age)` — zero for anything older than the
-  // 7-day default, which stale-log and orphan candidates typically
-  // are. `pnpm test:parity` cannot see it either: the storage
-  // conformance suite projects `lastModified` out of its comparison
-  // as adapter-optional. This wrapper is the only way to reach the
-  // production shape from `MemoryStorage`.
-  const withListedLastModified = (inner: Storage, lastModified: Date): Storage => ({
+  // from the listed object's write time. GC used to anchor on an
+  // optional `StorageListEntry.lastModified` that only the S3/GCS/R2
+  // adapters populated, giving production an effective grace of
+  // `max(0, grace − object age)` — zero past the 7-day default, for
+  // exactly the old objects GC marks — while `MemoryStorage` and
+  // `LocalFsStorage`, the backends this suite runs, omitted it and
+  // showed a full window.
+  //
+  // The field is gone, so the type no longer permits this and the
+  // storage conformance suite compares list entries whole. The cast
+  // below is what keeps the behavioural guard alive anyway: TypeScript
+  // cannot stop an adapter attaching an extra property at RUNTIME, and
+  // this asserts `computeDueAt` reads nothing off the entry regardless.
+  // Delete this only together with the assertion it protects.
+  const withListedTimestamp = (inner: Storage, lastModified: Date): Storage => ({
     get: (key, opts) => inner.get(key, opts),
     put: (key, body, opts) => inner.put(key, body, opts),
     delete: (key, opts) => inner.delete(key, opts),
     list: async function* (prefix, opts) {
       for await (const entry of inner.list(prefix, opts)) {
-        yield { ...entry, lastModified };
+        yield { ...entry, lastModified } as StorageListEntry;
       }
     },
   });
@@ -214,7 +216,7 @@ describe("runGc", () => {
     const markedAt = new Date("2026-01-08T00:00:00.000Z");
     // A month old — comfortably past the 7-day default, which is what
     // makes an age-anchored horizon land in the past at mark time.
-    const storage = withListedLastModified(inner, new Date("2025-12-08T00:00:00.000Z"));
+    const storage = withListedTimestamp(inner, new Date("2025-12-08T00:00:00.000Z"));
 
     // Default grace (no `graceMillis` override) — the production knob.
     const r = await runGc({ storage, currentJsonKey: KEY }, {

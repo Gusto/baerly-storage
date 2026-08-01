@@ -293,7 +293,6 @@ export class S3HttpStorage implements Storage {
         yield {
           key: entry.Key,
           etag: entry.ETag ?? "",
-          ...(entry.LastModified !== undefined && { lastModified: entry.LastModified }),
         };
         yielded += 1;
         if (opts?.maxKeys !== undefined && yielded >= opts.maxKeys) {
