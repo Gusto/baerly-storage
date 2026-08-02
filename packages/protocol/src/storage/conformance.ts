@@ -697,6 +697,56 @@ export function defineStorageConformanceSuite(
         );
       });
 
+      // The two options above were each pinned alone. GC's rotation
+      // cursors (`gc/pending.json`) depend on them TOGETHER, and on a
+      // property neither test reaches: the cursor names the last key a
+      // pass examined, and that same pass routinely DELETEs it before
+      // the next one resumes. An adapter that applied `maxKeys` before
+      // the cursor filter, or that resolved `startAfter` against a key
+      // that must still exist, would pass everything above and still
+      // strand orphans.
+      test("startAfter and maxKeys compose: the cap applies AFTER the cursor", async () => {
+        await s.put("a/1", new TextEncoder().encode("a1"));
+        await s.put("a/2", new TextEncoder().encode("a2"));
+        await s.put("a/3", new TextEncoder().encode("a3"));
+        await s.put("a/4", new TextEncoder().encode("a4"));
+        // Cap-then-cursor would yield ["a/2"] (or nothing); the
+        // contract is a 2-key window starting after the cursor.
+        await expectEventuallyEqual(
+          () =>
+            collect(s.list("a/", { startAfter: "a/1", maxKeys: 2 })).then((l) =>
+              l.map((e) => e.key),
+            ),
+          ["a/2", "a/3"],
+          settle,
+        );
+      });
+
+      test("startAfter resolves against a key that does not exist", async () => {
+        await s.put("a/1", new TextEncoder().encode("a1"));
+        await s.put("a/3", new TextEncoder().encode("a3"));
+        // `a/2` was never written. `startAfter` is a strict-greater
+        // comparison on the key VALUE, not a lookup, so this is a
+        // position, not a miss.
+        await expectEventuallyEqual(
+          () => collect(s.list("a/", { startAfter: "a/2" })).then((l) => l.map((e) => e.key)),
+          ["a/3"],
+          settle,
+        );
+      });
+
+      test("startAfter still resolves after the cursor key is deleted", async () => {
+        await s.put("a/1", new TextEncoder().encode("a1"));
+        await s.put("a/2", new TextEncoder().encode("a2"));
+        await s.put("a/3", new TextEncoder().encode("a3"));
+        await s.delete("a/2");
+        await expectEventuallyEqual(
+          () => collect(s.list("a/", { startAfter: "a/2" })).then((l) => l.map((e) => e.key)),
+          ["a/3"],
+          settle,
+        );
+      });
+
       test("returns the current etag for each entry, and nothing else", async () => {
         const a = await s.put("a", new TextEncoder().encode("alpha"));
         const b = await s.put("b", new TextEncoder().encode("beta"));

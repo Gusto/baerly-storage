@@ -157,11 +157,17 @@ porter can cite a specific clause.
    whole-bucket scan; every stored key MUST be yielded. (Used by the
    suite's own `deleteAllOnce` teardown and the _"returns the current etag
    for each entry"_ case, both listing `""`.)
-4. **`startAfter` MUST be strict-exclusive.** When `list(prefix, {
-   startAfter })` is given, the `startAfter` key itself MUST NOT be
-   returned — only keys strictly greater than it. (Conformance: _"startAfter
-   is exclusive"_ and the _"startAfter:k yields strict suffix of lex-sorted
-   keys"_ property.)
+4. **`startAfter` MUST be strict-exclusive, and MUST be a position rather
+   than a lookup.** When `list(prefix, { startAfter })` is given, the
+   `startAfter` key itself MUST NOT be returned — only keys strictly greater
+   than it. The comparison is on the key VALUE: `startAfter` MUST resolve
+   correctly for a key that was never written, or that has since been
+   deleted. GC's rotation cursors depend on this directly — a cursor names
+   the last key a pass examined, and the same pass frequently deletes it
+   before the next one resumes. (Conformance: _"startAfter is exclusive"_,
+   _"startAfter resolves against a key that does not exist"_, _"startAfter
+   still resolves after the cursor key is deleted"_, and the _"startAfter:k
+   yields strict suffix of lex-sorted keys"_ property.)
 5. **`list` results MUST be sorted by UTF-8 byte order, NOT UTF-16.** For
    BMP characters the two agree, but they diverge for supplementary-plane
    characters (surrogate pairs): a UTF-16 code-unit sort orders an emoji
@@ -172,7 +178,12 @@ porter can cite a specific clause.
    _"keys sort by UTF-8 byte order, not UTF-16 (supplementary-plane
    divergence)"_.
 6. **`maxKeys` MUST cap the yielded count** to the first `maxKeys` keys in
-   sort order. (Conformance: _"maxKeys caps the result"_.)
+   sort order. Combined with `startAfter`, the cap MUST apply AFTER the
+   cursor filter: `list(p, { startAfter: k, maxKeys: n })` yields the first
+   `n` keys strictly greater than `k`, never a window of `n` keys from the
+   start of the prefix that is then filtered down. (Conformance: _"maxKeys
+   caps the result"_ and _"startAfter and maxKeys compose: the cap applies
+   AFTER the cursor"_.)
 7. **Body round-trip MUST be byte-exact at the size boundaries.** A `0`-byte
    body and a 1 MiB (`1048576`-byte) body MUST `put` then `get` back
    byte-for-byte. (Conformance: _"round-trip exactly 0 bytes"_ …
