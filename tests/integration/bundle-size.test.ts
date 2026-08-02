@@ -1,10 +1,16 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { gzipSync } from "node:zlib";
-// min+gz numbers are esbuild-version-sensitive: a minifier version bump
-// rebaselines every entry's `minGz` ceiling at once.
-import { transform } from "esbuild";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
+import {
+  closureFiles,
+  collectClosure,
+  DIST_DIR,
+  measureMinGz,
+  measureRawGz,
+  minifyCacheStats,
+  resetMinifyCache,
+  STATIC_IMPORT_RE,
+} from "../../scripts/bundle-measure.ts";
 import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
 import { IS_CI } from "../setup/ci.ts";
 
@@ -55,7 +61,7 @@ import { IS_CI } from "../setup/ci.ts";
 //              a CONSERVATIVE UPPER BOUND — per-chunk syntax minify
 //              only, no cross-module tree-shaking / scope-hoisting — so
 //              the real consumer cost is ≤ this number. See the note in
-//              `measureClosure`.
+//              `measureRawGz`.
 // Only entries that declare `minGz` assert the third axis.
 //
 // Budgets are set to the smallest whole-KiB value (`N * 1024`) that
@@ -1275,113 +1281,12 @@ const BUDGETS: readonly Budget[] = [
   { entry: "gcs.js", raw: 75 * 1024, gz: 25 * 1024, minGz: 10 * 1024 },
 ];
 
-// Static-import specifiers only. Dynamic `import(...)` is intentionally
-// excluded — code reachable only via dynamic import is a separate
-// budget concern.
-const STATIC_IMPORT_RE = /(?:^|\n)\s*(?:import|export)[^"']*?from\s*["']([^"']+)["']/g;
-
-function collectClosure(entryAbs: string, seen: Set<string>): void {
-  if (seen.has(entryAbs)) {
-    return;
-  }
-  seen.add(entryAbs);
-  const src = readFileSync(entryAbs, "utf8");
-  for (const m of src.matchAll(STATIC_IMPORT_RE)) {
-    const spec = m[1]!;
-    if (!spec.startsWith("./") && !spec.startsWith("../")) {
-      continue;
-    }
-    collectClosure(resolve(dirname(entryAbs), spec), seen);
-  }
-}
-
-// Absolute paths of every chunk in `entry`'s static-import closure,
-// sorted for deterministic concatenation order.
-function closureFiles(entry: string): string[] {
-  const distDir = resolve(__dirname, "../../dist");
-  const entryAbs = resolve(distDir, entry);
-  if (!existsSync(entryAbs)) {
-    throw new Error(`dist/${entry} missing — run \`pnpm build\` before \`pnpm test\``);
-  }
-  const seen = new Set<string>();
-  collectClosure(entryAbs, seen);
-  return [...seen].toSorted();
-}
-
-// Raw + gzipped closure size. Pure fs + zlib, NO esbuild — so the
-// raw-only callers (the inline-dep-creep raw ceiling + the import
-// allowlist guard) never invoke the minifier. The consumer-cost
-// `min+gz` axis is the only one that needs esbuild; it lives in the
-// separate async `measureMinGz` below so a minifier flake can't sink a
-// test that only reads `.raw`. Both take a pre-resolved `files` list so
-// a test that needs both axes walks the closure once.
-function measureClosure(files: string[]): {
-  raw: number;
-  gz: number;
-  files: string[];
-} {
-  const distDir = resolve(__dirname, "../../dist");
-  const raw = files.reduce((sum, f) => sum + statSync(f).size, 0);
-  const gz = gzipSync(Buffer.concat(files.map((f) => readFileSync(f)))).length;
-  return { raw, gz, files: files.map((f) => f.replace(`${distDir}/`, "")) };
-}
-
-// `min+gz` minifies each chunk with esbuild (the minifier most consumer
-// bundlers — Vite/esbuild — actually run), concatenates, then gzips.
-// This is the consumer-facing artifact proxy: the lib ships UNMINIFIED,
-// so neither `raw` nor unminified-`gz` is what a consumer pays once
-// their bundler re-minifies. CONSERVATIVE UPPER BOUND: per-file syntax
-// minify only, NOT the cross-module tree-shaking / scope-hoisting a real
-// consumer bundler does, so the real shipped cost is ≤ this number.
-async function measureMinGz(files: string[]): Promise<number> {
-  const minified: string[] = [];
-  for (const file of files) {
-    minified.push(await minifyChunk(readFileSync(file, "utf8"), file));
-  }
-  return gzipSync(Buffer.concat(minified.map((c) => Buffer.from(c)))).length;
-}
-
-// min+gz minifies each chunk with esbuild, whose shared service flakes
-// under CI's 2-vCPU contention: a `transform` intermittently reports a
-// bogus "<stdin>:N: ERROR: X is not declared in this file" on perfectly
-// valid input (it surfaces the chunk's bare re-export names). It is
-// load-dependent (passes on roughly half of CI runs and always locally)
-// and is NOT a stale-service-state bug — it recurs on a freshly-`stop()`ed
-// service and across all retries, so neither retrying nor recreating the
-// service fixes it. Rather than fight esbuild under contention, min+gz is
-// hard-gated LOCALLY only (where esbuild is reliable) and skipped entirely
-// in CI (see the call site); the deterministic raw/gz axes gate everywhere.
-//
-// The retry is a light smoother for a one-off local transient, scoped to
-// the esbuild call ONLY. Budget assertions are deterministic functions of
-// the committed dist/ bytes, so a real over-budget or closure-leak
-// regression still fails locally on the first and every attempt. Each
-// failure is logged (not swallowed) so a flake still leaves a breadcrumb;
-// the final throw names the offending file instead of a bare esbuild error.
-async function minifyChunk(source: string, file: string, attempts = 3): Promise<string> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const { code } = await transform(source, { loader: "js", minify: true });
-      return code;
-    } catch (error) {
-      lastError = error;
-      console.warn(
-        `minifyChunk: esbuild attempt ${attempt}/${attempts} failed for ${file}: ${error}`,
-      );
-    }
-  }
-  throw new Error(`minifyChunk: esbuild failed for ${file} after ${attempts} attempts`, {
-    cause: lastError,
-  });
-}
-
 describe("bundle size", () => {
   for (const { entry, raw, gz, minGz, skip } of BUDGETS) {
     test.skipIf(skip)(`dist/${entry} closure stays within budget`, async () => {
       // Walk the static-import closure once; both axes read the same list.
       const files = closureFiles(entry);
-      const measured = measureClosure(files);
+      const measured = measureRawGz(files);
       // Only the consumer-cost axis needs esbuild, and only for entries
       // that declare a ceiling. esbuild flakes under CI's 2-vCPU contention
       // (see minifyChunk), so min+gz is HARD-GATED locally (the pre-commit
@@ -1473,6 +1378,22 @@ describe("bundle size", () => {
     });
   }
 
+  test("minifies each unique chunk exactly once across overlapping closures", async () => {
+    resetMinifyCache();
+    const indexFiles = closureFiles("index.js");
+    const httpFiles = closureFiles("http.js");
+
+    await measureMinGz(indexFiles);
+    await measureMinGz(httpFiles);
+
+    const unique = new Set([...indexFiles, ...httpFiles]).size;
+    const stats = minifyCacheStats();
+    // One esbuild call per unique chunk, never more.
+    expect(stats.misses).toBe(unique);
+    // The two closures overlap, so the second pass must hit the cache.
+    expect(stats.hits).toBeGreaterThan(0);
+  });
+
   // The kernel barrel (`baerly-storage`) is the surface every consumer
   // pays for. Writer / compactor / GC read the active per-request
   // recorder via `getCurrentContext()?.recorder`; that lookup needs
@@ -1480,7 +1401,7 @@ describe("bundle size", () => {
   // `observability-*.js` subgraph (logtape + canonical-line render +
   // pretty sink) into the barrel.
   test("dist/index.js closure excludes the observability subgraph", () => {
-    const measured = measureClosure(closureFiles("index.js"));
+    const measured = measureRawGz(closureFiles("index.js"));
     const observabilityChunks = measured.files.filter((f) => f.startsWith("observability-"));
     expect(
       observabilityChunks,
@@ -1563,9 +1484,8 @@ describe("bundle size", () => {
   };
   for (const entry of ["node.js", "dev-vite.js"]) {
     test(`dist/${entry} closure imports only Node builtins + declared runtime deps`, () => {
-      const distDir = resolve(__dirname, "../../dist");
       const seen = new Set<string>();
-      collectClosure(resolve(distDir, entry), seen);
+      collectClosure(resolve(DIST_DIR, entry), seen);
       const offenders: string[] = [];
       for (const file of seen) {
         const src = readFileSync(file, "utf8");
@@ -1577,7 +1497,7 @@ describe("bundle size", () => {
           if (spec.startsWith("node:") || RUNTIME_DEP_ALLOWLIST.has(packageName(spec))) {
             continue;
           }
-          offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+          offenders.push(`${file.replace(DIST_DIR, "")} → ${spec}`);
         }
       }
       expect(
@@ -1603,7 +1523,7 @@ describe("bundle size", () => {
     { entry: "dev-vite.js", raw: 710 * 1024 },
   ]) {
     test(`dist/${entry} closure stays under the inline-dep-creep raw ceiling`, () => {
-      const measured = measureClosure(closureFiles(entry)).raw;
+      const measured = measureRawGz(closureFiles(entry)).raw;
       expect(
         measured,
         `${entry} raw closure ${measured} B exceeds inline-dep-creep ceiling ${raw} B`,
@@ -1630,8 +1550,7 @@ describe("bundle size", () => {
   // from the tree entirely (neither a runtime nor a dev dependency) and
   // `@rgrove/parse-xml` added as the new runtime XML parser.
   const BUNDLED_OPTIONAL_PEERS = new Set(["@rgrove/parse-xml", "aws4fetch"]);
-  const pkgRoot = resolve(__dirname, "../..");
-  const distDir = resolve(pkgRoot, "dist");
+  const pkgRoot = resolve(DIST_DIR, "..");
   const rootPkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) as {
     bin?: Record<string, string>;
     publishConfig?: { exports?: Record<string, { import?: string }> };
@@ -1665,7 +1584,7 @@ describe("bundle size", () => {
         for (const m of src.matchAll(STATIC_IMPORT_RE)) {
           const spec = m[1]!;
           if (BUNDLED_OPTIONAL_PEERS.has(spec)) {
-            offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+            offenders.push(`${file.replace(DIST_DIR, "")} → ${spec}`);
           }
         }
       }
@@ -1679,8 +1598,7 @@ describe("bundle size", () => {
 
 describe("spec artifact emission", () => {
   test("dist/baerly.spec.json is emitted and schema-shaped", () => {
-    const distDir = resolve(__dirname, "../../dist");
-    const path = resolve(distDir, "baerly.spec.json");
+    const path = resolve(DIST_DIR, "baerly.spec.json");
     expect(existsSync(path)).toBe(true);
     const ir = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
     expect(ir["specVersion"]).toBe("1");
