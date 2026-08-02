@@ -204,6 +204,26 @@ describe("LocalFsStorage — impl-specific", () => {
     }
   });
 
+  test("list() tolerates a key deleted mid-iteration", async () => {
+    // `list` walks names, then reads each file to hash its etag. A delete
+    // landing in that window used to escape as a raw Node ENOENT rather
+    // than a BaerlyError — reachable in the maintenance fold, where runGc
+    // deletes while the compactor walks the same prefixes. A key vanishing
+    // mid-listing is legal on a real object store, so it is skipped.
+    for (const k of ["a", "b", "c", "d"]) {
+      await s.put(k, utf8("v"));
+    }
+    const seen: string[] = [];
+    for await (const entry of s.list("")) {
+      seen.push(entry.key);
+      if (entry.key === "a") {
+        await s.delete("b");
+        await s.delete("c");
+      }
+    }
+    expect(seen).toEqual(["a", "d"]);
+  });
+
   // --- The write path must never leave the bucket root (EXDEV) ---
   //
   // `rename(2)` and `link(2)` fail with `EXDEV` across filesystems, so a
