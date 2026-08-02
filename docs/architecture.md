@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-06-30
+last-reviewed: 2026-08-02
 tags: [architecture, lifecycle, module-map]
 related: ["spec/sync-protocol.md", "contributing/extending.md", "contributing/features.md"]
 ---
@@ -200,10 +200,20 @@ kernel portable:
   compatibility is defined as "everything reachable from
   `@baerly/server`'s entry points runs under Workerd"; that holds because
   `server` depends only on `protocol`.
-- **Workerd-incompatible `node:` builtins are blocked in `protocol` and
-  `server`.** `server` allowlists `node:async_hooks` only (Workerd
-  supports it under `nodejs_compat`); `protocol` allows none. Packages
-  above this line are Node-only by design and may import any builtin.
+- **Workerd-incompatible `node:` builtins are blocked in `protocol`,
+  `server`, and `adapter-cloudflare`.** `server` and `adapter-cloudflare`
+  allowlist `node:async_hooks` only (Workerd supports it under
+  `nodejs_compat`); `protocol` allows none. The remaining packages are
+  Node-only by design and may import any builtin.
+- **That gate reads each package's own source, so it cannot see a
+  transitive drag.** Importing a barrel that re-exports Node-only code
+  pulls the whole closure into a Workerd bundle without any `node:`
+  specifier appearing in the importing package — which is how
+  `LocalFsStorage` once reached `dist/cloudflare.js` by way of the
+  `@baerly/dev` barrel, for one HTML string. Import the leaf module
+  (`@baerly/dev/dev-landing`), not the barrel. Enforced on the artifact by
+  the `dist/cloudflare.js` Workerd-builtin closure assertion in
+  `tests/integration/bundle-size.test.ts`.
 
 The production import graph (`*.test.ts` / `*.test-d.ts` excluded) is a
 hand-maintained allow list — each row names the packages that owner may

@@ -16,22 +16,35 @@ const ROOT = resolvePath(HERE, "..");
  * Hand-maintained import allow list (contains one accepted Node-only
  * `dev ↔ adapter-node` cycle — see docs/architecture.md
  * §Package layers), plus a per-owner `node:`-builtin
- * purity gate for `protocol` and `server`. `allows` lists every other
+ * purity gate for the Workerd-loadable packages. `allows` lists every other
  * @baerly/* package the owner is permitted to import. Self-imports always
  * allowed. Anything not listed is forbidden. The optional `allowNode` field
  * gates Node builtins: when defined, the owner may only import `node:` builtins
- * in the list (`protocol` allows none; `server` allows `node:async_hooks`,
- * which Workerd supports under `nodejs_compat`). Rows leaving `allowNode`
- * undefined are Node-only by design and may import any builtin. Source of truth
- * lives in docs/architecture.md §Package layers; this table is the
- * executable mirror. When adding a new @baerly/* package, add a row to both.
+ * in the list (`protocol` allows none; `server` and `adapter-cloudflare` allow
+ * `node:async_hooks`, which Workerd supports under `nodejs_compat`). Rows
+ * leaving `allowNode` undefined are Node-only by design and may import any
+ * builtin. Source of truth lives in docs/architecture.md §Package layers; this
+ * table is the executable mirror. When adding a new @baerly/* package, add a
+ * row to both.
+ *
+ * NOTE on scope: `allowNode` gates a package's OWN source. It says nothing
+ * about what a permitted `@baerly/*` import drags in transitively — a barrel
+ * re-export can pull a Node-only closure into a Workerd bundle without any
+ * `node:` specifier appearing in the owner's files at all. That vector is
+ * guarded at the artifact level instead, by the `dist/cloudflare.js` closure
+ * assertion in `tests/integration/bundle-size.test.ts`.
  */
 const RULES = {
   protocol: { allows: [], allowNode: [] },
   server: { allows: ["protocol"], allowNode: ["node:async_hooks"] },
   dev: { allows: ["protocol", "server", "adapter-node"] },
   "adapter-node": { allows: ["protocol", "server", "dev"] },
-  "adapter-cloudflare": { allows: ["protocol", "server", "dev"] },
+  // Workerd-loadable, so gated like `server` rather than left open: this is
+  // the one row whose runtime cannot load an arbitrary Node builtin at all.
+  "adapter-cloudflare": {
+    allows: ["protocol", "server", "dev"],
+    allowNode: ["node:async_hooks"],
+  },
   client: { allows: ["protocol", "server"] },
   cli: {
     allows: ["protocol", "server", "dev", "adapter-node", "adapter-cloudflare", "client"],

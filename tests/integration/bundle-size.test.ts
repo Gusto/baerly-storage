@@ -929,7 +929,7 @@ const BUDGETS: readonly Budget[] = [
   //     `dev.js` under its own line, and cutting further would delete the
   //     reason the code is shaped this way. Measured 440712 raw; gz (132345,
   //     −775) and min-gz (45839, −241) both stay under.
-  //   → 418 KiB raw / 126 KiB gz / 44 KiB min-gz (2026-08-01): budgets move
+  //   → 419 KiB raw / 127 KiB gz / 44 KiB min-gz (2026-08-01): budgets move
   //     DOWN. `packages/adapter-cloudflare/src/worker.ts` imported
   //     `renderDevLanding` from the `@baerly/dev` barrel, and the barrel
   //     re-exports `LocalFsStorage`, so rolldown chunked the entire
@@ -947,7 +947,21 @@ const BUDGETS: readonly Budget[] = [
   //     min-gz, i.e. below the pre-branch 439542 / 132296 / 45841 on every
   //     axis. Budgets tighten to lock the win in rather than bank it as
   //     silent headroom.
-  { entry: "cloudflare.js", raw: 418 * 1024, gz: 126 * 1024, minGz: 44 * 1024 },
+  //
+  //     Tightened to one KiB above each measured axis, not to the nearest
+  //     boundary. Landing gz at 126 KiB left 105 B — less than a single
+  //     JSDoc line, on the entry that just took +392 B of raw comment prose
+  //     from a `packages/dev/` edit that never mentions Cloudflare. Per the
+  //     POLICY raw/gz are creep tripwires: a tripwire that fires on ordinary
+  //     prose reports noise, and the next author rebaselines it reflexively,
+  //     which is how a tripwire stops being read. The regression this locks
+  //     in is ~12 KiB raw / ~3.4 KiB gz (the barrel drag above), so ~1 KiB
+  //     of slack still catches it with 3× margin. min-gz stays at 44 KiB
+  //     with 963 B: that axis is the HARD ceiling and the one worth holding
+  //     tight. The barrel drag itself is now caught structurally, by the
+  //     `dist/cloudflare.js` Workerd-builtin closure assertion below, which
+  //     is what lets these two axes stay diagnostic rather than load-bearing.
+  { entry: "cloudflare.js", raw: 419 * 1024, gz: 127 * 1024, minGz: 44 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
@@ -1112,9 +1126,28 @@ const BUDGETS: readonly Budget[] = [
   //     single-process guarantee. Unlike most rebaselines above this is NOT
   //     comment-dominated: it is real shipped control flow. This closure is
   //     the right place for it to land — the same change REMOVED it from
-  //     `cloudflare.js` (see that entry). Measured 49869 raw / 17866 gz; no
+  //     `cloudflare.js` (see that entry). Measured 49883 raw / 17872 gz; no
   //     min-gz axis on this entry.
-  { entry: "dev.js", raw: 49 * 1024, gz: 18 * 1024 },
+  //   → 51 KiB raw / 19 KiB gz (2026-08-02): JSDoc only. `#canonicalRoot`
+  //     now records why the `delete`-vs-`put` lock-key divergence against a
+  //     not-yet-created symlinked root is a known, bounded gap rather than a
+  //     fix (Fresh Eyes, PR #84, Info), and `#lockKey` notes that
+  //     `toLowerCase()` approximates Unicode case folding rather than
+  //     implementing it. Both were condensed once before rebaselining — the
+  //     first drafts cost 1842 B raw, these cost 1253 B — but per the POLICY
+  //     comments are not golfed to fit a tripwire, and a recorded decision
+  //     on a reviewer finding is what keeps the next reader from
+  //     re-deriving it. This entry has NO min-gz axis precisely because it
+  //     never reaches a browser, so both axes here are pure creep
+  //     diagnostics on a dev/self-host surface.
+  //
+  //     gz is rebaselined even though 18396 still cleared 18 KiB — by 36 B.
+  //     Same reasoning as the `cloudflare.js` recalibration above: a
+  //     tripwire with less than one comment line of slack reports noise, and
+  //     leaving it there just defers the rebaseline to whoever next edits a
+  //     docstring in `packages/dev/`. Measured 51136 raw / 18396 gz, landing
+  //     both axes ~1 KiB clear.
+  { entry: "dev.js", raw: 51 * 1024, gz: 19 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare
@@ -1373,6 +1406,54 @@ describe("bundle size", () => {
     expect(
       observabilityChunks,
       `kernel barrel must not pull the observability subgraph; found: ${observabilityChunks.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  // `cloudflare.js` ships into a Worker. Workerd can load exactly one of the
+  // Node builtins this repo uses — `node:async_hooks`, under `nodejs_compat`,
+  // which `@baerly/server` needs for the per-request observability ALS. Every
+  // other `node:` specifier reaching this closure is code that cannot run
+  // there.
+  //
+  // This guard exists because the byte budgets alone did not catch the real
+  // thing. `worker.ts` imported `renderDevLanding` from the `@baerly/dev`
+  // barrel, the barrel re-exports `LocalFsStorage`, and rolldown chunked the
+  // whole Node-only local-fs closure — `node:fs`, `node:crypto`, `node:path`
+  // — into the Worker bundle for the sake of one HTML string. It surfaced
+  // only as a min-gz overrun, i.e. as a size symptom, several changes after
+  // it landed. `scripts/lint-package-layers.mjs` cannot see it either: its
+  // `allowNode` gate reads a package's own source, and no `node:` specifier
+  // ever appeared in `packages/adapter-cloudflare/`.
+  //
+  // Asserting on the artifact is what closes that gap, because the artifact
+  // is where a transitive drag becomes observable. It also means the raw/gz
+  // creep tripwires above do not have to carry this weight — per the POLICY
+  // they are diagnostics, and a budget tight enough to catch a barrel drag
+  // would fire on an ordinary JSDoc edit instead.
+  //
+  // Matches quoted specifiers in `from "node:…"`, side-effect
+  // `import "node:…"`, and `import("node:…")` — deliberately broader than
+  // `STATIC_IMPORT_RE`, which requires `from`. Quoting is what keeps this off
+  // prose: dist ships module-level JSDoc un-stripped, and several chunks
+  // discuss `node:fs` in backticks (e.g. `current-json-*.js` documenting that
+  // it stays Worker-bundleable).
+  const NODE_SPECIFIER_RE = /["'](node:[\w/.-]+)["']/g;
+  const WORKERD_LOADABLE_BUILTINS = new Set(["node:async_hooks"]);
+  test("dist/cloudflare.js closure imports no Workerd-unloadable Node builtin", () => {
+    const distDir = resolve(__dirname, "../../dist");
+    const offenders: string[] = [];
+    for (const file of closureFiles("cloudflare.js")) {
+      for (const m of readFileSync(file, "utf8").matchAll(NODE_SPECIFIER_RE)) {
+        const spec = m[1]!;
+        if (WORKERD_LOADABLE_BUILTINS.has(spec)) {
+          continue;
+        }
+        offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+      }
+    }
+    expect(
+      offenders,
+      `dist/cloudflare.js closure may import only [${[...WORKERD_LOADABLE_BUILTINS].join(", ")}]; found: ${offenders.join(", ")}. A Node builtin here means Node-only code was dragged into the Worker bundle — usually by importing a barrel that re-exports it. Import the leaf module instead (cf. \`@baerly/dev/dev-landing\` in packages/adapter-cloudflare/src/worker.ts)`,
     ).toEqual([]);
   });
 

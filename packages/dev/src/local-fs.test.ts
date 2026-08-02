@@ -4,7 +4,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -36,23 +35,24 @@ const ETAG_HELLO = `"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938
  * `null` when the host has only one. Identified by a differing `st_dev`,
  * which is exactly the condition `rename(2)` rejects with `EXDEV`.
  *
- * `/dev/shm` is a separate tmpfs mount on essentially every Linux distro,
- * so the cross-device arm runs for real in CI. macOS has no equivalent
- * (`/Volumes` holds only removable/network mounts, usually absent or
- * read-only), so it typically skips there — hence the always-runs
- * `TMPDIR` proxy alongside it.
+ * Deliberately limited to the shared-memory tmpfs mounts. `/dev/shm` is a
+ * separate mount on essentially every Linux distro, so the cross-device arm
+ * runs for real on CI — the only platform gating merges. macOS has no
+ * equivalent and skips, which the always-runs `TMPDIR` proxy alongside this
+ * covers.
+ *
+ * An earlier version also enumerated `/Volumes` to find a second filesystem
+ * on macOS. Removed: at module load that stats a developer's mounted
+ * volumes and `mkdtemp`s into the first writable one, so an external SSD or
+ * a mounted DMG collects temp directories from a unit test, and a stale
+ * network mount blocks the import. It bought coverage only on the platform
+ * that does not gate merges, and only when the machine happens to have a
+ * spare volume — i.e. non-deterministically. A fixed allowlist skips
+ * honestly instead.
  */
 const findForeignFilesystem = (): string | null => {
   const tmpDev = statSync(tmpdir()).dev;
-  const candidates = ["/dev/shm", "/run/shm"];
-  try {
-    for (const volume of readdirSync("/Volumes")) {
-      candidates.push(join("/Volumes", volume));
-    }
-  } catch {
-    // No /Volumes (non-darwin) — the Linux candidates above are enough.
-  }
-  for (const candidate of candidates) {
+  for (const candidate of ["/dev/shm", "/run/shm"]) {
     try {
       if (statSync(candidate).dev === tmpDev) {
         continue;

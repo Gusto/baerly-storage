@@ -296,6 +296,11 @@ export class LocalFsStorage implements Storage {
    * differing only in case, and never costs correctness — whereas
    * under-approximating does, which is exactly how the symlink class got
    * missed the first time. This adapter is not the throughput path.
+   *
+   * Strong approximation, not exact: `toLowerCase()` is not Unicode case
+   * folding (JS has no `toCaseFold()`), so APFS folds `Σ`/`σ`/`ς` onto one
+   * file where this yields two lock keys. Unreached — protocol keys are
+   * ASCII — and not worth a folding table here.
    */
   async #lockKey(path: string): Promise<string> {
     const root = await this.#canonicalRoot();
@@ -307,6 +312,22 @@ export class LocalFsStorage implements Storage {
    * against a bucket that was never created would otherwise memoize the
    * un-canonicalized spelling and defeat the aliasing guard for every
    * later `put`.
+   *
+   * Not caching failure bounds that to one call but does not erase it.
+   * `put` mkdirs before locking so it always canonicalizes; `delete` does
+   * not, so against a not-yet-created symlinked root it locks the
+   * unresolved spelling while a concurrent `put` locks the resolved one —
+   * two locks, no serialization. That needs only ONE spelling in play, not
+   * two: the split is resolved-vs-unresolved form of the same path.
+   *
+   * Known and kept (Fresh Eyes, PR #84, Info). The hazard `delete` locks
+   * against is slipping inside an `ifMatch` compare→publish, which needs
+   * the key to exist, hence the root to exist, hence `realpath` to have
+   * succeeded — so both conditions hold only if the root appears between
+   * this call and the `rm`, and the next call self-heals. Fixes cost more
+   * than that: mkdir-to-get-a-lock-key makes deleting from an absent
+   * bucket create it, and walking to the deepest existing ancestor adds
+   * real complexity for an unreachable window.
    */
   async #canonicalRoot(): Promise<string> {
     if (this.#realRoot !== undefined) {
