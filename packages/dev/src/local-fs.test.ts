@@ -480,4 +480,54 @@ describe("LocalFsStorage — impl-specific", () => {
     expect(fromBytes((await s.get("key-a"))!.body)).toBe("a");
     expect(fromBytes((await s.get("key-b"))!.body)).toBe("b");
   });
+
+  // --- AbortSignal must be re-checked inside the critical section ---
+  //
+  // `put` / `delete` check the signal on entry and then take the key's lock,
+  // which is an unbounded wait behind other writers to the same key. A signal
+  // aborted during that wait has already cleared the entry guard, so without
+  // the re-check inside the critical section the write lands anyway. Measured
+  // before the fix: an aborted queued put and an aborted queued delete both
+  // completed, and the key was gone.
+  //
+  // Aborting AFTER the call returns its promise is what makes these
+  // deterministic rather than timing-dependent. The entry guard is a
+  // synchronous `throwIfAborted()` at the top of the method, so by the time
+  // `abort()` runs it has provably already passed — leaving the
+  // in-critical-section re-check as the only guard that can still reject. No
+  // reliance on queue depth or on who wins the ticket.
+  //
+  // This is the gap the shared conformance suite cannot cover: its abort
+  // tests use a pre-aborted controller, which trips the entry guard and never
+  // reaches the lock at all.
+
+  test("put aborted while queued behind another writer rejects and does not land", async () => {
+    const holder = s.put("k", utf8("holder"));
+    const ac = new AbortController();
+    const queued = s.put("k", utf8("queued"), { signal: ac.signal });
+    ac.abort();
+    const [held, aborted] = await Promise.allSettled([holder, queued]);
+    expect(held.status).toBe("fulfilled");
+    expect(aborted.status).toBe("rejected");
+    expect((aborted as PromiseRejectedResult).reason).toMatchObject({ name: "AbortError" });
+    // Whichever racer took the ticket first, the aborted body must never be
+    // the one on disk.
+    expect(fromBytes((await s.get("k"))!.body)).toBe("holder");
+  });
+
+  test("delete aborted while queued behind another writer rejects and keeps the key", async () => {
+    await s.put("k", utf8("v0"));
+    const holder = s.put("k", utf8("holder"));
+    const ac = new AbortController();
+    const queued = s.delete("k", { signal: ac.signal });
+    ac.abort();
+    const [held, aborted] = await Promise.allSettled([holder, queued]);
+    expect(held.status).toBe("fulfilled");
+    expect(aborted.status).toBe("rejected");
+    expect((aborted as PromiseRejectedResult).reason).toMatchObject({ name: "AbortError" });
+    // Order-independent: if the delete had taken the ticket first it would
+    // still have to reject before its `rm`, so the key survives either way.
+    await expect(s.get("k")).resolves.not.toBeNull();
+    expect(fromBytes((await s.get("k"))!.body)).toBe("holder");
+  });
 });
