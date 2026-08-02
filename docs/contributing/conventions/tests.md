@@ -2,7 +2,7 @@
 title: Conventions for tests
 audience: coder
 summary: Test file layout, vitest imports, colocation rules, property-based testing patterns.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-08-01
 tags: [conventions, tests, vitest]
 related: [docs.md, "../development.md"]
 ---
@@ -108,9 +108,10 @@ Run it:
 - CAS **fairness is not a parity property** ([ADR-002](../../adr/002-ephemeral-coordination.md)
   "No fairness"); only exactly-one-winner + code-on-loss are asserted, never
   ordering/FIFO.
-- `LocalFsStorage` `ifMatch` is **in-process TOCTOU only** — the suite exercises
-  single-process CAS, so parity holds for what is tested; it does not claim cross-process
-  parity for local-fs.
+- `LocalFsStorage` `ifMatch` is **serialized in-process only** — it holds a per-key
+  lock across the whole read-compare-write, so single-process CAS (which is what the
+  suite exercises) has parity with the real backends, including exactly-one-winner
+  under concurrency. The gate does not claim cross-process parity for local-fs.
 - **HTTP-wire CAS parity is a known hole** (`tests/fixtures/http-conformance-cascade.ts`
   defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does
   not cover the HTTP `If-Match` round-trip.

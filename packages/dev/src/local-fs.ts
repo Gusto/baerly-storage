@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import {
   BaerlyError,
@@ -11,6 +11,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
+import { withKeyLock } from "./key-lock.ts";
 
 /**
  * Reserved prefix for the in-directory staging temps (see `put`).
@@ -85,8 +86,25 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * `ifNoneMatch:"*"` uses `link(2)` (atomic exclusive create; `EEXIST` ⇒
  * key exists) so concurrent creates have exactly one winner. temp+`link`
  * over `open(…,"wx")` keeps a partially-written new key invisible to a
- * concurrent reader. `ifMatch` keeps the `rename` path (in-process TOCTOU
- * only; cross-process contention uses the S3 / Minio `If-Match` path).
+ * concurrent reader.
+ *
+ * `ifMatch` is a read-compare-write, so it is made atomic by serializing
+ * every mutation of a key against every other — see `#lockKey`.
+ *
+ * Scope of that guarantee, precisely: **one loaded copy of this module**.
+ * Within it, concurrent CAS on one key admits exactly one winner and the
+ * losers get `Conflict`, across any number of `LocalFsStorage` instances
+ * whose roots resolve — through symlinks — to the same directory. That is
+ * one process in every normal setup, but the lock lives in a module-level
+ * map, so a process that somehow loads both this source and the bundled
+ * copy has two of them.
+ *
+ * Across processes it guarantees nothing: two `baerly` CLI runs, or two
+ * servers, sharing a directory can both win, because nothing in POSIX
+ * makes read-compare-write atomic without a lock file or a lease. That is
+ * why this adapter is for single-process dev and self-hosting;
+ * horizontally-scaled deploys need S3 / R2, whose server-side conditional
+ * write is what the no-lease maintenance fold actually relies on.
  *
  * Node-only — imports `node:fs`, `node:path`, `node:crypto`. Lives in
  * `@baerly/dev` because the protocol kernel is pure-modules / no I/O
@@ -94,6 +112,8 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  */
 export class LocalFsStorage implements Storage {
   readonly #root: string;
+  /** Memoized `realpath` of {@link #root} — see {@link #canonicalRoot}. */
+  #realRoot: string | undefined;
 
   constructor(opts: LocalFsStorageOptions) {
     this.#root = resolve(opts.root);
@@ -126,9 +146,32 @@ export class LocalFsStorage implements Storage {
   async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
     opts?.signal?.throwIfAborted();
     const path = this.#pathFor(key);
-    const newEtag = etagOf(body);
-
+    // Create the parent before taking the lock, so the `realpath` behind
+    // `#lockKey` has a directory to canonicalize.
     await mkdir(dirname(path), { recursive: true });
+    // Every mutation of a key is serialized against every other. `ifMatch`
+    // is the reason: it reads the current body, compares etags, and only
+    // then publishes, with awaited fs ops in between — so unguarded, two
+    // callers both read the base etag, both pass the compare, and both
+    // publish, yielding N winners for one base version. Guarding the
+    // unconditional and create-if-absent paths too is not incidental: an
+    // unconditional put landing inside another caller's compare→publish
+    // window is the same lost update reached from the other side.
+    return withKeyLock(await this.#lockKey(path), () => this.#putSerialized(key, path, body, opts));
+  }
+
+  async #putSerialized(
+    key: string,
+    path: string,
+    body: Uint8Array,
+    opts?: StoragePutOptions,
+  ): Promise<StoragePutResult> {
+    // Re-check inside the critical section. The pre-lock check happens
+    // before an unbounded queue wait, so a signal aborted while this call
+    // sat behind other writers to the same key would otherwise be ignored
+    // and the write would land anyway.
+    opts?.signal?.throwIfAborted();
+    const newEtag = etagOf(body);
 
     if (opts?.ifNoneMatch === "*") {
       // Atomic exclusive create via link(2) — see class JSDoc.
@@ -157,8 +200,9 @@ export class LocalFsStorage implements Storage {
     }
 
     if (opts?.ifMatch !== undefined) {
-      // TOCTOU within a process — fine. Cross-process callers should
-      // not rely on these guards (see class JSDoc).
+      // Read-compare-write. Atomic only because `put` holds this key's
+      // lock for the whole of it, publish included — see the class JSDoc
+      // for what that does and does not guarantee.
       const existing = await readExisting(path);
       if (existing === null) {
         throw new BaerlyError(
@@ -203,17 +247,97 @@ export class LocalFsStorage implements Storage {
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
     opts?.signal?.throwIfAborted();
     const path = this.#pathFor(key);
+    // Same lock as `put`: a delete slipping between an `ifMatch` compare
+    // and its publish would resurrect the key from a version the caller
+    // was told no longer existed.
+    return withKeyLock(await this.#lockKey(path), async () => {
+      // Re-check after the queue wait — see `#putSerialized`.
+      opts?.signal?.throwIfAborted();
+      try {
+        await rm(path);
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "ENOENT") {
+          return;
+        } // idempotent
+        throw new BaerlyError(
+          "InvalidResponse",
+          `LocalFsStorage.delete(${key}): ${(error as Error).message}`,
+          error,
+        );
+      }
+    });
+  }
+
+  /**
+   * Identity of the thing being mutated, for {@link withKeyLock}.
+   *
+   * Keyed on the *canonical filesystem path*, not on the key and not on
+   * `this`. Not on `this` because separate instances over one directory
+   * are the common case (`localFsStorage()` mints a fresh one per call),
+   * so an instance-scoped lock would serialize nothing where it matters.
+   * Not on the key because several distinct spellings can name one file,
+   * and handing an alias its own lock lets the race straight back in —
+   * each of the three below was measured at 2 winners before it was
+   * closed:
+   *
+   * - Case. The default macOS filesystem folds it, so `k` and `K` are one
+   *   object.
+   * - Unicode. macOS normalizes filenames, so NFC and NFD spellings of
+   *   one string are one object.
+   * - Symlinks. `resolve()` collapses `.`/`..` but not links, so
+   *   `/tmp/data` and `/private/tmp/data` — the same directory on every
+   *   Mac — look like two. Hence `realpath`, memoized per instance and
+   *   only cached once it succeeds, so a root that does not exist yet
+   *   cannot poison the entry.
+   *
+   * Case-folding and NFC-normalizing deliberately over-approximate: on a
+   * case-sensitive filesystem `a` and `A` are genuinely different objects
+   * and will share a lock. That costs a little concurrency between keys
+   * differing only in case, and never costs correctness — whereas
+   * under-approximating does, which is exactly how the symlink class got
+   * missed the first time. This adapter is not the throughput path.
+   *
+   * Strong approximation, not exact: `toLowerCase()` is not Unicode case
+   * folding (JS has no `toCaseFold()`), so APFS folds `Σ`/`σ`/`ς` onto one
+   * file where this yields two lock keys. Unreached — protocol keys are
+   * ASCII — and not worth a folding table here.
+   */
+  async #lockKey(path: string): Promise<string> {
+    const root = await this.#canonicalRoot();
+    return (root + path.slice(this.#root.length)).normalize("NFC").toLowerCase();
+  }
+
+  /**
+   * {@link #root} with symlinks resolved. Cached only on success: `delete`
+   * against a bucket that was never created would otherwise memoize the
+   * un-canonicalized spelling and defeat the aliasing guard for every
+   * later `put`.
+   *
+   * Not caching failure bounds that to one call but does not erase it.
+   * `put` mkdirs before locking so it always canonicalizes; `delete` does
+   * not, so against a not-yet-created symlinked root it locks the
+   * unresolved spelling while a concurrent `put` locks the resolved one —
+   * two locks, no serialization. That needs only ONE spelling in play, not
+   * two: the split is resolved-vs-unresolved form of the same path.
+   *
+   * Known and kept, not overlooked. The hazard `delete` locks
+   * against is slipping inside an `ifMatch` compare→publish, which needs
+   * the key to exist, hence the root to exist, hence `realpath` to have
+   * succeeded — so both conditions hold only if the root appears between
+   * this call and the `rm`, and the next call self-heals. Fixes cost more
+   * than that: mkdir-to-get-a-lock-key makes deleting from an absent
+   * bucket create it, and walking to the deepest existing ancestor adds
+   * real complexity for an unreachable window.
+   */
+  async #canonicalRoot(): Promise<string> {
+    if (this.#realRoot !== undefined) {
+      return this.#realRoot;
+    }
     try {
-      await rm(path);
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") {
-        return;
-      } // idempotent
-      throw new BaerlyError(
-        "InvalidResponse",
-        `LocalFsStorage.delete(${key}): ${(error as Error).message}`,
-        error,
-      );
+      this.#realRoot = await realpath(this.#root);
+      return this.#realRoot;
+    } catch {
+      return this.#root;
     }
   }
 
@@ -250,9 +374,10 @@ export class LocalFsStorage implements Storage {
         if (isErrnoException(error) && error.code === "ENOENT") {
           // Deleted between `walk` and this read. A key vanishing
           // mid-listing is a legal outcome on a real object store, so skip
-          // it rather than failing the whole iteration. Reachable in the
-          // maintenance fold, where `runGc` deletes while the compactor
-          // walks the same prefixes.
+          // it rather than failing the whole iteration — and skip it
+          // rather than locking, since `list` is a snapshot iterator, not
+          // a critical section. Reachable in the maintenance fold, where
+          // `runGc` deletes while the compactor walks the same prefixes.
           continue;
         }
         throw new BaerlyError(
