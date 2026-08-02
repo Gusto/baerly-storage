@@ -12,7 +12,6 @@ import {
   STATIC_IMPORT_RE,
 } from "../../scripts/bundle-measure.ts";
 import { formatBundleSizeLine } from "../helpers/bundle-size-report.ts";
-import { IS_CI } from "../setup/ci.ts";
 
 // Bundle weight matters because this lib ships into a user's app
 // bundle — every byte we add is a byte they pay. To keep barrel
@@ -1287,16 +1286,14 @@ describe("bundle size", () => {
       // Walk the static-import closure once; both axes read the same list.
       const files = closureFiles(entry);
       const measured = measureRawGz(files);
-      // Only the consumer-cost axis needs esbuild, and only for entries
-      // that declare a ceiling. esbuild flakes under CI's 2-vCPU contention
-      // (see minifyChunk), so min+gz is HARD-GATED locally (the pre-commit
-      // bundle-size hook, where esbuild is reliable) and skipped entirely in
-      // CI — it neither gates nor reports there, so running it would only
-      // pay the flaky esbuild cost for nothing. `process.env.CI` is set by
-      // the CI runner and unset for the local hook, so this splits cleanly.
-      const skipMinGz = IS_CI;
-      const minGzMeasured =
-        minGz !== undefined && !skipMinGz ? await measureMinGz(files) : undefined;
+      // min-gz is the consumer-facing axis and the only hard ceiling, so it
+      // gates everywhere including CI. It was previously CI-skipped for an
+      // esbuild flake that could not be reproduced in 6840 transforms under
+      // CPU saturation; chunk-level memoisation now cuts esbuild invocations
+      // ~62%. If it recurs, move it to a dedicated single-concurrency CI job
+      // — do NOT re-skip, that leaves the only real ceiling unenforced where
+      // merges are gated.
+      const minGzMeasured = minGz !== undefined ? await measureMinGz(files) : undefined;
       // Show closure composition in failure output so a regression
       // points straight at the chunk that grew.
       const rawLine = formatBundleSizeLine({
@@ -1347,8 +1344,7 @@ describe("bundle size", () => {
         { kind: "raw", measured: measured.raw, budget: raw, line: rawLine },
         { kind: "gz", measured: measured.gz, budget: gz, line: gzLine },
       ];
-      // min+gz gates locally only: skipped in CI, so minGzMeasured is
-      // undefined there and this axis never enters the budget assertion.
+      // Only entries that declare a `minGz` budget assert the third axis.
       if (minGzMeasured !== undefined && minGzLine) {
         axes.push({ kind: "min-gz", measured: minGzMeasured, budget: minGz ?? 0, line: minGzLine });
       }
