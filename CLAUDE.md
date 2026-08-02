@@ -474,6 +474,26 @@ auto-load on matching edits and point at the same files.
   exist. ~10 minutes of verification up front beats hours of work
   stuck on phantom references.
 
+## Pull request bodies
+
+Follow [`.github/pull_request_template.md`](.github/pull_request_template.md).
+It applies whether or not the template was rendered into your editor —
+`gh pr create --body` bypasses it, so read the file.
+
+The body is a maintainer's reference, not a record of how the branch was
+built. Default to short and lead with the conclusion. State what the code
+does now; don't narrate how you arrived at it. A tried-and-abandoned
+approach or a changed plan gets **one line under "Key points"** and
+appears nowhere else. Deferred work is an issue link, not an inventory.
+
+Most of what wants to sprawl into a PR body belongs somewhere durable
+instead — a changeset for user-facing behavior, `docs/spec` or `docs/adr`
+for rationale and invariants, JSDoc for why a constant has its value, the
+dated baseline note for a bundle-size rebaseline. Put it there and let the
+PR point at it.
+
+No AI attribution in the title or body.
+
 ## Pointers
 
 - Doc topic map: [docs/README.md](docs/README.md) — start here if
