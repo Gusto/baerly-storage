@@ -365,7 +365,18 @@ const BUDGETS: readonly Budget[] = [
   //     of a comment-dominated change. Measured 240194 raw / 75716 gz /
   //     20340 min-gz. Rebaselined per the POLICY rather than golfing the
   //     prose that stops the false bound from being reintroduced.
-  { entry: "index.js", raw: 235 * 1024, gz: 74 * 1024, minGz: 20 * 1024 },
+  //   → 239 KiB raw (2026-08-02): GC stale-log rotation cursor. Sized for
+  //     the whole branch — `GcPending.log_scan_cursor` and the shared
+  //     `mergeRotationCursor` land in this commit, the `gc.ts` module JSDoc
+  //     rewrite lands in the next one, and both are measured here so the
+  //     baseline is written once rather than revised mid-branch.
+  //     Comment-dominated, and the axis split says so: against the branch
+  //     base (240194 raw / 75716 gz / 20340 min-gz) raw moves +4351 while
+  //     min-gz — the hard ceiling, comments stripped — moves +18 and stays
+  //     122 B under its unchanged 20 KiB budget. gz also stays under, so
+  //     only the raw tripwire is rebaselined here.
+  //     Measured 244545 raw / 77477 gz / 20358 min-gz.
+  { entry: "index.js", raw: 239 * 1024, gz: 76 * 1024, minGz: 20 * 1024 },
   // The three auth verifier factories (bearerJwt, sharedSecret,
   // cloudflareAccess) plus the transitive jose closure pulled in by
   // bearerJwt's createRemoteJWKSet + jwtVerify. Adding a fourth
@@ -586,7 +597,33 @@ const BUDGETS: readonly Budget[] = [
   //     `console.warn` string — will trip it, and the honest fix at that
   //     point is to shrink the closure, not to take the KiB. Do not read
   //     the surviving 36 KiB line as headroom.
-  { entry: "http.js", raw: 361 * 1024, gz: 108 * 1024, minGz: 36 * 1024 },
+  //   → 365 KiB raw / 110 KiB gz / 37 KiB min-gz (2026-08-02): GC stale-log
+  //     rotation cursor, sized for the whole branch. Measured 373010 raw /
+  //     112018 gz / 36883 min-gz, against a branch base of 368659 / 110218 /
+  //     36858. The note above predicted this closure would have to argue
+  //     rather than assume headroom (it was 6 B under on min-gz), and this
+  //     is that change.
+  //
+  //     min-gz is the axis that needs the argument. It moves +25 B, which
+  //     crosses the old 36 KiB ceiling by 19 B — so this rebaseline is
+  //     required, not discretionary. The spend is a second rotation cursor:
+  //     an optional field, a merge branch, a validator arm, and the log
+  //     phase's examined/last-key bookkeeping. It is partly paid for up
+  //     front — the branch OPENS by deleting `listBounded` (`listWindow`
+  //     supersedes it, and it was the worse shape besides, draining the wire
+  //     and truncating client-side instead of pushing `maxKeys` down), which
+  //     returns minified kernel before any cursor work is spent. +25 B net
+  //     is what survives that.
+  //
+  //     Taking the full KiB rather than trimming to fit is deliberate. A
+  //     hard ceiling left at single-digit-bytes of headroom is a coin-flip
+  //     gate: min-gz is deterministic within one environment but drifts a
+  //     few bytes across them — esbuild desync is exactly why CI reports
+  //     min+gz instead of failing on it — so a 6 B budget passes for whoever
+  //     measured it and fails for the next person. The 1005 B now free is
+  //     headroom, not spend; treat the next crossing as this closure's real
+  //     argument.
+  { entry: "http.js", raw: 365 * 1024, gz: 110 * 1024, minGz: 37 * 1024 },
   // Observability primitives — ObservabilityContext, the
   // request-scoped MetricsRecorder, LogTape config + the
   // JSON sink only (the pretty sink + picocolors now live in
@@ -768,7 +805,14 @@ const BUDGETS: readonly Budget[] = [
   //     guard, and `mintGeneration`. gz (695 B) and min-gz (776 B) both stay
   //     under; only the raw tripwire moves. Measured 130752 raw / 40265 gz /
   //     11512 min-gz.
-  { entry: "maintenance.js", raw: 128 * 1024, gz: 40 * 1024, minGz: 12 * 1024 },
+  //   → 133 KiB raw / 42 KiB gz (2026-08-02): GC stale-log rotation cursor,
+  //     sized for the whole branch. This closure owns `gc.ts`, so it takes
+  //     the whole module-JSDoc rewrite. Measured 135346 raw / 42148 gz /
+  //     11538 min-gz, against a branch base of 130995 / 40364 / 11528. The
+  //     axis split identifies this as documentation rather than code creep:
+  //     raw +4351, gz +1784, but min-gz (the hard ceiling, comments
+  //     stripped) only +10, staying 750 B under its unchanged budget.
+  { entry: "maintenance.js", raw: 133 * 1024, gz: 42 * 1024, minGz: 12 * 1024 },
   // Cloudflare Workers adapter — re-exports the kernel barrel
   // (Db, Writer, etc.) plus the R2-binding `Storage` impl
   // and the `baerlyCloudflare` helper. Aggregator: closure
@@ -962,7 +1006,13 @@ const BUDGETS: readonly Budget[] = [
   //     the delta is comment-dominated and it carries more non-kernel code
   //     to amortise it against — do not infer http.js is comfortable from
   //     this line; see its own ⚠️ note above.
-  { entry: "cloudflare.js", raw: 432 * 1024, gz: 131 * 1024, minGz: 45 * 1024 },
+  //   → 436 KiB raw / 133 KiB gz (2026-08-02): GC stale-log rotation cursor,
+  //     sized for the whole branch. Measured 446159 raw / 135096 gz / 45913
+  //     min-gz, against a branch base of 441808 / 133274 / 45878 — raw
+  //     +4351, gz +1822, min-gz +35 and still 167 B under its unchanged
+  //     budget. gz takes the full KiB rather than the 72 B that would have
+  //     cleared it, for the same coin-flip reason argued on http.js.
+  { entry: "cloudflare.js", raw: 436 * 1024, gz: 133 * 1024, minGz: 45 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
