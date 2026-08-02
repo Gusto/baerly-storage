@@ -15,33 +15,72 @@
  * writer-retry window — a paused-process writer that resumes hours
  * later still finds its idempotency anchor on the bucket.
  *
- * Idempotent: same input bucket state ⇒ same `pending.json` output.
+ * Idempotent modulo the rotation cursors: same input bucket state ⇒
+ * same candidate set and same DELETEs. The two `*_scan_cursor` fields
+ * are position, not state, and advance on every pass by design.
  * Unbounded by default — the run marks and sweeps the entire eligible
  * set in one pass. Callers on the Cloudflare 50-subrequest free-tier
  * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's
  * `gc.maxMarksPerRun` / `maxSweepsPerRun` knobs (`InternalRunGcOptions`,
  * not on the public `RunGcOptions`).
  *
+ * **When a bounded pass needs a rotation cursor.** A budget-capped
+ * LIST that always starts at the lexicographic beginning only makes
+ * progress if deletion clears the front of its window. The test is:
+ * *is the set of PERMANENTLY-undeletable keys under this prefix
+ * unbounded, and lex-interleaved with the deletable set?* Both halves
+ * matter. Unbounded, because a window can only be entirely undeletable
+ * if at least `maxMarks` such keys cluster at its front — one of them
+ * sorting first is not enough. Permanently, because a key that is
+ * merely already-marked and awaiting grace blocks marking without
+ * blocking progress. Where the test passes, a fixed first-`maxMarks`
+ * window can be all-undeletable and the pass marks nothing, forever —
+ * and no budget increase fixes it, because the failure is the window's
+ * position, not its size.
+ *
+ * Two of the three categories below fail that test and carry a
+ * persisted cursor (`gc/pending.json`); each bounded pass resumes
+ * `startAfter` the prior pass's last EXAMINED key — examined, not
+ * marked, so a window of live or already-pending keys still steps
+ * forward — and wraps at end-of-keyspace, so the whole prefix is
+ * covered over a rotation within the per-pass budget.
+ *
  * Three categories of orphan:
  *   - `stale-log`: `<collectionPrefix>/log/<seq>.json` with
  *     `seq < log_seq_start`. After `compact()` folds these into a
- *     snapshot, they're unreferenced.
+ *     snapshot, they're unreferenced. **Cursored**
+ *     (`log_scan_cursor`). `logObjectKey` builds UNPADDED decimal, so
+ *     lex order is `0, 1, 10, 100…109, 11, …`: a numeric prefix is not
+ *     a lexicographic prefix, and the permanently-undeletable live
+ *     keys at/above the floor interleave with — and routinely precede
+ *     — the stale ones. With `log_seq_start = 100` and keys `0..999`,
+ *     the lex-first 20 are `0, 1, 10, 100–109, 11, 110–115`: four
+ *     stale. Sweep those and the window is `100–119`, twenty live
+ *     keys, zero marks, and seqs `2–9` + `12–99` are unreachable.
  *   - `orphan-snapshot`: a `<collectionPrefix>/snapshot/L<n>/...` key not
  *     equal to `current.snapshot`. Each compactor run replaces the
- *     pointer; the prior file becomes unreferenced.
+ *     pointer; the prior file becomes unreferenced. **Not cursored** —
+ *     the one category the test above exempts, and the exemption rests
+ *     on CARDINALITY, not ordering: exactly ONE key under `snapshot/`
+ *     is permanently undeletable (the live `current.snapshot`), so for
+ *     any `maxMarks >= 2` the window can never be all-undeletable
+ *     however the keys sort. Ordering is a second, weaker argument —
+ *     today `snapshotKey` zero-pads both seq fields to a fixed width
+ *     and `compactor.ts` always passes `minSeq = 0`, so lex order
+ *     equals numeric order and the live snapshot (highest `maxSeq`)
+ *     sorts LAST. Don't lean on that one: `snapshot.ts` documents the
+ *     `L<n>` level prefix as forward-compatible with L0..L8 rolling
+ *     merges, and an L0 key would sort before the L9 live snapshot.
+ *     The cardinality argument survives that; the ordering one does
+ *     not.
  *   - `orphan-content`: `<collectionPrefix>/content/<sha>.json` whose
  *     32-hex truncated-SHA-256 hash is not in the live content-hash
  *     set (computed by hashing every live `entry.after` post-image —
  *     the same hash the writer's step 4 produces). Surfaces writer
- *     crashes between the content PUT and the log-entry PUT. Because
- *     content keys are hash-named (random lex order) and live content
- *     is never deleted, a bounded pass cannot rely on deletion to
- *     advance its LIST window the way `stale-log` does — so the
- *     orphan-content LIST carries a persisted rotation cursor
- *     (`content_scan_cursor` in `gc/pending.json`): each bounded pass
- *     resumes `startAfter` the prior pass's last examined key and wraps
- *     at end-of-keyspace, so the whole `content/` keyspace is swept
- *     over a rotation within the per-pass `maxMarksPerRun` budget.
+ *     crashes between the content PUT and the log-entry PUT.
+ *     **Cursored** (`content_scan_cursor`). Content keys are
+ *     hash-named (random lex order) and live content is never deleted,
+ *     so a first-`maxMarks` window can be all-live.
  *
  * CAS-lost on `gc/pending.json` is non-fatal: the DELETEs already
  * issued are durable, so we return a successful result and the next
@@ -225,14 +264,26 @@ export const runGc = async (
   // Set of keys already pending — don't re-mark.
   const known = new Set(pending.json.candidates.map((c) => c.key));
 
-  // ── Step 3. Mark stale log entries [0, log_seq_start). ──────────
+  // ── Step 3. Mark stale log entries (seq < log_seq_start). ───────
+  // A LEXICOGRAPHIC window of the whole `log/` prefix, filtered
+  // NUMERICALLY. The two orders disagree — log keys are unpadded
+  // decimal — so the floor is not a lex boundary and there is no
+  // `endBefore` that would confine the scan to stale keys. Hence the
+  // rotation cursor: same mechanism as the content scan below, same
+  // advance-on-examined rule. See `log_scan_cursor`.
   const newCandidates: GcCandidate[] = [];
   let markedStaleLog = 0;
+  let logExaminedThisPass = 0;
+  let lastExaminedLogKey: string | undefined;
   if (logSeqStart > 0) {
     for await (const entry of storage.list(
       `${collectionPrefix}/log/`,
-      listWindow(maxMarks, undefined, signal),
+      listWindow(maxMarks, pending.json.log_scan_cursor, signal),
     )) {
+      // Advance on EXAMINED, not marked — an all-live window (or one
+      // full of already-pending keys) must still move forward.
+      logExaminedThisPass++;
+      lastExaminedLogKey = entry.key;
       const seq = parseSeqFromLogKey(entry.key);
       if (seq === null || seq >= logSeqStart) {
         continue;
@@ -248,9 +299,21 @@ export const runGc = async (
       markedStaleLog++;
     }
   }
+  // Same wrap rule as the content scan. When the phase was SKIPPED
+  // (`log_seq_start === 0`) this is `0 < maxMarks` ⇒ wrap, which is the
+  // intended reading: with no floor the candidate set is empty, so we
+  // trivially examined all of it and the next pass should start from
+  // the beginning. The pass record has no third state for "phase did
+  // not run", and inventing one would buy nothing — the floor is
+  // monotonic, so a collection only passes through `0` before its
+  // first fold, when there is no stale key to strand.
+  const nextLogCursor = logExaminedThisPass < maxMarks ? undefined : lastExaminedLogKey;
 
   // ── Step 4. Mark orphan snapshots. ──────────────────────────────
   let markedOrphanSnapshot = 0;
+  // Uncursored on purpose — `listWindow` with no cursor, so the window
+  // is always the lexicographic first `maxMarks`. See the module JSDoc
+  // for why this phase is the one exemption.
   for await (const entry of storage.list(
     `${collectionPrefix}/snapshot/`,
     listWindow(maxMarks, undefined, signal),
@@ -321,9 +384,14 @@ export const runGc = async (
   // New cursor: if the LIST yielded FEWER than `maxKeys` keys it
   // reached the end of the keyspace ⇒ WRAP (next pass starts from the
   // beginning, cursor cleared). The unbounded reconcile path
-  // (maxMarks ≈ MAX_SAFE_INTEGER) always yields < maxKeys, so it lists
-  // the whole keyspace in one pass, marks every orphan, and wraps —
-  // behavior unchanged. Otherwise carry the last examined key.
+  // (maxMarks ≈ MAX_SAFE_INTEGER) always yields < maxKeys, so it always
+  // WRAPS — but it does not necessarily scan the whole keyspace first.
+  // Bounded and cursored are INDEPENDENT axes: `listWindow` applies
+  // `startAfter` whenever the ledger carries a cursor, whatever
+  // `maxKeys` is, so an unbounded pass that finds a cursor left by a
+  // bounded one covers only cursor→end. Liveness-only and self-healing
+  // — that pass wraps, so the next starts from the beginning and marks
+  // the remainder. Otherwise carry the last examined key.
   const reachedEnd = examinedThisPass < maxMarks;
   const nextContentCursor = reachedEnd ? undefined : lastExaminedKey;
 
@@ -380,7 +448,7 @@ export const runGc = async (
           newCandidates,
           lastSweptAt,
           nextContentCursor,
-          nextLogCursor: undefined,
+          nextLogCursor,
           maxCandidates: GC_MAX_PENDING_CANDIDATES,
         }),
       signalOpts,
@@ -435,7 +503,9 @@ export const runGc = async (
  * carries one. `maxKeys` is a hard cross-page total on every adapter
  * (`docs/spec/storage-compatibility.md`), which is what makes
  * "yielded fewer than we asked for ⇒ end of keyspace" a sound wrap
- * test.
+ * test. `startAfter` is strict-greater on the key VALUE, so a cursor
+ * naming a key this pass already deleted still resumes correctly —
+ * never probe whether it still exists.
  */
 const listWindow = (
   maxKeys: number,

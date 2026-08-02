@@ -23,7 +23,7 @@ import {
   readGcPending,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
+import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
@@ -618,6 +618,245 @@ describe("runGc", () => {
     // Reached the end ⇒ cursor wrapped (cleared).
     const pending = await readGcPending(s, PENDING_KEY);
     expect(pending?.json.content_scan_cursor).toBeUndefined();
+  });
+
+  // ── stale-log LIST rotation ──────────────────────────────────────
+  // The sibling of the orphan-content rotation above, reached by a
+  // different route. `logObjectKey` builds UNPADDED decimal keys, so
+  // lex order is `0, 1, 10, 100…109, 11, …` and the LIVE keys at/above
+  // `log_seq_start` interleave with — and routinely lex-PRECEDE — the
+  // stale ones below it. A bounded pass listing from the lexicographic
+  // start can therefore spend its whole budget on live keys it will
+  // never delete, and never reach the stale keys behind them. Deletion
+  // cannot advance a window that is entirely live.
+  //
+  // NOTE the inversion vs. `seedOrphanContent`: that helper pads to 32
+  // hex digits SO THAT lex order == seed order. These seeds must NOT
+  // pad — the interleaving IS the defect, and a padded seed would pass
+  // against the broken code.
+  const STALE_LOG_PREFIX = "app/t/tenant/x/manifests/c/log";
+  const logKey = (seq: number): string => `${STALE_LOG_PREFIX}/${seq}.json`;
+
+  /**
+   * Floor at 100 with a five-entry live tail `[100, 105)` plus two
+   * stale entries `11` and `12`. Lex order is
+   * `100, 101, 102, 103, 104, 11, 12` — the five LIVE keys sort FIRST
+   * and the two stale ones are stranded behind them.
+   */
+  const seedInterleavedLog = async (s: MemoryStorage): Promise<void> => {
+    await createCurrentJson(
+      s,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 100,
+        tail_hint: 105,
+        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
+      }),
+    );
+    for (const seq of [100, 101, 102, 103, 104, 11, 12]) {
+      await seedLogEntry(s, "app/t/tenant/x/manifests/c", seq);
+    }
+  };
+
+  test("advances the log cursor on an all-live (zero-mark) window", async () => {
+    const s = new MemoryStorage();
+    await seedInterleavedLog(s);
+    // maxMarks=5 ⇒ the LIST examines exactly the five live keys
+    // 100..104 and marks nothing. The cursor MUST still advance to the
+    // last one so the next pass reaches the stale keys behind them.
+    // 5 examined == maxMarks ⇒ NOT end-of-keyspace ⇒ carried, not wrapped.
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 5,
+    } as InternalRunGcOptions);
+    expect(r.marked.stale_log).toBe(0);
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.log_scan_cursor).toBe(logKey(104));
+  });
+
+  test("rotates the stale-log LIST so sub-floor keys behind the first window are eventually swept", async () => {
+    const s = new MemoryStorage();
+    await seedInterleavedLog(s);
+    // Pass 1 examines the all-live window and marks nothing; pass 2
+    // resumes past it and reaches 11 + 12. Without rotation pass 2 is a
+    // verbatim replay of pass 1 and the two stale keys leak forever.
+    let totalSwept = 0;
+    for (let pass = 0; pass < 2; pass++) {
+      const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxMarksPerRun: 5,
+        maxSweepsPerRun: 5,
+      } as InternalRunGcOptions);
+      totalSwept += r.swept;
+    }
+    expect(totalSwept).toBe(2);
+    await expect(s.get(logKey(11))).resolves.toBeNull();
+    await expect(s.get(logKey(12))).resolves.toBeNull();
+    // The live tail is untouched.
+    for (let seq = 100; seq < 105; seq++) {
+      await expect(s.get(logKey(seq))).resolves.not.toBeNull();
+    }
+  });
+
+  test("persists log_scan_cursor across passes and WRAPS to undefined at the end", async () => {
+    const s = new MemoryStorage();
+    await seedInterleavedLog(s);
+    // Pass 1: 5 examined == maxMarks ⇒ cursor carried at the 5th key.
+    await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 5,
+    } as InternalRunGcOptions);
+    const after1 = await readGcPending(s, PENDING_KEY);
+    expect(after1?.json.log_scan_cursor).toBe(logKey(104));
+
+    // Pass 2: resumes startAfter log/104.json, examines [11, 12] = 2
+    // keys < maxMarks ⇒ reached the end ⇒ WRAP (cursor cleared).
+    await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 5,
+    } as InternalRunGcOptions);
+    const after2 = await readGcPending(s, PENDING_KEY);
+    expect(after2?.json.log_scan_cursor).toBeUndefined();
+  });
+
+  test("unbounded runGc from a CURSORLESS ledger marks ALL stale logs in one pass and wraps", async () => {
+    const s = new MemoryStorage();
+    await seedInterleavedLog(s);
+    // No maxMarksPerRun ⇒ DEFAULT_MAX_MARKS. The LIST yields all seven
+    // keys (< maxKeys) in one pass, so the reconcile path is unchanged.
+    // "Cursorless" is load-bearing in the name — see the next test.
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+    } as InternalRunGcOptions);
+    expect(r.marked.stale_log).toBe(2);
+    expect(r.swept).toBe(2);
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.log_scan_cursor).toBeUndefined();
+  });
+
+  test("an unbounded pass RESUMES from a cursor a bounded pass left, then wraps", async () => {
+    // BOUNDED and CURSORED are independent axes: `listWindow` applies
+    // `startAfter` whenever the ledger carries a cursor, whatever
+    // `maxKeys` is. So "unbounded" does NOT mean "scans the whole
+    // keyspace" — it means "cannot be cut short by the budget". An
+    // unbounded pass that inherits a bounded pass's cursor covers only
+    // cursor→end.
+    //
+    // This is liveness-only and self-healing (the pass wraps, so the
+    // next one starts from the beginning), which is why it is specified
+    // rather than fixed: suppressing the cursor on the unbounded path
+    // would cost a branch in a tight closure to defend a claim we can
+    // simply state accurately. Pinned so the behavior is a decision,
+    // not an accident. Surfaced by Fresh Eyes on PR #82.
+    const s = new MemoryStorage();
+    await seedInterleavedLog(s);
+    // Park the cursor at the very END of the keyspace: 7 keys examined
+    // == maxMarks ⇒ no wrap, cursor at the lex-last key (log/12.json).
+    await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 7,
+    } as InternalRunGcOptions);
+    const parked = await readGcPending(s, PENDING_KEY);
+    expect(parked?.json.log_scan_cursor).toBe(logKey(12));
+
+    // Add a stale key that sorts FIRST ("0" < "1"), i.e. strictly
+    // BEHIND the parked cursor. This is what makes the assertion
+    // decisive: a from-the-beginning scan would mark it, a resuming
+    // scan cannot see it. Counting marks alone would not distinguish
+    // the two, because both reach the same set from log/104 onward.
+    await seedLogEntry(s, "app/t/tenant/x/manifests/c", 0);
+
+    const resumed = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+    } as InternalRunGcOptions);
+    // Unbounded, yet it marks NOTHING new — it resumed past log/0.json.
+    expect(resumed.marked.stale_log).toBe(0);
+    await expect(s.get(logKey(0))).resolves.not.toBeNull();
+    // ...and it wrapped, which is the self-healing half.
+    const wrapped = await readGcPending(s, PENDING_KEY);
+    expect(wrapped?.json.log_scan_cursor).toBeUndefined();
+
+    // Next pass is cursorless, so the whole keyspace is in scope again
+    // and the straggler is reclaimed. One extra pass, nothing stranded.
+    const healed = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+    } as InternalRunGcOptions);
+    expect(healed.marked.stale_log).toBe(1);
+    await expect(s.get(logKey(0))).resolves.toBeNull();
+  });
+
+  test("the cursor advances past a window of already-pending (known) keys", async () => {
+    const s = new MemoryStorage();
+    // A FULL window of stale keys, so one window can be entirely
+    // already-marked. Floor 100, stale 11..15, live 100..104 — lex order
+    // is 100,101,102,103,104,11,12,13,14,15, so the two groups are
+    // exactly one maxMarks=5 window each.
+    await createCurrentJson(
+      s,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 100,
+        tail_hint: 105,
+        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
+      }),
+    );
+    for (const seq of [100, 101, 102, 103, 104, 11, 12, 13, 14, 15]) {
+      await seedLogEntry(s, "app/t/tenant/x/manifests/c", seq);
+    }
+    const pass = async (): Promise<void> => {
+      // DEFAULT grace — marks accumulate in the ledger and are NOT
+      // swept, which is the production shape for a full 7 days.
+      await runGc({ storage: s, currentJsonKey: KEY }, {
+        maxMarksPerRun: 5,
+      } as InternalRunGcOptions);
+    };
+    await pass(); // 1: all-live window        ⇒ cursor log/104
+    await pass(); // 2: marks 11..15           ⇒ cursor log/15
+    await pass(); // 3: nothing left           ⇒ wrap
+    await pass(); // 4: all-live window again  ⇒ cursor log/104
+    const before = await readGcPending(s, PENDING_KEY);
+    expect(before?.json.log_scan_cursor).toBe(logKey(104));
+
+    // Pass 5 is the one that matters: the window is 11..15, every key
+    // already in `known` and awaiting grace. Zero marks — but the
+    // cursor MUST still step past them. Advancing only on marked (or
+    // only on not-`known`) keys would leave the cursor here forever, so
+    // a ledger full of pending candidates re-creates the exact stall
+    // the rotation removes — and under the 7-day default that state
+    // lasts a week, making it the DOMINANT case, not an edge one.
+    const r5 = await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 5,
+    } as InternalRunGcOptions);
+    expect(r5.marked.stale_log).toBe(0);
+    expect(r5.swept).toBe(0);
+    const after = await readGcPending(s, PENDING_KEY);
+    expect(after?.json.log_scan_cursor).toBe(logKey(15));
+    expect(after?.json.candidates).toHaveLength(5);
+  });
+
+  test("a collection with no floor (log_seq_start = 0) CLEARS an existing log cursor", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    await seedLogEntry(s, "app/t/tenant/x/manifests/c", 0);
+    // Seed a cursor first, so this pins the DECISION rather than the
+    // absence of one: starting from a ledger with no cursor would make
+    // `toBeUndefined()` trivially true and the opposite decision
+    // (echo the stored cursor back) would pass too.
+    await createGcPending(s, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      log_scan_cursor: "app/t/tenant/x/manifests/c/log/9.json",
+    });
+    // The stale-log phase is skipped entirely when there is no floor.
+    // We treat that as a WRAP: the candidate set is empty, so "examined
+    // all of it" is trivially true and the correct next position is the
+    // beginning. The alternative — echo the stored cursor back, which
+    // the greater-of merge would turn into a no-op — is expressible,
+    // but it re-skips the head of the keyspace for a rotation after a
+    // concurrent wrap. Both are liveness-only; this pins which we chose.
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      maxMarksPerRun: 1,
+    } as InternalRunGcOptions);
+    expect(r.marked.stale_log).toBe(0);
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.log_scan_cursor).toBeUndefined();
   });
 
   // ── live-log scan concurrency bound ──────────────────────────────
