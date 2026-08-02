@@ -54,7 +54,8 @@
        user-facing behavior change   → a changeset (`.changeset/*.md`)
        design rationale, invariants  → `docs/spec/` or `docs/adr/`
        why a constant has its value  → JSDoc at the constant
-       a bundle-size rebaseline      → the dated note in the budget table
+       a bundle-size rebaseline      → regenerated `bundle-sizes.json` + why,
+                                       in the commit message
        work you didn't do            → an issue, linked here as one line
 
      Never include: a changelog of your branch, ticket bookkeeping beyond

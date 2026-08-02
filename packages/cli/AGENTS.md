@@ -55,15 +55,15 @@ CLI never renders user-facing code snippets.
 
 ## Bundle policy
 
-`dist/baerly.js` is **intentionally unbudgeted** in
-`tests/integration/bundle-size.test.ts:46-56`. Reason: static-import
+`dist/baerly.js` is **intentionally unbudgeted** — it is absent from
+`bundle-sizes.json`. Reason: static-import
 closure is ~28 KiB regardless of how much each verb pulls, citty-style
 lazy dispatch is the load-bearing discipline, and the bin runs on dev
 machines / CI where cold-start size is not a useful signal.
 
 What _is_ budgeted there is a behavioural guard:
 `BUNDLED_OPTIONAL_PEERS` walks `dist/baerly.js` to ensure
-`@xmldom/xmldom` and `aws4fetch` are bundled, not live-imported (the
+`@rgrove/parse-xml` and `aws4fetch` are bundled, not live-imported (the
 agent-struggle #14 regression class).
 
 Anti-patterns to flag in review:
@@ -79,10 +79,15 @@ Anti-patterns to flag in review:
 
 - `pnpm verify:agent` after a verb edit — typecheck + lint catch most
   regressions; the verb's own `*.test.ts` is the next gate.
-- `pnpm bundle-sizes` after touching `src/baerly.ts` or any new
-  static import. Self-builds, prints `BUNDLE_SIZE <entry> raw=… gz=…`
-  for every entry. Don't pipe through `tail`/`head`; output is
-  already compact.
+- After touching `src/baerly.ts` or any new static import, run
+  `pnpm test:agent tests/integration/bundle-size.test.ts` — that is
+  where the `BUNDLED_OPTIONAL_PEERS` guard lives. `pnpm bundle-sizes`
+  will NOT catch a regression here: `dist/baerly.js` is absent from
+  `bundle-sizes.json`, so the delta gate never measures it.
+- `pnpm bundle-sizes` self-builds and gates every snapshot entry,
+  printing only violations (or `ok (N entries)`). Add `--report` for
+  `BUNDLE_SIZE <entry> raw=…(+Δ,+Δ%) gz=…` on every entry. Don't pipe
+  through `tail`/`head`; output is already compact.
 - The worktree-bootstrap dance matters here:
   `pnpm worktree:bootstrap` rebuilds `dist/baerly.js`, which is what
   every example's `node_modules/.bin/baerly` symlinks to. Without it,
