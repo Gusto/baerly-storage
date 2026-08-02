@@ -575,6 +575,59 @@ describe("gc-pending", () => {
     await expect(readGcPending(s, KEY)).rejects.toMatchObject({ code: "InvalidResponse" });
   });
 
+  // ---- log_scan_cursor validation (sibling of content_scan_cursor) ----
+
+  test("accepts log_scan_cursor absent (optional)", async () => {
+    const s = new MemoryStorage();
+    await createGcPending(s, KEY, initial());
+    const read = await readGcPending(s, KEY);
+    expect(read?.json.log_scan_cursor).toBeUndefined();
+  });
+
+  test("accepts log_scan_cursor as a non-empty string", async () => {
+    const s = new MemoryStorage();
+    const withCursor: GcPending = { ...initial(), log_scan_cursor: "log/42.json" };
+    await createGcPending(s, KEY, withCursor);
+    const read = await readGcPending(s, KEY);
+    expect(read?.json.log_scan_cursor).toBe("log/42.json");
+  });
+
+  test("rejects log_scan_cursor as a number", async () => {
+    const s = new MemoryStorage();
+    await s.put(
+      KEY,
+      new TextEncoder().encode(
+        JSON.stringify({
+          schema_version: 1,
+          candidates: [],
+          last_swept_at: "",
+          log_scan_cursor: 42,
+        }),
+      ),
+      { contentType: GC_PENDING_CONTENT_TYPE },
+    );
+    const err = await readGcPending(s, KEY).catch((error: unknown) => error);
+    expect((err as BaerlyError).code).toBe("InvalidResponse");
+    expect((err as BaerlyError).message).toContain("log_scan_cursor");
+  });
+
+  test("rejects log_scan_cursor as boolean false (!== undefined but not string)", async () => {
+    const s = new MemoryStorage();
+    await s.put(
+      KEY,
+      new TextEncoder().encode(
+        JSON.stringify({
+          schema_version: 1,
+          candidates: [],
+          last_swept_at: "",
+          log_scan_cursor: false,
+        }),
+      ),
+      { contentType: GC_PENDING_CONTENT_TYPE },
+    );
+    await expect(readGcPending(s, KEY)).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
   // ---- casUpdateGcPending: missing key error message (L173) ----
 
   test("cas-update on missing key error message mentions 'does not exist'", async () => {
@@ -880,6 +933,7 @@ describe("gc-pending", () => {
       newCandidates: [cand("mine.json")],
       lastSweptAt: "",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     const keys = merged.candidates.map((c) => c.key);
@@ -898,6 +952,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "2026-01-03T00:00:00.000Z",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.candidates.map((c) => c.key)).toEqual(["b.json"]);
@@ -916,6 +971,7 @@ describe("gc-pending", () => {
       newCandidates: [cand("dup.json"), cand("fresh.json")],
       lastSweptAt: "",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     const keys = merged.candidates.map((c) => c.key);
@@ -937,6 +993,7 @@ describe("gc-pending", () => {
       newCandidates: [cand("fast.json"), cand("slow.json")],
       lastSweptAt: "2026-01-03T00:00:00.000Z",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.candidates.map((c) => c.key)).toEqual(["slow.json"]);
@@ -953,6 +1010,7 @@ describe("gc-pending", () => {
       newCandidates: [cand("c.json"), cand("d.json")],
       lastSweptAt: "",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 3,
     });
     expect(merged.candidates).toHaveLength(3);
@@ -973,6 +1031,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "2026-05-01T00:00:00.000Z",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.last_swept_at).toBe("2026-06-01T00:00:00.000Z");
@@ -989,6 +1048,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "2026-05-01T00:00:00.000Z",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.last_swept_at).toBe("2026-05-01T00:00:00.000Z");
@@ -1007,6 +1067,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "",
       nextContentCursor: "content/ddd",
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.content_scan_cursor).toBe("content/mmm");
@@ -1028,6 +1089,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "",
       nextContentCursor: "content/xyz",
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.content_scan_cursor).toBe("content/xyz");
@@ -1049,6 +1111,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect("content_scan_cursor" in merged).toBe(false);
@@ -1065,9 +1128,110 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect("content_scan_cursor" in merged).toBe(false);
+  });
+
+  test("mergeGcPending: log cursor takes the more-advanced of the two", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      log_scan_cursor: "log/9.json",
+    };
+    // Our pass advanced LESS far than the concurrent pass; don't regress.
+    // NB lexicographic, not numeric: "log/9.json" > "log/12.json".
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      nextLogCursor: "log/12.json",
+      maxCandidates: 1000,
+    });
+    expect(merged.log_scan_cursor).toBe("log/9.json");
+  });
+
+  test("mergeGcPending: log cursor — OUR advance wins when it is the greater", () => {
+    // The other direction of the `>` comparison. The content side only
+    // pins the latest-wins direction, so a mutant flipping the operator
+    // survives there; pin both here.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      log_scan_cursor: "log/12.json",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      nextLogCursor: "log/9.json",
+      maxCandidates: 1000,
+    });
+    expect(merged.log_scan_cursor).toBe("log/9.json");
+  });
+
+  test("mergeGcPending: latest has no log cursor, we advanced ⇒ keep our advance", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      nextLogCursor: "log/7.json",
+      maxCandidates: 1000,
+    });
+    expect(merged.log_scan_cursor).toBe("log/7.json");
+  });
+
+  test("mergeGcPending: our pass wrapped the log scan (undefined) ⇒ result wraps", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      log_scan_cursor: "log/55.json",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      nextLogCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect("log_scan_cursor" in merged).toBe(false);
+  });
+
+  test("mergeGcPending: the log and content cursors advance INDEPENDENTLY", () => {
+    // The two rotations are over disjoint keyspaces with different
+    // budgets-consumed-per-pass, so one wrapping must never reset or
+    // regress the other. A shared single cursor would fail this.
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      content_scan_cursor: "content/aaa",
+      log_scan_cursor: "log/55.json",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      // Content advanced past latest; log reached the end and wrapped.
+      nextContentCursor: "content/bbb",
+      nextLogCursor: undefined,
+      maxCandidates: 1000,
+    });
+    expect(merged.content_scan_cursor).toBe("content/bbb");
+    expect("log_scan_cursor" in merged).toBe(false);
   });
 
   test("mergeGcPending: returns the current schema_version", () => {
@@ -1076,6 +1240,7 @@ describe("gc-pending", () => {
       newCandidates: [],
       lastSweptAt: "",
       nextContentCursor: undefined,
+      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.schema_version).toBe(GC_PENDING_SCHEMA_VERSION);
@@ -1118,6 +1283,7 @@ describe("gc-pending", () => {
         newCandidates: [cand("mine.json")],
         lastSweptAt: "",
         nextContentCursor: undefined,
+        nextLogCursor: undefined,
         maxCandidates: 1000,
       }),
     );
@@ -1161,18 +1327,23 @@ const candidateArb: fc.Arbitrary<GcCandidate> = fc.record({
   reason: fc.constantFrom<GcCandidate["reason"]>("stale-log", "orphan-snapshot", "orphan-content"),
 });
 
-// Optionally carries `content_scan_cursor` — present (string) or the
-// key omitted entirely (the optional-additive contract).
+// Optionally carries `content_scan_cursor` / `log_scan_cursor` — each
+// present (string) or the key omitted entirely (the optional-additive
+// contract), independently of the other.
 const gcPendingArb: fc.Arbitrary<GcPending> = fc
   .record({
     candidates: fc.array(candidateArb, { maxLength: 8 }),
     last_swept_at: fc.string({ maxLength: 24 }),
     cursor: fc.option(fc.string({ maxLength: 24 }), { nil: undefined }),
+    logCursor: fc.option(fc.string({ maxLength: 24 }), { nil: undefined }),
   })
-  .map(({ candidates, last_swept_at, cursor }) => {
+  .map(({ candidates, last_swept_at, cursor, logCursor }) => {
     const out: GcPending = { schema_version: GC_PENDING_SCHEMA_VERSION, candidates, last_swept_at };
     if (cursor !== undefined) {
       out.content_scan_cursor = cursor;
+    }
+    if (logCursor !== undefined) {
+      out.log_scan_cursor = logCursor;
     }
     return out;
   });

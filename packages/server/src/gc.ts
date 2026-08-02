@@ -380,6 +380,7 @@ export const runGc = async (
           newCandidates,
           lastSweptAt,
           nextContentCursor,
+          nextLogCursor: undefined,
           maxCandidates: GC_MAX_PENDING_CANDIDATES,
         }),
       signalOpts,
