@@ -178,12 +178,24 @@ porter can cite a specific clause.
    _"keys sort by UTF-8 byte order, not UTF-16 (supplementary-plane
    divergence)"_.
 6. **`maxKeys` MUST cap the yielded count** to the first `maxKeys` keys in
-   sort order. Combined with `startAfter`, the cap MUST apply AFTER the
-   cursor filter: `list(p, { startAfter: k, maxKeys: n })` yields the first
-   `n` keys strictly greater than `k`, never a window of `n` keys from the
-   start of the prefix that is then filtered down. (Conformance: _"maxKeys
-   caps the result"_ and _"startAfter and maxKeys compose: the cap applies
-   AFTER the cursor"_.)
+   sort order. It is a hard total across the port's internal pagination, not
+   a per-page limit. Combined with `startAfter`, the cap MUST apply AFTER
+   the cursor filter: `list(p, { startAfter: k, maxKeys: n })` yields the
+   first `n` keys strictly greater than `k`, never a window of `n` keys from
+   the start of the prefix that is then filtered down. GC's wrap test —
+   _yielded fewer than `maxKeys` ⇒ reached end of keyspace_ — is unsound
+   without both halves: a port that yields one short page and stops
+   reports a false end-of-keyspace on every pass. A port MUST also
+   clamp `maxKeys` to its wire maximum (1000 on S3/R2) rather than
+   forwarding it verbatim — the kernel's unbounded path passes
+   `Number.MAX_SAFE_INTEGER`, which is `InvalidArgument` on real S3.
+   (Conformance: _"maxKeys caps the result"_ and _"startAfter and
+   maxKeys compose: the cap applies AFTER the cursor"_. **The
+   cross-adapter suite cannot reach the page boundary** — its fixtures
+   are a handful of keys and no in-tree backend pages below 1000 — so
+   the cross-page total and the clamp are pinned per-adapter instead,
+   in the `list` blocks of `s3-http.test.ts` and
+   `r2-binding-storage.test.ts`. A port MUST pin them itself.)
 7. **Body round-trip MUST be byte-exact at the size boundaries.** A `0`-byte
    body and a 1 MiB (`1048576`-byte) body MUST `put` then `get` back
    byte-for-byte. (Conformance: _"round-trip exactly 0 bytes"_ …

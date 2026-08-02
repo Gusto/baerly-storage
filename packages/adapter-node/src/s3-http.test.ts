@@ -352,6 +352,82 @@ describe("S3HttpStorage.list", () => {
     expect(out).toEqual(["a", "b"]);
   });
 
+  // `maxKeys` is normatively a HARD TOTAL across the port's internal
+  // pagination, not a per-page limit
+  // (docs/spec/storage-compatibility.md, list clause 6). The
+  // cross-adapter conformance suite cannot reach this: its fixtures are
+  // a handful of keys and no in-tree backend pages below 1000, so a
+  // port that yielded one page and stopped would pass conformance.
+  //
+  // It is load-bearing for GC's rotation cursors, which infer
+  // end-of-keyspace from "the LIST yielded FEWER than maxKeys". An
+  // adapter that stops at a short first page reports a false wrap on
+  // every pass, clearing the cursor forever — reinstating exactly the
+  // stall the cursor exists to remove. S3 is explicitly permitted to
+  // return fewer than `max-keys` with `IsTruncated`, so this is a real
+  // wire behaviour, not a hypothetical.
+  test("maxKeys is a hard TOTAL across pages, not a per-page limit", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = urlOfFetchInput(input);
+      if (url.includes("continuation-token=tok1")) {
+        return new Response(xmlPage(["c", "d"]), { status: 200 });
+      }
+      return new Response(xmlPage(["a", "b"], "tok1"), { status: 200 });
+    });
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    const out: string[] = [];
+    // Server pages at 2; we asked for 3. Stopping at the page boundary
+    // would yield ["a","b"] and, to a rotation cursor, look like the
+    // end of the keyspace.
+    for await (const e of s.list("p/", { maxKeys: 3 })) {
+      out.push(e.key);
+    }
+    expect(out).toEqual(["a", "b", "c"]);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    // The remaining budget rides on the follow-up request, so the
+    // second page asks for 1, not 3.
+    const second = fetchFn.mock.calls[1]![0] as Request;
+    expect(decodeURIComponent(second.url)).toContain("max-keys=1");
+  });
+
+  test("startAfter rides the FIRST page only; later pages use the continuation token", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = urlOfFetchInput(input);
+      if (url.includes("continuation-token=tok1")) {
+        return new Response(xmlPage(["c"]), { status: 200 });
+      }
+      return new Response(xmlPage(["a", "b"], "tok1"), { status: 200 });
+    });
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    const out: string[] = [];
+    for await (const e of s.list("p/", { startAfter: "p/x", maxKeys: 3 })) {
+      out.push(e.key);
+    }
+    expect(out).toEqual(["a", "b", "c"]);
+    const first = decodeURIComponent((fetchFn.mock.calls[0]![0] as Request).url);
+    const second = decodeURIComponent((fetchFn.mock.calls[1]![0] as Request).url);
+    expect(first).toContain("start-after=p/x");
+    // Sending both would be a protocol error on real S3.
+    expect(second).not.toContain("start-after");
+    expect(second).toContain("continuation-token=tok1");
+  });
+
+  test("an effectively-unbounded maxKeys is clamped to the 1000-key wire maximum", async () => {
+    // GC's unbounded reconcile path passes `Number.MAX_SAFE_INTEGER`.
+    // Forwarding that verbatim is `InvalidArgument` on real S3.
+    const fetchFn = vi.fn<typeof fetch>(
+      async (_req) => new Response(xmlPage(["a"]), { status: 200 }),
+    );
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    const drained: string[] = [];
+    for await (const e of s.list("p/", { maxKeys: Number.MAX_SAFE_INTEGER })) {
+      drained.push(e.key);
+    }
+    expect(drained).toEqual(["a"]);
+    const req = decodeURIComponent((fetchFn.mock.calls[0]![0] as Request).url);
+    expect(req).toContain("max-keys=1000");
+  });
+
   test("startAfter sets the cursor", async () => {
     const fetchFn = vi.fn<typeof fetch>(async (_req) => new Response(xmlPage([]), { status: 200 }));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
