@@ -170,7 +170,12 @@ export function unmeasuredPublishedEntries(snapshot: Snapshot): string[] {
   return publishedEntries().filter((entry) => !(entry in snapshot.entries));
 }
 
-function loadSnapshot(): Snapshot {
+/**
+ * The committed snapshot. Exported so the CLI and the tests gate the same
+ * bytes: two call sites resolving the path independently can silently drift
+ * onto different files, and the one that reads the wrong file passes.
+ */
+export function loadSnapshot(): Snapshot {
   return JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8")) as Snapshot;
 }
 
