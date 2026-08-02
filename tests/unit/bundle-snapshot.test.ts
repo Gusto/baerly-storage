@@ -3,6 +3,7 @@ import {
   blocksWrite,
   compareSnapshot,
   deltaLimit,
+  formatReportLine,
   type Snapshot,
 } from "../../scripts/bundle-sizes.ts";
 
@@ -126,6 +127,31 @@ describe("compareSnapshot", () => {
 
   test("a snapshot entry with no measurement is a loud error", () => {
     expect(() => compareSnapshot(snap(shipped), {})).toThrow(/index\.js/);
+  });
+});
+
+// The exact string is the contract: agents are told to grep `--report` output,
+// so the shape is pinned here rather than left to whatever console.log does.
+describe("formatReportLine", () => {
+  const shipped = { tier: "shipped", raw: 100000, gz: 30000, minGz: 10000, note: "n" };
+
+  test("carries measured size and delta from baseline on every axis", () => {
+    expect(formatReportLine("index.js", { raw: 100260, gz: 29988, minGz: 10000 }, shipped)).toBe(
+      "BUNDLE_SIZE index.js raw=100260(+260,+0.3%) gz=29988(-12,-0.0%) min-gz=10000(+0,+0.0%)",
+    );
+  });
+
+  test("an axis with no committed baseline reports the measurement alone", () => {
+    const tooling = { tier: "tooling", raw: 1000, note: "n" };
+    expect(formatReportLine("node.js", { raw: 1100, gz: 400 }, tooling)).toBe(
+      "BUNDLE_SIZE node.js raw=1100(+100,+10.0%) gz=400",
+    );
+  });
+
+  test("an unmeasured axis is absent, not reported as zero", () => {
+    expect(formatReportLine("node.js", { raw: 100000, gz: 30000 }, shipped)).toBe(
+      "BUNDLE_SIZE node.js raw=100000(+0,+0.0%) gz=30000(+0,+0.0%)",
+    );
   });
 });
 
