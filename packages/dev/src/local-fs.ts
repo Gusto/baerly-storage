@@ -269,6 +269,17 @@ export class LocalFsStorage implements Storage {
     if (segments.some((s) => s === "" || s === "." || s === "..")) {
       throw new BaerlyError("InvalidConfig", `LocalFsStorage: illegal segment in key: ${key}`);
     }
+    if (segments.some((s) => s.startsWith(TEMP_PREFIX))) {
+      // `walk` skips this prefix so in-flight staging temps never surface
+      // as keys, which means a *real* key here would be writable and
+      // readable but invisible to `list` — a silent violation of the
+      // put-then-list contract. Reserve the namespace rather than leave
+      // the hole open; `tempPathFor` is the only legitimate producer.
+      throw new BaerlyError(
+        "InvalidConfig",
+        `LocalFsStorage: key uses the reserved "${TEMP_PREFIX}" prefix: ${key}`,
+      );
+    }
     const path = join(this.#root, ...segments);
     if (path !== this.#root && !path.startsWith(this.#root + sep)) {
       throw new BaerlyError("InvalidConfig", `LocalFsStorage: resolved path escapes root: ${key}`);
@@ -319,11 +330,19 @@ const walk = async (root: string, out: string[]): Promise<void> => {
     }
     for (const entry of entries) {
       const full = join(dir, entry.name);
+      // Skip the reserved staging namespace (see TEMP_PREFIX) so a
+      // concurrent list during a write never surfaces a half-published
+      // key. Applied to directories as well as files: `#pathFor` rejects
+      // the prefix in ANY segment, so yielding `.baerly-tmp-d/child` here
+      // would produce a key that `list` then throws on when it maps that
+      // key back to a path. Nothing in this adapter creates such a
+      // directory, but a stray one must not break iteration.
+      if (entry.name.startsWith(TEMP_PREFIX)) {
+        continue;
+      }
       if (entry.isDirectory()) {
         stack.push(full);
-      } else if (entry.isFile() && !entry.name.startsWith(TEMP_PREFIX)) {
-        // Skip the transient create-if-absent temps (see TEMP_PREFIX) so a
-        // concurrent list during a create never surfaces a half-linked key.
+      } else if (entry.isFile()) {
         out.push(relative(root, full).split(sep).join(posix.sep));
       }
     }

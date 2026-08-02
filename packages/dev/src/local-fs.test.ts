@@ -1,4 +1,12 @@
-import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,14 +153,25 @@ describe("LocalFsStorage — impl-specific", () => {
     expect(entries).toEqual(["x/y/z"]);
   });
 
-  test("list() excludes internal create-if-absent temp files", async () => {
-    // The link(2)-based create-if-absent writes a `.baerly-tmp-*` file under
-    // the bucket root; a crash mid-create (or a concurrent list during a
-    // create) can leave one behind. It must never surface as a key.
+  test("list() excludes internal temp files at every depth", async () => {
+    // BOTH write paths stage a `.baerly-tmp-*` file next to their
+    // destination — the link(2) create-if-absent and the write+rename that
+    // serves unconditional and `ifMatch` puts. A crash between staging and
+    // publishing (or a concurrent list during one) can leave one behind at
+    // any depth, and it must never surface as a key. This is what makes
+    // staging inside the bucket root safe; see `tempPathFor`.
     await s.put("real", utf8("v"));
+    await s.put("nested/real", utf8("v"));
     writeFileSync(join(root, ".baerly-tmp-99999-0-deadbeef"), "leftover");
+    writeFileSync(join(root, "nested", ".baerly-tmp-99999-0-cafebabe"), "leftover");
+    // A *directory* in the reserved namespace is skipped wholesale rather
+    // than descended into. Nothing here creates one, but were its children
+    // yielded they would be keys that `#pathFor` rejects, and `list` would
+    // throw part-way through iteration instead of returning.
+    mkdirSync(join(root, ".baerly-tmp-99999-0-straydir"));
+    writeFileSync(join(root, ".baerly-tmp-99999-0-straydir", "child"), "leftover");
     const listed = await collect(s.list(""));
-    expect(listed.map((e) => e.key)).toEqual(["real"]);
+    expect(listed.map((e) => e.key)).toEqual(["nested/real", "real"]);
   });
 
   test("path-traversal keys are rejected", async () => {
@@ -169,6 +188,19 @@ describe("LocalFsStorage — impl-specific", () => {
       await expect(s.put(bad, utf8("v"))).rejects.toMatchObject({
         code: "InvalidConfig",
       });
+    }
+  });
+
+  test("keys in the reserved temp namespace are rejected", async () => {
+    // `walk` skips TEMP_PREFIX so staging temps never surface as keys —
+    // which means a real key there would be writable and readable but
+    // invisible to list(), silently violating put-then-list. The namespace
+    // is reserved rather than left as a hole for `tempPathFor` alone to
+    // avoid.
+    for (const bad of [".baerly-tmp-mine", "nested/.baerly-tmp-mine", ".baerly-tmp-"]) {
+      await expect(s.put(bad, utf8("v"))).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(s.get(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(s.delete(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
     }
   });
 
