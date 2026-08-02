@@ -27,8 +27,8 @@
  * The CLI wrapper at the bottom of the file constructs that
  * `Storage` from `--bucket=<uri>` via `parseBucketUri`. The
  * Cloudflare target short-circuits with an info-level "not yet
- * wired" finding pending the follow-up work in
- * `docs/followups/agent-friendliness.md` entry 10.
+ * wired" finding because the Node CLI cannot consume a
+ * Workerd-side R2 binding.
  *
  * Why GET each entry instead of relying on a list-time
  * `Last-Modified`: `StorageListEntry` carries no timestamp — it is
@@ -500,13 +500,13 @@ const bundle = defineBaerlySubcommand({
 
     if (target === "cloudflare") {
       // The CLI runs in Node and can't reach a Workerd-side R2 binding
-      // from `--bucket=<uri>`; full CF wiring is a follow-up — see
-      // `docs/followups/agent-friendliness.md` entry 10.
+      // directly. Operators can instead use R2's S3-compatible API
+      // through the Node target and an explicit bucket URI.
       findings.push({
         severity: "info",
         check: "usage.cloudflare",
         message:
-          "baerly admin usage is not yet wired for --target=cloudflare. See docs/followups/agent-friendliness.md entry 10.",
+          "baerly admin usage cannot read a Workerd-side R2 binding from --target=cloudflare. Use --target=node --bucket=s3://<bucket> with your R2 S3 API credentials.",
       });
     } else {
       if (args.bucket === undefined || args.bucket.length === 0) {

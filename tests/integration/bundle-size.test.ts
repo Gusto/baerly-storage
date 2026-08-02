@@ -101,10 +101,7 @@ interface Budget {
    * the result stays under this ceiling.
    */
   minGz?: number;
-  /**
-   * Skip this entry's check pending follow-up. Tracked in
-   * `docs/followups/first-touch-dx.md`.
-   */
+  /** Skip this entry's budget check. */
   skip?: boolean;
 }
 
