@@ -243,7 +243,24 @@ export class LocalFsStorage implements Storage {
         return;
       }
       opts?.signal?.throwIfAborted();
-      const buf = await readFile(this.#pathFor(key));
+      let buf: Buffer;
+      try {
+        buf = await readFile(this.#pathFor(key));
+      } catch (error) {
+        if (isErrnoException(error) && error.code === "ENOENT") {
+          // Deleted between `walk` and this read. A key vanishing
+          // mid-listing is a legal outcome on a real object store, so skip
+          // it rather than failing the whole iteration. Reachable in the
+          // maintenance fold, where `runGc` deletes while the compactor
+          // walks the same prefixes.
+          continue;
+        }
+        throw new BaerlyError(
+          "InvalidResponse",
+          `LocalFsStorage.list(${key}): ${(error as Error).message}`,
+          error,
+        );
+      }
       yield { key, etag: etagOf(buf) };
       yielded += 1;
     }
