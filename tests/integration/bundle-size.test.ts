@@ -1207,7 +1207,26 @@ const BUDGETS: readonly Budget[] = [
   //     would delete the reason the code is shaped this way. Measured 44143
   //     raw / 15835 gz — raw was 111 B over and moves, gz stays 549 B under
   //     and does not.
-  { entry: "dev.js", raw: 44 * 1024, gz: 16 * 1024 },
+  //   → 51 KiB raw / 19 KiB gz (2026-08-02): serializing every
+  //     `LocalFsStorage` mutation of a key — the `key-lock.ts` per-key async
+  //     mutex that makes the `ifMatch` read-compare-write atomic, `realpath`
+  //     canonicalization of the lock key, and the JSDoc scoping the
+  //     single-process guarantee (plus the recorded `delete`-vs-`put`
+  //     divergence against a not-yet-created symlinked root, and the note
+  //     that `toLowerCase()` approximates Unicode case folding rather than
+  //     implementing it).
+  //
+  //     Unlike most rebaselines above this is NOT comment-dominated: it is
+  //     real shipped control flow, and this closure is the right place for
+  //     it to land. Worth noting where it does NOT land — `cloudflare.js`
+  //     used to pick this code up through the `@baerly/dev` barrel and no
+  //     longer does, so a Worker pays nothing for any of it.
+  //
+  //     Measured 51125 raw / 18385 gz, both landing ~1 KiB clear. This entry
+  //     has NO min-gz axis precisely because it never reaches a browser, so
+  //     both axes here are pure creep diagnostics on a dev/self-host
+  //     surface, and per POLICY the docstrings are not golfed to fit them.
+  { entry: "dev.js", raw: 51 * 1024, gz: 19 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare

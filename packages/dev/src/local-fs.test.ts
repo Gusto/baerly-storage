@@ -1,13 +1,14 @@
 import {
   accessSync,
   constants,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fc } from "@fast-check/vitest";
@@ -34,18 +35,20 @@ const ETAG_HELLO = `"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938
  * `null` when the host has only one. Identified by a differing `st_dev`,
  * which is exactly the condition `rename(2)` rejects with `EXDEV`.
  *
- * Deliberately a fixed allowlist of the shared-memory tmpfs mounts rather
- * than a scan for any second volume. `/dev/shm` is a separate mount on
- * essentially every Linux distro, so the cross-device arm runs for real on
- * CI — the only platform gating merges. macOS has no equivalent and skips,
- * which the always-runs `TMPDIR` proxy alongside this covers.
+ * Deliberately limited to the shared-memory tmpfs mounts. `/dev/shm` is a
+ * separate mount on essentially every Linux distro, so the cross-device arm
+ * runs for real on CI — the only platform gating merges. macOS has no
+ * equivalent and skips, which the always-runs `TMPDIR` proxy alongside this
+ * covers.
  *
- * Enumerating something like `/Volumes` would buy a macOS arm, but at module
- * load it stats a developer's mounted volumes and `mkdtemp`s into the first
- * writable one — so an external SSD or a mounted DMG collects temp
- * directories from a unit test, and a stale network mount blocks the import.
- * Non-deterministic coverage on the platform that does not gate merges is
- * not worth that; skipping honestly is better.
+ * An earlier version also enumerated `/Volumes` to find a second filesystem
+ * on macOS. Removed: at module load that stats a developer's mounted
+ * volumes and `mkdtemp`s into the first writable one, so an external SSD or
+ * a mounted DMG collects temp directories from a unit test, and a stale
+ * network mount blocks the import. It bought coverage only on the platform
+ * that does not gate merges, and only when the machine happens to have a
+ * spare volume — i.e. non-deterministically. A fixed allowlist skips
+ * honestly instead.
  */
 const findForeignFilesystem = (): string | null => {
   const tmpDev = statSync(tmpdir()).dev;
@@ -64,6 +67,22 @@ const findForeignFilesystem = (): string | null => {
 };
 
 const FOREIGN_FS = findForeignFilesystem();
+
+/**
+ * Whether the filesystem backing `os.tmpdir()` folds case — true on a
+ * stock macOS (APFS, case-insensitive by default), false on Linux ext4.
+ * Probed rather than assumed from `process.platform`, since either OS can
+ * be configured the other way.
+ */
+const CASE_INSENSITIVE_FS = ((): boolean => {
+  const probe = mkdtempSync(join(tmpdir(), "baerly-case-probe-"));
+  try {
+    writeFileSync(join(probe, "probe"), "x");
+    return existsSync(join(probe, "PROBE"));
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 // LocalFsStorage-specific key arbitrary:
 //   - Lowercase only. Case-insensitive filesystems (default macOS
@@ -314,5 +333,201 @@ describe("LocalFsStorage — impl-specific", () => {
     } finally {
       await rm(concRoot, { recursive: true, force: true });
     }
+  });
+
+  // --- ifMatch CAS is read-compare-write and must be serialized ---
+  //
+  // The compare reads the on-disk etag, but the write that follows is two
+  // more awaited fs ops away, and `node:fs/promises` yields the event loop
+  // at each one. Without a lock, every racer reads the same base etag,
+  // every racer passes the compare, and every racer renames — N "successful"
+  // CAS writes against one base version, which is the one thing CAS exists
+  // to prevent. `Storage`'s contract (and every caller: the compactor's
+  // fold, `casUpdateCurrentJson`, `casUpdateGcPending`) requires exactly one.
+
+  test("concurrent ifMatch on the same etag has exactly one winner", async () => {
+    const base = await s.put("k", utf8("v0"));
+    const RACERS = 16;
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: RACERS }, (_, i) => s.put("k", utf8(`r${i}`), { ifMatch: base.etag })),
+    );
+    const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+    const conflicts = outcomes.filter(
+      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+    ).length;
+    expect(winners).toBe(1);
+    expect(conflicts).toBe(RACERS - 1);
+  });
+
+  test("concurrent ifMatch across separate instances on one root has exactly one winner", async () => {
+    // The load-bearing arm. `localFsStorage()` mints a fresh instance per
+    // call over the same default root, and the randomized cascade builds N
+    // instances over one `mkdtemp` root specifically to make them contend
+    // (`tests/integration/randomized.test.ts` → `makeStorages`). A lock
+    // scoped to the instance would serialize nothing in exactly the harness
+    // built to catch this, so the lock is keyed by resolved root + key.
+    const RACERS = 16;
+    const instances = Array.from({ length: RACERS }, () => new LocalFsStorage({ root }));
+    const base = await instances[0]!.put("k", utf8("v0"));
+    const outcomes = await Promise.allSettled(
+      instances.map((inst, i) => inst.put("k", utf8(`r${i}`), { ifMatch: base.etag })),
+    );
+    const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+    const conflicts = outcomes.filter(
+      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+    ).length;
+    expect(winners).toBe(1);
+    expect(conflicts).toBe(RACERS - 1);
+    // The survivor must be one of the racers' bodies, not a torn mix.
+    const body = fromBytes((await s.get("k"))!.body);
+    expect(body).toMatch(/^r\d+$/);
+  });
+
+  test("concurrent ifMatch through a symlinked root has exactly one winner", async () => {
+    // Two instances over ONE directory reached by two different path
+    // spellings. `resolve()` collapses `.`/`..` but not symlinks, so
+    // before the lock keyed on `realpath` these took separate locks and
+    // both published over the same base etag — measured, 2 winners.
+    //
+    // This is the portable arm of the aliasing guard: it needs no
+    // case-insensitive filesystem, so unlike the case variant below it
+    // actually runs on Linux CI, which is the only platform gating merges.
+    // `/tmp` -> `/private/tmp` on macOS makes this an ordinary
+    // misconfiguration, not a contrived one.
+    const base = await mkdtemp(join(tmpdir(), "baerly-localfs-symlink-"));
+    try {
+      await mkdir(join(base, "real"));
+      await symlink(join(base, "real"), join(base, "link"));
+      const viaReal = new LocalFsStorage({ root: join(base, "real") });
+      const viaLink = new LocalFsStorage({ root: join(base, "link") });
+      const seed = await viaReal.put("k", utf8("v0"));
+      const outcomes = await Promise.allSettled([
+        ...Array.from({ length: 8 }, (_, i) =>
+          viaReal.put("k", utf8(`real-${i}`), { ifMatch: seed.etag }),
+        ),
+        ...Array.from({ length: 8 }, (_, i) =>
+          viaLink.put("k", utf8(`link-${i}`), { ifMatch: seed.etag }),
+        ),
+      ]);
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const nonConflict = outcomes.filter(
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+      );
+      expect(nonConflict).toEqual([]);
+      expect(winners).toBe(1);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CASE_INSENSITIVE_FS)(
+    "concurrent ifMatch on case-variant keys has exactly one winner",
+    async () => {
+      // The case/normalization arm. It only means anything where the
+      // filesystem folds case — on a case-sensitive one these spellings
+      // are genuinely different objects and the assertion would hold
+      // trivially — so it skips honestly rather than passing for free and
+      // looking like coverage it is not providing. The symlink arm above
+      // is what guards the same mechanism on Linux CI.
+      const seed = await s.put("alias", utf8("v0"));
+      const spellings = ["alias", "ALIAS", "Alias", "aLiAs"];
+      const outcomes = await Promise.allSettled(
+        spellings.flatMap((spelling) =>
+          Array.from({ length: 4 }, (_, j) =>
+            s.put(spelling, utf8(`w-${spelling}-${j}`), { ifMatch: seed.etag }),
+          ),
+        ),
+      );
+      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+      const nonConflict = outcomes.filter(
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+      );
+      expect(nonConflict).toEqual([]);
+      expect(winners).toBe(1);
+    },
+  );
+
+  test("distinct keys are not serialized against each other", async () => {
+    // The lock must be per key, not global — serializing the whole adapter
+    // would be a "correctness fix" that quietly turns the dev server
+    // single-file. Asserting that N distinct puts all landed would NOT
+    // catch that (they land either way); this deadlocks under a global
+    // lock, because neither put can finish until the other has started.
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const aStarted = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const bStarted = new Promise<void>((r) => {
+      releaseB = r;
+    });
+    const bodyA = utf8("a");
+    const bodyB = utf8("b");
+    await Promise.all([
+      (async () => {
+        const p = s.put("key-a", bodyA);
+        releaseA();
+        await bStarted;
+        await p;
+      })(),
+      (async () => {
+        const p = s.put("key-b", bodyB);
+        releaseB();
+        await aStarted;
+        await p;
+      })(),
+    ]);
+    expect(fromBytes((await s.get("key-a"))!.body)).toBe("a");
+    expect(fromBytes((await s.get("key-b"))!.body)).toBe("b");
+  });
+
+  // --- AbortSignal must be re-checked inside the critical section ---
+  //
+  // `put` / `delete` check the signal on entry and then take the key's lock,
+  // which is an unbounded wait behind other writers to the same key. A signal
+  // aborted during that wait has already cleared the entry guard, so without
+  // the re-check inside the critical section the write lands anyway. Measured
+  // before the fix: an aborted queued put and an aborted queued delete both
+  // completed, and the key was gone.
+  //
+  // Aborting AFTER the call returns its promise is what makes these
+  // deterministic rather than timing-dependent. The entry guard is a
+  // synchronous `throwIfAborted()` at the top of the method, so by the time
+  // `abort()` runs it has provably already passed — leaving the
+  // in-critical-section re-check as the only guard that can still reject. No
+  // reliance on queue depth or on who wins the ticket.
+  //
+  // This is the gap the shared conformance suite cannot cover: its abort
+  // tests use a pre-aborted controller, which trips the entry guard and never
+  // reaches the lock at all.
+
+  test("put aborted while queued behind another writer rejects and does not land", async () => {
+    const holder = s.put("k", utf8("holder"));
+    const ac = new AbortController();
+    const queued = s.put("k", utf8("queued"), { signal: ac.signal });
+    ac.abort();
+    const [held, aborted] = await Promise.allSettled([holder, queued]);
+    expect(held.status).toBe("fulfilled");
+    expect(aborted.status).toBe("rejected");
+    expect((aborted as PromiseRejectedResult).reason).toMatchObject({ name: "AbortError" });
+    // Whichever racer took the ticket first, the aborted body must never be
+    // the one on disk.
+    expect(fromBytes((await s.get("k"))!.body)).toBe("holder");
+  });
+
+  test("delete aborted while queued behind another writer rejects and keeps the key", async () => {
+    await s.put("k", utf8("v0"));
+    const holder = s.put("k", utf8("holder"));
+    const ac = new AbortController();
+    const queued = s.delete("k", { signal: ac.signal });
+    ac.abort();
+    const [held, aborted] = await Promise.allSettled([holder, queued]);
+    expect(held.status).toBe("fulfilled");
+    expect(aborted.status).toBe("rejected");
+    expect((aborted as PromiseRejectedResult).reason).toMatchObject({ name: "AbortError" });
+    // Order-independent: if the delete had taken the ticket first it would
+    // still have to reject before its `rm`, so the key survives either way.
+    await expect(s.get("k")).resolves.not.toBeNull();
+    expect(fromBytes((await s.get("k"))!.body)).toBe("holder");
   });
 });

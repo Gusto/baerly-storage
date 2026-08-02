@@ -17,10 +17,12 @@ export interface LocalFsStorageFactoryOptions {
  * and lost on exit.
  *
  * NOT for multi-instance production: `LocalFsStorage`'s `ifMatch` CAS is
- * in-process TOCTOU only (cross-process `current.json` CAS-advance is not
- * atomic — see its class JSDoc). For horizontally-scaled deploys use
- * `s3Storage` / `r2Storage`, whose cross-process guarantee the no-lease
- * maintenance fold relies on.
+ * serialized within one process only, so a `current.json` CAS-advance is
+ * not atomic against a second process on the same directory (see its class
+ * JSDoc). Every call here returns a fresh instance, which is fine — the
+ * lock is keyed by resolved root, so instances sharing a directory share
+ * it. For horizontally-scaled deploys use `s3Storage` / `r2Storage`, whose
+ * cross-process guarantee the no-lease maintenance fold relies on.
  *
  * @example
  * ```ts
