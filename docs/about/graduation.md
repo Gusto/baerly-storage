@@ -331,6 +331,21 @@ with orphan production:
 > orphan-production rate `p`.**
 
 While that holds, orphans drain and total object count stays bounded.
+
+Two things upstream of the sweep can bind before sweep throughput does,
+and neither is fixed by raising the sweep rate:
+
+- **Mark coverage.** Every budgeted mark phase whose LIST window can
+  stall on undeletable keys carries a persisted rotation cursor in
+  `gc/pending.json` (`content_scan_cursor`, `log_scan_cursor`). Without
+  one, the phase starves and the candidate never enters the ledger for
+  the sweep budget to spend itself on.
+- **Ledger depth.** `GC_MAX_PENDING_CANDIDATES` bounds how many
+  candidates are in flight at once, across all three reasons together,
+  and each cohort waits out `GC_GRACE_PERIOD_MILLIS` before it can be
+  swept. On a large accumulated backlog that ceiling — not the sweep
+  budget — is what paces reclamation.
+
 Above-envelope write contention can make writers lose `log/<seq>.json`
 create races and maintenance lose `current.json` CAS often enough to
 produce orphans faster than GC sweeps them. Object count growth is the
