@@ -54,7 +54,6 @@ import {
   type GcPending,
   type MetricsRecorder,
   type Storage,
-  type StorageListEntry,
   GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
@@ -230,10 +229,10 @@ export const runGc = async (
   const newCandidates: GcCandidate[] = [];
   let markedStaleLog = 0;
   if (logSeqStart > 0) {
-    for await (const entry of listBounded(storage, `${collectionPrefix}/log/`, maxMarks, signal)) {
-      if (markedStaleLog >= maxMarks) {
-        break;
-      }
+    for await (const entry of storage.list(
+      `${collectionPrefix}/log/`,
+      listWindow(maxMarks, undefined, signal),
+    )) {
       const seq = parseSeqFromLogKey(entry.key);
       if (seq === null || seq >= logSeqStart) {
         continue;
@@ -252,15 +251,10 @@ export const runGc = async (
 
   // ── Step 4. Mark orphan snapshots. ──────────────────────────────
   let markedOrphanSnapshot = 0;
-  for await (const entry of listBounded(
-    storage,
+  for await (const entry of storage.list(
     `${collectionPrefix}/snapshot/`,
-    maxMarks,
-    signal,
+    listWindow(maxMarks, undefined, signal),
   )) {
-    if (markedOrphanSnapshot >= maxMarks) {
-      break;
-    }
     if (entry.key === current.snapshot) {
       continue;
     }
@@ -297,17 +291,14 @@ export const runGc = async (
   // keys are hash-named (random lex order) and live content is never
   // deleted, so a fixed first-`maxMarks` window can be all-live and
   // never reach orphan content past it. See `content_scan_cursor`.
-  const cursor = pending.json.content_scan_cursor;
   const contentPrefix = `${collectionPrefix}/content/`;
   let markedOrphanContent = 0;
   let examinedThisPass = 0;
   let lastExaminedKey: string | undefined;
-  const listOpts: { startAfter?: string; maxKeys: number; signal?: AbortSignal } = {
-    maxKeys: maxMarks,
-    ...(cursor !== undefined && { startAfter: cursor }),
-    ...(signal !== undefined && { signal }),
-  };
-  for await (const entry of storage.list(contentPrefix, listOpts)) {
+  for await (const entry of storage.list(
+    contentPrefix,
+    listWindow(maxMarks, pending.json.content_scan_cursor, signal),
+  )) {
     // The cursor advances by EXAMINED keys (not marked), so an
     // all-live window still moves the window forward to fresh keys
     // next pass.
@@ -438,25 +429,22 @@ export const runGc = async (
 // ---------------------------------------------------------------------
 
 /**
- * `Storage.list` with a hard ceiling — bounds the I/O cost of a
- * single pass when a runaway prefix has accumulated many keys.
+ * `Storage.list` options for one bounded rotation window: at most
+ * `maxKeys` keys, resuming strictly after `cursor` when the ledger
+ * carries one. `maxKeys` is a hard cross-page total on every adapter
+ * (`docs/spec/storage-compatibility.md`), which is what makes
+ * "yielded fewer than we asked for ⇒ end of keyspace" a sound wrap
+ * test.
  */
-const listBounded = async function* (
-  storage: Storage,
-  prefix: string,
-  cap: number,
+const listWindow = (
+  maxKeys: number,
+  cursor: string | undefined,
   signal: AbortSignal | undefined,
-): AsyncGenerator<StorageListEntry> {
-  let yielded = 0;
-  const opts = signal !== undefined ? { signal } : undefined;
-  for await (const entry of storage.list(prefix, opts)) {
-    if (yielded >= cap) {
-      return;
-    }
-    yield entry;
-    yielded++;
-  }
-};
+): { startAfter?: string; maxKeys: number; signal?: AbortSignal } => ({
+  maxKeys,
+  ...(cursor !== undefined && { startAfter: cursor }),
+  ...(signal !== undefined && { signal }),
+});
 
 /**
  * Parse `<...>/log/<seq>.json` and return `seq`. Returns `null` on
