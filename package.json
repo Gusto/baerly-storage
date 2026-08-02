@@ -192,7 +192,7 @@
     "gate:day-one": "vitest run --project=default tests/integration/day-one-handshake.test.ts",
     "gen:spec": "node scripts/gen-spec.ts",
     "gen:version-matrix": "node scripts/check-version-matrix.ts --write",
-    "bundle-sizes": "node scripts/bundle-sizes.mjs",
+    "bundle-sizes": "node scripts/bundle-sizes.ts",
     "check:exports": "node scripts/check-exports.mjs",
     "check:publint": "node scripts/check-publint.mjs",
     "verify:package": "node scripts/build-if-needed.mjs && BAERLY_SKIP_BUILD=1 pnpm run check:exports && BAERLY_SKIP_BUILD=1 pnpm run check:publint",
