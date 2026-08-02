@@ -1199,7 +1199,15 @@ const BUDGETS: readonly Budget[] = [
   //     15400 gz — the +56 B the note above predicted, plus the guard.
   //     No min-gz axis on this entry; comment-dominated, per POLICY not
   //     golfed to fit.
-  { entry: "dev.js", raw: 43 * 1024, gz: 16 * 1024 },
+  //   → 44 KiB raw (2026-08-02): `LocalFsStorage.put`'s EXDEV fix — the
+  //     shared `tempPathFor` staging helper, and the JSDoc explaining why
+  //     the temp must be a sibling of its destination rather than live in
+  //     `os.tmpdir()`. Comments ship un-stripped here, so most of the +1111
+  //     is that prose; per POLICY it is not golfed to fit, and cutting it
+  //     would delete the reason the code is shaped this way. Measured 44143
+  //     raw / 15835 gz — raw was 111 B over and moves, gz stays 549 B under
+  //     and does not.
+  { entry: "dev.js", raw: 44 * 1024, gz: 16 * 1024 },
   // Worker-safe S3 entry — `S3HttpStorage` + `sigV4Signer` + the
   // `aws4fetch` SigV4 client + `@rgrove/parse-xml` XML parser.
   // Intended for cross-account R2 / non-R2 S3 from a Cloudflare

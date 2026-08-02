@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import {
   BaerlyError,
@@ -14,10 +13,32 @@ import {
 } from "@baerly/protocol";
 
 /**
- * Reserved prefix for the in-directory create-if-absent temp (see `put`).
+ * Reserved prefix for the in-directory staging temps (see `put`).
  * `walk`/`list` skip it; it is internal/transient and never a real key.
  */
 const TEMP_PREFIX = ".baerly-tmp-";
+
+/**
+ * Staging path for a two-phase (write → publish) `put`. Always a sibling
+ * of the destination: `rename(2)`/`link(2)` refuse to cross filesystems
+ * (`EXDEV`), and the bucket root is routinely on a different volume from
+ * `os.tmpdir()`. `TEMP_PREFIX` is what makes staging in-bucket safe —
+ * `walk` filters it at every depth, so a crash before the publish leaves
+ * a file invisible to `list` rather than a bogus key.
+ *
+ * The trade-off that invisibility buys: a temp stranded by a hard crash
+ * now sits inside the bucket, and because every enumerator goes through
+ * `list`, nothing — not `runGc`, not `admin fsck` — will ever reclaim it.
+ * Staging in `os.tmpdir()` at least let the OS reap it. Repeated crashes
+ * therefore grow the data directory, and clearing that is a manual
+ * `find . -name '.baerly-tmp-*' -delete`. Non-crash failures are cleaned
+ * up by `put`'s `finally`.
+ */
+const tempPathFor = (finalPath: string): string =>
+  join(
+    dirname(finalPath),
+    `${TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
 
 export interface LocalFsStorageOptions {
   /** Root directory; treated as "the bucket". */
@@ -56,14 +77,16 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * makes this adapter useful for fixture-based tests.
  *
  * Writes are atomic via `writeFile(temp) + rename(final)`; readers
- * never see a partially-written file.
+ * never see a partially-written file. The temp is always a sibling of
+ * its destination — `rename(2)`/`link(2)` fail with `EXDEV` across
+ * filesystems, and the bucket root is routinely on a different volume
+ * from `os.tmpdir()` (see `tempPathFor`).
  *
- * `ifNoneMatch:"*"` uses a same-dir temp + `link(2)` (atomic exclusive
- * create; `EEXIST` ⇒ key exists) so concurrent creates have exactly one
- * winner. Same-dir avoids `EXDEV`; temp+`link` over `open(…,"wx")` keeps
- * a partially-written new key invisible to a concurrent reader. `ifMatch`
- * keeps the `rename` path (in-process TOCTOU only; cross-process
- * contention uses the S3 / Minio `If-Match` path).
+ * `ifNoneMatch:"*"` uses `link(2)` (atomic exclusive create; `EEXIST` ⇒
+ * key exists) so concurrent creates have exactly one winner. temp+`link`
+ * over `open(…,"wx")` keeps a partially-written new key invisible to a
+ * concurrent reader. `ifMatch` keeps the `rename` path (in-process TOCTOU
+ * only; cross-process contention uses the S3 / Minio `If-Match` path).
  *
  * Node-only — imports `node:fs`, `node:path`, `node:crypto`. Lives in
  * `@baerly/dev` because the protocol kernel is pure-modules / no I/O
@@ -109,10 +132,7 @@ export class LocalFsStorage implements Storage {
 
     if (opts?.ifNoneMatch === "*") {
       // Atomic exclusive create via link(2) — see class JSDoc.
-      const tmp = join(
-        dirname(path),
-        `${TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      );
+      const tmp = tempPathFor(path);
       try {
         await writeFile(tmp, body);
         await link(tmp, path);
@@ -155,28 +175,27 @@ export class LocalFsStorage implements Storage {
       }
     }
 
-    // Unconditional PUT (or ifMatch already verified above).
-    // Write to a unique temp path then rename for atomicity. Temp lives
-    // in `os.tmpdir()` so a half-written file never appears under the
-    // bucket root where `list` might see it. PID + timestamp + random
-    // tail makes the name unique across concurrent writers in the same
-    // process.
-    const tmp = join(
-      tmpdir(),
-      `baerly-localfs-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    await writeFile(tmp, body);
+    // Unconditional PUT (or `ifMatch` already verified above). Stage to a
+    // sibling temp, then `rename` to publish — the rename is atomic, so a
+    // reader sees either the old body or the new one, never a partial
+    // write. See `tempPathFor` for why the temp must be a sibling.
+    const tmp = tempPathFor(path);
     try {
+      await writeFile(tmp, body);
       await rename(tmp, path);
     } catch (error) {
-      // Best-effort cleanup of the temp file; swallow any error there
-      // so the original failure surfaces unchanged.
-      await rm(tmp, { force: true }).catch(() => {});
       throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage.put(${key}): ${(error as Error).message}`,
         error,
       );
+    } finally {
+      // Best-effort cleanup, mirroring the create-if-absent branch. On
+      // success the rename already consumed the temp and this is a no-op;
+      // on failure it keeps a half-written body from lingering under the
+      // bucket root, where only the `TEMP_PREFIX` filter hides it. A
+      // cleanup failure must not mask the error thrown above.
+      await rm(tmp, { force: true }).catch(() => {});
     }
     return { etag: newEtag, serverDate: new Date() };
   }
