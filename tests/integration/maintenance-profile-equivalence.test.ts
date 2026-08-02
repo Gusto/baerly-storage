@@ -198,7 +198,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
 
       test(
         "(A) materialized state is byte-for-byte identical across every profile (and the no-maintenance reference)",
-        // 120s locally: under single-write commit each commit forward-probes
+        // 180s locally: under single-write commit each commit forward-probes
         // the log tail (galloping, O(log gap) GETs). The no-maintenance
         // reference seed never advances tail_hint, so its gap grows to the
         // full stream length — over LocalFs (real file I/O) under
@@ -206,7 +206,17 @@ describe("MaintenanceProfile cross-profile correctness", () => {
         // ciTimeout gives the 2-vCPU CI core extra headroom (the higher
         // ceiling only bites if the replay is genuinely that slow; locally
         // the tighter bound stands).
-        { timeout: ciTimeout(120_000) },
+        //
+        // 120s → 180s (2026-08-02): the local-fs arm measures ~80s in
+        // isolation, so a 120s ceiling left under 40s for fork-pool
+        // contention, which the full suite exhausts — the failures this
+        // produces are timeouts under load, not hangs, and the arm passes
+        // on its own every time. That margin was already the thinnest in
+        // the file before anything else changed, and the per-key write lock
+        // landing in this branch adds ~7s more to the arm. This is the next
+        // turn of the rotating-cast problem `tests/setup/ci.ts` describes,
+        // so the base moves rather than the work shrinking.
+        { timeout: ciTimeout(180_000) },
         async () => {
           const ops = buildOps();
 
