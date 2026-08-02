@@ -27,20 +27,42 @@
  *    drains correctly.
  *
  * 2. With the CF-FREE caps (`gcMaxMarks = 20`, `gcMaxSweeps = 10`) the
- *    object count ALSO stays BOUNDED, now that `runGc`'s orphan-content
- *    LIST rotates via a persisted `content_scan_cursor` (Task 4.6).
- *    Each bounded pass resumes `startAfter` the prior pass's last
- *    examined key, so over a rotation the whole hash-named `content/`
- *    keyspace is reached — orphan content past the first-`maxMarks`
- *    lexicographic window is no longer stranded. The count converges to
- *    `live + bounded slack` (orphans in flight within the grace window
- *    plus the per-pass mark budget) instead of growing linearly.
+ *    object count ALSO stays BOUNDED, now that BOTH of `runGc`'s
+ *    starvable mark phases rotate via a persisted cursor in
+ *    `gc/pending.json`. Each bounded pass resumes `startAfter` the prior
+ *    pass's last examined key, so over a rotation the whole prefix is
+ *    reached and nothing past the first-`maxMarks` lexicographic window
+ *    is stranded. The count converges to `live + bounded slack`
+ *    (orphans in flight within the grace window plus the per-pass mark
+ *    budget) instead of growing linearly.
  *
- *    Before Task 4.6 the content LIST had no `startAfter` rotation, so
- *    once orphan content accrued past the first-`maxMarks` window GC
- *    could never reach it (~0.5 objects/write leak). The `BITES` arm
- *    below still models the pre-decoupling fold-bolted GC and STILL
- *    grows — proving the bounded assertion is not vacuous.
+ *    - `content_scan_cursor` (Task 4.6): content keys are hash-named,
+ *      so a bounded window can be all-live. Before it, orphan content
+ *      accrued past the first window was unreachable (~0.5
+ *      objects/write leak).
+ *    - `log_scan_cursor`: log keys are UNPADDED decimal, so the live
+ *      keys at/above `log_seq_start` lex-interleave with — and
+ *      routinely precede — the stale ones below it. Before it, a
+ *      bounded pass filled its window with live keys and stale logs
+ *      behind them leaked permanently.
+ *
+ *    Boundedness needs both. A sweep budget that keeps pace is
+ *    necessary but not sufficient: a starved MARK phase never puts the
+ *    candidate in the ledger for the sweep to find.
+ *
+ *    **These arms do not themselves demonstrate the log half**, and
+ *    the claim above is design rationale, not something measured here.
+ *    Both arms set `gcGraceMillis: 0`, so mark and sweep land in the
+ *    same pass and deletion DOES clear the front of the window — the
+ *    precondition the stale-log rotation exists for when it does not
+ *    hold. They pass identically with and without `log_scan_cursor`.
+ *    The stale-log rotation is covered by the micro-fixtures in
+ *    `gc.test.ts`, which seed the unpadded-decimal interleaving
+ *    directly; a drain-level arm at non-zero grace would be the
+ *    stronger guard and does not exist yet.
+ *
+ *    The `BITES` arm below still models the pre-decoupling fold-bolted
+ *    GC and STILL grows — proving the bounded assertion is not vacuous.
  */
 
 import {
