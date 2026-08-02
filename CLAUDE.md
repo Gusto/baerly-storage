@@ -340,8 +340,9 @@ Path-scoped conventions. **Read the matching file before editing.**
 | Public API on `Db` / `Collection`                                | [docs/contributing/extending.md](docs/contributing/extending.md)                                                                                |
 | `packages/server/src/schema.ts` or `CollectionDefinition.schema` | [docs/contributing/extending.md](docs/contributing/extending.md) §"Declare a schema for a collection"                                           |
 | Durable schemas, wire, or version axes                            | [docs/contributing/conventions/versioning.md](docs/contributing/conventions/versioning.md)                                                      |
+| `bundle-sizes.json`, `rolldown.config.ts`, or any `packages/*/src/**` size-affecting change | [docs/contributing/conventions/bundle-budgets.md](docs/contributing/conventions/bundle-budgets.md)                                            |
 
-Claude users: `.claude/rules/{tests,docs,change-discipline}.md`
+Claude users: `.claude/rules/{tests,docs,change-discipline,bundle-budgets}.md`
 auto-load on matching edits and point at the same files.
 
 ## Conventions
@@ -404,15 +405,16 @@ auto-load on matching edits and point at the same files.
 - ❌ Skipping or `.skip()`'ing a test to ship. If a test is wrong, fix it;
   if the code is wrong, fix the code.
 - ❌ Hard-coding new magic numbers. Add to `packages/protocol/src/constants.ts`.
-- ❌ Trimming JSDoc, comments, or error-message text to squeeze under the
-  **raw/gz bundle-size budget**. Those two axes are creep _tripwires_; `min-gz`
-  is the only hard ceiling (it's the real shipped-to-browser cost — see the
-  `POLICY` note in `tests/integration/bundle-size.test.ts`, which the failing
-  assertion now also prints). On an intentional change, rebaseline the KiB line
-  with a dated baseline note — don't golf docs/identifiers/messages. Comments
-  ship un-stripped, but doc + error quality outweigh a few raw bytes. (An axis
-  over on `min-gz` is different: that's a real regression — shrink the closure,
-  don't rebaseline.)
+- ❌ Trimming JSDoc, comments, or error-message text to squeeze under a
+  **bundle budget**. Comments ship un-stripped so they cost `raw`/`gz`, but
+  they vanish under a consumer's minifier — golfing them buys bytes nobody
+  pays. `min-gz` is the axis a consumer actually pays; all three are
+  delta-gated. Intended growth is cleared with `pnpm bundle-sizes --write`
+  plus a reason in the commit message; do NOT add a dated changelog entry to
+  any file. Absolute ceilings are deliberately almost absent — only
+  `app-config.js` has one, and it asserts that entry has no runtime closure
+  rather than that it is small. Full policy:
+  [docs/contributing/conventions/bundle-budgets.md](docs/contributing/conventions/bundle-budgets.md).
 - ❌ Reintroducing `bun:test`, Rome, or baseUrl imports — all replaced.
 - ❌ Extensionless relative imports (`from "./foo"`). Always write
   `from "./foo.ts"` or `from "./foo/index.ts"`. Node's
@@ -489,8 +491,10 @@ appears nowhere else. Deferred work is an issue link, not an inventory.
 Most of what wants to sprawl into a PR body belongs somewhere durable
 instead — a changeset for user-facing behavior, `docs/spec` or `docs/adr`
 for rationale and invariants, JSDoc for why a constant has its value, the
-dated baseline note for a bundle-size rebaseline. Put it there and let the
-PR point at it.
+regenerated `bundle-sizes.json` plus a reason in the commit message for a
+bundle-size rebaseline (dated baseline notes are gone — see
+[bundle-budgets.md](docs/contributing/conventions/bundle-budgets.md)).
+Put it there and let the PR point at it.
 
 No AI attribution in the title or body.
 

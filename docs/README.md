@@ -140,6 +140,7 @@ For people changing the code in this repo.
   - [`contributing/conventions/observability.md`](contributing/conventions/observability.md)
   - [`contributing/conventions/change-discipline.md`](contributing/conventions/change-discipline.md)
   - [`contributing/conventions/versioning.md`](contributing/conventions/versioning.md)
+  - [`contributing/conventions/bundle-budgets.md`](contributing/conventions/bundle-budgets.md)
 
 ## Protocol & decisions
 
