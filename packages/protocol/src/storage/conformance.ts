@@ -19,10 +19,12 @@ export interface ConformanceOptions {
   // `ifMatch` under the no-lease maintenance fold — so a `Storage` that
   // doesn't honor them isn't a valid baerly backend. The CAS blocks
   // below always run; a backend that can't pass them must not ship.
-  // CAVEAT: these blocks exercise single-process semantics. `LocalFsStorage`
-  // is a dev/single-process adapter whose `ifMatch` is in-process TOCTOU
-  // only (cross-process `current.json` CAS-advance is NOT atomic there) —
-  // see its class JSDoc in `packages/dev/src/local-fs.ts`. Real S3 / Minio
+  // CAVEAT: these blocks exercise single-process semantics, including the
+  // two exactly-one-winner races. `LocalFsStorage` passes them by
+  // serializing mutations of a key in-process, which is a real guarantee
+  // but only that one: a green run here does NOT certify it across
+  // processes, where its read-compare-write `ifMatch` has no lock at all.
+  // See its class JSDoc in `packages/dev/src/local-fs.ts`. Real S3 / Minio
   // / R2 provide the cross-process guarantee the no-lease fold relies on.
   /**
    * When false, generated key arbitraries must yield case-insensitively
@@ -492,6 +494,49 @@ export function defineStorageConformanceSuite(
           s.put("k", new TextEncoder().encode("v2"), { ifMatch: opts.staleEtag }),
         ).rejects.toMatchObject({ code: "Conflict" });
       });
+
+      test("admits exactly one winner under concurrent ifMatch on the same etag", async () => {
+        // The mirror of the `ifNoneMatch:"*"` exactly-one-winner test below,
+        // and the reason it matters: `ifNoneMatch` guards the log-append
+        // commit, while `ifMatch` guards every *advance* of an existing
+        // coordination object — `current.json` under the no-lease fold
+        // (`compactor.ts`), `gc/pending.json` (`casUpdateGcPending`). A
+        // backend that lets two racers both win an `ifMatch` on one base
+        // etag silently loses one of those updates, which is exactly the
+        // read-compare-write hazard CAS is supposed to close.
+        //
+        // The three tests above are all sequential, so this contract went
+        // unstated — and an in-tree adapter violated it undetected.
+        const RACERS = 16;
+        const enc = new TextEncoder();
+        const first = await s.put("k", enc.encode("v0"));
+        // Same guard as "succeeds and rotates etag": on an eventually-
+        // consistent backend a racer can otherwise hit a replica that has
+        // not seen the seed write and 412 for the wrong reason.
+        await pollUntil(
+          () => s.get("k"),
+          (g) => g !== null && g.etag === first.etag,
+          settle,
+        );
+        const outcomes = await Promise.allSettled(
+          Array.from({ length: RACERS }, (_u, i) =>
+            s.put("k", enc.encode(`r${i}`), { ifMatch: first.etag }),
+          ),
+        );
+        const winners = outcomes.filter((o) => o.status === "fulfilled").length;
+        // Loser codes are a SET for the same reason as the create race: real
+        // AWS S3 surfaces a contended conditional write as 409
+        // ConditionalRequestConflict (retryable `NetworkError`) rather than
+        // 412. Asserting a single code would manufacture false parity.
+        const losers = outcomes.filter(
+          (o) =>
+            o.status === "rejected" &&
+            o.reason instanceof BaerlyError &&
+            (o.reason.code === "Conflict" || o.reason.code === "NetworkError"),
+        ).length;
+        expect(winners).toBe(1);
+        expect(losers).toBe(RACERS - 1);
+      });
     });
 
     describe('CAS — ifNoneMatch="*"', () => {
@@ -589,6 +634,35 @@ export function defineStorageConformanceSuite(
           const outcomes = await Promise.allSettled(
             Array.from({ length: 16 }, (_u, i) =>
               store.put("k", ENC.encode(`r${i}`), { ifNoneMatch: "*" }),
+            ),
+          );
+          const loser = outcomes.find((o) => o.status === "rejected");
+          if (loser === undefined) {
+            throw new Error("expected at least one contended loser");
+          }
+          throw (loser as PromiseRejectedResult).reason;
+        },
+        expectedCodes: ["Conflict", "NetworkError"],
+      },
+      {
+        label: "concurrent ifMatch loser",
+        act: async (store) => {
+          const first = await store.put("k", ENC.encode("v0"));
+          // Settle guard, for the same reason as the block test above: on
+          // an eventually-consistent backend a racer can otherwise hit a
+          // replica that has not seen the seed and lose for the wrong
+          // reason, which would still pass this row but would stop
+          // exercising contention. Four racers, not sixteen — this row
+          // only samples a loser's code, and the exactly-one-winner
+          // property is already asserted above.
+          await pollUntil(
+            () => store.get("k"),
+            (g) => g !== null && g.etag === first.etag,
+            settle,
+          );
+          const outcomes = await Promise.allSettled(
+            Array.from({ length: 4 }, (_u, i) =>
+              store.put("k", ENC.encode(`r${i}`), { ifMatch: first.etag }),
             ),
           );
           const loser = outcomes.find((o) => o.status === "rejected");
