@@ -651,13 +651,17 @@ describe("ols-qr-v1", () => {
   test("the rank gate catches a dependent column at ANY scale, not just 1x", () => {
     // The regression test for the gate's original defect. `bytes` is an exact
     // integer multiple of `calls`, so the design is mathematically rank 2 at
-    // every multiplier. Against a single global `max|R_kk|` tolerance, a
-    // multiplier as small as 9 was enough for the dependent column's rounding
-    // residual to clear a bar set by a different column's scale: 2737 of 4800
-    // sampled rank-2 designs were accepted as rank 3 and returned coefficients
-    // of magnitude 1e13-1e15. The suite only ever exercised multiplier 1, which
-    // is the one case that survived.
-    for (const multiplier of [1, 9, 100, 1000, 1e6, 1e9, 1e12]) {
+    // every multiplier. Against a single global `max|R_kk|` tolerance, the
+    // dependent column's rounding residual clears a bar set by a DIFFERENT
+    // column's scale: 2737 of 4800 sampled rank-2 designs were accepted as
+    // rank 3 and returned coefficients of magnitude 1e13-1e15.
+    //
+    // The `calls` values are [1,2,4,8], NOT [1,2,3,4]. Consecutive integers
+    // are one of the arrangements the old gate happened to handle correctly at
+    // every multiplier — writing the obvious row set here produced a test that
+    // passed under the broken gate too. Verified: with the original gate
+    // reinstated, [1,2,4,8] at multiplier 7 is accepted as rank 3.
+    for (const multiplier of [1, 7, 9, 100, 1000, 1e6, 1e9, 1e12]) {
       let thrown: unknown;
       try {
         olsQr({
@@ -665,8 +669,8 @@ describe("ols-qr-v1", () => {
           rows: [
             { x: [1, 1, 1 * multiplier], y: 2 },
             { x: [1, 2, 2 * multiplier], y: 3 },
-            { x: [1, 3, 3 * multiplier], y: 5 },
-            { x: [1, 4, 4 * multiplier], y: 6 },
+            { x: [1, 4, 4 * multiplier], y: 5 },
+            { x: [1, 8, 8 * multiplier], y: 6 },
           ],
         });
       } catch (error) {
