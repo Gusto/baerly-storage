@@ -1,7 +1,8 @@
 import { describe, test, expect } from "vitest";
 import { mulberry32 } from "../load-harness/generators/rng.ts";
-import type { BootstrapOptions, OlsQrInput } from "./statistics.ts";
 import {
+  type BootstrapOptions,
+  type OlsQrInput,
   BOOTSTRAP_PRNG,
   bootstrapPercentile,
   bootstrapPercentileReplicates,
@@ -33,8 +34,8 @@ const expectInputError = (fn: () => unknown): void => {
   let thrown: unknown;
   try {
     fn();
-  } catch (err) {
-    thrown = err;
+  } catch (error) {
+    thrown = error;
   }
   expect(thrown).toMatchObject({ code: "StatisticsInput" });
 };
@@ -501,10 +502,95 @@ describe("ols-qr-v1", () => {
     expect(r.intercept_present).toBe(V.intercept_present);
   });
 
-  test("a well-conditioned design reports a small condition estimate", () => {
+  test("a well-conditioned design reports the pinned condition estimate", () => {
     const r = olsQr({ columns: V.columns, rows: V.rows });
-    expect(r.condition_estimate).toBeGreaterThanOrEqual(1);
-    expect(r.condition_estimate).toBeLessThan(100);
+    expect(r.condition_estimate).toBe(V.condition_estimate);
+  });
+
+  test("the rank gate catches a dependent column at ANY scale, not just 1x", () => {
+    // The regression test for the gate's original defect. `bytes` is an exact
+    // integer multiple of `calls`, so the design is mathematically rank 2 at
+    // every multiplier. Against a single global `max|R_kk|` tolerance, a
+    // multiplier as small as 9 was enough for the dependent column's rounding
+    // residual to clear a bar set by a different column's scale: 2737 of 4800
+    // sampled rank-2 designs were accepted as rank 3 and returned coefficients
+    // of magnitude 1e13-1e15. The suite only ever exercised multiplier 1, which
+    // is the one case that survived.
+    for (const multiplier of [1, 9, 100, 1000, 1e6, 1e9, 1e12]) {
+      let thrown: unknown;
+      try {
+        olsQr({
+          columns: ["intercept", "calls", "bytes"],
+          rows: [
+            { x: [1, 1, 1 * multiplier], y: 2 },
+            { x: [1, 2, 2 * multiplier], y: 3 },
+            { x: [1, 3, 3 * multiplier], y: 5 },
+            { x: [1, 4, 4 * multiplier], y: 6 },
+          ],
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, `multiplier ${multiplier} must be rejected`).toMatchObject({
+        code: "SingularDesign",
+        rank: 2,
+      });
+    }
+  });
+
+  test("the rank verdict does not depend on the order the columns were listed", () => {
+    // Same matrix, permuted. Under a global-scale tolerance this returned
+    // rank 3, rank 1, and rank 2 for three permutations of one design.
+    const base = [
+      { x: [1, 1, 1000], y: 2 },
+      { x: [1, 2, 2000], y: 3 },
+      { x: [1, 3, 3000], y: 5 },
+      { x: [1, 4, 4000], y: 6 },
+    ];
+    const names = ["intercept", "calls", "bytes"];
+    for (const p of [
+      [0, 1, 2],
+      [2, 1, 0],
+      [1, 2, 0],
+      [0, 2, 1],
+    ]) {
+      let thrown: unknown;
+      try {
+        olsQr({
+          columns: p.map((i) => names[i]!),
+          rows: base.map((row) => ({ x: p.map((i) => row.x[i]!), y: row.y })),
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, `permutation ${p.join("")} must be rejected`).toMatchObject({
+        code: "SingularDesign",
+        rank: 2,
+      });
+    }
+  });
+
+  test("condition_estimate is invariant to the units a column is measured in", () => {
+    // The same model with its size column in bytes, KiB, MiB, GiB, and bits.
+    // Identical fit, so the diagnostic must be identical too. Over the RAW
+    // diagonal it spanned 1.6e8 to 1.3e18 and the rank verdict FLIPPED — MiB
+    // and GiB threw `SingularDesign` where bytes returned rank 3.
+    const estimates = [1, 2 ** -10, 2 ** -20, 2 ** -30, 8].map((scale) => {
+      const r = olsQr({
+        columns: ["intercept", "calls", "size"],
+        rows: [
+          { x: [1, 1, (1 + 1e-9) * scale], y: 2 },
+          { x: [1, 2, (2 - 1e-9) * scale], y: 3 },
+          { x: [1, 3, (3 + 1e-9) * scale], y: 5 },
+          { x: [1, 4, (4 - 1e-9) * scale], y: 6 },
+        ],
+      });
+      expect(r.rank).toBe(3);
+      return r.condition_estimate;
+    });
+    // Bit-identical, not merely close.
+    expect(new Set(estimates).size).toBe(1);
+    expect(estimates[0]).toBeGreaterThan(1e6);
   });
 
   test("a NEARLY collinear design passes the rank gate but reports a huge condition estimate", () => {
@@ -647,8 +733,8 @@ describe("ols-qr-v1", () => {
           { x: [1, 4, 4], y: 6 },
         ],
       });
-    } catch (err) {
-      thrown = err;
+    } catch (error) {
+      thrown = error;
     }
     expect(thrown).toBeDefined();
     expect(thrown).toMatchObject({

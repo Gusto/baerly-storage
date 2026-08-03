@@ -266,6 +266,11 @@ export const STATISTICS_TEST_VECTORS = {
     rank: 3,
     intercept_present: true,
     r_squared: 1,
+    // Over the COLUMN-EQUILIBRATED diagonal, so this is a pure number: rescaling
+    // any column's units leaves it bit-identical. Pinned exactly — it is the
+    // only near-collinearity signal the algorithm emits, and a study is expected
+    // to preregister a bar against it.
+    condition_estimate: 3.2008648384906406,
   },
   // The index signature is load-bearing. `satisfies` runs an excess-property
   // check against a bare `{ readonly id: string }`, which rejects every vector's
@@ -812,11 +817,21 @@ export interface OlsQrResult {
    */
   readonly r_squared: number;
   /**
-   * `max|R_kk| / min|R_kk|` over the QR diagonal — a cheap condition-number
+   * `max / min` over the COLUMN-EQUILIBRATED QR diagonal — each `|R_kk|`
+   * divided by its own column's Euclidean norm. A cheap condition-number
    * estimate, and the ONLY signal this algorithm gives about NEAR collinearity.
    *
-   * The rank gate below catches exact deficiency only. Unpivoted Householder
-   * cannot distinguish a well-conditioned design from a nearly singular one:
+   * Equilibrating is what makes the number quotable. A raw
+   * `max|R_kk| / min|R_kk|` scales with whatever units each column was measured
+   * in — the same model in bytes and in MiB reported estimates four orders
+   * apart — so no fixed bar could mean anything. Dividing each column by its
+   * own norm removes that freedom, and by van der Sluis' theorem column
+   * equilibration is within a factor of `sqrt(n)` of the best any diagonal
+   * scaling can do, so the number is also near-optimal rather than merely
+   * stable.
+   *
+   * The rank gate catches deficiency down to rounding. It still cannot
+   * distinguish a well-conditioned design from a merely NEAR-singular one:
    * both pass `rank === columns.length` and both return coefficients, but the
    * near-singular one's coefficients are noise. Plan J's design matrix is
    * near-collinear by construction (rows and bytes both grow with snapshot
@@ -882,10 +897,15 @@ const assertOlsInput = (input: OlsQrInput): void => {
  * equations, no column pivoting; back-substitution preserves the caller's
  * column order. Rank-deficient designs throw `SingularDesignError`.
  *
- * WITHOUT PIVOTING THE RANK GATE SEES EXACT DEFICIENCY ONLY. A nearly
- * collinear design passes it and returns coefficients that are numerically
- * meaningless. `condition_estimate` on the result is the only warning a caller
- * gets; a caller that interprets these coefficients as physics must check it.
+ * The rank gate is taken on the COLUMN-EQUILIBRATED diagonal, so it holds
+ * whatever units the caller measured each column in, and does not depend on
+ * the order the columns were listed in.
+ *
+ * WITHOUT PIVOTING THE GATE STILL SEES DEFICIENCY ONLY, NEVER DEGREE. A merely
+ * NEAR-collinear design passes it and returns coefficients that are
+ * numerically meaningless. `condition_estimate` on the result is the only
+ * warning a caller gets; a caller that interprets these coefficients as
+ * physics must check it.
  */
 export const olsQr = (input: OlsQrInput): OlsQrResult => {
   assertOlsInput(input);
@@ -894,6 +914,14 @@ export const olsQr = (input: OlsQrInput): OlsQrResult => {
   const n = columns.length;
   const a: number[][] = input.rows.map((r) => [...r.x]);
   const b: number[] = input.rows.map((r) => r.y);
+
+  // Euclidean norm of every ORIGINAL design column, captured before the
+  // factorization overwrites `a`. Both the rank gate and the condition estimate
+  // divide by these, which is what makes them independent of the units a caller
+  // happened to measure each column in.
+  const columnNorms = columns.map((_, k) =>
+    Math.sqrt(input.rows.reduce((acc, row) => acc + row.x[k]! * row.x[k]!, 0)),
+  );
 
   for (let k = 0; k < n; k++) {
     let norm = 0;
@@ -905,7 +933,7 @@ export const olsQr = (input: OlsQrInput): OlsQrResult => {
       continue;
     }
     const alpha = a[k]![k]! > 0 ? -norm : norm;
-    const v = new Array<number>(m).fill(0);
+    const v = Array.from<number>({ length: m }).fill(0);
     for (let i = k; i < m; i++) {
       v[i] = a[i]![k]!;
     }
@@ -937,30 +965,41 @@ export const olsQr = (input: OlsQrInput): OlsQrResult => {
     }
   }
 
-  let maxAbsDiagonal = 0;
-  let minAbsDiagonal = Number.POSITIVE_INFINITY;
-  for (let k = 0; k < n; k++) {
-    const d = Math.abs(a[k]![k]!);
-    maxAbsDiagonal = Math.max(maxAbsDiagonal, d);
-    minAbsDiagonal = Math.min(minAbsDiagonal, d);
-  }
-  const tolerance = Number.EPSILON * Math.max(m, n) * maxAbsDiagonal;
+  // Each |R_kk| divided by its own column's norm — the diagonal of the
+  // COLUMN-EQUILIBRATED factorization. `R_kk` is the part of column k
+  // orthogonal to columns 0..k-1, so this ratio is the sine of the angle
+  // between column k and the span of its predecessors: dimensionless, in
+  // [0,1], and 0 exactly when column k is a linear combination of them.
+  //
+  // Scaling by each column's OWN norm is what makes the gate correct. Against a
+  // single global `max|R_kk|`, a dependent column merely LARGER than its
+  // neighbours has a rounding residual bigger than a tolerance set by some
+  // other column's scale, and passes as full rank — at a scale ratio as small
+  // as 9, not 1e16. It also made the verdict depend on column ORDER and on the
+  // units each column was measured in (the same model in MiB threw where the
+  // one in bytes did not). A zero column has no direction, so it scores 0.
+  const scaledDiagonal = columns.map((_, k) =>
+    columnNorms[k] === 0 ? 0 : Math.abs(a[k]![k]!) / columnNorms[k]!,
+  );
+  // Dimensionless, because `scaledDiagonal` is. `max(m, n)` is the usual
+  // dimension factor on accumulated rounding error in a Householder pass.
+  const tolerance = Number.EPSILON * Math.max(m, n);
   let rank = 0;
-  for (let k = 0; k < n; k++) {
-    if (Math.abs(a[k]![k]!) > tolerance) {
+  for (const d of scaledDiagonal) {
+    if (d > tolerance) {
       rank++;
     }
   }
   if (rank < n) {
     throw new SingularDesignError(columns, rank);
   }
-  // Past the rank gate every diagonal exceeds `tolerance`, so `minAbsDiagonal`
-  // is strictly positive and this cannot divide by zero or return Infinity.
+  // Past the rank gate every entry exceeds `tolerance`, so the minimum is
+  // strictly positive and this can neither divide by zero nor return Infinity.
   // This is the ONLY near-collinearity signal `ols-qr-v1` produces: rank alone
   // cannot tell a well-conditioned design from a nearly singular one.
-  const conditionEstimate = maxAbsDiagonal / minAbsDiagonal;
+  const conditionEstimate = Math.max(...scaledDiagonal) / Math.min(...scaledDiagonal);
 
-  const coefficients = new Array<number>(n).fill(0);
+  const coefficients = Array.from<number>({ length: n }).fill(0);
   for (let k = n - 1; k >= 0; k--) {
     let sum = b[k]!;
     for (let j = k + 1; j < n; j++) {
@@ -988,9 +1027,12 @@ export const olsQr = (input: OlsQrInput): OlsQrResult => {
     return first !== 0 && input.rows.every((row) => row.x[j] === first);
   });
 
-  // oxlint's `no-nested-ternary` is repo policy. `bench/` is currently outside
-  // the lint glob (`package.json` → `"lint": "oxlint tests packages"`), so this
-  // file is UNLINTED — write it as if it were not. Const-lift the inner branch.
+  // oxlint's `no-nested-ternary` is repo policy. `bench/` is outside the
+  // `pnpm verify` lint glob (`package.json` → `"lint": "oxlint tests packages"`),
+  // so CI will not catch a violation here — but the lefthook pre-commit hook
+  // lints staged files by extension, and these two files are kept clean under
+  // `oxlint bench/`. Write it as if `verify` did cover it. Const-lift the
+  // inner branch.
   const degenerateRSquared = rss === 0 ? 1 : 0;
   const rSquared = tss === 0 ? degenerateRSquared : 1 - rss / tss;
 
