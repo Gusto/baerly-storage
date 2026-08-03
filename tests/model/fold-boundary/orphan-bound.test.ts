@@ -42,6 +42,15 @@ const action = (overrides: Partial<ObserverAction> = {}): ObserverAction => ({
 
 const sortedKeys = (state: ModelState): readonly string[] => [...state.snapshots.keys()].toSorted();
 
+type ReclamationScenario = "empty" | "crashed" | "mixed-k" | "successive-fold";
+
+const reclamationScenarios: readonly ReclamationScenario[] = [
+  "empty",
+  "crashed",
+  "mixed-k",
+  "successive-fold",
+];
+
 const expectedClassification = (result: ScheduleResult) => {
   const referenced = new Set(
     result.generations.flatMap(({ snapshotKey }) => (snapshotKey === null ? [] : [snapshotKey])),
@@ -57,6 +66,53 @@ const expectedClassification = (result: ScheduleResult) => {
     reclaimable: [...new Set([...neverReferenced, ...superseded])].toSorted(),
   };
 };
+
+const reclamationState = (scenario: ReclamationScenario, tail: number): ModelState => {
+  const initial = stateWithTail(tail);
+  if (scenario === "empty") {
+    return runSchedule({ initial, observers: [] }).finalState;
+  }
+  if (scenario === "crashed") {
+    return runSchedule({
+      initial,
+      observers: [action({ observedTail: tail, k: 1, crashAt: "after_snapshot_put" })],
+    }).finalState;
+  }
+  if (scenario === "mixed-k") {
+    return runSchedule({
+      initial,
+      observers: [
+        action({ observerId: 1, readsAtGeneration: 0, observedTail: tail, k: 1 }),
+        action({ observerId: 2, readsAtGeneration: 0, observedTail: tail, k: 2 }),
+      ],
+    }).finalState;
+  }
+
+  const first = runSchedule({
+    initial,
+    observers: [action({ observerId: 1, observedTail: tail, k: 1 })],
+  });
+  return runSchedule({
+    initial: first.finalState,
+    observers: [action({ observerId: 2, observedTail: tail, k: 1 })],
+  }).finalState;
+};
+
+const stateProjection = (state: ModelState) => ({
+  log: {
+    acknowledgedTail: state.log.acknowledgedTail,
+    ops: state.log.ops.map((operation) => ({ ...operation })),
+  },
+  manifest: { ...state.manifest },
+  snapshots: [...state.snapshots.entries()].map(([key, snapshot]) => [
+    key,
+    {
+      key: snapshot.key,
+      maxSeq: snapshot.maxSeq,
+      rows: snapshot.rows.map(([docId, value]) => [docId, value] as const),
+    },
+  ]),
+});
 
 describe("orphan and reclamation bounds", () => {
   test("P6a_sameGenerationSameKContentionAddsNoDistinctCasOrphan", () => {
@@ -152,64 +208,27 @@ describe("orphan and reclamation bounds", () => {
 
   test("P6e_reclamationRemovesAllAndOnlyNonCurrentSnapshots", () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom("empty", "crashed", "mixed-k", "successive-fold"),
-        fc.integer({ min: 2, max: 32 }),
-        (scenario, tail) => {
-          const initial = stateWithTail(tail);
-          const state = (() => {
-            if (scenario === "empty") {
-              return runSchedule({ initial, observers: [] }).finalState;
-            }
-            if (scenario === "crashed") {
-              return runSchedule({
-                initial,
-                observers: [action({ observedTail: tail, k: 1, crashAt: "after_snapshot_put" })],
-              }).finalState;
-            }
-            if (scenario === "mixed-k") {
-              return runSchedule({
-                initial,
-                observers: [
-                  action({ observerId: 1, readsAtGeneration: 0, observedTail: tail, k: 1 }),
-                  action({ observerId: 2, readsAtGeneration: 0, observedTail: tail, k: 2 }),
-                ],
-              }).finalState;
-            }
-
-            const first = runSchedule({
-              initial,
-              observers: [action({ observerId: 1, observedTail: tail, k: 1 })],
-            });
-            return runSchedule({
-              initial: first.finalState,
-              observers: [action({ observerId: 2, observedTail: tail, k: 1 })],
-            }).finalState;
-          })();
-          const before = {
-            log: state.log,
-            manifest: state.manifest,
-            snapshots: [...state.snapshots.entries()],
-            rows: [...rowsAtManifest(state).entries()].toSorted(),
-          };
+      fc.property(fc.integer({ min: 2, max: 32 }), (tail) => {
+        for (const scenario of reclamationScenarios) {
+          const state = reclamationState(scenario, tail);
+          const before = stateProjection(state);
+          const beforeRows = [...rowsAtManifest(state).entries()].toSorted();
           const expectedKeys =
             state.manifest.snapshotKey === null ? [] : [state.manifest.snapshotKey];
           const reclaimed = reclaimUnreferenced(state);
           const freshClassification = runSchedule({ initial: reclaimed, observers: [] });
 
           expect(sortedKeys(reclaimed)).toEqual(expectedKeys);
-          expect([...rowsAtManifest(reclaimed).entries()].toSorted()).toEqual(before.rows);
-          expect(reclaimed.log).toBe(before.log);
-          expect(reclaimed.manifest).toBe(before.manifest);
+          expect([...rowsAtManifest(reclaimed).entries()].toSorted()).toEqual(beforeRows);
+          expect(reclaimed.log).toBe(state.log);
+          expect(reclaimed.manifest).toBe(state.manifest);
           expect(reclaimed.snapshots).not.toBe(state.snapshots);
-          expect(state.log).toBe(before.log);
-          expect(state.manifest).toBe(before.manifest);
-          expect([...state.snapshots.entries()]).toEqual(before.snapshots);
+          expect(stateProjection(state)).toEqual(before);
           expect(freshClassification.neverReferencedSnapshots).toEqual([]);
           expect(freshClassification.supersededSnapshots).toEqual([]);
           expect(freshClassification.reclaimableSnapshots).toEqual([]);
-        },
-      ),
+        }
+      }),
     );
   });
 
