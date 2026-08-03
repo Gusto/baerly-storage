@@ -1,8 +1,8 @@
 import { sha256Hex as protocolSha256Hex } from "@baerly/protocol";
 
-export const CANONICAL_JSON_VERSION = "baerly-canonical-json-v1" as const;
+export const CANONICAL_JSON_VERSION = "baerly.canonical-json/v1" as const;
 export const CANONICAL_JSON_VECTOR_CORPUS_DIGEST =
-  "2f7eecfc4324c311d306db52eb4589d628df835a3e76a9715e290ad099ef7d01" as const;
+  "b57cba454b9b25349c6be469a82f1174450601309f643063018bbfaaaab4376d" as const;
 export const CANONICAL_JSON_MAX_DEPTH = 256;
 
 export type CanonicalJsonValue =

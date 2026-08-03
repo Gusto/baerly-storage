@@ -15,7 +15,15 @@ import {
 
 interface AcceptedCanonicalJsonVector {
   readonly name: string;
-  readonly value: CanonicalJsonValue;
+  /** Absent when `value_encoding` supplies the input instead. */
+  readonly value?: CanonicalJsonValue;
+  /**
+   * Escape hatch for inputs the `value` field cannot carry across languages.
+   * `-0` is the motivating case: Python's `json.loads("-0")` yields int `0`, so
+   * the sign is gone before a port's harness ever sees it.
+   */
+  readonly value_encoding?: "number-literal";
+  readonly value_literal?: string;
   readonly canonical: string;
   readonly sha256: string;
 }
@@ -23,14 +31,23 @@ interface AcceptedCanonicalJsonVector {
 interface RejectedCanonicalJsonVector {
   readonly name: string;
   readonly placement: "root-string" | "object-value" | "object-key";
-  readonly encoding: "utf16-code-units" | "unicode-code-points";
-  readonly values: readonly number[];
-  readonly reason: "non-ijson-string";
+  readonly encoding: "utf16-code-units" | "unicode-code-points" | "literal";
+  readonly values?: readonly number[];
+  readonly literal?: string;
+  readonly reason: "non-ijson-string" | "forbidden-key";
 }
 
 type CanonicalJsonVector = AcceptedCanonicalJsonVector | RejectedCanonicalJsonVector;
 
-const vectors = vectorsJson as readonly CanonicalJsonVector[];
+interface CanonicalJsonVectorCorpus {
+  readonly schema: string;
+  readonly canonical_json_version: string;
+  readonly corpus_digest_sha256: string;
+  readonly vectors: readonly CanonicalJsonVector[];
+}
+
+const corpusFile = vectorsJson as CanonicalJsonVectorCorpus;
+const vectors = corpusFile.vectors;
 
 const isAcceptedVector = (vector: CanonicalJsonVector): vector is AcceptedCanonicalJsonVector =>
   "canonical" in vector;
@@ -41,6 +58,11 @@ const rejectedVectors = vectors.filter(
 );
 
 const runtimeValue = (value: unknown): CanonicalJsonValue => value as CanonicalJsonValue;
+
+const acceptedVectorInput = (vector: AcceptedCanonicalJsonVector): CanonicalJsonValue =>
+  vector.value_encoding === "number-literal"
+    ? (Number(vector.value_literal) as CanonicalJsonValue)
+    : runtimeValue(vector.value);
 
 const expectCanonicalError = (
   value: unknown,
@@ -117,10 +139,15 @@ const isAcceptedGeneratedJson = (value: unknown): boolean => {
 
 const acceptedJsonValue = fc.jsonValue().filter(isAcceptedGeneratedJson);
 
-const reconstructRejectedString = (vector: RejectedCanonicalJsonVector): string =>
-  vector.encoding === "utf16-code-units"
-    ? String.fromCharCode(...vector.values)
-    : String.fromCodePoint(...vector.values);
+const reconstructRejectedString = (vector: RejectedCanonicalJsonVector): string => {
+  if (vector.encoding === "literal") {
+    return vector.literal as string;
+  }
+  const values = vector.values as readonly number[];
+  return vector.encoding === "utf16-code-units"
+    ? String.fromCharCode(...values)
+    : String.fromCodePoint(...values);
+};
 
 const rejectedVectorInput = (
   vector: RejectedCanonicalJsonVector,
@@ -155,11 +182,20 @@ const rejectedVectorPath = (vector: RejectedCanonicalJsonVector, value: string):
 
 describe("canonical vector contract", () => {
   test("publishes the versioned corpus contract", () => {
-    expect(CANONICAL_JSON_VERSION).toBe("baerly-canonical-json-v1");
+    expect(CANONICAL_JSON_VERSION).toBe("baerly.canonical-json/v1");
     expect(CANONICAL_JSON_MAX_DEPTH).toBe(256);
     expect(CANONICAL_JSON_VECTOR_CORPUS_DIGEST).toBe(
-      "2f7eecfc4324c311d306db52eb4589d628df835a3e76a9715e290ad099ef7d01",
+      "b57cba454b9b25349c6be469a82f1174450601309f643063018bbfaaaab4376d",
     );
+  });
+
+  test("carries a self-describing envelope a non-JS port can read", () => {
+    // The corpus has to be interpretable without executing this module: a Go or
+    // Python port gets the schema, the canonical-JSON version it pins, and the
+    // digest to check itself against, all from the file itself.
+    expect(corpusFile.schema).toBe("baerly.canonical-json-vectors/v1");
+    expect(corpusFile.canonical_json_version).toBe(CANONICAL_JSON_VERSION);
+    expect(corpusFile.corpus_digest_sha256).toBe(CANONICAL_JSON_VECTOR_CORPUS_DIGEST);
   });
 
   test("contains each exact portable vector name once", () => {
@@ -168,14 +204,20 @@ describe("canonical vector contract", () => {
       "empty-array",
       "scalar-null",
       "scalar-true",
+      "scalar-false",
       "scalar-string",
+      "scalar-negative-zero",
+      "number-representation-edges",
+      "string-escape-edges",
+      "surrogate-pair-value",
       "key-sort-basic",
       "array-order-ascending",
       "array-order-descending",
       "nested-containers",
       "key-sort-utf16-code-unit",
-      "shared-subobject-dag",
-      "proto-adjacent-keys",
+      "key-escape-edges",
+      "duplicate-subobject-shape",
+      "pollution-adjacent-key-names",
       "three-level-nesting",
       "anchor-single-key",
       "reject-lone-high-surrogate-root",
@@ -183,28 +225,60 @@ describe("canonical vector contract", () => {
       "reject-lone-high-surrogate-nested",
       "reject-lone-low-surrogate-key",
       "reject-bmp-noncharacter-root",
+      "reject-bmp-penultimate-noncharacter-root",
       "reject-plane-end-noncharacter-key",
       "reject-supplementary-noncharacter-root",
+      "reject-supplementary-penultimate-noncharacter-root",
+      "reject-forbidden-proto-key",
     ]);
     expect(new Set(vectors.map(({ name }) => name)).size).toBe(vectors.length);
   });
 
   test("serializes and hashes every portable vector", async () => {
     for (const vector of acceptedVectors) {
-      const actual = canonicalJson(vector.value);
+      const actual = canonicalJson(acceptedVectorInput(vector));
       expect(actual).toBe(vector.canonical);
       await expect(sha256Hex(actual)).resolves.toBe(vector.sha256);
       expect(canonicalJson(runtimeValue(JSON.parse(vector.canonical)))).toBe(vector.canonical);
     }
   });
 
+  test("pins the number representations a port is most likely to get wrong", () => {
+    // RFC 8785 §3.2.2.3 defers to ECMAScript Number::toString. Python, Go, Java
+    // and Rust do NOT reproduce it by default, so these exact spellings are the
+    // corpus's highest-value rows. Asserted here by name as well as by digest so
+    // a regression names the behavior instead of only moving a hash.
+    const vector = acceptedVectors.find(({ name }) => name === "number-representation-edges");
+    expect(vector?.canonical).toBe(
+      "[0,1,-1,1.5,-1.5,4.5,0.002,0.000001,1e-7,333333333.3333333," +
+        "1e+30,1e-27,9007199254740991,5e-324,1.7976931348623157e+308]",
+    );
+  });
+
+  test("pins the negative-zero vector through its literal encoding", () => {
+    const vector = acceptedVectors.find(({ name }) => name === "scalar-negative-zero");
+    expect(vector?.value_encoding).toBe("number-literal");
+    expect(vector?.value_literal).toBe("-0");
+    expect(vector?.canonical).toBe("0");
+    expect(canonicalJson(acceptedVectorInput(vector as AcceptedCanonicalJsonVector))).toBe("0");
+  });
+
+  test("pins the escaping a port is most likely to get wrong", () => {
+    // RFC 8785 §3.2.2.2: only the five short escapes plus lowercase \u00xx for
+    // remaining C0 controls. Solidus, DEL, and non-ASCII stay literal.
+    const value = acceptedVectors.find(({ name }) => name === "string-escape-edges");
+    expect(value?.canonical).toBe('"\\"\\\\/\\b\\t\\n\\f\\r\\u0000\\u001fé😀"');
+    const key = acceptedVectors.find(({ name }) => name === "key-escape-edges");
+    expect(key?.canonical).toBe('{"\\"\\\\/\\b\\t\\n\\f\\r\\u0000\\u001fé😀":1,"a":2}');
+  });
+
   test("pins the digest of the produced vector corpus", async () => {
-    const corpus = acceptedVectors.map(({ value }) => canonicalJson(value)).join("\n");
+    const corpus = acceptedVectors.map((v) => canonicalJson(acceptedVectorInput(v))).join("\n");
     await expect(sha256Hex(corpus)).resolves.toBe(CANONICAL_JSON_VECTOR_CORPUS_DIGEST);
   });
 
-  test("rejects every portable I-JSON string-domain vector", () => {
-    expect(rejectedVectors).toHaveLength(7);
+  test("rejects every portable rejection vector", () => {
+    expect(rejectedVectors).toHaveLength(10);
     for (const vector of rejectedVectors) {
       const value = reconstructRejectedString(vector);
       expectCanonicalError(
@@ -250,6 +324,49 @@ describe("canonical serialization", () => {
     expect(canonicalJson({ nested: [-0] })).toBe('{"nested":[0]}');
   });
 
+  test("rejects both plane-end noncharacters (xFFFE and xFFFF) in every plane", () => {
+    // Closes a proven mutation survivor: relaxing the guard from `>= 0xfffe` to
+    // `> 0xfffe` killed ZERO tests, because every noncharacter vector landed on
+    // an xFFFF. Both offsets, all 17 planes, in a value and in a key.
+    for (let plane = 0; plane <= 0x10; plane += 1) {
+      for (const offset of [0xfffe, 0xffff]) {
+        const codePoint = plane * 0x10000 + offset;
+        const value = String.fromCodePoint(codePoint);
+        expectCanonicalError(value, "non-ijson-string", "$");
+        expectCanonicalError({ [value]: 1 }, "non-ijson-string");
+      }
+    }
+  });
+
+  test("rejects the FDD0-FDEF noncharacter block", () => {
+    for (const codePoint of [0xfdd0, 0xfddf, 0xfdef]) {
+      expectCanonicalError(String.fromCodePoint(codePoint), "non-ijson-string", "$");
+    }
+    // The characters immediately outside the block stay acceptable.
+    for (const codePoint of [0xfdcf, 0xfdf0]) {
+      expect(() => canonicalJson(String.fromCodePoint(codePoint))).not.toThrow();
+    }
+  });
+
+  test("rejects lone surrogates in values and in property names", () => {
+    // Duplicated outside the corpus on purpose: deleting a vector row should not
+    // silently delete the only guard for a rule.
+    for (const codeUnit of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
+      const lone = String.fromCharCode(codeUnit);
+      expectCanonicalError(lone, "non-ijson-string", "$");
+      expectCanonicalError({ value: lone }, "non-ijson-string", "$.value");
+      expectCanonicalError({ [lone]: 1 }, "non-ijson-string");
+      expectCanonicalError([lone], "non-ijson-string", "$[0]");
+    }
+    // A high surrogate as the final code unit has no trailing unit to pair with.
+    expectCanonicalError(`a${String.fromCharCode(0xd800)}`, "non-ijson-string", "$");
+  });
+
+  test("escapes control characters and quotes in property names", () => {
+    const key = `"\\${String.fromCharCode(0x0a, 0x00)}`;
+    expect(canonicalJson({ [key]: 1 })).toBe('{"\\"\\\\\\n\\u0000":1}');
+  });
+
   test("preserves valid UTF-16 surrogate pairs in values and property names", () => {
     const validPair = String.fromCharCode(0xd83d, 0xde00);
     expect(canonicalJson(validPair)).toBe('"😀"');
@@ -257,6 +374,15 @@ describe("canonical serialization", () => {
   });
 
   test("sorts keys by UTF-16 code unit at every object depth", () => {
+    // The full discriminating set. `{ﬀ, 😀}` alone is NOT enough: it sorts
+    // identically under an explicit `<`/`>` comparator and under
+    // `localeCompare`, so a comparator regression would slip past and be caught
+    // only by the corpus digest — a hash pin that fires on any byte change
+    // rather than a test that names this behavior. Under `localeCompare` this
+    // object yields {"", 😀, 0, a, A, ﬀ}, so the assertion below fails.
+    expect(canonicalJson({ ﬀ: 1, "😀": 2, a: 3, A: 4, "0": 5, "": 6 })).toBe(
+      '{"":6,"0":5,"A":4,"a":3,"😀":2,"ﬀ":1}',
+    );
     expect(canonicalJson({ outer: { ﬀ: 1, "😀": 2 }, a: 3 })).toBe(
       '{"a":3,"outer":{"😀":2,"ﬀ":1}}',
     );
@@ -272,6 +398,19 @@ describe("canonical serialization", () => {
   test("allows shared acyclic references", () => {
     const shared = { n: 1 };
     expect(canonicalJson({ b: shared, a: shared })).toBe('{"a":{"n":1},"b":{"n":1}}');
+  });
+
+  test("serializes a shared subobject at two paths and at two depths", () => {
+    // The `duplicate-subobject-shape` vector CANNOT cover this: it is loaded from
+    // JSON, and no language's JSON parser produces aliased subtrees, so its two
+    // subobjects are structurally equal but never the same reference. Real
+    // aliasing is only testable from hand-built values, here.
+    const shared = { n: 1 };
+    expect(canonicalJson({ b: shared, a: shared })).toBe('{"a":{"n":1},"b":{"n":1}}');
+    expect(canonicalJson({ a: shared, b: { c: shared } })).toBe('{"a":{"n":1},"b":{"c":{"n":1}}}');
+    expect(canonicalJson([shared, [shared, { d: shared }]])).toBe(
+      '[{"n":1},[{"n":1},{"d":{"n":1}}]]',
+    );
   });
 
   test("never invokes toJSON", () => {
