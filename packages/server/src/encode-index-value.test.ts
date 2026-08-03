@@ -1,5 +1,5 @@
-import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
+import { describe, expect, test } from "vitest";
 import { BaerlyError } from "@baerly/protocol";
 import { encodeIndexValue } from "./indexes.ts";
 
@@ -87,7 +87,7 @@ const valueArb = fc.oneof(
 );
 
 describe("encodeIndexValue — value-order-preserving wire format", () => {
-  test.prop({ a: valueArb, b: valueArb })(
+  fcTest.prop({ a: valueArb, b: valueArb })(
     "lex order of encodings matches semantic (type, then within-type) order",
     ({ a, b }) => {
       const ra = rank(a);
@@ -117,7 +117,7 @@ describe("encodeIndexValue — value-order-preserving wire format", () => {
     },
   );
 
-  test.prop({ a: valueArb, b: valueArb })(
+  fcTest.prop({ a: valueArb, b: valueArb })(
     "injective on primitives: byte-equal encodings ⟺ semantically equal",
     ({ a, b }) => {
       const equalEncoding = encodeIndexValue(a) === encodeIndexValue(b);

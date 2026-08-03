@@ -1,6 +1,6 @@
 /* eslint-disable no-underscore-dangle -- `_id` is the locked primary key. */
-import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
+import { describe, expect, test } from "vitest";
 import {
   type DocumentData,
   type JSONObject,
@@ -70,7 +70,7 @@ const isProjectable = (body: JSONObject, field: string): boolean => {
 };
 
 describe("allIndexKeysFor — filtered-index emission matches matchesWire ∧ projectable", () => {
-  test.prop({ body: bodyArb, predicate: fc.option(wireArb, { nil: undefined }) })(
+  fcTest.prop({ body: bodyArb, predicate: fc.option(wireArb, { nil: undefined }) })(
     "emits a key iff (no predicate OR predicate matches) AND field projectable",
     ({ body, predicate }) => {
       const def: IndexDefinition =
@@ -87,7 +87,7 @@ describe("allIndexKeysFor — filtered-index emission matches matchesWire ∧ pr
     },
   );
 
-  test.prop({ body: bodyArb })(
+  fcTest.prop({ body: bodyArb })(
     "an unfiltered index is unaffected by a sibling filtered index",
     ({ body }) => {
       const defs: ReadonlyArray<IndexDefinition> = [

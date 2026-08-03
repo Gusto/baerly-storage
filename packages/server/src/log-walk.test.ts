@@ -6,7 +6,7 @@
  * log fold (property-based against an independent reference oracle).
  */
 
-import { fc, test } from "@fast-check/vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
 import {
   BaerlyError,
   MAX_PARALLEL_LOG_READS,
@@ -20,7 +20,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { describe, expect } from "vitest";
+import { describe, expect, test } from "vitest";
 import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { foldLogEntriesOnto, readLogEntry, walkLogRange } from "./log-walk.ts";
 
@@ -287,13 +287,13 @@ const runFold = (
 };
 
 describe("foldLogEntriesOnto — per-doc replace semantics", () => {
-  test.prop({ entries: entriesArb })("matches the spec reference fold", ({ entries }) => {
+  fcTest.prop({ entries: entriesArb })("matches the spec reference fold", ({ entries }) => {
     expect(runFold(entries, { collection: FOLD_COLLECTION })).toEqual(
       referenceFold(entries, FOLD_COLLECTION),
     );
   });
 
-  test.prop({ entries: entriesArb })(
+  fcTest.prop({ entries: entriesArb })(
     "collection scoping: full fold == fold of the matching-collection subset",
     ({ entries }) => {
       const subset = entries.filter((e) => e.collection === FOLD_COLLECTION);
@@ -303,7 +303,7 @@ describe("foldLogEntriesOnto — per-doc replace semantics", () => {
     },
   );
 
-  test.prop({ entries: entriesArb, ids: fc.subarray(["a", "b", "c", "d"]) })(
+  fcTest.prop({ entries: entriesArb, ids: fc.subarray(["a", "b", "c", "d"]) })(
     "docIdFilter scoping: filtered fold == fold of the filter subset",
     ({ entries, ids }) => {
       const filter = new Set(ids);
@@ -314,7 +314,7 @@ describe("foldLogEntriesOnto — per-doc replace semantics", () => {
     },
   );
 
-  test.prop({ entries: entriesArb })(
+  fcTest.prop({ entries: entriesArb })(
     "after===undefined on I/U is a no-op: dropping those entries is invisible",
     ({ entries }) => {
       const withDefinedAfterOnly = entries.filter((e) => e.op === "D" || e.after !== undefined);

@@ -17,8 +17,8 @@
  * of the manifest key" and `docs/spec/log-entry-shape.md`
  * §"Cursor format".
  */
-import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
+import { describe, expect, test } from "vitest";
 import { COUNT_BIT_WIDTH, TIMESTAMP_BIT_WIDTH } from "./constants.ts";
 import { MemoryStorage } from "./storage/memory.ts";
 import { timestamp } from "./time.ts";
@@ -72,7 +72,7 @@ const encodeKey = (p: CausalPoint, session: string): string =>
 const causalCmp = (a: CausalPoint, b: CausalPoint): number => a.millis - b.millis || a.seq - b.seq;
 
 describe("Patent C3 — descending-base-32 LSN reverse-lex ordering", () => {
-  test.prop({ pop: populationArb })(
+  fcTest.prop({ pop: populationArb })(
     "for any pair A causally < B: enc(A) lex-greater-than enc(B)",
     ({ pop }) => {
       const sorted = [...pop.points].toSorted(causalCmp);
@@ -90,7 +90,7 @@ describe("Patent C3 — descending-base-32 LSN reverse-lex ordering", () => {
     },
   );
 
-  test.prop({ pop: populationArb })(
+  fcTest.prop({ pop: populationArb })(
     "forward Storage.list yields keys in reverse-causal order",
     async ({ pop }) => {
       const s = new MemoryStorage();
@@ -112,7 +112,7 @@ describe("Patent C3 — descending-base-32 LSN reverse-lex ordering", () => {
     },
   );
 
-  test.prop({ pop: populationArb })(
+  fcTest.prop({ pop: populationArb })(
     "str2uintDesc round-trips every encoded seq + timestamp",
     ({ pop }) => {
       for (const p of pop.points) {

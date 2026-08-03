@@ -1,5 +1,5 @@
-import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
+import { describe, expect, test } from "vitest";
 import { type DocumentValue, merge } from "./json.ts";
 
 const documentValueArb = fc.letrec((tie) => ({
@@ -39,7 +39,7 @@ const jsonStructuredDoc = fc.letrec((tie) => ({
 })).doc as fc.Arbitrary<DocumentValue>;
 
 describe("JSON Merge Patch (RFC 7386)", () => {
-  test.prop({ a: documentValueArb })("identity: merge(a, undefined) === a", ({ a }) => {
+  fcTest.prop({ a: documentValueArb })("identity: merge(a, undefined) === a", ({ a }) => {
     expect(merge(a, undefined)).toEqual(a);
   });
 
@@ -71,7 +71,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect(merge<DocumentValue>(42, null)).toBeUndefined();
   });
 
-  test.prop({ a: documentValueArb })("deletion: merge(a, null) === undefined", ({ a }) => {
+  fcTest.prop({ a: documentValueArb })("deletion: merge(a, null) === undefined", ({ a }) => {
     expect(merge(a, null)).toBeUndefined();
   });
 
@@ -87,7 +87,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     expect(merge<DocumentValue>({ a: false }, true)).toEqual(true);
   });
 
-  test.prop({
+  fcTest.prop({
     a: jsonStructuredDoc,
     b: jsonStructuredDoc,
     c: jsonStructuredDoc,
@@ -98,7 +98,7 @@ describe("JSON Merge Patch (RFC 7386)", () => {
     },
   );
 
-  test.prop({ a: documentValueArb })("idempotent: merge(a, a) === a", ({ a }) => {
+  fcTest.prop({ a: documentValueArb })("idempotent: merge(a, a) === a", ({ a }) => {
     expect(merge(a, a)).toEqual(a);
   });
 
