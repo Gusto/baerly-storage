@@ -227,3 +227,17 @@ export const drainToQuiescence = (args: {
   }
   return finish(schedule);
 };
+
+export const reclaimUnreferenced: (state: ModelState) => ModelState = (state) => {
+  const currentKey = state.manifest.snapshotKey;
+  if (currentKey === null) {
+    return { ...state, snapshots: new Map() };
+  }
+
+  const current = state.snapshots.get(currentKey);
+  if (current === undefined) {
+    throw new Error(`missing snapshot object: ${currentKey}`);
+  }
+
+  return { ...state, snapshots: new Map([[currentKey, current]]) };
+};
