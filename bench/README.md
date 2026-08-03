@@ -20,7 +20,7 @@ Two harnesses live under `bench/`:
 | `bench/amortized-write-cost.ts` | Amortized BILLABLE Class A ops (PUT+LIST; DeleteObject is $0) per logical write, INCLUDING in-band maintenance (folds + GC), across workload shapes × profile (cf-free / node). Source of truth for the write-amp constants in the cost CLI + the effective-write-amp claim in docs/about/cost-model.md. No infra (MemoryStorage). MEASURES ONLY. | When revisiting the write-amplification claim or the cost-CLI projection |
 | `bench/write-amp-stress.ts` | STRESS variant of `amortized-write-cost.ts`: drives pathological churn workloads (100%-update tiny set, unbounded insert growth, 500-doc full rewrite) under aggressive in-band maintenance to find the PEAK billable Class A ops per logical write. Tracks `peak_billable_class_a_per_write` (single-writer; the route past ~4× is a CAS-retry storm, governed by the throughput ceiling, not measured here). Backs the "peaks ~4×, never reaches the retired >6 trigger" claim. No infra (MemoryStorage). MEASURES ONLY. Baseline at `docs/spec/attachments/amortized-write-cost-stress-baseline.json`. | When revisiting whether the retired `write-amp > 6` graduation trigger could ever fire |
 | `bench/collection-fanout.ts` | Storage op cost of `discoverCollections` (LIST count) + full `admin usage` scan (LIST + GET count) vs. N collections under one tenant prefix, measured via a counting Storage proxy on MemoryStorage. No infra. MEASURES ONLY — re-derives the collections/tenant fan-out limit. A checked-in baseline lives at `docs/spec/attachments/collection-fanout-baseline.json`. | When revisiting the collections/tenant fan-out limit in docs/about/graduation.md or docs/about/workload-fit.md |
-| `bench/measurement/` | Not a harness — the algorithm-tagged statistics **library** the harnesses above summarize their results with. Quantiles, MAD, three bootstraps, two binomial upper bounds, and OLS via Householder QR, each carrying its algorithm tag and every parameter that determined the number. Pure; no infra; no runnable entry point. | When a bench emits a `p95`, a confidence interval, or a regression coefficient — import from here rather than hand-rolling one |
+| `bench/measurement/` | Not a harness — the shared measurement **library** the harnesses above build on. `statistics.ts` holds the algorithm-tagged summaries (quantiles, MAD, three bootstraps, two binomial upper bounds, OLS via Householder QR), each carrying its algorithm tag and every parameter that determined the number. `storage-journal.ts` and `storage-factory.ts` hold the recording and isolation seam: a timer-free `Storage` decorator producing an ordered operation journal plus an exact namespace journal, and a per-attempt backend lease whose cleanup authority is one in-memory instance, one `mkdtemp` root, or an explicit key list. Pure; no infra. | When a bench emits a `p95`, a confidence interval, or a regression coefficient; or when it needs a recorded, disposable backend rather than a shared one |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
@@ -243,6 +243,84 @@ reads those coefficients as physics must preregister a bar on
 
 ```sh
 pnpm vitest run bench/measurement/statistics.test.ts
+```
+
+### storage-journal.ts — what a run did, without a clock
+
+`wrapJournaledStorage` decorates any `Storage` and records two things.
+The **operation journal** is ordered: method, key, the request options
+that change semantics, PUT byte length and SHA-256, the result or error
+class, and an attempt id. The **namespace journal** is exact — key and
+byte-length state assembled from benchmark-owned provisioning plus
+observed PUT/DELETE outcomes, with zero LIST calls spent to maintain it.
+
+Timing is deliberately absent: no wall-clock field, no clock or timer
+call, and no runtime import beyond the global Web Crypto digest. Tests
+pin all three, the last two by reading the module's own source. That
+keeps a semantics comparison free of clock noise and keeps the module
+loadable outside Node.
+
+Three behaviours to know before you consume a snapshot:
+
+- **`snapshotOperations()` throws on non-quiescence.** A dispatched but
+  unsettled row raises `JournalNotQuiescentError` rather than being
+  omitted, because journal equality is the primary consumer and two
+  silently-truncated lists compare equal to each other.
+  `snapshotSettledOperations()` is the explicit opt-out.
+- **`list` allocates its index at the first `next()`,** not at the call,
+  so it rides a different clock from get/put/delete. A test pins the
+  resulting interleaving rather than hiding it — any downstream
+  comparator has to normalize for it.
+- **An ambiguous PUT/DELETE failure marks that key uncertain,** so
+  orphan accounting fails closed after a lost acknowledgement. The
+  parallel `uncertainty` array carries the classification, the operation
+  index, and whether the signal was already aborted at dispatch.
+
+`billingClassOf` implements the [cost-model](../docs/about/cost-model.md)
+definition — puts and lists bill, DELETE is $0. That is one definition,
+not a resolution: a test records all three live and mutually
+inconsistent definitions in the tree as evidence for their owner. Note
+it counts `Storage` calls, not billable requests, so against a remote
+backend that paginates or retries inside one call it understates Class A.
+
+### storage-factory.ts — one disposable backend per attempt
+
+`StorageFactory` provisions a fresh journaled backend; `StorageLease`
+owns removing it. Cleanup authority is the point of the module, and it
+is narrow by construction: a single in-memory instance, the single
+`mkdtemp` directory the factory created, or an explicit key list.
+Nothing here can delete a bucket, a parent directory, or a prefix.
+Exact-key cleanup issues one DELETE per sorted, de-duplicated key, never
+a LIST, and does not stop at the first failure.
+
+`create()` turns a provisioning error into a structured
+`{ status: "failed", failure }` rather than rejecting. Read that as a
+statement about **provisioning** — the memory factory wraps its whole
+body, while the local-fs factory wraps only the `mkdtemp` that can
+actually fail; `new LocalFsStorage()` and `makeLease()` sit outside its
+`try` because neither has a throw path (the former is a `resolve()` on a
+string, the latter takes an already-branded `AttemptId`). Adding a
+`catch` around them would ship an arm no test can reach, which is the
+same reason `isWithinCleanupAuthority` is exported instead of inlined. If
+either ever gains a throw path, widen the `try` then — and note the
+`mkdtemp` directory is already created by that point, so the widened
+catch has to remove it.
+
+`cleanup()` is memoized, flips the lease to `cleaned` on first call
+regardless of outcome, and reports `clean` / `partial` / `failed` naming
+every failed target.
+
+`withStorageLease(factory, work)` is the runner. It samples
+`pendingOperationCount()` **before** cleanup and reports it on both
+settled arms: a non-zero value means `work` abandoned an in-flight
+operation and the backend was torn out from under it. It neither throws
+nor waits on that — throwing would mask the work's own error, and there
+is no safe general way to await an operation the caller abandoned — so
+treat a result carrying `pending_operations_at_cleanup > 0` as invalid.
+
+```sh
+pnpm vitest run bench/measurement/storage-journal.test.ts \
+  bench/measurement/storage-factory.test.ts
 ```
 
 ## bench/fold-cost.ts
