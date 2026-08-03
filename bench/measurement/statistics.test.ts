@@ -29,15 +29,21 @@ import {
  * errors"): assert on the `code` discriminant, never the message. Vitest's
  * `toThrowError` does not reliably accept an asymmetric matcher, so catch and
  * `toMatchObject` instead.
+ *
+ * `field` is REQUIRED. Asserting `code` alone only proves that some validation
+ * fired, not the one under test — which is how the `z` finiteness guard came
+ * to be fully deletable with this suite green: its two tests were being caught
+ * by the downstream (confidence, z) consistency gate instead, and nothing
+ * noticed. Naming the field makes each case pin the check it claims to.
  */
-const expectInputError = (fn: () => unknown): void => {
+const expectInputError = (fn: () => unknown, field: string): void => {
   let thrown: unknown;
   try {
     fn();
   } catch (error) {
     thrown = error;
   }
-  expect(thrown).toMatchObject({ code: "StatisticsInput" });
+  expect(thrown).toMatchObject({ code: "StatisticsInput", field });
 };
 
 describe("tag constants", () => {
@@ -57,6 +63,22 @@ describe("tag constants", () => {
 
   test("the PRNG tag is mulberry32-v1", () => {
     expect(BOOTSTRAP_PRNG).toBe("mulberry32-v1");
+  });
+});
+
+describe("sample ordering", () => {
+  test("the sort is numeric, not lexicographic", () => {
+    // Every other sample in this file — [1,2,3,4], [0,10,20,30], [1,2,8],
+    // [1,1,2,2,4,6,9], every replicate array — happens to sort identically as
+    // strings. So dropping the comparator from `ascending`'s `toSorted` left
+    // the entire suite green while silently corrupting every quantile, median,
+    // MAD, and bootstrap interval the module produces. This sample is the one
+    // that separates them, and it is the shape of real latency data.
+    const spread = [9, 12, 100, 250, 1500];
+    expect([...spread].toSorted()).toEqual([100, 12, 1500, 250, 9]); // what a string sort does
+    expect(quantileR7(spread, 0.5)).toBe(100);
+    expect(quantileNearestRank(spread, 0.95)).toBe(1500);
+    expect(madFromMedian(spread)).toBe(91);
   });
 });
 
@@ -83,11 +105,11 @@ describe("quantile-nearest-rank-v1", () => {
   });
 
   test("rejects an empty sample, a nonfinite value, and an out-of-range q", () => {
-    expectInputError(() => quantileNearestRank([], 0.5));
-    expectInputError(() => quantileNearestRank([1, Number.NaN], 0.5));
-    expectInputError(() => quantileNearestRank([1, Number.POSITIVE_INFINITY], 0.5));
-    expectInputError(() => quantileNearestRank([1, 2], 1.5));
-    expectInputError(() => quantileNearestRank([1, 2], -0.1));
+    expectInputError(() => quantileNearestRank([], 0.5), "values");
+    expectInputError(() => quantileNearestRank([1, Number.NaN], 0.5), "values");
+    expectInputError(() => quantileNearestRank([1, Number.POSITIVE_INFINITY], 0.5), "values");
+    expectInputError(() => quantileNearestRank([1, 2], 1.5), "q");
+    expectInputError(() => quantileNearestRank([1, 2], -0.1), "q");
   });
 });
 
@@ -239,6 +261,31 @@ describe("bootstrap-percentile-v1", () => {
     expect([...V.replicates_at_seed_1]).not.toEqual([...V.replicates]);
   });
 
+  test("the nearest-rank statistic is a distinct dispatch branch", () => {
+    // `quantile-nearest-rank-v1` is publicly admitted by BOOTSTRAP_STATISTICS
+    // but was never bootstrapped, so `applyStatistic`'s nearest-rank branch
+    // could return anything. Pinned at q=0.25, where the two quantile
+    // definitions genuinely disagree — at q=0.5 over a 3-element resample they
+    // coincide, and the assertion would hold under either dispatch.
+    const NR = V.nearest_rank;
+    expect(bootstrapPercentileReplicates(VALUES, NR.statistic, OPTIONS)).toEqual([
+      ...NR.replicates,
+    ]);
+    expect([...NR.replicates]).not.toEqual([...NR.r7_replicates_at_same_q]);
+    expect(
+      bootstrapPercentileReplicates(
+        VALUES,
+        { algorithm: "quantile-r7-v1", q: NR.statistic.q },
+        OPTIONS,
+      ),
+    ).toEqual([...NR.r7_replicates_at_same_q]);
+
+    const r = bootstrapPercentile(VALUES, NR.statistic, OPTIONS);
+    expect(r.point).toBe(NR.point);
+    expect(r.interval).toEqual({ ...NR.interval });
+    expect(r.statistic).toEqual({ ...NR.statistic });
+  });
+
   test("the mean statistic is selectable and recorded", () => {
     const r = bootstrapPercentile(VALUES, { algorithm: "mean-v1" }, OPTIONS);
     expect(r.statistic).toEqual({ algorithm: "mean-v1" });
@@ -246,23 +293,29 @@ describe("bootstrap-percentile-v1", () => {
   });
 
   test("rejects a missing q on a quantile statistic and a present q on the mean", () => {
-    expectInputError(() => bootstrapPercentile(VALUES, { algorithm: "quantile-r7-v1" }, OPTIONS));
-    expectInputError(() => bootstrapPercentile(VALUES, { algorithm: "mean-v1", q: 0.5 }, OPTIONS));
+    expectInputError(
+      () => bootstrapPercentile(VALUES, { algorithm: "quantile-r7-v1" }, OPTIONS),
+      "statistic.q",
+    );
+    expectInputError(
+      () => bootstrapPercentile(VALUES, { algorithm: "mean-v1", q: 0.5 }, OPTIONS),
+      "statistic.q",
+    );
   });
 
   test("rejects every out-of-contract bootstrap option", () => {
-    const bad: BootstrapOptions[] = [
-      { ...OPTIONS, seed: -1 },
-      { ...OPTIONS, seed: 1.5 },
-      { ...OPTIONS, seed: 4_294_967_296 },
-      { ...OPTIONS, resamples: 0 },
-      { ...OPTIONS, resamples: 2.5 },
-      { ...OPTIONS, confidence: 0 },
-      { ...OPTIONS, confidence: 1 },
-      { ...OPTIONS, inclusion_unit: "   " },
+    const bad: { options: BootstrapOptions; field: string }[] = [
+      { options: { ...OPTIONS, seed: -1 }, field: "seed" },
+      { options: { ...OPTIONS, seed: 1.5 }, field: "seed" },
+      { options: { ...OPTIONS, seed: 4_294_967_296 }, field: "seed" },
+      { options: { ...OPTIONS, resamples: 0 }, field: "resamples" },
+      { options: { ...OPTIONS, resamples: 2.5 }, field: "resamples" },
+      { options: { ...OPTIONS, confidence: 0 }, field: "confidence" },
+      { options: { ...OPTIONS, confidence: 1 }, field: "confidence" },
+      { options: { ...OPTIONS, inclusion_unit: "   " }, field: "inclusion_unit" },
     ];
-    for (const options of bad) {
-      expectInputError(() => bootstrapPercentile(VALUES, MEDIAN, options));
+    for (const { options, field } of bad) {
+      expectInputError(() => bootstrapPercentile(VALUES, MEDIAN, options), field);
     }
   });
 
@@ -303,28 +356,34 @@ describe("paired-ratio-bootstrap-v1", () => {
   });
 
   test("rejects a nonpositive baseline, a duplicate pair id, and a nonfinite arm", () => {
-    expectInputError(() =>
-      pairedRatioBootstrap([{ pair_id: "p1", baseline: 0, candidate: 1 }], OPTIONS),
+    expectInputError(
+      () => pairedRatioBootstrap([{ pair_id: "p1", baseline: 0, candidate: 1 }], OPTIONS),
+      "baseline",
     );
-    expectInputError(() =>
-      pairedRatioBootstrap([{ pair_id: "p1", baseline: -2, candidate: 1 }], OPTIONS),
+    expectInputError(
+      () => pairedRatioBootstrap([{ pair_id: "p1", baseline: -2, candidate: 1 }], OPTIONS),
+      "baseline",
     );
-    expectInputError(() =>
-      pairedRatioBootstrap(
-        [
-          { pair_id: "dup", baseline: 2, candidate: 1 },
-          { pair_id: "dup", baseline: 4, candidate: 3 },
-        ],
-        OPTIONS,
-      ),
+    expectInputError(
+      () =>
+        pairedRatioBootstrap(
+          [
+            { pair_id: "dup", baseline: 2, candidate: 1 },
+            { pair_id: "dup", baseline: 4, candidate: 3 },
+          ],
+          OPTIONS,
+        ),
+      "pair_id",
     );
-    expectInputError(() =>
-      pairedRatioBootstrap([{ pair_id: "p1", baseline: 2, candidate: Number.NaN }], OPTIONS),
+    expectInputError(
+      () => pairedRatioBootstrap([{ pair_id: "p1", baseline: 2, candidate: Number.NaN }], OPTIONS),
+      "candidate",
     );
-    expectInputError(() =>
-      pairedRatioBootstrap([{ pair_id: "  ", baseline: 2, candidate: 1 }], OPTIONS),
+    expectInputError(
+      () => pairedRatioBootstrap([{ pair_id: "  ", baseline: 2, candidate: 1 }], OPTIONS),
+      "pair_id",
     );
-    expectInputError(() => pairedRatioBootstrap([], OPTIONS));
+    expectInputError(() => pairedRatioBootstrap([], OPTIONS), "pairs");
   });
 });
 
@@ -366,18 +425,38 @@ describe("stratified-paired-difference-bootstrap-v1", () => {
   test("each stratum keeps its original count in every replicate", () => {
     // Stratum "b" alone can never contribute a value below 10, so no replicate
     // mean can fall below (1+1+10+10)/4 = 5.5 — proof strata were not pooled.
+    //
+    // The floor is RECOMPUTED from the pairs first. Asserted only with
+    // `toBeGreaterThanOrEqual`, the pinned constant was free: setting it to 0
+    // left this test green and vacuous.
+    const byStratum = new Map<string, number[]>();
+    for (const p of PAIRS) {
+      const bucket = byStratum.get(p.stratum) ?? [];
+      bucket.push(p.candidate - p.baseline);
+      byStratum.set(p.stratum, bucket);
+    }
+    const floor =
+      [...byStratum.values()].reduce((acc, d) => acc + Math.min(...d) * d.length, 0) / PAIRS.length;
+    expect(V.replicate_floor_if_strata_preserved).toBe(floor);
+
     const replicates = stratifiedPairedDifferenceBootstrapReplicates(PAIRS, OPTIONS);
     for (const r of replicates) {
       expect(r).toBeGreaterThanOrEqual(V.replicate_floor_if_strata_preserved);
     }
+    // And the floor is a real constraint on this fixture, not a number so low
+    // that pooling would satisfy it too: pooling all four differences admits
+    // replicate means as low as 1.
+    expect(floor).toBeGreaterThan(Math.min(...PAIRS.map((p) => p.candidate - p.baseline)));
   });
 
   test("rejects an empty stratum label", () => {
-    expectInputError(() =>
-      stratifiedPairedDifferenceBootstrap(
-        [{ pair_id: "x", stratum: "  ", baseline: 0, candidate: 1 }],
-        OPTIONS,
-      ),
+    expectInputError(
+      () =>
+        stratifiedPairedDifferenceBootstrap(
+          [{ pair_id: "x", stratum: "  ", baseline: 0, candidate: 1 }],
+          OPTIONS,
+        ),
+      "stratum",
     );
   });
 
@@ -430,10 +509,10 @@ describe("clopper-pearson-zero-failure-upper-v1", () => {
   });
 
   test("rejects attempts below one and confidence outside (0,1)", () => {
-    expectInputError(() => clopperPearsonZeroFailureUpper(0, 0.95));
-    expectInputError(() => clopperPearsonZeroFailureUpper(10.5, 0.95));
-    expectInputError(() => clopperPearsonZeroFailureUpper(100, 1));
-    expectInputError(() => clopperPearsonZeroFailureUpper(100, 0));
+    expectInputError(() => clopperPearsonZeroFailureUpper(0, 0.95), "attempts");
+    expectInputError(() => clopperPearsonZeroFailureUpper(10.5, 0.95), "attempts");
+    expectInputError(() => clopperPearsonZeroFailureUpper(100, 1), "confidence");
+    expectInputError(() => clopperPearsonZeroFailureUpper(100, 0), "confidence");
   });
 });
 
@@ -472,10 +551,11 @@ describe("wilson-one-sided-upper-v1", () => {
   });
 
   test("rejects a (confidence, z) pair that cannot both be true", () => {
-    expectInputError(() => wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: 2 }));
+    expectInputError(() => wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: 2 }), "z");
     // A confidence with no table row is rejected rather than silently trusted.
-    expectInputError(() =>
-      wilsonOneSidedUpper(3, 100, { confidence: 0.9123, z: 1.6448536269514722 }),
+    expectInputError(
+      () => wilsonOneSidedUpper(3, 100, { confidence: 0.9123, z: 1.6448536269514722 }),
+      "confidence",
     );
   });
 
@@ -499,14 +579,22 @@ describe("wilson-one-sided-upper-v1", () => {
 
   test("rejects failures outside [0, attempts], attempts below one, and a nonpositive z", () => {
     const z = WILSON_Z_BY_CONFIDENCE[0.95];
-    expectInputError(() => wilsonOneSidedUpper(-1, 100, { confidence: 0.95, z }));
-    expectInputError(() => wilsonOneSidedUpper(101, 100, { confidence: 0.95, z }));
-    expectInputError(() => wilsonOneSidedUpper(1.5, 100, { confidence: 0.95, z }));
-    expectInputError(() => wilsonOneSidedUpper(0, 0, { confidence: 0.95, z }));
-    expectInputError(() => wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: 0 }));
-    expectInputError(() =>
-      wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: Number.POSITIVE_INFINITY }),
+    expectInputError(() => wilsonOneSidedUpper(-1, 100, { confidence: 0.95, z }), "failures");
+    expectInputError(() => wilsonOneSidedUpper(101, 100, { confidence: 0.95, z }), "failures");
+    expectInputError(() => wilsonOneSidedUpper(1.5, 100, { confidence: 0.95, z }), "failures");
+    expectInputError(() => wilsonOneSidedUpper(0, 0, { confidence: 0.95, z }), "attempts");
+    expectInputError(() => wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: 0 }), "z");
+    expectInputError(
+      () => wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: Number.POSITIVE_INFINITY }),
+      "z",
     );
+    // NaN is the case that only the finiteness guard can stop. `z: 0` and
+    // `z: Infinity` above are both also caught downstream by the
+    // (confidence, z) consistency gate, so deleting the guard entirely left
+    // this suite green — while `Math.abs(NaN - expectedZ) > 1e-12` is false,
+    // letting NaN through the gate and emitting `upper: NaN` into a record
+    // the canonical serializer rejects.
+    expectInputError(() => wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: Number.NaN }), "z");
   });
 });
 
@@ -775,24 +863,32 @@ describe("ols-qr-v1", () => {
   });
 
   test("rejects malformed designs", () => {
-    const bad: OlsQrInput[] = [
-      { columns: [], rows: [{ x: [], y: 1 }] },
+    const bad: { input: OlsQrInput; field: string }[] = [
+      { input: { columns: [], rows: [{ x: [], y: 1 }] }, field: "columns" },
       {
-        columns: ["a", "a"],
-        rows: [
-          { x: [1, 1], y: 1 },
-          { x: [2, 2], y: 2 },
-        ],
+        input: {
+          columns: ["a", "a"],
+          rows: [
+            { x: [1, 1], y: 1 },
+            { x: [2, 2], y: 2 },
+          ],
+        },
+        field: "columns",
       },
-      { columns: [" "], rows: [{ x: [1], y: 1 }] },
-      { columns: ["a", "b"], rows: [{ x: [1, 2], y: 1 }] }, // fewer rows than columns
-      { columns: ["a"], rows: [{ x: [1, 2], y: 1 }] }, // wrong row width
-      { columns: ["a"], rows: [{ x: [Number.POSITIVE_INFINITY], y: 1 }] },
-      { columns: ["a"], rows: [{ x: [1], y: Number.NaN }] },
-      { columns: ["a"], rows: [] },
+      { input: { columns: [" "], rows: [{ x: [1], y: 1 }] }, field: "columns" },
+      // fewer rows than columns
+      { input: { columns: ["a", "b"], rows: [{ x: [1, 2], y: 1 }] }, field: "rows" },
+      // wrong row width
+      { input: { columns: ["a"], rows: [{ x: [1, 2], y: 1 }] }, field: "rows" },
+      {
+        input: { columns: ["a"], rows: [{ x: [Number.POSITIVE_INFINITY], y: 1 }] },
+        field: "rows",
+      },
+      { input: { columns: ["a"], rows: [{ x: [1], y: Number.NaN }] }, field: "rows" },
+      { input: { columns: ["a"], rows: [] }, field: "rows" },
     ];
-    for (const input of bad) {
-      expectInputError(() => olsQr(input));
+    for (const { input, field } of bad) {
+      expectInputError(() => olsQr(input), field);
     }
   });
 });
@@ -931,9 +1027,23 @@ describe("canonical-JSON safety", () => {
     );
   });
 
-  test("a zero-dispersion sample emits +0, not -0", () => {
-    assertEmittable(madEstimate([5, 5, 5]));
-    expect(Object.is(madEstimate([5, 5, 5]).mad, -0)).toBe(false);
+  test("a single-element -0 sample is normalized on the way out", () => {
+    // Replaces a test that asserted `madEstimate([5,5,5]).mad` is not -0. That
+    // one could not fail: `madFromMedian` runs every deviation through
+    // `Math.abs`, which never returns -0. It read as a pin and pinned nothing.
+    //
+    // The reachable path is the single-element short-circuit — `quantileR7`
+    // returns `sorted[0]` verbatim when n is 1, so a sample of [-0] carries -0
+    // straight to `median`, and a q of -0 rides through untouched.
+    expect(Object.is(quantileR7([-0], 0.5), -0)).toBe(true); // the raw kernel does emit it
+    const m = madEstimate([-0]);
+    expect(Object.is(m.median, -0)).toBe(false);
+    assertEmittable(m);
+
+    const q = quantileEstimate([-0], -0, "quantile-r7-v1");
+    expect(Object.is(q.value, -0)).toBe(false);
+    expect(Object.is(q.q, -0)).toBe(false);
+    assertEmittable(q);
   });
 
   /**
@@ -963,6 +1073,17 @@ describe("canonical-JSON safety", () => {
     });
     expect(Object.is(w.failures, -0)).toBe(false);
     assertEmittable(w);
+
+    // The other two bootstraps echo `seed` through the same path.
+    const pr = STATISTICS_TEST_VECTORS["paired-ratio-bootstrap-v1"];
+    const ratio = pairedRatioBootstrap(pr.pairs, { ...pr.options, seed: -0 });
+    expect(Object.is(ratio.seed, -0)).toBe(false);
+    assertEmittable(ratio);
+
+    const st = STATISTICS_TEST_VECTORS["stratified-paired-difference-bootstrap-v1"];
+    const strat = stratifiedPairedDifferenceBootstrap(st.pairs, { ...st.options, seed: -0 });
+    expect(Object.is(strat.seed, -0)).toBe(false);
+    assertEmittable(strat);
   });
 
   test("the returned statistic selector is a copy, not the caller's object", () => {
