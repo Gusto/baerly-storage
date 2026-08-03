@@ -170,6 +170,39 @@ export function unmeasuredPublishedEntries(snapshot: Snapshot): string[] {
   return publishedEntries().filter((entry) => !(entry in snapshot.entries));
 }
 
+/** A tier-gated axis the snapshot carries no baseline for. */
+export interface UngatedAxis {
+  entry: string;
+  axis: Axis;
+}
+
+/**
+ * Tier-gated axes with no committed baseline.
+ *
+ * `compareSnapshot` skips an axis whose baseline is `undefined`, because it
+ * cannot tell "not yet measured" apart from "this tier does not gate it". So
+ * an entry present in the snapshot but carrying no numbers is not gated
+ * leniently, it is not gated at all: it can grow without bound and every run
+ * still reports `ok`.
+ *
+ * `unmeasuredPublishedEntries` does not catch this — the entry IS in the
+ * snapshot. And the hand-add workflow produces exactly this state, since
+ * adding an entry means writing a `tier` and a `note` and leaving the
+ * measurements to a later `--write`. That window has to close before the next
+ * commit rather than whenever someone next remembers to regenerate.
+ */
+export function ungatedAxes(snapshot: Snapshot): UngatedAxis[] {
+  const out: UngatedAxis[] = [];
+  for (const [entry, spec] of Object.entries(snapshot.entries)) {
+    for (const axis of snapshot.policy.tiers[spec.tier]?.axes ?? []) {
+      if (spec[axis] === undefined) {
+        out.push({ entry, axis });
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * The committed snapshot. Exported so the CLI and the tests gate the same
  * bytes: two call sites resolving the path independently can silently drift
@@ -366,6 +399,26 @@ async function runCli(): Promise<void> {
         `     \`pnpm bundle-sizes --write\` to fill in the measurements.`,
     );
     process.exit(1);
+  }
+
+  // `--write` is the one mode allowed past this: filling in a missing baseline
+  // is precisely what it does. Every other mode would otherwise print `ok` for
+  // an entry the delta gate silently skips, which is how a hand-added entry
+  // gets committed green and grows unbounded until someone regenerates.
+  if (!write) {
+    const ungated = ungatedAxes(snapshot);
+    if (ungated.length > 0) {
+      console.error(
+        `FAIL no committed baseline on a tier-gated axis: ${ungated
+          .map((u) => `${u.entry} ${AXIS_LABEL[u.axis]}`)
+          .join(", ")}`,
+      );
+      console.error(
+        `     The delta gate skips an axis it cannot compare, so nothing gates\n` +
+          `     these. Run \`pnpm bundle-sizes --write\` to fill them in.`,
+      );
+      process.exit(1);
+    }
   }
 
   const measured = await measureSnapshotEntries(snapshot);
