@@ -11,6 +11,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./dev-landing": {
+      "types": "./src/dev-landing.ts",
+      "import": "./src/dev-landing.ts"
+    },
     "./local-fs": {
       "types": "./src/local-fs.ts",
       "import": "./src/local-fs.ts"
