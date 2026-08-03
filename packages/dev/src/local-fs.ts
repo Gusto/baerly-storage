@@ -313,6 +313,15 @@ export class LocalFsStorage implements Storage {
    * un-canonicalized spelling and defeat the aliasing guard for every
    * later `put`.
    *
+   * Only `ENOENT` falls back. Every other `realpath` failure — `EACCES`,
+   * `ELOOP`, `ENAMETOOLONG` — throws, because the fallback is a *different
+   * lock key*, and absorbing those would let an instance that cannot
+   * canonicalize run unserialized against one that can. That is the
+   * exactly-one-winner guarantee this lock exists to provide, failing
+   * silently, which is indistinguishable from the defect it fixed. A root
+   * that is unreadable is a broken deployment either way; the only choice
+   * is whether it says so.
+   *
    * Not caching failure bounds that to one call but does not erase it.
    * `put` mkdirs before locking so it always canonicalizes; `delete` does
    * not, so against a not-yet-created symlinked root it locks the
@@ -336,8 +345,15 @@ export class LocalFsStorage implements Storage {
     try {
       this.#realRoot = await realpath(this.#root);
       return this.#realRoot;
-    } catch {
-      return this.#root;
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        return this.#root;
+      }
+      throw new BaerlyError(
+        "InvalidResponse",
+        `LocalFsStorage: cannot canonicalize root (${this.#root}): ${(error as Error).message}`,
+        error,
+      );
     }
   }
 

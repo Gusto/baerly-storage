@@ -420,6 +420,48 @@ describe("LocalFsStorage — impl-specific", () => {
     }
   });
 
+  test("a root that cannot be canonicalized fails loudly instead of unlocking", async () => {
+    // `#canonicalRoot` swallows a `realpath` failure and falls back to the
+    // unresolved spelling. That is correct for exactly one case — a root
+    // that does not exist yet — and silently wrong for every other, because
+    // the fallback is a *different lock key*: an instance that fails to
+    // canonicalize does not serialize against one that succeeds, and the
+    // exactly-one-winner guarantee above degrades with nothing logged and
+    // nothing thrown. So only ENOENT may be absorbed.
+    //
+    // A symlink loop is the portable way to make `realpath` fail with
+    // something else (ELOOP) without needing a permission bit, which is
+    // unsettable under the root-owned containers CI runs in. `delete` is
+    // the probe because it is the one mutation that reaches `#lockKey`
+    // without first `mkdir`-ing its parent.
+    const base = await mkdtemp(join(tmpdir(), "baerly-localfs-eloop-"));
+    try {
+      await symlink(join(base, "b"), join(base, "a"));
+      await symlink(join(base, "a"), join(base, "b"));
+      const s2 = new LocalFsStorage({ root: join(base, "a") });
+      const err = await s2.delete("k").then(
+        () => null,
+        (error: unknown) => error as { code?: string; message?: string },
+      );
+      expect(err).not.toBeNull();
+      expect(err?.code).toBe("InvalidResponse");
+      // Names the canonicalization, not the `rm` that would have failed
+      // downstream anyway — the point is that the lock key is unsound, and
+      // an operator reading `delete(k): ELOOP` would not learn that.
+      expect(err?.message).toMatch(/canonicalize root/);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a root that does not exist yet is still absorbed", async () => {
+    // The one case the fallback exists for, held in place against the
+    // narrowing above: `delete` from a bucket that was never created stays
+    // an idempotent no-op rather than becoming an ENOENT error.
+    const absent = new LocalFsStorage({ root: join(root, "never-created") });
+    await expect(absent.delete("k")).resolves.toBeUndefined();
+  });
+
   test.skipIf(!CASE_INSENSITIVE_FS)(
     "concurrent ifMatch on case-variant keys has exactly one winner",
     async () => {
