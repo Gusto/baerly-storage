@@ -672,3 +672,106 @@ describe("ols-qr-v1", () => {
     }
   });
 });
+
+describe("contract surface", () => {
+  test("every algorithm tag has exactly one pinned vector, with a well-formed id", () => {
+    expect(Object.keys(STATISTICS_TEST_VECTORS).toSorted()).toEqual(
+      [...STATISTICS_ALGORITHMS].toSorted(),
+    );
+    for (const entry of Object.values(STATISTICS_TEST_VECTORS)) {
+      expect(entry.id).toMatch(/^[a-z0-9][a-z0-9/_-]*\/v1$/);
+    }
+    expect(PRNG_TEST_VECTOR.id).toMatch(/^[a-z0-9][a-z0-9/_-]*\/v1$/);
+  });
+
+  test("every pinned id is distinct", () => {
+    const ids = [...Object.values(STATISTICS_TEST_VECTORS).map((e) => e.id), PRNG_TEST_VECTOR.id];
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test("every table z is the one-sided normal quantile for its confidence", () => {
+    // Sanity, not derivation: z must increase with confidence and stay inside
+    // a range no plausible transcription error survives.
+    const rows = Object.entries(WILSON_Z_BY_CONFIDENCE)
+      .map(([c, z]) => ({ c: Number(c), z }))
+      .toSorted((a, b) => a.c - b.c);
+    for (const [i, row] of rows.entries()) {
+      expect(row.z).toBeGreaterThan(0);
+      expect(row.z).toBeLessThan(4);
+      if (i > 0) {
+        expect(row.z).toBeGreaterThan(rows[i - 1]!.z);
+      }
+    }
+  });
+});
+
+describe("canonical-JSON safety", () => {
+  /**
+   * Lane D's canonical JSON REJECTS `undefined`, `NaN`, `±Infinity`, and `-0`
+   * (`canonical-hashing.md` §"rejection contract") — it does not normalize
+   * them. Every result object here is serialized into a hashed evidence record,
+   * so a single missed `normalizeZero` becomes an opaque rejection inside
+   * Plan J. This walks every number of every result shape.
+   */
+  const assertEmittable = (value: unknown, path = "$"): void => {
+    if (typeof value === "number") {
+      expect(Number.isFinite(value), `${path} must be finite`).toBe(true);
+      expect(Object.is(value, -0), `${path} must not be negative zero`).toBe(false);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => assertEmittable(v, `${path}[${i}]`));
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) {
+        expect(v, `${path}.${k} must not be undefined`).not.toBeUndefined();
+        assertEmittable(v, `${path}.${k}`);
+      }
+      return;
+    }
+    expect(["string", "boolean"], `${path} has an unserializable type`).toContain(typeof value);
+  };
+
+  test("every result shape emits only canonical-JSON-safe values", () => {
+    const b = STATISTICS_TEST_VECTORS["bootstrap-percentile-v1"];
+    const pr = STATISTICS_TEST_VECTORS["paired-ratio-bootstrap-v1"];
+    const st = STATISTICS_TEST_VECTORS["stratified-paired-difference-bootstrap-v1"];
+    const cp = STATISTICS_TEST_VECTORS["clopper-pearson-zero-failure-upper-v1"];
+    const w = STATISTICS_TEST_VECTORS["wilson-one-sided-upper-v1"];
+    const o = STATISTICS_TEST_VECTORS["ols-qr-v1"];
+
+    assertEmittable(quantileEstimate(b.values, 0.5, "quantile-r7-v1"));
+    assertEmittable(quantileEstimate(b.values, 0, "quantile-nearest-rank-v1"));
+    assertEmittable(madEstimate(b.values));
+    assertEmittable(bootstrapPercentile(b.values, b.statistic, b.options));
+    assertEmittable(bootstrapPercentile(b.values, { algorithm: "mean-v1" }, b.options));
+    assertEmittable(pairedRatioBootstrap(pr.pairs, pr.options));
+    assertEmittable(stratifiedPairedDifferenceBootstrap(st.pairs, st.options));
+    assertEmittable(clopperPearsonZeroFailureUpper(cp.attempts, cp.confidence));
+    assertEmittable(
+      wilsonOneSidedUpper(w.failures, w.attempts, { confidence: w.confidence, z: w.z }),
+    );
+    assertEmittable(olsQr({ columns: o.columns, rows: o.rows }));
+  });
+
+  test("the zero-coefficient OLS case — the realistic -0 producer — is safe", () => {
+    // True intercept exactly 0 over a negative Householder pivot.
+    assertEmittable(
+      olsQr({
+        columns: ["intercept", "x"],
+        rows: [
+          { x: [1, 1], y: 1 },
+          { x: [1, 2], y: 3 },
+          { x: [1, 3], y: 2 },
+          { x: [1, 4], y: 5 },
+        ],
+      }),
+    );
+  });
+
+  test("a zero-dispersion sample emits +0, not -0", () => {
+    assertEmittable(madEstimate([5, 5, 5]));
+    expect(Object.is(madEstimate([5, 5, 5]).mad, -0)).toBe(false);
+  });
+});
