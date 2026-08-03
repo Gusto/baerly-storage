@@ -13,6 +13,7 @@ import {
   createCurrentJson,
   MemoryStorage,
   BaerlyError,
+  LOG_KEY_PREFIX,
   readCurrentJson,
   type Storage,
   type StoragePutOptions,
@@ -32,6 +33,25 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
     key,
     logStateCurrentJson({ writer_fence: { epoch: 0, owner: "compactor-test", claimed_at: "" } }),
   );
+};
+
+const logObjectKeyPattern = new RegExp(String.raw`/${LOG_KEY_PREFIX}/(\d+)\.json$`);
+
+const recordingStorage = (inner: MemoryStorage): { storage: Storage; logReadSeqs: number[] } => {
+  const logReadSeqs: number[] = [];
+  const storage: Storage = {
+    get(key, opts) {
+      const match = logObjectKeyPattern.exec(key);
+      if (match !== null) {
+        logReadSeqs.push(Number.parseInt(match[1]!, 10));
+      }
+      return inner.get(key, opts);
+    },
+    put: (key, body, opts) => inner.put(key, body, opts),
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+  return { storage, logReadSeqs };
 };
 
 describe("compact", () => {
@@ -681,6 +701,7 @@ describe("compact", () => {
 
   test("cas-lost: snapshot pointer unchanged, bumps cas_lost_total, orphan reclaimable by runGc", async () => {
     const inner = new MemoryStorage();
+    const recording = recordingStorage(inner);
     await bootstrap(inner, KEY);
     const writer = new Writer({ storage: inner, currentJsonKey: KEY });
     for (let i = 0; i < 30; i++) {
@@ -691,9 +712,9 @@ describe("compact", () => {
     // Fail the compactor's current.json CAS PUT exactly once.
     let failedOnce = false;
     const failingPut: Storage = {
-      get: inner.get.bind(inner),
-      delete: inner.delete.bind(inner),
-      list: inner.list.bind(inner),
+      get: recording.storage.get,
+      delete: recording.storage.delete,
+      list: recording.storage.list,
       async put(k: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
         if (!failedOnce && k === KEY && opts?.ifMatch !== undefined) {
           failedOnce = true;
