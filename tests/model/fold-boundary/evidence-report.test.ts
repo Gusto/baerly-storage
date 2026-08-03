@@ -57,6 +57,85 @@ const SOURCE_FILES = [
   "tests/model/fold-boundary/progress-bound.test.ts",
   "tests/model/fold-boundary/schedule.ts",
 ] as const;
+const PROPERTY_CATALOG = [
+  {
+    question: 1,
+    propertyIds: [
+      "P1a_manifestTargetIsIndependentOfObservationAndBudget",
+      "P1b_liveAndObservedAlignedTargetsDependOnObservedAvailability",
+    ],
+    command: "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P1a_|P1b_'",
+  },
+  {
+    question: 2,
+    propertyIds: [
+      "P2a_fewerThanNextKEntriesProducesNoObjectOrProgress",
+      "P2b_retryAfterAvailabilityUsesTheSameManifestTarget",
+    ],
+    command: "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P2a_|P2b_'",
+  },
+  {
+    question: 3,
+    propertyIds: [
+      "P3a_crashBeforeCasLeavesManifestUnchangedAndRetryUsesSameTarget",
+      "P3b_laggingObserverBoundarySequenceIsAPrefixOfFullyInformedSequence",
+    ],
+    command: "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P3a_|P3b_'",
+  },
+  {
+    question: 4,
+    propertyIds: [
+      "P4a_firstTargetAfterKChangeIsStrictlyMonotoneAndNewKAligned",
+      "P4b_mixedKObserversCanPrepareDifferentObjectsFromOneGeneration",
+    ],
+    command: "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P4a_|P4b_'",
+  },
+  {
+    question: 5,
+    propertyIds: [
+      "P5a_observersOnOppositeSidesOfOneBoundaryEmitAtMostOneObjectForOneK",
+      "P5b_sameManifestSameKAlwaysProducesTheSameObjectKey",
+    ],
+    command: "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P5a_|P5b_'",
+  },
+  {
+    question: 6,
+    propertyIds: [
+      "P6a_sameGenerationSameKContentionAddsNoDistinctCasOrphan",
+      "P6b_successfulFoldCanIncreaseRatherThanReduceReclaimableObjects",
+      "P6c_mixedKContentionHasAReachableDistinctCasOrphan",
+      "P6d_crashAfterPutHasAReachableNeverReferencedSnapshot",
+      "P6e_reclamationRemovesAllAndOnlyNonCurrentSnapshots",
+    ],
+    command:
+      "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P6a_|P6b_|P6c_|P6d_|P6e_'",
+  },
+  {
+    question: 7,
+    propertyIds: [
+      "P7a_everyPreparedManifestBoundaryStrictlyAdvancesAndIsAligned",
+      "P7b_everyPreparedReadSetIsTheExactContiguousInterval",
+      "P7c_contiguousIncrementalFoldEqualsReferenceReplay",
+      "P7d_publishedSnapshotCanPreserveEveryAcknowledgedPrefix",
+      "P7e_everyPublishedSnapshotMatchesReferenceReplayThroughItsFloor",
+    ],
+    command:
+      "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P7a_|P7b_|P7c_|P7d_|P7e_'",
+  },
+  {
+    question: 8,
+    propertyIds: [
+      "P8a_tightKnownTailCostIsNPlusFiveWithSnapshotAndNPlusFourWithout",
+      "P8b_deferredAttemptStillPaysSnapshotAndLogReadsButNoPuts",
+      "P8c_kAboveMaxEntriesCannotPrepare",
+      "P8d_zeroMaxEntriesIsAnExplicitZeroProgressCounterexample",
+      "P8e_manifestAlignedProgressFitsCfFreeWithTightKnownTailForKAtMostTwenty",
+      "P8f_scheduledStaleProbeCanExceedThePerPassSubrequestLimit",
+    ],
+    command:
+      "FC_NUM_RUNS=10000 pnpm test:agent tests/model/fold-boundary -t 'P8a_|P8b_|P8c_|P8d_|P8e_|P8f_'",
+  },
+] as const;
 
 type ClaimClassification =
   | "universally-quantified-property"
@@ -171,20 +250,98 @@ const sourceHashes = async (repoRoot: string): Promise<Readonly<Record<string, s
     ),
   );
 
-const namedPropertyIds = async (repoRoot: string): Promise<ReadonlySet<string>> => {
+interface SourceToken {
+  readonly kind: "identifier" | "punctuation" | "string";
+  readonly value: string;
+}
+
+const sourceTokens = (source: string): readonly SourceToken[] => {
+  const tokens: SourceToken[] = [];
+  let index = 0;
+
+  while (index < source.length) {
+    const current = source[index]!;
+    const next = source[index + 1];
+    if (/\s/.test(current)) {
+      index += 1;
+      continue;
+    }
+    if (current === "/" && next === "/") {
+      index = source.indexOf("\n", index + 2);
+      if (index === -1) {
+        break;
+      }
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (current === "`" || current === "'" || current === '"') {
+      const quote = current;
+      const start = index + 1;
+      index = start;
+      while (index < source.length) {
+        if (source[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (source[index] === quote) {
+          break;
+        }
+        index += 1;
+      }
+      if (quote !== "`") {
+        tokens.push({ kind: "string", value: source.slice(start, index) });
+      }
+      index += 1;
+      continue;
+    }
+    if (/[A-Za-z_$]/.test(current)) {
+      const start = index;
+      index += 1;
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index]!)) {
+        index += 1;
+      }
+      tokens.push({ kind: "identifier", value: source.slice(start, index) });
+      continue;
+    }
+
+    tokens.push({ kind: "punctuation", value: current });
+    index += 1;
+  }
+
+  return tokens;
+};
+
+const declaredPropertyIdsInSource = (source: string): readonly string[] => {
+  const tokens = sourceTokens(source);
+  return tokens.flatMap((token, index) => {
+    const previous = tokens[index - 1];
+    const openParen = tokens[index + 1];
+    const propertyId = tokens[index + 2];
+    const comma = tokens[index + 3];
+    return token.kind === "identifier" &&
+      token.value === "test" &&
+      previous?.value !== "." &&
+      openParen?.value === "(" &&
+      propertyId?.kind === "string" &&
+      /^P[1-8][a-z]_[A-Za-z0-9]+$/.test(propertyId.value) &&
+      comma?.value === ","
+      ? [propertyId.value]
+      : [];
+  });
+};
+
+const declaredPropertyIds = async (repoRoot: string): Promise<ReadonlySet<string>> => {
   const propertyTestFiles = SOURCE_FILES.filter(
     (path) => path.endsWith(".test.ts") && !path.endsWith("evidence-report.test.ts"),
   );
   const sources = await Promise.all(
     propertyTestFiles.map((path) => readFile(join(repoRoot, path), "utf8")),
   );
-  return new Set(
-    sources.flatMap((source) =>
-      [...source.matchAll(/test\("(?<id>P[1-8][a-z]_[^"]+)"/g)].map(
-        (match) => match.groups!["id"]!,
-      ),
-    ),
-  );
+  return new Set(sources.flatMap(declaredPropertyIdsInSource));
 };
 
 const writeReport = async (
@@ -786,14 +943,30 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
   };
   const markdown = renderMarkdown(payload);
 
-  const propertyIds = await namedPropertyIds(repoRoot);
-  expect(propertyIds.size).toBeGreaterThan(0);
+  expect(
+    declaredPropertyIdsInSource(`
+      // test("P1z_lineCommentOnly", () => {});
+      /*
+      test("P1z_blockCommentOnly", () => {});
+      */
+      const text = 'test("P1z_stringLiteralOnly", () => {})';
+      test("P1a_realDeclaration", () => {});
+    `),
+  ).toEqual(["P1a_realDeclaration"]);
+  const actualPropertyIds = await declaredPropertyIds(repoRoot);
+  const canonicalPropertyIds = PROPERTY_CATALOG.flatMap(
+    ({ propertyIds: catalogPropertyIds }) => catalogPropertyIds,
+  );
+  expect(canonicalPropertyIds).toHaveLength(new Set(canonicalPropertyIds).size);
+  expect([...actualPropertyIds].toSorted()).toEqual([...canonicalPropertyIds].toSorted());
   expect(payload.claims.map(({ question }) => question)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-  for (const claim of payload.claims) {
-    expect(claim.propertyIds.length).toBeGreaterThan(0);
-    expect(claim.propertyIds.every((propertyId) => propertyIds.has(propertyId))).toBe(true);
-    expect(claim.command).toContain("FC_NUM_RUNS=10000");
-  }
+  expect(
+    payload.claims.map(({ question, propertyIds: claimPropertyIds, command: claimCommand }) => ({
+      question,
+      propertyIds: claimPropertyIds,
+      command: claimCommand,
+    })),
+  ).toEqual(PROPERTY_CATALOG);
   expect(Object.keys(payload.sourceSha256).toSorted()).toEqual([...SOURCE_FILES].toSorted());
   expect(Object.values(payload.sourceSha256).every((digest) => /^[a-f0-9]{64}$/.test(digest))).toBe(
     true,
@@ -831,6 +1004,7 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
   ) as typeof payload;
   const readBackMarkdown = await readFile(join(secondDirectory, "report.md"), "utf8");
   expect(parsed).toEqual(payload);
+  expect(readBackMarkdown).toBe(markdown);
   expect(parsed.status).toBe("research-only / non-authorizing");
   expect(parsed.baseSha).toBe(BASE_SHA);
   expect(parsed.deterministicSeed).toBe(DETERMINISTIC_SEED);
