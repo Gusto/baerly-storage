@@ -2,42 +2,16 @@ import { WRITE_TICK_FOLD_ENTRIES_PER_PASS } from "@baerly/protocol";
 import { fc } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
-import { CF_FREE_BUDGET, type FoldBudget } from "./boundary.ts";
-import { emptyState, type ModelLog, type ModelOp, type ModelState } from "./model.ts";
-import { drainToQuiescence, runSchedule, type ObserverAction } from "./schedule.ts";
-
-const roomyBudget = (overrides: Partial<FoldBudget> = {}): FoldBudget => ({
-  maxEntriesPerRun: 100,
-  minEntriesToCompact: 1,
-  ceilingBytes: 1_000_000,
-  ceilingEntries: 1_000,
-  subrequestLimit: 10_000,
-  ...overrides,
-});
-
-const operations = (count: number): readonly ModelOp[] =>
-  Array.from({ length: count }, (_, index) => ({
-    kind: "I" as const,
-    docId: `doc-${index}`,
-    value: index,
-  }));
+import { CF_FREE_BUDGET } from "./boundary.ts";
+import { action, operations } from "./fixtures.ts";
+import { emptyState, type ModelLog, type ModelState } from "./model.ts";
+import { drainToQuiescence, runSchedule } from "./schedule.ts";
 
 const stateWithTail = (tail: number, tailHint = tail): ModelState => {
   const state = emptyState({ ops: operations(tail), acknowledgedTail: tail });
   const manifest = { ...state.manifest, tailHint };
   return { ...state, manifest, manifestHistory: [{ ...manifest }] };
 };
-
-const action = (overrides: Partial<ObserverAction> = {}): ObserverAction => ({
-  observerId: 0,
-  readsAtGeneration: Number.MAX_SAFE_INTEGER,
-  observedTail: 20,
-  k: 5,
-  budget: roomyBudget(),
-  algorithm: "aligned-manifest",
-  crashAt: "none",
-  ...overrides,
-});
 
 const localReplay = (log: ModelLog, to: number): readonly (readonly [string, number])[] => {
   const rows = new Map<string, number>();

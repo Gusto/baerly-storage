@@ -1,45 +1,17 @@
 import { fc } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
-import { type FoldBudget } from "./boundary.ts";
-import { emptyState, rowsAtManifest, type ModelOp, type ModelState } from "./model.ts";
+import { action, operations, roomyBudget } from "./fixtures.ts";
+import { emptyState, rowsAtManifest, type ModelState } from "./model.ts";
 import {
   drainToQuiescence,
   reclaimUnreferenced,
   runSchedule,
-  type ObserverAction,
   type ScheduleResult,
 } from "./schedule.ts";
 
-const roomyBudget = (overrides: Partial<FoldBudget> = {}): FoldBudget => ({
-  maxEntriesPerRun: 100,
-  minEntriesToCompact: 1,
-  ceilingBytes: 1_000_000,
-  ceilingEntries: 1_000,
-  subrequestLimit: 10_000,
-  ...overrides,
-});
-
-const operations = (count: number): readonly ModelOp[] =>
-  Array.from({ length: count }, (_, index) => ({
-    kind: "I" as const,
-    docId: `doc-${index}`,
-    value: index,
-  }));
-
 const stateWithTail = (tail: number): ModelState =>
   emptyState({ ops: operations(tail), acknowledgedTail: tail });
-
-const action = (overrides: Partial<ObserverAction> = {}): ObserverAction => ({
-  observerId: 0,
-  readsAtGeneration: Number.MAX_SAFE_INTEGER,
-  observedTail: 20,
-  k: 5,
-  budget: roomyBudget(),
-  algorithm: "aligned-manifest",
-  crashAt: "none",
-  ...overrides,
-});
 
 const sortedKeys = (state: ModelState): readonly string[] => [...state.snapshots.keys()].toSorted();
 

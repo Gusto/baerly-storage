@@ -11,6 +11,7 @@ import {
   type FoldBudget,
 } from "./boundary.ts";
 import { billableClassA, foldCost } from "./cost.ts";
+import { operations, roomyBudget } from "./fixtures.ts";
 import {
   applySnapshot,
   emptyState,
@@ -18,25 +19,8 @@ import {
   replayAcknowledged,
   type ModelLog,
   type ModelManifest,
-  type ModelOp,
   type ModelState,
 } from "./model.ts";
-
-const roomyBudget = (overrides: Partial<FoldBudget> = {}): FoldBudget => ({
-  maxEntriesPerRun: 100,
-  minEntriesToCompact: 1,
-  ceilingBytes: 1_000_000,
-  ceilingEntries: 1_000,
-  subrequestLimit: 10_000,
-  ...overrides,
-});
-
-const operations = (count: number): readonly ModelOp[] =>
-  Array.from({ length: count }, (_, index) => ({
-    kind: "I" as const,
-    docId: `doc-${index}`,
-    value: index,
-  }));
 
 const stateAt = (
   floor: number,
