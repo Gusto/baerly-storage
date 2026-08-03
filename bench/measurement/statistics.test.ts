@@ -140,17 +140,26 @@ describe("mad-from-median-v1", () => {
 
 describe("tagged summaries", () => {
   test("quantileEstimate carries the tag, q, and sample size", () => {
-    expect(quantileEstimate([1, 2, 3, 4], 0.95, "quantile-nearest-rank-v1")).toEqual({
+    // Sourced from the vectors, not inlined. Both samples and both (q, value)
+    // pairs below have a home in STATISTICS_TEST_VECTORS, so writing them as
+    // literals here would let the tagged wrapper drift away from the constant
+    // the contract hash is taken over — one eroded test at a time.
+    const NR = STATISTICS_TEST_VECTORS["quantile-nearest-rank-v1"];
+    const nr = NR.expected[3]; // q = 0.95 -> 4
+    expect(quantileEstimate(NR.values, nr.q, "quantile-nearest-rank-v1")).toEqual({
       algorithm: "quantile-nearest-rank-v1",
-      q: 0.95,
-      value: 4,
-      sample_size: 4,
+      q: nr.q,
+      value: nr.value,
+      sample_size: NR.values.length,
     });
-    expect(quantileEstimate([0, 10, 20, 30], 0.25, "quantile-r7-v1")).toEqual({
+
+    const R7 = STATISTICS_TEST_VECTORS["quantile-r7-v1"];
+    const r7 = R7.expected[1]; // q = 0.25 -> 7.5
+    expect(quantileEstimate(R7.values, r7.q, "quantile-r7-v1")).toEqual({
       algorithm: "quantile-r7-v1",
-      q: 0.25,
-      value: 7.5,
-      sample_size: 4,
+      q: r7.q,
+      value: r7.value,
+      sample_size: R7.values.length,
     });
   });
 
@@ -689,9 +698,46 @@ describe("contract surface", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  test("every table z is the one-sided normal quantile for its confidence", () => {
-    // Sanity, not derivation: z must increase with confidence and stay inside
-    // a range no plausible transcription error survives.
+  /**
+   * Composite Simpson over the standard-normal pdf: `Φ(z) = 0.5 + ∫₀^z φ(t)dt`.
+   *
+   * This is the CDF, not its inverse. It can only ever CHECK a `(confidence, z)`
+   * row — it cannot produce a z — so it is not the untagged tenth algorithm the
+   * plan's non-goals ban. It lives in the test, never in the module.
+   */
+  const standardNormalCdf = (z: number, intervals = 20_000): number => {
+    const pdf = (t: number): number => Math.exp(-0.5 * t * t) / Math.sqrt(2 * Math.PI);
+    const h = z / intervals;
+    let sum = pdf(0) + pdf(z);
+    for (let i = 1; i < intervals; i++) {
+      sum += pdf(i * h) * (i % 2 === 0 ? 2 : 4);
+    }
+    return 0.5 + (h / 3) * sum;
+  };
+
+  test("every table z round-trips through the normal CDF to its own confidence", () => {
+    // The table is the module's one load-bearing numeric surface that is NOT in
+    // STATISTICS_TEST_VECTORS, and a wrong z ships evidence tagged with a
+    // confidence that did not determine the number — the exact failure §4.7
+    // exists to prevent. Range and monotonicity checks do not catch that: a z
+    // perturbed by 0.2 stays positive, stays under 4, and stays ordered.
+    //
+    // Every current row lands within 2.6e-15; a 0.2 perturbation lands at
+    // 4.2e-3, twelve orders away. 1e-12 separates them with enormous margin
+    // while leaving room for the quadrature's own error.
+    for (const [confidence, z] of Object.entries(WILSON_Z_BY_CONFIDENCE)) {
+      expect(Math.abs(standardNormalCdf(z) - Number(confidence))).toBeLessThan(1e-12);
+    }
+  });
+
+  test("the round-trip guard is sharp enough to reject a perturbed z", () => {
+    // Proves the guard above is not vacuous: without this, a test asserting
+    // "z is the normal quantile" could pass while checking nothing of the sort.
+    const corrupted = WILSON_Z_BY_CONFIDENCE[0.99] + 0.2;
+    expect(Math.abs(standardNormalCdf(corrupted) - 0.99)).toBeGreaterThan(1e-12);
+  });
+
+  test("table z values increase with confidence and stay in a plausible range", () => {
     const rows = Object.entries(WILSON_Z_BY_CONFIDENCE)
       .map(([c, z]) => ({ c: Number(c), z }))
       .toSorted((a, b) => a.c - b.c);
@@ -773,5 +819,44 @@ describe("canonical-JSON safety", () => {
   test("a zero-dispersion sample emits +0, not -0", () => {
     assertEmittable(madEstimate([5, 5, 5]));
     expect(Object.is(madEstimate([5, 5, 5]).mad, -0)).toBe(false);
+  });
+
+  /**
+   * The guard above walks results exhaustively, but every fixture feeding it is
+   * `-0`-free, so it could only ever catch a COMPUTED negative zero. An ECHOED
+   * one slipped straight through: `-0` clears `Number.isInteger(v) && v >= 0`
+   * and `!(v < 0)` untouched, so a caller parameter carrying `-0` was copied
+   * verbatim onto the result. These feed `-0` in deliberately.
+   */
+  test("a -0 caller parameter is normalized before it reaches the result", () => {
+    const b = STATISTICS_TEST_VECTORS["bootstrap-percentile-v1"];
+
+    // seed: -0 arises from `seed: -index` at index 0.
+    const seeded = bootstrapPercentile(b.values, b.statistic, { ...b.options, seed: -0 });
+    expect(Object.is(seeded.seed, -0)).toBe(false);
+    assertEmittable(seeded);
+
+    // statistic.q: -0 arises from `q: -x` at x = 0.
+    const q0 = bootstrapPercentile(b.values, { algorithm: "quantile-r7-v1", q: -0 }, b.options);
+    expect(Object.is(q0.statistic?.q, -0)).toBe(false);
+    assertEmittable(q0);
+
+    // failures: -0 arises from `failures: -count` at count 0.
+    const w = wilsonOneSidedUpper(-0, 100, {
+      confidence: 0.95,
+      z: WILSON_Z_BY_CONFIDENCE[0.95],
+    });
+    expect(Object.is(w.failures, -0)).toBe(false);
+    assertEmittable(w);
+  });
+
+  test("the returned statistic selector is a copy, not the caller's object", () => {
+    // Echoing by reference would let a caller mutate an already-emitted evidence
+    // record after the fact.
+    const b = STATISTICS_TEST_VECTORS["bootstrap-percentile-v1"];
+    const selector = { algorithm: "quantile-r7-v1" as const, q: 0.5 };
+    const result = bootstrapPercentile(b.values, selector, b.options);
+    expect(result.statistic).not.toBe(selector);
+    expect(result.statistic).toEqual(selector);
   });
 });
