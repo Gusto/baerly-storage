@@ -4,8 +4,10 @@ import {
   compareSnapshot,
   deltaLimit,
   formatReportLine,
+  loadSnapshot,
   nextSnapshot,
   type Snapshot,
+  ungatedAxes,
 } from "../../scripts/bundle-sizes.ts";
 
 const policy = {
@@ -128,6 +130,57 @@ describe("compareSnapshot", () => {
 
   test("a snapshot entry with no measurement is a loud error", () => {
     expect(() => compareSnapshot(snap(shipped), {})).toThrow(/index\.js/);
+  });
+});
+
+// The delta gate can only compare against a baseline it has. An entry whose
+// tier gates an axis it carries no number for is therefore not gated leniently
+// — it is not gated at all, and `compareSnapshot` cannot say so, because a
+// missing baseline is indistinguishable from an axis the tier never gated.
+// `ungatedAxes` is what makes that state visible before it can be committed.
+describe("ungatedAxes", () => {
+  test("compareSnapshot is silent on a tier-gated axis with no baseline", () => {
+    // The premise. A hand-added entry measuring 99 MB draws no violation,
+    // which is why the check below has to exist outside compareSnapshot.
+    const entries = { "index.js": { tier: "shipped", note: "hand-added" } };
+    expect(
+      compareSnapshot(snap(entries), { "index.js": { raw: 99e6, gz: 9e6, minGz: 9e5 } }),
+    ).toEqual([]);
+  });
+
+  test("flags every tier-gated axis a hand-added entry has yet to measure", () => {
+    // Exactly the state `pnpm bundle-sizes`'s own error message asks for:
+    // add the entry with a `tier` and a `note`, then `--write` to fill it in.
+    const entries = { "index.js": { tier: "shipped", note: "hand-added" } };
+    expect(ungatedAxes(snap(entries))).toEqual([
+      { entry: "index.js", axis: "raw" },
+      { entry: "index.js", axis: "gz" },
+      { entry: "index.js", axis: "minGz" },
+    ]);
+  });
+
+  test("flags a single missing axis on an otherwise measured entry", () => {
+    const entries = { "index.js": { tier: "shipped", raw: 1, gz: 2, note: "n" } };
+    expect(ungatedAxes(snap(entries))).toEqual([{ entry: "index.js", axis: "minGz" }]);
+  });
+
+  test("does not flag an axis the entry's tier never gates", () => {
+    // tooling reads raw only, so a missing gz is correct, not a gap.
+    const entries = { "dev.js": { tier: "tooling", raw: 1000, note: "n" } };
+    expect(ungatedAxes(snap(entries))).toEqual([]);
+  });
+
+  test("a fully measured snapshot has nothing ungated", () => {
+    const entries = {
+      "index.js": { tier: "shipped", raw: 100000, gz: 30000, minGz: 10000, note: "n" },
+    };
+    expect(ungatedAxes(snap(entries))).toEqual([]);
+  });
+
+  test("the committed snapshot is fully gated", () => {
+    // The gate this repo actually runs. If this fails, some entry is green
+    // because nothing compares it, not because it did not grow.
+    expect(ungatedAxes(loadSnapshot())).toEqual([]);
   });
 });
 
