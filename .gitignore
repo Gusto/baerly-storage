@@ -7,6 +7,9 @@
 # Planning artifacts (untracked; not shipped, not doc-validated)
 .plans/
 
+# Local git worktrees
+.worktrees/
+
 # Dependencies
 node_modules/
 .pnpm-store/
