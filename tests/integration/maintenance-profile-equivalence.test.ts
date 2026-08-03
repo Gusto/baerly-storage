@@ -20,7 +20,7 @@
  *       write-tick path (the writer's post-CAS `runBoundedMaintenance`
  *       dispatch, reached inside an ALS maintenance scope) under each
  *       profile leaves `find()`/`all()` returning the SAME rows (sorted
- *       by `_id`), equal to a no-maintenance reference read of the same
+ *       by `_id`), equal to a fold/GC-disabled reference read of the same
  *       stream. find() reads snapshot + live tail, so equivalence holds
  *       no matter how much each profile folded.
  *
@@ -76,7 +76,9 @@ const bootstrap = (storage: Storage): Promise<void> =>
 
 const WORKING_SET = 50; // bounded live doc set ⇒ constant live floor
 const BODY_BYTES = 2000; // bodies big enough that the ratio gate trips and folds fire
-const TOTAL_OPS = 1200; // long enough that both profiles fold many times
+// Exact cold-start first-fold threshold: 64 KiB live-byte floor / 128 B
+// per-entry estimate. This guarantees one fold while bounding four replays.
+const TOTAL_OPS = 512;
 
 interface Op {
   readonly op: "I" | "U" | "D";
@@ -125,8 +127,9 @@ const buildOps = (): readonly Op[] => {
  *  of the box), so to control the profile we always wrap in an ALS
  *  maintenance scope:
  *   - `profile` given ⇒ ticks at that profile's rate (the production path);
- *   - `profile` omitted ⇒ `disabled: true`, a truly maintenance-FREE
- *     reference seed (pure log tail, no folding). */
+ *   - `profile` omitted ⇒ `disabled: true`, a fold/GC-free
+ *     reference seed (pure log tail, no folding); the writer still
+ *     refreshes `tail_hint` periodically. */
 const replay = async (
   storage: Storage,
   ops: readonly Op[],
@@ -167,7 +170,8 @@ interface ProfileCase {
   readonly profile: MaintenanceProfile;
 }
 
-// Small table so adding a third profile later is a one-line addition.
+// Three maintained profiles plus the fold/GC-disabled reference make four
+// full replays in case (A).
 const PROFILE_CASES: readonly ProfileCase[] = [
   { label: "cf-free", profile: MAINTENANCE_PROFILE_CF_FREE },
   { label: "node", profile: MAINTENANCE_PROFILE_NODE },
@@ -197,31 +201,19 @@ describe("MaintenanceProfile cross-profile correctness", () => {
       };
 
       test(
-        "(A) materialized state is byte-for-byte identical across every profile (and the no-maintenance reference)",
-        // 180s locally: under single-write commit each commit forward-probes
-        // the log tail (galloping, O(log gap) GETs). The no-maintenance
-        // reference seed never advances tail_hint, so its gap grows to the
-        // full stream length — over LocalFs (real file I/O) under
-        // full-suite CPU contention the three replays exceed the old 60s.
-        // ciTimeout gives the 2-vCPU CI core extra headroom (the higher
-        // ceiling only bites if the replay is genuinely that slow; locally
-        // the tighter bound stands).
-        //
-        // 120s → 180s (2026-08-02): the local-fs arm measures ~80s in
-        // isolation, so a 120s ceiling left under 40s for fork-pool
-        // contention, which the full suite exhausts — the failures this
-        // produces are timeouts under load, not hangs, and the arm passes
-        // on its own every time. That margin was already the thinnest in
-        // the file before anything else changed, and the per-key write lock
-        // landing in this branch adds ~7s more to the arm. This is the next
-        // turn of the rotating-cast problem `tests/setup/ci.ts` describes,
-        // so the base moves rather than the work shrinking.
-        { timeout: ciTimeout(180_000) },
+        "(A) materialized state is byte-for-byte identical across every profile (and the fold/GC-disabled reference)",
+        // 120s is contention headroom for four 512-commit replays. Disabled
+        // maintenance still refreshes tail_hint periodically; the maintained
+        // profiles additionally run cadence-driven GC plus one cold-start
+        // fold, whose LocalFs prefix lists repeatedly walk the bucket.
+        // ciTimeout gives the 2-vCPU CI core extra headroom without expanding
+        // this bounded workload.
+        { timeout: ciTimeout(120_000) },
         async () => {
           const ops = buildOps();
 
-          // Reference: the same stream with NO maintenance at all. Every
-          // profile's maintained view must equal this.
+          // Reference: the same stream with fold/GC disabled. Every profile's
+          // maintained view must equal this.
           const refStorage = await freshBucket();
           await replay(refStorage, ops);
           const reference = await readRows(refStorage);
@@ -260,12 +252,12 @@ describe("MaintenanceProfile cross-profile correctness", () => {
             "profiles must reach different fold progress (else equivalence is vacuous)",
           ).toBeGreaterThan(1);
 
-          // EQUIVALENCE: every profile's view equals the no-maintenance
+          // EQUIVALENCE: every profile's view equals the fold/GC-disabled
           // reference, byte-for-byte (deep-equal over sorted rows).
           for (const pc of PROFILE_CASES) {
             expect(
               maintained[pc.label],
-              `${pc.label} view must equal the no-maintenance reference`,
+              `${pc.label} view must equal the fold/GC-disabled reference`,
             ).toEqual(reference);
           }
           // Explicit cross-profile pin so a future third profile is also
@@ -286,7 +278,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
         // PROFILE_CASES — a future 3rd profile touches this by hand.
         async () => {
           // Pre-build a tail bigger than either profile's per-pass slice
-          // with NO maintenance, so the fold start state is identical for
+          // with fold/GC disabled, so the fold start state is identical for
           // both arms. 300 fresh inserts > node's 200/pass slice ⇒ neither
           // profile drains the whole tail in one pass, so the per-pass
           // advance is exactly maxFoldEntriesPerPass for each.
@@ -319,13 +311,13 @@ describe("MaintenanceProfile cross-profile correctness", () => {
           // isolating the fold so the advance is purely the fold slice.
           const oneFoldAdvance = async (profile: MaintenanceProfile): Promise<number> => {
             const storage = await freshBucket();
-            await replay(storage, tailOps); // no maintenance during seed
-            // Under single-write commit the writer advances neither
-            // `tail_hint`. Stamp the true tail
-            // (TAIL entries at seq [0, TAIL)) so the runner's gate sees the
-            // live tail, and stamp `mean_entry_bytes` to the ~2 KB entry
-            // size so the ratio TRIGGER estimate reflects these large
-            // entries instead of the small cold-start fallback.
+            await replay(storage, tailOps); // fold/GC disabled during seed
+            // Disabled maintenance refreshes `tail_hint` only periodically.
+            // Stamp the true tail (TAIL entries at seq [0, TAIL)) so the
+            // runner's gate sees the complete live tail, and stamp
+            // `mean_entry_bytes` to the ~2 KB entry size so the ratio TRIGGER
+            // estimate reflects these large entries instead of the small
+            // cold-start fallback.
             await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
               ...c,
               tail_hint: TAIL,
