@@ -15,8 +15,26 @@ import { transform } from "esbuild";
  */
 export const DIST_DIR = fileURLToPath(new URL("../dist/", import.meta.url));
 
-/** Matches a static `import ... from "x"` / `export ... from "x"` specifier. */
-export const STATIC_IMPORT_RE = /(?:^|\n)\s*(?:import|export)[^"']*?from\s*["']([^"']+)["']/g;
+/**
+ * Matches a static `import ... from "x"` / `export ... from "x"` specifier.
+ *
+ * The leading `[\n;]` is a statement-position anchor, and it is load-bearing
+ * in both directions:
+ *
+ * - It must accept `;` as well as a newline. Anchoring on `\n` alone reads at
+ *   most one specifier per physical line, so `import a from "./x.js"; export
+ *   * from "./y.js"` silently drops the second one and every chunk beneath
+ *   it — an undercount with no error, which is the failure mode a size gate
+ *   can least afford.
+ * - It must not be dropped. `dist/` ships comments un-stripped and JSDoc
+ *   `@example` blocks quote imports; without the anchor those get walked as
+ *   if they were real edges.
+ *
+ * A `;` inside a string literal followed by import-shaped text would be a
+ * false positive, but it resolves to a path that does not exist and
+ * `collectClosure` throws ENOENT — loud, unlike the undercount.
+ */
+export const STATIC_IMPORT_RE = /(?:^|[\n;])\s*(?:import|export)[^"']*?from\s*["']([^"']+)["']/g;
 
 /** Walk `entryAbs`'s static-import graph, accumulating absolute paths in `seen`. */
 export function collectClosure(entryAbs: string, seen: Set<string>): void {
