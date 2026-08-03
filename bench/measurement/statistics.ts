@@ -508,3 +508,479 @@ export const bootstrapPercentile = (
     statistic,
   };
 };
+
+export interface PairedValue {
+  readonly pair_id: string;
+  readonly baseline: number;
+  readonly candidate: number;
+}
+
+export interface StratifiedPair extends PairedValue {
+  readonly stratum: string;
+}
+
+const assertPairs = (pairs: readonly PairedValue[]): void => {
+  if (pairs.length === 0) {
+    throw new StatisticsInputError("pairs", "no complete pairs supplied");
+  }
+  const seen = new Set<string>();
+  for (const p of pairs) {
+    if (typeof p.pair_id !== "string" || p.pair_id.trim() === "") {
+      throw new StatisticsInputError("pair_id", "must be a nonempty string");
+    }
+    if (seen.has(p.pair_id)) {
+      throw new StatisticsInputError("pair_id", `duplicate ${p.pair_id}`);
+    }
+    seen.add(p.pair_id);
+    if (typeof p.baseline !== "number" || !Number.isFinite(p.baseline)) {
+      throw new StatisticsInputError("baseline", `pair ${p.pair_id} has no finite baseline arm`);
+    }
+    if (typeof p.candidate !== "number" || !Number.isFinite(p.candidate)) {
+      throw new StatisticsInputError("candidate", `pair ${p.pair_id} has no finite candidate arm`);
+    }
+  }
+};
+
+const perPairRatios = (pairs: readonly PairedValue[]): number[] =>
+  pairs.map((p) => {
+    if (p.baseline <= 0) {
+      throw new StatisticsInputError(
+        "baseline",
+        `pair ${p.pair_id} baseline must be > 0 for a ratio; got ${String(p.baseline)}`,
+      );
+    }
+    return p.candidate / p.baseline;
+  });
+
+/** The pinned replicate medians of `paired-ratio-bootstrap-v1`, in draw order. */
+export const pairedRatioBootstrapReplicates = (
+  pairs: readonly PairedValue[],
+  options: BootstrapOptions,
+): readonly number[] => {
+  assertPairs(pairs);
+  assertBootstrapOptions(options);
+  const ratios = perPairRatios(pairs);
+  const rng = mulberry32(options.seed);
+  const replicates: number[] = [];
+  for (let r = 0; r < options.resamples; r++) {
+    replicates.push(median(drawWithReplacement(ratios, rng)));
+  }
+  return replicates;
+};
+
+/** `paired-ratio-bootstrap-v1`: resamples complete pairs; summarizes the median of per-pair ratios. */
+export const pairedRatioBootstrap = (
+  pairs: readonly PairedValue[],
+  options: BootstrapOptions,
+): BootstrapResult<"paired-ratio-bootstrap-v1"> => {
+  const replicates = pairedRatioBootstrapReplicates(pairs, options);
+  return {
+    algorithm: "paired-ratio-bootstrap-v1",
+    prng: BOOTSTRAP_PRNG,
+    point: normalizeZero(median(perPairRatios(pairs))),
+    interval: percentileInterval(replicates, options.confidence),
+    seed: options.seed,
+    resamples: options.resamples,
+    inclusion_unit: options.inclusion_unit,
+  };
+};
+
+/** Groups differences by stratum in FIRST-APPEARANCE order — the draw order is normative. */
+const groupStrata = (pairs: readonly StratifiedPair[]): number[][] => {
+  const order: string[] = [];
+  const byStratum = new Map<string, number[]>();
+  for (const p of pairs) {
+    if (typeof p.stratum !== "string" || p.stratum.trim() === "") {
+      throw new StatisticsInputError("stratum", `pair ${p.pair_id} has no stratum label`);
+    }
+    let bucket = byStratum.get(p.stratum);
+    if (bucket === undefined) {
+      bucket = [];
+      byStratum.set(p.stratum, bucket);
+      order.push(p.stratum);
+    }
+    bucket.push(p.candidate - p.baseline);
+  }
+  return order.map((s) => byStratum.get(s)!);
+};
+
+/** The pinned replicate mean differences of the stratified bootstrap, in draw order. */
+export const stratifiedPairedDifferenceBootstrapReplicates = (
+  pairs: readonly StratifiedPair[],
+  options: BootstrapOptions,
+): readonly number[] => {
+  assertPairs(pairs);
+  assertBootstrapOptions(options);
+  const strata = groupStrata(pairs);
+  const rng = mulberry32(options.seed);
+  const replicates: number[] = [];
+  for (let r = 0; r < options.resamples; r++) {
+    const drawn: number[] = [];
+    for (const stratum of strata) {
+      drawn.push(...drawWithReplacement(stratum, rng));
+    }
+    replicates.push(mean(drawn));
+  }
+  return replicates;
+};
+
+/**
+ * `stratified-paired-difference-bootstrap-v1`: resamples complete pairs within
+ * each declared stratum, preserving every stratum's original count.
+ */
+export const stratifiedPairedDifferenceBootstrap = (
+  pairs: readonly StratifiedPair[],
+  options: BootstrapOptions,
+): BootstrapResult<"stratified-paired-difference-bootstrap-v1"> => {
+  const replicates = stratifiedPairedDifferenceBootstrapReplicates(pairs, options);
+  return {
+    algorithm: "stratified-paired-difference-bootstrap-v1",
+    prng: BOOTSTRAP_PRNG,
+    point: normalizeZero(mean(pairs.map((p) => p.candidate - p.baseline))),
+    interval: percentileInterval(replicates, options.confidence),
+    seed: options.seed,
+    resamples: options.resamples,
+    inclusion_unit: options.inclusion_unit,
+  };
+};
+
+export interface ClopperPearsonZeroFailureResult {
+  readonly algorithm: "clopper-pearson-zero-failure-upper-v1";
+  readonly upper: number;
+  readonly failures: 0;
+  readonly attempts: number;
+  readonly confidence: number;
+}
+
+const assertAttempts = (attempts: number): void => {
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new StatisticsInputError("attempts", `must be an integer >= 1; got ${String(attempts)}`);
+  }
+};
+
+const assertConfidence = (confidence: number): void => {
+  if (!Number.isFinite(confidence) || confidence <= 0 || confidence >= 1) {
+    throw new StatisticsInputError("confidence", `must be within (0,1); got ${String(confidence)}`);
+  }
+};
+
+/** `clopper-pearson-zero-failure-upper-v1`: the exact one-sided bound at zero observed failures. */
+export const clopperPearsonZeroFailureUpper = (
+  attempts: number,
+  confidence: number,
+): ClopperPearsonZeroFailureResult => {
+  assertAttempts(attempts);
+  assertConfidence(confidence);
+  return {
+    algorithm: "clopper-pearson-zero-failure-upper-v1",
+    upper: normalizeZero(1 - (1 - confidence) ** (1 / attempts)),
+    failures: 0,
+    attempts,
+    confidence,
+  };
+};
+
+export interface WilsonOneSidedUpperResult {
+  readonly algorithm: "wilson-one-sided-upper-v1";
+  readonly upper: number;
+  readonly failures: number;
+  readonly attempts: number;
+  readonly confidence: number;
+  readonly z: number;
+}
+
+/**
+ * `wilson-one-sided-upper-v1`. The caller supplies z; this function never
+ * DERIVES it from `confidence`, but it does REJECT a pair that cannot both be
+ * true, and records both.
+ *
+ * The three options were: derive z (an untagged tenth algorithm), record an
+ * unchecked pair (which lets a study emit `confidence: 0.95` over a number
+ * computed at z = 2 — the exact failure §4.7 exists to prevent), or validate.
+ * Only validation is neither.
+ */
+export const wilsonOneSidedUpper = (
+  failures: number,
+  attempts: number,
+  options: { readonly confidence: number; readonly z: number },
+): WilsonOneSidedUpperResult => {
+  assertAttempts(attempts);
+  assertConfidence(options.confidence);
+  if (!Number.isInteger(failures) || failures < 0 || failures > attempts) {
+    throw new StatisticsInputError(
+      "failures",
+      `must be an integer within [0, ${attempts}]; got ${String(failures)}`,
+    );
+  }
+  if (!Number.isFinite(options.z) || options.z <= 0) {
+    throw new StatisticsInputError("z", `must be finite and > 0; got ${String(options.z)}`);
+  }
+  // The (confidence, z) consistency gate. Toleranced, not exact: a study that
+  // computed its z from a different library may land an ulp away, and rejecting
+  // that would be a usability trap. 1e-12 is still four orders tighter than the
+  // gap between any two adjacent table rows, so z=2 at confidence=0.95 fails.
+  const expectedZ = (WILSON_Z_BY_CONFIDENCE as Record<number, number | undefined>)[
+    options.confidence
+  ];
+  if (expectedZ === undefined) {
+    throw new StatisticsInputError(
+      "confidence",
+      `no z is pinned for ${String(options.confidence)}; add a WILSON_Z_BY_CONFIDENCE row (a contract change) rather than passing an unchecked pair`,
+    );
+  }
+  if (Math.abs(options.z - expectedZ) > 1e-12) {
+    throw new StatisticsInputError(
+      "z",
+      `z ${String(options.z)} does not match confidence ${String(options.confidence)} (expected ~${String(expectedZ)}); recording both would emit a confidence that did not determine the number`,
+    );
+  }
+  const n = attempts;
+  const z = options.z;
+  const p = failures / n;
+  const upper =
+    (p + (z * z) / (2 * n) + z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) /
+    (1 + (z * z) / n);
+  return {
+    algorithm: "wilson-one-sided-upper-v1",
+    upper: normalizeZero(upper),
+    failures,
+    attempts,
+    confidence: options.confidence,
+    z,
+  };
+};
+
+/** Rank-deficient OLS design. `ols-qr-v1` records singularity as a failure, never as coefficients. */
+export class SingularDesignError extends Error {
+  readonly code = "SingularDesign" as const;
+  readonly algorithm = "ols-qr-v1" as const;
+  readonly columns: readonly string[];
+  readonly rank: number;
+  constructor(columns: readonly string[], rank: number) {
+    super(
+      `bench/measurement/statistics: singular design — rank ${rank} < ${columns.length} columns`,
+    );
+    this.name = "SingularDesignError";
+    this.columns = columns;
+    this.rank = rank;
+  }
+}
+
+export interface OlsQrInput {
+  readonly columns: readonly string[];
+  readonly rows: readonly {
+    readonly x: readonly number[];
+    readonly y: number;
+  }[];
+}
+
+export interface OlsQrResult {
+  readonly algorithm: "ols-qr-v1";
+  readonly columns: readonly string[];
+  readonly coefficients: readonly number[];
+  readonly rank: number;
+  readonly residuals: readonly number[];
+  readonly residual_sum_squares: number;
+  readonly root_mean_square_error: number;
+  /**
+   * The CENTERED R². Only interpretable when `intercept_present` is true — on a
+   * model with no constant column the centered definition can go negative and
+   * invites misreading. Check `intercept_present` before quoting it.
+   */
+  readonly r_squared: number;
+  /**
+   * `max|R_kk| / min|R_kk|` over the QR diagonal — a cheap condition-number
+   * estimate, and the ONLY signal this algorithm gives about NEAR collinearity.
+   *
+   * The rank gate below catches exact deficiency only. Unpivoted Householder
+   * cannot distinguish a well-conditioned design from a nearly singular one:
+   * both pass `rank === columns.length` and both return coefficients, but the
+   * near-singular one's coefficients are noise. Plan J's design matrix is
+   * near-collinear by construction (rows and bytes both grow with snapshot
+   * size), and it interprets these coefficients as physics, so the study MUST
+   * preregister a bar on this number rather than trusting `rank` alone.
+   *
+   * `Number.POSITIVE_INFINITY` is unreachable here: a zero min-diagonal would
+   * have thrown `SingularDesignError` first.
+   */
+  readonly condition_estimate: number;
+  /**
+   * True iff some design column is constant and nonzero across every row — i.e.
+   * the model has an intercept. Detected from the data, not from a column name,
+   * because a caller may spell it anything.
+   */
+  readonly intercept_present: boolean;
+}
+
+const assertOlsInput = (input: OlsQrInput): void => {
+  const { columns, rows } = input;
+  if (columns.length === 0) {
+    throw new StatisticsInputError("columns", "at least one design column is required");
+  }
+  const seen = new Set<string>();
+  for (const name of columns) {
+    if (typeof name !== "string" || name.trim() === "") {
+      throw new StatisticsInputError("columns", "every column name must be nonempty");
+    }
+    if (seen.has(name)) {
+      throw new StatisticsInputError("columns", `duplicate column name ${name}`);
+    }
+    seen.add(name);
+  }
+  if (rows.length === 0) {
+    throw new StatisticsInputError("rows", "at least one row is required");
+  }
+  if (rows.length < columns.length) {
+    throw new StatisticsInputError(
+      "rows",
+      `need at least ${columns.length} rows for ${columns.length} columns; got ${rows.length}`,
+    );
+  }
+  for (const [i, row] of rows.entries()) {
+    if (row.x.length !== columns.length) {
+      throw new StatisticsInputError(
+        "rows",
+        `row ${i} has width ${row.x.length}, expected ${columns.length}`,
+      );
+    }
+    for (const v of row.x) {
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        throw new StatisticsInputError("rows", `row ${i} has a nonfinite design value`);
+      }
+    }
+    if (typeof row.y !== "number" || !Number.isFinite(row.y)) {
+      throw new StatisticsInputError("rows", `row ${i} has a nonfinite response`);
+    }
+  }
+};
+
+/**
+ * `ols-qr-v1`: Householder QR on the augmented matrix [A | y]. No normal
+ * equations, no column pivoting; back-substitution preserves the caller's
+ * column order. Rank-deficient designs throw `SingularDesignError`.
+ *
+ * WITHOUT PIVOTING THE RANK GATE SEES EXACT DEFICIENCY ONLY. A nearly
+ * collinear design passes it and returns coefficients that are numerically
+ * meaningless. `condition_estimate` on the result is the only warning a caller
+ * gets; a caller that interprets these coefficients as physics must check it.
+ */
+export const olsQr = (input: OlsQrInput): OlsQrResult => {
+  assertOlsInput(input);
+  const columns = [...input.columns];
+  const m = input.rows.length;
+  const n = columns.length;
+  const a: number[][] = input.rows.map((r) => [...r.x]);
+  const b: number[] = input.rows.map((r) => r.y);
+
+  for (let k = 0; k < n; k++) {
+    let norm = 0;
+    for (let i = k; i < m; i++) {
+      norm += a[i]![k]! * a[i]![k]!;
+    }
+    norm = Math.sqrt(norm);
+    if (norm === 0) {
+      continue;
+    }
+    const alpha = a[k]![k]! > 0 ? -norm : norm;
+    const v = new Array<number>(m).fill(0);
+    for (let i = k; i < m; i++) {
+      v[i] = a[i]![k]!;
+    }
+    v[k] = v[k]! - alpha;
+    let vNorm2 = 0;
+    for (let i = k; i < m; i++) {
+      vNorm2 += v[i]! * v[i]!;
+    }
+    if (vNorm2 === 0) {
+      continue;
+    }
+    for (let j = k; j < n; j++) {
+      let dot = 0;
+      for (let i = k; i < m; i++) {
+        dot += v[i]! * a[i]![j]!;
+      }
+      const factor = (2 * dot) / vNorm2;
+      for (let i = k; i < m; i++) {
+        a[i]![j] = a[i]![j]! - factor * v[i]!;
+      }
+    }
+    let dotB = 0;
+    for (let i = k; i < m; i++) {
+      dotB += v[i]! * b[i]!;
+    }
+    const factorB = (2 * dotB) / vNorm2;
+    for (let i = k; i < m; i++) {
+      b[i] = b[i]! - factorB * v[i]!;
+    }
+  }
+
+  let maxAbsDiagonal = 0;
+  let minAbsDiagonal = Number.POSITIVE_INFINITY;
+  for (let k = 0; k < n; k++) {
+    const d = Math.abs(a[k]![k]!);
+    maxAbsDiagonal = Math.max(maxAbsDiagonal, d);
+    minAbsDiagonal = Math.min(minAbsDiagonal, d);
+  }
+  const tolerance = Number.EPSILON * Math.max(m, n) * maxAbsDiagonal;
+  let rank = 0;
+  for (let k = 0; k < n; k++) {
+    if (Math.abs(a[k]![k]!) > tolerance) {
+      rank++;
+    }
+  }
+  if (rank < n) {
+    throw new SingularDesignError(columns, rank);
+  }
+  // Past the rank gate every diagonal exceeds `tolerance`, so `minAbsDiagonal`
+  // is strictly positive and this cannot divide by zero or return Infinity.
+  // This is the ONLY near-collinearity signal `ols-qr-v1` produces: rank alone
+  // cannot tell a well-conditioned design from a nearly singular one.
+  const conditionEstimate = maxAbsDiagonal / minAbsDiagonal;
+
+  const coefficients = new Array<number>(n).fill(0);
+  for (let k = n - 1; k >= 0; k--) {
+    let sum = b[k]!;
+    for (let j = k + 1; j < n; j++) {
+      sum -= a[k]![j]! * coefficients[j]!;
+    }
+    coefficients[k] = sum / a[k]![k]!;
+  }
+
+  const residuals = input.rows.map((row) => {
+    let fitted = 0;
+    for (let j = 0; j < n; j++) {
+      fitted += row.x[j]! * coefficients[j]!;
+    }
+    return row.y - fitted;
+  });
+  const rss = residuals.reduce((acc, e) => acc + e * e, 0);
+  const yBar = mean(input.rows.map((row) => row.y));
+  const tss = input.rows.reduce((acc, row) => acc + (row.y - yBar) ** 2, 0);
+
+  // A constant, nonzero column IS an intercept, whatever the caller named it.
+  // Detected from the data because `columns` are free-form labels — Plan J
+  // spells its "intercept" and "fixed", and a third study may spell it "one".
+  const interceptPresent = columns.some((_, j) => {
+    const first = input.rows[0]!.x[j]!;
+    return first !== 0 && input.rows.every((row) => row.x[j] === first);
+  });
+
+  // oxlint's `no-nested-ternary` is repo policy. `bench/` is currently outside
+  // the lint glob (`package.json` → `"lint": "oxlint tests packages"`), so this
+  // file is UNLINTED — write it as if it were not. Const-lift the inner branch.
+  const degenerateRSquared = rss === 0 ? 1 : 0;
+  const rSquared = tss === 0 ? degenerateRSquared : 1 - rss / tss;
+
+  return {
+    algorithm: "ols-qr-v1",
+    columns,
+    coefficients: coefficients.map(normalizeZero),
+    rank,
+    residuals: residuals.map(normalizeZero),
+    residual_sum_squares: normalizeZero(rss),
+    root_mean_square_error: normalizeZero(Math.sqrt(rss / m)),
+    r_squared: normalizeZero(rSquared),
+    condition_estimate: conditionEstimate,
+    intercept_present: interceptPresent,
+  };
+};
