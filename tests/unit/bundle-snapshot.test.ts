@@ -4,6 +4,7 @@ import {
   compareSnapshot,
   deltaLimit,
   formatReportLine,
+  formatViolation,
   loadSnapshot,
   nextSnapshot,
   type Snapshot,
@@ -181,6 +182,65 @@ describe("ungatedAxes", () => {
     // The gate this repo actually runs. If this fails, some entry is green
     // because nothing compares it, not because it did not grow.
     expect(ungatedAxes(loadSnapshot())).toEqual([]);
+  });
+});
+
+// The failure path is the only output an author ever reads, and it is the one
+// the test suite never reaches — every green run asserts `violations` is empty.
+// Its predecessor `formatBundleSizeLine` carried unit tests; this keeps that
+// coverage rather than dropping it with the budget loop.
+describe("formatViolation", () => {
+  test("a delta violation names the growth, the percentage and the way out", () => {
+    expect(
+      formatViolation(
+        {
+          kind: "delta",
+          entry: "index.js",
+          axis: "raw",
+          baseline: 100000,
+          measured: 110000,
+          limit: 2000,
+        },
+        256,
+      ),
+    ).toBe(
+      [
+        "FAIL index.js raw 100000 -> 110000 (+10000, +10.0%) exceeds max(tier%, 256B)",
+        "     If intended: `pnpm bundle-sizes --write`, and say why in the commit message.",
+        "     Do NOT trim JSDoc, comments, or error text to fit — those ship",
+        "     un-stripped in raw/gz but vanish under a consumer's minifier.",
+      ].join("\n"),
+    );
+  });
+
+  // `minGz` is a JSON field name. An author who sees it in the failure text
+  // and `min-gz` everywhere else has to work out that they are one axis.
+  test("spells minGz the way every other line does", () => {
+    const out = formatViolation(
+      {
+        kind: "delta",
+        entry: "index.js",
+        axis: "minGz",
+        baseline: 10000,
+        measured: 11000,
+        limit: 200,
+      },
+      256,
+    );
+    expect(out).toContain("FAIL index.js min-gz 10000 -> 11000");
+    expect(out).not.toContain("minGz");
+  });
+
+  test("a ceiling violation says --write will not clear it", () => {
+    // The distinction the whole `blocksWrite` split exists for: an agent that
+    // reads "rebaseline" here would burn a cycle on a command that refuses.
+    const out = formatViolation(
+      { kind: "ceiling", entry: "app-config.js", axis: "gz", ceiling: 512, measured: 900 },
+      256,
+    );
+    expect(out).toContain("exceeds HARD CEILING 512 (+388)");
+    expect(out).toContain("`--write` will NOT clear this");
+    expect(out).not.toContain("If intended");
   });
 });
 
