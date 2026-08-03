@@ -13,6 +13,7 @@ import {
   createCurrentJson,
   MemoryStorage,
   BaerlyError,
+  LOG_KEY_PREFIX,
   readCurrentJson,
   type Storage,
   type StoragePutOptions,
@@ -32,6 +33,25 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
     key,
     logStateCurrentJson({ writer_fence: { epoch: 0, owner: "compactor-test", claimed_at: "" } }),
   );
+};
+
+const logObjectKeyPattern = new RegExp(String.raw`/${LOG_KEY_PREFIX}/(\d+)\.json$`);
+
+const recordingStorage = (inner: MemoryStorage): { storage: Storage; logReadSeqs: number[] } => {
+  const logReadSeqs: number[] = [];
+  const storage: Storage = {
+    get(key, opts) {
+      const match = logObjectKeyPattern.exec(key);
+      if (match !== null) {
+        logReadSeqs.push(Number.parseInt(match[1]!, 10));
+      }
+      return inner.get(key, opts);
+    },
+    put: (key, body, opts) => inner.put(key, body, opts),
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+  return { storage, logReadSeqs };
 };
 
 describe("compact", () => {
@@ -553,6 +573,7 @@ describe("compact", () => {
     expect(res).toMatchObject({ written: false, deferred: true });
     expect(res.skippedReason).toBe("deferred");
     expect(res.logSeqStartAfter).toBe(res.logSeqStartBefore);
+    expect(res.entriesFolded).toBe(0);
     // current.json byte-unchanged (no CAS, no PUT).
     const afterRaw = await s.get(KEY);
     expect(afterRaw!.body).toEqual(beforeRaw!.body);
@@ -679,11 +700,86 @@ describe("compact", () => {
     expect(after!.json.tail_hint).toBe(M);
   });
 
+  test("a bounded fold reads its contiguous slice once and publishes its fold end", async () => {
+    const inner = new MemoryStorage();
+    const recording = recordingStorage(inner);
+    const tail = 8;
+    const foldEnd = 3;
+    const logPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await seedLogEntries(inner, logPrefix, 0, tail, (seq) => ({
+      doc_id: `d${seq}`,
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: tail }));
+
+    const res = await compact({ storage: recording.storage, currentJsonKey: KEY }, {
+      minEntriesToCompact: 1,
+      maxEntriesPerRun: foldEnd,
+      knownTail: tail,
+    } as InternalCompactOptions);
+
+    expect(res.written).toBe(true);
+    expect(res.logSeqStartBefore).toBe(0);
+    expect(res.logSeqStartAfter).toBe(foldEnd);
+    expect(recording.logReadSeqs).toEqual([8, 0, 1, 2]);
+    const after = await readCurrentJson(inner, KEY);
+    expect(after!.json.log_seq_start).toBe(foldEnd);
+  });
+
+  test("an unbounded fold reads through its discovered tail and publishes it", async () => {
+    const inner = new MemoryStorage();
+    const recording = recordingStorage(inner);
+    const tail = 8;
+    const logPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await seedLogEntries(inner, logPrefix, 0, tail, (seq) => ({
+      doc_id: `d${seq}`,
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    await bootstrap(inner, KEY);
+
+    const res = await compact(
+      { storage: recording.storage, currentJsonKey: KEY },
+      {
+        minEntriesToCompact: 1,
+      },
+    );
+
+    expect(res.written).toBe(true);
+    expect(res.logSeqStartAfter).toBe(tail);
+    expect(recording.logReadSeqs).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7]);
+    const after = await readCurrentJson(inner, KEY);
+    expect(after!.json.log_seq_start).toBe(tail);
+  });
+
+  test("a missing sequence rejects without publishing a new floor", async () => {
+    const inner = new MemoryStorage();
+    const recording = recordingStorage(inner);
+    const tail = 7;
+    const logPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await seedLogEntries(inner, logPrefix, 0, 3);
+    await seedLogEntries(inner, logPrefix, 4, tail);
+    await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: tail }));
+    const before = await readCurrentJson(inner, KEY);
+
+    await expect(
+      compact({ storage: recording.storage, currentJsonKey: KEY }, {
+        minEntriesToCompact: 1,
+        knownTail: tail,
+      } as InternalCompactOptions),
+    ).rejects.toMatchObject({ code: "Internal" });
+
+    expect(recording.logReadSeqs).toEqual([7, 0, 1, 2, 3, 4, 5, 6]);
+    const after = await readCurrentJson(inner, KEY);
+    expect(after).toEqual(before);
+  });
+
   test("cas-lost: snapshot pointer unchanged, bumps cas_lost_total, orphan reclaimable by runGc", async () => {
     const inner = new MemoryStorage();
+    const recording = recordingStorage(inner);
+    const foldEnd = 30;
     await bootstrap(inner, KEY);
     const writer = new Writer({ storage: inner, currentJsonKey: KEY });
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < foldEnd; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
     const before = await readCurrentJson(inner, KEY);
@@ -691,9 +787,9 @@ describe("compact", () => {
     // Fail the compactor's current.json CAS PUT exactly once.
     let failedOnce = false;
     const failingPut: Storage = {
-      get: inner.get.bind(inner),
-      delete: inner.delete.bind(inner),
-      list: inner.list.bind(inner),
+      get: recording.storage.get,
+      delete: recording.storage.delete,
+      list: recording.storage.list,
       async put(k: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
         if (!failedOnce && k === KEY && opts?.ifMatch !== undefined) {
           failedOnce = true;
@@ -707,14 +803,21 @@ describe("compact", () => {
     await runWithContext(ctx, async () => {
       res = await compact({ storage: failingPut, currentJsonKey: KEY }, {
         minEntriesToCompact: 10,
-        maxEntriesPerRun: 30,
+        maxEntriesPerRun: foldEnd,
       } as InternalCompactOptions);
     });
     expect(res.written).toBe(false);
     expect(res.skippedReason).toBe("cas-lost");
-    // current.json snapshot pointer is unchanged.
+    expect(res.logSeqStartAfter).toBe(res.logSeqStartBefore);
+    expect(res.entriesFolded).toBe(foldEnd - res.logSeqStartBefore);
+    expect(recording.logReadSeqs).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+      26, 27, 28, 29, 30, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      21, 22, 23, 24, 25, 26, 27, 28, 29,
+    ]);
+    // The entire current.json head is unchanged after the lost CAS.
     const after = await readCurrentJson(inner, KEY);
-    expect(after!.json.snapshot).toBeNull();
+    expect(after).toEqual(before);
     // The metric was emitted by the COMPACTOR (not the runner).
     const snap = ctx.recorder.snapshot();
     expect(snap.counters.filter((c) => c.name === "db.compaction.cas_lost_total")).toEqual([
