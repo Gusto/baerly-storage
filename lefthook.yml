@@ -12,7 +12,7 @@ pre-commit:
       # excludes markdown + regenerated evidence even if such a file is staged
       # and passed explicitly, so this hook cannot corrupt prose).
       glob: "*.{ts,tsx,mts,cts,mjs,cjs,js,json,jsonc,html,css}"
-      run: pnpm exec oxfmt {staged_files}
+      run: pnpm exec oxfmt --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
     lint:
       glob: "*.{ts,tsx,mjs,cjs}"
