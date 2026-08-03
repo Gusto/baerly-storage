@@ -160,9 +160,11 @@ confirm it's yours.
 
 ## Debugging a flaky test
 
-1. Reproduce: `pnpm test:randomize` runs the default Vitest project once
-   with `FC_NUM_RUNS=10000`; it increases the fast-check sample size but
-   does not loop until failure.
+1. Reproduce: `pnpm test:randomize` runs the property-fuzzing slice of the
+   default Vitest project once with `FC_NUM_RUNS=10000`; it increases the
+   fast-check sample size but does not loop until failure. The dedicated
+   maintenance crash fuzzer and the expensive non-property
+   profile-equivalence / end-to-end suites are excluded.
 2. Narrow: copy the failing test name and run that file alone.
 3. Logs: pass a `MetricsRecorder` (or wrap one) into the
    `Writer` under test to observe internal events. The
@@ -179,11 +181,13 @@ confirm it's yours.
 
 ## When to crank the fuzzers
 
-`pnpm test:randomize` runs the default Vitest project once with
-`FC_NUM_RUNS=10000`, raising fast-check property tests from 100 to
-10,000 cases. It does not loop until failure, and the
-`randomized.test.ts` cascade has its own backend variants, so a higher
-`FC_NUM_RUNS` does not make that file loop. Reach for it when you:
+`pnpm test:randomize` runs the property-fuzzing slice of the default Vitest
+project once with `FC_NUM_RUNS=10000`, raising fast-check property tests from
+100 to 10,000 cases. It excludes the dedicated maintenance crash fuzzer and
+the expensive non-property profile-equivalence / end-to-end suites. It does
+not loop until failure, and the `randomized.test.ts` cascade has its own
+backend variants, so a higher `FC_NUM_RUNS` does not make that file loop.
+Reach for it when you:
 
 - changed property-tested protocol, query, index, compaction, or GC
   behavior and want a larger fast-check sample;

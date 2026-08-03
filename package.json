@@ -178,7 +178,7 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint tests packages",
-    "test:randomize": "FC_NUM_RUNS=10000 vitest run --project=default",
+    "test:randomize": "BAERLY_RANDOMIZE=1 FC_NUM_RUNS=10000 vitest run --project=default --exclude tests/integration/maintenance-crash-fuzz.test.ts --exclude tests/integration/maintenance-profile-equivalence.test.ts --exclude tests/integration/maintenance-e2e.test.ts",
     "test:fuzz-maintenance": "FC_NUM_RUNS=10000 vitest run --project=default tests/integration/maintenance-crash-fuzz.test.ts",
     "test:adapter-cloudflare": "ADAPTER_CLOUDFLARE=1 vitest run --project=cloudflare-pool",
     "test:http-conformance": "vitest run --project=default tests/integration/http-conformance.test.ts",
