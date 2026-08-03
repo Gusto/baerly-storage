@@ -1461,6 +1461,56 @@ describe("bundle size", () => {
     ).toEqual([]);
   });
 
+  // `cloudflare.js` ships into a Worker. Workerd can load exactly one of the
+  // Node builtins this repo uses — `node:async_hooks`, under `nodejs_compat`,
+  // which `@baerly/server` needs for the per-request observability ALS. Every
+  // other `node:` specifier reaching this closure is code that cannot run
+  // there.
+  //
+  // This guard exists because nothing else could see the real thing.
+  // `worker.ts` imported `renderDevLanding` from the `@baerly/dev` barrel,
+  // the barrel re-exports `LocalFsStorage`, and rolldown chunked the whole
+  // Node-only local-fs closure — `node:crypto`, `node:fs/promises`,
+  // `node:os`, `node:path` — into the Worker bundle for the sake of one HTML
+  // string. Measured with that import reintroduced, all three byte budgets
+  // on this entry still PASSED: the drag was invisible on every axis, and
+  // only became a symptom later when unrelated growth pushed min-gz over.
+  // `scripts/lint-package-layers.mjs` cannot see it either — its `allowNode`
+  // gate reads a package's own source, and no `node:` specifier ever
+  // appeared in `packages/adapter-cloudflare/`.
+  //
+  // Asserting on the artifact is what closes that gap, because the artifact
+  // is where a transitive drag becomes observable. It also means the raw/gz
+  // creep tripwires above do not have to carry this weight — per the POLICY
+  // they are diagnostics, and a budget tight enough to catch a barrel drag
+  // would fire on an ordinary JSDoc edit instead.
+  //
+  // Matches quoted specifiers in `from "node:…"`, side-effect
+  // `import "node:…"`, and `import("node:…")` — deliberately broader than
+  // `STATIC_IMPORT_RE`, which requires `from`. Quoting is what keeps this off
+  // prose: dist ships module-level JSDoc un-stripped, and several chunks
+  // discuss `node:fs` in backticks (e.g. `current-json-*.js` documenting that
+  // it stays Worker-bundleable).
+  const NODE_SPECIFIER_RE = /["'](node:[\w/.-]+)["']/g;
+  const WORKERD_LOADABLE_BUILTINS = new Set(["node:async_hooks"]);
+  test("dist/cloudflare.js closure imports no Workerd-unloadable Node builtin", () => {
+    const distDir = resolve(__dirname, "../../dist");
+    const offenders: string[] = [];
+    for (const file of closureFiles("cloudflare.js")) {
+      for (const m of readFileSync(file, "utf8").matchAll(NODE_SPECIFIER_RE)) {
+        const spec = m[1]!;
+        if (WORKERD_LOADABLE_BUILTINS.has(spec)) {
+          continue;
+        }
+        offenders.push(`${file.replace(`${distDir}/`, "")} → ${spec}`);
+      }
+    }
+    expect(
+      offenders,
+      `dist/cloudflare.js closure may import only [${[...WORKERD_LOADABLE_BUILTINS].join(", ")}]; found: ${offenders.join(", ")}. A Node builtin here means Node-only code was dragged into the Worker bundle — usually by importing a barrel that re-exports it. Import the leaf module instead (cf. \`@baerly/dev/dev-landing\` in packages/adapter-cloudflare/src/worker.ts)`,
+    ).toEqual([]);
+  });
+
   // `node.js` and `dev-vite.js` are server-side / dev-only aggregator
   // entrypoints — they never ship to a browser and never enter a
   // consumer's app bundle. Budgeting their wire size (raw/gz) measures
