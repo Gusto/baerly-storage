@@ -456,6 +456,121 @@ export const deriveFindings = (cells: readonly ProbeCell[]): readonly string[] =
   return findings;
 };
 
+/**
+ * One cell of the frozen `fold-cost` baseline
+ * (`docs/spec/attachments/fold-cost-baseline.json`). Only the fields the
+ * overlap comparison reads are declared; the file carries more.
+ */
+export interface FrozenBaselineCell {
+  readonly axis: string;
+  readonly rows: number;
+  readonly bytes_per_doc: number;
+  readonly snapshot_bytes: number;
+  readonly cpu_ms_median: number;
+  readonly peak_bytes_median: number;
+}
+
+/**
+ * Narrow a parsed JSON document to its `cells` array, THROWING when it is
+ * absent rather than asserting the shape and letting `undefined` through.
+ *
+ * A bare `parsed as { cells: T[] }` succeeds on any valid JSON, so a file
+ * without `cells` yields `undefined` typed as an array and defers the failure
+ * to the first `.find` / `.length` — as an uncaught `TypeError`, at a call site
+ * chosen by luck rather than by the caller. Lives here rather than in the
+ * runner because the runner ends in a module-scope `await main()`: nothing can
+ * import it, so nothing there can be tested.
+ *
+ * Checks that `cells` is an array and NOT the shape of each element. Both
+ * callers read a file this probe itself wrote, so the array check is what
+ * separates "wrong file" from "our file"; a per-field schema would be
+ * validating our own serializer.
+ */
+export const cellsOf = <T>(parsed: unknown, source: string): readonly T[] => {
+  const cells = (parsed as { cells?: unknown } | null)?.cells;
+  if (!Array.isArray(cells)) {
+    throw new TypeError(`${source}: expected a "cells" array, got ${typeof cells}`);
+  }
+  return cells as readonly T[];
+};
+
+/** Range of a ratio series, e.g. `1.42x-2.49x`. */
+const span = (xs: readonly number[]): string =>
+  `${Math.min(...xs).toFixed(2)}x-${Math.max(...xs).toFixed(2)}x`;
+
+/**
+ * Overlap-cell divergence against the frozen `fold-cost` baseline. Comparing
+ * the shared cells is the only check that the fixture builder, the seed, and
+ * the measurement definitions still mean what they meant in June 2026.
+ *
+ * Pure, and here rather than in the runner, so it can be tested: the runner
+ * owns the file read and passes the parsed cells in.
+ *
+ * `snapshot_bytes` is seeded and MUST match exactly. `peak_bytes_median` is an
+ * allocation measurement and should track closely. `cpu_ms_median` is
+ * host-specific and is expected to differ — how much it differs is precisely
+ * what tells a reader how far to trust this run's CPU-bound verdicts.
+ */
+export const compareToFrozen = (
+  cells: readonly ProbeCell[],
+  frozen: readonly FrozenBaselineCell[],
+): readonly string[] => {
+  const mismatched: string[] = [];
+  const cpuRatios: number[] = [];
+  const peakRatios: number[] = [];
+  let compared = 0;
+  for (const cell of cells) {
+    const peer = frozen.find(
+      (f) => f.axis === cell.axis && f.rows === cell.rows && f.bytes_per_doc === cell.bytes_per_doc,
+    );
+    if (peer === undefined) {
+      continue;
+    }
+    compared += 1;
+    if (peer.snapshot_bytes !== cell.snapshot_bytes) {
+      mismatched.push(
+        `${cell.axis}/${cell.label} ${cell.snapshot_bytes} != ${peer.snapshot_bytes}`,
+      );
+    }
+    cpuRatios.push(cell.cpu_ms_median / peer.cpu_ms_median);
+    peakRatios.push(cell.peak_bytes_median / peer.peak_bytes_median);
+  }
+
+  if (compared === 0) {
+    return ["overlap check SKIPPED: no cell in this grid also exists in the frozen baseline."];
+  }
+  const bytesVerdict =
+    mismatched.length === 0
+      ? "snapshot_bytes matches the frozen baseline EXACTLY on all of them (same seed, same builder)"
+      : `snapshot_bytes DIVERGES on ${mismatched.length} cell(s): ${mismatched.join("; ")} — treat this whole run as suspect`;
+  // DERIVED, never transcribed — same rule this module states for its own
+  // findings. A literal "THIS HOST IS SLOWER" here would invert the portability
+  // caveat the moment the probe is re-run on faster hardware, in the one string
+  // that tells a reader how far to trust the CPU rows.
+  const slowest = Math.max(...cpuRatios);
+  const fastest = Math.min(...cpuRatios);
+  let direction: string;
+  if (fastest > 1) {
+    direction =
+      "THIS HOST IS SLOWER than the host that produced the baseline, so CPU-bound verdicts " +
+      "(the cf-free rows) are conservative on this hardware";
+  } else if (slowest < 1) {
+    direction =
+      "THIS HOST IS FASTER than the host that produced the baseline, so CPU-bound verdicts " +
+      "(the cf-free rows) are OPTIMISTIC on this hardware and must not be published as-is";
+  } else {
+    direction =
+      "this host straddles the baseline (some cells faster, some slower), so the CPU-bound " +
+      "verdicts (the cf-free rows) are not comparable cell-for-cell";
+  }
+  return [
+    `overlap vs the frozen fold-cost baseline (${compared} shared cells): ${bytesVerdict}. ` +
+      `peak_bytes_median ${span(peakRatios)} of frozen — allocation behaviour is unchanged. ` +
+      `cpu_ms_median ${span(cpuRatios)} of frozen, so ${direction}. CPU-bound verdicts are NOT ` +
+      `portable; the memory-bound verdicts (cf-paid) are.`,
+  ];
+};
+
 export const buildRecommendation = (input: {
   readonly cells: readonly ProbeCell[];
   readonly subject_commit: string;
