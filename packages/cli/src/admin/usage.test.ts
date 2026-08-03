@@ -290,7 +290,7 @@ describe("baerly admin usage — query-cost reporting", () => {
     }
   });
 
-  test("--target=cloudflare short-circuits with an info finding", async () => {
+  test("--target=cloudflare finding names the supported Node bucket alternative", async () => {
     const stdout = captureStream(process.stdout);
     let exitCode: number;
     try {
@@ -300,11 +300,15 @@ describe("baerly admin usage — query-cost reporting", () => {
     }
     expect(exitCode).toBe(0);
     const envelope = JSON.parse(stdout.captured.join("").trim()) as {
-      result: { findings: { check: string; severity: string }[] };
+      result: { findings: { check: string; severity: string; message: string }[] };
     };
     expect(envelope.result.findings).toHaveLength(1);
-    expect(envelope.result.findings[0]?.check).toBe("usage.cloudflare");
-    expect(envelope.result.findings[0]?.severity).toBe("info");
+    const finding = envelope.result.findings[0];
+    expect(finding?.check).toBe("usage.cloudflare");
+    expect(finding?.severity).toBe("info");
+    expect(finding?.message).toBe(
+      "baerly admin usage cannot read a Workerd-side R2 binding from --target=cloudflare. Use --target=node --bucket=s3://<bucket> with your R2 S3 API credentials.",
+    );
   });
 
   test("--target=node without --bucket rejected with InvalidConfig (exit 1)", async () => {
