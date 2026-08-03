@@ -1,0 +1,86 @@
+[
+  {
+    "name": "empty-object",
+    "value": {},
+    "canonical": "{}",
+    "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  {
+    "name": "empty-array",
+    "value": [],
+    "canonical": "[]",
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "name": "scalar-null",
+    "value": null,
+    "canonical": "null",
+    "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+  },
+  {
+    "name": "scalar-true",
+    "value": true,
+    "canonical": "true",
+    "sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+  },
+  {
+    "name": "scalar-string",
+    "value": "x",
+    "canonical": "\"x\"",
+    "sha256": "ba2df4903a2c14e86dc3bcca58911b44ac1d2514b7227bf6eb08cfb978f55a1b"
+  },
+  {
+    "name": "key-sort-basic",
+    "value": { "z": 1, "a": [true, null, "x"] },
+    "canonical": "{\"a\":[true,null,\"x\"],\"z\":1}",
+    "sha256": "cc31fc728ab32ccfd6543dd8cce686b9633b3c47fbec82c88a466688f3a8cb81"
+  },
+  {
+    "name": "array-order-ascending",
+    "value": [1, 2],
+    "canonical": "[1,2]",
+    "sha256": "49a64717d5d4cb19952e6eac2946415cf6879adacf9908e7d872332d32c6e684"
+  },
+  {
+    "name": "array-order-descending",
+    "value": [2, 1],
+    "canonical": "[2,1]",
+    "sha256": "af1a1fc110b6094c48582b0ef83553cb7908d7a4365424eef28e76ef6c88d630"
+  },
+  {
+    "name": "nested-containers",
+    "value": { "b": { "d": 2, "c": [1, [2, {}]] }, "a": "" },
+    "canonical": "{\"a\":\"\",\"b\":{\"c\":[1,[2,{}]],\"d\":2}}",
+    "sha256": "2ea8103fd7997e7d75738bbb0fe323a3d29fe84951771d29ca8158ced39bf0be"
+  },
+  {
+    "name": "key-sort-utf16-code-unit",
+    "value": { "ﬀ": 1, "😀": 2, "a": 6, "A": 5, "0": 4, "": 3 },
+    "canonical": "{\"\":3,\"0\":4,\"A\":5,\"a\":6,\"😀\":2,\"ﬀ\":1}",
+    "sha256": "abd2a31299295835613099d91f278c3350441d0f688f5fb4d99ad6328076a72a"
+  },
+  {
+    "name": "shared-subobject-dag",
+    "value": { "a": { "n": 1 }, "b": { "n": 1 } },
+    "canonical": "{\"a\":{\"n\":1},\"b\":{\"n\":1}}",
+    "sha256": "6b4844c41d3f2cb3aed6e40ddec630f6883595b8a362aa8d0f65aa7d371991e0"
+  },
+  {
+    "name": "proto-adjacent-keys",
+    "value": { "prototype": 2, "constructor": 1 },
+    "canonical": "{\"constructor\":1,\"prototype\":2}",
+    "sha256": "9ae9956888d77e89cb6d392d46dba419d40ff862e1135985822f533278c01f0f"
+  },
+  {
+    "name": "three-level-nesting",
+    "value": { "level": { "level": { "level": 1 } } },
+    "canonical": "{\"level\":{\"level\":{\"level\":1}}}",
+    "sha256": "0751a28a8ca75ac8a9adffc9fdc0c0c6197e173bc9b3af70d2d4ab19dd7e6269"
+  },
+  {
+    "name": "anchor-single-key",
+    "value": { "a": 1 },
+    "canonical": "{\"a\":1}",
+    "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+  }
+]
