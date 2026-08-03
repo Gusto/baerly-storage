@@ -141,11 +141,11 @@ export const prepareFold = (args: {
   readonly k: number;
   readonly algorithm: BoundaryAlgorithm;
 }): PreparedFold => {
-  const observedTail = Math.max(0, Math.min(args.observedTail, args.state.log.acknowledgedTail));
+  const availableTail = Math.max(0, Math.min(args.observedTail, args.state.log.acknowledgedTail));
   const baseGeneration = args.state.manifest.generation;
   const foldEnd = algorithms[args.algorithm]({
     manifest: args.state.manifest,
-    observedTail,
+    observedTail: availableTail,
     budget: args.budget,
     k: args.k,
   });
@@ -157,7 +157,7 @@ export const prepareFold = (args: {
       foldEnd: null,
       readSet: [],
       snapshot: null,
-      cost: noWorkCost(args.probeFloor, observedTail),
+      cost: noWorkCost(args.probeFloor, args.observedTail),
     };
   }
 
@@ -189,7 +189,7 @@ export const prepareFold = (args: {
       cost: foldCost({
         manifest: args.state.manifest,
         probeFloor: args.probeFloor,
-        observedTail,
+        observedTail: args.observedTail,
         logEntriesRead: readSet.length,
         reachedSnapshotPut: false,
         reachedCurrentCas: false,
@@ -206,7 +206,7 @@ export const prepareFold = (args: {
     cost: foldCost({
       manifest: args.state.manifest,
       probeFloor: args.probeFloor,
-      observedTail,
+      observedTail: args.observedTail,
       logEntriesRead: readSet.length,
       reachedSnapshotPut: true,
       reachedCurrentCas: true,

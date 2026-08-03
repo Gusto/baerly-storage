@@ -277,6 +277,29 @@ describe("exact compact cost", () => {
     });
   });
 
+  test("probe cost uses supplied observation past acknowledged tail", () => {
+    const result = prepareFold({
+      state: stateAt(1, 1, 3),
+      observedTail: 3,
+      probeFloor: 1,
+      budget: roomyBudget(),
+      k: 1,
+      algorithm: "aligned-manifest",
+    });
+
+    expect(result.outcome).toBe("below_min_threshold");
+    expect(result.readSet).toEqual([]);
+    expect(result.cost).toEqual({
+      currentGets: 1,
+      probeGets: 3,
+      snapshotGets: 0,
+      logGets: 0,
+      snapshotPuts: 0,
+      currentPuts: 0,
+      total: 4,
+    });
+  });
+
   test("byte ceiling defers after replay without charging writes", () => {
     const result = prepareFold({
       state: stateAt(0, 1),
