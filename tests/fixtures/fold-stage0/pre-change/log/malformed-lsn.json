@@ -1,0 +1,1 @@
+{"commit_ts":"2026-08-01T00:00:00.000Z","collection":"tickets","session":"capture","lsn":"not-an-lsn","seq":5,"op":"I","doc_id":"bad-lsn","after":{"_id":"bad-lsn"}}

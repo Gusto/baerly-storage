@@ -1,0 +1,1 @@
+{"schema_version":1,"min_seq":0,"max_seq":1,"collection":"tickets","docs":[{"_id":"marked","body":{"_id":"marked","value":1}}],"id_collation":"utf8-scalar-v1","range_provenance":{"min_seq":0,"max_seq":1}}

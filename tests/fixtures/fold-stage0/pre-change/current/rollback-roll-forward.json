@@ -1,0 +1,1 @@
+{"schema_version":3,"snapshot":null,"tail_hint":6,"log_seq_start":0,"writer_fence":{"epoch":1,"owner":"pre-lifecycle","claimed_at":""},"snapshot_bytes":0,"snapshot_rows":0,"generation":"000000000003"}

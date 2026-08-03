@@ -1,0 +1,23 @@
+{
+  "schema": "baerly.fold-stage0-study/v1",
+  "study_id": "compat-freeze-01bdd298ac19",
+  "study_kind": "compatibility-freeze",
+  "frozen_subject_commit": "01bdd298ac19826e8141fe67cdfd3b62b4dcdd5e",
+  "captured_at_utc": "2026-08-03T18:16:53.976Z",
+  "corpus_root": "tests/fixtures/fold-stage0/pre-change",
+  "corpus_manifest_sha256": "2fe321e8e817f983fd6a144125a7c5bec11a5e7a80c80649fa072757dbcda230",
+  "corpus_file_count": 31,
+  "supersedes": null,
+  "files": [
+    {
+      "path": "capture-provenance.json",
+      "bytes": 476,
+      "sha256": "3e5699fd050550d7f60beb5b6a96e442ad7081e95491a9e542ff528f2a8404f0"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3664,
+      "sha256": "03d4435d97751841fd38808370b7e519e3509dba69ac22cf7df4b716cae0643f"
+    }
+  ]
+}
