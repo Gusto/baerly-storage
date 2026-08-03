@@ -573,6 +573,7 @@ describe("compact", () => {
     expect(res).toMatchObject({ written: false, deferred: true });
     expect(res.skippedReason).toBe("deferred");
     expect(res.logSeqStartAfter).toBe(res.logSeqStartBefore);
+    expect(res.entriesFolded).toBe(0);
     // current.json byte-unchanged (no CAS, no PUT).
     const afterRaw = await s.get(KEY);
     expect(afterRaw!.body).toEqual(beforeRaw!.body);
@@ -775,9 +776,10 @@ describe("compact", () => {
   test("cas-lost: snapshot pointer unchanged, bumps cas_lost_total, orphan reclaimable by runGc", async () => {
     const inner = new MemoryStorage();
     const recording = recordingStorage(inner);
+    const foldEnd = 30;
     await bootstrap(inner, KEY);
     const writer = new Writer({ storage: inner, currentJsonKey: KEY });
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < foldEnd; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
     const before = await readCurrentJson(inner, KEY);
@@ -801,11 +803,13 @@ describe("compact", () => {
     await runWithContext(ctx, async () => {
       res = await compact({ storage: failingPut, currentJsonKey: KEY }, {
         minEntriesToCompact: 10,
-        maxEntriesPerRun: 30,
+        maxEntriesPerRun: foldEnd,
       } as InternalCompactOptions);
     });
     expect(res.written).toBe(false);
     expect(res.skippedReason).toBe("cas-lost");
+    expect(res.logSeqStartAfter).toBe(res.logSeqStartBefore);
+    expect(res.entriesFolded).toBe(foldEnd - res.logSeqStartBefore);
     expect(recording.logReadSeqs).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
       26, 27, 28, 29, 30, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,

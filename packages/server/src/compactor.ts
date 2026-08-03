@@ -453,6 +453,9 @@ export const compact = async (
       // lost fold is EXPECTED contention, not an error. (The runner
       // must NOT also emit it — that would double-count.)
       ctxMetrics().counter("db.compaction.cas_lost_total", 1, { collection: collectionName });
+      // `entriesFolded` on cas-lost is the count attempted
+      // (`foldEnd - logSeqStartBefore`), not zero. The snapshot was built and
+      // written before publication lost its CAS; deferred folds read no range.
       return {
         written: false,
         skippedReason: "cas-lost",
