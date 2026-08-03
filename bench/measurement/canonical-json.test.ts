@@ -502,4 +502,35 @@ describe("SHA-256 framing", () => {
       path: "$",
     });
   });
+
+  test("sha256Hex rejects a non-I-JSON string rather than hashing substituted bytes", async () => {
+    for (const codeUnit of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
+      const promise = sha256Hex(String.fromCharCode(codeUnit));
+      expect(promise).toBeInstanceOf(Promise);
+      await expect(promise).rejects.toMatchObject({
+        code: "CanonicalJsonError",
+        reason: "non-ijson-string",
+        path: "$",
+      });
+    }
+    await expect(sha256Hex(String.fromCharCode(0xfffe))).rejects.toMatchObject({
+      reason: "non-ijson-string",
+    });
+  });
+
+  test("sha256Hex is injective where TextEncoder alone would collide", async () => {
+    // TextEncoder.encode substitutes U+FFFD for a lone surrogate, so every one
+    // of these would otherwise hash to sha256Hex("�"). Validation is what
+    // keeps the exported function injective over its declared string type.
+    const substitute = await sha256Hex("�");
+    for (const codeUnit of [0xd800, 0xdfff]) {
+      await expect(sha256Hex(String.fromCharCode(codeUnit))).rejects.toBeInstanceOf(
+        CanonicalJsonError,
+      );
+    }
+    // The raw bytes remain reachable, and stay distinct from the substitution.
+    await expect(sha256Hex(new Uint8Array([0xed, 0xa0, 0x80]))).resolves.not.toBe(substitute);
+    // A valid surrogate pair is untouched by the guard.
+    await expect(sha256Hex("\u{10000}")).resolves.not.toBe(substitute);
+  });
 });

@@ -238,8 +238,39 @@ const serialize = (value: unknown, path: string, depth: number, ancestors: Set<o
 export const canonicalJson = (value: CanonicalJsonValue): string =>
   serialize(value, "$", 0, new Set());
 
-export const sha256Hex = (bytes: string | Uint8Array): Promise<string> =>
-  protocolSha256Hex(typeof bytes === "string" ? UTF8_ENCODER.encode(bytes) : bytes);
+/**
+ * Hash a string as its exact UTF-8 bytes, or a `Uint8Array` byte-for-byte.
+ *
+ * The string overload validates its input against the same I-JSON string
+ * domain `canonicalJson` enforces, because `TextEncoder.encode` is LOSSY on
+ * strings this module otherwise rejects: it substitutes U+FFFD for every
+ * unpaired surrogate, so all 2048 code units in U+D800–U+DFFF — and U+FFFD
+ * itself — collapse onto ONE digest. Without this check the exported function
+ * is not injective over its declared `string` type, which is a silent
+ * pre-image collision in a primitive whose whole job is byte-exact evidence
+ * digests.
+ *
+ * It is also the portability boundary. Python's `str.encode("utf-8")` raises
+ * `UnicodeEncodeError` on a lone surrogate and Rust's `String` cannot hold one
+ * at all, so the substituting behavior is reachable ONLY from JavaScript. A
+ * digest no other language can reproduce is worse than a rejection every
+ * language agrees on.
+ *
+ * The invariant this establishes: `sha256Hex` accepts exactly the strings
+ * `canonicalJson` can emit. Arbitrary bytes are not second-class — they go
+ * through the `Uint8Array` channel, which is byte-exact by construction and
+ * is the correct escape hatch for anything outside the I-JSON string domain.
+ *
+ * `async` so the rejection surfaces as a rejected promise rather than a
+ * synchronous throw, matching `hashCanonicalJson`.
+ */
+export const sha256Hex = async (bytes: string | Uint8Array): Promise<string> => {
+  if (typeof bytes !== "string") {
+    return protocolSha256Hex(bytes);
+  }
+  assertIjsonString(bytes, "$");
+  return protocolSha256Hex(UTF8_ENCODER.encode(bytes));
+};
 
 export const hashCanonicalJson = async (value: CanonicalJsonValue): Promise<string> =>
   sha256Hex(canonicalJson(value));
