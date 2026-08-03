@@ -76,6 +76,10 @@ const ALLOWED_BASENAMES = new Set([
 const ALLOWED_PREFIXES = [
   "docs/spec/attachments/", // regenerated bench evidence (also ignored by oxfmt)
   "manual-e2e/fixtures/", // adversarial S3-key fixtures (deliberately weird names)
+  // Frozen pre-Stage-0 compatibility corpus: literal captured bytes bound to
+  // a SHA-256 manifest. Reformatting any file here invalidates its hash, so
+  // no formatter may own it. Mirrored in .oxfmtrc.json `ignorePatterns`.
+  "tests/fixtures/fold-stage0/pre-change/",
 ];
 
 /** @returns {"oxfmt"|"markdown"|"data"|null} bucket, or null if unowned. */
