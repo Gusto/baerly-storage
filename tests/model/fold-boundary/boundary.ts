@@ -110,14 +110,41 @@ export const NODE_BUDGET: FoldBudget = {
   subrequestLimit: 10_000,
 };
 
-export interface PreparedFold {
-  readonly outcome: "below_min_threshold" | "deferred" | "prepared";
+interface PreparedFoldBase {
   readonly baseGeneration: number;
-  readonly foldEnd: number | null;
   readonly readSet: readonly number[];
-  readonly snapshot: SnapshotObject | null;
   readonly cost: FoldCost;
 }
+
+/**
+ * The result of one fold preparation, discriminated on `outcome`.
+ *
+ * `foldEnd` and `snapshot` are state-dependent: no boundary was chosen below the
+ * minimum threshold, and a deferred fold chose a boundary but published no
+ * object. Modelling that as a union rather than a flat record with two nullable
+ * fields is what lets `schedule.ts` reach `snapshot` after an
+ * `outcome !== "prepared"` early return without a non-null assertion.
+ *
+ * Every variant still declares both fields — `null`-typed where absent — so
+ * call sites that only want to report or compare them (the evidence tables, for
+ * instance) can read `foldEnd` / `snapshot` off an un-narrowed value.
+ */
+export type PreparedFold =
+  | (PreparedFoldBase & {
+      readonly outcome: "below_min_threshold";
+      readonly foldEnd: null;
+      readonly snapshot: null;
+    })
+  | (PreparedFoldBase & {
+      readonly outcome: "deferred";
+      readonly foldEnd: number;
+      readonly snapshot: null;
+    })
+  | (PreparedFoldBase & {
+      readonly outcome: "prepared";
+      readonly foldEnd: number;
+      readonly snapshot: SnapshotObject;
+    });
 
 const algorithms: Readonly<Record<BoundaryAlgorithm, BoundaryFn>> = {
   "live-greedy": liveGreedyBoundary,

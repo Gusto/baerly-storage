@@ -117,7 +117,7 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
     };
   }
 
-  const snapshot = prepared.snapshot!;
+  const { snapshot } = prepared;
   schedule.state = storeSnapshot(schedule.state, snapshot);
   if (action.crashAt === "after_snapshot_put") {
     return {
