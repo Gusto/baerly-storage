@@ -262,47 +262,61 @@ export function formatReportLine(entry: string, measured: Measured, spec: Snapsh
   return `BUNDLE_SIZE ${entry} ${parts.join(" ")}`;
 }
 
-// Canonical key order, so an axis measured for the first time lands next to
-// its siblings instead of after `note`, and two regenerations of the same
-// build produce byte-identical files.
-const ENTRY_KEY_ORDER: readonly (keyof SnapshotEntry)[] = [
-  "tier",
-  "raw",
-  "gz",
-  "minGz",
-  "hardCeiling",
-  "note",
-];
-
+/**
+ * Canonical key order, so an axis measured for the first time lands next to
+ * its siblings instead of after `note`, and two regenerations of the same
+ * build produce byte-identical files.
+ *
+ * Written as a literal rather than a key loop so the compiler checks it: a
+ * required field dropped from the reconstruction is a type error here, where
+ * a `Record<string, unknown>` accumulator would need a double assertion to
+ * become a `SnapshotEntry` again and would let the omission through.
+ */
 function orderEntry(spec: SnapshotEntry): SnapshotEntry {
-  const ordered: Record<string, unknown> = {};
-  for (const key of ENTRY_KEY_ORDER) {
-    if (spec[key] !== undefined) {
-      ordered[key] = spec[key];
-    }
-  }
-  // Anything the schema grows later still survives a regeneration.
-  for (const [key, value] of Object.entries(spec)) {
-    if (!(key in ordered)) {
-      ordered[key] = value;
-    }
-  }
-  return ordered as unknown as SnapshotEntry;
+  const { tier, raw, gz, minGz, hardCeiling, note, ...rest } = spec;
+  return {
+    tier,
+    ...(raw !== undefined && { raw }),
+    ...(gz !== undefined && { gz }),
+    ...(minGz !== undefined && { minGz }),
+    ...(hardCeiling !== undefined && { hardCeiling }),
+    note,
+    // Anything the schema grows later still survives a regeneration.
+    ...rest,
+  };
 }
 
-/** Rewrite measured values, preserving hand-maintained `note` / `hardCeiling` / `tier`. */
-function writeSnapshot(snapshot: Snapshot, measured: Record<string, Measured>): void {
+/**
+ * The snapshot as `--write` would commit it: measured axes refreshed,
+ * hand-maintained `tier` / `hardCeiling` / `note` carried through untouched.
+ *
+ * Pure, and split out from the write so the rebaseline contract is testable
+ * without a filesystem or an `oxfmt` subprocess. Only axes the entry's tier
+ * (or a hard ceiling) actually gates are written, so a tooling-tier entry
+ * never accumulates a `gz` baseline nothing reads.
+ *
+ * An entry with no measurement keeps its committed values. The CLI cannot
+ * reach that case — `compareSnapshot` throws on it first — but silently
+ * dropping a baseline is the one outcome that must not happen here.
+ */
+export function nextSnapshot(snapshot: Snapshot, measured: Record<string, Measured>): Snapshot {
+  const entries: Record<string, SnapshotEntry> = {};
   for (const [entry, spec] of Object.entries(snapshot.entries)) {
-    const now = measured[entry]!;
-    for (const axis of axesFor(snapshot, spec)) {
-      const value = now[axis];
+    const now = measured[entry];
+    const updated: SnapshotEntry = { ...spec };
+    for (const axis of now ? axesFor(snapshot, spec) : []) {
+      const value = now?.[axis];
       if (value !== undefined) {
-        spec[axis] = value;
+        updated[axis] = value;
       }
     }
-    snapshot.entries[entry] = orderEntry(spec);
+    entries[entry] = orderEntry(updated);
   }
-  writeFileSync(SNAPSHOT_PATH, `${JSON.stringify(snapshot, null, 2)}\n`);
+  return { ...snapshot, entries };
+}
+
+function writeSnapshot(snapshot: Snapshot, measured: Record<string, Measured>): void {
+  writeFileSync(SNAPSHOT_PATH, `${JSON.stringify(nextSnapshot(snapshot, measured), null, 2)}\n`);
   // `JSON.stringify` never collapses a short array onto one line, oxfmt always
   // does — so an un-formatted write leaves the tree failing `pnpm verify`'s
   // `format:check` immediately after a legitimate rebaseline. Formatting here

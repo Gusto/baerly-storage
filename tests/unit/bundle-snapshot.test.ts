@@ -4,6 +4,7 @@ import {
   compareSnapshot,
   deltaLimit,
   formatReportLine,
+  nextSnapshot,
   type Snapshot,
 } from "../../scripts/bundle-sizes.ts";
 
@@ -152,6 +153,93 @@ describe("formatReportLine", () => {
     expect(formatReportLine("node.js", { raw: 100000, gz: 30000 }, shipped)).toBe(
       "BUNDLE_SIZE node.js raw=100000(+0,+0.0%) gz=30000(+0,+0.0%)",
     );
+  });
+});
+
+// `--write` is the path an agent reaches for the moment the gate trips, so
+// what it preserves is as load-bearing as what the gate rejects: a rebaseline
+// that quietly dropped a `hardCeiling` would convert a structural commitment
+// into a delta baseline, and the next regeneration would ratify whatever the
+// closure weighed by then.
+describe("nextSnapshot", () => {
+  const shipped: Snapshot["entries"] = {
+    "index.js": { tier: "shipped", raw: 100000, gz: 30000, minGz: 10000, note: "kernel barrel" },
+  };
+
+  test("refreshes every measured axis the tier gates", () => {
+    const next = nextSnapshot(snap(shipped), {
+      "index.js": { raw: 111111, gz: 33333, minGz: 11111 },
+    });
+    expect(next.entries["index.js"]).toMatchObject({ raw: 111111, gz: 33333, minGz: 11111 });
+  });
+
+  test("carries hand-maintained tier, note and hardCeiling through untouched", () => {
+    const entries: Snapshot["entries"] = {
+      "app-config.js": {
+        tier: "shipped",
+        raw: 167,
+        gz: 147,
+        minGz: 70,
+        hardCeiling: { raw: 1024, gz: 512 },
+        note: "no runtime closure",
+      },
+    };
+    const next = nextSnapshot(snap(entries), { "app-config.js": { raw: 200, gz: 160, minGz: 80 } });
+    expect(next.entries["app-config.js"]).toEqual({
+      tier: "shipped",
+      raw: 200,
+      gz: 160,
+      minGz: 80,
+      hardCeiling: { raw: 1024, gz: 512 },
+      note: "no runtime closure",
+    });
+  });
+
+  test("does not write an axis the entry's tier never gates", () => {
+    // dev.js is measured on gz for free, but the tooling tier reads raw only.
+    // Writing gz anyway would commit a baseline nothing compares against.
+    const entries: Snapshot["entries"] = { "dev.js": { tier: "tooling", raw: 1000, note: "n" } };
+    const next = nextSnapshot(snap(entries), { "dev.js": { raw: 1100, gz: 400 } });
+    expect(next.entries["dev.js"]).toEqual({ tier: "tooling", raw: 1100, note: "n" });
+  });
+
+  test("writes an axis a hard ceiling needs even when the tier omits it", () => {
+    const entries: Snapshot["entries"] = {
+      "dev.js": { tier: "tooling", raw: 1000, note: "n", hardCeiling: { gz: 9999 } },
+    };
+    const next = nextSnapshot(snap(entries), { "dev.js": { raw: 1100, gz: 400 } });
+    expect(next.entries["dev.js"]?.gz).toBe(400);
+  });
+
+  test("keeps the committed baseline for an entry with no measurement", () => {
+    // Unreachable from the CLI (`compareSnapshot` throws first), but dropping
+    // a baseline here would silently retire that entry's gate.
+    expect(nextSnapshot(snap(shipped), {}).entries["index.js"]).toEqual(shipped["index.js"]);
+  });
+
+  test("emits a canonical key order, so two regenerations are byte-identical", () => {
+    // Same measurement, entry authored with keys out of order.
+    const scrambled: Snapshot["entries"] = {
+      "index.js": { note: "kernel barrel", minGz: 1, tier: "shipped", gz: 1, raw: 1 },
+    };
+    const measured = { "index.js": { raw: 100000, gz: 30000, minGz: 10000 } };
+    const once = nextSnapshot(snap(scrambled), measured);
+    expect(Object.keys(once.entries["index.js"]!)).toEqual(["tier", "raw", "gz", "minGz", "note"]);
+    expect(JSON.stringify(nextSnapshot(once, measured))).toBe(JSON.stringify(once));
+  });
+
+  test("preserves a field the schema grows later", () => {
+    const entries = {
+      "index.js": { ...shipped["index.js"]!, futureField: "keep me" },
+    } as Snapshot["entries"];
+    const next = nextSnapshot(snap(entries), { "index.js": { raw: 1, gz: 1, minGz: 1 } });
+    expect(next.entries["index.js"]).toHaveProperty("futureField", "keep me");
+  });
+
+  test("does not mutate the snapshot it was handed", () => {
+    const original = snap(shipped);
+    nextSnapshot(original, { "index.js": { raw: 999999, gz: 999999, minGz: 999999 } });
+    expect(original.entries["index.js"]?.raw).toBe(100000);
   });
 });
 
