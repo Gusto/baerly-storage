@@ -160,12 +160,19 @@ const assertBootstrapOptions = (options: BootstrapOptions): void => {
  */
 export const STATISTICS_TEST_VECTORS = {
   "quantile-nearest-rank-v1": {
-    id: "nearest-rank/1-2-3-4/q00-q25-q50-q95-q100/v1",
+    id: "nearest-rank/1-2-3-4/q00-q25-q30-q50-q95-q100/v1",
     values: [1, 2, 3, 4],
     // One-indexed ceil(q*n) over the ascending sort, clamped to [1,n].
+    //
+    // q=0.3 is the row that pins CEIL specifically. At every other q here
+    // `q*n` is already an integer or rounds up anyway (0, 1, 2, 3.8, 4), so
+    // `Math.round` computes the same five answers and the defining operation
+    // went unpinned. At q=0.3, `q*n` is 1.2: ceil gives rank 2 (value 2),
+    // round gives rank 1 (value 1).
     expected: [
       { q: 0, value: 1 },
       { q: 0.25, value: 1 },
+      { q: 0.3, value: 2 },
       { q: 0.5, value: 2 },
       { q: 0.95, value: 4 },
       { q: 1, value: 4 },
@@ -241,7 +248,7 @@ export const STATISTICS_TEST_VECTORS = {
     id: "clopper-pearson/n100/c095/v1",
     attempts: 100,
     confidence: 0.95,
-    upper: 0.029513049607039932,
+    upper: 0.029513049607039925,
   },
   "wilson-one-sided-upper-v1": {
     id: "wilson/f3-n100/c095/z1_6448536269514722/v1",
@@ -698,7 +705,12 @@ export const clopperPearsonZeroFailureUpper = (
   assertConfidence(confidence);
   return {
     algorithm: "clopper-pearson-zero-failure-upper-v1",
-    upper: normalizeZero(1 - (1 - confidence) ** (1 / attempts)),
+    // `-expm1(log1p(-c)/n)`, not the algebraically equal
+    // `1 - (1-c)**(1/n)`. The latter subtracts two nearly equal numbers: the
+    // bound falls as 1/n, so at n=1e6 it loses 1.3e-11 relative and at n=1e12
+    // it loses 5.8e-6 — while `expm1`/`log1p` are exactly the pair built for
+    // this regime. Below n≈1e4 the two agree to within an ulp.
+    upper: normalizeZero(-Math.expm1(Math.log1p(-confidence) / attempts)),
     failures: 0,
     attempts: normalizeZero(attempts),
     confidence: normalizeZero(confidence),
@@ -767,7 +779,12 @@ export const wilsonOneSidedUpper = (
     (1 + (z * z) / n);
   return {
     algorithm: "wilson-one-sided-upper-v1",
-    upper: normalizeZero(upper),
+    // Clamped because this is a probability. At p̂ = 1 the limit is exactly 1
+    // analytically — numerator and denominator both collapse to 1 + z²/n — but
+    // the float evaluation overshoots for 501 of the first 2000 attempt counts
+    // (n = 11 gives 1.0000000000000002). An all-failures scenario is ordinary
+    // in a bench study, and a bound above 1 is not a probability.
+    upper: normalizeZero(Math.min(1, upper)),
     // `failures` is normalized for the same reason `seed` is: `-0` clears
     // `Number.isInteger(f) && f >= 0` untouched, and `failures: -count` at
     // count 0 is ordinary arithmetic, not a pathological input.
