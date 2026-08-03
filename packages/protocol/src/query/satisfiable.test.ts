@@ -22,8 +22,8 @@
  *
  * @see docs/spec/sync-protocol.md — predicate algebra.
  */
-import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
+import { describe, expect, test } from "vitest";
 
 import { BaerlyError } from "../errors.ts";
 import type { DocumentValue, JSONObject } from "../json.ts";
@@ -131,7 +131,7 @@ const hasModelInClauseSpace = (wire: PredicateWire): boolean => {
 };
 
 describe("assertWireSatisfiable (via validateWire) — soundness", () => {
-  test.prop({ wire: opWireArb })(
+  fcTest.prop({ wire: opWireArb })(
     "UnsatisfiablePredicate verdict ⟹ no document in the clause-derived space matches",
     ({ wire }) => {
       let threwUnsat = false;
@@ -184,7 +184,7 @@ const witnessValueFor = (clause: PredicateClause): DocumentValue => {
 };
 
 describe("assertWireSatisfiable (via validateWire) — witness", () => {
-  test.prop({ wire: distinctFieldWireArb })(
+  fcTest.prop({ wire: distinctFieldWireArb })(
     "an accepted single-clause-per-field wire has a constructible model",
     ({ wire }) => {
       try {
@@ -1120,7 +1120,7 @@ describe("in() intersection empty — error includes field name (line 244)", () 
 // This kills families of boundary-relational mutants on lines 104, 126, 181.
 // ---------------------------------------------------------------------------
 describe("property: tightened interval satisfiability agrees with set-theoretic check", () => {
-  test.prop({
+  fcTest.prop({
     lo1: fc.integer({ min: -5, max: 5 }),
     lo2: fc.integer({ min: -5, max: 5 }),
     hi1: fc.integer({ min: -5, max: 5 }),
@@ -1146,7 +1146,7 @@ describe("property: tightened interval satisfiability agrees with set-theoretic 
     },
   );
 
-  test.prop({
+  fcTest.prop({
     lo1: fc.integer({ min: -5, max: 5 }),
     lo2: fc.integer({ min: -5, max: 5 }),
     hi1: fc.integer({ min: -5, max: 5 }),
@@ -1172,7 +1172,7 @@ describe("property: tightened interval satisfiability agrees with set-theoretic 
     },
   );
 
-  test.prop({
+  fcTest.prop({
     lo: fc.integer({ min: -5, max: 5 }),
     hi: fc.integer({ min: -5, max: 5 }),
     loInclusive: fc.boolean(),
@@ -1202,7 +1202,7 @@ describe("property: tightened interval satisfiability agrees with set-theoretic 
 // max(lo1, lo2) boundary with proper inclusive/exclusive semantics.
 // ---------------------------------------------------------------------------
 describe("property: tightenLower picks the effective tighter bound", () => {
-  test.prop({
+  fcTest.prop({
     lo1: fc.integer({ min: -5, max: 5 }),
     lo2: fc.integer({ min: -5, max: 5 }),
     lo1Inc: fc.boolean(),
@@ -1244,7 +1244,7 @@ describe("property: tightenLower picks the effective tighter bound", () => {
 // Property: tightenUpper correctness
 // ---------------------------------------------------------------------------
 describe("property: tightenUpper picks the effective tighter bound", () => {
-  test.prop({
+  fcTest.prop({
     hi1: fc.integer({ min: -5, max: 5 }),
     hi2: fc.integer({ min: -5, max: 5 }),
     hi1Inc: fc.boolean(),

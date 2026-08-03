@@ -36,17 +36,18 @@ One topic per file. Don't pile unrelated suites together.
 
 ## Property-based tests
 
-Use `fast-check` via `@fast-check/vitest`. Import `fc` and `test` from
-`@fast-check/vitest`; pull `expect`/`describe` from `vitest`. Prefer the
-object-form `test.prop({ a, b })` so failure messages name the shrunk
-values.
+Use `fast-check` via `@fast-check/vitest`. Alias its property-test wrapper as
+`fcTest`; pull ordinary `test` plus `expect`/`describe` from `vitest`. This
+keeps deterministic cases from inheriting `fc.configureGlobal().numRuns` when
+a file mixes both kinds of test. Prefer the object-form
+`fcTest.prop({ a, b })` so failure messages name the shrunk values.
 
-- Pure modules: drive arbitraries through `test.prop`. Example:
+- Pure modules: drive arbitraries through `fcTest.prop`. Example:
   ```ts
-  import { fc, test } from "@fast-check/vitest";
-  import { describe, expect } from "vitest";
+  import { fc, test as fcTest } from "@fast-check/vitest";
+  import { describe, expect, test } from "vitest";
 
-  test.prop({ n: fc.integer() })("abs is non-negative", ({ n }) => {
+  fcTest.prop({ n: fc.integer() })("abs is non-negative", ({ n }) => {
     expect(Math.abs(n)).toBeGreaterThanOrEqual(0);
   });
   ```
@@ -59,8 +60,10 @@ values.
 - Protocol-level ordering tests (interleaved writes, replay, partial
   failures) still live in `tests/integration/randomized.test.ts`.
 - Per-property iteration count comes from `FC_NUM_RUNS` (default 100).
-  `pnpm test:randomize` cranks it to 10000 for a single deterministic
-  pass.
+  `pnpm test:randomize` cranks it to 10000 for a single pass of the default
+  project's property-fuzzing slice. The command excludes the dedicated
+  maintenance crash fuzzer and the expensive non-property
+  profile-equivalence / end-to-end suites.
 
 ## Asserting on errors
 - Check the `code`, not the message:

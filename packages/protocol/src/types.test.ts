@@ -12,8 +12,8 @@
  *
  * @see docs/spec/sync-protocol.md §"LSNs, wall clocks, and downstream consumers"
  */
-import { fc, test } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { fc, test as fcTest } from "@fast-check/vitest";
+import { describe, expect, test } from "vitest";
 
 import { COUNT_BIT_WIDTH, TIMESTAMP_BIT_WIDTH } from "./constants.ts";
 import { countKey, str2uint, str2uintDesc, uint2str, uint2strDesc, uuid, uuidv7 } from "./types.ts";
@@ -111,15 +111,15 @@ describe("base-32 codecs — round-trip", () => {
     expect(str2uint("10")).toBe(32);
   });
 
-  test.prop({ g: bitsAndN })("str2uint(uint2str(n, bits)) === n", ({ g }) => {
+  fcTest.prop({ g: bitsAndN })("str2uint(uint2str(n, bits)) === n", ({ g }) => {
     expect(str2uint(uint2str(g.n, g.bits))).toBe(g.n);
   });
 
-  test.prop({ g: bitsAndN })("str2uintDesc(uint2strDesc(n, bits), bits) === n", ({ g }) => {
+  fcTest.prop({ g: bitsAndN })("str2uintDesc(uint2strDesc(n, bits), bits) === n", ({ g }) => {
     expect(str2uintDesc(uint2strDesc(g.n, g.bits), g.bits)).toBe(g.n);
   });
 
-  test.prop({ n: fc.nat({ max: Number.MAX_SAFE_INTEGER }) })(
+  fcTest.prop({ n: fc.nat({ max: Number.MAX_SAFE_INTEGER }) })(
     "str2uintDesc(countKey(n), COUNT_BIT_WIDTH) === n across the full COUNT domain",
     ({ n }) => {
       // COUNT_BIT_WIDTH is 53; countKey uses it. Decoding with the same width
@@ -131,7 +131,7 @@ describe("base-32 codecs — round-trip", () => {
 });
 
 describe("base-32 codecs — fixed width", () => {
-  test.prop({ g: bitsAndN })(
+  fcTest.prop({ g: bitsAndN })(
     "uint2str / uint2strDesc pad to ceil(bits/5) chars for every value in domain",
     ({ g }) => {
       const width = Math.ceil(g.bits / 5);
@@ -142,7 +142,7 @@ describe("base-32 codecs — fixed width", () => {
 });
 
 describe("base-32 codecs — ordering", () => {
-  test.prop({ g: bitsAndPair })(
+  fcTest.prop({ g: bitsAndPair })(
     "ascending: a < b ⟺ uint2str(a) < uint2str(b) (lexical, equal width)",
     ({ g }) => {
       if (g.a === g.b) {
@@ -154,7 +154,7 @@ describe("base-32 codecs — ordering", () => {
     },
   );
 
-  test.prop({ g: bitsAndPair })(
+  fcTest.prop({ g: bitsAndPair })(
     "descending: a < b ⟺ uint2strDesc(a) > uint2strDesc(b) (the load-bearing reversal)",
     ({ g }) => {
       if (g.a === g.b) {
@@ -166,7 +166,7 @@ describe("base-32 codecs — ordering", () => {
     },
   );
 
-  test.prop({ ns: fc.array(fc.nat({ max: 1023 }), { maxLength: 12 }) })(
+  fcTest.prop({ ns: fc.array(fc.nat({ max: 1023 }), { maxLength: 12 }) })(
     "sort correspondence: lexical sort of uint2strDesc(n,10) === value-descending sort",
     ({ ns }) => {
       const cmp = (x: number, y: number): number => {
