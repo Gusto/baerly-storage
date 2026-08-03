@@ -28,15 +28,19 @@ export type CanonicalJsonRejectionReason =
   | "forbidden-key"
   | "non-enumerable-own-property"
   | "accessor-own-property"
-  | "max-depth-exceeded";
+  | "max-depth-exceeded"
+  | "serialization-failed";
 
 export class CanonicalJsonError extends Error {
   readonly code = "CanonicalJsonError" as const;
   readonly reason: CanonicalJsonRejectionReason;
   readonly path: string;
 
-  constructor(reason: CanonicalJsonRejectionReason, path: string) {
-    super(`Canonical JSON rejected ${reason} at ${path}`);
+  constructor(reason: CanonicalJsonRejectionReason, path: string, cause?: unknown) {
+    super(
+      `Canonical JSON rejected ${reason} at ${path}`,
+      cause === undefined ? undefined : { cause },
+    );
     this.name = "CanonicalJsonError";
     this.reason = reason;
     this.path = path;
@@ -116,12 +120,23 @@ const ownDataProperties = (
     reject("symbol-key", path);
   }
 
-  const properties: OwnDataProperty[] = [];
-  for (const ownKey of keys) {
-    if (typeof ownKey !== "string" || (arrayLength !== undefined && ownKey === "length")) {
-      continue;
-    }
+  // Validate in canonical key order, NOT `Reflect.ownKeys` order. `ownKeys`
+  // yields non-index string keys in property-insertion order, so validating in
+  // that order would make the reported `reason` and `path` depend on how the
+  // caller happened to build the object: `{a: <non-enumerable>, b: <getter>}`
+  // and `{b: <getter>, a: <non-enumerable>}` describe the same value but would
+  // disagree about what is wrong with it. Accepted output is already
+  // insertion-order independent (objects emit in this same sorted order, arrays
+  // emit by index), and sorting here extends that determinism to the rejection
+  // path — which is the half a cross-language port has to reproduce from the
+  // vector corpus.
+  const stringKeys = keys
+    .filter((key): key is string => typeof key === "string")
+    .filter((key) => arrayLength === undefined || key !== "length")
+    .toSorted(compareUtf16);
 
+  const properties: OwnDataProperty[] = [];
+  for (const ownKey of stringKeys) {
     const childPath =
       arrayLength !== undefined && isArrayIndex(ownKey, arrayLength)
         ? `${path}[${ownKey}]`
@@ -220,9 +235,9 @@ const serialize = (value: unknown, path: string, depth: number, ancestors: Set<o
     reject("non-plain-object", path);
   }
 
-  const properties = ownDataProperties(value, path).toSorted((left, right) =>
-    compareUtf16(left.key, right.key),
-  );
+  // Already in canonical key order — `ownDataProperties` sorts so that
+  // validation and emission share one ordering source.
+  const properties = ownDataProperties(value, path);
   ancestors.add(value);
   try {
     const encoded = properties.map(({ key, value: child }) => {
@@ -235,8 +250,34 @@ const serialize = (value: unknown, path: string, depth: number, ancestors: Set<o
   }
 };
 
-export const canonicalJson = (value: CanonicalJsonValue): string =>
-  serialize(value, "$", 0, new Set());
+/**
+ * Serialize a value to its canonical JSON bytes, or throw `CanonicalJsonError`.
+ *
+ * The `catch` is a totality guarantee, not error handling. `CANONICAL_JSON_MAX_DEPTH`
+ * bounds nesting, but nothing bounds OUTPUT SIZE, and a shared acyclic
+ * reference — which this module deliberately accepts — expands multiplicatively:
+ * 26 distinct objects nested 26 deep, a tenth of the depth limit, produce over
+ * 512 MB of output and V8 throws a bare `RangeError: Invalid string length`
+ * from `JSON.stringify` or `Array.prototype.join`. One legal 90M-character
+ * string reaches the same place. Rewrapping keeps the module's promise that
+ * every failure is a `CanonicalJsonError` with a `reason`, preserving the
+ * engine error as `cause`.
+ *
+ * Deliberately NOT a byte budget. A budget would be a 16th accepted-domain
+ * rule with no consumer asking for it; this restores the error-type invariant
+ * without narrowing what the module accepts. Add a budget when something
+ * actually needs to fail early rather than late.
+ */
+export const canonicalJson = (value: CanonicalJsonValue): string => {
+  try {
+    return serialize(value, "$", 0, new Set());
+  } catch (error) {
+    if (error instanceof CanonicalJsonError) {
+      throw error;
+    }
+    throw new CanonicalJsonError("serialization-failed", "$", error);
+  }
+};
 
 /**
  * Hash a string as its exact UTF-8 bytes, or a `Uint8Array` byte-for-byte.

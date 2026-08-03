@@ -404,6 +404,75 @@ describe("deterministic rejections", () => {
     expect(calls).toBe(0);
   });
 
+  test("reports the same reason and path regardless of property insertion order", () => {
+    const lone = String.fromCharCode(0xd800);
+    // Each builder produces the same logical value with two defects, inserted
+    // in opposite orders. Before the keys were sorted ahead of validation these
+    // pairs disagreed: `Reflect.ownKeys` order decided which defect was found.
+    const pairs: readonly {
+      readonly first: () => object;
+      readonly second: () => object;
+      readonly reason: CanonicalJsonRejectionReason;
+      readonly path: string;
+    }[] = [
+      {
+        first: () => {
+          const value = {};
+          Object.defineProperty(value, "alpha", { value: 1, enumerable: false });
+          Object.defineProperty(value, "beta", { get: () => 1, enumerable: true });
+          return value;
+        },
+        second: () => {
+          const value = {};
+          Object.defineProperty(value, "beta", { get: () => 1, enumerable: true });
+          Object.defineProperty(value, "alpha", { value: 1, enumerable: false });
+          return value;
+        },
+        reason: "non-enumerable-own-property",
+        path: "$.alpha",
+      },
+      {
+        first: () => {
+          const value = Object.create(null) as Record<string, unknown>;
+          Object.defineProperty(value, "__proto__", { value: 1, enumerable: true });
+          value[lone] = 1;
+          return value;
+        },
+        second: () => {
+          const value = Object.create(null) as Record<string, unknown>;
+          value[lone] = 1;
+          Object.defineProperty(value, "__proto__", { value: 1, enumerable: true });
+          return value;
+        },
+        reason: "forbidden-key",
+        path: '$["__proto__"]',
+      },
+    ];
+
+    for (const { first, second, reason, path } of pairs) {
+      expectCanonicalError(first(), reason, path);
+      expectCanonicalError(second(), reason, path);
+    }
+  });
+
+  test("rewraps an engine-level failure as CanonicalJsonError", () => {
+    // Proxies are outside the ACCEPTED DOMAIN, but the error-TYPE guarantee
+    // still has to hold: a foreign throw from inside the traversal must not
+    // escape as a bare TypeError. This is the cheap, deterministic stand-in for
+    // the real trigger — a >512MB output, which throws a bare V8 RangeError but
+    // costs ~1.2GB of RSS to provoke and so is unfit for the default suite.
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new TypeError("engine-level failure");
+        },
+      },
+    );
+    const error = expectCanonicalError(hostile, "serialization-failed", "$");
+    expect(error.cause).toBeInstanceOf(TypeError);
+  });
+
   test("rejects values deeper than the versioned maximum", () => {
     let accepted: unknown = null;
     for (let depth = 0; depth < CANONICAL_JSON_MAX_DEPTH; depth += 1) {
