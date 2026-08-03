@@ -1012,7 +1012,38 @@ const BUDGETS: readonly Budget[] = [
   //     +4351, gz +1822, min-gz +35 and still 167 B under its unchanged
   //     budget. gz takes the full KiB rather than the 72 B that would have
   //     cleared it, for the same coin-flip reason argued on http.js.
-  { entry: "cloudflare.js", raw: 436 * 1024, gz: 133 * 1024, minGz: 45 * 1024 },
+  //   → 425 KiB raw / 129 KiB gz / 44 KiB min-gz (2026-08-02): budgets move
+  //     DOWN. `packages/adapter-cloudflare/src/worker.ts` imported
+  //     `renderDevLanding` from the `@baerly/dev` barrel, and the barrel
+  //     re-exports `LocalFsStorage`, so rolldown chunked the entire Node-only
+  //     local-fs closure — `node:crypto`, `node:fs/promises`, `node:os`,
+  //     `node:path` — into every deployed Worker for the sake of one HTML
+  //     string. `dev-landing.ts` has no imports at all, so giving it its own
+  //     `@baerly/dev/dev-landing` subpath drops the whole closure out of this
+  //     aggregator. Measured 433454 raw / 131424 gz / 44135 min-gz against a
+  //     branch base of 446159 / 135096 / 45913 — a 12705 / 3672 / 1778 B win
+  //     on all three axes. Budgets tighten to lock the win in rather than bank
+  //     it as silent headroom.
+  //
+  //     Worth noting what the base was: on the line above, raw had 305 B of
+  //     headroom and min-gz 167 B. This entry was one ordinary comment edit
+  //     from firing on two axes, and the code responsible for that pressure
+  //     could not run under Workerd in the first place.
+  //
+  //     Tightened to roughly a KiB above each measured axis, not to the
+  //     nearest boundary. Per the POLICY raw/gz are creep tripwires: one that
+  //     fires on ordinary prose reports noise, and the next author rebaselines
+  //     it reflexively, which is how a tripwire stops being read. The
+  //     regression these lock in is the ~12 KiB raw / ~3.6 KiB gz barrel drag
+  //     above, so 1746 B raw / 672 B gz of slack still catches it with margin.
+  //     min-gz keeps 921 B: that axis is the HARD ceiling and the one worth
+  //     holding tight.
+  //
+  //     The barrel drag itself is caught structurally rather than by bytes —
+  //     see the `dist/cloudflare.js` Workerd-builtin closure assertion below,
+  //     which is what lets these two axes stay diagnostic rather than
+  //     load-bearing.
+  { entry: "cloudflare.js", raw: 425 * 1024, gz: 129 * 1024, minGz: 44 * 1024 },
   // Client surface — `BaerlyClient<TConfig>` + fetcher plumbing.
   // Browser/runtime-agnostic; no kernel modules in the closure.
   // Budget history:
