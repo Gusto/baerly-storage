@@ -90,10 +90,6 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
     };
   }
 
-  const observedTail = Math.max(
-    0,
-    Math.min(action.observedTail, schedule.state.log.acknowledgedTail),
-  );
   const historicalState: ModelState = {
     log: schedule.state.log,
     manifest,
@@ -101,7 +97,7 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
   };
   const prepared = prepareFold({
     state: historicalState,
-    observedTail,
+    observedTail: action.observedTail,
     probeFloor: manifest.tailHint,
     budget: action.budget,
     k: action.k,

@@ -82,21 +82,21 @@ describe("fold crash and observer schedules", () => {
     });
     expect(result.attempts[1]!.cost).toEqual({
       currentGets: 1,
-      probeGets: 1,
+      probeGets: 181,
       snapshotGets: 0,
       logGets: 5,
       snapshotPuts: 1,
       currentPuts: 0,
-      total: 8,
+      total: 188,
     });
     expect(result.attempts[2]!.cost).toEqual({
       currentGets: 1,
-      probeGets: 1,
+      probeGets: 181,
       snapshotGets: 0,
       logGets: 5,
       snapshotPuts: 1,
       currentPuts: 1,
-      total: 9,
+      total: 189,
     });
     expect(result.attempts[1]!.emittedKey).toBe(result.attempts[2]!.emittedKey);
     expect(
