@@ -146,7 +146,7 @@ describe("tagged summaries", () => {
     // literals here would let the tagged wrapper drift away from the constant
     // the contract hash is taken over — one eroded test at a time.
     const NR = STATISTICS_TEST_VECTORS["quantile-nearest-rank-v1"];
-    const nr = NR.expected[3]; // q = 0.95 -> 4
+    const nr = NR.expected[4]; // q = 0.95 -> 4
     expect(quantileEstimate(NR.values, nr.q, "quantile-nearest-rank-v1")).toEqual({
       algorithm: "quantile-nearest-rank-v1",
       q: nr.q,
@@ -400,7 +400,10 @@ describe("clopper-pearson-zero-failure-upper-v1", () => {
   test("pinned vector n=100, confidence 0.95", () => {
     const r = clopperPearsonZeroFailureUpper(V.attempts, V.confidence);
     expect(r.algorithm).toBe("clopper-pearson-zero-failure-upper-v1");
-    expect(r.upper).toBeCloseTo(V.upper, 15);
+    // `toBe`, not `toBeCloseTo(_, 15)`: this is a deterministic double, and 15
+    // decimal places is ~36 ulps of slack at this magnitude — enough to hide a
+    // real change in how the bound is evaluated.
+    expect(r.upper).toBe(V.upper);
     expect(r.failures).toBe(0);
     expect(r.attempts).toBe(V.attempts);
     expect(r.confidence).toBe(V.confidence);
@@ -410,6 +413,20 @@ describe("clopper-pearson-zero-failure-upper-v1", () => {
     expect(clopperPearsonZeroFailureUpper(1000, 0.95).upper).toBeLessThan(
       clopperPearsonZeroFailureUpper(100, 0.95).upper,
     );
+  });
+
+  test("the bound stays accurate at large attempt counts", () => {
+    // The defining identity of the exact bound at zero failures is
+    // (1 - p_U)^n = 1 - c. Evaluated as `1 - (1-c)**(1/n)` the subtraction
+    // cancels catastrophically as the bound shrinks: 1.3e-11 relative error at
+    // n=1e6, 5.8e-6 at n=1e12. Checked against the identity rather than
+    // against a second formula, so this cannot pass by agreeing with itself.
+    for (const attempts of [1e3, 1e6, 1e9, 1e12]) {
+      const { upper } = clopperPearsonZeroFailureUpper(attempts, 0.95);
+      // log-space, because (1-p)^1e12 underflows a direct evaluation.
+      const residual = Math.abs(attempts * Math.log1p(-upper) - Math.log(0.05));
+      expect(residual, `n=${attempts}`).toBeLessThan(1e-9);
+    }
   });
 
   test("rejects attempts below one and confidence outside (0,1)", () => {
@@ -431,7 +448,7 @@ describe("wilson-one-sided-upper-v1", () => {
       z: V.z,
     });
     expect(r.algorithm).toBe("wilson-one-sided-upper-v1");
-    expect(r.upper).toBeCloseTo(V.upper, 15);
+    expect(r.upper).toBe(V.upper); // deterministic double — see the Clopper-Pearson note
     expect(r.failures).toBe(V.failures);
     expect(r.attempts).toBe(V.attempts);
     expect(r.confidence).toBe(V.confidence);
@@ -466,6 +483,18 @@ describe("wilson-one-sided-upper-v1", () => {
     const nudged = WILSON_Z_BY_CONFIDENCE[0.95] * (1 + Number.EPSILON);
     const r = wilsonOneSidedUpper(3, 100, { confidence: 0.95, z: nudged });
     expect(r.z).toBe(nudged);
+  });
+
+  test("an all-failures sample never emits a bound above 1", () => {
+    // At p̂ = 1 the Wilson upper limit is exactly 1 analytically, but the float
+    // evaluation overshoots for 501 of the first 2000 attempt counts — n = 11
+    // gives 1.0000000000000002. A probability above 1 is not a probability.
+    const z = WILSON_Z_BY_CONFIDENCE[0.95];
+    for (let attempts = 1; attempts <= 2000; attempts++) {
+      const { upper } = wilsonOneSidedUpper(attempts, attempts, { confidence: 0.95, z });
+      expect(upper, `n=${attempts}`).toBeLessThanOrEqual(1);
+    }
+    expect(wilsonOneSidedUpper(11, 11, { confidence: 0.95, z }).upper).toBe(1);
   });
 
   test("rejects failures outside [0, attempts], attempts below one, and a nonpositive z", () => {
