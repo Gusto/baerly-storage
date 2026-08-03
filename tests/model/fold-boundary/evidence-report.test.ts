@@ -208,7 +208,11 @@ const stateWithTail = (tail: number, tailHint = tail): ModelState => {
     ops: syntheticOperations(tail, DETERMINISTIC_SEED),
     acknowledgedTail: tail,
   });
-  return tailHint === tail ? state : { ...state, manifest: { ...state.manifest, tailHint } };
+  if (tailHint === tail) {
+    return state;
+  }
+  const manifest = { ...state.manifest, tailHint };
+  return { ...state, manifest, manifestHistory: [{ ...manifest }] };
 };
 
 const action = (overrides: Partial<ObserverAction> = {}): ObserverAction => ({

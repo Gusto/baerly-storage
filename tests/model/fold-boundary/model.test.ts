@@ -123,6 +123,7 @@ describe("fold-boundary reference model", () => {
     const snapshot = makeSnapshot(snapshotRows, 1);
     const originalState = {
       manifest: state.manifest,
+      manifestHistory: state.manifestHistory,
       snapshots: [...state.snapshots.entries()],
     };
 
@@ -140,7 +141,25 @@ describe("fold-boundary reference model", () => {
     });
     expect(sortedRows(snapshotRows)).toEqual([["bravo", 2]]);
     expect(state.manifest).toBe(originalState.manifest);
+    expect(state.manifestHistory).toBe(originalState.manifestHistory);
     expect([...state.snapshots.entries()]).toEqual(originalState.snapshots);
+  });
+
+  test("model_manifestHistoryUsesClonedRecordsAndAppendsImmutably", () => {
+    const log: ModelLog = {
+      ops: [{ kind: "I", docId: "alpha", value: 1 }],
+      acknowledgedTail: 1,
+    };
+    const state = emptyState(log);
+    const published = applySnapshot(state, makeSnapshot(replayAcknowledged(log), 1));
+
+    expect(state.manifestHistory).toEqual([state.manifest]);
+    expect(state.manifestHistory[0]).not.toBe(state.manifest);
+    expect(published.manifestHistory.map(({ generation }) => generation)).toEqual([0, 1]);
+    expect(published.manifestHistory.at(-1)).toEqual(published.manifest);
+    expect(published.manifestHistory.at(-1)).not.toBe(published.manifest);
+    expect(published.manifestHistory).not.toBe(state.manifestHistory);
+    expect(state.manifestHistory).toHaveLength(1);
   });
 
   test("reachableStateArbitraryNeverPublishesANonAdvancingSnapshot", () => {

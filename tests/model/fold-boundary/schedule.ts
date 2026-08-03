@@ -36,7 +36,6 @@ export interface ScheduleResult {
 interface MutableSchedule {
   state: ModelState;
   readonly attempts: FoldAttempt[];
-  readonly generations: ModelManifest[];
 }
 
 const manifestReadCost = (): FoldCost => ({
@@ -77,7 +76,7 @@ const selectedManifest = (
 };
 
 const performAttempt = (schedule: MutableSchedule, action: ObserverAction): FoldAttempt => {
-  const manifest = selectedManifest(schedule.generations, action);
+  const manifest = selectedManifest(schedule.state.manifestHistory, action);
   if (action.crashAt === "after_manifest_read") {
     return {
       observerId: action.observerId,
@@ -93,6 +92,7 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
   const historicalState: ModelState = {
     log: schedule.state.log,
     manifest,
+    manifestHistory: schedule.state.manifestHistory,
     snapshots: schedule.state.snapshots,
   };
   const probeFloor = Math.max(manifest.logSeqStart, manifest.tailHint);
@@ -153,8 +153,11 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
       Math.max(0, Math.min(action.observedTail, schedule.state.log.acknowledgedTail)),
     ),
   };
-  schedule.state = { ...schedule.state, manifest: published };
-  schedule.generations.push(published);
+  schedule.state = {
+    ...schedule.state,
+    manifest: published,
+    manifestHistory: [...schedule.state.manifestHistory, { ...published }],
+  };
   return {
     observerId: action.observerId,
     outcome: "written",
@@ -168,7 +171,9 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
 
 const finish = (schedule: MutableSchedule): ScheduleResult => {
   const referenced = new Set(
-    schedule.generations.flatMap(({ snapshotKey }) => (snapshotKey === null ? [] : [snapshotKey])),
+    schedule.state.manifestHistory.flatMap(({ snapshotKey }) =>
+      snapshotKey === null ? [] : [snapshotKey],
+    ),
   );
   const currentKey = schedule.state.manifest.snapshotKey;
   const present = [...schedule.state.snapshots.keys()];
@@ -183,28 +188,23 @@ const finish = (schedule: MutableSchedule): ScheduleResult => {
   return {
     attempts: schedule.attempts,
     finalState: schedule.state,
-    generations: schedule.generations,
+    generations: schedule.state.manifestHistory,
     neverReferencedSnapshots,
     supersededSnapshots,
     reclaimableSnapshots,
   };
 };
 
-const mutableSchedule = (
-  initial: ModelState,
-  priorGenerations: readonly ModelManifest[] = [initial.manifest],
-): MutableSchedule => ({
+const mutableSchedule = (initial: ModelState): MutableSchedule => ({
   state: initial,
   attempts: [],
-  generations: [...priorGenerations],
 });
 
 export const runSchedule = (args: {
   readonly initial: ModelState;
-  readonly priorGenerations?: readonly ModelManifest[];
   readonly observers: readonly ObserverAction[];
 }): ScheduleResult => {
-  const schedule = mutableSchedule(args.initial, args.priorGenerations);
+  const schedule = mutableSchedule(args.initial);
   for (const observer of args.observers) {
     schedule.attempts.push(performAttempt(schedule, observer));
   }

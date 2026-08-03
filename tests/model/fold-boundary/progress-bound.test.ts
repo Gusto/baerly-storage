@@ -24,7 +24,8 @@ const operations = (count: number): readonly ModelOp[] =>
 
 const stateWithTail = (tail: number, tailHint = tail): ModelState => {
   const state = emptyState({ ops: operations(tail), acknowledgedTail: tail });
-  return { ...state, manifest: { ...state.manifest, tailHint } };
+  const manifest = { ...state.manifest, tailHint };
+  return { ...state, manifest, manifestHistory: [{ ...manifest }] };
 };
 
 const action = (overrides: Partial<ObserverAction> = {}): ObserverAction => ({
@@ -325,9 +326,11 @@ describe("fold publication and progress bounds", () => {
       initial: stateWithTail(20, 0),
       observers: [action({ observedTail: 5, k: 5 })],
     }).finalState;
+    const staleManifest = { ...published.manifest, tailHint: 0 };
     const staleHintBelowFloor: ModelState = {
       ...published,
-      manifest: { ...published.manifest, tailHint: 0 },
+      manifest: staleManifest,
+      manifestHistory: [...published.manifestHistory.slice(0, -1), { ...staleManifest }],
     };
     const result = runSchedule({
       initial: staleHintBelowFloor,

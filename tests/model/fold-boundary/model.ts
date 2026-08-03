@@ -23,6 +23,7 @@ export interface ModelManifest {
 export interface ModelState {
   readonly log: ModelLog;
   readonly manifest: ModelManifest;
+  readonly manifestHistory: readonly ModelManifest[];
   readonly snapshots: ReadonlyMap<string, SnapshotObject>;
 }
 
@@ -42,21 +43,27 @@ const copySnapshot = (snapshot: SnapshotObject): SnapshotObject => ({
   rows: snapshot.rows.map(([docId, value]) => [docId, value] as const),
 });
 
+const copyManifest = (manifest: ModelManifest): ModelManifest => ({ ...manifest });
+
 const boundedSequence = (log: ModelLog, sequence: number): number =>
   Math.max(0, Math.min(sequence, log.acknowledgedTail));
 
 export const modelTail = (log: ModelLog): number => log.ops.length;
 
-export const emptyState = (log: ModelLog): ModelState => ({
-  log,
-  manifest: {
+export const emptyState = (log: ModelLog): ModelState => {
+  const manifest: ModelManifest = {
     generation: 0,
     logSeqStart: 0,
     snapshotKey: null,
     tailHint: modelTail(log),
-  },
-  snapshots: new Map(),
-});
+  };
+  return {
+    log,
+    manifest,
+    manifestHistory: [copyManifest(manifest)],
+    snapshots: new Map(),
+  };
+};
 
 export const foldRange = (base: ModelRows, log: ModelLog, from: number, to: number): ModelRows => {
   const rows = new Map(base);
@@ -93,15 +100,17 @@ export const makeSnapshot = (rows: ModelRows, maxSeq: number): SnapshotObject =>
 export const applySnapshot = (state: ModelState, snapshot: SnapshotObject): ModelState => {
   const snapshots = new Map(state.snapshots);
   snapshots.set(snapshot.key, copySnapshot(snapshot));
+  const manifest: ModelManifest = {
+    ...state.manifest,
+    generation: state.manifest.generation + 1,
+    logSeqStart: snapshot.maxSeq,
+    snapshotKey: snapshot.key,
+  };
 
   return {
     log: state.log,
-    manifest: {
-      ...state.manifest,
-      generation: state.manifest.generation + 1,
-      logSeqStart: snapshot.maxSeq,
-      snapshotKey: snapshot.key,
-    },
+    manifest,
+    manifestHistory: [...state.manifestHistory, copyManifest(manifest)],
     snapshots,
   };
 };

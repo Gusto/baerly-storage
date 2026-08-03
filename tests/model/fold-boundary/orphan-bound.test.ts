@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { type FoldBudget } from "./boundary.ts";
 import { emptyState, rowsAtManifest, type ModelOp, type ModelState } from "./model.ts";
 import {
+  drainToQuiescence,
   reclaimUnreferenced,
   runSchedule,
   type ObserverAction,
@@ -104,6 +105,7 @@ const stateProjection = (state: ModelState) => ({
     ops: state.log.ops.map((operation) => ({ ...operation })),
   },
   manifest: { ...state.manifest },
+  manifestHistory: state.manifestHistory.map((manifest) => ({ ...manifest })),
   snapshots: [...state.snapshots.entries()].map(([key, snapshot]) => [
     key,
     {
@@ -189,14 +191,16 @@ describe("orphan and reclamation bounds", () => {
   });
 
   test("P6d_crashAfterPutHasAReachableNeverReferencedSnapshot", () => {
+    const initial = stateWithTail(20);
     const result = runSchedule({
-      initial: stateWithTail(20),
+      initial,
       observers: [action({ observerId: 1, observedTail: 20, k: 5, crashAt: "after_snapshot_put" })],
     });
     const [crashedKey] = result.attempts.map(({ emittedKey }) => emittedKey);
     const expected = expectedClassification(result);
 
     expect(result.attempts.map(({ outcome }) => outcome)).toEqual(["crashed"]);
+    expect(result.finalState.manifestHistory).toBe(initial.manifestHistory);
     expect(crashedKey).not.toBeNull();
     expect(sortedKeys(result.finalState)).toEqual([crashedKey]);
     expect(expected.neverReferenced).toEqual([crashedKey]);
@@ -222,6 +226,7 @@ describe("orphan and reclamation bounds", () => {
           expect([...rowsAtManifest(reclaimed).entries()].toSorted()).toEqual(beforeRows);
           expect(reclaimed.log).toBe(state.log);
           expect(reclaimed.manifest).toBe(state.manifest);
+          expect(reclaimed.manifestHistory).toBe(state.manifestHistory);
           expect(reclaimed.snapshots).not.toBe(state.snapshots);
           expect(stateProjection(state)).toEqual(before);
           expect(freshClassification.neverReferencedSnapshots).toEqual([]);
@@ -242,7 +247,6 @@ describe("orphan and reclamation bounds", () => {
     });
     const restarted = runSchedule({
       initial: prefix.finalState,
-      priorGenerations: prefix.generations,
       observers: [],
     });
     const [olderSnapshot] = [...prefix.finalState.snapshots.keys()];
@@ -258,27 +262,55 @@ describe("orphan and reclamation bounds", () => {
     const observers = [
       action({ observerId: 1, observedTail: 15, k: 5 }),
       action({ observerId: 2, observedTail: 15, k: 5 }),
-      action({ observerId: 3, observedTail: 15, k: 5 }),
+      action({ observerId: 3, readsAtGeneration: 1, observedTail: 15, k: 5 }),
     ];
     const uninterrupted = runSchedule({ initial, observers });
     const prefix = runSchedule({ initial, observers: observers.slice(0, 2) });
     const resumed = runSchedule({
       initial: prefix.finalState,
-      priorGenerations: prefix.generations,
       observers: observers.slice(2),
     });
 
+    expect(resumed.attempts[0]).toMatchObject({ baseGeneration: 1, outcome: "cas_lost" });
     expect(resumed.generations).toEqual(uninterrupted.generations);
     expect(resumed.neverReferencedSnapshots).toEqual(uninterrupted.neverReferencedSnapshots);
     expect(resumed.supersededSnapshots).toEqual(uninterrupted.supersededSnapshots);
     expect(resumed.reclaimableSnapshots).toEqual(uninterrupted.reclaimableSnapshots);
   });
 
+  test("scheduler_resumedDrainPreservesLifetimeSnapshotProvenance", () => {
+    const prefix = runSchedule({
+      initial: stateWithTail(20),
+      observers: [
+        action({ observerId: 1, observedTail: 20, k: 5 }),
+        action({ observerId: 2, observedTail: 20, k: 5 }),
+      ],
+    });
+    const resumed = drainToQuiescence({
+      initial: prefix.finalState,
+      budget: roomyBudget(),
+      k: 5,
+      algorithm: "aligned-manifest",
+      maxPasses: 4,
+    });
+
+    expect(resumed.attempts.map(({ outcome }) => outcome)).toEqual([
+      "written",
+      "written",
+      "below_min_threshold",
+    ]);
+    expect(resumed.generations.map(({ generation }) => generation)).toEqual([0, 1, 2, 3, 4]);
+    expect(resumed.neverReferencedSnapshots).toEqual([]);
+    expect(resumed.supersededSnapshots).toHaveLength(3);
+  });
+
   test("reclamation rejects a missing current snapshot instead of fabricating it", () => {
     const state = stateWithTail(2);
+    const missingManifest = { ...state.manifest, snapshotKey: "missing-current-snapshot" };
     const missingCurrent: ModelState = {
       ...state,
-      manifest: { ...state.manifest, snapshotKey: "missing-current-snapshot" },
+      manifest: missingManifest,
+      manifestHistory: [{ ...missingManifest }],
     };
 
     expect(() => reclaimUnreferenced(missingCurrent)).toThrow(
