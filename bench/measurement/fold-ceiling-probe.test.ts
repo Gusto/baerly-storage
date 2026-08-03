@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
+  type FrozenBaselineCell,
   HOST_BUDGETS,
   type HostBudget,
   type ProbeCell,
   REPORTED_MARGINS,
   buildRecommendation,
+  cellsOf,
+  compareToFrozen,
   deriveFindings,
   isPeakSampleUsable,
   largestSustainable,
@@ -236,6 +239,110 @@ describe("deriveFindings", () => {
     });
     expect(rec.findings.at(-1)).toBe("overlap check: ok");
     expect(rec.findings.length).toBe(deriveFindings(bothAxes).length + 1);
+  });
+});
+
+describe("cellsOf", () => {
+  test("returns the cells array when the document carries one", () => {
+    expect(cellsOf<number>({ cells: [1, 2] }, "f.json")).toEqual([1, 2]);
+    expect(cellsOf<number>({ cells: [] }, "f.json")).toEqual([]);
+  });
+
+  test("throws rather than yielding undefined typed as an array", () => {
+    // The failure this exists to prevent: `parsed as { cells: T[] }` on each of
+    // these hands back `undefined` and defers the crash to the first `.find`.
+    for (const bad of [{}, { cells: "nope" }, { cells: { 0: 1 } }, null, 7]) {
+      expect(() => cellsOf(bad, "f.json")).toThrow(TypeError);
+    }
+  });
+
+  test("names the source file so the operator knows which read failed", () => {
+    expect(() => cellsOf({}, "docs/spec/attachments/fold-cost-baseline.json")).toThrow(
+      /fold-cost-baseline\.json/,
+    );
+  });
+});
+
+describe("compareToFrozen", () => {
+  const frozen = (over: Partial<FrozenBaselineCell> = {}): FrozenBaselineCell => ({
+    axis: "bytes",
+    rows: 256,
+    bytes_per_doc: 2048,
+    snapshot_bytes: 532_300,
+    cpu_ms_median: 10,
+    peak_bytes_median: 1_000_000,
+    ...over,
+  });
+  const overlapping = (over: Partial<ProbeCell> = {}): ProbeCell =>
+    cell({ axis: "bytes", rows: 256, snapshot_bytes: 532_300, ...over });
+
+  test("skips when no cell in the grid also exists in the baseline", () => {
+    const [only] = compareToFrozen([overlapping({ rows: 999 })], [frozen()]);
+    expect(only).toMatch(/SKIPPED/);
+  });
+
+  test("matches on axis + rows + bytes_per_doc, and reports the count compared", () => {
+    const findings = compareToFrozen(
+      [overlapping(), overlapping({ rows: 512, snapshot_bytes: 1_048_576 })],
+      [frozen(), frozen({ rows: 512, snapshot_bytes: 1_048_576 })],
+    );
+    expect(findings[0]).toContain("(2 shared cells)");
+  });
+
+  test("a same-axis cell with a different bytes_per_doc is NOT a peer", () => {
+    const findings = compareToFrozen([overlapping({ bytes_per_doc: 64 })], [frozen()]);
+    expect(findings[0]).toMatch(/SKIPPED/);
+  });
+
+  test("calls the run suspect when a seeded snapshot_bytes diverges", () => {
+    const findings = compareToFrozen([overlapping({ snapshot_bytes: 999 })], [frozen()]);
+    expect(findings[0]).toContain("DIVERGES");
+    expect(findings[0]).toContain("suspect");
+  });
+
+  test("says SLOWER only when every overlap cell is slower than the baseline", () => {
+    // cpu ratios 1.5 and 2.0 — fastest > 1.
+    const findings = compareToFrozen(
+      [
+        overlapping({ cpu_ms_median: 15 }),
+        overlapping({ rows: 512, snapshot_bytes: 1_048_576, cpu_ms_median: 20 }),
+      ],
+      [frozen(), frozen({ rows: 512, snapshot_bytes: 1_048_576 })],
+    );
+    expect(findings[0]).toContain("THIS HOST IS SLOWER");
+    expect(findings[0]).toContain("conservative");
+  });
+
+  test("says FASTER — and refuses publication — only when every cell is faster", () => {
+    // cpu ratios 0.5 and 0.8 — slowest < 1.
+    const findings = compareToFrozen(
+      [
+        overlapping({ cpu_ms_median: 5 }),
+        overlapping({ rows: 512, snapshot_bytes: 1_048_576, cpu_ms_median: 8 }),
+      ],
+      [frozen(), frozen({ rows: 512, snapshot_bytes: 1_048_576 })],
+    );
+    expect(findings[0]).toContain("THIS HOST IS FASTER");
+    expect(findings[0]).toContain("must not be published as-is");
+  });
+
+  test("straddles when the cells disagree on direction", () => {
+    // cpu ratios 0.5 and 2.0 — neither bound holds.
+    const findings = compareToFrozen(
+      [
+        overlapping({ cpu_ms_median: 5 }),
+        overlapping({ rows: 512, snapshot_bytes: 1_048_576, cpu_ms_median: 20 }),
+      ],
+      [frozen(), frozen({ rows: 512, snapshot_bytes: 1_048_576 })],
+    );
+    expect(findings[0]).toContain("straddles");
+    expect(findings[0]).not.toContain("THIS HOST IS");
+  });
+
+  test("a cell exactly on the baseline straddles rather than claiming a direction", () => {
+    // The boundary the verdict turns on: ratio 1.0 is neither >1 nor <1.
+    const findings = compareToFrozen([overlapping({ cpu_ms_median: 10 })], [frozen()]);
+    expect(findings[0]).toContain("straddles");
   });
 });
 

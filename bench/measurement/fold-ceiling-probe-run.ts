@@ -23,8 +23,11 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
+  type FrozenBaselineCell,
   type ProbeCell,
   buildRecommendation,
+  cellsOf,
+  compareToFrozen,
   referenceLine,
   renderTable,
   runProbeGrid,
@@ -36,120 +39,32 @@ import {
  * (bytes 256 / 512 / 2560 rows at 2048 B/doc, rows 2048 / 8192 / 16384 at
  * 64 B/doc), and comparing them is the only check that the fixture builder, the
  * seed, and the measurement definitions still mean what they meant in June
- * 2026. Don't hand-maintain this count against the grid: `overlapFindings`
+ * 2026. Don't hand-maintain this count against the grid: {@link compareToFrozen}
  * matches on axis + rows + bytes_per_doc and prints the number it actually
  * compared.
  */
 const FROZEN_BASELINE = "docs/spec/attachments/fold-cost-baseline.json";
 
-interface FrozenCell {
-  readonly axis: string;
-  readonly rows: number;
-  readonly bytes_per_doc: number;
-  readonly snapshot_bytes: number;
-  readonly cpu_ms_median: number;
-  readonly peak_bytes_median: number;
-}
-
-/** Range of a ratio series, e.g. `1.42x-2.49x`. */
-const span = (xs: readonly number[]): string =>
-  `${Math.min(...xs).toFixed(2)}x-${Math.max(...xs).toFixed(2)}x`;
-
 /**
- * Narrow a parsed JSON document to its `cells` array, THROWING when it is
- * absent rather than asserting the shape and letting `undefined` through.
+ * Read the frozen baseline and hand it to {@link compareToFrozen}. The read is
+ * all that lives here; the derivation is pure and unit-tested next door.
  *
- * A bare `parsed as { cells: T[] }` succeeds on any valid JSON, so a file
- * without `cells` yields `undefined` typed as an array and defers the failure
- * to the first `.find` / `.length` — as an uncaught `TypeError`, at a call site
- * chosen by luck rather than by the caller. Both readers below want a decision
- * at the read, and they want DIFFERENT decisions: see each call site.
- */
-const cellsOf = <T>(parsed: unknown, source: string): readonly T[] => {
-  const cells = (parsed as { cells?: unknown } | null)?.cells;
-  if (!Array.isArray(cells)) {
-    throw new TypeError(`${source}: expected a "cells" array, got ${typeof cells}`);
-  }
-  return cells as readonly T[];
-};
-
-/**
- * Overlap-cell divergence against the frozen baseline. Computed here rather
- * than in the pure module because it reads a file the pure module must not.
- *
- * `snapshot_bytes` is seeded and MUST match exactly. `peak_bytes_median` is an
- * allocation measurement and should track closely. `cpu_ms_median` is
- * host-specific and is expected to differ — how much it differs is precisely
- * what tells a reader how far to trust this run's CPU-bound verdicts.
+ * Degrades to a SKIP finding, never throws: this runs AFTER the multi-minute
+ * sweep and BEFORE the result file is written, so anything that escapes here
+ * discards every measured cell. The shape check belongs inside the try for
+ * exactly that reason — a baseline that parses but carries no `cells` is a
+ * skippable overlap check, not a lost run. The reuse path in `main` wants the
+ * opposite decision from the same helper; see there.
  */
 const overlapFindings = async (cells: readonly ProbeCell[]): Promise<readonly string[]> => {
-  // Degrade to a SKIP finding, never throw: this runs AFTER the multi-minute
-  // sweep and BEFORE the result file is written, so anything that escapes here
-  // discards every measured cell. The shape check belongs inside the try for
-  // exactly that reason — a baseline that parses but carries no `cells` is a
-  // skippable overlap check, not a lost run.
-  let frozen: readonly FrozenCell[];
+  let frozen: readonly FrozenBaselineCell[];
   try {
     const parsed: unknown = JSON.parse(await readFile(FROZEN_BASELINE, "utf8"));
-    frozen = cellsOf<FrozenCell>(parsed, FROZEN_BASELINE);
+    frozen = cellsOf<FrozenBaselineCell>(parsed, FROZEN_BASELINE);
   } catch (error: unknown) {
     return [`overlap check SKIPPED: could not read ${FROZEN_BASELINE} (${String(error)}).`];
   }
-
-  const mismatched: string[] = [];
-  const cpuRatios: number[] = [];
-  const peakRatios: number[] = [];
-  let compared = 0;
-  for (const cell of cells) {
-    const peer = frozen.find(
-      (f) => f.axis === cell.axis && f.rows === cell.rows && f.bytes_per_doc === cell.bytes_per_doc,
-    );
-    if (peer === undefined) {
-      continue;
-    }
-    compared += 1;
-    if (peer.snapshot_bytes !== cell.snapshot_bytes) {
-      mismatched.push(
-        `${cell.axis}/${cell.label} ${cell.snapshot_bytes} != ${peer.snapshot_bytes}`,
-      );
-    }
-    cpuRatios.push(cell.cpu_ms_median / peer.cpu_ms_median);
-    peakRatios.push(cell.peak_bytes_median / peer.peak_bytes_median);
-  }
-
-  if (compared === 0) {
-    return ["overlap check SKIPPED: no cell in this grid also exists in the frozen baseline."];
-  }
-  const bytesVerdict =
-    mismatched.length === 0
-      ? "snapshot_bytes matches the frozen baseline EXACTLY on all of them (same seed, same builder)"
-      : `snapshot_bytes DIVERGES on ${mismatched.length} cell(s): ${mismatched.join("; ")} — treat this whole run as suspect`;
-  // DERIVED, never transcribed — same rule the probe module states for its own
-  // findings. A literal "THIS HOST IS SLOWER" here would invert the portability
-  // caveat the moment the probe is re-run on faster hardware, in the one string
-  // that tells a reader how far to trust the CPU rows.
-  const slowest = Math.max(...cpuRatios);
-  const fastest = Math.min(...cpuRatios);
-  let direction: string;
-  if (fastest > 1) {
-    direction =
-      "THIS HOST IS SLOWER than the host that produced the baseline, so CPU-bound verdicts " +
-      "(the cf-free rows) are conservative on this hardware";
-  } else if (slowest < 1) {
-    direction =
-      "THIS HOST IS FASTER than the host that produced the baseline, so CPU-bound verdicts " +
-      "(the cf-free rows) are OPTIMISTIC on this hardware and must not be published as-is";
-  } else {
-    direction =
-      "this host straddles the baseline (some cells faster, some slower), so the CPU-bound " +
-      "verdicts (the cf-free rows) are not comparable cell-for-cell";
-  }
-  return [
-    `overlap vs the frozen fold-cost baseline (${compared} shared cells): ${bytesVerdict}. ` +
-      `peak_bytes_median ${span(peakRatios)} of frozen — allocation behaviour is unchanged. ` +
-      `cpu_ms_median ${span(cpuRatios)} of frozen, so ${direction}. CPU-bound verdicts are NOT ` +
-      `portable; the memory-bound verdicts (cf-paid) are.`,
-  ];
+  return compareToFrozen(cells, frozen);
 };
 
 const main = async (): Promise<number> => {
@@ -171,9 +86,14 @@ const main = async (): Promise<number> => {
   } else {
     // Fail FAST here, the opposite of the frozen-baseline read above: this is
     // an operator-supplied path, it is read before any measurement runs, and a
-    // malformed file has nothing to lose by throwing. Feeding an unvalidated
-    // shape into buildRecommendation would instead produce a plausible-looking
-    // record derived from garbage.
+    // malformed file has nothing to lose by throwing.
+    //
+    // The check is array-shaped only. It separates "wrong file" from "our
+    // file"; it does NOT catch a bad cell inside our file — an element missing
+    // `cpu_ms_median` still propagates NaN through the margin math into the
+    // record. That is deliberate: a per-field schema here would be validating
+    // this probe's own serializer against itself, and the operator staring at
+    // the NaN is the one who produced the file a minute earlier.
     const parsed: unknown = JSON.parse(await readFile(reuse, "utf8"));
     cells = cellsOf<ProbeCell>(parsed, reuse);
     console.error(`  re-deriving from ${cells.length} recorded cells in ${reuse} (no measurement)`);
