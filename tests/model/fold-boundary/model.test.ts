@@ -13,7 +13,7 @@ import {
   type ModelLog,
   type ModelRows,
 } from "./model.ts";
-import { arbModelLog, arbPositiveK } from "./arbitraries.ts";
+import { arbModelLog, arbPositiveK, arbReachableState } from "./arbitraries.ts";
 
 const sortedRows = (rows: ModelRows): readonly (readonly [string, number])[] =>
   [...rows.entries()].toSorted(([left], [right]) => left.localeCompare(right));
@@ -141,5 +141,21 @@ describe("fold-boundary reference model", () => {
     expect(sortedRows(snapshotRows)).toEqual([["bravo", 2]]);
     expect(state.manifest).toBe(originalState.manifest);
     expect([...state.snapshots.entries()]).toEqual(originalState.snapshots);
+  });
+
+  test("reachableStateArbitraryNeverPublishesANonAdvancingSnapshot", () => {
+    fc.assert(
+      fc.property(arbReachableState, (state) => {
+        if (state.manifest.logSeqStart === 0) {
+          expect(state.manifest.generation).toBe(0);
+          expect(state.manifest.snapshotKey).toBeNull();
+          expect(state.snapshots.size).toBe(0);
+        } else {
+          expect(state.manifest.generation).toBe(1);
+          expect(state.manifest.snapshotKey).not.toBeNull();
+        }
+      }),
+      { numRuns: 1_000, seed: 20_260_803 },
+    );
   });
 });

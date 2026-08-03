@@ -232,6 +232,48 @@ describe("orphan and reclamation bounds", () => {
     );
   });
 
+  test("scheduler_preservesReferencedSnapshotProvenanceAcrossAnEmptyRestart", () => {
+    const prefix = runSchedule({
+      initial: stateWithTail(15),
+      observers: [
+        action({ observerId: 1, observedTail: 15, k: 5 }),
+        action({ observerId: 2, observedTail: 15, k: 5 }),
+      ],
+    });
+    const restarted = runSchedule({
+      initial: prefix.finalState,
+      priorGenerations: prefix.generations,
+      observers: [],
+    });
+    const [olderSnapshot] = [...prefix.finalState.snapshots.keys()];
+
+    expect(prefix.attempts.map(({ outcome }) => outcome)).toEqual(["written", "written"]);
+    expect(olderSnapshot).toBeDefined();
+    expect(restarted.neverReferencedSnapshots).toEqual([]);
+    expect(restarted.supersededSnapshots).toEqual([olderSnapshot]);
+  });
+
+  test("scheduler_classificationIsInvariantWhenAScheduleIsSplitWithProvenance", () => {
+    const initial = stateWithTail(15);
+    const observers = [
+      action({ observerId: 1, observedTail: 15, k: 5 }),
+      action({ observerId: 2, observedTail: 15, k: 5 }),
+      action({ observerId: 3, observedTail: 15, k: 5 }),
+    ];
+    const uninterrupted = runSchedule({ initial, observers });
+    const prefix = runSchedule({ initial, observers: observers.slice(0, 2) });
+    const resumed = runSchedule({
+      initial: prefix.finalState,
+      priorGenerations: prefix.generations,
+      observers: observers.slice(2),
+    });
+
+    expect(resumed.generations).toEqual(uninterrupted.generations);
+    expect(resumed.neverReferencedSnapshots).toEqual(uninterrupted.neverReferencedSnapshots);
+    expect(resumed.supersededSnapshots).toEqual(uninterrupted.supersededSnapshots);
+    expect(resumed.reclaimableSnapshots).toEqual(uninterrupted.reclaimableSnapshots);
+  });
+
   test("reclamation rejects a missing current snapshot instead of fabricating it", () => {
     const state = stateWithTail(2);
     const missingCurrent: ModelState = {

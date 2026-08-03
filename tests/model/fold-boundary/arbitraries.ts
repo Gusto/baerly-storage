@@ -74,6 +74,8 @@ export const arbReachableState: fc.Arbitrary<ModelState> = arbModelLog.chain((lo
   fc
     .integer({ min: 0, max: log.acknowledgedTail })
     .map((boundary) =>
-      applySnapshot(emptyState(log), makeSnapshot(replayAcknowledged(log, boundary), boundary)),
+      boundary === 0
+        ? emptyState(log)
+        : applySnapshot(emptyState(log), makeSnapshot(replayAcknowledged(log, boundary), boundary)),
     ),
 );

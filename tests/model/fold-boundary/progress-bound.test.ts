@@ -301,4 +301,41 @@ describe("fold publication and progress bounds", () => {
     expect(result.attempts[0]!.cost.probeGets).toBe(101);
     expect(result.attempts[0]!.cost.total).toBeGreaterThan(CF_FREE_BUDGET.subrequestLimit);
   });
+
+  test("scheduler_advancesTailHintAndAmortizesAStaleProbeAcrossSuccessfulPasses", () => {
+    const first = runSchedule({
+      initial: stateWithTail(100, 0),
+      observers: [action({ observedTail: 100, k: 20 })],
+    });
+    const second = runSchedule({
+      initial: first.finalState,
+      observers: [action({ observedTail: 100, k: 20 })],
+    });
+
+    expect(first.attempts[0]!.outcome).toBe("written");
+    expect(first.attempts[0]!.cost.probeGets).toBe(101);
+    expect(first.finalState.manifest.tailHint).toBe(100);
+    expect(second.attempts[0]!.outcome).toBe("written");
+    expect(second.attempts[0]!.cost.probeGets).toBe(1);
+    expect(second.finalState.manifest.tailHint).toBe(100);
+  });
+
+  test("scheduler_neverProbesBelowAPublishedLogFloor", () => {
+    const published = runSchedule({
+      initial: stateWithTail(20, 0),
+      observers: [action({ observedTail: 5, k: 5 })],
+    }).finalState;
+    const staleHintBelowFloor: ModelState = {
+      ...published,
+      manifest: { ...published.manifest, tailHint: 0 },
+    };
+    const result = runSchedule({
+      initial: staleHintBelowFloor,
+      observers: [action({ observedTail: 5, k: 5 })],
+    });
+
+    expect(staleHintBelowFloor.manifest.logSeqStart).toBe(5);
+    expect(result.attempts[0]!.outcome).toBe("below_min_threshold");
+    expect(result.attempts[0]!.cost.probeGets).toBe(1);
+  });
 });

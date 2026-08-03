@@ -95,10 +95,11 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
     manifest,
     snapshots: schedule.state.snapshots,
   };
+  const probeFloor = Math.max(manifest.logSeqStart, manifest.tailHint);
   const prepared = prepareFold({
     state: historicalState,
     observedTail: action.observedTail,
-    probeFloor: manifest.tailHint,
+    probeFloor,
     budget: action.budget,
     k: action.k,
     algorithm: action.algorithm,
@@ -147,6 +148,10 @@ const performAttempt = (schedule: MutableSchedule, action: ObserverAction): Fold
     generation: manifest.generation + 1,
     logSeqStart: snapshot.maxSeq,
     snapshotKey: snapshot.key,
+    tailHint: Math.max(
+      manifest.tailHint,
+      Math.max(0, Math.min(action.observedTail, schedule.state.log.acknowledgedTail)),
+    ),
   };
   schedule.state = { ...schedule.state, manifest: published };
   schedule.generations.push(published);
@@ -185,17 +190,21 @@ const finish = (schedule: MutableSchedule): ScheduleResult => {
   };
 };
 
-const mutableSchedule = (initial: ModelState): MutableSchedule => ({
+const mutableSchedule = (
+  initial: ModelState,
+  priorGenerations: readonly ModelManifest[] = [initial.manifest],
+): MutableSchedule => ({
   state: initial,
   attempts: [],
-  generations: [initial.manifest],
+  generations: [...priorGenerations],
 });
 
 export const runSchedule = (args: {
   readonly initial: ModelState;
+  readonly priorGenerations?: readonly ModelManifest[];
   readonly observers: readonly ObserverAction[];
 }): ScheduleResult => {
-  const schedule = mutableSchedule(args.initial);
+  const schedule = mutableSchedule(args.initial, args.priorGenerations);
   for (const observer of args.observers) {
     schedule.attempts.push(performAttempt(schedule, observer));
   }
