@@ -90,6 +90,12 @@ export const CF_FREE_BUDGET: FoldBudget = {
   minEntriesToCompact: WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
   ceilingBytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes,
   ceilingEntries: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
+  // MODEL ASSUMPTION, not a kernel constant. Every other field above is
+  // imported from `@baerly/protocol`; this one is the Cloudflare Workers Free
+  // plan per-request subrequest cap, a platform limit the kernel does not
+  // model or export. It is what P8f measures the probe cost against, so it is
+  // reported under `modelAssumptions` — never `liveConstants` — in the
+  // evidence payload.
   subrequestLimit: 50,
 };
 
@@ -98,6 +104,9 @@ export const NODE_BUDGET: FoldBudget = {
   minEntriesToCompact: WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
   ceilingBytes: MAINTENANCE_PROFILE_NODE.maxFoldBytes,
   ceilingEntries: MAINTENANCE_PROFILE_NODE.maxFoldRows,
+  // MODEL ASSUMPTION (see CF_FREE_BUDGET above). Self-hosted Node has no
+  // platform subrequest cap; this stands in for "effectively unbounded" so the
+  // Node arm can share one `FoldBudget` shape with the Cloudflare arm.
   subrequestLimit: 10_000,
 };
 

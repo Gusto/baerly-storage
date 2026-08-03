@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -40,7 +41,31 @@ import {
   type ObserverAction,
 } from "./schedule.ts";
 
-const BASE_SHA = "ac3ed48e5bd39aa4a758d05d40a5195e0d84eccc" as const;
+/**
+ * The commit this report was generated from, resolved at run time.
+ *
+ * Deliberately NOT a hardcoded literal. A literal is correct only until the
+ * branch is rebased, and the round-trip assertion at the bottom of this file
+ * compares the emitted value against the same constant — so a stale SHA would
+ * still pass and ship a report attributing results to the wrong commit.
+ * `sourceSha256` pins the bytes that produced the numbers; this pins the
+ * commit those bytes came from.
+ *
+ * Falls back to `"unknown"` rather than throwing: the report's own integrity
+ * does not depend on git being reachable, and a missing SHA is honest whereas
+ * a wrong one is not.
+ */
+const resolveCommitSha = (): string => {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+};
+
 const DETERMINISTIC_SEED = 20260803 as const;
 const K_SWEEP = [8, 16, 20, 32, 64, 200] as const;
 const SYNTHETIC_LOG_LENGTH = 640;
@@ -159,12 +184,21 @@ interface EvidenceCounterexample {
 
 interface EvidencePayload {
   readonly status: "research-only / non-authorizing";
-  readonly baseSha: typeof BASE_SHA;
+  readonly commitSha: string;
   readonly generatedAtUtc: string;
   readonly deterministicSeed: typeof DETERMINISTIC_SEED;
   readonly effectiveFcNumRuns: number;
   readonly nodeVersion: string;
+  /** Values imported from `@baerly/protocol`. Every entry is real kernel state. */
   readonly liveConstants: Readonly<Record<string, number>>;
+  /**
+   * Values the MODEL assumes but the kernel does not export. Kept separate
+   * from `liveConstants` so a reader can tell at a glance which numbers are
+   * sourced from the implementation and which are the model's own premises.
+   */
+  readonly modelAssumptions: Readonly<
+    Record<string, { readonly value: number; readonly source: string }>
+  >;
   readonly modelParameters: {
     readonly kSweep: typeof K_SWEEP;
     readonly syntheticLogLength: number;
@@ -338,6 +372,23 @@ const declaredPropertyIdsInSource = (source: string): readonly string[] => {
   });
 };
 
+/**
+ * Scrape the real `test("P…")` declarations out of the sibling property files.
+ *
+ * This file excludes ITSELF, and that exclusion is load-bearing rather than
+ * merely tidy. `sourceTokens` treats a backtick as opening a span that runs to
+ * the next unescaped backtick; it does not track `${…}` interpolation, so a
+ * NESTED template flips backtick parity for everything after it. This file has
+ * one — the `` `\`${id}\`` `` in `renderMarkdown` — so the tokenizer misreads a
+ * large span of its own body as a single string literal. The sibling property
+ * files contain no nested templates, so they tokenize correctly.
+ *
+ * Keep it that way: if a property file ever grows a nested template, this
+ * scraper will silently stop seeing declarations after it. The failure is loud
+ * (a missing ID fails the two-way set equality against `PROPERTY_CATALOG`
+ * below) but the cause is not obvious, hence this note. The durable fix is a
+ * mode/depth stack in `sourceTokens`.
+ */
 const declaredPropertyIds = async (repoRoot: string): Promise<ReadonlySet<string>> => {
   const propertyTestFiles = SOURCE_FILES.filter(
     (path) => path.endsWith(".test.ts") && !path.endsWith("evidence-report.test.ts"),
@@ -384,7 +435,7 @@ No implementation mechanism is authorized by this report.
 
 ## Provenance
 
-- Base SHA: \`${payload.baseSha}\`
+- Commit SHA: \`${payload.commitSha}\`
 - Generated UTC: \`${payload.generatedAtUtc}\`
 - Deterministic scenario seed: \`${payload.deterministicSeed}\`
 - Effective FC_NUM_RUNS: \`${payload.effectiveFcNumRuns}\`
@@ -909,11 +960,12 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
     reclamation,
   };
   const generatedAtUtc = new Date().toISOString();
+  const generatedFromSha = resolveCommitSha();
   const effectiveFcNumRuns = Number(process.env["FC_NUM_RUNS"] ?? 100);
   expect(Number.isFinite(effectiveFcNumRuns)).toBe(true);
   const payload: EvidencePayload = {
     status: "research-only / non-authorizing",
-    baseSha: BASE_SHA,
+    commitSha: generatedFromSha,
     generatedAtUtc,
     deterministicSeed: DETERMINISTIC_SEED,
     effectiveFcNumRuns,
@@ -927,7 +979,13 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
         MAINTENANCE_PROFILE_CF_FREE.maxFoldEntriesPerPass,
       MAINTENANCE_PROFILE_NODE_MAX_FOLD_ENTRIES_PER_PASS:
         MAINTENANCE_PROFILE_NODE.maxFoldEntriesPerPass,
-      CF_FREE_SUBREQUEST_LIMIT: CF_FREE_BUDGET.subrequestLimit,
+    },
+    modelAssumptions: {
+      cfFreeSubrequestLimit: {
+        value: CF_FREE_BUDGET.subrequestLimit,
+        source:
+          "Cloudflare Workers Free plan per-request subrequest cap. Platform limit, not a kernel constant — @baerly/protocol does not export it.",
+      },
     },
     modelParameters: {
       kSweep: K_SWEEP,
@@ -940,6 +998,7 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
     unresolvedQuestions: [
       "Which K and maintenance-profile policy should be selected for each deployment class?",
       "What K compatibility rule should rolling deployments enforce while old and new observers overlap?",
+      "Does the scheduled fold path need a bounded tail probe, and what should a pass do when the bound is hit — defer the fold, or refresh the tail hint and make partial progress? See the stale-probe-budget-overflow counterexample: the O(gap) probe is hole-tolerant by design, so the writer's O(log gap) galloping tail-find is not a drop-in substitute.",
     ],
     implementationAuthorization:
       "No implementation mechanism is authorized by this research evidence.",
@@ -1010,7 +1069,10 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
   expect(parsed).toEqual(payload);
   expect(readBackMarkdown).toBe(markdown);
   expect(parsed.status).toBe("research-only / non-authorizing");
-  expect(parsed.baseSha).toBe(BASE_SHA);
+  // Shape check, not a round-trip tautology: assert the resolver produced a
+  // real object name (or the honest fallback) before trusting it as provenance.
+  expect(generatedFromSha).toMatch(/^([a-f0-9]{40}|unknown)$/);
+  expect(parsed.commitSha).toBe(generatedFromSha);
   expect(parsed.deterministicSeed).toBe(DETERMINISTIC_SEED);
   expect(parsed.modelParameters.kSweep).toEqual(K_SWEEP);
   expect(parsed.modelParameters.alignmentOrigin).toBe("absolute-sequence-zero");
@@ -1019,7 +1081,7 @@ test("R1_reportIsCollisionSafeSelfConsistentAndTraceableToProperties", async () 
     "No implementation mechanism is authorized by this research evidence.",
   );
   expect(readBackMarkdown).toContain("No implementation mechanism is authorized by this report.");
-  expect(readBackMarkdown).toContain(`Base SHA: \`${BASE_SHA}\``);
+  expect(readBackMarkdown).toContain(`Commit SHA: \`${generatedFromSha}\``);
   expect(readBackMarkdown).toContain("## Deterministic tables");
   expect(readBackMarkdown).toContain("## Counterexamples");
   expect(readBackMarkdown).toContain("## Source SHA-256");
