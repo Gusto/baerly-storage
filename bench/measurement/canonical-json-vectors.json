@@ -82,5 +82,54 @@
     "value": { "a": 1 },
     "canonical": "{\"a\":1}",
     "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+  },
+  {
+    "name": "reject-lone-high-surrogate-root",
+    "placement": "root-string",
+    "encoding": "utf16-code-units",
+    "values": [55296],
+    "reason": "non-ijson-string"
+  },
+  {
+    "name": "reject-lone-low-surrogate-root",
+    "placement": "root-string",
+    "encoding": "utf16-code-units",
+    "values": [56320],
+    "reason": "non-ijson-string"
+  },
+  {
+    "name": "reject-lone-high-surrogate-nested",
+    "placement": "object-value",
+    "encoding": "utf16-code-units",
+    "values": [55296],
+    "reason": "non-ijson-string"
+  },
+  {
+    "name": "reject-lone-low-surrogate-key",
+    "placement": "object-key",
+    "encoding": "utf16-code-units",
+    "values": [56320],
+    "reason": "non-ijson-string"
+  },
+  {
+    "name": "reject-bmp-noncharacter-root",
+    "placement": "root-string",
+    "encoding": "unicode-code-points",
+    "values": [64976],
+    "reason": "non-ijson-string"
+  },
+  {
+    "name": "reject-plane-end-noncharacter-key",
+    "placement": "object-key",
+    "encoding": "unicode-code-points",
+    "values": [65535],
+    "reason": "non-ijson-string"
+  },
+  {
+    "name": "reject-supplementary-noncharacter-root",
+    "placement": "root-string",
+    "encoding": "unicode-code-points",
+    "values": [1114111],
+    "reason": "non-ijson-string"
   }
 ]

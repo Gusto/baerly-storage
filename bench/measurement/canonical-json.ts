@@ -19,6 +19,7 @@ export type CanonicalJsonRejectionReason =
   | "symbol-value"
   | "bigint-value"
   | "non-finite-number"
+  | "non-ijson-string"
   | "non-plain-object"
   | "cyclic-reference"
   | "array-hole"
@@ -71,6 +72,29 @@ const compareUtf16 = (left: string, right: string): number => {
   return 0;
 };
 
+const assertIjsonString = (value: string, path: string): void => {
+  for (let index = 0; index < value.length; index += 1) {
+    const leading = value.charCodeAt(index);
+    let codePoint = leading;
+    if (leading >= 0xd800 && leading <= 0xdbff) {
+      const trailing = value.charCodeAt(index + 1);
+      if (index + 1 >= value.length || trailing < 0xdc00 || trailing > 0xdfff) {
+        reject("non-ijson-string", path);
+      }
+      codePoint = (leading - 0xd800) * 0x400 + trailing - 0xdc00 + 0x10000;
+      index += 1;
+    } else if (leading >= 0xdc00 && leading <= 0xdfff) {
+      reject("non-ijson-string", path);
+    }
+
+    const isNoncharacter =
+      (codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe;
+    if (isNoncharacter) {
+      reject("non-ijson-string", path);
+    }
+  }
+};
+
 const isArrayIndex = (key: string, length: number): boolean => {
   if (key === "0") {
     return length > 0;
@@ -102,6 +126,7 @@ const ownDataProperties = (
       arrayLength !== undefined && isArrayIndex(ownKey, arrayLength)
         ? `${path}[${ownKey}]`
         : propertyPath(path, ownKey);
+    assertIjsonString(ownKey, childPath);
     const descriptor = Object.getOwnPropertyDescriptor(container, ownKey);
     if (descriptor === undefined) {
       throw new CanonicalJsonError("non-plain-object", path);
@@ -149,6 +174,7 @@ const serialize = (value: unknown, path: string, depth: number, ancestors: Set<o
       return JSON.stringify(value) as string;
     }
     case "string": {
+      assertIjsonString(value, path);
       return JSON.stringify(value) as string;
     }
     case "number": {

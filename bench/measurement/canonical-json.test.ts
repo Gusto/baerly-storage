@@ -13,14 +13,32 @@ import {
   sha256Hex,
 } from "./canonical-json.ts";
 
-interface CanonicalJsonVector {
+interface AcceptedCanonicalJsonVector {
   readonly name: string;
   readonly value: CanonicalJsonValue;
   readonly canonical: string;
   readonly sha256: string;
 }
 
+interface RejectedCanonicalJsonVector {
+  readonly name: string;
+  readonly placement: "root-string" | "object-value" | "object-key";
+  readonly encoding: "utf16-code-units" | "unicode-code-points";
+  readonly values: readonly number[];
+  readonly reason: "non-ijson-string";
+}
+
+type CanonicalJsonVector = AcceptedCanonicalJsonVector | RejectedCanonicalJsonVector;
+
 const vectors = vectorsJson as readonly CanonicalJsonVector[];
+
+const isAcceptedVector = (vector: CanonicalJsonVector): vector is AcceptedCanonicalJsonVector =>
+  "canonical" in vector;
+
+const acceptedVectors = vectors.filter(isAcceptedVector);
+const rejectedVectors = vectors.filter(
+  (vector): vector is RejectedCanonicalJsonVector => !isAcceptedVector(vector),
+);
 
 const runtimeValue = (value: unknown): CanonicalJsonValue => value as CanonicalJsonValue;
 
@@ -58,19 +76,82 @@ const normalizeNegativeZero = (value: unknown): unknown => {
   return value;
 };
 
-const hasNoForbiddenKey = (value: unknown): boolean => {
+const isIjsonString = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const leading = value.charCodeAt(index);
+    let codePoint = leading;
+    if (leading >= 0xd800 && leading <= 0xdbff) {
+      const trailing = value.charCodeAt(index + 1);
+      if (index + 1 >= value.length || trailing < 0xdc00 || trailing > 0xdfff) {
+        return false;
+      }
+      codePoint = (leading - 0xd800) * 0x400 + trailing - 0xdc00 + 0x10000;
+      index += 1;
+    } else if (leading >= 0xdc00 && leading <= 0xdfff) {
+      return false;
+    }
+    if ((codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const isAcceptedGeneratedJson = (value: unknown): boolean => {
+  if (typeof value === "string") {
+    return isIjsonString(value);
+  }
   if (Array.isArray(value)) {
-    return value.every(hasNoForbiddenKey);
+    return value.every(isAcceptedGeneratedJson);
   }
   if (value !== null && typeof value === "object") {
     return Object.keys(value).every(
-      (key) => key !== "__proto__" && hasNoForbiddenKey((value as Record<string, unknown>)[key]),
+      (key) =>
+        key !== "__proto__" &&
+        isIjsonString(key) &&
+        isAcceptedGeneratedJson((value as Record<string, unknown>)[key]),
     );
   }
   return true;
 };
 
-const acceptedJsonValue = fc.jsonValue().filter(hasNoForbiddenKey);
+const acceptedJsonValue = fc.jsonValue().filter(isAcceptedGeneratedJson);
+
+const reconstructRejectedString = (vector: RejectedCanonicalJsonVector): string =>
+  vector.encoding === "utf16-code-units"
+    ? String.fromCharCode(...vector.values)
+    : String.fromCodePoint(...vector.values);
+
+const rejectedVectorInput = (
+  vector: RejectedCanonicalJsonVector,
+  value: string,
+): CanonicalJsonValue => {
+  switch (vector.placement) {
+    case "root-string": {
+      return value;
+    }
+    case "object-value": {
+      return { value };
+    }
+    case "object-key": {
+      return { [value]: null };
+    }
+  }
+};
+
+const rejectedVectorPath = (vector: RejectedCanonicalJsonVector, value: string): string => {
+  switch (vector.placement) {
+    case "root-string": {
+      return "$";
+    }
+    case "object-value": {
+      return "$.value";
+    }
+    case "object-key": {
+      return `$[${JSON.stringify(value)}]`;
+    }
+  }
+};
 
 describe("canonical vector contract", () => {
   test("publishes the versioned corpus contract", () => {
@@ -97,12 +178,19 @@ describe("canonical vector contract", () => {
       "proto-adjacent-keys",
       "three-level-nesting",
       "anchor-single-key",
+      "reject-lone-high-surrogate-root",
+      "reject-lone-low-surrogate-root",
+      "reject-lone-high-surrogate-nested",
+      "reject-lone-low-surrogate-key",
+      "reject-bmp-noncharacter-root",
+      "reject-plane-end-noncharacter-key",
+      "reject-supplementary-noncharacter-root",
     ]);
     expect(new Set(vectors.map(({ name }) => name)).size).toBe(vectors.length);
   });
 
   test("serializes and hashes every portable vector", async () => {
-    for (const vector of vectors) {
+    for (const vector of acceptedVectors) {
       const actual = canonicalJson(vector.value);
       expect(actual).toBe(vector.canonical);
       await expect(sha256Hex(actual)).resolves.toBe(vector.sha256);
@@ -111,8 +199,20 @@ describe("canonical vector contract", () => {
   });
 
   test("pins the digest of the produced vector corpus", async () => {
-    const corpus = vectors.map(({ value }) => canonicalJson(value)).join("\n");
+    const corpus = acceptedVectors.map(({ value }) => canonicalJson(value)).join("\n");
     await expect(sha256Hex(corpus)).resolves.toBe(CANONICAL_JSON_VECTOR_CORPUS_DIGEST);
+  });
+
+  test("rejects every portable I-JSON string-domain vector", () => {
+    expect(rejectedVectors).toHaveLength(7);
+    for (const vector of rejectedVectors) {
+      const value = reconstructRejectedString(vector);
+      expectCanonicalError(
+        rejectedVectorInput(vector, value),
+        vector.reason,
+        rejectedVectorPath(vector, value),
+      );
+    }
   });
 
   test("pins an independent SHA-256 anchor for the canonical single-key object", async () => {
@@ -130,8 +230,6 @@ describe("canonical serialization", () => {
     ["", '""'],
     ["é😀", '"é😀"'],
     ["\u0000\b\t\n\f\r", '"\\u0000\\b\\t\\n\\f\\r"'],
-    ["\ud800", '"\\ud800"'],
-    ["\udc00", '"\\udc00"'],
     [0, "0"],
     [1.5, "1.5"],
     [4.5, "4.5"],
@@ -150,6 +248,12 @@ describe("canonical serialization", () => {
   test("normalizes negative zero to the canonical number zero", () => {
     expect(canonicalJson(-0)).toBe("0");
     expect(canonicalJson({ nested: [-0] })).toBe('{"nested":[0]}');
+  });
+
+  test("preserves valid UTF-16 surrogate pairs in values and property names", () => {
+    const validPair = String.fromCharCode(0xd83d, 0xde00);
+    expect(canonicalJson(validPair)).toBe('"😀"');
+    expect(canonicalJson({ [validPair]: validPair })).toBe('{"😀":"😀"}');
   });
 
   test("sorts keys by UTF-16 code unit at every object depth", () => {
@@ -315,7 +419,7 @@ describe("deterministic rejections", () => {
 describe("canonical properties", () => {
   propertyTest.prop({
     value: fc.dictionary(
-      fc.string().filter((key) => key !== "__proto__"),
+      fc.string().filter((key) => key !== "__proto__" && isIjsonString(key)),
       acceptedJsonValue,
     ),
   })("permuting object insertion order preserves canonical bytes", ({ value }) => {
@@ -345,7 +449,7 @@ describe("canonical properties", () => {
   });
 
   propertyTest.prop({ value: fc.anything() })(
-    "arbitrary JavaScript values return canonical bytes or a canonical error",
+    "generated ordinary non-Proxy JavaScript values return canonical bytes or a canonical error",
     ({ value }) => {
       try {
         expect(typeof canonicalJson(runtimeValue(value))).toBe("string");
@@ -385,6 +489,16 @@ describe("SHA-256 framing", () => {
     await expect(promise).rejects.toMatchObject({
       code: "CanonicalJsonError",
       reason: "undefined-value",
+      path: "$",
+    });
+  });
+
+  test("hashCanonicalJson rejects a non-I-JSON string asynchronously", async () => {
+    const promise = hashCanonicalJson(String.fromCharCode(0xd800));
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toMatchObject({
+      code: "CanonicalJsonError",
+      reason: "non-ijson-string",
       path: "$",
     });
   });
