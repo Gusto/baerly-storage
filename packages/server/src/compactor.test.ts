@@ -811,9 +811,9 @@ describe("compact", () => {
       26, 27, 28, 29, 30, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
       21, 22, 23, 24, 25, 26, 27, 28, 29,
     ]);
-    // current.json snapshot pointer is unchanged.
+    // The entire current.json head is unchanged after the lost CAS.
     const after = await readCurrentJson(inner, KEY);
-    expect(after!.json.snapshot).toBeNull();
+    expect(after).toEqual(before);
     // The metric was emitted by the COMPACTOR (not the runner).
     const snap = ctx.recorder.snapshot();
     expect(snap.counters.filter((c) => c.name === "db.compaction.cas_lost_total")).toEqual([
