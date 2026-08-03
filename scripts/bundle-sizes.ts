@@ -239,7 +239,12 @@ export async function measureSnapshotEntries(
  */
 const AXIS_LABEL: Record<Axis, string> = { raw: "raw", gz: "gz", minGz: "min-gz" };
 
-function formatViolation(v: Violation, floorBytes: number): string {
+/**
+ * The gate's failure output. Exported so its shape is pinned by test: a green
+ * run never reaches it, so nothing else exercises the one text an author is
+ * guaranteed to read.
+ */
+export function formatViolation(v: Violation, floorBytes: number): string {
   const axis = AXIS_LABEL[v.axis];
   if (v.kind === "ceiling") {
     return [
