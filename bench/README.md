@@ -16,11 +16,12 @@ Two harnesses live under `bench/`:
 | `bench/r2-contention.ts` | CAS-storm 412/429 rates on one `current.json`; validates the idle-reader bound on the wire | When changing `packages/server/src/writer.ts`, coordination primitives, or retry policy |
 | `bench/load-harness/` | Object-storage ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model. `--variant=node-gcs` (gated on `GCS=1` + `credentials/gcs.json`) is the source of the measured GCS write-amp behind the GCS row in [docs/about/cost-model.md](../docs/about/cost-model.md#cost-vs-scale-table) | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 | `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/about/graduation.md](../docs/about/graduation.md) |
+| `bench/measurement/fold-ceiling-probe-run.ts` | How far above today's `C` / `E` a fold still fits each host profile's CPU + memory budget, at 2× / 4× / 7× safety margins. Reuses the `fold-cost.ts` fixture verbatim so cells stay comparable to its frozen baseline. No infra (MemoryStorage). MEASURES ONLY. **No checked-in baseline yet** — its sampling and axis-aggregation methodology is unresolved; read the caveats in the section below before promoting any output. | When revisiting whether `C` / `E` can be raised on a more capable host |
 | `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + snapshot-over-ceiling minutes) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. Verdict is per-axis (tail + objects) then combined. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
 | `bench/amortized-write-cost.ts` | Amortized BILLABLE Class A ops (PUT+LIST; DeleteObject is $0) per logical write, INCLUDING in-band maintenance (folds + GC), across workload shapes × profile (cf-free / node). Source of truth for the write-amp constants in the cost CLI + the effective-write-amp claim in docs/about/cost-model.md. No infra (MemoryStorage). MEASURES ONLY. | When revisiting the write-amplification claim or the cost-CLI projection |
 | `bench/write-amp-stress.ts` | STRESS variant of `amortized-write-cost.ts`: drives pathological churn workloads (100%-update tiny set, unbounded insert growth, 500-doc full rewrite) under aggressive in-band maintenance to find the PEAK billable Class A ops per logical write. Tracks `peak_billable_class_a_per_write` (single-writer; the route past ~4× is a CAS-retry storm, governed by the throughput ceiling, not measured here). Backs the "peaks ~4×, never reaches the retired >6 trigger" claim. No infra (MemoryStorage). MEASURES ONLY. Baseline at `docs/spec/attachments/amortized-write-cost-stress-baseline.json`. | When revisiting whether the retired `write-amp > 6` graduation trigger could ever fire |
 | `bench/collection-fanout.ts` | Storage op cost of `discoverCollections` (LIST count) + full `admin usage` scan (LIST + GET count) vs. N collections under one tenant prefix, measured via a counting Storage proxy on MemoryStorage. No infra. MEASURES ONLY — re-derives the collections/tenant fan-out limit. A checked-in baseline lives at `docs/spec/attachments/collection-fanout-baseline.json`. | When revisiting the collections/tenant fan-out limit in docs/about/graduation.md or docs/about/workload-fit.md |
-| `bench/measurement/` | Not a harness — the shared measurement **library** the harnesses above build on. `statistics.ts` holds the algorithm-tagged summaries (quantiles, MAD, three bootstraps, two binomial upper bounds, OLS via Householder QR), each carrying its algorithm tag and every parameter that determined the number. `storage-journal.ts` and `storage-factory.ts` hold the recording and isolation seam: a timer-free `Storage` decorator producing an ordered operation journal plus an exact namespace journal, and a per-attempt backend lease whose cleanup authority is one in-memory instance, one `mkdtemp` root, or an explicit key list. Pure; no infra. | When a bench emits a `p95`, a confidence interval, or a regression coefficient; or when it needs a recorded, disposable backend rather than a shared one |
+| `bench/measurement/` | Not a harness — the shared measurement **library** the harnesses above build on. `statistics.ts` holds the algorithm-tagged summaries (quantiles, MAD, three bootstraps, two binomial upper bounds, OLS via Householder QR), each carrying its algorithm tag and every parameter that determined the number. `storage-journal.ts` and `storage-factory.ts` hold the recording and isolation seam: a timer-free `Storage` decorator producing an ordered operation journal plus an exact namespace journal, and a per-attempt backend lease whose cleanup authority is one in-memory instance, one `mkdtemp` root, or an explicit key list. `fold-ceiling-probe.ts` is the pure half of the fold-ceiling probe. All pure; no infra — the directory's one script is `fold-ceiling-probe-run.ts` (`pnpm bench:fold-ceiling`). | When a bench emits a `p95`, a confidence interval, or a regression coefficient; or when it needs a recorded, disposable backend rather than a shared one |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
@@ -193,9 +194,14 @@ The key derived fields:
 
 ## bench/measurement/
 
-The one place a bench summarizes numbers. Not runnable — a pure library
-(`statistics.ts`) with no I/O, no clock read, and one import: the
+The one place a bench summarizes numbers. `statistics.ts` is a pure
+library — not runnable, no I/O, no clock read, and one import: the
 repository's canonical Mulberry32 PRNG.
+
+`fold-ceiling-probe.ts` sits alongside it and splits the same way: the
+module itself is pure and has no module-scope side effects, and
+`fold-ceiling-probe-run.ts` is the runnable half wired to
+`pnpm bench:fold-ceiling`. Its own section is below.
 
 Every function returns its result **tagged**: the algorithm identifier
 plus every parameter that determined the number — seed, resample count,
@@ -371,6 +377,54 @@ find where the CPU / memory budget of a target host intersects the grid
 This bench **measures only**: it never moves `C`, `E`, or any constant.
 Re-sizing the ceilings off these numbers is an explicitly deferred later
 phase.
+
+## bench/measurement/fold-ceiling-probe.ts
+
+Extends `fold-cost.ts` past today's ceilings: for each host profile
+(cf-free / cf-paid / node) and each safety margin (2× / 4× / 7×), how
+large could `C` and `E` be before the fold stops fitting the profile's
+CPU and memory budget? Reuses `bench/lib/fold-fixture.ts` verbatim —
+same seed, same tail, same measurement definitions — so its cells are
+directly comparable to the frozen `fold-cost` baseline, and the runner
+prints an overlap check against that baseline as a calibration signal.
+
+```sh
+BAERLY_SUBJECT_COMMIT=$(git rev-parse HEAD) pnpm bench:fold-ceiling
+```
+
+Takes minutes. **Run it on an otherwise-idle machine** — a contended run
+produces a non-monotonic CPU column, and the large cells discard a high
+fraction of peak samples to GC (see the flooring note under `fold-cost.ts`
+above). Set `BAERLY_FOLD_CEILING_CELLS=<record.json>` to re-derive a
+record from an existing run's cells without re-measuring; everything in
+the record except `cells` is a pure function of them.
+
+One timestamped JSON per run lands in `bench/results/fold-ceiling/`
+(gitignored). **There is deliberately no checked-in baseline yet.** Three
+methodology issues have to be resolved, and the grid re-run on a quiesced
+machine, before any output of this probe is promoted to
+`docs/spec/attachments/` or cited anywhere:
+
+- **No minimum usable-sample floor.** `runCell` keeps the filtered median
+  whenever _any_ sample survives `isPeakSampleUsable`, so a cell that
+  discarded 7 of its 9 iterations reports a median over 2 samples with
+  nothing in the record marking it as thin. The filter is also one-sided:
+  it drops fully-floored samples and keeps partially-floored ones.
+- **`largestSustainable` aggregates with `Math.max`.** That answers "the
+  largest row count for which _some_ tested configuration fits", where a
+  safety ceiling wants "…for which _all_ tested configurations fit". A
+  cross-axis cell can credit a row count whose own rows-axis cell fails
+  the same budget.
+- **`binding_axis` is derived from an axis-mixed sort.** Rows-axis cells
+  are byte-small but allocation-expensive, so they sort early and win
+  `firstMiss`, letting one scalar annotate two independent verdicts.
+
+Also read `todayHeadroom` with care: `nearestAtOrBelow` falls back to the
+lowest cell when none is at or below the limit, and no bytes-axis cell
+currently lands under `C` (the smallest measures 532300 against a 524288
+ceiling), so "at today's `C`" is reported from a cell ~1.5% above it.
+
+This probe **measures only**: it never moves `C`, `E`, or any constant.
 
 ## bench/maintenance-backlog.ts
 
