@@ -1,0 +1,424 @@
+{
+  "schema": "baerly.fold-ceiling-probe/v1",
+  "subject_commit": "6523ec699e26f8ad9661a878d3abe958165cea44",
+  "node_version": "v24.16.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "todays_ceilings": {
+    "c_bytes": 524288,
+    "e_rows": 2048
+  },
+  "budgets": [
+    {
+      "profile": "cf-free",
+      "cpu_ms": 10,
+      "memory_bytes": 134217728,
+      "source": "graduation.md — ~10 ms CPU/request, 128 MB isolate"
+    },
+    {
+      "profile": "cf-paid",
+      "cpu_ms": 30000,
+      "memory_bytes": 134217728,
+      "source": "graduation.md — 30 s CPU default, ~128 MB Worker memory (memory is the wall)"
+    },
+    {
+      "profile": "node",
+      "cpu_ms": 30000,
+      "memory_bytes": 536870912,
+      "source": "ASSUMPTION, not a platform limit: a modest 512 MB container, 30 s request budget"
+    }
+  ],
+  "margins": [
+    2,
+    4,
+    7
+  ],
+  "cells": [
+    {
+      "axis": "bytes",
+      "label": "512KB",
+      "rows": 256,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 532300,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 3.523,
+      "peak_bytes_median": 2485500,
+      "peak_over_snapshot": 4.669359383806125,
+      "peak_samples_discarded": 1
+    },
+    {
+      "axis": "bytes",
+      "label": "1MB",
+      "rows": 512,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 1064524,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 6.087,
+      "peak_bytes_median": 3167144,
+      "peak_over_snapshot": 2.9751738805325196,
+      "peak_samples_discarded": 0
+    },
+    {
+      "axis": "bytes",
+      "label": "2MB",
+      "rows": 1024,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 2128973,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 11.024,
+      "peak_bytes_median": 5684208,
+      "peak_over_snapshot": 2.66992958576741,
+      "peak_samples_discarded": 1
+    },
+    {
+      "axis": "bytes",
+      "label": "3MB",
+      "rows": 1536,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 3193421,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 14.499,
+      "peak_bytes_median": 8230608,
+      "peak_over_snapshot": 2.577363899091288,
+      "peak_samples_discarded": 0
+    },
+    {
+      "axis": "bytes",
+      "label": "4MB",
+      "rows": 2048,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 4257869,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 28.356,
+      "peak_bytes_median": 10051248,
+      "peak_over_snapshot": 2.3606287558400694,
+      "peak_samples_discarded": 0
+    },
+    {
+      "axis": "bytes",
+      "label": "5MB",
+      "rows": 2560,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 5322317,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 63.73,
+      "peak_bytes_median": 12606196,
+      "peak_over_snapshot": 2.368554146624487,
+      "peak_samples_discarded": 1
+    },
+    {
+      "axis": "bytes",
+      "label": "8MB",
+      "rows": 4096,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 8515661,
+      "tail_entries": 100,
+      "iterations": 9,
+      "cpu_ms_median": 121.564,
+      "peak_bytes_median": 19767960,
+      "peak_over_snapshot": 2.3213653056409833,
+      "peak_samples_discarded": 3
+    },
+    {
+      "axis": "bytes",
+      "label": "16MB",
+      "rows": 8192,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 17031245,
+      "tail_entries": 100,
+      "iterations": 9,
+      "cpu_ms_median": 285.349,
+      "peak_bytes_median": 38327800,
+      "peak_over_snapshot": 2.2504402937072423,
+      "peak_samples_discarded": 6
+    },
+    {
+      "axis": "bytes",
+      "label": "32MB",
+      "rows": 16384,
+      "bytes_per_doc": 2048,
+      "snapshot_bytes": 34062414,
+      "tail_entries": 100,
+      "iterations": 9,
+      "cpu_ms_median": 367.352,
+      "peak_bytes_median": 76763232,
+      "peak_over_snapshot": 2.2536051613957837,
+      "peak_samples_discarded": 6
+    },
+    {
+      "axis": "rows",
+      "label": "2048 rows",
+      "rows": 2048,
+      "bytes_per_doc": 64,
+      "snapshot_bytes": 232287,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 3.42,
+      "peak_bytes_median": 1786952,
+      "peak_over_snapshot": 7.692862708631994,
+      "peak_samples_discarded": 0
+    },
+    {
+      "axis": "rows",
+      "label": "8192 rows",
+      "rows": 8192,
+      "bytes_per_doc": 64,
+      "snapshot_bytes": 928947,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 9.746,
+      "peak_bytes_median": 6508296,
+      "peak_over_snapshot": 7.006100455677235,
+      "peak_samples_discarded": 3
+    },
+    {
+      "axis": "rows",
+      "label": "16384 rows",
+      "rows": 16384,
+      "bytes_per_doc": 64,
+      "snapshot_bytes": 1857834,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 18.345,
+      "peak_bytes_median": 10465112,
+      "peak_over_snapshot": 5.632963978482469,
+      "peak_samples_discarded": 0
+    },
+    {
+      "axis": "rows",
+      "label": "32768 rows",
+      "rows": 32768,
+      "bytes_per_doc": 64,
+      "snapshot_bytes": 3715572,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 29.577,
+      "peak_bytes_median": 20660040,
+      "peak_over_snapshot": 5.560392854720619,
+      "peak_samples_discarded": 4
+    },
+    {
+      "axis": "rows",
+      "label": "65536 rows",
+      "rows": 65536,
+      "bytes_per_doc": 64,
+      "snapshot_bytes": 7431356,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 80.119,
+      "peak_bytes_median": 41183200,
+      "peak_over_snapshot": 5.541814979661854,
+      "peak_samples_discarded": 6
+    },
+    {
+      "axis": "rows",
+      "label": "131072 rows",
+      "rows": 131072,
+      "bytes_per_doc": 64,
+      "snapshot_bytes": 14862044,
+      "tail_entries": 100,
+      "iterations": 9,
+      "cpu_ms_median": 451.195,
+      "peak_bytes_median": 43726064,
+      "peak_over_snapshot": 2.942129898148599,
+      "peak_samples_discarded": 3
+    },
+    {
+      "axis": "cross",
+      "label": "4k x 1KB",
+      "rows": 4096,
+      "bytes_per_doc": 1024,
+      "snapshot_bytes": 4321357,
+      "tail_entries": 100,
+      "iterations": 11,
+      "cpu_ms_median": 18.581,
+      "peak_bytes_median": 10787520,
+      "peak_over_snapshot": 2.4963269639606263,
+      "peak_samples_discarded": 3
+    },
+    {
+      "axis": "cross",
+      "label": "16k x 512B",
+      "rows": 16384,
+      "bytes_per_doc": 512,
+      "snapshot_bytes": 8896590,
+      "tail_entries": 100,
+      "iterations": 9,
+      "cpu_ms_median": 48.117,
+      "peak_bytes_median": 27213144,
+      "peak_over_snapshot": 3.0588286073652937,
+      "peak_samples_discarded": 1
+    },
+    {
+      "axis": "cross",
+      "label": "65k x 256B",
+      "rows": 65536,
+      "bytes_per_doc": 256,
+      "snapshot_bytes": 18808910,
+      "tail_entries": 100,
+      "iterations": 9,
+      "cpu_ms_median": 415.667,
+      "peak_bytes_median": 25338188,
+      "peak_over_snapshot": 1.3471375002591857,
+      "peak_samples_discarded": 7
+    }
+  ],
+  "today_headroom": [
+    {
+      "profile": "cf-free",
+      "at_c_cpu_ms": 3.523,
+      "at_c_peak_bytes": 2485500,
+      "at_e_cpu_ms": 3.42,
+      "at_e_peak_bytes": 1786952,
+      "cpu_margin_at_c": 2.838489923360772,
+      "cpu_margin_at_e": 2.9239766081871346,
+      "memory_margin_at_c": 54.000292898813115,
+      "memory_margin_at_e": 75.10986752861857
+    },
+    {
+      "profile": "cf-paid",
+      "at_c_cpu_ms": 3.523,
+      "at_c_peak_bytes": 2485500,
+      "at_e_cpu_ms": 3.42,
+      "at_e_peak_bytes": 1786952,
+      "cpu_margin_at_c": 8515.469770082316,
+      "cpu_margin_at_e": 8771.929824561405,
+      "memory_margin_at_c": 54.000292898813115,
+      "memory_margin_at_e": 75.10986752861857
+    },
+    {
+      "profile": "node",
+      "at_c_cpu_ms": 3.523,
+      "at_c_peak_bytes": 2485500,
+      "at_e_cpu_ms": 3.42,
+      "at_e_peak_bytes": 1786952,
+      "cpu_margin_at_c": 8515.469770082316,
+      "cpu_margin_at_e": 8771.929824561405,
+      "memory_margin_at_c": 216.00117159525246,
+      "memory_margin_at_e": 300.43947011447426
+    }
+  ],
+  "sustainable": [
+    {
+      "profile": "cf-free",
+      "margin": 2,
+      "max_c_bytes": 532300,
+      "max_e_rows": 2048,
+      "binding_axis": "cpu",
+      "c_multiple_of_today": 1.0152816772460938,
+      "e_multiple_of_today": 1
+    },
+    {
+      "profile": "cf-free",
+      "margin": 4,
+      "max_c_bytes": null,
+      "max_e_rows": null,
+      "binding_axis": "none",
+      "c_multiple_of_today": null,
+      "e_multiple_of_today": null
+    },
+    {
+      "profile": "cf-free",
+      "margin": 7,
+      "max_c_bytes": null,
+      "max_e_rows": null,
+      "binding_axis": "none",
+      "c_multiple_of_today": null,
+      "e_multiple_of_today": null
+    },
+    {
+      "profile": "cf-paid",
+      "margin": 2,
+      "max_c_bytes": 17031245,
+      "max_e_rows": 131072,
+      "binding_axis": "memory",
+      "c_multiple_of_today": 32.48452186584473,
+      "e_multiple_of_today": 64
+    },
+    {
+      "profile": "cf-paid",
+      "margin": 4,
+      "max_c_bytes": 8515661,
+      "max_e_rows": 65536,
+      "binding_axis": "memory",
+      "c_multiple_of_today": 16.242334365844727,
+      "e_multiple_of_today": 32
+    },
+    {
+      "profile": "cf-paid",
+      "margin": 7,
+      "max_c_bytes": 5322317,
+      "max_e_rows": 16384,
+      "binding_axis": "memory",
+      "c_multiple_of_today": 10.151514053344727,
+      "e_multiple_of_today": 8
+    },
+    {
+      "profile": "node",
+      "margin": 2,
+      "max_c_bytes": 34062414,
+      "max_e_rows": 131072,
+      "binding_axis": "grid-exhausted",
+      "c_multiple_of_today": 64.96889877319336,
+      "e_multiple_of_today": 64
+    },
+    {
+      "profile": "node",
+      "margin": 4,
+      "max_c_bytes": 34062414,
+      "max_e_rows": 131072,
+      "binding_axis": "grid-exhausted",
+      "c_multiple_of_today": 64.96889877319336,
+      "e_multiple_of_today": 64
+    },
+    {
+      "profile": "node",
+      "margin": 7,
+      "max_c_bytes": 17031245,
+      "max_e_rows": 131072,
+      "binding_axis": "memory",
+      "c_multiple_of_today": 32.48452186584473,
+      "e_multiple_of_today": 64
+    }
+  ],
+  "findings": [
+    "cf-free: at today's C the fold costs 3.52 ms and 2.37 MB peak — 2.8x CPU margin, 54.0x memory margin. At today's E it costs 3.42 ms and 1.70 MB peak — 2.9x CPU, 75.1x memory.",
+    "cf-paid: at today's C the fold costs 3.52 ms and 2.37 MB peak — 8515.5x CPU margin, 54.0x memory margin. At today's E it costs 3.42 ms and 1.70 MB peak — 8771.9x CPU, 75.1x memory.",
+    "node: at today's C the fold costs 3.52 ms and 2.37 MB peak — 8515.5x CPU margin, 216.0x memory margin. At today's E it costs 3.42 ms and 1.70 MB peak — 8771.9x CPU, 300.4x memory.",
+    "bytes axis: the cost-per-MB knee is REAL and starts between 3.05 MB (4.76 ms/MB) and 4.06 MB (6.98 ms/MB). Series, ms/MB: 512KB=6.9, 1MB=6.0, 2MB=5.4, 3MB=4.8, 4MB=7.0, 5MB=12.6, 8MB=15.0, 16MB=17.6, 32MB=11.3.",
+    "cf-paid @2x margin: C 16.24 MB (32.5x today), E 131072 rows (64.0x today), bound by memory — wall.",
+    "cf-paid @4x margin: C 8.12 MB (16.2x today), E 65536 rows (32.0x today), bound by memory — wall.",
+    "cf-paid @7x margin: C 5.08 MB (10.2x today), E 16384 rows (8.0x today), bound by memory — wall.",
+    "cross 4k x 1KB (4096 rows x 1024 B, 4.12 MB) vs the nearest bytes-axis cell 4MB (2048 rows x 2048 B, 4.06 MB): CPU 18.6 ms vs 28.4 ms (0.66x), peak 10.29 MB vs 9.59 MB (1.07x). peak/snapshot 2.50 vs 2.36.",
+    "cross 16k x 512B (16384 rows x 512 B, 8.48 MB) vs the nearest bytes-axis cell 8MB (4096 rows x 2048 B, 8.12 MB): CPU 48.1 ms vs 121.6 ms (0.40x), peak 25.95 MB vs 18.85 MB (1.38x). peak/snapshot 3.06 vs 2.32.",
+    "cross 65k x 256B (65536 rows x 256 B, 17.94 MB) vs the nearest bytes-axis cell 16MB (8192 rows x 2048 B, 16.24 MB): CPU 415.7 ms vs 285.3 ms (1.46x), peak 24.16 MB vs 36.55 MB (0.66x). peak/snapshot 1.35 vs 2.25.",
+    "peak-sample hygiene: 13 of 18 cells lost at least one GC-floored peak sample (see isPeakSampleUsable); worst cell dropped 7 of its samples. CPU is unaffected — cpuUsage() deltas have no baseline to float.",
+    "overlap vs the frozen fold-cost baseline (6 shared cells): snapshot_bytes matches the frozen baseline EXACTLY on all of them (same seed, same builder). peak_bytes_median 0.95x-1.05x of frozen — allocation behaviour is unchanged. cpu_ms_median 1.42x-2.49x of frozen, so THIS HOST IS SLOWER than the host that produced the baseline. CPU-bound verdicts (the cf-free rows) are therefore conservative on this hardware and are NOT portable; the memory-bound verdicts (cf-paid) are."
+  ],
+  "recommended_changes": [
+    {
+      "file": "packages/protocol/src/constants.ts",
+      "change": "Give MAINTENANCE_PROFILE_CF_PAID and MAINTENANCE_PROFILE_NODE their own maxFoldBytes/maxFoldRows instead of sharing the CF-free values. See the `sustainable` table for the measured room at each margin.",
+      "owner": "Protocol owner",
+      "blocked_by": "worktree-fix-issue-74-readpreimage-floor holds packages/protocol/src/constants.ts (locked live session)"
+    },
+    {
+      "file": "packages/server/src/maintenance.ts",
+      "change": "`E` has no operator override: the profile read takes `args.maxFoldBytes ?? profile.maxFoldBytes` for C but plain `profile.maxFoldRows` for E. Add BAERLY_MAINTENANCE_MAX_FOLD_ROWS to mirror the C override. (Manifest §11 item 6.)",
+      "owner": "Protocol owner",
+      "blocked_by": null
+    },
+    {
+      "file": "docs/about/graduation.md",
+      "change": "The `≈ 11 ms CPU per MB` model and the `1 MB | ~11 ms` table row overstate measured cost. Restate against measurement, or mark the model as a deliberate upper bound and say so.",
+      "owner": "Performance owner (graduation.md is a §6.2-owned product doc)",
+      "blocked_by": null
+    }
+  ]
+}
