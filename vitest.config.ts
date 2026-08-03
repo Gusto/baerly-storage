@@ -42,6 +42,7 @@ import { IS_CI } from "./tests/setup/ci.ts";
 // enough headroom for Minio at default `FC_NUM_RUNS=100`.
 const isRandomize =
   process.env["FC_NUM_RUNS"] !== undefined && Number(process.env["FC_NUM_RUNS"]) > 1_000;
+const isRandomizeCommand = process.env["BAERLY_RANDOMIZE"] === "1";
 const isMinio = process.env["MINIO"] === "1";
 // CI runners (GitHub-hosted `ubuntu-latest` is 2 vCPUs) are markedly slower
 // than dev machines, and under `pool: forks` the full suite contends hard for
@@ -90,6 +91,19 @@ const exportSmokeExclude = process.env["EXPORT_SMOKE"] === "1" ? [] : ["**/expor
 // `describe.runIf(...)` — double-gating mirrors `exportSmokeExclude`.
 const dayOneExclude =
   process.env["DAY_ONE_TARGETS"] !== undefined ? [] : ["**/day-one-handshake.test.ts"];
+
+// Vitest 4.1.10 parses repeatable CLI `--exclude` flags, but inline projects
+// do not inherit them when `--project=default` is selected. Keep the flags on
+// `test:randomize` as the command contract and mirror them into this project's
+// actual exclusion list. The script-only marker avoids excluding the dedicated
+// crash fuzzer, which also sets FC_NUM_RUNS=10000.
+const randomizeExclude = isRandomizeCommand
+  ? [
+      "tests/integration/maintenance-crash-fuzz.test.ts",
+      "tests/integration/maintenance-profile-equivalence.test.ts",
+      "tests/integration/maintenance-e2e.test.ts",
+    ]
+  : [];
 
 // The R2 binding conformance entry lives at
 // `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`
@@ -190,6 +204,7 @@ export default defineConfig({
             ...conformanceExclude,
             ...exportSmokeExclude,
             ...dayOneExclude,
+            ...randomizeExclude,
             // CF adapter has its own project; don't double-run.
             r2BindingConformanceGlob,
             r2BindingRandomizedGlob,
