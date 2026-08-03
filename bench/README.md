@@ -1,8 +1,8 @@
 ---
 title: Bench harnesses
 audience: coder
-summary: Two bench harnesses under bench/ — r2-contention.ts and load-harness/. When to run each, how to read results, DuckDB analysis pattern, and green-light criteria.
-last-reviewed: 2026-05-12
+summary: The bench harnesses under bench/, plus the shared statistics library in bench/measurement/. When to run each, how to read results, DuckDB analysis pattern, and green-light criteria.
+last-reviewed: 2026-08-02
 tags: [bench, performance, cost-model]
 related: ["../docs/about/cost-model.md", "../tests/integration/maintenance-e2e.test.ts"]
 ---
@@ -20,6 +20,7 @@ Two harnesses live under `bench/`:
 | `bench/amortized-write-cost.ts` | Amortized BILLABLE Class A ops (PUT+LIST; DeleteObject is $0) per logical write, INCLUDING in-band maintenance (folds + GC), across workload shapes × profile (cf-free / node). Source of truth for the write-amp constants in the cost CLI + the effective-write-amp claim in docs/about/cost-model.md. No infra (MemoryStorage). MEASURES ONLY. | When revisiting the write-amplification claim or the cost-CLI projection |
 | `bench/write-amp-stress.ts` | STRESS variant of `amortized-write-cost.ts`: drives pathological churn workloads (100%-update tiny set, unbounded insert growth, 500-doc full rewrite) under aggressive in-band maintenance to find the PEAK billable Class A ops per logical write. Tracks `peak_billable_class_a_per_write` (single-writer; the route past ~4× is a CAS-retry storm, governed by the throughput ceiling, not measured here). Backs the "peaks ~4×, never reaches the retired >6 trigger" claim. No infra (MemoryStorage). MEASURES ONLY. Baseline at `docs/spec/attachments/amortized-write-cost-stress-baseline.json`. | When revisiting whether the retired `write-amp > 6` graduation trigger could ever fire |
 | `bench/collection-fanout.ts` | Storage op cost of `discoverCollections` (LIST count) + full `admin usage` scan (LIST + GET count) vs. N collections under one tenant prefix, measured via a counting Storage proxy on MemoryStorage. No infra. MEASURES ONLY — re-derives the collections/tenant fan-out limit. A checked-in baseline lives at `docs/spec/attachments/collection-fanout-baseline.json`. | When revisiting the collections/tenant fan-out limit in docs/about/graduation.md or docs/about/workload-fit.md |
+| `bench/measurement/` | Not a harness — the algorithm-tagged statistics **library** the harnesses above summarize their results with. Quantiles, MAD, three bootstraps, two binomial upper bounds, and OLS via Householder QR, each carrying its algorithm tag and every parameter that determined the number. Pure; no infra; no runnable entry point. | When a bench emits a `p95`, a confidence interval, or a regression coefficient — import from here rather than hand-rolling one |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
 for the Minio-backed variants. Neither is a per-PR CI gate. The
@@ -189,6 +190,60 @@ The key derived fields:
   (which is total bytes written / logical bytes written and is
   always `>= 1`); this is a within-compaction
   output/input ratio.
+
+## bench/measurement/
+
+The one place a bench summarizes numbers. Not runnable — a pure library
+(`statistics.ts`) with no I/O, no clock read, and one import: the
+repository's canonical Mulberry32 PRNG.
+
+Every function returns its result **tagged**: the algorithm identifier
+plus every parameter that determined the number — seed, resample count,
+confidence, inclusion unit, statistic selector, design columns. A study
+therefore cannot emit a bare `p95` or `confidence_interval` whose
+definition has to be reconstructed later from prose.
+
+`STATISTICS_ALGORITHMS` is the closed vocabulary:
+
+| Tag | Returns |
+|---|---|
+| `quantile-nearest-rank-v1` | One-indexed `ceil(q*n)` over the ascending sort |
+| `quantile-r7-v1` | Hyndman–Fan type 7 (R's `quantile` default) |
+| `mad-from-median-v1` | Median absolute deviation, **raw** — no 1.4826 normal-consistency constant |
+| `bootstrap-percentile-v1` | Percentile-interval bootstrap of a selectable statistic |
+| `paired-ratio-bootstrap-v1` | Resamples complete pairs; median of per-pair ratios |
+| `stratified-paired-difference-bootstrap-v1` | Resamples within each stratum, preserving stratum counts |
+| `clopper-pearson-zero-failure-upper-v1` | Exact one-sided upper bound at zero observed failures |
+| `wilson-one-sided-upper-v1` | Wilson score upper limit; the caller supplies `z` |
+| `ols-qr-v1` | Least squares via Householder QR, no normal equations, no pivoting |
+
+Three properties are load-bearing and easy to erode:
+
+- **Expected values live in `STATISTICS_TEST_VECTORS`, as data.** The
+  tests read their numbers from that constant and nowhere else, so a
+  changed expectation necessarily moves the hash taken over it. Do not
+  "simplify" a test back to inline literals.
+- **Every emitted number is `-0`-normalized**, echoed caller parameters
+  included. The canonical JSON these results feed rejects `-0` rather
+  than normalizing it, and `-0` clears both `Number.isInteger(v) && v >= 0`
+  and `!(v < 0)` untouched.
+- **The module supplies algorithms only.** Sample counts, thresholds,
+  retry rules, and candidate-admission policy are study-owned and
+  always arrive as caller parameters. `wilson-one-sided-upper-v1`
+  validates `(confidence, z)` against a table rather than deriving `z`,
+  because deriving it would add an untagged tenth algorithm.
+
+`ols-qr-v1` reports `condition_estimate` and never acts on it. The rank
+gate is taken on the column-equilibrated QR diagonal, so it is
+independent of column units and column order, but it still detects
+deficiency rather than degree: a merely near-collinear design passes it
+and returns coefficients that are numerically meaningless. A study that
+reads those coefficients as physics must preregister a bar on
+`condition_estimate`.
+
+```sh
+pnpm vitest run bench/measurement/statistics.test.ts
+```
 
 ## bench/fold-cost.ts
 

@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { mulberry32 } from "../load-harness/generators/rng.ts";
 import {
   type BootstrapOptions,
+  type BootstrapStatisticSelector,
   type OlsQrInput,
   BOOTSTRAP_PRNG,
   bootstrapPercentile,
@@ -293,13 +294,36 @@ describe("bootstrap-percentile-v1", () => {
   });
 
   test("rejects a missing q on a quantile statistic and a present q on the mean", () => {
+    // Both selectors below are now COMPILE errors — that is the point of the
+    // discriminated union. The casts are what a caller handing in a selector
+    // parsed from a study's JSON config effectively has, and the runtime guard
+    // exists for exactly them, so it still needs a test.
     expectInputError(
-      () => bootstrapPercentile(VALUES, { algorithm: "quantile-r7-v1" }, OPTIONS),
+      () =>
+        bootstrapPercentile(
+          VALUES,
+          { algorithm: "quantile-r7-v1" } as unknown as BootstrapStatisticSelector,
+          OPTIONS,
+        ),
       "statistic.q",
     );
     expectInputError(
-      () => bootstrapPercentile(VALUES, { algorithm: "mean-v1", q: 0.5 }, OPTIONS),
+      () =>
+        bootstrapPercentile(
+          VALUES,
+          { algorithm: "mean-v1", q: 0.5 } as unknown as BootstrapStatisticSelector,
+          OPTIONS,
+        ),
       "statistic.q",
+    );
+    expectInputError(
+      () =>
+        bootstrapPercentile(
+          VALUES,
+          { algorithm: "nope-v1", q: 0.5 } as unknown as BootstrapStatisticSelector,
+          OPTIONS,
+        ),
+      "statistic.algorithm",
     );
   });
 

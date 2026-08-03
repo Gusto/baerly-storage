@@ -421,18 +421,32 @@ export interface IntervalEstimate {
   readonly confidence: number;
 }
 
-export interface BootstrapStatisticSelector {
-  readonly algorithm: BootstrapStatisticTag;
-  /** Required for a quantile algorithm; must be absent for `mean-v1`. */
-  readonly q?: number;
-}
+/**
+ * Which summary a bootstrap resamples.
+ *
+ * A union, not one interface with an optional `q`, because `q` is required for
+ * a quantile algorithm and forbidden for `mean-v1` — a state-dependent shape.
+ * As a single interface the invariant lived only in `assertStatisticSelector`,
+ * and every read of `q` downstream needed a non-null assertion the compiler
+ * could not check.
+ *
+ * The runtime validation stays regardless: a study may hand this straight in
+ * from parsed JSON, where the union is only a compile-time promise.
+ */
+export type BootstrapStatisticSelector =
+  | { readonly algorithm: "mean-v1"; readonly q?: undefined }
+  | {
+      readonly algorithm: Exclude<BootstrapStatisticTag, "mean-v1">;
+      readonly q: number;
+    };
 
-export interface BootstrapResult<
-  Algorithm extends
-    | "bootstrap-percentile-v1"
-    | "paired-ratio-bootstrap-v1"
-    | "stratified-paired-difference-bootstrap-v1",
-> {
+/** The three algorithms that return a `BootstrapResult`. */
+export type BootstrapAlgorithm =
+  | "bootstrap-percentile-v1"
+  | "paired-ratio-bootstrap-v1"
+  | "stratified-paired-difference-bootstrap-v1";
+
+export interface BootstrapResult<Algorithm extends BootstrapAlgorithm> {
   readonly algorithm: Algorithm;
   readonly prng: "mulberry32-v1";
   /** The statistic applied to the ORIGINAL sample, not a replicate summary. */
@@ -483,24 +497,30 @@ const drawWithReplacement = <T>(source: readonly T[], rng: () => number): T[] =>
  * rejects an explicit `undefined` as surely as it rejects `-0`.
  */
 const normalizeSelector = (statistic: BootstrapStatisticSelector): BootstrapStatisticSelector =>
-  statistic.q === undefined
-    ? { algorithm: statistic.algorithm }
+  statistic.algorithm === "mean-v1"
+    ? { algorithm: "mean-v1" }
     : { algorithm: statistic.algorithm, q: normalizeZero(statistic.q) };
 
 const assertStatisticSelector = (statistic: BootstrapStatisticSelector): void => {
-  if (!(BOOTSTRAP_STATISTICS as readonly string[]).includes(statistic.algorithm)) {
-    throw new StatisticsInputError("statistic.algorithm", `unknown ${statistic.algorithm}`);
+  // Read through an untyped view on purpose. The union above is a
+  // compile-time promise; this function exists for the caller who does not
+  // have one — a selector parsed from a study's JSON config. Narrowing the
+  // union here would make the checks unreachable to the compiler and
+  // therefore untestable.
+  const { algorithm, q } = statistic as { algorithm: string; q?: number };
+  if (!(BOOTSTRAP_STATISTICS as readonly string[]).includes(algorithm)) {
+    throw new StatisticsInputError("statistic.algorithm", `unknown ${algorithm}`);
   }
-  if (statistic.algorithm === "mean-v1") {
-    if (statistic.q !== undefined) {
+  if (algorithm === "mean-v1") {
+    if (q !== undefined) {
       throw new StatisticsInputError("statistic.q", "must be absent for mean-v1");
     }
     return;
   }
-  if (statistic.q === undefined) {
-    throw new StatisticsInputError("statistic.q", `required for ${statistic.algorithm}`);
+  if (q === undefined) {
+    throw new StatisticsInputError("statistic.q", `required for ${algorithm}`);
   }
-  assertProbability(statistic.q, "statistic.q");
+  assertProbability(q, "statistic.q");
 };
 
 const applyStatistic = (
@@ -511,9 +531,39 @@ const applyStatistic = (
     return mean(values);
   }
   if (statistic.algorithm === "quantile-nearest-rank-v1") {
-    return quantileNearestRank(values, statistic.q!);
+    return quantileNearestRank(values, statistic.q);
   }
-  return quantileR7(values, statistic.q!);
+  return quantileR7(values, statistic.q);
+};
+
+/**
+ * The shared result envelope for all three bootstraps.
+ *
+ * Collapsed into one place because it already drifted: normalization of the
+ * echoed `seed` had to be fixed at three call sites that had been written out
+ * separately, and one of them was missed. Everything that varies between the
+ * three algorithms is a parameter here; everything that does not is written
+ * once.
+ */
+const finalizeBootstrap = <Algorithm extends BootstrapAlgorithm>(
+  algorithm: Algorithm,
+  point: number,
+  replicates: readonly number[],
+  options: BootstrapOptions,
+  statistic?: BootstrapStatisticSelector,
+): BootstrapResult<Algorithm> => {
+  const base = {
+    algorithm,
+    prng: BOOTSTRAP_PRNG,
+    point: normalizeZero(point),
+    interval: percentileInterval(replicates, options.confidence),
+    seed: normalizeZero(options.seed),
+    resamples: normalizeZero(options.resamples),
+    inclusion_unit: options.inclusion_unit,
+  };
+  // `statistic` is OMITTED, never set to undefined — canonical JSON rejects an
+  // explicit undefined as surely as it rejects -0.
+  return statistic === undefined ? base : { ...base, statistic: normalizeSelector(statistic) };
 };
 
 /** The pinned replicate statistics of `bootstrap-percentile-v1`, in draw order. */
@@ -544,16 +594,13 @@ export const bootstrapPercentile = (
   options: BootstrapOptions,
 ): BootstrapResult<"bootstrap-percentile-v1"> => {
   const replicates = bootstrapPercentileReplicates(values, statistic, options);
-  return {
-    algorithm: "bootstrap-percentile-v1",
-    prng: BOOTSTRAP_PRNG,
-    point: normalizeZero(applyStatistic(values, statistic)),
-    interval: percentileInterval(replicates, options.confidence),
-    seed: normalizeZero(options.seed),
-    resamples: normalizeZero(options.resamples),
-    inclusion_unit: options.inclusion_unit,
-    statistic: normalizeSelector(statistic),
-  };
+  return finalizeBootstrap(
+    "bootstrap-percentile-v1",
+    applyStatistic(values, statistic),
+    replicates,
+    options,
+    statistic,
+  );
 };
 
 export interface PairedValue {
@@ -621,15 +668,12 @@ export const pairedRatioBootstrap = (
   options: BootstrapOptions,
 ): BootstrapResult<"paired-ratio-bootstrap-v1"> => {
   const replicates = pairedRatioBootstrapReplicates(pairs, options);
-  return {
-    algorithm: "paired-ratio-bootstrap-v1",
-    prng: BOOTSTRAP_PRNG,
-    point: normalizeZero(median(perPairRatios(pairs))),
-    interval: percentileInterval(replicates, options.confidence),
-    seed: normalizeZero(options.seed),
-    resamples: normalizeZero(options.resamples),
-    inclusion_unit: options.inclusion_unit,
-  };
+  return finalizeBootstrap(
+    "paired-ratio-bootstrap-v1",
+    median(perPairRatios(pairs)),
+    replicates,
+    options,
+  );
 };
 
 /** Groups differences by stratum in FIRST-APPEARANCE order — the draw order is normative. */
@@ -680,15 +724,12 @@ export const stratifiedPairedDifferenceBootstrap = (
   options: BootstrapOptions,
 ): BootstrapResult<"stratified-paired-difference-bootstrap-v1"> => {
   const replicates = stratifiedPairedDifferenceBootstrapReplicates(pairs, options);
-  return {
-    algorithm: "stratified-paired-difference-bootstrap-v1",
-    prng: BOOTSTRAP_PRNG,
-    point: normalizeZero(mean(pairs.map((p) => p.candidate - p.baseline))),
-    interval: percentileInterval(replicates, options.confidence),
-    seed: normalizeZero(options.seed),
-    resamples: normalizeZero(options.resamples),
-    inclusion_unit: options.inclusion_unit,
-  };
+  return finalizeBootstrap(
+    "stratified-paired-difference-bootstrap-v1",
+    mean(pairs.map((p) => p.candidate - p.baseline)),
+    replicates,
+    options,
+  );
 };
 
 export interface ClopperPearsonZeroFailureResult {
