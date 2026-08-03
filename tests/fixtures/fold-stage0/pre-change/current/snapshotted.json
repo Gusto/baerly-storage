@@ -1,0 +1,1 @@
+{"schema_version":3,"snapshot":"capture/tickets/snapshot/L9/000000000000-000000000002-ad5afa8d2ba7793777fa3536ae93eb82242ba9477e07fb927a876ebd2f8fab04.json","tail_hint":2,"log_seq_start":2,"writer_fence":{"epoch":0,"owner":"capture","claimed_at":""},"snapshot_bytes":156,"snapshot_rows":2,"generation":"000000000001"}

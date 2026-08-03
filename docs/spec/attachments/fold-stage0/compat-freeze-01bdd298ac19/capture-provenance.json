@@ -1,0 +1,10 @@
+{
+  "schema": "baerly.fold-stage0-capture-provenance/v1",
+  "frozen_subject_commit": "01bdd298ac19826e8141fe67cdfd3b62b4dcdd5e",
+  "capture_tool_path": "scripts/freeze-fold-stage0-compatibility.mjs",
+  "capture_tool_sha256": "74dda09bd36d7a147c82d35269bf60414e053f645e7891b8d89adba0e9f2c26e",
+  "root_package_version": "0.6.0",
+  "lockfile_sha256": "99b75f4adec1d283d4af1ff0f68e1328f09cee08f2a2275224111cef769efe8f",
+  "node_version": "v24.16.0",
+  "pnpm_version": "11.1.2"
+}

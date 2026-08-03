@@ -1,0 +1,3 @@
+{"_id":"a","label":"ascii","rank":1}
+{"_id":"𐀀","label":"astral","rank":3}
+{"_id":"�","label":"bmp","rank":2}

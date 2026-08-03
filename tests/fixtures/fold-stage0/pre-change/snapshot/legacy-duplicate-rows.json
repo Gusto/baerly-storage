@@ -1,0 +1,1 @@
+{"schema_version":1,"min_seq":0,"max_seq":2,"collection":"tickets","docs":[{"_id":"duplicate","body":{"_id":"duplicate","revision":1}},{"_id":"duplicate","body":{"_id":"duplicate","revision":2}}]}

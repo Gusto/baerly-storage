@@ -1,0 +1,194 @@
+{
+  "schema": "baerly.fold-stage0-compatibility/v1",
+  "frozen_subject_commit": "01bdd298ac19826e8141fe67cdfd3b62b4dcdd5e",
+  "capture_tool_sha256": "74dda09bd36d7a147c82d35269bf60414e053f645e7891b8d89adba0e9f2c26e",
+  "package_version": "0.6.0",
+  "files": [
+    {
+      "path": "current/fresh-zero.json",
+      "contract": "current-json",
+      "bytes": 201,
+      "sha256": "aea49ffcd4659bf7e8692bff6a1957b2c8f3e67b5c0fc5af673fd09403b4bef9"
+    },
+    {
+      "path": "current/high-floor-no-old-logs.json",
+      "contract": "current-json",
+      "bytes": 317,
+      "sha256": "bc81a6d1fe618d61adb3da9eda37a76c13e14abc43b0eef82c43a56cc1096244"
+    },
+    {
+      "path": "current/null-snapshot-positive-floor.json",
+      "contract": "current-json",
+      "bytes": 201,
+      "sha256": "47a85b72a0793756490d6a2b4d56b47faf53715558e98c8da6d8086f4e97623e"
+    },
+    {
+      "path": "current/rollback-roll-forward.json",
+      "contract": "current-json",
+      "bytes": 200,
+      "sha256": "9109f3d1540e441dd45725beb40ec79e882ac9e7574cb0371686e5baf381f5a9"
+    },
+    {
+      "path": "current/snapshotted.json",
+      "contract": "current-json",
+      "bytes": 317,
+      "sha256": "3e49b21a3126831b31149209dbe12cbdac1e30d9a55468bbd50e33518d2e5785"
+    },
+    {
+      "path": "dump/mixed-unicode.ndjson",
+      "contract": "dump",
+      "bytes": 115,
+      "sha256": "a8fca7508b29454352bc09b0f39a26001d4db84ff6dd26d286faa26a81c1c0d3"
+    },
+    {
+      "path": "export/mixed-unicode-d1.sql",
+      "contract": "export",
+      "bytes": 409,
+      "sha256": "232aa5d5299a8257bed97d928f7383c072e6c2ca1c7336daed6b49e3e64d6bb2"
+    },
+    {
+      "path": "export/mixed-unicode-postgres.sql",
+      "contract": "export",
+      "bytes": 419,
+      "sha256": "219692b3734707d8635e0c36ddff9a8ffecb5983a4a2820dbd90ce2668b6d3a8"
+    },
+    {
+      "path": "export/mixed-unicode-sqlite.sql",
+      "contract": "export",
+      "bytes": 409,
+      "sha256": "232aa5d5299a8257bed97d928f7383c072e6c2ca1c7336daed6b49e3e64d6bb2"
+    },
+    {
+      "path": "log/delete.json",
+      "contract": "log",
+      "bytes": 153,
+      "sha256": "bfbdf8017731a6a7f0e27be6bf0d3b410cbab585fb4b1f0e708366cf38b70d59"
+    },
+    {
+      "path": "log/identity-divergent.json",
+      "contract": "log",
+      "bytes": 184,
+      "sha256": "753434f7d0282846de8179285823cce7fac313bfd2865a08f07eaaada55b9725"
+    },
+    {
+      "path": "log/insert.json",
+      "contract": "log",
+      "bytes": 181,
+      "sha256": "8215b33b5384a630ce519f39de3e12aa8b36dea2c70f9efbb7b744871c6a93f8"
+    },
+    {
+      "path": "log/key-body-sequence-divergent.json",
+      "contract": "log",
+      "bytes": 185,
+      "sha256": "2aaf6540ca8a16a5f2708b9b21a412676ad463a75d79895b1ec0f9c5bcffeb4f"
+    },
+    {
+      "path": "log/malformed-lsn.json",
+      "contract": "log",
+      "bytes": 164,
+      "sha256": "d24468f0067c49eb882ebb4ffb2f80e6116ae2fa6b357dbde2e7da836a1fea98"
+    },
+    {
+      "path": "log/malformed-scalar-escape.json",
+      "contract": "log",
+      "bytes": 181,
+      "sha256": "eaf68ccbabb6350e6911df7d865a5cb036fafe9c7350a3cc29bc52e4a161e382"
+    },
+    {
+      "path": "log/sequence-divergent.json",
+      "contract": "log",
+      "bytes": 185,
+      "sha256": "6261a864a7d6fbbfc00e9644b4a476856f850011e95f05b1d64bc02def9bcc2a"
+    },
+    {
+      "path": "log/session-divergent.json",
+      "contract": "log",
+      "bytes": 180,
+      "sha256": "524186f8ab30b653867766af591fa956e9c1ed288c9950d335389f08c11fb2f1"
+    },
+    {
+      "path": "log/update.json",
+      "contract": "log",
+      "bytes": 181,
+      "sha256": "60a0f584925a3e98318629a1999bf1f7685413b53d382c0a81d9eea89a1598a6"
+    },
+    {
+      "path": "mixed-version/b-reads-marked.snapshot.json",
+      "contract": "mixed-version",
+      "bytes": 204,
+      "sha256": "976e113b7ed2f09e84bb8d1d22215e0ce0794d5e60a36e13a570dafba5871d3b"
+    },
+    {
+      "path": "mixed-version/stage0-reads-unmarked.snapshot.json",
+      "contract": "mixed-version",
+      "bytes": 179,
+      "sha256": "a1a0a7d69b4819602ca7e63827247b0f40736e0df5f23501a00b009a785958b7"
+    },
+    {
+      "path": "restore/canonical.ndjson",
+      "contract": "restore",
+      "bytes": 115,
+      "sha256": "a78fbcfdb747a2d88b0596c86670108b84b66a41218f4338584d7d0bae259f13"
+    },
+    {
+      "path": "restore/duplicate-ids.ndjson",
+      "contract": "restore",
+      "bytes": 52,
+      "sha256": "7c2a4afb444e0c18d6940f688a37859cfaad63e38e8aa2f9cbf152ed3ffa6a58"
+    },
+    {
+      "path": "restore/identity-divergent.ndjson",
+      "contract": "restore",
+      "bytes": 45,
+      "sha256": "75f4c189ec51051b8282ab4876d6870a335145eaf7a06b4ec3f7a56345299cd5"
+    },
+    {
+      "path": "restore/malformed-scalar.ndjson",
+      "contract": "restore",
+      "bytes": 36,
+      "sha256": "f84bd955a5e658692e967c48055ba0662415eea6eec734fed46a952adcd576e3"
+    },
+    {
+      "path": "restore/missing-id.ndjson",
+      "contract": "restore",
+      "bytes": 22,
+      "sha256": "9674d075f147c90a1161486b2d87a42b9252e0e34f14d4b8f37700441da2d3da"
+    },
+    {
+      "path": "snapshot/identity-divergent.json",
+      "contract": "snapshot",
+      "bytes": 147,
+      "sha256": "75038233a8b401d50ff0e04d670d64f97243545d73d74ecabf54ea86817667fa"
+    },
+    {
+      "path": "snapshot/legacy-ascii.json",
+      "contract": "snapshot",
+      "bytes": 156,
+      "sha256": "ad5afa8d2ba7793777fa3536ae93eb82242ba9477e07fb927a876ebd2f8fab04"
+    },
+    {
+      "path": "snapshot/legacy-duplicate-rows.json",
+      "contract": "snapshot",
+      "bytes": 196,
+      "sha256": "f2ef3f38dc07035dc153c0d44e4cdce525839f371fd715842deeb35aaa3b9ef4"
+    },
+    {
+      "path": "snapshot/legacy-unmarked-organ-pipe-mixed.json",
+      "contract": "snapshot",
+      "bytes": 280,
+      "sha256": "e51dbb83c4d3129937a94651e492db1539977b464c07c4ae6bfb0a1393fca736"
+    },
+    {
+      "path": "snapshot/legacy-utf16-random-distinct.json",
+      "contract": "snapshot",
+      "bytes": 193,
+      "sha256": "b335dfceb926d1e73cfdaac1db7aaa63cf3fd2853210fa1fbbae98aaafc51e66"
+    },
+    {
+      "path": "snapshot/malformed-scalar-escape.json",
+      "contract": "snapshot",
+      "bytes": 136,
+      "sha256": "6c6e6926a70ee55ab1e0e235b47e97fbcd308a072383378afdd98d48fe625e34"
+    }
+  ]
+}
