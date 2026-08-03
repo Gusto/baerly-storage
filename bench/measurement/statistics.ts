@@ -322,9 +322,13 @@ export const quantileR7 = (values: readonly number[], q: number): number => {
 };
 
 /**
- * The ordinary median. Provably identical to `quantileR7(values, 0.5)` for
- * every n — for even n, `h=(n-1)/2` interpolates exactly halfway between the
- * two central values. There is deliberately no second median implementation.
+ * The ordinary median, defined as `quantileR7(values, 0.5)`. For even n,
+ * `h=(n-1)/2` interpolates exactly halfway between the two central values.
+ *
+ * The two spellings agree in exact arithmetic but NOT bit-for-bit in IEEE-754:
+ * `(a+b)/2` and `a + 0.5*(b-a)` differ in the last ulp for roughly 9% of random
+ * even-n pairs. That is precisely why there is deliberately no second median
+ * implementation here — one definition, so the question never arises.
  */
 const median = (values: readonly number[]): number => quantileR7(values, 0.5);
 
@@ -423,7 +427,7 @@ const percentileInterval = (
   return {
     lower: normalizeZero(quantileR7(replicates, alpha)),
     upper: normalizeZero(quantileR7(replicates, 1 - alpha)),
-    confidence,
+    confidence: normalizeZero(confidence),
   };
 };
 
@@ -439,6 +443,22 @@ const drawWithReplacement = <T>(source: readonly T[], rng: () => number): T[] =>
   }
   return drawn;
 };
+
+/**
+ * Copy the caller's selector, normalizing its `q`.
+ *
+ * Closes two defects at once. Echoing the caller's object BY REFERENCE lets a
+ * later mutation retroactively edit an already-emitted evidence record; and
+ * `assertProbability` accepts `-0` (`-0 < 0` is false), so a `q` of `-0` would
+ * otherwise ride into a serializer that rejects it.
+ *
+ * `q` is omitted rather than set to `undefined` when absent: canonical JSON
+ * rejects an explicit `undefined` as surely as it rejects `-0`.
+ */
+const normalizeSelector = (statistic: BootstrapStatisticSelector): BootstrapStatisticSelector =>
+  statistic.q === undefined
+    ? { algorithm: statistic.algorithm }
+    : { algorithm: statistic.algorithm, q: normalizeZero(statistic.q) };
 
 const assertStatisticSelector = (statistic: BootstrapStatisticSelector): void => {
   if (!(BOOTSTRAP_STATISTICS as readonly string[]).includes(statistic.algorithm)) {
@@ -502,10 +522,10 @@ export const bootstrapPercentile = (
     prng: BOOTSTRAP_PRNG,
     point: normalizeZero(applyStatistic(values, statistic)),
     interval: percentileInterval(replicates, options.confidence),
-    seed: options.seed,
-    resamples: options.resamples,
+    seed: normalizeZero(options.seed),
+    resamples: normalizeZero(options.resamples),
     inclusion_unit: options.inclusion_unit,
-    statistic,
+    statistic: normalizeSelector(statistic),
   };
 };
 
@@ -579,8 +599,8 @@ export const pairedRatioBootstrap = (
     prng: BOOTSTRAP_PRNG,
     point: normalizeZero(median(perPairRatios(pairs))),
     interval: percentileInterval(replicates, options.confidence),
-    seed: options.seed,
-    resamples: options.resamples,
+    seed: normalizeZero(options.seed),
+    resamples: normalizeZero(options.resamples),
     inclusion_unit: options.inclusion_unit,
   };
 };
@@ -638,8 +658,8 @@ export const stratifiedPairedDifferenceBootstrap = (
     prng: BOOTSTRAP_PRNG,
     point: normalizeZero(mean(pairs.map((p) => p.candidate - p.baseline))),
     interval: percentileInterval(replicates, options.confidence),
-    seed: options.seed,
-    resamples: options.resamples,
+    seed: normalizeZero(options.seed),
+    resamples: normalizeZero(options.resamples),
     inclusion_unit: options.inclusion_unit,
   };
 };
@@ -675,8 +695,8 @@ export const clopperPearsonZeroFailureUpper = (
     algorithm: "clopper-pearson-zero-failure-upper-v1",
     upper: normalizeZero(1 - (1 - confidence) ** (1 / attempts)),
     failures: 0,
-    attempts,
-    confidence,
+    attempts: normalizeZero(attempts),
+    confidence: normalizeZero(confidence),
   };
 };
 
@@ -743,10 +763,13 @@ export const wilsonOneSidedUpper = (
   return {
     algorithm: "wilson-one-sided-upper-v1",
     upper: normalizeZero(upper),
-    failures,
-    attempts,
-    confidence: options.confidence,
-    z,
+    // `failures` is normalized for the same reason `seed` is: `-0` clears
+    // `Number.isInteger(f) && f >= 0` untouched, and `failures: -count` at
+    // count 0 is ordinary arithmetic, not a pathological input.
+    failures: normalizeZero(failures),
+    attempts: normalizeZero(attempts),
+    confidence: normalizeZero(options.confidence),
+    z: normalizeZero(z),
   };
 };
 
