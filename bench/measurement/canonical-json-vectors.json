@@ -1,0 +1,238 @@
+{
+  "schema": "baerly.canonical-json-vectors/v1",
+  "canonical_json_version": "baerly.canonical-json/v1",
+  "corpus_digest_sha256": "b57cba454b9b25349c6be469a82f1174450601309f643063018bbfaaaab4376d",
+  "vectors": [
+    {
+      "name": "empty-object",
+      "value": {},
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "empty-array",
+      "value": [],
+      "canonical": "[]",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "scalar-null",
+      "value": null,
+      "canonical": "null",
+      "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "name": "scalar-true",
+      "value": true,
+      "canonical": "true",
+      "sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+    },
+    {
+      "name": "scalar-false",
+      "value": false,
+      "canonical": "false",
+      "sha256": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "name": "scalar-string",
+      "value": "x",
+      "canonical": "\"x\"",
+      "sha256": "ba2df4903a2c14e86dc3bcca58911b44ac1d2514b7227bf6eb08cfb978f55a1b"
+    },
+    {
+      "name": "scalar-negative-zero",
+      "value_encoding": "number-literal",
+      "value_literal": "-0",
+      "canonical": "0",
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "name": "number-representation-edges",
+      "value": [
+        0, 1, -1, 1.5, -1.5, 4.5, 0.002, 0.000001, 1e-7, 333333333.3333333, 1e30, 1e-27,
+        9007199254740991, 5e-324, 1.7976931348623157e308
+      ],
+      "canonical": "[0,1,-1,1.5,-1.5,4.5,0.002,0.000001,1e-7,333333333.3333333,1e+30,1e-27,9007199254740991,5e-324,1.7976931348623157e+308]",
+      "sha256": "f29f7d89362c5e2297350176b6a9f44525bd11bcb2fb91e5de32c7083f7a3779"
+    },
+    {
+      "name": "string-escape-edges",
+      "value": "\"\\/\b\t\n\f\r\u0000\u001fé😀",
+      "canonical": "\"\\\"\\\\/\\b\\t\\n\\f\\r\\u0000\\u001fé😀\"",
+      "sha256": "d62f92b26d36eca820bca0372635a9a97520f9d8cdcf2773436ff34ad684c91c"
+    },
+    {
+      "name": "surrogate-pair-value",
+      "value": "😀",
+      "canonical": "\"😀\"",
+      "sha256": "7a0c50b92434b015545fe93ab723db2d4b2cdd14a441405624a9ce8be29f1d5a"
+    },
+    {
+      "name": "key-sort-basic",
+      "value": {
+        "z": 1,
+        "a": [true, null, "x"]
+      },
+      "canonical": "{\"a\":[true,null,\"x\"],\"z\":1}",
+      "sha256": "cc31fc728ab32ccfd6543dd8cce686b9633b3c47fbec82c88a466688f3a8cb81"
+    },
+    {
+      "name": "array-order-ascending",
+      "value": [1, 2],
+      "canonical": "[1,2]",
+      "sha256": "49a64717d5d4cb19952e6eac2946415cf6879adacf9908e7d872332d32c6e684"
+    },
+    {
+      "name": "array-order-descending",
+      "value": [2, 1],
+      "canonical": "[2,1]",
+      "sha256": "af1a1fc110b6094c48582b0ef83553cb7908d7a4365424eef28e76ef6c88d630"
+    },
+    {
+      "name": "nested-containers",
+      "value": {
+        "b": {
+          "d": 2,
+          "c": [1, [2, {}]]
+        },
+        "a": ""
+      },
+      "canonical": "{\"a\":\"\",\"b\":{\"c\":[1,[2,{}]],\"d\":2}}",
+      "sha256": "2ea8103fd7997e7d75738bbb0fe323a3d29fe84951771d29ca8158ced39bf0be"
+    },
+    {
+      "name": "key-sort-utf16-code-unit",
+      "value": {
+        "0": 4,
+        "ﬀ": 1,
+        "😀": 2,
+        "a": 6,
+        "A": 5,
+        "": 3
+      },
+      "canonical": "{\"\":3,\"0\":4,\"A\":5,\"a\":6,\"😀\":2,\"ﬀ\":1}",
+      "sha256": "abd2a31299295835613099d91f278c3350441d0f688f5fb4d99ad6328076a72a"
+    },
+    {
+      "name": "key-escape-edges",
+      "value": {
+        "\"\\/\b\t\n\f\r\u0000\u001fé😀": 1,
+        "a": 2
+      },
+      "canonical": "{\"\\\"\\\\/\\b\\t\\n\\f\\r\\u0000\\u001fé😀\":1,\"a\":2}",
+      "sha256": "7c8358f1b11e949a35a72d2be4011577ea174ce3cbef04e9f39bb42c6dbe9bf4"
+    },
+    {
+      "name": "duplicate-subobject-shape",
+      "value": {
+        "a": {
+          "n": 1
+        },
+        "b": {
+          "n": 1
+        }
+      },
+      "canonical": "{\"a\":{\"n\":1},\"b\":{\"n\":1}}",
+      "sha256": "6b4844c41d3f2cb3aed6e40ddec630f6883595b8a362aa8d0f65aa7d371991e0"
+    },
+    {
+      "name": "pollution-adjacent-key-names",
+      "value": {
+        "prototype": 2,
+        "constructor": 1
+      },
+      "canonical": "{\"constructor\":1,\"prototype\":2}",
+      "sha256": "9ae9956888d77e89cb6d392d46dba419d40ff862e1135985822f533278c01f0f"
+    },
+    {
+      "name": "three-level-nesting",
+      "value": {
+        "level": {
+          "level": {
+            "level": 1
+          }
+        }
+      },
+      "canonical": "{\"level\":{\"level\":{\"level\":1}}}",
+      "sha256": "0751a28a8ca75ac8a9adffc9fdc0c0c6197e173bc9b3af70d2d4ab19dd7e6269"
+    },
+    {
+      "name": "anchor-single-key",
+      "value": {
+        "a": 1
+      },
+      "canonical": "{\"a\":1}",
+      "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+    },
+    {
+      "name": "reject-lone-high-surrogate-root",
+      "placement": "root-string",
+      "encoding": "utf16-code-units",
+      "values": [55296],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-lone-low-surrogate-root",
+      "placement": "root-string",
+      "encoding": "utf16-code-units",
+      "values": [56320],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-lone-high-surrogate-nested",
+      "placement": "object-value",
+      "encoding": "utf16-code-units",
+      "values": [55296],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-lone-low-surrogate-key",
+      "placement": "object-key",
+      "encoding": "utf16-code-units",
+      "values": [56320],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-bmp-noncharacter-root",
+      "placement": "root-string",
+      "encoding": "unicode-code-points",
+      "values": [64976],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-bmp-penultimate-noncharacter-root",
+      "placement": "root-string",
+      "encoding": "unicode-code-points",
+      "values": [65534],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-plane-end-noncharacter-key",
+      "placement": "object-key",
+      "encoding": "unicode-code-points",
+      "values": [65535],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-supplementary-noncharacter-root",
+      "placement": "root-string",
+      "encoding": "unicode-code-points",
+      "values": [1114111],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-supplementary-penultimate-noncharacter-root",
+      "placement": "root-string",
+      "encoding": "unicode-code-points",
+      "values": [131070],
+      "reason": "non-ijson-string"
+    },
+    {
+      "name": "reject-forbidden-proto-key",
+      "placement": "object-key",
+      "encoding": "literal",
+      "literal": "__proto__",
+      "reason": "forbidden-key"
+    }
+  ]
+}

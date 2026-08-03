@@ -89,12 +89,16 @@ const MAX_UINT32 = 4_294_967_295;
 /**
  * Collapse `-0` to `0` on every number this module emits.
  *
- * Lane D's canonical JSON REJECTS `-0` rather than normalizing it
- * (`canonical-json.ts`: reason `negative-zero`), and these result objects are
- * serialized into hashed evidence records. The reachable path is ordinary
- * arithmetic, not a pathological input: an exactly zero OLS coefficient divided
- * by a Householder pivot yields `-0` whenever that pivot is negative, which it
- * routinely is. Normalizing here means no caller has to know.
+ * These result objects are serialized into hashed evidence records, and `-0`
+ * arrives through ordinary arithmetic rather than a pathological input: an
+ * exactly zero OLS coefficient divided by a Householder pivot yields `-0`
+ * whenever that pivot is negative, which it routinely is.
+ *
+ * Note that `canonical-json.ts` NORMALIZES `-0` to `0` — it does not reject it,
+ * and there is no `negative-zero` rejection reason — so this is not what keeps
+ * serialization working. What it buys is that the in-memory record is
+ * `Object.is`-comparable and snapshot-stable BEFORE serialization, independent
+ * of how any downstream serializer treats signed zero.
  *
  * Apply at every point where a result object is CONSTRUCTED — not inside the
  * numeric kernels, where an intermediate `-0` is harmless and stripping it
