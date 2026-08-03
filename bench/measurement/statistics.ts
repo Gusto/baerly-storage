@@ -210,6 +210,21 @@ export const STATISTICS_TEST_VECTORS = {
     // ORDER. At this resample count seed 1 yields the SAME interval, so
     // asserting interval divergence would be a false test.
     replicates_at_seed_1: [2, 8, 2, 2, 1, 1, 2, 1],
+    // The nearest-rank selector is a legal `BOOTSTRAP_STATISTICS` member and a
+    // distinct dispatch branch, and it had no test.
+    //
+    // q=0.25, NOT q=0.5. Over a 3-element resample the two quantile
+    // definitions coincide at the median — `ceil(0.5*3)=2` and `h=(3-1)*0.5=1`
+    // both select `sorted[1]` — so a q=0.5 vector is satisfied by either
+    // dispatch and would pin nothing. At q=0.25 they genuinely diverge, and
+    // the R-7 replicates are carried alongside so the test can assert that.
+    nearest_rank: {
+      statistic: { algorithm: "quantile-nearest-rank-v1", q: 0.25 },
+      replicates: [1, 1, 2, 1, 2, 2, 1, 1],
+      r7_replicates_at_same_q: [1, 1.5, 2, 1, 5, 2, 1, 1],
+      point: 1,
+      interval: { lower: 1, upper: 2, confidence: 0.75 },
+    },
   },
   "paired-ratio-bootstrap-v1": {
     id: "paired-ratio/2-1_4-3_8-4/seed7/r8/c075/v1",
