@@ -18,17 +18,30 @@ import { arbModelLog, arbPositiveK } from "./arbitraries.ts";
 const sortedRows = (rows: ModelRows): readonly (readonly [string, number])[] =>
   [...rows.entries()].toSorted(([left], [right]) => left.localeCompare(right));
 
-const rowsAt = (log: ModelLog, to: number): ModelRows => replayAcknowledged(log, to);
+const oracleRowsAt = (log: ModelLog, to: number): ModelRows => {
+  const rows = new Map<string, number>();
+  const acknowledgedEnd = Math.max(0, Math.min(to, log.acknowledgedTail));
+
+  for (const operation of log.ops.slice(0, acknowledgedEnd)) {
+    if (operation.kind === "D") {
+      rows.delete(operation.docId);
+    } else {
+      rows.set(operation.docId, operation.value);
+    }
+  }
+
+  return rows;
+};
 
 describe("fold-boundary reference model", () => {
   test("P7c_contiguousIncrementalFoldEqualsReferenceReplay", () => {
     fc.assert(
       fc.property(arbModelLog, arbPositiveK, (log, requestedBoundary) => {
         const boundary = Math.min(requestedBoundary, log.acknowledgedTail);
-        const base = rowsAt(log, boundary);
+        const base = oracleRowsAt(log, boundary);
 
         expect(sortedRows(foldRange(base, log, boundary, log.acknowledgedTail))).toEqual(
-          sortedRows(replayAcknowledged(log)),
+          sortedRows(oracleRowsAt(log, log.acknowledgedTail)),
         );
       }),
     );
@@ -38,10 +51,12 @@ describe("fold-boundary reference model", () => {
     fc.assert(
       fc.property(arbModelLog, arbPositiveK, (log, requestedBoundary) => {
         const boundary = Math.min(requestedBoundary, log.acknowledgedTail);
-        const snapshot = makeSnapshot(rowsAt(log, boundary), boundary);
+        const snapshot = makeSnapshot(oracleRowsAt(log, boundary), boundary);
         const published = applySnapshot(emptyState(log), snapshot);
 
-        expect(sortedRows(rowsAtManifest(published))).toEqual(sortedRows(replayAcknowledged(log)));
+        expect(sortedRows(rowsAtManifest(published))).toEqual(
+          sortedRows(oracleRowsAt(log, log.acknowledgedTail)),
+        );
       }),
     );
   });
