@@ -100,11 +100,17 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
   return storage;
 };
 
-// ── Counting proxy (Class A = PUT + DELETE; Class B = GET + LIST) ──────
+// ── Counting proxy (mutation guard: PUT + DELETE) ──────────────────────
 //
 // Reuses the same shape as the `countingStorage` helper in
-// `maintenance.test.ts`. "Class A" follows the S3 pricing vocabulary:
-// PUT / COPY / POST / DELETE = mutating ops that cost more.
+// `maintenance.test.ts`. `classA()` sums PUT + DELETE because this file
+// is a MUTATION guard: its job is proving a read leaves the bucket
+// byte-identical, and PUT + DELETE is exactly the set that could change
+// it. That predicate is deliberately NOT the billing meter — on both R2
+// and S3, LIST is Class A and DELETE is free. For cost measurement use
+// `billableClassAOps` (PUT + LIST) from `tests/fixtures/counting-storage.ts`;
+// `tests/unit/read-class-a-cost.test.ts` gates the read-path cost claim
+// in `docs/about/cost-model.md` on that meter.
 
 interface CountingProxy {
   readonly storage: Storage;
