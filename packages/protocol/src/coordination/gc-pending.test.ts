@@ -17,6 +17,7 @@ import {
   type GcPending,
   casUpdateGcPending,
   createGcPending,
+  gcPendingKey,
   mergeGcPending,
   readGcPending,
 } from "./gc-pending.ts";
@@ -1384,6 +1385,35 @@ describe("gc-pending", () => {
     // Bounded: exactly GC_PENDING_CAS_MAX_ATTEMPTS puts (one per retry),
     // then Conflict. Pinned to the constant so a bump is caught.
     expect(putCount).toBe(GC_PENDING_CAS_MAX_ATTEMPTS);
+  });
+});
+
+describe("gcPendingKey", () => {
+  // Byte-identical guarantee: this literal is the key shape that every
+  // caller (gc / admin restore / the collection-api cascade fixture)
+  // must produce. Mirrors the `logObjectKey` pin in `log.test.ts` for the
+  // sibling `log/<seq>.json` shape.
+  //
+  // Scope, honestly: this is cheap self-documentation, not the guard that
+  // catches a real rename. Because every caller now routes through this
+  // helper, a CONSISTENT rename stays coherent end to end and is caught
+  // loudly elsewhere — ~28 tests across the suite redden on one. What
+  // this block adds is a single place that says what the shape IS, so the
+  // literal has to be changed deliberately rather than drifted into.
+  test("composes <collectionPrefix>/gc/pending.json", () => {
+    expect(gcPendingKey("apps/_/tenants/_/manifests/users")).toBe(
+      "apps/_/tenants/_/manifests/users/gc/pending.json",
+    );
+  });
+
+  // The helper is a pure suffix append: it neither normalises nor
+  // validates its input. Pinned so nobody "helpfully" trims a trailing
+  // slash here — every caller passes a `current.json`-derived prefix
+  // that already has none, and a silent normalisation would mask a
+  // caller that started passing the wrong thing.
+  test("appends without normalising the caller's prefix", () => {
+    expect(gcPendingKey("a/b")).toBe("a/b/gc/pending.json");
+    expect(gcPendingKey("")).toBe("/gc/pending.json");
   });
 });
 

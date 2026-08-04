@@ -31,6 +31,7 @@ import {
   type SchemaValidator,
   type Storage,
   createCurrentJson,
+  gcPendingKey,
   uuid,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
@@ -493,8 +494,8 @@ const runGcCascade = async (
   const t = freshTableName("gc");
   await provision(storage, app, tenant, t);
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${t}/current.json`;
-  const pendingKey = `app/${app}/tenant/${tenant}/manifests/${t}/gc/pending.json`;
   const collectionPrefix = `app/${app}/tenant/${tenant}/manifests/${t}`;
+  const pendingKey = gcPendingKey(collectionPrefix);
 
   for (let i = 0; i < 30; i++) {
     await db.collection(t).insert({ _id: `r-${i}`, k: "row", n: i });
