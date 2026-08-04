@@ -568,6 +568,98 @@ These are the load-bearing rules.
     | nonce `A`     | `A`     | pass   | Same generation.                                            |
     | nonce `B`     | `A`     | reject | Truncated.                                                  |
 
+14. **A publication window is assumed shorter than the GC grace.** Two
+    paths PUT an artifact before the object that makes it reachable
+    exists, and are therefore observable by a concurrent GC mark:
+
+    - `Writer.commit` probes its `log/<seq>` slot
+      (`packages/server/src/writer.ts`, step 3), PUTs the content bodies
+      for that commit (step 4), and only then creates the slot (step 5).
+      Between the probe and the create, the content object is on the
+      bucket and no live log entry or snapshot references it, so
+      `runGc` classifies it `orphan-content`.
+    - The compactor PUTs a snapshot (`packages/server/src/compactor.ts`,
+      step 6) before it CASes `current.json` to point at it (step 7).
+      In between, the snapshot key is not `current.snapshot`, so `runGc`
+      classifies it `orphan-snapshot`.
+
+    The protocol assumes neither window stays open longer than
+    `GC_GRACE_PERIOD_MILLIS` (`packages/protocol/src/constants.ts`, 7
+    days), which is the delay GC imposes between a mark and the DELETE
+    it authorises. `packages/server/src/gc.ts`'s module JSDoc states the
+    same bound from the GC side — "The grace bounds the worst plausible
+    writer-retry window". Request-bounded runtimes (a Worker invocation,
+    a Lambda, an HTTP handler) enforce the assumption in practice.
+    Nothing in the kernel checks it, and no error is raised if it is
+    violated.
+
+    **The grace alone does not cover these two windows.** Its stated
+    rationale is about a writer that will _retry_: "a paused-process
+    writer that resumes hours later still finds its idempotency anchor
+    on the bucket". A content PUT and a snapshot PUT have already
+    **succeeded**; what is outstanding is the next step, not a repeat of
+    that one, so an argument about retry latency does not bound them.
+    What covers them is `runGc`'s sweep-time revalidation: the sweep
+    gate re-derives liveness from the `current.json`, floor, and
+    live-content-hash set that same pass already read, and drops — never
+    deletes — a candidate that now reads live or whose `generation` no
+    longer matches the live manifest. An artifact that became reachable
+    after it was marked is therefore dropped unswept — as far as the
+    freshest manifest that pass holds can see, which is the freshness
+    bound stated in the second limitation below.
+
+    **Known limitation: the grace is wall-clock, with no cross-node
+    backstop.** `computeDueAt` stamps `due_at` as the marking node's
+    `Date.now()` plus the grace, and the sweep gate compares that
+    against the sweeping node's `Date.now()`. There is no lease, no
+    bucket-side clock, and no skew tolerance on this path
+    (`LAG_WINDOW_MILLIS` covers log timestamps, not GC due dates). A
+    node whose clock runs more than the grace ahead of the node that did
+    the marking sees every candidate as already due on the first pass
+    that observes it. The consequence is that the grace stops bounding
+    anything, and the sweep-time revalidation above becomes the only
+    check standing between a mark and its DELETE.
+
+    **Known limitation: the revalidation is only as fresh as the
+    freshest manifest the pass already holds.** `runGc` reads
+    `current.json` at step 1
+    ([`packages/server/src/gc.ts`](../../packages/server/src/gc.ts)) and
+    re-reads it at step 6 only when a due `orphan-snapshot` candidate
+    could actually be deleted. The fence and the floor re-check use
+    whichever of the two is newer, so a pass that re-read for the
+    snapshot arm gets the fresher answer for the log and content arms
+    for free — but a pass with no due snapshot never re-reads at all.
+    That is deliberate: an unconditional second read would add a Class B
+    op to every pass, and costing nothing extra is what lets GC ride the
+    write tick. So on such a pass the fence detects "the collection was
+    replaced since this candidate was MARKED", not "since this pass
+    started reading", and the difference is a real window. The worked
+    case below is exactly that shape — `stale-log` candidates, no due
+    snapshot, therefore no re-read.
+
+    Pass `P` reads generation `G1` and floor 12 and loads
+    the due candidates naming `log/10` and `log/11`. `P` then spends
+    seconds on LISTs and log GETs. Meanwhile `baerly admin restore
+    --force` reseeds the collection to generation `G2` at floor 10,
+    clears `gc/pending.json`, and re-creates `log/10` and `log/11` as
+    live entries of the new generation. `P` reaches step 6 still holding
+    its stale `current`: the fence compares `G1` against `G1` and passes,
+    `10 < 12` reads dead, and both live keys are deleted. The restore's
+    ledger clear does not help — `P` loaded those candidates into memory
+    before the clear landed. Read together with the wall-clock limitation
+    above, this window is the entire safety margin: on a node clocked far
+    enough ahead the grace collapses to nothing, and all that stands
+    between a mark and its DELETE is one read of `current.json` taken an
+    unbounded time earlier. The mitigation is operational and is the one
+    [`packages/cli/src/admin/restore.ts`](../../packages/cli/src/admin/restore.ts)
+    already states — do not run `admin restore` against a collection
+    taking live traffic, where "traffic" includes GC passes, since
+    `runScheduledMaintenance` fires them on a cron independent of writes.
+    Re-reading or CASing the manifest immediately before the DELETEs
+    would close the window, and is deliberately not done: it would trade
+    a window that operational exclusivity already covers for a permanent
+    key leak on any pass that dies between the check and the DELETE.
+
 ## LSNs, wall clocks, and downstream consumers
 
 Each `LogEntry` carries a kernel sequence and an external cursor:
