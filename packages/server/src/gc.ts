@@ -348,53 +348,20 @@ export const runGc = async (
     logSeqStart,
     signal,
   );
-  // Rotation cursor: resume the content LIST after the last key we
-  // examined last pass. Bounded passes (`maxMarks` < keyspace) thus
-  // sweep the whole `content/` keyspace over a rotation instead of
-  // re-scanning the same lexicographic-first window forever — content
-  // keys are hash-named (random lex order) and live content is never
-  // deleted, so a fixed first-`maxMarks` window can be all-live and
-  // never reach orphan content past it. See `content_scan_cursor`.
-  const contentPrefix = `${collectionPrefix}/content/`;
-  let markedOrphanContent = 0;
-  let examinedThisPass = 0;
-  let lastExaminedKey: string | undefined;
-  for await (const entry of storage.list(
-    contentPrefix,
-    listWindow(maxMarks, pending.json.content_scan_cursor, signal),
-  )) {
-    // The cursor advances by EXAMINED keys (not marked), so an
-    // all-live window still moves the window forward to fresh keys
-    // next pass.
-    examinedThisPass++;
-    lastExaminedKey = entry.key;
-    const hash = parseHashFromContentKey(entry.key);
-    if (hash === null || liveHashes.has(hash)) {
-      continue;
-    }
-    if (known.has(entry.key)) {
-      continue;
-    }
-    newCandidates.push({
-      key: entry.key,
-      due_at: computeDueAt(now, grace),
-      reason: "orphan-content",
-    });
-    markedOrphanContent++;
-  }
-  // New cursor: if the LIST yielded FEWER than `maxKeys` keys it
-  // reached the end of the keyspace ⇒ WRAP (next pass starts from the
-  // beginning, cursor cleared). The unbounded reconcile path
-  // (maxMarks ≈ MAX_SAFE_INTEGER) always yields < maxKeys, so it always
-  // WRAPS — but it does not necessarily scan the whole keyspace first.
-  // Bounded and cursored are INDEPENDENT axes: `listWindow` applies
-  // `startAfter` whenever the ledger carries a cursor, whatever
-  // `maxKeys` is, so an unbounded pass that finds a cursor left by a
-  // bounded one covers only cursor→end. Liveness-only and self-healing
-  // — that pass wraps, so the next starts from the beginning and marks
-  // the remainder. Otherwise carry the last examined key.
-  const reachedEnd = examinedThisPass < maxMarks;
-  const nextContentCursor = reachedEnd ? undefined : lastExaminedKey;
+  const contentPass = await markOrphanContent({
+    storage,
+    collectionPrefix,
+    liveHashes,
+    known,
+    maxMarks,
+    cursor: pending.json.content_scan_cursor,
+    now,
+    grace,
+    signal,
+  });
+  newCandidates.push(...contentPass.candidates);
+  const markedOrphanContent = contentPass.candidates.length;
+  const nextContentCursor = contentPass.nextContentCursor;
 
   // ── Step 6. Rescue live candidates, then sweep due candidates. ──
   // Eligible set = previously-pending entries PLUS this pass's freshly
@@ -618,6 +585,72 @@ const parseHashFromContentKey = (key: string): string | null => {
  */
 const computeDueAt = (now: () => Date, graceMs: number): string =>
   new Date(now().getTime() + graceMs).toISOString();
+
+/**
+ * One bounded rotation window over `content/`: LIST at most `maxMarks`
+ * keys resuming after `cursor`, mark every key whose content hash is
+ * absent from `liveHashes` and not already pending, and report where the
+ * next pass resumes.
+ *
+ * Rotation cursor: bounded passes (`maxMarks` < keyspace) sweep the whole
+ * `content/` keyspace over a rotation instead of re-scanning the same
+ * lexicographic-first window forever — content keys are hash-named
+ * (random lex order) and live content is never deleted, so a fixed
+ * first-`maxMarks` window can be all-live and never reach orphan content
+ * past it. See `content_scan_cursor`.
+ */
+const markOrphanContent = async (opts: {
+  readonly storage: Storage;
+  readonly collectionPrefix: string;
+  readonly liveHashes: ReadonlySet<string>;
+  readonly known: ReadonlySet<string>;
+  readonly maxMarks: number;
+  readonly cursor: string | undefined;
+  readonly now: () => Date;
+  readonly grace: number;
+  readonly signal: AbortSignal | undefined;
+}): Promise<{
+  readonly candidates: GcCandidate[];
+  readonly nextContentCursor: string | undefined;
+}> => {
+  const candidates: GcCandidate[] = [];
+  let examinedThisPass = 0;
+  let lastExaminedKey: string | undefined;
+  for await (const entry of opts.storage.list(
+    `${opts.collectionPrefix}/content/`,
+    listWindow(opts.maxMarks, opts.cursor, opts.signal),
+  )) {
+    // The cursor advances by EXAMINED keys (not marked), so an all-live
+    // window still moves the window forward to fresh keys next pass.
+    examinedThisPass++;
+    lastExaminedKey = entry.key;
+    const hash = parseHashFromContentKey(entry.key);
+    if (hash === null || opts.liveHashes.has(hash)) {
+      continue;
+    }
+    if (opts.known.has(entry.key)) {
+      continue;
+    }
+    candidates.push({
+      key: entry.key,
+      due_at: computeDueAt(opts.now, opts.grace),
+      reason: "orphan-content",
+    });
+  }
+  // New cursor: if the LIST yielded FEWER than `maxKeys` keys it reached
+  // the end of the keyspace ⇒ WRAP (next pass starts from the beginning,
+  // cursor cleared). The unbounded reconcile path (maxMarks ≈
+  // MAX_SAFE_INTEGER) always yields < maxKeys, so it always WRAPS — but it
+  // does not necessarily scan the whole keyspace first. Bounded and
+  // cursored are INDEPENDENT axes: `listWindow` applies `startAfter`
+  // whenever the ledger carries a cursor, whatever `maxKeys` is, so an
+  // unbounded pass that finds a cursor left by a bounded one covers only
+  // cursor→end. Liveness-only and self-healing — that pass wraps, so the
+  // next starts from the beginning and marks the remainder. Otherwise
+  // carry the last examined key.
+  const reachedEnd = examinedThisPass < opts.maxMarks;
+  return { candidates, nextContentCursor: reachedEnd ? undefined : lastExaminedKey };
+};
 
 /**
  * Build the live content-hash set. The set covers every live
