@@ -681,6 +681,83 @@ describe("Writer", () => {
     });
     expect(r.attempts).toBe(1);
   });
+
+  test("a commit never lands below the log_seq_start observed after it", async () => {
+    // Every other seq assertion in this file is an exact literal
+    // (`toBe(0)`, `toBe(1)`, …) against a collection whose floor is 0 and
+    // never moves, so none of them can see a commit landing BENEATH the
+    // floor. This states the relation instead, against the one manifest
+    // shape in the system where the floor has moved DOWN.
+    //
+    // That shape is what `baerly admin restore --force` writes: its
+    // deliberate floor exemption reseeds `log_seq_start` from the
+    // surviving log objects, which can land below the old floor, and it
+    // resets `snapshot` to null. `CurrentJson.log_seq_start`'s own docs
+    // name the trap — `log_seq_start > 0` implies `snapshot !== null`,
+    // "except after a `--force`". A writer that reads `snapshot: null` as
+    // "nothing has been folded, so there is no floor to respect" probes
+    // from zero, finds a swept slot beneath the floor, and commits there.
+    // Nothing collides, nothing errors, the write is acknowledged — and
+    // readers walk from the floor, so the row is invisible forever.
+    //
+    // HONEST FRAMING, do not overstate this test: `assertCurrentJson`
+    // enforces `0 <= log_seq_start <= tail_hint`, so today `probeFloor`'s
+    // `Math.max` is a defensive no-op and this invariant holds by
+    // construction. This is a TRIPWIRE on the floor exemption, not
+    // coverage of a live defect. It exists because the exemption is the
+    // only write in the system that lowers the floor, and because no
+    // other assertion here is relative to a floor that has moved.
+    const storage = new MemoryStorage();
+    // The post-`--force` manifest, in the fields this test turns on:
+    // floor and hint both reseeded to 10, snapshot dropped. Ten, not
+    // zero, is what makes the assertion non-trivial. It is NOT byte-
+    // identical to what `restore.ts` writes — the real reseed bumps
+    // `writer_fence.epoch` and stamps `RESTORE_OWNER`, and re-mints
+    // `generation` rather than reusing the fixture's fixed nonce.
+    // `commit()` reads neither field, so neither difference reaches the
+    // behaviour under test; the shared shape is `snapshot: null` over a
+    // positive floor.
+    const RESEEDED_FLOOR = 10;
+    await createCurrentJson(
+      storage,
+      CURRENT_KEY,
+      logStateCurrentJson({
+        snapshot: null,
+        log_seq_start: RESEEDED_FLOOR,
+        tail_hint: RESEEDED_FLOOR,
+      }),
+    );
+    // Sub-floor survivors GC has not reached yet — the objects whose
+    // presence set `truncatedNext` to 10 in the first place. Seqs 0 and 1
+    // are absent because GC swept them: `log/` is walked in LEX order
+    // (`0, 1, 10, 11, 2, …`), so a budget-bounded pass deletes the
+    // numerically-highest keys before the middle of the range.
+    for (let seq = 2; seq <= 9; seq++) {
+      await seedLogEntry(storage, `app/test/tenant/t/manifests/${COLL}`, seq);
+    }
+    // The precondition that makes a probe-too-low writer silently wrong
+    // rather than loudly wrong: the slot it would pick is FREE.
+    await expect(storage.get(`${LOG_PREFIX}/0.json`)).resolves.toBeNull();
+
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "post-restore",
+      body: { _id: "post-restore", title: "after a --force reseed" },
+    });
+
+    const stored = await storage.get(CURRENT_KEY);
+    const floor = decodeJson<CurrentJson>(stored!.body).log_seq_start;
+    // The invariant, as a relation against the floor observed AFTER the
+    // commit — never against a literal.
+    expect(result.entry.seq).toBeGreaterThanOrEqual(floor);
+    // …and the row really is where the result says it is, so the
+    // assertion above is about a durable object and not just a number.
+    await expect(
+      storage.get(`${LOG_PREFIX}/${String(result.entry.seq)}.json`),
+    ).resolves.not.toBeNull();
+  });
 });
 
 describe("Writer — writer fence", () => {
