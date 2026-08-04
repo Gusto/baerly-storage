@@ -692,11 +692,23 @@ export const runGc = async (
     );
     pendingDepth = updated.json.candidates.length;
   } catch (error) {
-    // CAS-lost on pending.json after exhausting the bounded retry:
-    // another GC pass kept landing concurrently. The DELETEs we issued
-    // are durable; the next pass picks up any marks we couldn't persist.
-    // Surface success — re-throwing here would mask the work we DID
-    // complete.
+    // `Conflict` covers two benign races, and the DELETEs we issued are
+    // durable in both:
+    //   - CAS-lost on pending.json after exhausting the bounded retry —
+    //     another GC pass kept landing concurrently;
+    //   - the ledger VANISHED between step 2 and here. `baerly admin
+    //     restore` deletes `gc/pending.json` on both reseed branches, so
+    //     this is routine rather than exceptional.
+    //     `casUpdateGcPending` reports it as `Conflict` because it IS a
+    //     CAS precondition failure — an `If-Match` PUT against the
+    //     deleted key would have 412'd.
+    // Either way the next pass re-marks whatever we couldn't persist,
+    // bootstrapping a fresh ledger if there isn't one. Surface success —
+    // re-throwing would mask the work we DID complete, and on the
+    // `runScheduledMaintenance` path (documented "Errors propagate")
+    // would surface a routine restore to an operator's cron.
+    // `InvalidResponse` — a ledger body that is present but corrupt — is
+    // deliberately NOT in this arm and still escapes.
     if (error instanceof BaerlyError && error.code === "Conflict") {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.

@@ -201,10 +201,22 @@ export const createGcPending = async (
  *
  * @throws BaerlyError{code:"Conflict"} — another writer kept landing a
  *         write between this function's read and write for every
- *         attempt.
- * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist
- *         (use {@link createGcPending} instead) or body doesn't
- *         parse / fails the shape guard.
+ *         attempt, OR `key` does not exist. The missing-key case is a
+ *         CAS precondition failure, not a separate class of fault: the
+ *         pre-read is an optimisation, and a bare
+ *         `If-Match: <etag>` PUT against a key another actor deleted
+ *         would have surfaced `412` → `Conflict` from the storage layer
+ *         anyway. It is deliberately NOT retried — a deleted ledger
+ *         stays deleted until someone calls {@link createGcPending},
+ *         which the next `runGc` pass does. `baerly admin restore`
+ *         deletes `gc/pending.json` on both reseed branches, so a
+ *         concurrent pass reaches this routinely; `runGc` treats
+ *         `Conflict` as benign best-effort.
+ * @throws BaerlyError{code:"InvalidResponse"} — the stored body doesn't
+ *         parse or fails the shape guard. Kept distinct from the
+ *         missing-key case on purpose: a caller that tolerates
+ *         `Conflict` as a race must not thereby swallow a corrupt
+ *         ledger, which fails identically on every future pass.
  */
 export const casUpdateGcPending = async (
   storage: Storage,
@@ -216,9 +228,17 @@ export const casUpdateGcPending = async (
   for (let attempt = 0; attempt < GC_PENDING_CAS_MAX_ATTEMPTS; attempt++) {
     const existing = await readGcPending(storage, key, opts);
     if (existing === null) {
+      // `Conflict`, not `InvalidResponse`: the object was there when the
+      // caller decided to update it and is not there now, which is the
+      // If-Match precondition failing — the same 412 the storage layer
+      // would have raised had this helper skipped its pre-read. Callers
+      // that already tolerate a lost CAS therefore tolerate a ledger
+      // deleted out from under them (`baerly admin restore`) without
+      // also having to tolerate `InvalidResponse`, which stays reserved
+      // for a body that is present but broken.
       throw new BaerlyError(
-        "InvalidResponse",
-        `gc/pending.json at ${key} does not exist; use createGcPending first`,
+        "Conflict",
+        `gc/pending.json at ${key} does not exist; it was deleted concurrently, or was never created — see createGcPending`,
       );
     }
     const next = mutator(structuredClone(existing.json));
