@@ -107,6 +107,7 @@ import {
   createGcPending,
   decodeJsonBytes,
   encodeJsonBytes,
+  gcPendingKey,
   logObjectKey,
   logSeqStartOf,
   mergeGcPending,
@@ -345,7 +346,7 @@ export const runGc = async (
   const now = internal.now ?? ((): Date => new Date());
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
-  const gcPendingKey = `${collectionPrefix}/gc/pending.json`;
+  const pendingKey = gcPendingKey(collectionPrefix);
   const signal = options.signal;
   const signalOpts = signal !== undefined ? { signal } : undefined;
 
@@ -445,7 +446,7 @@ export const runGc = async (
   // ── Step 2. Read or create gc/pending.json. ─────────────────────
   // Race-tolerant create: a concurrent pass may have bootstrapped
   // between our read and our create. Re-read on Conflict.
-  let pending = await readGcPending(storage, gcPendingKey, signalOpts);
+  let pending = await readGcPending(storage, pendingKey, signalOpts);
   if (pending === null) {
     const initial: GcPending = {
       schema_version: GC_PENDING_SCHEMA_VERSION,
@@ -453,10 +454,10 @@ export const runGc = async (
       last_swept_at: "",
     };
     try {
-      pending = await createGcPending(storage, gcPendingKey, initial, signalOpts);
+      pending = await createGcPending(storage, pendingKey, initial, signalOpts);
     } catch (error) {
       if (error instanceof BaerlyError && error.code === "Conflict") {
-        pending = await readGcPending(storage, gcPendingKey, signalOpts);
+        pending = await readGcPending(storage, pendingKey, signalOpts);
         if (pending === null) {
           throw error;
         }
@@ -676,7 +677,7 @@ export const runGc = async (
   try {
     const updated = await casUpdateGcPending(
       storage,
-      gcPendingKey,
+      pendingKey,
       (latest) =>
         mergeGcPending(latest, {
           sweptKeys,

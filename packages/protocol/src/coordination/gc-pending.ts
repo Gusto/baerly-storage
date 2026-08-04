@@ -111,6 +111,17 @@ export interface GcPendingRead {
 }
 
 /**
+ * The single constructor for a `gc/pending.json` key:
+ * `<collectionPrefix>/gc/pending.json`. `collectionPrefix` is the
+ * `<…>/manifests/<collection>` segment — this helper adds the ledger's
+ * relative path. Route all callers here so the key shape lives in one
+ * place, mirroring {@link logObjectKey} in `log-key.ts` for the sibling
+ * `log/<seq>.json` shape.
+ */
+export const gcPendingKey = (collectionPrefix: string): string =>
+  `${collectionPrefix}/gc/pending.json`;
+
+/**
  * Read + parse `gc/pending.json` at `key`. Returns `null` on
  * not-found.
  *
