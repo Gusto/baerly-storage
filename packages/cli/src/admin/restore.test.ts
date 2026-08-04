@@ -16,7 +16,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { casUpdateCurrentJson, readCurrentJson } from "@baerly/protocol";
+import {
+  casUpdateCurrentJson,
+  createGcPending,
+  gcPendingKey,
+  type GcPending,
+  readCurrentJson,
+  readGcPending,
+} from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { runRestore } from "./restore.ts";
 import { captureStream } from "../_internal/testing.ts";
@@ -26,6 +33,22 @@ const TENANT = "tenant";
 const COLL = "tickets";
 const CURRENT_JSON_KEY = `app/${APP}/tenant/${TENANT}/manifests/${COLL}/current.json`;
 const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
+const GC_PENDING_KEY = gcPendingKey(TABLE_PREFIX);
+
+/** A populated `gc/pending.json` body, shaped like a real post-mark ledger. */
+const STALE_GC_PENDING: GcPending = {
+  schema_version: 1,
+  candidates: [
+    {
+      key: `${TABLE_PREFIX}/log/0.json`,
+      due_at: "2020-01-01T00:00:00.000Z",
+      reason: "stale-log",
+    },
+  ],
+  last_swept_at: "2020-01-01T00:00:00.000Z",
+  content_scan_cursor: "deadbeef",
+  log_scan_cursor: "3",
+};
 
 const CANONICAL_NDJSON =
   `{"_id":"t-1","status":"open","title":"first"}\n` +
@@ -263,6 +286,68 @@ describe("baerly admin restore", () => {
     const truncated = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(truncated?.json.generation).toMatch(/^[0-9a-f]{12}$/);
     expect(truncated?.json.generation).not.toBe(seeded?.json.generation);
+  });
+
+  test("--force clears a populated gc/pending.json ledger as part of the reseed", async () => {
+    // A ledger left behind by the reseed names keys from the truncated
+    // log — which the restore's own commits may re-create at the same
+    // seq — and carries rotation cursors and a pending depth that no
+    // longer describe this collection. The reseed must delete the
+    // ledger object outright, not merely stop referencing it.
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const first = await runRestore(
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
+    expect(first).toBe(0);
+
+    await createGcPending(storage, GC_PENDING_KEY, STALE_GC_PENDING);
+    await expect(readGcPending(storage, GC_PENDING_KEY)).resolves.not.toBeNull();
+
+    await writeFile(stdinPath, `{"_id":"u-1","x":1}\n`, "utf8");
+    const second = await runRestore(
+      [
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--force",
+      ],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
+    expect(second).toBe(0);
+    await expect(readGcPending(storage, GC_PENDING_KEY)).resolves.toBeNull();
+  });
+
+  test("fresh-target restore clears a leftover gc/pending.json ledger", async () => {
+    // `current.json` absent while a ledger is present. No CLI path
+    // produces this — there is no `admin drop` — so it comes from
+    // operator surgery (deleting `current.json` by hand, or restoring
+    // into a prefix a previous collection used) or a half-finished
+    // reseed. The fresh-target branch must clear it too.
+    await createGcPending(storage, GC_PENDING_KEY, STALE_GC_PENDING);
+    await expect(readGcPending(storage, GC_PENDING_KEY)).resolves.not.toBeNull();
+
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const exitCode = await runRestore(
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
+    expect(exitCode).toBe(0);
+    await expect(readGcPending(storage, GC_PENDING_KEY)).resolves.toBeNull();
+  });
+
+  test("restore succeeds when no gc/pending.json ledger exists", async () => {
+    // The ledger-clear must be a no-op, not an error, when GC has never
+    // run for this collection (the common case).
+    await expect(readGcPending(storage, GC_PENDING_KEY)).resolves.toBeNull();
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const exitCode = await runRestore(
+      [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+      { streams: { stdin: createReadStream(stdinPath) } },
+    );
+    expect(exitCode).toBe(0);
+    await expect(readGcPending(storage, GC_PENDING_KEY)).resolves.toBeNull();
   });
 
   test("--force chooses old tail from log keys without decoding malformed old entries", async () => {

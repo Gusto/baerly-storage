@@ -21,6 +21,13 @@
  * stdin: NDJSON, one `{_id, ...}` row per line. Empty lines tolerated.
  *        EOF terminates.
  *
+ * Side effect: both reseed branches also delete any leftover
+ * `gc/pending.json` for the collection before the first row commits. A
+ * candidate marked before the reseed names a key from the old
+ * incarnation of the log, which the commits below may re-create at the
+ * same seq; the stale ledger's rotation cursors and pending depth no
+ * longer describe this collection either. A missing ledger is a no-op.
+ *
  * Cost shape: under single-write commit each `Writer.commit` is 2 Class
  *   A PUTs (content + the committing `log/<seq>` create — no per-row
  *   `current.json` write). So: 1 PUT current.json (initial seed) + N × 2
@@ -52,6 +59,7 @@ import {
   type CurrentJson,
   type DocumentData,
   encodeJsonBytes,
+  gcPendingKey,
   mintGeneration,
   readCurrentJson,
   type Storage,
@@ -66,6 +74,7 @@ import {
   JSON_ARG,
   TENANT_ARG,
 } from "../subcommand.ts";
+import { collectionPrefixOf } from "./usage.ts";
 
 const RESTORE_OWNER = "baerly-restore";
 
@@ -122,6 +131,8 @@ const bundle = defineBaerlySubcommand({
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     assertCollectionArg(args.collection, "baerly admin restore");
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
+    const collectionPrefix = collectionPrefixOf(currentJsonKey);
+    const pendingKey = gcPendingKey(collectionPrefix);
 
     let baseSeq = 0;
     const head = await readCurrentJson(bucket.storage, currentJsonKey);
@@ -149,6 +160,17 @@ const bundle = defineBaerlySubcommand({
       // writes. (We still bump the fence epoch to keep the field
       // monotone, but nothing reads it.)
       //
+      // That contract covers concurrent GC PASSES too, not only
+      // concurrent writers, and `runScheduledMaintenance` fires GC on a
+      // cron independent of writes — so "no live writes" is not by
+      // itself enough. A pass reads `current.json` once at its top and
+      // never re-reads it before issuing its sweep DELETEs, so a pass
+      // that started before this reseed carries the pre-reseed floor
+      // all the way through and can delete log objects the reseed
+      // below re-creates. The ledger clear does not close that window:
+      // such a pass loaded its candidates into memory before the clear
+      // landed.
+      //
       // CRITICAL: stale log entries from the old generation still
       // live on disk under `log/<seq>.json` paths. The writer's
       // `If-None-Match: "*"` log PUT will 412 if we restart `tail_hint`
@@ -160,7 +182,6 @@ const bundle = defineBaerlySubcommand({
       // by folding the old log bodies: `--force` must be able to recover
       // from malformed old entries, and a hole must not make us
       // under-shoot a later old entry.
-      const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
       const truncatedNext = await tailFromListedLogKeys(bucket.storage, collectionPrefix);
       baseSeq = truncatedNext;
       // FLOOR EXEMPTION — deliberate. `casUpdateCurrentJson` rejects any
@@ -234,6 +255,17 @@ const bundle = defineBaerlySubcommand({
           `baerly admin restore: failed to reseed current.json: ${(error as Error).message}`,
         );
       }
+      // Clear the GC ledger the old incarnation left behind. A
+      // candidate marked before this reseed names a key from the
+      // truncated log, which the commits below may re-create at the
+      // same seq; the ledger's rotation cursors and pending depth no
+      // longer describe this collection either. Clear it before the
+      // writer's first commit below — write-tick maintenance runs
+      // `runGc` inline (CF-free profile, `gcInterval = 4`), so a GC
+      // pass can happen during the restore itself. `Storage.delete` is
+      // idempotent (404 ⇒ no-op) per the `Storage` contract, so this is
+      // safe whether or not a ledger exists.
+      await bucket.storage.delete(pendingKey);
     } else {
       // Fresh target: seed `current.json` with `tail_hint=0`.
       const seed: CurrentJson = {
@@ -253,6 +285,15 @@ const bundle = defineBaerlySubcommand({
         generation: mintGeneration(),
       };
       await createCurrentJson(bucket.storage, currentJsonKey, seed);
+      // Same clear as the `--force` branch above, for the case where
+      // `current.json` is absent but a ledger is not. There is no
+      // `admin drop` subcommand, so this is not a product path — it is
+      // reachable by operator surgery (deleting `current.json` by hand,
+      // or restoring into a prefix a previous collection used) and by a
+      // partially-completed reseed. Cheap insurance rather than a case
+      // the CLI can produce on its own; must land before the writer's
+      // first commit either way.
+      await bucket.storage.delete(pendingKey);
     }
 
     const writer = new Writer({ storage: bucket.storage, currentJsonKey });
