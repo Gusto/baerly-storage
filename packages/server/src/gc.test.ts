@@ -15,6 +15,7 @@ import {
   type StorageListEntry,
   BaerlyError,
   GC_GRACE_PERIOD_MILLIS,
+  GC_PENDING_CAS_MAX_ATTEMPTS,
   GC_PENDING_SCHEMA_VERSION,
   MAX_PARALLEL_LOG_READS,
   SNAPSHOT_SCHEMA_VERSION,
@@ -907,6 +908,101 @@ describe("runGc", () => {
     // is non-fatal.
     expect(r.swept).toBe(1);
     await expect(s.get("app/t/tenant/x/manifests/c/log/0.json")).resolves.toBeNull();
+    // The retry loop CONVERGED: the interceptor above fires once, so
+    // `casUpdateGcPending`'s attempt 2 re-reads the rival's body, re-merges,
+    // and lands. The candidate therefore LEAVES the ledger and nothing is
+    // sticky. Pinned so the contrast with the exhausted-budget test below
+    // is explicit rather than incidental — that test is the one that
+    // reaches `gc.ts`'s `Conflict` catch, and this one never does.
+    const converged = await readGcPending(s, PENDING_KEY);
+    expect(converged?.json.candidates).toEqual([]);
+  });
+
+  test("sticky CAS-loss: candidate survives the ledger when every CAS attempt loses", async () => {
+    // The genuinely dangerous shape, and the one the sibling test above
+    // does NOT reach. A pass that DELETES a key and then fails to persist
+    // the removal leaves a candidate in `gc/pending.json` naming a key
+    // that is already gone — and a `GcCandidate` is a bare key with no
+    // identity. `baerly admin restore --force` can later re-create that
+    // exact key inside the NEW live range, at which point the surviving
+    // candidate authorises a DELETE of live data. That is the ABA the
+    // integration suite (`tests/integration/gc-restore-fencing.test.ts`)
+    // drives end to end; this test pins the state it starts from.
+    //
+    // `runGc` must still report SUCCESS here: the DELETEs it issued are
+    // durable, and re-throwing would mask the work that did complete.
+    const s = new MemoryStorage();
+    // Same fixture as the sibling: floor at 1 so `log/0.json` is genuinely
+    // sub-floor and the sweep gate re-derives it as dead.
+    await createCurrentJson(
+      s,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 1,
+        tail_hint: 1,
+        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
+      }),
+    );
+    const staleLogKey = "app/t/tenant/x/manifests/c/log/0.json";
+    const pre: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: staleLogKey,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
+        },
+      ],
+      last_swept_at: "",
+    };
+    await createGcPending(s, PENDING_KEY, pre);
+    // Exhaust the budget: land a rival CAS before EVERY guarded PUT, not
+    // just the first, so all `GC_PENDING_CAS_MAX_ATTEMPTS` attempts lose
+    // and `casUpdateGcPending` surfaces `Conflict`. `inRival` is the
+    // re-entrancy guard — the rival's own guarded PUT re-enters this
+    // wrapper and would otherwise recurse forever.
+    const origPut = s.put.bind(s);
+    let guardedPuts = 0;
+    let inRival = false;
+    s.put = (async (key, body, opts) => {
+      if (key === PENDING_KEY && opts?.ifMatch !== undefined && !inRival) {
+        guardedPuts++;
+        inRival = true;
+        try {
+          await casUpdateGcPending(s, PENDING_KEY, (cur) => ({
+            ...cur,
+            last_swept_at: `rival-${String(guardedPuts)}`,
+          }));
+        } finally {
+          inRival = false;
+        }
+      }
+      return origPut(key, body, opts);
+    }) as typeof s.put;
+
+    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    // Every attempt was made, and every one lost.
+    expect(guardedPuts).toBe(GC_PENDING_CAS_MAX_ATTEMPTS);
+    // `runGc` still reports success — the DELETE is durable, so the pass
+    // is not a failure.
+    expect(r.swept).toBe(1);
+    await expect(s.get(staleLogKey)).resolves.toBeNull();
+    // …and the candidate is STICKY: it names a key that no longer exists,
+    // and it will be re-evaluated by the next pass against whatever the
+    // bucket looks like then.
+    const stuck = await readGcPending(s, PENDING_KEY);
+    expect(stuck?.json.candidates.map((c) => c.key)).toEqual([staleLogKey]);
+    // `pendingDepth` is best-effort on this path and deliberately does NOT
+    // agree with the ledger: it reports our post-sweep view (0), while the
+    // durable ledger still holds 1. Pinned because that divergence is the
+    // documented contract of the `Conflict` catch, not a bug to "fix".
+    expect(r.pendingDepth).toBe(0);
+    expect(stuck?.json.candidates).toHaveLength(1);
   });
 
   // Production mutation caught: treating an occupied bounded probe as an
