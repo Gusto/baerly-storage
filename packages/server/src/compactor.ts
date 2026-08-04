@@ -50,7 +50,7 @@ import {
 } from "@baerly/protocol";
 import { requireIntegerOption } from "./option-guards.ts";
 import { walkLogRangeWithBytes } from "./log-walk.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { probeTailChunk, probeTailFrom, type TailProbeChunk } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import {
   encodeSnapshotBody,
@@ -92,12 +92,23 @@ export interface InternalCompactOptions extends CompactOptions {
   /**
    * @internal Budget cap for the CF free-tier subrequest budget;
    * `CLOUDFLARE_FREE_TIER` sets it. Tests also set it to exercise
-   * the cap path. The compactor's I/O profile is
-   * `maxEntriesPerRun + 3` subrequests (N GETs + 1 PUT snapshot +
-   * 1 GET current + 1 PUT current). The default is effectively
-   * unbounded (`Number.MAX_SAFE_INTEGER`).
+   * the cap path. A snapshot-producing run's I/O profile includes the
+   * current read, bounded tail probe, optional prior snapshot read, folded
+   * log reads, and two writes (snapshot PUT plus `current.json` CAS). A
+   * probe-budget checkpoint instead writes only the `current.json` CAS.
+   * The default is effectively unbounded (`Number.MAX_SAFE_INTEGER`).
    */
   readonly maxEntriesPerRun?: number;
+
+  /**
+   * @internal Maximum consecutive log GETs spent discovering the tail
+   * during one compaction run. An exhausted budget checkpoints the
+   * certified lower bound in `current.json` so the next run resumes from
+   * there. Must be a positive integer. When omitted, the default path uses
+   * the strict protocol-capped probe, which throws rather than accepting a
+   * partial result.
+   */
+  readonly maxTailProbeGets?: number;
 
   /**
    * @internal SNAPSHOT-axis byte ceiling. The rebuilt snapshot body
@@ -126,10 +137,11 @@ export interface InternalCompactOptions extends CompactOptions {
    * `max(log_seq_start, tail_hint, knownTail)`, so on a stale-low stored
    * `tail_hint` the forward probe walks only "commits since this writer's
    * commit" instead of re-walking the whole gap from the stale hint
-   * (which could blow the CF subrequest budget — B4). The compactor still
-   * discovers the TRUE tail by probing UP from this floor (small gap).
-   * Absent on the scheduled path ⇒ probe from `max(log_seq_start,
-   * tail_hint)` as before.
+   * (which could blow the CF subrequest budget — B4). The compactor probes
+   * UP from this floor and, within `maxTailProbeGets`, either discovers the
+   * exact tail or certifies an exclusive lower bound that it checkpoints;
+   * the latter is not the exact tail. Absent on the scheduled path ⇒ probe
+   * from `max(log_seq_start, tail_hint)` as before.
    */
   readonly knownTail?: number;
 }
@@ -137,8 +149,19 @@ export interface InternalCompactOptions extends CompactOptions {
 export interface CompactResult {
   /** `true` iff a new snapshot landed and `current.json` was advanced. */
   readonly written: boolean;
-  /** Reason `written === false`. */
-  readonly skippedReason?: "below-min-threshold" | "current-json-missing" | "cas-lost" | "deferred";
+  /**
+   * Reason `written === false`. `"probe-budget-checkpointed"` means the
+   * explicitly budgeted tail probe could not finish: no snapshot was
+   * published, but the certified tail lower bound was durably checkpointed
+   * in `current.json`. A later scheduled `compact()` invocation resumes
+   * probing from that checkpoint.
+   */
+  readonly skippedReason?:
+    | "below-min-threshold"
+    | "current-json-missing"
+    | "cas-lost"
+    | "deferred"
+    | "probe-budget-checkpointed";
   /** `true` on the over-ceiling rebuild-defer path (`skippedReason === "deferred"`). */
   readonly deferred?: boolean;
   /** Prior snapshot key (`null` if no prior snapshot existed). */
@@ -170,9 +193,9 @@ const APPLICATION_JSON = "application/json";
  *
  * @throws BaerlyError code="InvalidConfig" — `maxEntriesPerRun` or
  *   `knownTail` (the `InternalCompactOptions` seam) is not a
- *   non-negative integer. Checked before any I/O: a non-finite value
- *   would otherwise slip the range guards and write an unreadable
- *   `current.json`.
+ *   non-negative integer, or `maxTailProbeGets` is not a positive
+ *   integer. Checked before any I/O: a non-finite value would otherwise
+ *   slip the range guards and write an unreadable `current.json`.
  * @throws BaerlyError code="InvalidResponse" — `current.json` is
  *   present but malformed, or a snapshot body fails its schema /
  *   collection cross-check.
@@ -207,6 +230,7 @@ export const compact = async (
   // narrowing — and keeps the public type honest.
   const internal = options as InternalCompactOptions;
   const maxPerRun = internal.maxEntriesPerRun ?? DEFAULT_MAX_PER_RUN;
+  const maxTailProbeGets = internal.maxTailProbeGets;
   const minToCompact = options.minEntriesToCompact ?? DEFAULT_MIN_TO_COMPACT;
   // Each ceiling: `undefined ⇒ no ceiling` (treated as `Infinity`).
   const ceilingBytes = internal.ceilingBytes ?? Number.POSITIVE_INFINITY;
@@ -237,6 +261,9 @@ export const compact = async (
     requireIntegerOption("compact", collectionName, name, value, 0);
   requireSeqOption("maxEntriesPerRun", maxPerRun);
   requireSeqOption("knownTail", internal.knownTail ?? 0);
+  if (maxTailProbeGets !== undefined) {
+    requireIntegerOption("compact", collectionName, "maxTailProbeGets", maxTailProbeGets, 1);
+  }
 
   // ── Step 1. Read current.json fresh. ────────────────────────────
   const read = await readCurrentJson(
@@ -257,26 +284,70 @@ export const compact = async (
   const current = read.json;
   const baseEtag = read.etag;
   const logSeqStartBefore = logSeqStartOf(current);
-  // Forward-probe the TRUE tail (uncapped) and stamp it as the new
-  // `tail_hint` (Step 7). Ordinary writer commits never advance
-  // `tail_hint` under single-write commit; compaction folds are the
-  // primary durable advancer, with maintenance defer/disable refreshes
-  // and explicit operator/import paths as the other writers. The
-  // compactor still discovers the true tail to keep the writer's
-  // per-commit tail-find cheap (a tracking hint ⇒ small gap). The
-  // compactor's O(gap) probe is amortized O(1) per write across the
-  // fold cadence; it's Class-A-active, not idle-reader-bound.
+  // Forward-probe a bounded chunk of the tail and stamp the certified
+  // lower bound (or exact tail) as the new `tail_hint` (Step 7).
+  // Ordinary writer commits never advance `tail_hint` under single-write
+  // commit; compaction folds are the primary durable advancer, with
+  // maintenance defer/disable refreshes and explicit operator/import paths
+  // as the other writers. An exhausted probe budget checkpoints its lower
+  // bound before a below-threshold return, so a future run resumes there.
   // Raise the probe floor to any fresh tail lower bound the caller passed
   // (the write-tick `knownTail` = writer's observed `seq + 1`) so a
   // stale-low stored `tail_hint` doesn't force an O(gap) re-walk (B4).
   const probeFloor = Math.max(logSeqStartBefore, current.tail_hint, internal.knownTail ?? 0);
-  const probe = await probeTailFrom(storage, collectionPrefix, probeFloor, {
-    ...(options.signal !== undefined && { signal: options.signal }),
-  });
-  const discoveredTail = probe.tail;
+  let probe: TailProbeChunk;
+  if (maxTailProbeGets === undefined) {
+    const exact = await probeTailFrom(storage, collectionPrefix, probeFloor, {
+      ...(options.signal !== undefined && { signal: options.signal }),
+    });
+    probe = { kind: "exact", ...exact, complete: true };
+  } else {
+    probe = await probeTailChunk(storage, collectionPrefix, probeFloor, {
+      ...(options.signal !== undefined && { signal: options.signal }),
+      cap: maxTailProbeGets,
+    });
+  }
+  const tailIsExact = probe.kind === "exact";
+  const discoveredTail = probe.kind === "exact" ? probe.tail : probe.lowerBound;
   const nextSeq = discoveredTail;
   const available = nextSeq - logSeqStartBefore;
   if (available < minToCompact) {
+    if (!tailIsExact) {
+      const checkpoint: CurrentJson = {
+        ...current,
+        tail_hint: Math.max(current.tail_hint, discoveredTail),
+      };
+      const checkpointBody = encodeJsonBytes(checkpoint);
+      const checkpointCasOpts: StoragePutOptions = {
+        ifMatch: baseEtag,
+        contentType: APPLICATION_JSON,
+        ...(options.signal !== undefined && { signal: options.signal }),
+      };
+      try {
+        await storage.put(currentJsonKey, checkpointBody, checkpointCasOpts);
+      } catch (error) {
+        if (isCasConflict(error)) {
+          ctxMetrics().counter("db.compaction.cas_lost_total", 1, { collection: collectionName });
+          return {
+            written: false,
+            skippedReason: "cas-lost",
+            previousSnapshotKey: current.snapshot,
+            logSeqStartBefore,
+            logSeqStartAfter: logSeqStartBefore,
+            entriesFolded: 0,
+          };
+        }
+        throw error;
+      }
+      return {
+        written: false,
+        skippedReason: "probe-budget-checkpointed",
+        previousSnapshotKey: current.snapshot,
+        logSeqStartBefore,
+        logSeqStartAfter: logSeqStartBefore,
+        entriesFolded: 0,
+      };
+    }
     return {
       written: false,
       skippedReason: "below-min-threshold",
@@ -471,9 +542,11 @@ export const compact = async (
   // add zero storage ops.
   const metrics = ctxMetrics();
   metrics.histogram("db.compact.entries_folded", entriesFolded, { collection: collectionName });
-  metrics.gauge("db.manifest.lag_window_depth", discoveredTail - foldEnd, {
-    collection: collectionName,
-  });
+  if (tailIsExact) {
+    metrics.gauge("db.manifest.lag_window_depth", discoveredTail - foldEnd, {
+      collection: collectionName,
+    });
+  }
 
   return {
     written: true,

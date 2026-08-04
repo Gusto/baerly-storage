@@ -13,7 +13,9 @@ import {
   createCurrentJson,
   MemoryStorage,
   BaerlyError,
+  encodeJsonBytes,
   LOG_KEY_PREFIX,
+  LOG_FORWARD_PROBE_CAP,
   readCurrentJson,
   type Storage,
   type StoragePutOptions,
@@ -164,6 +166,11 @@ describe("compact", () => {
     ["maxEntriesPerRun", "fractional", { maxEntriesPerRun: 1.5 }, "non-negative"],
     ["knownTail", "NaN", { knownTail: Number.NaN }, "non-negative"],
     ["knownTail", "negative", { knownTail: -1 }, "non-negative"],
+    ["maxTailProbeGets", "zero", { maxTailProbeGets: 0 }, "positive"],
+    ["maxTailProbeGets", "negative", { maxTailProbeGets: -1 }, "positive"],
+    ["maxTailProbeGets", "NaN", { maxTailProbeGets: Number.NaN }, "positive"],
+    ["maxTailProbeGets", "Infinity", { maxTailProbeGets: Number.POSITIVE_INFINITY }, "positive"],
+    ["maxTailProbeGets", "fractional", { maxTailProbeGets: 1.5 }, "positive"],
   ])("rejects %s = %s at the seam", (option, _shape, overrides, integerContract) => {
     test("fails closed before invoking storage", async () => {
       const s = new MemoryStorage();
@@ -788,6 +795,145 @@ describe("compact", () => {
     expect(recording.logReadSeqs).toEqual([7, 0, 1, 2, 3, 4, 5, 6]);
     const after = await readCurrentJson(inner, KEY);
     expect(after).toEqual(before);
+  });
+
+  test("checkpoints an incomplete bounded tail probe without writing a snapshot", async () => {
+    const s = new MemoryStorage();
+    const collectionPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await bootstrap(s, KEY);
+    await seedLogEntries(s, collectionPrefix, 0, 100);
+
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 50,
+      maxEntriesPerRun: 20,
+      maxTailProbeGets: 25,
+    } as InternalCompactOptions);
+
+    expect(res).toMatchObject({ written: false, skippedReason: "probe-budget-checkpointed" });
+    expect((await readCurrentJson(s, KEY))!.json).toMatchObject({
+      log_seq_start: 0,
+      tail_hint: 25,
+      snapshot: null,
+    });
+  });
+
+  test("the default tail probe rejects a full protocol-cap run without publishing", async () => {
+    // Replacing `probeTailFrom` with the chunk probe on the default path
+    // would accept its `at-least` result and fold a non-exact tail. The
+    // default safety contract must instead surface the runaway as Internal.
+    const inner = new MemoryStorage();
+    const collectionPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await bootstrap(inner, KEY);
+    const entry = encodeJsonBytes({
+      seq: 0,
+      op: "I",
+      collection: COLL,
+      doc_id: "d0",
+      after: { _id: "d0" },
+    });
+    let logGets = 0;
+    const putKeys: string[] = [];
+    const alwaysOccupied: Storage = {
+      async get(key, opts) {
+        if (key.startsWith(`${collectionPrefix}/${LOG_KEY_PREFIX}/`)) {
+          logGets++;
+          return { body: entry, etag: "always-occupied" };
+        }
+        return inner.get(key, opts);
+      },
+      async put(key, body, opts) {
+        putKeys.push(key);
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+
+    await expect(
+      compact({ storage: alwaysOccupied, currentJsonKey: KEY }, { minEntriesToCompact: 1 }),
+    ).rejects.toMatchObject({ code: "Internal" });
+
+    expect(logGets).toBe(LOG_FORWARD_PROBE_CAP);
+    expect(putKeys).toEqual([]);
+  });
+
+  test("folds a certified probe lower bound without emitting an exact lag gauge", async () => {
+    const s = new MemoryStorage();
+    const collectionPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await bootstrap(s, KEY);
+    await seedLogEntries(s, collectionPrefix, 0, 100);
+    const ctx = createObservabilityContext();
+    let res!: Awaited<ReturnType<typeof compact>>;
+
+    await runWithContext(ctx, async () => {
+      res = await compact({ storage: s, currentJsonKey: KEY }, {
+        minEntriesToCompact: 20,
+        maxEntriesPerRun: 20,
+        maxTailProbeGets: 25,
+      } as InternalCompactOptions);
+    });
+
+    expect(res.entriesFolded).toBe(20);
+    expect((await readCurrentJson(s, KEY))!.json).toMatchObject({
+      log_seq_start: 20,
+      tail_hint: 25,
+    });
+    const metrics = ctx.recorder.snapshot();
+    expect(metrics.histograms).toContainEqual({
+      name: "db.compact.entries_folded",
+      value: 20,
+      labels: { collection: COLL },
+    });
+    expect(
+      metrics.gauges.find((gauge) => gauge.name === "db.manifest.lag_window_depth"),
+    ).toBeUndefined();
+  });
+
+  test("returns cas-lost when an incomplete-probe checkpoint loses its ETag", async () => {
+    const inner = new MemoryStorage();
+    const collectionPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await bootstrap(inner, KEY);
+    await seedLogEntries(inner, collectionPrefix, 0, 100);
+    let failedOnce = false;
+    const failingPut: Storage = {
+      get: inner.get.bind(inner),
+      delete: inner.delete.bind(inner),
+      list: inner.list.bind(inner),
+      async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (!failedOnce && key === KEY && opts?.ifMatch !== undefined) {
+          failedOnce = true;
+          throw new BaerlyError("Conflict", "simulated checkpoint CAS loss");
+        }
+        return inner.put(key, body, opts);
+      },
+    };
+    const ctx = createObservabilityContext();
+    let res!: Awaited<ReturnType<typeof compact>>;
+
+    await runWithContext(ctx, async () => {
+      res = await compact({ storage: failingPut, currentJsonKey: KEY }, {
+        minEntriesToCompact: 50,
+        maxEntriesPerRun: 20,
+        maxTailProbeGets: 25,
+      } as InternalCompactOptions);
+    });
+
+    expect(res.skippedReason).toBe("cas-lost");
+    expect((await readCurrentJson(inner, KEY))!.json.tail_hint).toBe(0);
+    const snapshots: string[] = [];
+    for await (const entry of inner.list(`${collectionPrefix}/snapshot/`)) {
+      snapshots.push(entry.key);
+    }
+    expect(snapshots).toEqual([]);
+    expect(
+      ctx.recorder
+        .snapshot()
+        .counters.filter((counter) => counter.name === "db.compaction.cas_lost_total"),
+    ).toEqual([{ name: "db.compaction.cas_lost_total", value: 1, labels: { collection: COLL } }]);
   });
 
   test("cas-lost: snapshot orphan stays pending until a later fold advances beyond it", async () => {
