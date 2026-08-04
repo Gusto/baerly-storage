@@ -773,7 +773,7 @@ describe("compact", () => {
     expect(after).toEqual(before);
   });
 
-  test("cas-lost: snapshot pointer unchanged, bumps cas_lost_total, orphan reclaimable by runGc", async () => {
+  test("cas-lost: snapshot orphan stays pending until a later fold advances beyond it", async () => {
     const inner = new MemoryStorage();
     const recording = recordingStorage(inner);
     const foldEnd = 30;
@@ -823,19 +823,43 @@ describe("compact", () => {
     expect(snap.counters.filter((c) => c.name === "db.compaction.cas_lost_total")).toEqual([
       { name: "db.compaction.cas_lost_total", value: 1, labels: { collection: COLL } },
     ]);
-    // The orphan snapshot it wrote is reclaimable by runGc. Two-phase:
-    // first pass marks it into gc/pending.json; with graceMillis:0 the
-    // second pass sweeps it.
+    // The orphan snapshot covers [0, 30), but the lost CAS leaves the fresh
+    // manifest floor at 0. GC must mark and retain it: a compactor could still
+    // publish this exact object until the monotone floor advances beyond 30.
     expect(res.newSnapshotKey).toBeDefined();
     const orphan = await inner.get(res.newSnapshotKey!);
     expect(orphan).not.toBeNull();
-    await runGc({ storage: inner, currentJsonKey: KEY }, {
+    const retained = await runGc({ storage: inner, currentJsonKey: KEY }, {
       graceMillis: 0,
     } as Parameters<typeof runGc>[1]);
-    await runGc({ storage: inner, currentJsonKey: KEY }, {
-      graceMillis: 0,
-    } as Parameters<typeof runGc>[1]);
+    expect(retained.marked.orphan_snapshot).toBe(1);
+    expect(retained.swept).toBe(0);
+    expect(retained.pendingDepth).toBe(1);
+    await expect(inner.get(res.newSnapshotKey!)).resolves.not.toBeNull();
+
+    // Commit one more entry, then perform a real successful fold through 31.
+    // The fresh floor is now strictly beyond the CAS-lost snapshot's max_seq,
+    // making that pending candidate safe to reclaim on the next GC pass.
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: `d${foldEnd}`,
+      body: { _id: `d${foldEnd}` },
+    });
+    const advanced = await compact({ storage: inner, currentJsonKey: KEY }, {
+      minEntriesToCompact: 10,
+      maxEntriesPerRun: foldEnd + 1,
+    } as InternalCompactOptions);
+    expect(advanced.written).toBe(true);
+    expect(advanced.logSeqStartAfter).toBe(foldEnd + 1);
+    expect(advanced.newSnapshotKey).not.toBe(res.newSnapshotKey);
+
+    // Default grace keeps the newly marked stale logs pending, so this one
+    // sweep is specifically the older, already-due snapshot candidate.
+    const reclaimed = await runGc({ storage: inner, currentJsonKey: KEY });
+    expect(reclaimed.swept).toBe(1);
     const swept = await inner.get(res.newSnapshotKey!);
     expect(swept).toBeNull();
+    await expect(inner.get(advanced.newSnapshotKey!)).resolves.not.toBeNull();
   });
 });

@@ -17,16 +17,21 @@ import {
   GC_PENDING_SCHEMA_VERSION,
   MAX_PARALLEL_LOG_READS,
   MemoryStorage,
+  SNAPSHOT_SCHEMA_VERSION,
+  casUpdateCurrentJson,
   casUpdateGcPending,
   createCurrentJson,
   createGcPending,
+  readCurrentJson,
   readGcPending,
+  snapshotHash,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
+import { encodeSnapshotBody, snapshotKey } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
@@ -39,6 +44,7 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const PENDING_KEY = "app/t/tenant/x/manifests/c/gc/pending.json";
+const PREFIX = "app/t/tenant/x/manifests/c";
 const COLL = "c";
 
 describe("runGc", () => {
@@ -274,6 +280,236 @@ describe("runGc", () => {
       pending?.json.candidates.filter((c) => c.reason === "orphan-snapshot") ?? [];
     expect(snapCandidates).toHaveLength(1);
     expect(snapCandidates[0]?.key).toBe(first.newSnapshotKey);
+  });
+
+  test("rescues a snapshot that becomes current after the initial manifest read", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const newSnapshot = `${PREFIX}/snapshot/L9/newly-current.json`;
+    const deleted: string[] = [];
+    let advanced = false;
+    const storage: Storage = {
+      get: (key, opts) => inner.get(key, opts),
+      put: (key, body, opts) => inner.put(key, body, opts),
+      async delete(key, opts) {
+        deleted.push(key);
+        await inner.delete(key, opts);
+      },
+      list(prefix, opts) {
+        if (prefix !== `${PREFIX}/snapshot/`) {
+          return inner.list(prefix, opts);
+        }
+        return (async function* (): AsyncIterable<StorageListEntry> {
+          if (!advanced) {
+            advanced = true;
+            await inner.put(newSnapshot, new TextEncoder().encode("{}"));
+            await casUpdateCurrentJson(inner, KEY, (current) => ({
+              ...current,
+              snapshot: newSnapshot,
+            }));
+          }
+          yield* inner.list(prefix, opts);
+        })();
+      },
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    expect(result.marked.orphan_snapshot).toBe(1);
+    expect(result.swept).toBe(0);
+    expect(deleted).not.toContain(newSnapshot);
+    await expect(inner.get(newSnapshot)).resolves.not.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((candidate) => candidate.key)).not.toContain(newSnapshot);
+  });
+
+  // Production mutation caught: admitting any due snapshot not named by the
+  // late manifest read lets a compactor publish that exact candidate after
+  // the GET linearizes but before DELETE, leaving a dangling pointer.
+  test("retains a due snapshot published after the fresh manifest read", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 10,
+        tail_hint: 10,
+      }),
+    );
+    const candidateBody = encodeSnapshotBody({
+      schema_version: SNAPSHOT_SCHEMA_VERSION,
+      min_seq: 0,
+      max_seq: 20,
+      collection: COLL,
+      docs: [],
+    });
+    const candidate = snapshotKey(PREFIX, 0, 20, await snapshotHash(candidateBody));
+    await inner.put(candidate, candidateBody);
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: candidate,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "orphan-snapshot",
+        },
+      ],
+      last_swept_at: "",
+    });
+
+    let currentReads = 0;
+    const deleted: string[] = [];
+    const storage: Storage = {
+      async get(key, opts) {
+        const result = await inner.get(key, opts);
+        if (key === KEY) {
+          currentReads++;
+          if (currentReads === 2) {
+            // The GET above linearized first. Publish the already-written
+            // snapshot and advance the manifest before GC can issue DELETE.
+            await inner.put(candidate, candidateBody);
+            await casUpdateCurrentJson(inner, KEY, (current) => ({
+              ...current,
+              snapshot: candidate,
+              log_seq_start: 20,
+              tail_hint: 20,
+            }));
+          }
+        }
+        return result;
+      },
+      put: (key, body, opts) => inner.put(key, body, opts),
+      async delete(key, opts) {
+        deleted.push(key);
+        await inner.delete(key, opts);
+      },
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    expect(currentReads).toBe(2);
+    expect(result.swept).toBe(0);
+    expect(deleted).not.toContain(candidate);
+    const current = await readCurrentJson(inner, KEY);
+    expect(current?.json.snapshot).toBe(candidate);
+    await expect(inner.get(candidate)).resolves.not.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((entry) => entry.key)).toContain(candidate);
+  });
+
+  test("sweeps a due canonical snapshot strictly below the fresh log floor", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 20,
+        tail_hint: 20,
+      }),
+    );
+    const candidate = snapshotKey(PREFIX, 0, 19, "b".repeat(64));
+    await inner.put(candidate, new TextEncoder().encode("{}"));
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: candidate,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "orphan-snapshot",
+        },
+      ],
+      last_swept_at: "",
+    });
+
+    const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(1);
+    await expect(inner.get(candidate)).resolves.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((entry) => entry.key)).not.toContain(candidate);
+  });
+
+  test("retains a due canonical snapshot equal to the fresh log floor", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 20,
+        tail_hint: 20,
+      }),
+    );
+    const candidate = snapshotKey(PREFIX, 0, 20, "c".repeat(64));
+    await inner.put(candidate, new TextEncoder().encode("{}"));
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: candidate,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "orphan-snapshot",
+        },
+      ],
+      last_swept_at: "",
+    });
+
+    const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(0);
+    await expect(inner.get(candidate)).resolves.not.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((entry) => entry.key)).toContain(candidate);
+  });
+
+  test("retains malformed and unknown-layout due snapshot candidates", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 100,
+        tail_hint: 100,
+      }),
+    );
+    const malformed = `${PREFIX}/snapshot/L9/not-a-canonical-snapshot.json`;
+    const unknownLayout = `${PREFIX}/snapshot/L8/000000000000-000000000001-${"d".repeat(64)}.json`;
+    await inner.put(malformed, new TextEncoder().encode("{}"));
+    await inner.put(unknownLayout, new TextEncoder().encode("{}"));
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [malformed, unknownLayout].map((key) => ({
+        key,
+        due_at: "2000-01-01T00:00:00.000Z",
+        reason: "orphan-snapshot" as const,
+      })),
+      last_swept_at: "",
+    });
+
+    const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(0);
+    await expect(inner.get(malformed)).resolves.not.toBeNull();
+    await expect(inner.get(unknownLayout)).resolves.not.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((entry) => entry.key).toSorted()).toEqual(
+      [malformed, unknownLayout].toSorted(),
+    );
   });
 
   test("does NOT mark a live content blob as orphan", async () => {
