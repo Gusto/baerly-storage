@@ -182,6 +182,24 @@ The load-bearing kernel metrics today (canonical list in
   CAS on `current.json` (per-collection label). The GC-side sibling of
   the compactor's `db.compaction.cas_lost_total`; sustained non-zero on
   either is write contention above the envelope.
+- `db.gc.dropped_total` — GC counter, labelled by `cause`
+  (`stale-generation` / `still-live`). A candidate the sweep gate
+  resolved out of the ledger without deleting anything, because its
+  `generation` no longer matches the live manifest or because the key
+  reads live again. Deliberately separate from `db.gc.swept_total`: a
+  drop frees no bytes, and folding the two would make a pass that
+  reclaimed nothing look productive. Expect one `stale-generation`
+  spike per `baerly admin restore` and one on the first pass after
+  upgrading to a build that stamps generations (every pre-upgrade
+  candidate is dropped for want of one and re-marked next pass, so
+  reclamation of anything already pending is delayed by one grace
+  period). Both are self-healing. A `stale-generation` rate that does
+  NOT subside means something is re-minting `generation` repeatedly; a
+  sustained `still-live` rate means the mark phase is misjudging
+  liveness, which is the failure the gate exists to contain rather
+  than to hide — check it against `db.gc.swept_total` before assuming
+  GC is healthy, since a collection can drop steadily while
+  reclaiming nothing.
 - `db.orphan.candidate_count` — GC gauge (`gc/pending.json` depth).
 - `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` /
   `db.storage.<op>.duration_ms` — storage decorator counters +

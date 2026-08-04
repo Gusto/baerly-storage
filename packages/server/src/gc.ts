@@ -102,6 +102,7 @@ import {
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
   MAX_PARALLEL_LOG_READS,
+  NO_GENERATION,
   BaerlyError,
   casUpdateGcPending,
   createGcPending,
@@ -285,6 +286,23 @@ export interface RunGcResult {
   /** Number of keys deleted in this pass. */
   readonly swept: number;
   /**
+   * Per-cause counts of candidates RESOLVED OUT of the ledger without
+   * being deleted, because the sweep gate re-checked them and found
+   * them no longer eligible: `stale_generation` when the manifest that
+   * authorised the mark has been replaced, `still_live` when the key
+   * reads live now.
+   *
+   * A drop frees no bytes, so it drives neither {@link swept} nor
+   * `last_swept_at`. It is nonetheless the healthy outcome — dropping
+   * is what keeps a permanently-live candidate from wedging the ledger
+   * against `GC_MAX_PENDING_CANDIDATES`, which keeps the FIRST N
+   * entries. Also emitted as `db.gc.dropped_total`, labelled by cause.
+   */
+  readonly dropped: {
+    readonly stale_generation: number;
+    readonly still_live: number;
+  };
+  /**
    * Depth of `gc/pending.json` after this pass. Drives the
    * `db.orphan.candidate_count` metric. Best-effort on `cas-lost` —
    * see module JSDoc.
@@ -311,6 +329,7 @@ const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
 const zeroGcResult = (): RunGcResult => ({
   marked: { stale_log: 0, orphan_snapshot: 0, orphan_content: 0 },
   swept: 0,
+  dropped: { stale_generation: 0, still_live: 0 },
   pendingDepth: 0,
 });
 
@@ -470,6 +489,15 @@ export const runGc = async (
   // Set of keys already pending — don't re-mark.
   const known = new Set(pending.json.candidates.map((c) => c.key));
 
+  // Stamped onto every candidate this pass marks, so the sweep gate can
+  // tell "still the collection I judged this against" from "a different
+  // incarnation wearing the same key". Spread rather than assigned so a
+  // manifest with no generation writes no field at all — absent is the
+  // legacy-compatible spelling, and it decodes to `NO_GENERATION` on
+  // both sides of the later comparison.
+  const markGeneration: { generation?: string } =
+    current.generation !== undefined ? { generation: current.generation } : {};
+
   // ── Step 3. Mark stale log entries (seq < log_seq_start). ───────
   // A LEXICOGRAPHIC window of the whole `log/` prefix, filtered
   // NUMERICALLY. The two orders disagree — log keys are unpadded
@@ -501,6 +529,7 @@ export const runGc = async (
         key: entry.key,
         due_at: computeDueAt(now, grace),
         reason: "stale-log",
+        ...markGeneration,
       });
       markedStaleLog++;
     }
@@ -524,6 +553,19 @@ export const runGc = async (
     `${collectionPrefix}/snapshot/`,
     listWindow(maxMarks, undefined, signal),
   )) {
+    // Liveness HERE is exact key equality with the active pointer,
+    // never a parsed key range — a snapshot installed directly by
+    // `admin restore` or by a replacement fold is live whatever its seq
+    // fields say, and one whose name parses as "current-looking" is
+    // still dead if `current.snapshot` does not name it.
+    //
+    // That is not in tension with `parseMaxSeqFromCanonicalSnapshotKey`
+    // in the sweep below, which answers a different question. The mark
+    // asks "is this the live snapshot?"; the sweep asks "can this
+    // already-marked, already-graced candidate still become live in a
+    // later generation?" — and only there is a canonical key range
+    // sound, because it is used to RETAIN on doubt rather than to
+    // authorise a DELETE.
     if (entry.key === current.snapshot) {
       continue;
     }
@@ -534,6 +576,7 @@ export const runGc = async (
       key: entry.key,
       due_at: computeDueAt(now, grace),
       reason: "orphan-snapshot",
+      ...markGeneration,
     });
     markedOrphanSnapshot++;
   }
@@ -577,6 +620,7 @@ export const runGc = async (
       cursor: pending.json.content_scan_cursor,
       now,
       grace,
+      markGeneration,
       signal,
     });
     newCandidates.push(...contentPass.candidates);
@@ -603,10 +647,46 @@ export const runGc = async (
   const freshCurrent = hasDueSnapshot
     ? await readCurrentJson(storage, currentJsonKey, signalOpts)
     : undefined;
+  // The freshest manifest this pass holds. `freshCurrent` exists only
+  // when a due snapshot forced the re-read above; otherwise this is the
+  // step-1 read. Either way it costs no additional op, and preferring
+  // the fresher one narrows — never widens — the window between the
+  // read a decision rests on and the DELETE it authorises.
+  const fenceCurrent = freshCurrent?.json ?? current;
+  const fenceGeneration = fenceCurrent.generation ?? NO_GENERATION;
+  const fenceFloor = logSeqStartOf(fenceCurrent);
   const rescuedKeys = new Set<string>();
+  const staleGenerationKeys = new Set<string>();
   for (const candidate of sweepCandidates) {
+    // Arm 1 — the generation fence, checked before liveness and for
+    // every reason. A candidate marked under a manifest that has since
+    // been replaced was judged against a keyspace that no longer
+    // exists: `baerly admin restore --force` truncates the log, reseeds
+    // `log_seq_start` from the surviving objects (which can move the
+    // floor DOWN), and re-mints `generation`. A `log/K` that was
+    // provably dead under the old floor can be a live entry of the new
+    // incarnation, at the same key. Absent compares equal to absent, so
+    // a bucket whose manifest never carried a generation is unaffected.
+    if ((candidate.generation ?? NO_GENERATION) !== fenceGeneration) {
+      staleGenerationKeys.add(candidate.key);
+      continue;
+    }
     if (candidate.reason === "orphan-snapshot" && candidate.key === freshCurrent?.json.snapshot) {
       rescuedKeys.add(candidate.key);
+      continue;
+    }
+    // Arm 2 — a stale-log candidate that reads live again. Same
+    // generation, so this is not a reseed; the floor can still have
+    // been rewound by a `--force` that reused the nonce, and a mark
+    // taken `GC_GRACE_PERIOD_MILLIS` ago is stale enough to be worth
+    // re-deriving from the floor rather than trusted. An unparseable
+    // key stays sweepable: it was marked as one, and `parseSeqFromLogKey`
+    // returning `null` says nothing about liveness.
+    if (candidate.reason === "stale-log") {
+      const seq = parseSeqFromLogKey(candidate.key);
+      if (seq !== null && seq >= fenceFloor) {
+        rescuedKeys.add(candidate.key);
+      }
       continue;
     }
     if (candidate.reason === "orphan-content" && completeLiveContentHashes !== undefined) {
@@ -616,10 +696,16 @@ export const runGc = async (
       }
     }
   }
+  // Both arms resolve a candidate OUT of the ledger without deleting
+  // anything. That is what stops the ledger starving: `mergeGcPending`
+  // keeps the FIRST `GC_MAX_PENDING_CANDIDATES` entries, so a
+  // permanently-live candidate at the head would otherwise wedge it
+  // forever and silently discard every later mark.
+  const droppedKeys = new Set([...staleGenerationKeys, ...rescuedKeys]);
   const toSweep: GcCandidate[] = [];
   const remaining: GcCandidate[] = [];
   for (const cand of sweepCandidates) {
-    if (rescuedKeys.has(cand.key)) {
+    if (droppedKeys.has(cand.key)) {
       continue;
     }
     // Without a complete live hash set, an orphan-content candidate cannot
@@ -662,7 +748,7 @@ export const runGc = async (
   // `mergeGcPending` drops terminal keys via its existing `sweptKeys`
   // merge input. Positively-live rescues are terminal ledger resolutions too,
   // but only `toSweep` drives DELETEs, result counts, timestamps, and metrics.
-  const sweptKeys = new Set([...toSweep.map((candidate) => candidate.key), ...rescuedKeys]);
+  const sweptKeys = new Set([...toSweep.map((candidate) => candidate.key), ...droppedKeys]);
   // `""` when this pass swept nothing — sourcing the no-sweep truth from
   // `latest` (via the merge's "take later" rule) rather than our stale
   // read. With no contention this is observably identical: `latest`
@@ -744,10 +830,32 @@ export const runGc = async (
       reason: contentDeferredReason,
     });
   }
+  // Separate from `db.gc.swept_total` on purpose: a drop frees no bytes,
+  // so folding the two would make a pass that reclaimed nothing look
+  // productive. A `stale-generation` spike is expected exactly once
+  // after a restore or an upgrade and is alertable if it persists; a
+  // sustained `still-live` rate means the mark phase is misjudging
+  // liveness, which is the failure this gate exists to contain.
+  if (staleGenerationKeys.size > 0) {
+    metrics.counter("db.gc.dropped_total", staleGenerationKeys.size, {
+      collection: collectionName,
+      cause: "stale-generation",
+    });
+  }
+  if (rescuedKeys.size > 0) {
+    metrics.counter("db.gc.dropped_total", rescuedKeys.size, {
+      collection: collectionName,
+      cause: "still-live",
+    });
+  }
 
   return {
     marked: markedSummary,
     swept: toSweep.length,
+    dropped: {
+      stale_generation: staleGenerationKeys.size,
+      still_live: rescuedKeys.size,
+    },
     pendingDepth,
     ...(contentDeferredReason !== undefined && { contentDeferredReason }),
   };
@@ -870,6 +978,13 @@ const markOrphanContent = async (opts: {
   readonly cursor: string | undefined;
   readonly now: () => Date;
   readonly grace: number;
+  /**
+   * The manifest generation to stamp on each candidate, pre-spread by
+   * the caller so an absent generation writes no field. Passed in
+   * rather than derived here because this helper never reads
+   * `current.json` — see `GcCandidate.generation`.
+   */
+  readonly markGeneration: { generation?: string };
   readonly signal: AbortSignal | undefined;
 }): Promise<{
   readonly candidates: GcCandidate[];
@@ -897,6 +1012,7 @@ const markOrphanContent = async (opts: {
       key: entry.key,
       due_at: computeDueAt(opts.now, opts.grace),
       reason: "orphan-content",
+      ...opts.markGeneration,
     });
   }
   // New cursor: if the LIST yielded FEWER than `maxKeys` keys it reached

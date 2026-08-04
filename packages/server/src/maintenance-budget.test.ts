@@ -39,7 +39,11 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
+import {
+  LOG_STATE_GENERATION,
+  logStateCurrentJson,
+  seedLogEntries,
+} from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { CLOUDFLARE_FREE_TIER, runBoundedMaintenance } from "./maintenance.ts";
@@ -280,11 +284,13 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
         key: `${prefix}/gc/due-${index}.json`,
         due_at: "2000-01-01T00:00:00.000Z",
         reason: "stale-log" as const,
+        generation: LOG_STATE_GENERATION,
       })),
       {
         key: snapshotKey(prefix, 0, 39, "b".repeat(64)),
         due_at: "2000-01-01T00:00:00.000Z",
         reason: "orphan-snapshot" as const,
+        generation: LOG_STATE_GENERATION,
       },
     ];
     let firstPendingRead = true;
@@ -350,11 +356,13 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
         key: `${prefix}/gc/deferred-due-${index}.json`,
         due_at: "2000-01-01T00:00:00.000Z",
         reason: "stale-log" as const,
+        generation: LOG_STATE_GENERATION,
       })),
       {
         key: snapshotKey(prefix, 0, 19, "c".repeat(64)),
         due_at: "2000-01-01T00:00:00.000Z",
         reason: "orphan-snapshot" as const,
+        generation: LOG_STATE_GENERATION,
       },
     ];
     let firstPendingRead = true;

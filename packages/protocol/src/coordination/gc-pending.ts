@@ -99,6 +99,22 @@ export interface GcCandidate {
   due_at: string;
   /** Why the key is a candidate. */
   reason: "stale-log" | "orphan-snapshot" | "orphan-content";
+  /**
+   * The `current.json` `generation` this candidate was marked under, if
+   * the manifest carried one. The sweep drops — never deletes — a
+   * candidate whose generation no longer matches the live manifest,
+   * which is what stops a mark decision taken under one incarnation of
+   * a collection from executing against a different one up to
+   * `GC_GRACE_PERIOD_MILLIS` later.
+   *
+   * Optional and additive on the same terms as the rotation cursors, so
+   * {@link GC_PENDING_SCHEMA_VERSION} is unchanged and a ledger written
+   * by an older build stays valid. Absent decodes to `NO_GENERATION` on
+   * both sides of the comparison, so a bucket whose manifest carries no
+   * generation keeps reclaiming normally rather than fencing everything
+   * off.
+   */
+  generation?: string;
 }
 
 /**
@@ -450,6 +466,19 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
       throw new BaerlyError(
         "InvalidResponse",
         `gc/pending.json at ${key}: candidates[${String(i)}].reason must be one of stale-log|orphan-snapshot|orphan-content`,
+      );
+    }
+    // Optional, like the rotation cursors: absent is valid and means
+    // "marked under a manifest with no generation". Present-but-not-a-
+    // string is a producer bug, and this guard runs inside
+    // `readGcPending` — GC's step-2 read — so rejecting here stalls the
+    // collection's GC rather than letting a malformed candidate reach
+    // the sweep gate, where a non-string would compare unequal to every
+    // real generation and be silently dropped forever.
+    if (cr["generation"] !== undefined && typeof cr["generation"] !== "string") {
+      throw new BaerlyError(
+        "InvalidResponse",
+        `gc/pending.json at ${key}: candidates[${String(i)}].generation must be a string when present`,
       );
     }
   }

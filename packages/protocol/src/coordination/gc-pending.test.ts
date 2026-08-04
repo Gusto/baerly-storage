@@ -154,6 +154,45 @@ describe("gc-pending", () => {
     await expect(readGcPending(s, KEY)).rejects.toThrow(BaerlyError);
   });
 
+  test("accepts a candidate with no generation (legacy ledger)", async () => {
+    // The field is optional and additive, which is the whole reason
+    // `GC_PENDING_SCHEMA_VERSION` does not move: a ledger written by a
+    // build that predates the generation fence must stay READABLE, or
+    // upgrading bricks GC for every collection with pending candidates
+    // instead of costing them one grace period.
+    const s = new MemoryStorage();
+    const legacy = new TextEncoder().encode(
+      JSON.stringify({
+        schema_version: 1,
+        candidates: [{ key: "a", due_at: "x", reason: "stale-log" }],
+        last_swept_at: "",
+      }),
+    );
+    await s.put(KEY, legacy, { contentType: "application/json" });
+    const read = await readGcPending(s, KEY);
+    expect(read?.json.candidates[0]?.generation).toBeUndefined();
+  });
+
+  test("rejects a non-string generation on read", async () => {
+    // A producer bug, not a race — and it must surface at the READ
+    // rather than at the sweep gate. A non-string would compare unequal
+    // to every real generation, so the candidate would be silently
+    // dropped on every pass and its key never reclaimed; the same
+    // reasoning is why `reason` and the rotation cursors are validated.
+    const s = new MemoryStorage();
+    const bad = new TextEncoder().encode(
+      JSON.stringify({
+        schema_version: 1,
+        candidates: [{ key: "a", due_at: "x", reason: "stale-log", generation: 7 }],
+        last_swept_at: "",
+      }),
+    );
+    await s.put(KEY, bad, { contentType: "application/json" });
+    await expect(readGcPending(s, KEY)).rejects.toMatchObject({
+      code: "InvalidResponse",
+    });
+  });
+
   test("rejects malformed shape on create", async () => {
     const s = new MemoryStorage();
     const bad = { schema_version: 1, candidates: "no", last_swept_at: "" } as unknown as GcPending;

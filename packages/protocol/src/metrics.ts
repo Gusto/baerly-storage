@@ -32,6 +32,14 @@
  *     those are; do not re-enumerate them)
  *   - `db.gc.cas_lost_total` — counter (GC lost its admission-checkpoint CAS
  *     on `current.json`; the GC-side sibling of `db.compaction.cas_lost_total`)
+ *   - `db.gc.dropped_total` — counter (labelled by cause: `stale-generation`
+ *     / `still-live`). Candidates resolved out of the ledger WITHOUT a
+ *     DELETE because the sweep gate re-checked them and found them no
+ *     longer eligible. A drop frees no bytes, so this is deliberately
+ *     not folded into `db.gc.swept_total` — a pass that reclaimed
+ *     nothing must not read as productive. One `stale-generation` spike
+ *     per restore or upgrade is expected; a sustained `still-live` rate
+ *     means the mark phase is misjudging liveness
  *
  * Names follow `db.<subsystem>.<metric>`, dot-separated, all-lowercase
  * snake_case segments. Labels are flat

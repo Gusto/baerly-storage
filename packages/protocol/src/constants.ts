@@ -691,3 +691,26 @@ export const NO_AUTH_CONFIGURED_MESSAGE: string =
  */
 export const SHARED_SECRET_MISSING_MESSAGE: string =
   'baerly: auth="shared-secret" but SHARED_SECRET env is empty/unset. Cloudflare: `wrangler secret put SHARED_SECRET`, or add to .dev.vars for local dev. Node: set in process env.';
+
+/**
+ * Stands in for "this manifest has no `generation`". Both spellings of
+ * that state — a `current.json` predating the field, and a bare-LSN
+ * cursor minted before this build — decode to this value, so an
+ * ordinary string comparison handles them without a fail-open branch.
+ * See the truth table in `docs/spec/sync-protocol.md`.
+ *
+ * `"-"` is safe as the sentinel because a real generation is a minted
+ * lowercase-hex nonce (`mintGeneration`), and hex contains no `-`. So
+ * the sentinel can never collide with a value a manifest actually
+ * carries, in either the `/v1/since` cursor codec or the GC candidate
+ * fence.
+ *
+ * Sited HERE rather than next to the cursor codec that first needed
+ * it: `constants.ts` is a zero-import leaf, and `runGc` imports this
+ * sentinel. Re-exported from `cursor.ts` so existing importers are
+ * unaffected. Importing it from `cursor.ts` instead would drag
+ * `parseCursor` + `formatCursor` into the `index.js` and
+ * `maintenance.js` closures — every consumer paying for a `/v1/since`
+ * codec to get one `"-"`.
+ */
+export const NO_GENERATION = "-";
