@@ -45,7 +45,7 @@ import { getCurrentContext } from "./observability/context.ts";
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
-export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
+export { type ContentDeferralReason, type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
 export {
   type RebuildIndexOptions,
   type RebuildIndexResult,

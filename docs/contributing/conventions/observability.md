@@ -163,6 +163,16 @@ The load-bearing kernel metrics today (canonical list in
 - `db.gc.entries_swept_per_second` — GC gauge (livelock indicator
   when below writes/s).
 - `db.gc.swept_total` — GC counter, labelled by reason.
+- `db.gc.content_deferred_total` — GC counter, labelled by the
+  `ContentDeferralReason` for a pass that skipped orphan-content
+  discovery. Emitted only on a deferred pass. The label names the
+  unreadable artifact, not the fault class, so a single occurrence can
+  be a transient storage error that clears on the next pass; a
+  SUSTAINED non-zero rate is the alertable signal, and means
+  orphan-content GC is parked for as long as the fault persists. Cron
+  callers see no metrics outside an HTTP scope —
+  `RunGcResult.contentDeferredReason` carries the same value for them
+  to log.
 - `db.orphan.candidate_count` — GC gauge (`gc/pending.json` depth).
 - `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` /
   `db.storage.<op>.duration_ms` — storage decorator counters +

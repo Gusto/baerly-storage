@@ -24,6 +24,11 @@
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
  *   - `db.compact.entries_folded` — histogram (entries folded per run)
  *   - `db.gc.swept_total` — counter (labelled by reason)
+ *   - `db.gc.content_deferred_total` — counter (labelled by reason; emitted
+ *     only when a pass skipped orphan-content discovery, so any sustained
+ *     non-zero rate on a `snapshot-unreadable` / `live-log-unreadable`
+ *     reason is alertable — a single occurrence may be transient, a
+ *     repeating one does not self-clear)
  *
  * Names follow `db.<subsystem>.<metric>`, dot-separated, all-lowercase
  * snake_case segments. Labels are flat

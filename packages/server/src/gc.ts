@@ -172,17 +172,23 @@ export interface InternalRunGcOptions extends RunGcOptions {
 /**
  * Why a pass skipped orphan-content discovery entirely.
  *
- * DEGRADED (never expected; does NOT self-clear) — an artifact that
- * should be readable was not, so no complete live set can be built while
- * the fault persists. Orphan content accumulates for as long as it does:
+ * DEGRADED (never expected) — an artifact that should be readable was
+ * not, so no complete live set can be built while the fault persists.
+ * Orphan content accumulates for as long as it does:
  *   - `"live-log-unreadable"`: a log entry inside `[log_seq_start, tail)`
  *     was missing or would not decode.
  *   - `"snapshot-unreadable"`: reading or hash-verifying the current
  *     snapshot failed (a persistent `AccessDenied` or a corrupt body
  *     parks orphan-content GC here indefinitely).
  *
- * A DEGRADED reason on consecutive passes is the operator's signal to
- * look at the named artifact; `admin fsck` walks the same chain.
+ * A reason names the ARTIFACT that could not be read, not the fault
+ * class: a one-off transient storage error and a persistent
+ * `AccessDenied` on the same object both report
+ * `"snapshot-unreadable"`. So a single occurrence does NOT imply a fault
+ * that fails to self-clear — a transient one clears on the next pass.
+ * Consecutive passes reporting the same reason is the discriminator, and
+ * the operator's signal to look at the named artifact; `admin fsck`
+ * walks the same chain and surfaces the underlying error.
  */
 export type ContentDeferralReason = "live-log-unreadable" | "snapshot-unreadable";
 
@@ -204,6 +210,20 @@ export interface RunGcResult {
    * see module JSDoc.
    */
   readonly pendingDepth: number;
+  /**
+   * Set iff this pass skipped orphan-content discovery: no content was
+   * marked, no pending content candidate was swept, and
+   * `content_scan_cursor` was held so the next pass resumes in place.
+   * `marked.stale_log` / `marked.orphan_snapshot` and their sweeps are
+   * unaffected — only the content category defers.
+   *
+   * Absent means content classification ran on a complete live set. Also
+   * emitted as `db.gc.content_deferred_total` (labelled by reason), but a
+   * cron caller outside any HTTP scope sees no metrics — read this field
+   * and log a reason (see {@link ContentDeferralReason}) that repeats
+   * across passes.
+   */
+  readonly contentDeferredReason?: ContentDeferralReason;
 }
 
 const DEFAULT_MAX_MARKS = Number.MAX_SAFE_INTEGER;
@@ -360,6 +380,8 @@ export const runGc = async (
   let markedOrphanContent = 0;
   let nextContentCursor: string | undefined;
   let preserveContentCursor = false;
+  // Why content discovery deferred, for the result field and the metric.
+  let contentDeferredReason: ContentDeferralReason | undefined;
   let completeLiveContentHashes: ReadonlySet<string> | undefined;
   const liveContent = await collectLiveContentHashes(
     storage,
@@ -375,6 +397,7 @@ export const runGc = async (
     // whole category (cursor held, nothing marked, nothing swept) rather
     // than classify against an incomplete set.
     preserveContentCursor = true;
+    contentDeferredReason = liveContent.incompleteReason;
   } else {
     completeLiveContentHashes = liveContent.hashes;
     const contentPass = await markOrphanContent({
@@ -531,11 +554,22 @@ export const runGc = async (
       metrics.counter("db.gc.swept_total", count, { collection: collectionName, reason });
     }
   }
+  // Emitted only on a deferred pass, so a flat zero rate is the healthy
+  // signal and any non-zero reason is the alertable one. Without this, a
+  // pass that classified nothing because it COULDN'T is indistinguishable
+  // from one that found no orphans.
+  if (contentDeferredReason !== undefined) {
+    metrics.counter("db.gc.content_deferred_total", 1, {
+      collection: collectionName,
+      reason: contentDeferredReason,
+    });
+  }
 
   return {
     marked: markedSummary,
     swept: toSweep.length,
     pendingDepth,
+    ...(contentDeferredReason !== undefined && { contentDeferredReason }),
   };
 };
 
