@@ -22,8 +22,10 @@
  * Unbounded by default — the run marks and sweeps the entire eligible
  * set in one pass. Callers on the Cloudflare 50-subrequest free-tier
  * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's
- * `gc.maxMarksPerRun` / `maxSweepsPerRun` knobs (`InternalRunGcOptions`,
- * not on the public `RunGcOptions`).
+ * tail-admission, mark, and sweep knobs (`InternalRunGcOptions`, not on
+ * the public `RunGcOptions`). One Free invocation processes only this
+ * GC phase for one collection; alternate it with a direct bounded
+ * `compact()` invocation instead of composing both phases.
  *
  * **When a bounded pass needs a rotation cursor.** A budget-capped
  * LIST that always starts at the lexicographic beginning only makes
@@ -92,8 +94,10 @@ import {
   type CurrentJson,
   type GcCandidate,
   type GcPending,
+  type LogEntry,
   type MetricsRecorder,
   type Storage,
+  CURRENT_JSON_CONTENT_TYPE,
   GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
@@ -111,8 +115,9 @@ import {
   readGcPending,
   versionFromContent,
 } from "@baerly/protocol";
+import { requireIntegerOption } from "./option-guards.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { probeTailChunk, probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
@@ -138,6 +143,21 @@ export interface RunGcOptions {
  */
 export interface InternalRunGcOptions extends RunGcOptions {
   /**
+   * @internal Maximum GETs used to establish the tail admission proof.
+   * An occupied or malformed chunk defers only the content phase while
+   * preserving safe occupancy progress. Must be a positive integer when
+   * supplied; absent retains exact default probing.
+   */
+  readonly maxTailProbeGets?: number;
+
+  /**
+   * @internal Maximum complete live-log range affordable for content
+   * liveness hashing. Must be a non-negative integer when supplied;
+   * absent retains the exact/unbounded default behavior.
+   */
+  readonly maxLiveLogEntriesPerRun?: number;
+
+  /**
    * @internal Override grace-period for tests. Defaults to
    * {@link GC_GRACE_PERIOD_MILLIS} (7 days). Tests use `0` to bypass
    * the grace and exercise the sweep path in one pass.
@@ -154,9 +174,10 @@ export interface InternalRunGcOptions extends RunGcOptions {
 
   /**
    * @internal Budget cap on keys deleted per run.
-   * `CLOUDFLARE_FREE_TIER` sets it — CF free-tier safe when paired
-   * with `compact()` in the same scheduled handler. The default is
-   * effectively unbounded (`Number.MAX_SAFE_INTEGER`).
+   * `CLOUDFLARE_FREE_TIER` sets it — CF free-tier safe as one isolated
+   * GC phase for one collection, alternated with a separate direct
+   * `compact()` invocation. The default is effectively unbounded
+   * (`Number.MAX_SAFE_INTEGER`).
    */
   readonly maxSweepsPerRun?: number;
 
@@ -170,11 +191,22 @@ export interface InternalRunGcOptions extends RunGcOptions {
 }
 
 /**
- * Why a pass skipped orphan-content discovery entirely.
+ * Why a pass skipped orphan-content discovery entirely. Two classes,
+ * and an operator needs to tell them apart:
+ *
+ * BUDGET (expected on Cloudflare Free; self-clearing) — the pass could
+ * not afford to prove content liveness, checkpointed its progress, and a
+ * later pass finishes the job:
+ *   - `"probe-budget"`: the bounded tail probe hit `maxTailProbeGets`
+ *     without reaching the true tail.
+ *   - `"live-tail-over-cap"`: the tail is known exactly but the live
+ *     range exceeds `maxLiveLogEntriesPerRun`.
  *
  * DEGRADED (never expected) — an artifact that should be readable was
  * not, so no complete live set can be built while the fault persists.
  * Orphan content accumulates for as long as it does:
+ *   - `"probe-slot-malformed"`: an occupied log slot in the probe range
+ *     held a body that would not decode.
  *   - `"live-log-unreadable"`: a log entry inside `[log_seq_start, tail)`
  *     was missing or would not decode.
  *   - `"snapshot-unreadable"`: reading or hash-verifying the current
@@ -189,8 +221,55 @@ export interface InternalRunGcOptions extends RunGcOptions {
  * Consecutive passes reporting the same reason is the discriminator, and
  * the operator's signal to look at the named artifact; `admin fsck`
  * walks the same chain and surfaces the underlying error.
+ *
+ * The BUDGET/DEGRADED class is what callers actually branch on, and it is
+ * not readable off the string — use {@link isDegradedContentDeferral}
+ * rather than re-deriving it from a hardcoded list of members.
  */
-export type ContentDeferralReason = "live-log-unreadable" | "snapshot-unreadable";
+export type ContentDeferralReason =
+  | "probe-budget"
+  | "live-tail-over-cap"
+  | "probe-slot-malformed"
+  | "live-log-unreadable"
+  | "snapshot-unreadable";
+
+/**
+ * The BUDGET/DEGRADED split of {@link ContentDeferralReason}, in the one
+ * place that owns it. A `Record` over the union rather than a list of the
+ * degraded members: adding a sixth reason fails to typecheck until it is
+ * classified here, so a new reason cannot silently inherit the wrong class
+ * — false alerts for a budget reason, silence for a degraded one.
+ */
+const CONTENT_DEFERRAL_IS_DEGRADED: Readonly<Record<ContentDeferralReason, boolean>> = {
+  "probe-budget": false,
+  "live-tail-over-cap": false,
+  "probe-slot-malformed": true,
+  "live-log-unreadable": true,
+  "snapshot-unreadable": true,
+};
+
+/**
+ * Whether a deferral reason is DEGRADED — a fault that does not
+ * self-clear, so orphan-content GC stays parked until an operator acts on
+ * the named artifact. `false` for both a budget reason and `undefined`
+ * (no deferral), which makes it a total predicate over
+ * `RunGcResult.contentDeferredReason`.
+ *
+ * This is the alerting predicate for a cron caller, which runs outside any
+ * HTTP scope and therefore sees no metrics.
+ *
+ * @example
+ * ```ts
+ * import { isDegradedContentDeferral, runGc } from "@gusto/baerly-storage/maintenance";
+ *
+ * const gc = await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
+ * if (isDegradedContentDeferral(gc.contentDeferredReason)) {
+ *   console.error("orphan-content GC is degraded:", gc.contentDeferredReason);
+ * }
+ * ```
+ */
+export const isDegradedContentDeferral = (reason: ContentDeferralReason | undefined): boolean =>
+  reason !== undefined && CONTENT_DEFERRAL_IS_DEGRADED[reason];
 
 /**
  * Return shape of {@link runGc}.
@@ -220,14 +299,19 @@ export interface RunGcResult {
    * Absent means content classification ran on a complete live set. Also
    * emitted as `db.gc.content_deferred_total` (labelled by reason), but a
    * cron caller outside any HTTP scope sees no metrics — read this field
-   * and log a reason (see {@link ContentDeferralReason}) that repeats
-   * across passes.
+   * and log a reason that {@link isDegradedContentDeferral} accepts when
+   * it repeats across passes.
    */
   readonly contentDeferredReason?: ContentDeferralReason;
 }
 
 const DEFAULT_MAX_MARKS = Number.MAX_SAFE_INTEGER;
 const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
+const zeroGcResult = (): RunGcResult => ({
+  marked: { stale_log: 0, orphan_snapshot: 0, orphan_content: 0 },
+  swept: 0,
+  pendingDepth: 0,
+});
 
 /**
  * Single GC pass — mark new orphans, sweep due-elapsed candidates,
@@ -256,6 +340,8 @@ export const runGc = async (
   const grace = internal.graceMillis ?? GC_GRACE_PERIOD_MILLIS;
   const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
+  const maxTailProbeGets = internal.maxTailProbeGets;
+  const maxLiveLogEntries = internal.maxLiveLogEntriesPerRun;
   const now = internal.now ?? ((): Date => new Date());
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
@@ -263,17 +349,98 @@ export const runGc = async (
   const signal = options.signal;
   const signalOpts = signal !== undefined ? { signal } : undefined;
 
+  // These internal caps feed range arithmetic and must fail before the
+  // first storage operation. Their absence is meaningful: the public/default
+  // path keeps the exact, complete pre-admission behavior.
+  if (maxTailProbeGets !== undefined) {
+    requireIntegerOption("runGc", collectionName, "maxTailProbeGets", maxTailProbeGets, 1);
+  }
+  if (maxLiveLogEntries !== undefined) {
+    requireIntegerOption("runGc", collectionName, "maxLiveLogEntriesPerRun", maxLiveLogEntries, 0);
+  }
+
   // ── Step 1. Read current.json (skip silently if absent). ────────
   const cur = await readCurrentJson(storage, currentJsonKey, signalOpts);
   if (cur === null) {
-    return {
-      marked: { stale_log: 0, orphan_snapshot: 0, orphan_content: 0 },
-      swept: 0,
-      pendingDepth: 0,
-    };
+    return zeroGcResult();
   }
   const current = cur.json;
   const logSeqStart = logSeqStartOf(current);
+
+  // Bounded scheduled GC admits content liveness hashing only after an
+  // exact, affordable proof. Capture decoded suffix entries here so an
+  // admitted pass never pays for those GETs twice. This happens before the
+  // pending-ledger read so a deferred pass can checkpoint its certified
+  // progress without spending bootstrap/CAS budget first.
+  let admittedTailProbe:
+    | { readonly floor: number; readonly tail: number; readonly entries: LogEntry[] }
+    | undefined;
+  let preserveContentCursor = false;
+  // Why content discovery deferred, for the result field and the metric.
+  // Ordered DEGRADED-before-BUDGET where a pass qualifies for both: a
+  // malformed slot is the actionable fault, and a budget reason would bury
+  // it under an outcome operators are told to expect on Free.
+  let contentDeferredReason: ContentDeferralReason | undefined;
+  const boundedAdmission = maxTailProbeGets !== undefined || maxLiveLogEntries !== undefined;
+  if (boundedAdmission) {
+    const floor = Math.max(logSeqStart, current.tail_hint);
+    const probe = await probeTailChunk(storage, collectionPrefix, floor, {
+      ...(signal !== undefined && { signal }),
+      ...(maxTailProbeGets !== undefined && { cap: maxTailProbeGets }),
+      tolerateMalformed: true,
+    });
+    const exactTail = probe.kind === "exact" ? probe.tail : undefined;
+    const liveEntryCap = maxLiveLogEntries ?? Number.MAX_SAFE_INTEGER;
+    if (!probe.complete) {
+      contentDeferredReason = "probe-slot-malformed";
+    } else if (probe.kind === "at-least") {
+      contentDeferredReason = "probe-budget";
+    } else if (exactTail !== undefined && exactTail - logSeqStart > liveEntryCap) {
+      contentDeferredReason = "live-tail-over-cap";
+    }
+    preserveContentCursor = contentDeferredReason !== undefined;
+
+    // Tested against the reason rather than `preserveContentCursor` so the
+    // conflict return below narrows to a defined reason — the two are the
+    // same condition, assigned on the line above.
+    if (contentDeferredReason !== undefined) {
+      const certifiedTail = probe.kind === "exact" ? probe.tail : probe.lowerBound;
+      if (certifiedTail > current.tail_hint) {
+        try {
+          await storage.put(
+            currentJsonKey,
+            encodeJsonBytes({ ...current, tail_hint: certifiedTail }),
+            {
+              ifMatch: cur.etag,
+              contentType: CURRENT_JSON_CONTENT_TYPE,
+              ...(signal !== undefined && { signal }),
+            },
+          );
+        } catch (error) {
+          if (error instanceof BaerlyError && error.code === "Conflict") {
+            // One attempt only — a retry spends more budget and could admit
+            // against a different manifest. But the pass DID defer content
+            // classification, and on a DEGRADED reason that is the alertable
+            // fact; a bare zero result renders it as a healthy idle pass,
+            // indistinguishable from a missing `current.json`. Report the
+            // reason on both channels, and count the lost checkpoint the way
+            // `compact()` counts its own.
+            const casLostMetrics = ctxMetrics();
+            const casLostLabels = { collection: collectionName };
+            casLostMetrics.counter("db.gc.cas_lost_total", 1, casLostLabels);
+            casLostMetrics.counter("db.gc.content_deferred_total", 1, {
+              ...casLostLabels,
+              reason: contentDeferredReason,
+            });
+            return { ...zeroGcResult(), contentDeferredReason };
+          }
+          throw error;
+        }
+      }
+    } else if (probe.kind === "exact") {
+      admittedTailProbe = { floor, tail: probe.tail, entries: probe.entries };
+    }
+  }
 
   // ── Step 2. Read or create gc/pending.json. ─────────────────────
   // Race-tolerant create: a concurrent pass may have bootstrapped
@@ -379,26 +546,26 @@ export const runGc = async (
   // the writer used to mint the content key.
   let markedOrphanContent = 0;
   let nextContentCursor: string | undefined;
-  let preserveContentCursor = false;
-  // Why content discovery deferred, for the result field and the metric.
-  let contentDeferredReason: ContentDeferralReason | undefined;
   let completeLiveContentHashes: ReadonlySet<string> | undefined;
-  const liveContent = await collectLiveContentHashes(
-    storage,
-    collectionPrefix,
-    collectionName,
-    current,
-    logSeqStart,
-    signal,
-  );
-  if (!liveContent.complete) {
+  const liveContent = preserveContentCursor
+    ? undefined
+    : await collectLiveContentHashes(
+        storage,
+        collectionPrefix,
+        collectionName,
+        current,
+        logSeqStart,
+        signal,
+        admittedTailProbe,
+      );
+  if (liveContent !== undefined && !liveContent.complete) {
     // A partial live set cannot prove ANY content key dead — the missing
     // post-images are exactly the ones that would look orphan. Defer the
     // whole category (cursor held, nothing marked, nothing swept) rather
     // than classify against an incomplete set.
     preserveContentCursor = true;
     contentDeferredReason = liveContent.incompleteReason;
-  } else {
+  } else if (liveContent !== undefined) {
     completeLiveContentHashes = liveContent.hashes;
     const contentPass = await markOrphanContent({
       storage,
@@ -555,9 +722,9 @@ export const runGc = async (
     }
   }
   // Emitted only on a deferred pass, so a flat zero rate is the healthy
-  // signal and any non-zero reason is the alertable one. Without this, a
-  // pass that classified nothing because it COULDN'T is indistinguishable
-  // from one that found no orphans.
+  // signal and any non-zero DEGRADED reason is the alertable one. Without
+  // this, a pass that classified nothing because it COULDN'T is
+  // indistinguishable from one that found no orphans.
   if (contentDeferredReason !== undefined) {
     metrics.counter("db.gc.content_deferred_total", 1, {
       collection: collectionName,
@@ -756,6 +923,11 @@ type LiveContentScan =
  * post-image: every `entry.after` in `[logSeqStart, true tail)` plus
  * every row body in the current snapshot.
  *
+ * A bounded admitted caller supplies the exact probe it already paid for.
+ * Entries below `probe.floor` are fetched once; decoded entries from
+ * `[probe.floor, probe.tail)` are ingested directly. With no probe the
+ * original exact/unbounded probe + complete storage scan remains unchanged.
+ *
  * Missing or malformed live entries and snapshot read failures yield the
  * incomplete arm, which carries a reason and no hashes — the caller
  * cannot reach a partial set to classify against.
@@ -767,6 +939,11 @@ const collectLiveContentHashes = async (
   current: CurrentJson,
   logSeqStart: number,
   signal: AbortSignal | undefined,
+  exactProbe?: {
+    readonly floor: number;
+    readonly tail: number;
+    readonly entries: ReadonlyArray<LogEntry>;
+  },
 ): Promise<LiveContentScan> => {
   const hashes = new Set<string>();
   // First cause wins: the log walk runs before the snapshot read, and a
@@ -783,12 +960,18 @@ const collectLiveContentHashes = async (
   // probe at `max(log_seq_start, tail_hint)` — entries below
   // `log_seq_start` are folded and never scanned by the loop below. The
   // loop 404-tolerates misses, so over-bounding to `tail` is safe.
-  const { tail } = await probeTailFrom(
-    storage,
-    collectionPrefix,
-    Math.max(logSeqStart, current.tail_hint),
-    { signal },
-  );
+  let tail: number;
+  if (exactProbe !== undefined) {
+    tail = exactProbe.tail;
+  } else {
+    const tailProbe = await probeTailFrom(
+      storage,
+      collectionPrefix,
+      Math.max(logSeqStart, current.tail_hint),
+      { signal },
+    );
+    tail = tailProbe.tail;
+  }
   // Read every live entry in `[logSeqStart, tail)`, but cap the
   // simultaneous in-flight log GETs at MAX_PARALLEL_LOG_READS. A raw
   // `Promise.all` over the whole range fans out up to
@@ -800,33 +983,55 @@ const collectLiveContentHashes = async (
   // missing `log/<seq>` past a stale-low hint is skipped, not fatal)
   // and tolerant of a malformed entry, so it keeps its own bounded loop
   // rather than borrowing the throwing walker.
-  const ingestLogEntry = async (s: number): Promise<void> => {
-    const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
-    if (got === null) {
-      markIncomplete("live-log-unreadable");
-      return;
-    }
-    let entry: { after?: unknown };
-    try {
-      entry = decodeJsonBytes<{ after?: unknown }>(got.body);
-    } catch {
-      markIncomplete("live-log-unreadable");
-      return;
-    }
+  const ingestDecodedLogEntry = async (entry: Pick<LogEntry, "after">): Promise<void> => {
     if (entry.after === undefined) {
       return;
     }
     const bodyBytes = encodeJsonBytes(entry.after);
     hashes.add(await versionFromContent(bodyBytes));
   };
-  for (let chunkStart = logSeqStart; chunkStart < tail; chunkStart += MAX_PARALLEL_LOG_READS) {
+  const ingestLogEntry = async (s: number): Promise<void> => {
+    const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
+    if (got === null) {
+      markIncomplete("live-log-unreadable");
+      return;
+    }
+    let entry: LogEntry;
+    try {
+      entry = decodeJsonBytes<LogEntry>(got.body);
+    } catch {
+      markIncomplete("live-log-unreadable");
+      return;
+    }
+    await ingestDecodedLogEntry(entry);
+  };
+  const storageScanEnd = exactProbe?.floor ?? tail;
+  for (
+    let chunkStart = logSeqStart;
+    chunkStart < storageScanEnd;
+    chunkStart += MAX_PARALLEL_LOG_READS
+  ) {
     signal?.throwIfAborted();
-    const chunkEnd = Math.min(chunkStart + MAX_PARALLEL_LOG_READS, tail);
+    const chunkEnd = Math.min(chunkStart + MAX_PARALLEL_LOG_READS, storageScanEnd);
     const chunk: Array<Promise<void>> = [];
     for (let s = chunkStart; s < chunkEnd; s++) {
       chunk.push(ingestLogEntry(s));
     }
     await Promise.all(chunk);
+  }
+  if (exactProbe !== undefined) {
+    for (
+      let chunkStart = 0;
+      chunkStart < exactProbe.entries.length;
+      chunkStart += MAX_PARALLEL_LOG_READS
+    ) {
+      signal?.throwIfAborted();
+      await Promise.all(
+        exactProbe.entries
+          .slice(chunkStart, chunkStart + MAX_PARALLEL_LOG_READS)
+          .map(ingestDecodedLogEntry),
+      );
+    }
   }
 
   // Snapshot rows.
