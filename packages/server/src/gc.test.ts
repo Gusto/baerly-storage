@@ -1392,6 +1392,7 @@ describe("runGc", () => {
           marked: { stale_log: 1, orphan_snapshot: 1, orphan_content: 0 },
           swept: 2,
           pendingDepth: 3,
+          contentDeferredReason: "live-log-unreadable",
         });
         // The content LIST never runs — nothing can be classified.
         expect(trace.lists).toContain(`${PREFIX}/log/`);
@@ -1471,6 +1472,10 @@ describe("runGc", () => {
           marked: { stale_log: 0, orphan_snapshot: 1, orphan_content: 0 },
           swept: 1,
           pendingDepth: 1,
+          // A persistent AccessDenied here parks orphan-content GC
+          // forever, so the pass must NOT look identical to an
+          // orphan-free one.
+          contentDeferredReason: "snapshot-unreadable",
         });
         expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
         expect(trace.lists).not.toContain(`${PREFIX}/content/`);
@@ -1484,4 +1489,71 @@ describe("runGc", () => {
       });
     },
   );
+
+  // A degraded pass and a genuinely orphan-free one both mark zero content
+  // and sweep zero content. Without a signal that separates them, a
+  // persistent snapshot fault disables orphan-content GC silently and
+  // forever. Pin both directions of that discrimination.
+  describe("content-deferral signal", () => {
+    test("counts a degraded pass under its reason label", async () => {
+      const inner = new MemoryStorage();
+      const currentSnapshot = `${PREFIX}/snapshot/L9/000000000000-000000000040-${"a".repeat(64)}.json`;
+      await createCurrentJson(
+        inner,
+        KEY,
+        logStateCurrentJson({ snapshot: currentSnapshot, log_seq_start: 0, tail_hint: 0 }),
+      );
+      await inner.put(currentSnapshot, new TextEncoder().encode("not-a-valid-snapshot"));
+      const denied: Storage = {
+        get: (key, opts) => {
+          if (key === currentSnapshot) {
+            throw new BaerlyError("AccessDenied", "snapshot read denied");
+          }
+          return inner.get(key, opts);
+        },
+        put: (key, body, opts) => inner.put(key, body, opts),
+        delete: (key, opts) => inner.delete(key, opts),
+        list: (prefix, opts) => inner.list(prefix, opts),
+      };
+
+      const ctx = createObservabilityContext();
+      let result!: Awaited<ReturnType<typeof runGc>>;
+      await runWithContext(ctx, async () => {
+        result = await runGc({ storage: denied, currentJsonKey: KEY }, {
+          maxMarksPerRun: 20,
+          maxSweepsPerRun: 10,
+        } as InternalRunGcOptions);
+      });
+
+      expect(result.contentDeferredReason).toBe("snapshot-unreadable");
+      expect(
+        ctx.recorder.snapshot().counters.filter((c) => c.name === "db.gc.content_deferred_total"),
+      ).toEqual([
+        {
+          name: "db.gc.content_deferred_total",
+          value: 1,
+          labels: { collection: COLL, reason: "snapshot-unreadable" },
+        },
+      ]);
+    });
+
+    test("emits nothing when a complete live set classified content", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 0 }));
+
+      const ctx = createObservabilityContext();
+      let result!: Awaited<ReturnType<typeof runGc>>;
+      await runWithContext(ctx, async () => {
+        result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+          maxMarksPerRun: 20,
+          maxSweepsPerRun: 10,
+        } as InternalRunGcOptions);
+      });
+
+      expect(result.contentDeferredReason).toBeUndefined();
+      expect(
+        ctx.recorder.snapshot().counters.find((c) => c.name === "db.gc.content_deferred_total"),
+      ).toBeUndefined();
+    });
+  });
 });
