@@ -24,6 +24,7 @@ import {
   type Storage,
   BaerlyError,
   casUpdateCurrentJson,
+  CF_FREE_COMPACT_TAIL_PROBE_GETS,
   GC_STARVATION_GUARD,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
@@ -131,12 +132,24 @@ export {
 } from "@baerly/protocol";
 
 // Snapshot ceilings aren't part of the scheduled cap surface; omitted.
-const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMaintenanceOptions => ({
+const profileToScheduledOptions = (
+  profile: MaintenanceProfile,
+  maxTailProbeGets?: number,
+  minEntriesToCompact: number = WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+): InternalMaintenanceOptions => ({
   compact: {
     maxEntriesPerRun: profile.maxFoldEntriesPerPass,
-    minEntriesToCompact: WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+    minEntriesToCompact,
+    ...(maxTailProbeGets !== undefined && { maxTailProbeGets }),
   },
-  gc: { maxMarksPerRun: profile.gcMaxMarks, maxSweepsPerRun: profile.gcMaxSweeps },
+  gc: {
+    maxMarksPerRun: profile.gcMaxMarks,
+    maxSweepsPerRun: profile.gcMaxSweeps,
+    ...(maxTailProbeGets !== undefined && {
+      maxTailProbeGets,
+      maxLiveLogEntriesPerRun: profile.maxFoldEntriesPerPass,
+    }),
+  },
 });
 
 /**
@@ -144,22 +157,44 @@ const profileToScheduledOptions = (profile: MaintenanceProfile): InternalMainten
  * derived from {@link MAINTENANCE_PROFILE_CF_FREE} (one source of truth).
  *
  * Budget arithmetic (worst case):
- *   compact: 1 GET current + 1 GET snapshot (if any) + N GETs log
- *     + 1 PUT snapshot + 1 PUT current = 3 + N (N = maxEntriesPerRun).
- *   runGc:   1 GET current + 1 GET pending + 3 LISTs (one page each)
- *     + M GETs log (live tail for content hashes) + S DELETEs + 1 PUT
- *     pending = 6 + M + S.
+ *   compact: 1 current GET + P tail-probe GETs + 1 optional prior-snapshot
+ *     GET + N folded-log GETs + 1 snapshot PUT + 1 `current.json` CAS PUT
+ *     = 4 + N + P (N = maxEntriesPerRun, P = 25).
+ *   full content-marking GC, maximally contended: 1 current GET + (M + 1)
+ *     live-log/probe GETs + 3 pending-bootstrap-conflict operations + 3 LIST
+ *     calls + 1 optional snapshot GET + 1 conditional fresh-current GET before
+ *     a due snapshot sweep + S DELETEs + all three final pending CAS attempts
+ *     (3 GETs + 3 PUTs).
+ *   content-deferred GC: 1 current GET + P tail-probe GETs + 1 `tail_hint`
+ *     checkpoint CAS PUT + 3 pending-bootstrap-conflict operations + 2 LIST
+ *     calls + 1 conditional fresh-current GET before a due snapshot sweep + S
+ *     DELETEs + all three final pending CAS attempts (3 GETs + 3 PUTs).
  *
- * With N=20, M=20, S=10 the totals are: compact ≈ 23, gc ≈ 36 — over
- * the 50 cap combined. The Cloudflare scheduled handler therefore
- * alternates phases per tick (even minute → compact, odd minute →
- * GC) by calling `compact()` / `runGc()` directly instead of
- * `runScheduledMaintenance`; the `maintenance-budget.test.ts`
+ * `minEntriesToCompact` drops to `maxFoldEntriesPerPass` (20) here, from the
+ * write-tick default of 50, because a bounded probe changes what "available"
+ * can even mean. `compact()` measures `available = discoveredTail −
+ * log_seq_start`, and a P-capped probe certifies at most `probeFloor + P`, so
+ * a threshold above P is only reachable after several passes have each spent
+ * P GETs to ratchet `tail_hint` forward — every one of them returning
+ * `probe-budget-checkpointed` without folding. Holding 50 against P=25 also
+ * pairs a threshold with a smaller per-pass fold cap (N=20), which folds 20
+ * of an accumulated 50 and then waits for the remainder to climb back to 50.
+ * Keeping the threshold at N makes a pass fold exactly when one pass's worth
+ * of work exists. Any future edit must keep `minEntriesToCompact <= P`.
+ *
+ * With N=20, P=25, M=20, S=10 the exact worst cases are: compaction ≤49,
+ * full content-marking GC ≤46, and content-deferred GC ≤49. Combining a
+ * compact and GC pass can exceed 50, so the Cloudflare scheduled handler
+ * processes one collection and alternates phases per invocation (even minute
+ * → compact, odd minute → GC) by calling `compact()` / `runGc()` directly
+ * instead of `runScheduledMaintenance`; the `maintenance-budget.test.ts`
  * worst-case test proves each phase in isolation sits under 50 ops
  * with these bounds.
  */
 export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_FREE,
+  CF_FREE_COMPACT_TAIL_PROBE_GETS,
+  MAINTENANCE_PROFILE_CF_FREE.maxFoldEntriesPerPass,
 );
 
 /**

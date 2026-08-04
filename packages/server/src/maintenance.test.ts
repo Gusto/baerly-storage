@@ -132,9 +132,30 @@ describe("runScheduledMaintenance", () => {
     const cfFree = CLOUDFLARE_FREE_TIER as InternalMaintenanceOptions;
 
     expect(cfFree.compact?.maxEntriesPerRun).toBe(20);
-    expect(cfFree.compact?.minEntriesToCompact).toBe(50);
+    expect(cfFree.compact?.minEntriesToCompact).toBe(20);
+    expect(cfFree.compact?.maxTailProbeGets).toBe(25);
+    expect(cfFree.gc?.maxTailProbeGets).toBe(25);
+    expect(cfFree.gc?.maxLiveLogEntriesPerRun).toBe(20);
     expect(cfFree.gc?.maxMarksPerRun).toBe(20);
     expect(cfFree.gc?.maxSweepsPerRun).toBe(10);
+  });
+
+  test("CLOUDFLARE_FREE_TIER keeps its fold threshold within one probe budget", () => {
+    // Not a restatement of the constants above: this is the RELATION
+    // between two of them. `compact()` derives `available` from a probe
+    // that certifies at most `probeFloor + maxTailProbeGets`, so a
+    // threshold above that budget cannot be met by a single pass — every
+    // pass would return `probe-budget-checkpointed` and fold nothing until
+    // enough passes had ratcheted `tail_hint` forward. Raising the
+    // threshold or lowering the probe budget in isolation reintroduces
+    // that stall, so bind them here.
+    const cfFree = CLOUDFLARE_FREE_TIER as InternalMaintenanceOptions;
+    const threshold = cfFree.compact?.minEntriesToCompact;
+    const probeBudget = cfFree.compact?.maxTailProbeGets;
+
+    expect(threshold).toBeDefined();
+    expect(probeBudget).toBeDefined();
+    expect(threshold as number).toBeLessThanOrEqual(probeBudget as number);
   });
 
   test("CLOUDFLARE_PAID_TIER carries the Node-derived per-pass bounds", () => {
@@ -145,6 +166,10 @@ describe("runScheduledMaintenance", () => {
     const cfPaid = CLOUDFLARE_PAID_TIER as InternalMaintenanceOptions;
 
     expect(cfPaid.compact?.maxEntriesPerRun).toBe(200);
+    expect(cfPaid.compact?.minEntriesToCompact).toBe(50);
+    expect(cfPaid.compact?.maxTailProbeGets).toBeUndefined();
+    expect(cfPaid.gc?.maxTailProbeGets).toBeUndefined();
+    expect(cfPaid.gc?.maxLiveLogEntriesPerRun).toBeUndefined();
     expect(cfPaid.gc?.maxMarksPerRun).toBe(200);
     expect(cfPaid.gc?.maxSweepsPerRun).toBe(100);
   });
