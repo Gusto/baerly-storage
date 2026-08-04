@@ -188,9 +188,12 @@ export const cfMaintenanceDispatch = (
  * Cron Trigger handler. Called once per tick when the user has
  * declared `triggers.crons` in `wrangler.jsonc` AND passed this
  * option. The body owns its own subrequest budget — wrap any
- * outlasting work in `ctx.waitUntil(...)`. Multi-tenant deployments
- * typically iterate a list of `current.json` keys and call
- * {@link runScheduledMaintenance} per tenant.
+ * outlasting work in `ctx.waitUntil(...)`. On Cloudflare Free, one
+ * invocation must process only one `current.json` key and one direct
+ * `compact()` or `runGc()` phase; alternate phases and shard cron
+ * triggers or persist a collection cursor instead of looping tenants /
+ * collections. Cloudflare Paid may use {@link runScheduledMaintenance}
+ * within its larger invocation budget.
  */
 export type WorkerScheduledHandler = (
   event: ScheduledController,
@@ -563,12 +566,16 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     async scheduled(event, env, ctx): Promise<void> {
       const { options } = await ensureResolved(env);
       if (options.scheduled !== undefined) {
-        // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, call
-        // `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` when the
-        // profile is "cf-paid", or `CLOUDFLARE_FREE_TIER` (the default) —
-        // both imported from `@gusto/baerly-storage/maintenance`. Use
-        // `resolveCfMaintenanceProfile((k) => env[k])` (exported from this
-        // module) to read the env var inside your WorkerScheduledHandler.
+        // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, reserve
+        // `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` for
+        // "cf-paid". On the Free default, alternate direct
+        // `compact(args, CLOUDFLARE_FREE_TIER.compact)` and
+        // `runGc(args, CLOUDFLARE_FREE_TIER.gc)` calls, with exactly one
+        // collection/phase per invocation; shard or persist a collection
+        // cursor instead of looping. Import those entry points from
+        // `@gusto/baerly-storage/maintenance`, and use
+        // `resolveCfMaintenanceProfile((k) => env[k])` here to select the
+        // paid recipe when configured.
         await options.scheduled(event, env, ctx);
       }
     },

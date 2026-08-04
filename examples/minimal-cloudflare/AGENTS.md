@@ -533,8 +533,23 @@ not auto-compact and pays a small, bounded replay — fine at small scale, a sig
 graduate once a collection is large. See docs/about/graduation.md for the per-tier
 envelope and the `BAERLY_MAINTENANCE_*` operator env vars (you almost never need them).
 
-Operator opt-in: call runScheduledMaintenance from @gusto/baerly-storage/maintenance on
-your own schedule. Not required for steady-state operation.
+Operator opt-in is not required for steady-state operation. On Cloudflare Free, run
+exactly one collection and one phase per invocation, alternating the direct primitives:
+
+```ts
+import { CLOUDFLARE_FREE_TIER, compact, runGc } from "@gusto/baerly-storage/maintenance";
+
+const args = { storage, currentJsonKey };
+if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
+  await compact(args, CLOUDFLARE_FREE_TIER.compact);
+} else {
+  await runGc(args, CLOUDFLARE_FREE_TIER.gc);
+}
+```
+
+Do not loop tenants or collections in one Free invocation; shard the schedule or persist
+a collection cursor across invocations. Reserve `runScheduledMaintenance()` (both
+phases) for Cloudflare Paid or Node, within that host's invocation budget.
 
 <!-- pattern-d:end -->
 
