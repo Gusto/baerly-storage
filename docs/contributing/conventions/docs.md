@@ -82,6 +82,23 @@ update every occurrence so they don't silently drift:
   may use the same content without the `Built like git:` lead when the
   sentence is embedded in explanatory prose.
 
+Two positioning constraints apply to **product positioning and
+graduation copy** — the prose that says what baerly-storage is for,
+how far it scales, and when to leave it. They do not reach ordinary
+explanatory or reference prose, and they say nothing about how a doc
+characterizes the reader's _own_ software.
+
+- **Production-grade within an envelope.** Describe the ceiling in
+  terms of workload scale and shape, never maturity. Do not call
+  baerly-storage "between toy and production," "prototype-tier," "not
+  a real database," or a stepping stone to a "serious" database.
+  Internal tools are production systems; the small surface is
+  deliberate.
+- **Do not invent scale numbers.** `docs/about/workload-fit.md`,
+  `docs/about/graduation.md`, and `docs/about/cost-model.md` are the
+  canonical owners of throughput, size, and cost figures. Front-door
+  copy links to those sources instead of restating their figures.
+
 Consistency is of the _wording_, not byte-identical formatting: the
 copies are not identical today (e.g. some are bold and standalone,
 others are embedded in a longer sentence or soft-wrapped). Keep the
