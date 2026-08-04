@@ -2,8 +2,8 @@
 title: Ephemeral coordination
 audience: adr
 doc_type: adr
-summary: ADR 002 — coordination runs in request-bounded compute, never a resident process; maintenance is in-band on the write path and reads are pure. The runtime model lives in sync-protocol.md + the operator-burden test; this record keeps the no-daemon doctrine and the rejected coordinator/cron/lease paths.
-last-reviewed: 2026-06-28
+summary: ADR 002 — coordination runs in request-bounded compute, never a resident process; maintenance is in-band on the write path and reads are pure. The runtime model lives in sync-protocol.md + the operator-burden test; this record keeps the no-daemon doctrine and the rejected coordinator/cron/lease/read-triggered-maintenance paths.
+last-reviewed: 2026-08-04
 tags: [decision, adr, runtime-model]
 related:
   [
@@ -88,6 +88,25 @@ is a **graduation signal, not silent breakage**.
   release the next CAS. Shipped a static ceiling instead.
 - **A compaction lease.** Considered and deferred; duplicate-fold compute
   under contention is accepted and measured, not coordinated away.
+- **Read-triggered snapshot publication ("banking").** A full-scan read
+  already holds a complete materialized fold at a known `current.json`
+  ETag, so reusing it to publish a snapshot and CAS the pointer looks
+  nearly free. It is not. Pure reads are a ratified invariant
+  ([sync-protocol.md §Protocol invariants](../spec/sync-protocol.md#protocol-invariants),
+  #8), so this path must supersede that contract rather than build
+  against it — and the invariant above is what makes it structurally
+  wrong rather than merely unproved: orphan production would track
+  **read** rate while reclamation stays write-ticked, so a read-heavy
+  write-idle bucket pins sweep throughput at 0 while `p > 0`. That is
+  the seed-then-idle orphan residual
+  ([cost-model.md](../about/cost-model.md#maintenance-is-write-driven-reads-are-pure))
+  without its bound, because reads recur and an import does not.
+  Cleanup would also depend on a later write, so it is not resumable
+  from bucket state; and the payoff inverts against the Cloudflare
+  envelope, since banking is worth most exactly when the live tail is
+  long — which is when the read alone sits closest to the 50-subrequest
+  ceiling. Anti-precedent: Cassandra's `read_repair_chance`, removed in
+  4.0 ([CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)).
 
 ## What would break the property
 
