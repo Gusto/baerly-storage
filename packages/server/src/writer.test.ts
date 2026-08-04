@@ -684,10 +684,14 @@ describe("Writer", () => {
 
   test("a commit never lands below the log_seq_start observed after it", async () => {
     // Every other seq assertion in this file is an exact literal
-    // (`toBe(0)`, `toBe(1)`, …) against a collection whose floor is 0 and
-    // never moves, so none of them can see a commit landing BENEATH the
-    // floor. This states the relation instead, against the one manifest
-    // shape in the system where the floor has moved DOWN.
+    // (`toBe(0)`, `toBe(1)`, …) against a floor that never moves DOWN. Not
+    // "a floor of 0" — the `[log_seq_start, tail_hint)` walk test asserts
+    // a seq under a static floor of 2, and the `FLOOR = 300` tests further
+    // down assert index keys rather than seqs. The point is narrower: in
+    // all of them the commit lands at or above a floor that only ever rose,
+    // so none can observe a commit landing BENEATH the floor. This states
+    // the relation instead, against the one manifest shape in the system
+    // where the floor has moved DOWN.
     //
     // That shape is what `baerly admin restore --force` writes: its
     // deliberate floor exemption reseeds `log_seq_start` from the
@@ -704,9 +708,13 @@ describe("Writer", () => {
     // enforces `0 <= log_seq_start <= tail_hint`, so today `probeFloor`'s
     // `Math.max` is a defensive no-op and this invariant holds by
     // construction. This is a TRIPWIRE on the floor exemption, not
-    // coverage of a live defect. It exists because the exemption is the
-    // only write in the system that lowers the floor, and because no
-    // other assertion here is relative to a floor that has moved.
+    // coverage of a live defect — mutating `probeFloor` reddens other
+    // tests too, though none of them NAMES this invariant. It exists
+    // because the exemption is the only write in the system that lowers
+    // the floor. The read-side counterpart is `http/since.test.ts`, which
+    // pins cursor REJECTION across the same post-`--force` shape; its only
+    // commit happens before the truncation, so it does not cover the write
+    // path this test does.
     const storage = new MemoryStorage();
     // The post-`--force` manifest, in the fields this test turns on:
     // floor and hint both reseeded to 10, snapshot dropped. Ten, not

@@ -2406,6 +2406,49 @@ describe("runGc — sweep-time revalidation", () => {
     expect(r.dropped).toEqual({ stale_generation: 0, still_live: 0 });
   });
 
+  test("revalidation adds ZERO storage ops — a dropping pass costs a sweeping pass minus the DELETE", async () => {
+    // The gate's cost argument, pinned. Every value it consults is
+    // already in lexical scope — `current` and `logSeqStart` from step 1,
+    // the live-hash set from step 5 — so it issues no probe, no HEAD and
+    // no extra LIST. Nothing else in the suite counts operations, so
+    // without this test that claim rests on inspection alone.
+    //
+    // Two arms, byte-identical but for the candidate's `generation`, so
+    // any difference in the op trace IS revalidation cost. Both halves
+    // matter: comparing the arms catches an op added on the drop path,
+    // and pinning the absolute trace catches one added to BOTH paths,
+    // which a comparison alone would let through.
+    const traceFor = async (candidateGeneration: string): Promise<StorageTrace> => {
+      const inner = new MemoryStorage();
+      // Seed on the raw storage so fixture writes are not traced.
+      await seedDueStaleLog(inner, { floor: 9, seq: 5, candidateGeneration });
+      const { storage, trace } = tracingStorage(inner);
+      await runGc({ storage, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxSweepsPerRun: 10,
+      } as InternalRunGcOptions);
+      return trace;
+    };
+
+    const swept = await traceFor(LOG_STATE_GENERATION);
+    const dropped = await traceFor(OTHER_GENERATION);
+
+    // Identical reads, writes and listings — the whole difference is the
+    // DELETE the fenced pass correctly declined to issue.
+    expect(dropped.gets).toEqual(swept.gets);
+    expect(dropped.puts).toEqual(swept.puts);
+    expect(dropped.lists).toEqual(swept.lists);
+    expect(swept.deletes).toEqual([`${PREFIX}/log/5.json`]);
+    expect(dropped.deletes).toEqual([]);
+
+    // The absolute shape, so an op added to both arms cannot hide behind
+    // the equality above. Keys rather than counts: a changed op is then
+    // legible in the diff instead of arriving as an off-by-one.
+    expect(swept.gets).toEqual([KEY, PENDING_KEY, `${PREFIX}/log/9.json`, PENDING_KEY]);
+    expect(swept.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/`, `${PREFIX}/content/`]);
+    expect(swept.puts.map((p) => p.key)).toEqual([PENDING_KEY]);
+  });
+
   test("drops a due stale-log candidate that the floor has made live again", async () => {
     // The second arm, independent of the first: same generation
     // throughout, but the floor has moved DOWN beneath the candidate.
