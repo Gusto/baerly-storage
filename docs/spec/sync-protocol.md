@@ -3,7 +3,7 @@ title: Sync protocol
 audience: spec
 doc_type: current-contract
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-08-03
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -363,9 +363,12 @@ snapshot:
    `log_seq_start` advances to the folded end, and
    `snapshot_bytes` / `snapshot_rows` / `mean_entry_bytes` are updated.
    The compactor also advances `tail_hint` (monotone max). Compaction
-   folds are the primary durable advancer of the hint, and write-tick
-   maintenance may also rate-limit-refresh it when fold/GC work is
-   disabled or deferred. Ordinary writer commits never touch
+   folds are the primary durable advancer of the hint. Explicitly bounded
+   scheduled compaction can instead durably checkpoint an incomplete probe's
+   certified lower bound in `tail_hint` without publishing a snapshot; a
+   later pass resumes from that checkpoint. Write-tick maintenance may also
+   rate-limit-refresh the hint when fold/GC work is disabled or deferred.
+   Ordinary writer commits never touch
    `current.json` on the commit path. The fold CAS is therefore the
    only steady-state writer of the snapshot pointer, `log_seq_start`,
    and snapshot counters, which strengthens compaction-state atomicity.
@@ -399,14 +402,31 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   raised via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, whereas `E`
   (`MAINTENANCE_MAX_FOLD_ROWS`) is a hardcoded constant with no env
   override.
-- GC marks and sweeps bounded batches from `gc/pending.json`.
+- GC marks and sweeps bounded batches from `gc/pending.json`. A bounded
+  pass may checkpoint an inexact tail lower bound, or an exact tail that is
+  unaffordable for complete live-content classification, before deferring
+  orphan-content discovery. A malformed occupied slot also advances the safe
+  occupancy proof but makes the live-content set incomplete. An incomplete or
+  deferred live-content set disables both orphan-content marking and pending
+  orphan-content sweeping; the stored content cursor is preserved. With a
+  complete set, pending content candidates whose parsed hash is live are
+  resolved from the ledger without DELETE or sweep accounting.
+- Before any due snapshot candidate can be swept, GC re-reads `current.json`
+  and resolves every candidate named by the fresh `current.snapshot` pointer.
+  Stale-log classification continues to use the initial monotone
+  `log_seq_start`; a stale read can delay collection but cannot make a live log
+  stale.
+- Cloudflare Free schedules one collection and one phase per invocation,
+  alternating direct bounded `compact()` and `runGc()` calls. Fan-out must be
+  sharded or driven by a persisted collection cursor; the combined
+  `runScheduledMaintenance()` helper is for Cloudflare Paid or Node budgets.
 - Cloudflare can defer the tick past the response with
   `ctx.waitUntil`; Node runs inline unless the host wraps it
   differently.
 
 There is no daemon, lease service, scheduler, or background thread.
-`runScheduledMaintenance` is an exported convenience for teams that
-want an explicit maintenance window; it is not required for
+`runScheduledMaintenance` is an exported convenience for Cloudflare Paid or
+Node teams that want an explicit maintenance window; it is not required for
 correctness.
 
 The doctrine and trade-offs live in
@@ -449,13 +469,15 @@ These are the load-bearing rules.
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.
-   `tail_hint` is a non-authoritative monotone lower bound, durably
-   advanced by compaction folds and by the write-tick runner's tail
-   refresh when fold/GC work defers or is disabled. Ordinary writer
-   commits never refresh it inline. Other non-commit-path writers are
-   explicit: the one-time `createCurrentJson` bootstrap, operator/import
-   paths such as `admin restore`, and the best-effort `last_warned_seq`
-   graduation stamp.
+   `tail_hint` is a non-authoritative monotone lower bound, durably advanced
+   by compaction folds, explicitly bounded scheduled-compaction probe
+   checkpoints, bounded-GC tail checkpoints, and by the write-tick runner's
+   tail refresh when fold/GC work defers or is disabled. Those durable
+   checkpoint writers use monotone CAS updates and never move `tail_hint`
+   past the true first missing log slot. Ordinary writer commits never refresh
+   it inline. Other non-commit-path writers are explicit: the one-time
+   `createCurrentJson` bootstrap, operator/import paths such as `admin
+   restore`, and the best-effort `last_warned_seq` graduation stamp.
 7. **An abandoned write cannot falsely unindex a committed doc.** New
    index keys are emitted _before_ the commit and stale keys deleted
    _after_, so a committed value is never de-indexed by a write that did

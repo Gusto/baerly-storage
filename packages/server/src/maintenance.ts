@@ -1,10 +1,9 @@
 /**
- * `runScheduledMaintenance` — single-pass compose of `compact()` and
- * `runGc()` over one collection. Designed to fit a single Cloudflare
- * Cron Trigger invocation's 50-subrequest free-tier budget when
- * called with the {@link CLOUDFLARE_FREE_TIER} profile (which the
- * caller pairs with even/odd-minute alternation between compact and
- * GC ticks); unbounded on Node.
+ * `runScheduledMaintenance` — single-pass composition of `compact()` and
+ * `runGc()` over one collection. It always runs both phases; therefore one
+ * invocation with {@link CLOUDFLARE_FREE_TIER} is **not** safe for
+ * Cloudflare Free's 50-subrequest limit. Free-tier schedulers alternate
+ * direct `compact()` and `runGc()` calls instead. Unbounded on Node.
  *
  * Single-attempt: returns the combined result. The caller (cron
  * handler) is responsible for scheduling the next invocation; this
@@ -75,11 +74,13 @@ export interface MaintenanceResult {
 }
 
 /**
- * Single maintenance pass for one collection. Runs `compact()` then
- * `runGc()` (in that order; the compactor's advance of
- * `log_seq_start` produces the stale-log candidates the GC then
- * marks). Callers wanting a single phase per tick invoke
- * `compact()` or `runGc()` directly instead.
+ * Single maintenance pass for one collection. Always runs `compact()` then
+ * `runGc()` (in that order; the compactor's advance of `log_seq_start`
+ * produces the stale-log candidates the GC then marks). It is not safe to
+ * call once with {@link CLOUDFLARE_FREE_TIER} on Cloudflare Free: the two
+ * individually bounded phases can exceed that invocation's combined
+ * 50-subrequest limit. Alternate direct `compact()` and `runGc()` calls for
+ * that profile.
  *
  * Errors propagate — the caller's cron handler is responsible for
  * logging them. The Cloudflare runtime ships uncaught Worker errors
@@ -88,7 +89,12 @@ export interface MaintenanceResult {
  *
  * @example
  * ```ts
- * import { runScheduledMaintenance, CLOUDFLARE_FREE_TIER } from "@gusto/baerly-storage/maintenance";
+ * import {
+ *   CLOUDFLARE_FREE_TIER,
+ *   compact,
+ *   runGc,
+ *   runScheduledMaintenance,
+ * } from "@gusto/baerly-storage/maintenance";
  *
  * // Node (unbounded — defaults fold the entire live tail):
  * const res = await runScheduledMaintenance(
@@ -96,8 +102,12 @@ export interface MaintenanceResult {
  * );
  * console.log("compacted:", res.compact.entriesFolded, "swept:", res.gc.swept);
  *
- * // Cloudflare free tier (50-subrequest cap, single phase per tick):
- * await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER);
+ * // Cloudflare Free: alternate the individually bounded direct phases.
+ * if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
+ *   await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
+ * } else {
+ *   await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
+ * }
  * ```
  */
 export const runScheduledMaintenance = async (
@@ -185,9 +195,9 @@ const profileToScheduledOptions = (
  * With N=20, P=25, M=20, S=10 the exact worst cases are: compaction ≤49,
  * full content-marking GC ≤46, and content-deferred GC ≤49. Combining a
  * compact and GC pass can exceed 50, so the Cloudflare scheduled handler
- * processes one collection and alternates phases per invocation (even minute
- * → compact, odd minute → GC) by calling `compact()` / `runGc()` directly
- * instead of `runScheduledMaintenance`; the `maintenance-budget.test.ts`
+ * processes one collection and alternates phases per invocation (even minute →
+ * compact, odd minute → GC) by calling `compact()` / `runGc()` directly instead of
+ * `runScheduledMaintenance`; the `maintenance-budget.test.ts`
  * worst-case test proves each phase in isolation sits under 50 ops
  * with these bounds.
  */
