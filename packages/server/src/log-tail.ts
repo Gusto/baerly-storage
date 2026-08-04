@@ -14,6 +14,64 @@ import {
   logObjectKey,
 } from "@baerly/protocol";
 
+export type TailProbeChunk =
+  | {
+      readonly kind: "exact";
+      readonly tail: number;
+      readonly entries: LogEntry[];
+      readonly complete: boolean;
+    }
+  | {
+      readonly kind: "at-least";
+      readonly lowerBound: number;
+      readonly entries: LogEntry[];
+      readonly complete: boolean;
+    };
+
+/**
+ * Probe a bounded chunk of committed entries from `hint`. An occupied
+ * chunk certifies only that the tail is at or past its exclusive bound.
+ * Decode failures throw by default. GC alone opts into tolerant
+ * occupancy probing: malformed slots remain occupied, `complete` becomes
+ * false, and probing continues to the first missing slot or cap.
+ */
+export const probeTailChunk = async (
+  storage: Storage,
+  logPrefix: string,
+  hint: number,
+  opts?: { signal?: AbortSignal; cap?: number; tolerateMalformed?: boolean },
+): Promise<TailProbeChunk> => {
+  const cap = opts?.cap ?? LOG_FORWARD_PROBE_CAP;
+  const getOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
+  const entries: LogEntry[] = [];
+  let complete = true;
+  for (let i = 0; i < cap; i++) {
+    const seq = hint + i;
+    const key = logObjectKey(logPrefix, seq);
+    const got = await storage.get(key, getOpts);
+    if (got === null) {
+      return { kind: "exact", tail: seq, entries, complete };
+    }
+    try {
+      entries.push(decodeJsonBytes<LogEntry>(got.body));
+    } catch (error) {
+      if (opts?.tolerateMalformed === true) {
+        complete = false;
+        continue;
+      }
+      // A malformed body at an occupied slot is a protocol violation —
+      // surface it as InvalidResponse (the same code readLogEntry uses)
+      // rather than a raw SyntaxError leaking out of the probe.
+      throw new BaerlyError(
+        "InvalidResponse",
+        `probeTailChunk: malformed log entry at ${key}: ${(error as Error).message}`,
+        { cause: error },
+      );
+    }
+  }
+  return { kind: "at-least", lowerBound: hint + cap, entries, complete };
+};
+
 /**
  * Discover the true committed tail and fold entries in `[hint, tail)`.
  * `tail` is the first empty seq (>= hint); `entries` are the
@@ -27,28 +85,9 @@ export const probeTailFrom = async (
   hint: number,
   opts?: { signal?: AbortSignal; cap?: number },
 ): Promise<{ tail: number; entries: LogEntry[] }> => {
-  const cap = opts?.cap ?? LOG_FORWARD_PROBE_CAP;
-  const getOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
-  const entries: LogEntry[] = [];
-  for (let i = 0; i < cap; i++) {
-    const seq = hint + i;
-    const key = logObjectKey(logPrefix, seq);
-    const got = await storage.get(key, getOpts);
-    if (got === null) {
-      return { tail: seq, entries };
-    }
-    try {
-      entries.push(decodeJsonBytes<LogEntry>(got.body));
-    } catch (error) {
-      // A malformed body at an occupied slot is a protocol violation —
-      // surface it as InvalidResponse (the same code readLogEntry uses)
-      // rather than a raw SyntaxError leaking out of the probe.
-      throw new BaerlyError(
-        "InvalidResponse",
-        `probeTailFrom: malformed log entry at ${key}: ${(error as Error).message}`,
-        { cause: error },
-      );
-    }
+  const result = await probeTailChunk(storage, logPrefix, hint, opts);
+  if (result.kind === "exact") {
+    return { tail: result.tail, entries: result.entries };
   }
   // Cap exhausted without hitting a 404 — the true tail is past `cap`.
   // Returning `hint+cap` here would silently truncate every downstream
@@ -62,7 +101,7 @@ export const probeTailFrom = async (
   // needs to walk past the cap.
   throw new BaerlyError(
     "Internal",
-    `probeTailFrom: forward probe exceeded ${cap} from hint ${hint} on ${logPrefix}`,
+    `probeTailFrom: forward probe exceeded ${opts?.cap ?? LOG_FORWARD_PROBE_CAP} from hint ${hint} on ${logPrefix}`,
   );
 };
 
