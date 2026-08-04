@@ -165,14 +165,23 @@ The load-bearing kernel metrics today (canonical list in
 - `db.gc.swept_total` — GC counter, labelled by reason.
 - `db.gc.content_deferred_total` — GC counter, labelled by the
   `ContentDeferralReason` for a pass that skipped orphan-content
-  discovery. Emitted only on a deferred pass. The label names the
-  unreadable artifact, not the fault class, so a single occurrence can
-  be a transient storage error that clears on the next pass; a
-  SUSTAINED non-zero rate is the alertable signal, and means
-  orphan-content GC is parked for as long as the fault persists. Cron
-  callers see no metrics outside an HTTP scope —
-  `RunGcResult.contentDeferredReason` carries the same value for them
-  to log.
+  discovery. Emitted only on a deferred pass. Budget reasons are
+  expected under `CLOUDFLARE_FREE_TIER` and self-clear; degraded ones
+  do not, and park orphan-content GC for as long as the fault
+  persists. A degraded reason names the unreadable artifact, not the
+  fault class, so a single occurrence can be a transient storage error
+  that clears on the next pass — a SUSTAINED non-zero rate is the
+  alertable signal. `isDegradedContentDeferral` is the authority on
+  which reason is which — branch on it in code rather than on a
+  literal list, and read the union's members off it when writing a
+  label-matching alert rule, because a reason added later will be
+  classified there and nowhere else. Cron callers see no metrics
+  outside an HTTP scope — `RunGcResult.contentDeferredReason` carries
+  the same value for them to pass to that predicate.
+- `db.gc.cas_lost_total` — GC counter for a lost admission-checkpoint
+  CAS on `current.json` (per-collection label). The GC-side sibling of
+  the compactor's `db.compaction.cas_lost_total`; sustained non-zero on
+  either is write contention above the envelope.
 - `db.orphan.candidate_count` — GC gauge (`gc/pending.json` depth).
 - `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` /
   `db.storage.<op>.duration_ms` — storage decorator counters +
