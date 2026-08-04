@@ -102,6 +102,14 @@ const randomizeExclude = isRandomizeCommand
       "tests/integration/maintenance-crash-fuzz.test.ts",
       "tests/integration/maintenance-profile-equivalence.test.ts",
       "tests/integration/maintenance-e2e.test.ts",
+      // The multilevel fold study is a self-contained design-time model: it
+      // imports no production code, so a `packages/**` change cannot alter its
+      // result. Its own property suites honor `FC_NUM_RUNS`, so leaving it in
+      // would add tens of minutes to a soak that gains no signal from it. Run
+      // the study deliberately via `pnpm model:multilevel`
+      // (`tests/model/multilevel/README.md`). It still runs at default volume
+      // under plain `pnpm test`, which is what keeps it from bit-rotting.
+      "tests/model/multilevel/**/*.test.ts",
     ]
   : [];
 
