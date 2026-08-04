@@ -21,6 +21,18 @@ The tests live under `tests/` and run under plain `pnpm test` for one reason:
 so the model keeps compiling and keeps passing as the repo moves around it.
 That is bit-rot protection, not a regression gate.
 
+**A green report authorizes nothing.** Specifically, it does not license
+building a multilevel manifest format, a decoder for one, a query path over
+one, a compactor change, or an oracle adapter. Each of those needs its own
+design and its own ratification; "the model admits no counterexample" is an
+input to that decision, not the decision.
+
+**Keep this model semantically independent of `tests/model/fold-boundary/`.**
+Do not share modeled state, transitions, generators, reconstruction logic, or
+invariants between them: the two models test different hypotheses, and shared
+semantics could give them the same blind spot. If shared reporting
+infrastructure is introduced, include it in each report's source-hash closure.
+
 ## What it checks
 
 Eight safety properties, evaluated over prefixes of each selected derived
