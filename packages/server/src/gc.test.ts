@@ -13,6 +13,7 @@ import {
   type Storage,
   type StorageGetOptions,
   type StorageListEntry,
+  BaerlyError,
   GC_GRACE_PERIOD_MILLIS,
   GC_PENDING_SCHEMA_VERSION,
   MAX_PARALLEL_LOG_READS,
@@ -27,7 +28,11 @@ import {
   snapshotHash,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
+import {
+  logStateCurrentJson,
+  seedLogEntries,
+  seedLogEntry,
+} from "../../../tests/fixtures/log-state.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
@@ -46,6 +51,53 @@ const KEY = "app/t/tenant/x/manifests/c/current.json";
 const PENDING_KEY = "app/t/tenant/x/manifests/c/gc/pending.json";
 const PREFIX = "app/t/tenant/x/manifests/c";
 const COLL = "c";
+
+interface StorageTrace {
+  readonly gets: string[];
+  readonly puts: Array<{
+    key: string;
+    ifMatch: string | undefined;
+    ifNoneMatch: string | undefined;
+  }>;
+  readonly deletes: string[];
+  readonly lists: string[];
+}
+
+const tracingStorage = (inner: Storage): { storage: Storage; trace: StorageTrace } => {
+  const trace: StorageTrace = { gets: [], puts: [], deletes: [], lists: [] };
+  const storage: Storage = {
+    async get(key, opts) {
+      trace.gets.push(key);
+      return inner.get(key, opts);
+    },
+    async put(key, body, opts) {
+      trace.puts.push({
+        key,
+        ifMatch: opts?.ifMatch,
+        ifNoneMatch: opts?.ifNoneMatch,
+      });
+      return inner.put(key, body, opts);
+    },
+    async delete(key, opts) {
+      trace.deletes.push(key);
+      return inner.delete(key, opts);
+    },
+    list(prefix, opts) {
+      trace.lists.push(prefix);
+      return inner.list(prefix, opts);
+    },
+  };
+  return { storage, trace };
+};
+
+const seedDenseLog = async (
+  storage: Storage,
+  fromSeq: number,
+  toExclusive: number,
+): Promise<void> =>
+  seedLogEntries(storage, PREFIX, fromSeq, toExclusive, (seq) => ({
+    after: { _id: `d${seq}`, n: seq },
+  }));
 
 describe("runGc", () => {
   test("returns zeros and bootstraps an empty pending.json on first run", async () => {
@@ -573,6 +625,68 @@ describe("runGc", () => {
     expect(r.marked.orphan_content).toBe(1);
     expect(r.swept).toBe(1);
     await expect(s.get(orphanKey)).resolves.toBeNull();
+  });
+
+  test("rescues a due pending content candidate once a complete live set references it", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const writer = new Writer({ storage: inner, currentJsonKey: KEY });
+    await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "live-again",
+      body: { _id: "live-again", n: 1 },
+    });
+    const liveContentKeys: string[] = [];
+    for await (const entry of inner.list(`${PREFIX}/content/`)) {
+      liveContentKeys.push(entry.key);
+    }
+    expect(liveContentKeys).toHaveLength(1);
+    const liveContent = liveContentKeys[0]!;
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: liveContent,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "orphan-content",
+        },
+      ],
+      last_swept_at: "",
+    });
+    const concurrentCandidate = {
+      key: `${PREFIX}/gc/concurrent.json`,
+      due_at: "2099-01-01T00:00:00.000Z",
+      reason: "stale-log" as const,
+    };
+    let injectedConcurrentUpdate = false;
+    const subject: Storage = {
+      get: (key, opts) => inner.get(key, opts),
+      async put(key, body, opts) {
+        if (key === PENDING_KEY && opts?.ifMatch !== undefined && !injectedConcurrentUpdate) {
+          injectedConcurrentUpdate = true;
+          await casUpdateGcPending(inner, PENDING_KEY, (latest) => ({
+            ...latest,
+            candidates: [...latest.candidates, concurrentCandidate],
+          }));
+        }
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+    const { storage, trace } = tracingStorage(subject);
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+    expect(result).toMatchObject({ swept: 0, pendingDepth: 1 });
+    expect(trace.deletes).not.toContain(liveContent);
+    await expect(inner.get(liveContent)).resolves.not.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates).toEqual([concurrentCandidate]);
   });
 
   test("bounds new marks per category at maxMarksPerRun", async () => {
@@ -1209,4 +1323,165 @@ describe("runGc", () => {
       await expect(inner.get(entry.key)).resolves.not.toBeNull();
     }
   });
+
+  // A partial live-content set cannot prove ANY content key dead — the
+  // post-images it is missing are exactly the ones that look orphan. These
+  // run the DEFAULT (unbounded) path, because the deferral is not a
+  // budget behaviour: a Node operator with an unreadable artifact gets it
+  // too. Only the content phase defers; stale-log and orphan-snapshot work
+  // and their due sweeps continue.
+  describe.each(["missing", "malformed"] as const)(
+    "when a live log entry is %s on the default path",
+    (failure) => {
+      test("defers content classification and preserves its cursor", async () => {
+        const inner = new MemoryStorage();
+        await createCurrentJson(
+          inner,
+          KEY,
+          logStateCurrentJson({
+            log_seq_start: 40,
+            tail_hint: 50,
+          }),
+        );
+        await seedLogEntry(inner, PREFIX, 0);
+        await seedDenseLog(inner, 40, 60);
+        if (failure === "missing") {
+          await inner.delete(`${PREFIX}/log/45.json`);
+        } else {
+          await inner.put(`${PREFIX}/log/45.json`, new TextEncoder().encode("not-json"));
+        }
+        const orphanSnapshot = `${PREFIX}/snapshot/L9/orphan-incomplete-log.json`;
+        const orphanContent = `${PREFIX}/content/ffffffffffffffffffffffffffffffff.json`;
+        const dueStaleKey = `${PREFIX}/gc/due-incomplete-log.json`;
+        const dueSnapshotKey = snapshotKey(PREFIX, 0, 39, "f".repeat(64));
+        const storedCursor = `${PREFIX}/content/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json`;
+        await inner.put(orphanSnapshot, new TextEncoder().encode("{}"));
+        await inner.put(dueSnapshotKey, new TextEncoder().encode("{}"));
+        await inner.put(orphanContent, new TextEncoder().encode("{}"));
+        await createGcPending(inner, PENDING_KEY, {
+          schema_version: GC_PENDING_SCHEMA_VERSION,
+          candidates: [
+            {
+              key: dueStaleKey,
+              due_at: "2000-01-01T00:00:00.000Z",
+              reason: "stale-log",
+            },
+            {
+              key: dueSnapshotKey,
+              due_at: "2000-01-01T00:00:00.000Z",
+              reason: "orphan-snapshot",
+            },
+            {
+              key: orphanContent,
+              due_at: "2000-01-01T00:00:00.000Z",
+              reason: "orphan-content",
+            },
+          ],
+          last_swept_at: "",
+          content_scan_cursor: storedCursor,
+        });
+
+        const { storage, trace } = tracingStorage(inner);
+        const result = await runGc({ storage, currentJsonKey: KEY }, {
+          maxMarksPerRun: 20,
+          maxSweepsPerRun: 10,
+          now: () => new Date("2026-01-01T00:00:00.000Z"),
+        } as InternalRunGcOptions);
+
+        expect(result).toEqual({
+          marked: { stale_log: 1, orphan_snapshot: 1, orphan_content: 0 },
+          swept: 2,
+          pendingDepth: 3,
+        });
+        // The content LIST never runs — nothing can be classified.
+        expect(trace.lists).toContain(`${PREFIX}/log/`);
+        expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
+        expect(trace.lists).not.toContain(`${PREFIX}/content/`);
+        expect(trace.deletes).toEqual([dueStaleKey, dueSnapshotKey]);
+        // The pending orphan-content candidate is NOT swept on an
+        // unprovable pass, and the cursor does not move.
+        await expect(inner.get(orphanContent)).resolves.not.toBeNull();
+        const pending = await readGcPending(inner, PENDING_KEY);
+        expect(pending?.json.content_scan_cursor).toBe(storedCursor);
+        expect(pending?.json.candidates.map((candidate) => candidate.reason).toSorted()).toEqual([
+          "orphan-content",
+          "orphan-snapshot",
+          "stale-log",
+        ]);
+      });
+    },
+  );
+
+  // Swallowing a current-snapshot read failure and returning the hashes
+  // collected so far makes every snapshot-only row look dead. All snapshot
+  // failure modes must defer content classification, on every host.
+  describe.each(["failed", "missing", "corrupt"] as const)(
+    "when the current snapshot is %s on the default path",
+    (failure) => {
+      test("defers content classification and preserves its cursor", async () => {
+        const inner = new MemoryStorage();
+        const currentSnapshot = `${PREFIX}/snapshot/L9/000000000000-000000000040-${"a".repeat(64)}.json`;
+        await createCurrentJson(
+          inner,
+          KEY,
+          logStateCurrentJson({
+            snapshot: currentSnapshot,
+            log_seq_start: 0,
+            tail_hint: 0,
+          }),
+        );
+        if (failure !== "missing") {
+          await inner.put(currentSnapshot, new TextEncoder().encode("not-a-valid-snapshot"));
+        }
+        const orphanSnapshot = `${PREFIX}/snapshot/L9/orphan-incomplete-snapshot.json`;
+        const orphanContent = `${PREFIX}/content/ffffffffffffffffffffffffffffffff.json`;
+        const dueKey = `${PREFIX}/gc/due-incomplete-snapshot.json`;
+        const storedCursor = `${PREFIX}/content/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json`;
+        await inner.put(orphanSnapshot, new TextEncoder().encode("{}"));
+        await inner.put(orphanContent, new TextEncoder().encode("{}"));
+        await createGcPending(inner, PENDING_KEY, {
+          schema_version: GC_PENDING_SCHEMA_VERSION,
+          candidates: [{ key: dueKey, due_at: "2000-01-01T00:00:00.000Z", reason: "stale-log" }],
+          last_swept_at: "",
+          content_scan_cursor: storedCursor,
+        });
+        const subject: Storage =
+          failure === "failed"
+            ? {
+                get: (key, opts) => {
+                  if (key === currentSnapshot) {
+                    throw new BaerlyError("AccessDenied", "snapshot read denied");
+                  }
+                  return inner.get(key, opts);
+                },
+                put: (key, body, opts) => inner.put(key, body, opts),
+                delete: (key, opts) => inner.delete(key, opts),
+                list: (prefix, opts) => inner.list(prefix, opts),
+              }
+            : inner;
+
+        const { storage, trace } = tracingStorage(subject);
+        const result = await runGc({ storage, currentJsonKey: KEY }, {
+          maxMarksPerRun: 20,
+          maxSweepsPerRun: 10,
+          now: () => new Date("2026-01-01T00:00:00.000Z"),
+        } as InternalRunGcOptions);
+
+        expect(result).toEqual({
+          marked: { stale_log: 0, orphan_snapshot: 1, orphan_content: 0 },
+          swept: 1,
+          pendingDepth: 1,
+        });
+        expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
+        expect(trace.lists).not.toContain(`${PREFIX}/content/`);
+        expect(trace.deletes).toEqual([dueKey]);
+        await expect(inner.get(orphanContent)).resolves.not.toBeNull();
+        const pending = await readGcPending(inner, PENDING_KEY);
+        expect(pending?.json.content_scan_cursor).toBe(storedCursor);
+        expect(pending?.json.candidates.map((candidate) => candidate.reason)).toEqual([
+          "orphan-snapshot",
+        ]);
+      });
+    },
+  );
 });
