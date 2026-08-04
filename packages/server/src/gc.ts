@@ -539,9 +539,17 @@ export const runGc = async (
   // intended reading: with no floor the candidate set is empty, so we
   // trivially examined all of it and the next pass should start from
   // the beginning. The pass record has no third state for "phase did
-  // not run", and inventing one would buy nothing — the floor is
-  // monotonic, so a collection only passes through `0` before its
-  // first fold, when there is no stale key to strand.
+  // not run", and inventing one would buy nothing.
+  //
+  // Do NOT justify that by calling the floor monotonic. It is not:
+  // `admin restore --force` reseeds `log_seq_start` from the surviving
+  // log objects and can move it DOWN (invariant 12, and the read-to-
+  // delete window in invariant 14). The argument that actually holds is
+  // narrower and does not need monotonicity — a `0` floor has no key
+  // beneath it, so there is no stale key for a wrap to strand, and the
+  // only writer that reseeds `0` is `tailFromListedLogKeys` returning
+  // `maxSeq + 1 == 0`, which happens exactly when the log prefix listed
+  // empty.
   const nextLogCursor = logExaminedThisPass < maxMarks ? undefined : lastExaminedLogKey;
 
   // ── Step 4. Mark orphan snapshots. ──────────────────────────────
