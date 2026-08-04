@@ -5,7 +5,8 @@
  * Kept separate from `log.ts` for the same reason as `log-key.ts`:
  * `log.ts` carries the heavier `lsn` parsing runtime, and consumers that
  * only need to split a cursor shouldn't drag it into their bundle
- * closure. This module imports only `BaerlyError`.
+ * closure. This module imports only `BaerlyError` and the
+ * `NO_GENERATION` sentinel from the zero-import `constants.ts`.
  *
  * ## Why the cursor is not just the LSN
  *
@@ -27,6 +28,7 @@
  * `/v1/since` boundary.
  */
 
+import { NO_GENERATION } from "./constants.ts";
 import { BaerlyError } from "./errors.ts";
 
 /**
@@ -37,14 +39,12 @@ import { BaerlyError } from "./errors.ts";
 const CURSOR_SEPARATOR = ".";
 
 /**
- * Stands in for "this manifest has no `generation`". Both spellings of
- * that state — a `current.json` predating the field, and a bare-LSN
- * cursor minted before this build — decode to this value, so the
- * ordinary string comparison in `/v1/since` handles them without a
- * fail-open branch. See the truth table in
- * `docs/spec/sync-protocol.md`.
+ * Re-exported from the zero-import `constants.ts`, where the sentinel
+ * now lives so `runGc` can reach it without dragging this module's
+ * codec into the `index.js` / `maintenance.js` closures. Kept exported
+ * here because `/v1/since` is still its primary consumer.
  */
-export const NO_GENERATION = "-";
+export { NO_GENERATION };
 
 /**
  * Build the wire cursor for an entry's `lsn` under a manifest's

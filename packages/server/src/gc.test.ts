@@ -23,12 +23,14 @@ import {
   casUpdateGcPending,
   createCurrentJson,
   createGcPending,
+  encodeJsonBytes,
   readCurrentJson,
   readGcPending,
   snapshotHash,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import {
+  LOG_STATE_GENERATION,
   logStateCurrentJson,
   seedLogEntries,
   seedLogEntry,
@@ -112,6 +114,7 @@ describe("runGc", () => {
     expect(r).toEqual({
       marked: { stale_log: 0, orphan_snapshot: 0, orphan_content: 0 },
       swept: 0,
+      dropped: { stale_generation: 0, still_live: 0 },
       pendingDepth: 0,
     });
     const pending = await readGcPending(s, PENDING_KEY);
@@ -442,6 +445,7 @@ describe("runGc", () => {
           key: candidate,
           due_at: "2000-01-01T00:00:00.000Z",
           reason: "orphan-snapshot",
+          generation: LOG_STATE_GENERATION,
         },
       ],
       last_swept_at: "",
@@ -510,6 +514,7 @@ describe("runGc", () => {
           key: candidate,
           due_at: "2000-01-01T00:00:00.000Z",
           reason: "orphan-snapshot",
+          generation: LOG_STATE_GENERATION,
         },
       ],
       last_swept_at: "",
@@ -545,6 +550,7 @@ describe("runGc", () => {
           key: candidate,
           due_at: "2000-01-01T00:00:00.000Z",
           reason: "orphan-snapshot",
+          generation: LOG_STATE_GENERATION,
         },
       ],
       last_swept_at: "",
@@ -581,6 +587,7 @@ describe("runGc", () => {
         key,
         due_at: "2000-01-01T00:00:00.000Z",
         reason: "orphan-snapshot" as const,
+        generation: LOG_STATE_GENERATION,
       })),
       last_swept_at: "",
     });
@@ -685,6 +692,7 @@ describe("runGc", () => {
           key: liveContent,
           due_at: "2000-01-01T00:00:00.000Z",
           reason: "orphan-content",
+          generation: LOG_STATE_GENERATION,
         },
       ],
       last_swept_at: "",
@@ -693,6 +701,7 @@ describe("runGc", () => {
       key: `${PREFIX}/gc/concurrent.json`,
       due_at: "2099-01-01T00:00:00.000Z",
       reason: "stale-log" as const,
+      generation: LOG_STATE_GENERATION,
     };
     let injectedConcurrentUpdate = false;
     const subject: Storage = {
@@ -836,7 +845,21 @@ describe("runGc", () => {
 
   test("returns success on CAS-lost on pending.json (best-effort pendingDepth)", async () => {
     const s = new MemoryStorage();
-    await bootstrap(s, KEY);
+    // Floor at 1, not the bootstrap default of 0, so the seeded
+    // candidate below names a key that is genuinely BENEATH the floor.
+    // With a floor of 0 the sweep gate re-derives `log/0.json` as live
+    // and drops the candidate instead of deleting it — correctly, since
+    // readers walk from 0 — and this test would be asserting a sweep the
+    // mark phase could never have authorised in the first place.
+    await createCurrentJson(
+      s,
+      KEY,
+      logStateCurrentJson({
+        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
+        log_seq_start: 1,
+        tail_hint: 1,
+      }),
+    );
     // Pre-seed pending.json with an entry due-for-sweep so the run
     // has work to do.
     const pre: GcPending = {
@@ -846,6 +869,7 @@ describe("runGc", () => {
           key: "app/t/tenant/x/manifests/c/log/0.json",
           due_at: "2000-01-01T00:00:00.000Z",
           reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
         },
       ],
       last_swept_at: "",
@@ -900,7 +924,14 @@ describe("runGc", () => {
     await inner.put(orphanContent, new TextEncoder().encode("{}"));
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [{ key: dueKey, due_at: "2000-01-01T00:00:00.000Z", reason: "stale-log" }],
+      candidates: [
+        {
+          key: dueKey,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
+        },
+      ],
       last_swept_at: "",
       content_scan_cursor: `${PREFIX}/content/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json`,
     });
@@ -917,6 +948,7 @@ describe("runGc", () => {
     expect(result).toEqual({
       marked: { stale_log: 0, orphan_snapshot: 1, orphan_content: 0 },
       swept: 1,
+      dropped: { stale_generation: 0, still_live: 0 },
       pendingDepth: 1,
       // Budget class: expected on Free, and the checkpoint below is what
       // makes it self-clear.
@@ -959,7 +991,14 @@ describe("runGc", () => {
     await inner.put(orphanContent, new TextEncoder().encode("{}"));
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [{ key: dueKey, due_at: "2000-01-01T00:00:00.000Z", reason: "stale-log" }],
+      candidates: [
+        {
+          key: dueKey,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
+        },
+      ],
       last_swept_at: "",
       content_scan_cursor: `${PREFIX}/content/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json`,
     });
@@ -1045,11 +1084,17 @@ describe("runGc", () => {
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
       candidates: [
-        { key: dueStale, due_at: "2000-01-01T00:00:00.000Z", reason: "stale-log" },
+        {
+          key: dueStale,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
+        },
         {
           key: dueSnapshot,
           due_at: "2000-01-01T00:00:00.000Z",
           reason: "orphan-snapshot",
+          generation: LOG_STATE_GENERATION,
         },
       ],
       last_swept_at: "",
@@ -1068,6 +1113,7 @@ describe("runGc", () => {
     expect(result).toEqual({
       marked: { stale_log: 1, orphan_snapshot: 1, orphan_content: 0 },
       swept: 2,
+      dropped: { stale_generation: 0, still_live: 0 },
       pendingDepth: 2,
       // Degraded class. This probe reaches an exact tail (36 is missing),
       // so only the malformed condition holds; the both-hold precedence
@@ -1125,16 +1171,19 @@ describe("runGc", () => {
               key: dueStaleKey,
               due_at: "2000-01-01T00:00:00.000Z",
               reason: "stale-log",
+              generation: LOG_STATE_GENERATION,
             },
             {
               key: dueSnapshotKey,
               due_at: "2000-01-01T00:00:00.000Z",
               reason: "orphan-snapshot",
+              generation: LOG_STATE_GENERATION,
             },
             {
               key: orphanContent,
               due_at: "2000-01-01T00:00:00.000Z",
               reason: "orphan-content",
+              generation: LOG_STATE_GENERATION,
             },
           ],
           last_swept_at: "",
@@ -1153,6 +1202,7 @@ describe("runGc", () => {
         expect(result).toEqual({
           marked: { stale_log: 1, orphan_snapshot: 1, orphan_content: 0 },
           swept: 2,
+          dropped: { stale_generation: 0, still_live: 0 },
           pendingDepth: 3,
           contentDeferredReason: "live-log-unreadable",
         });
@@ -1201,7 +1251,14 @@ describe("runGc", () => {
         await inner.put(orphanContent, new TextEncoder().encode("{}"));
         await createGcPending(inner, PENDING_KEY, {
           schema_version: GC_PENDING_SCHEMA_VERSION,
-          candidates: [{ key: dueKey, due_at: "2000-01-01T00:00:00.000Z", reason: "stale-log" }],
+          candidates: [
+            {
+              key: dueKey,
+              due_at: "2000-01-01T00:00:00.000Z",
+              reason: "stale-log",
+              generation: LOG_STATE_GENERATION,
+            },
+          ],
           last_swept_at: "",
           content_scan_cursor: storedCursor,
         });
@@ -1232,6 +1289,7 @@ describe("runGc", () => {
         expect(result).toEqual({
           marked: { stale_log: 0, orphan_snapshot: 1, orphan_content: 0 },
           swept: 1,
+          dropped: { stale_generation: 0, still_live: 0 },
           pendingDepth: 1,
           // The reviewer-cited scenario: a persistent AccessDenied here
           // parks orphan-content GC forever, so the pass must NOT look
@@ -1414,6 +1472,7 @@ describe("runGc", () => {
     expect(result).toEqual({
       marked: { stale_log: 0, orphan_snapshot: 0, orphan_content: 0 },
       swept: 0,
+      dropped: { stale_generation: 0, still_live: 0 },
       pendingDepth: 0,
       contentDeferredReason: "probe-budget",
     });
@@ -1972,16 +2031,19 @@ describe("runGc", () => {
               key: dueStaleKey,
               due_at: "2000-01-01T00:00:00.000Z",
               reason: "stale-log",
+              generation: LOG_STATE_GENERATION,
             },
             {
               key: dueSnapshotKey,
               due_at: "2000-01-01T00:00:00.000Z",
               reason: "orphan-snapshot",
+              generation: LOG_STATE_GENERATION,
             },
             {
               key: orphanContent,
               due_at: "2000-01-01T00:00:00.000Z",
               reason: "orphan-content",
+              generation: LOG_STATE_GENERATION,
             },
           ],
           last_swept_at: "",
@@ -1998,6 +2060,7 @@ describe("runGc", () => {
         expect(result).toEqual({
           marked: { stale_log: 1, orphan_snapshot: 1, orphan_content: 0 },
           swept: 2,
+          dropped: { stale_generation: 0, still_live: 0 },
           pendingDepth: 3,
           contentDeferredReason: "live-log-unreadable",
         });
@@ -2049,7 +2112,14 @@ describe("runGc", () => {
         await inner.put(orphanContent, new TextEncoder().encode("{}"));
         await createGcPending(inner, PENDING_KEY, {
           schema_version: GC_PENDING_SCHEMA_VERSION,
-          candidates: [{ key: dueKey, due_at: "2000-01-01T00:00:00.000Z", reason: "stale-log" }],
+          candidates: [
+            {
+              key: dueKey,
+              due_at: "2000-01-01T00:00:00.000Z",
+              reason: "stale-log",
+              generation: LOG_STATE_GENERATION,
+            },
+          ],
           last_swept_at: "",
           content_scan_cursor: storedCursor,
         });
@@ -2078,6 +2148,7 @@ describe("runGc", () => {
         expect(result).toEqual({
           marked: { stale_log: 0, orphan_snapshot: 1, orphan_content: 0 },
           swept: 1,
+          dropped: { stale_generation: 0, still_live: 0 },
           pendingDepth: 1,
           // A persistent AccessDenied here parks orphan-content GC
           // forever, so the pass must NOT look identical to an
@@ -2096,4 +2167,216 @@ describe("runGc", () => {
       });
     },
   );
+});
+
+// ---------------------------------------------------------------------
+// The sweep-time revalidation gate.
+//
+// Before this gate the sweep had exactly two conjuncts: a budget counter
+// and `due_at <= now`. A mark decision taken under one view of the
+// bucket therefore executed up to `GC_GRACE_PERIOD_MILLIS` later under a
+// different one, with no liveness re-check. These tests pin the four
+// outcomes the gate now distinguishes, and each is written so that
+// removing the arm under test turns it RED rather than merely changing a
+// count — the object's continued existence is the assertion, not the
+// tally.
+// ---------------------------------------------------------------------
+describe("runGc — sweep-time revalidation", () => {
+  const OTHER_GENERATION = "ffffffffffff";
+
+  /** Seed a manifest + a due `stale-log` candidate naming `log/<seq>`. */
+  const seedDueStaleLog = async (
+    storage: MemoryStorage,
+    opts: { floor: number; seq: number; manifestGeneration?: string; candidateGeneration?: string },
+  ): Promise<string> => {
+    await createCurrentJson(
+      storage,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: opts.floor,
+        tail_hint: opts.floor,
+        ...(opts.manifestGeneration !== undefined && { generation: opts.manifestGeneration }),
+      }),
+    );
+    const key = `${PREFIX}/log/${String(opts.seq)}.json`;
+    await storage.put(key, new TextEncoder().encode("{}"));
+    await createGcPending(storage, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          ...(opts.candidateGeneration !== undefined && {
+            generation: opts.candidateGeneration,
+          }),
+        },
+      ],
+      last_swept_at: "",
+    });
+    return key;
+  };
+
+  const sweep = async (storage: MemoryStorage): ReturnType<typeof runGc> =>
+    runGc({ storage, currentJsonKey: KEY }, {
+      graceMillis: 0,
+      maxSweepsPerRun: 10,
+    } as InternalRunGcOptions);
+
+  test("drops a due candidate whose generation no longer matches the manifest", async () => {
+    // The reachable data-loss schedule, reduced to its gate. A candidate
+    // was marked against generation A; `admin restore --force` has since
+    // re-minted the manifest to generation B and re-created `log/5` as a
+    // LIVE entry of the new incarnation. Without the fence this DELETEs
+    // a live log object, putting a hole inside `[log_seq_start, tail)` —
+    // after which every read and every fold throws `Internal` from
+    // `walkLogRangeWithBytes` and the collection cannot heal itself.
+    const s = new MemoryStorage();
+    const key = await seedDueStaleLog(s, {
+      floor: 9,
+      seq: 5,
+      manifestGeneration: OTHER_GENERATION,
+      candidateGeneration: LOG_STATE_GENERATION,
+    });
+
+    const r = await sweep(s);
+
+    // The load-bearing assertion: the object SURVIVES. A drop resolves a
+    // candidate out of the ledger; it never deletes.
+    await expect(s.get(key)).resolves.not.toBeNull();
+    expect(r.swept).toBe(0);
+    expect(r.dropped).toEqual({ stale_generation: 1, still_live: 0 });
+    // …and it really left the ledger, rather than being retained and
+    // re-examined (and re-dropped) on every future pass.
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.candidates).toEqual([]);
+  });
+
+  test("sweeps a due candidate whose generation still matches", async () => {
+    // The control for the test above: the fence must not swallow the
+    // ordinary case. Same fixture, same floor, same due date — only the
+    // manifest generation agrees.
+    const s = new MemoryStorage();
+    const key = await seedDueStaleLog(s, {
+      floor: 9,
+      seq: 5,
+      candidateGeneration: LOG_STATE_GENERATION,
+    });
+
+    const r = await sweep(s);
+
+    await expect(s.get(key)).resolves.toBeNull();
+    expect(r.swept).toBe(1);
+    expect(r.dropped).toEqual({ stale_generation: 0, still_live: 0 });
+  });
+
+  test("drops a candidate marked before the build began stamping generations", async () => {
+    // The upgrade path. A ledger written by an older build carries no
+    // `generation` at all, and absent cannot be proven to match a
+    // manifest that has one — so the whole pre-upgrade ledger is dropped
+    // on the first pass and re-marked on the next with a fresh grace
+    // period. One-time, self-healing, and visible as a single
+    // `stale-generation` spike.
+    const s = new MemoryStorage();
+    const key = await seedDueStaleLog(s, { floor: 9, seq: 5 });
+
+    const r = await sweep(s);
+
+    await expect(s.get(key)).resolves.not.toBeNull();
+    expect(r.dropped.stale_generation).toBe(1);
+  });
+
+  test("keeps reclaiming on a bucket whose manifest carries no generation", async () => {
+    // Legacy compatibility, and the reason the field is optional on BOTH
+    // sides rather than defaulted at the writer. Absent compares equal to
+    // absent, so a collection predating `generation` entirely is not
+    // fenced off from GC forever.
+    const s = new MemoryStorage();
+    const key = await seedDueStaleLog(s, {
+      floor: 9,
+      seq: 5,
+      manifestGeneration: undefined,
+    });
+    // `logStateCurrentJson` always stamps a generation, so strip it to
+    // build the pre-`generation` manifest shape this test is about.
+    const cur = await readCurrentJson(s, KEY);
+    const { generation: _dropped, ...withoutGeneration } = cur!.json;
+    await s.put(KEY, encodeJsonBytes(withoutGeneration), { ifMatch: cur!.etag });
+
+    const r = await sweep(s);
+
+    await expect(s.get(key)).resolves.toBeNull();
+    expect(r.swept).toBe(1);
+    expect(r.dropped).toEqual({ stale_generation: 0, still_live: 0 });
+  });
+
+  test("drops a due stale-log candidate that the floor has made live again", async () => {
+    // The second arm, independent of the first: same generation
+    // throughout, but the floor has moved DOWN beneath the candidate.
+    // Only `admin restore --force` writes that shape — its deliberate
+    // floor exemption reseeds `log_seq_start` from the surviving log
+    // objects. `log/5` was dead under a floor of 9; under a floor of 3 it
+    // is a live entry readers walk.
+    const s = new MemoryStorage();
+    const key = await seedDueStaleLog(s, {
+      floor: 3,
+      seq: 5,
+      candidateGeneration: LOG_STATE_GENERATION,
+    });
+
+    const r = await sweep(s);
+
+    await expect(s.get(key)).resolves.not.toBeNull();
+    expect(r.swept).toBe(0);
+    expect(r.dropped).toEqual({ stale_generation: 0, still_live: 1 });
+  });
+
+  test("a drop advances neither last_swept_at nor db.gc.swept_total", async () => {
+    // A drop frees no bytes. Folding it into the sweep counters would
+    // make a pass that reclaimed nothing read as productive, and would
+    // move a timestamp whose whole purpose is to say when bytes last came
+    // back.
+    const s = new MemoryStorage();
+    await seedDueStaleLog(s, {
+      floor: 9,
+      seq: 5,
+      manifestGeneration: OTHER_GENERATION,
+      candidateGeneration: LOG_STATE_GENERATION,
+    });
+
+    const ctx = createObservabilityContext();
+    await runWithContext(ctx, async () => sweep(s));
+
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.last_swept_at).toBe("");
+    const snap = ctx.recorder.snapshot();
+    expect(snap.counters.find((c) => c.name === "db.gc.swept_total")).toBeUndefined();
+    const dropped = snap.counters.filter((c) => c.name === "db.gc.dropped_total");
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.value).toBe(1);
+    expect(dropped[0]?.labels).toMatchObject({ cause: "stale-generation" });
+  });
+
+  test("stamps the marking manifest's generation onto every new candidate", async () => {
+    // The other half of the fence: a candidate with no generation is
+    // fenced against nothing on the next pass. Marks must carry it, or
+    // the sweep arm above degenerates into the upgrade path forever.
+    const s = new MemoryStorage();
+    await createCurrentJson(s, KEY, logStateCurrentJson({ log_seq_start: 4, tail_hint: 4 }));
+    for (let seq = 0; seq < 3; seq++) {
+      await s.put(`${PREFIX}/log/${String(seq)}.json`, new TextEncoder().encode("{}"));
+    }
+
+    await runGc({ storage: s, currentJsonKey: KEY }, {
+      // A grace far in the future, so everything marked stays pending
+      // and this test reads marks rather than sweeps.
+      graceMillis: 60 * 60 * 1000,
+    } as InternalRunGcOptions);
+
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.candidates.length).toBeGreaterThan(0);
+    for (const candidate of pending!.json.candidates) {
+      expect(candidate.generation).toBe(LOG_STATE_GENERATION);
+    }
+  });
 });
