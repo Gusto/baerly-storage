@@ -107,10 +107,16 @@ describe("gc-pending", () => {
     ).rejects.toMatchObject({ code: "Conflict" });
   });
 
-  test("cas-update on a missing key throws InvalidResponse", async () => {
+  test("cas-update on a missing key throws Conflict, not InvalidResponse", async () => {
+    // The code is load-bearing, not cosmetic. `runGc` tolerates
+    // `Conflict` from its step-7 CAS as a benign lost race and rethrows
+    // everything else, and `admin restore` deletes this very key on both
+    // reseed branches — so a ledger that vanishes mid-pass MUST arrive
+    // as the tolerated code. `InvalidResponse` stays reserved for a body
+    // that is present but broken, which must keep escaping.
     const s = new MemoryStorage();
     await expect(casUpdateGcPending(s, KEY, (cur) => cur)).rejects.toMatchObject({
-      code: "InvalidResponse",
+      code: "Conflict",
     });
   });
 
@@ -634,9 +640,12 @@ describe("gc-pending", () => {
   test("cas-update on missing key error message mentions 'does not exist'", async () => {
     const s = new MemoryStorage();
     const err = await casUpdateGcPending(s, KEY, (cur) => cur).catch((error: unknown) => error);
-    expect((err as BaerlyError).code).toBe("InvalidResponse");
+    expect((err as BaerlyError).code).toBe("Conflict");
     // L173: message must contain the 'does not exist' explanation
     expect((err as BaerlyError).message).toContain("does not exist");
+    // …and must not read as a pure programming error, since the
+    // dominant cause in production is a concurrent `admin restore`.
+    expect((err as BaerlyError).message).toContain("deleted concurrently");
   });
 
   // ---- casUpdateGcPending: encode and store new state (L179) ----
