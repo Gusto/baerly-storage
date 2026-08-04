@@ -1234,6 +1234,77 @@ describe("gc-pending", () => {
     expect("log_scan_cursor" in merged).toBe(false);
   });
 
+  // Production mutation caught: treating a deliberately deferred content
+  // phase as an end-of-keyspace wrap would manufacture a cursor transition
+  // even when the latest ledger has never stored one.
+  test("mergeGcPending: deferred content preserves an absent cursor while log progress advances", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      nextLogCursor: "log/7.json",
+      preserveContentCursor: true,
+      maxCandidates: 1000,
+    });
+    expect("content_scan_cursor" in merged).toBe(false);
+    expect(merged.log_scan_cursor).toBe("log/7.json");
+  });
+
+  // Production mutation caught: interpreting deferred
+  // `nextContentCursor: undefined` as a wrap would clear a stored content
+  // cursor and restart the expensive content rotation from the beginning.
+  test("mergeGcPending: deferred content preserves a stored cursor while log progress wraps", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      content_scan_cursor: "content/mmm",
+      log_scan_cursor: "log/9.json",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: undefined,
+      nextLogCursor: undefined,
+      preserveContentCursor: true,
+      maxCandidates: 1000,
+    });
+    expect(merged.content_scan_cursor).toBe("content/mmm");
+    expect("log_scan_cursor" in merged).toBe(false);
+  });
+
+  // Production mutation caught: reusing the stale pass's proposed content
+  // position during a CAS retry would regress a concurrent pass's advance;
+  // preservation must copy the freshly-read ledger value verbatim while the
+  // independent log cursor still merges forward.
+  test("mergeGcPending: deferred content preserves a concurrent advance verbatim", () => {
+    const latest: GcPending = {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [],
+      last_swept_at: "",
+      content_scan_cursor: "content/zzz",
+      log_scan_cursor: "log/12.json",
+    };
+    const merged = mergeGcPending(latest, {
+      sweptKeys: new Set<string>(),
+      newCandidates: [],
+      lastSweptAt: "",
+      nextContentCursor: "content/aaa",
+      nextLogCursor: "log/9.json",
+      preserveContentCursor: true,
+      maxCandidates: 1000,
+    });
+    expect(merged.content_scan_cursor).toBe("content/zzz");
+    expect(merged.log_scan_cursor).toBe("log/9.json");
+  });
+
   test("mergeGcPending: returns the current schema_version", () => {
     const merged = mergeGcPending(initial(), {
       sweptKeys: new Set<string>(),

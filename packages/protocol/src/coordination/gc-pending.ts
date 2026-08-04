@@ -267,6 +267,10 @@ export const casUpdateGcPending = async (
  *          - latest cursor defined ⇒ take the lexicographically GREATER
  *            (don't regress a concurrent pass's advance);
  *          - latest cursor absent ⇒ keep OUR advance (don't lose it).
+ *    When `pass.preserveContentCursor` is true the content phase was
+ *    deliberately deferred, not completed: copy the latest stored value
+ *    verbatim on every CAS retry. This third state is content-only; the log
+ *    cursor still follows its normal independent rotation semantics.
  *  - **log_scan_cursor**: the same rule, applied INDEPENDENTLY over the
  *    `log/` keyspace. The two rotations cover disjoint prefixes and
  *    consume their budgets at different rates, so one reaching the end
@@ -280,6 +284,7 @@ export const mergeGcPending = (
     readonly lastSweptAt: string;
     readonly nextContentCursor: string | undefined;
     readonly nextLogCursor: string | undefined;
+    readonly preserveContentCursor?: boolean;
     readonly maxCandidates: number;
   },
 ): GcPending => {
@@ -302,7 +307,9 @@ export const mergeGcPending = (
 
   // Both rotation cursors follow the same asymmetric rule, applied
   // independently over their own prefix — see {@link mergeRotationCursor}.
-  const contentCursor = mergeRotationCursor(latest.content_scan_cursor, pass.nextContentCursor);
+  const contentCursor = pass.preserveContentCursor
+    ? latest.content_scan_cursor
+    : mergeRotationCursor(latest.content_scan_cursor, pass.nextContentCursor);
   const logCursor = mergeRotationCursor(latest.log_scan_cursor, pass.nextLogCursor);
 
   return {
