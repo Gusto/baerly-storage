@@ -420,6 +420,19 @@ export const WRITE_TICK_GC_MAX_SWEEPS: number = 10;
 export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
 
 /**
+ * Cloudflare Free scheduled-compactor tail-discovery budget (`P`). A
+ * prior-snapshot fold pass costs 1 GET current + P GETs tail probe +
+ * 1 GET prior snapshot + N GETs log + 1 PUT snapshot + 1 PUT current
+ * = 4 + N + P storage operations. With P=25 and the Free profile's
+ * N=20 slice, the worst pass is 49 operations, leaving one operation
+ * below the 50-subrequest invocation cap.
+ *
+ * @see packages/server/src/maintenance.ts
+ * @see packages/server/src/maintenance-budget.test.ts
+ */
+export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
+
+/**
  * compact()'s minEntriesToCompact, set EXPLICITLY by the runner so it agrees with Gate 1
  * rather than inheriting compact()'s silent default 100 (which would contradict the 64 KB
  * first-fold story — round-4 Tier-3). Adapter-overridable; CF-free value.

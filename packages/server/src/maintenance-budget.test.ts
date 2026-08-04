@@ -6,26 +6,31 @@
  *
  * One scheduled Worker invocation is capped at 50 subrequests on the
  * free tier; this test wraps `MemoryStorage` in a counting proxy and
- * proves that a single {@link runScheduledMaintenance} tick under
+ * proves that every isolated scheduled phase under
  * {@link CLOUDFLARE_FREE_TIER} stays at or below that budget. R2
  * binding ops map 1:1 to subrequests, so the proxy counts `get` /
  * `put` / `delete` / `list` invocations as one each.
  *
  * The Cloudflare scheduled handler runs only one phase per tick
- * (even-minute compact, odd-minute GC) because `collectLiveContentHashes`
- * inside `runGc()` reads the full live log tail unconditionally —
- * combining both phases in a single tick can exceed 50 ops when the
- * tail is long. This test therefore checks each phase in isolation,
- * mirroring what production actually executes. If a future refactor
+ * (even-minute compact, odd-minute GC). GC admits the content phase only
+ * after a bounded exact probe proves the full live tail affordable; a
+ * partial GC still advances the hint and performs non-content cleanup.
+ * These tests check each phase in isolation, mirroring production. If a future refactor
  * inflates either phase's per-tick budget, this is the load-bearing
  * test that fails — do NOT relax the assertion. Tune
  * `CLOUDFLARE_FREE_TIER` or the underlying primitives instead.
  */
 
 import {
+  BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
+  GC_PENDING_SCHEMA_VERSION,
+  SNAPSHOT_SCHEMA_VERSION,
   createCurrentJson,
+  createGcPending,
   MemoryStorage,
+  readCurrentJson,
+  snapshotHash,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -34,9 +39,11 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
-import { runGc } from "./gc.ts";
+import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { CLOUDFLARE_FREE_TIER, runBoundedMaintenance } from "./maintenance.ts";
+import { encodeSnapshotBody, snapshotKey } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
 const FREE_TIER_BUDGET = 50;
@@ -48,8 +55,14 @@ const FREE_TIER_BUDGET = 50;
  */
 const countingStorage = (
   inner: Storage,
-): { storage: Storage; getOps: () => number; report: () => Record<string, number> } => {
+): {
+  storage: Storage;
+  getOps: () => number;
+  report: () => Record<string, number>;
+  listedPrefixes: () => string[];
+} => {
   const counts = { get: 0, put: 0, delete: 0, list: 0 };
+  const prefixes: string[] = [];
   const wrapper: Storage = {
     async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
       counts.get += 1;
@@ -68,6 +81,7 @@ const countingStorage = (
       opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
     ): AsyncIterable<StorageListEntry> {
       counts.list += 1;
+      prefixes.push(prefix);
       return inner.list(prefix, opts);
     },
   };
@@ -75,6 +89,7 @@ const countingStorage = (
     storage: wrapper,
     getOps: (): number => counts.get + counts.put + counts.delete + counts.list,
     report: (): Record<string, number> => ({ ...counts }),
+    listedPrefixes: (): string[] => [...prefixes],
   };
 };
 
@@ -108,73 +123,286 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
 
-  test("compact-only tick stays at or below 50 storage ops", async () => {
-    // Even-minute branch of the scheduled handler: compact alone.
-    // Budget math: 1 GET current + 1 GET tail-probe 404 + N GETs log
-    // (N = maxEntriesPerRun = 20) + 1 PUT snapshot + 1 PUT current ≈ 24.
-    // (No prior snapshot on first compact ⇒ skip the snapshot-load GET.)
-    //
-    // Under single-write commit the writer doesn't advance tail_hint, so
-    // model steady state (a prior fold stamped it) by stamping the true
-    // tail. The compactor then probes from `max(log_seq_start, tail_hint)`
-    // — an immediate 404 — instead of walking O(minEntriesToCompact) to
-    // confirm the go/no-go gate, which is the budget-blowing cost on a
-    // never-yet-compacted backlog.
+  test("compact-only ticks converge from a stale-low tail_hint within the 50-op budget", async () => {
+    // Even-minute branch of the scheduled handler: compact alone. The
+    // writer deliberately leaves tail_hint stale, so each invocation must
+    // bound discovery, checkpoint progress, and let later ticks resume.
     const inner = new MemoryStorage();
-    await seed(inner, KEY, COLL, 200);
-    const { casUpdateCurrentJson } = await import("@baerly/protocol");
-    await casUpdateCurrentJson(inner, KEY, (c) => ({ ...c, tail_hint: 200 }));
-    const { storage, getOps, report } = countingStorage(inner);
+    await seed(inner, KEY, COLL, 100);
 
-    const r = await compact({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
-    expect(r.written).toBe(true);
-    const ops = getOps();
-    expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
-      FREE_TIER_BUDGET,
-    );
+    const perPassOps: number[] = [];
+    const reasons: Array<string | undefined> = [];
+    const states: Array<{ log_seq_start: number; tail_hint: number }> = [];
+    const reports: Array<Record<string, number>> = [];
+    let reachedBelowMinThreshold = false;
+
+    for (let invocation = 0; invocation < 10; invocation++) {
+      const { storage, getOps, report } = countingStorage(inner);
+      const result = await compact({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
+      const current = await readCurrentJson(inner, KEY);
+      expect(current).not.toBeNull();
+
+      perPassOps.push(getOps());
+      reasons.push(result.skippedReason);
+      reports.push(report());
+      states.push({
+        log_seq_start: current!.json.log_seq_start,
+        tail_hint: current!.json.tail_hint,
+      });
+
+      if (result.skippedReason === "below-min-threshold") {
+        reachedBelowMinThreshold = true;
+        break;
+      }
+    }
+
+    for (let i = 1; i < states.length; i++) {
+      expect(states[i]!.log_seq_start).toBeGreaterThanOrEqual(states[i - 1]!.log_seq_start);
+      expect(states[i]!.tail_hint).toBeGreaterThanOrEqual(states[i - 1]!.tail_hint);
+    }
+
+    expect(reachedBelowMinThreshold).toBe(true);
+    expect(perPassOps.length).toBeLessThan(10);
+    expect(
+      perPassOps.every((ops) => ops <= FREE_TIER_BUDGET),
+      `per-pass ops: ${JSON.stringify(perPassOps)}; reports: ${JSON.stringify(reports)}`,
+    ).toBe(true);
+    expect(perPassOps, `reports: ${JSON.stringify(reports)}`).toEqual([48, 49, 49, 49, 25, 2]);
+    expect(Math.max(...perPassOps)).toBe(49);
+    expect(reasons).not.toContain("probe-budget-checkpointed");
+
+    const finalCurrent = await readCurrentJson(inner, KEY);
+    expect(finalCurrent).not.toBeNull();
+    expect(finalCurrent!.json).toMatchObject({ log_seq_start: 100, tail_hint: 100 });
   });
 
-  test("gc-only tick stays at or below 50 storage ops at steady state", async () => {
-    // Odd-minute branch of the scheduled handler: GC alone. Steady
-    // state on free tier: compaction runs at the same cadence as GC
-    // and keeps the live log tail near `minEntriesToCompact = 50`,
-    // bounded by the M term in the GC budget docstring.
-    //
-    // To model the steady-state operating point we seed 60 entries
-    // and pre-compact: log_seq_start = 20, tail_hint = 60 ⇒ tail = 40,
-    // which is below the 50-entry compaction threshold (next compact
-    // tick will rerun). The GC pass then mark+sweeps stale-log
-    // candidates and computes live-content hashes over the 40-entry
-    // tail.
-    //
-    // Budget math (steady state): 1 GET current + 1 GET pending +
-    // 1 PUT create pending (first GC pass) + 3 LISTs + 1 GET snapshot
-    // + ≤40 GETs log + ≤20 DELETEs (mark-and-sweep bypass) + 1 PUT
-    // pending = ≤67 — over budget. The default 7-day grace means
-    // *zero* sweeps in any single pass, so the realistic GC ops are
-    // 1 GET current + 1 GET pending + 1 PUT create + 3 LISTs + 1 GET
-    // snapshot + 40 GETs log + 1 PUT pending = 48, fits.
+  // Production mutation caught: manual tail priming hid both the stale-hint
+  // catch-up cost and content-GC starvation. Real alternating scheduled
+  // phases must keep every invocation bounded, advance manifest positions
+  // monotonically, and eventually admit a complete content-marking pass.
+  test.each([60, 100])(
+    "real compact/GC alternation drains %i entries within budget and admits content marking",
+    async (entryCount) => {
+      const inner = new MemoryStorage();
+      await seed(inner, KEY, COLL, entryCount);
+      const orphanContent =
+        "app/t/tenant/x/manifests/c/content/00000000000000000000000000000000.json";
+      await inner.put(orphanContent, new TextEncoder().encode('{"_id":"orphan"}'));
+      const seededCurrent = await readCurrentJson(inner, KEY);
+      expect(seededCurrent?.json.tail_hint).toBe(0);
+
+      const states: Array<{ log_seq_start: number; tail_hint: number }> = [];
+      const invocations: Array<{
+        phase: "compact" | "gc";
+        ops: number;
+        report: Record<string, number>;
+      }> = [];
+      let fullContentPass = false;
+
+      for (let invocation = 0; invocation < 24 && !fullContentPass; invocation++) {
+        const counted = countingStorage(inner);
+        const phase = invocation % 2 === 0 ? "compact" : "gc";
+        if (phase === "compact") {
+          await compact(
+            { storage: counted.storage, currentJsonKey: KEY },
+            CLOUDFLARE_FREE_TIER.compact,
+          );
+        } else {
+          const result = await runGc(
+            { storage: counted.storage, currentJsonKey: KEY },
+            CLOUDFLARE_FREE_TIER.gc,
+          );
+          if (result.marked.orphan_content === 1) {
+            fullContentPass = true;
+            expect(counted.listedPrefixes()).toContain("app/t/tenant/x/manifests/c/content/");
+          }
+        }
+
+        const current = await readCurrentJson(inner, KEY);
+        expect(current).not.toBeNull();
+        states.push({
+          log_seq_start: current!.json.log_seq_start,
+          tail_hint: current!.json.tail_hint,
+        });
+        const report = counted.report();
+        const ops = counted.getOps();
+        invocations.push({ phase, ops, report });
+        expect(
+          ops,
+          `entries=${entryCount}; invocation=${invocation}; phase=${phase}; report=${JSON.stringify(report)}`,
+        ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+      }
+
+      for (let i = 1; i < states.length; i++) {
+        expect(states[i]!.log_seq_start).toBeGreaterThanOrEqual(states[i - 1]!.log_seq_start);
+        expect(states[i]!.tail_hint).toBeGreaterThanOrEqual(states[i - 1]!.tail_hint);
+      }
+      if (!fullContentPass) {
+        throw new Error(`content pass never admitted: ${JSON.stringify(invocations)}`);
+      }
+      expect(fullContentPass).toBe(true);
+      expect(states.at(-1)?.tail_hint).toBe(entryCount);
+      expect(entryCount - states.at(-1)!.log_seq_start).toBeLessThanOrEqual(20);
+    },
+  );
+
+  // Production mutation caught: forgetting any bootstrap/final-CAS retry
+  // cost can make the nominal Free profile exceed 50 under contention.
+  // Hand-derived maximum: 1 current GET + 21 live/probe GETs + 3 pending
+  // bootstrap ops + 3 LISTs + 1 snapshot GET + 10 DELETEs + 1 fresh
+  // current GET for a due snapshot + 6 final CAS ops = 46.
+  test("maximally contended admitted GC stays at 46 storage operations", async () => {
     const inner = new MemoryStorage();
-    await seed(inner, KEY, COLL, 60);
-
-    // Pre-compact to set up the steady-state shape; we measure GC alone,
-    // so we do compact outside the counting wrapper. Under single-write
-    // commit the writer doesn't advance tail_hint, so after a CAPPED
-    // compact the stored hint lags the true tail. Stamp the true tail
-    // (tail_hint=60) directly so GC's probe is a single immediate-404
-    // and the steady-state shape (log_seq_start=20, tail=60) holds — the
-    // operating point the budget math models.
-    await compact({ storage: inner, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact);
-    const { casUpdateCurrentJson } = await import("@baerly/protocol");
-    await casUpdateCurrentJson(inner, KEY, (c) => ({ ...c, tail_hint: 60 }));
-
-    const { storage, getOps, report } = countingStorage(inner);
-    const r = await runGc({ storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.gc);
-    expect(r).not.toBeNull();
-    const ops = getOps();
-    expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
-      FREE_TIER_BUDGET,
+    const prefix = "app/t/tenant/x/manifests/c";
+    const snapshotBody = encodeSnapshotBody({
+      schema_version: SNAPSHOT_SCHEMA_VERSION,
+      min_seq: 0,
+      max_seq: 40,
+      collection: COLL,
+      docs: [],
+    });
+    const liveSnapshot = snapshotKey(prefix, 0, 40, await snapshotHash(snapshotBody));
+    await inner.put(liveSnapshot, snapshotBody);
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        snapshot: liveSnapshot,
+        log_seq_start: 40,
+        tail_hint: 50,
+      }),
     );
+    await seedLogEntries(inner, prefix, 40, 60, (seq) => ({
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    const dueCandidates = [
+      ...Array.from({ length: 9 }, (_, index) => ({
+        key: `${prefix}/gc/due-${index}.json`,
+        due_at: "2000-01-01T00:00:00.000Z",
+        reason: "stale-log" as const,
+      })),
+      {
+        key: snapshotKey(prefix, 0, 39, "b".repeat(64)),
+        due_at: "2000-01-01T00:00:00.000Z",
+        reason: "orphan-snapshot" as const,
+      },
+    ];
+    let firstPendingRead = true;
+    let injectedBootstrapWinner = false;
+    const contended: Storage = {
+      async get(key, opts) {
+        if (key === `${prefix}/gc/pending.json` && firstPendingRead) {
+          firstPendingRead = false;
+          return null;
+        }
+        return inner.get(key, opts);
+      },
+      async put(key, body, opts) {
+        if (
+          key === `${prefix}/gc/pending.json` &&
+          opts?.ifNoneMatch === "*" &&
+          !injectedBootstrapWinner
+        ) {
+          injectedBootstrapWinner = true;
+          await createGcPending(inner, key, {
+            schema_version: GC_PENDING_SCHEMA_VERSION,
+            candidates: dueCandidates,
+            last_swept_at: "",
+          });
+          return inner.put(key, body, opts);
+        }
+        if (key === `${prefix}/gc/pending.json` && opts?.ifMatch !== undefined) {
+          throw new BaerlyError("Conflict", "forced final pending CAS conflict");
+        }
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (listPrefix, opts) => inner.list(listPrefix, opts),
+    };
+    const counted = countingStorage(contended);
+
+    const result = await runGc({ storage: counted.storage, currentJsonKey: KEY }, {
+      ...CLOUDFLARE_FREE_TIER.gc,
+      graceMillis: 0,
+      now: () => new Date("2026-01-01T00:00:00.000Z"),
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(10);
+    const totalOps = counted.getOps();
+    expect(totalOps).toBe(46);
+    expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+  });
+
+  test("maximally contended content-deferred GC stays at 49 storage operations", async () => {
+    const inner = new MemoryStorage();
+    const prefix = "app/t/tenant/x/manifests/c";
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 20,
+        tail_hint: 20,
+      }),
+    );
+    await seedLogEntries(inner, prefix, 20, 45);
+    const dueCandidates = [
+      ...Array.from({ length: 9 }, (_, index) => ({
+        key: `${prefix}/gc/deferred-due-${index}.json`,
+        due_at: "2000-01-01T00:00:00.000Z",
+        reason: "stale-log" as const,
+      })),
+      {
+        key: snapshotKey(prefix, 0, 19, "c".repeat(64)),
+        due_at: "2000-01-01T00:00:00.000Z",
+        reason: "orphan-snapshot" as const,
+      },
+    ];
+    let firstPendingRead = true;
+    let injectedBootstrapWinner = false;
+    const contended: Storage = {
+      async get(key, opts) {
+        if (key === `${prefix}/gc/pending.json` && firstPendingRead) {
+          firstPendingRead = false;
+          return null;
+        }
+        return inner.get(key, opts);
+      },
+      async put(key, body, opts) {
+        if (
+          key === `${prefix}/gc/pending.json` &&
+          opts?.ifNoneMatch === "*" &&
+          !injectedBootstrapWinner
+        ) {
+          injectedBootstrapWinner = true;
+          await createGcPending(inner, key, {
+            schema_version: GC_PENDING_SCHEMA_VERSION,
+            candidates: dueCandidates,
+            last_swept_at: "",
+          });
+          return inner.put(key, body, opts);
+        }
+        if (key === `${prefix}/gc/pending.json` && opts?.ifMatch !== undefined) {
+          throw new BaerlyError("Conflict", "forced final pending CAS conflict");
+        }
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (listPrefix, opts) => inner.list(listPrefix, opts),
+    };
+    const counted = countingStorage(contended);
+
+    const result = await runGc({ storage: counted.storage, currentJsonKey: KEY }, {
+      ...CLOUDFLARE_FREE_TIER.gc,
+      graceMillis: 0,
+      now: () => new Date("2026-01-01T00:00:00.000Z"),
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(10);
+    expect(counted.listedPrefixes()).toEqual([`${prefix}/log/`, `${prefix}/snapshot/`]);
+    expect(counted.report()).toEqual({ get: 32, put: 5, delete: 10, list: 2 });
+    const totalOps = counted.getOps();
+    expect(totalOps).toBe(49);
+    expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 
   test("B4: a write-tick fold with a STALE-LOW stored tail_hint stays within budget because observedTail bounds the probe", async () => {
