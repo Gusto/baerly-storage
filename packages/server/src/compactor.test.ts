@@ -153,14 +153,19 @@ describe("compact", () => {
   // the collection against every read path, `restore --force` included.
   // A negative value is the benign case (it would merely lower the floor).
   describe.each([
-    ["maxEntriesPerRun", "negative", { maxEntriesPerRun: -1 }],
-    ["maxEntriesPerRun", "NaN", { maxEntriesPerRun: Number.NaN }],
-    ["maxEntriesPerRun", "Infinity", { maxEntriesPerRun: Number.POSITIVE_INFINITY }],
-    ["maxEntriesPerRun", "fractional", { maxEntriesPerRun: 1.5 }],
-    ["knownTail", "NaN", { knownTail: Number.NaN }],
-    ["knownTail", "negative", { knownTail: -1 }],
-  ])("rejects %s = %s at the seam", (_option, _shape, overrides) => {
-    test("fails closed before touching storage", async () => {
+    ["maxEntriesPerRun", "negative", { maxEntriesPerRun: -1 }, "non-negative"],
+    ["maxEntriesPerRun", "NaN", { maxEntriesPerRun: Number.NaN }, "non-negative"],
+    [
+      "maxEntriesPerRun",
+      "Infinity",
+      { maxEntriesPerRun: Number.POSITIVE_INFINITY },
+      "non-negative",
+    ],
+    ["maxEntriesPerRun", "fractional", { maxEntriesPerRun: 1.5 }, "non-negative"],
+    ["knownTail", "NaN", { knownTail: Number.NaN }, "non-negative"],
+    ["knownTail", "negative", { knownTail: -1 }, "non-negative"],
+  ])("rejects %s = %s at the seam", (option, _shape, overrides, integerContract) => {
+    test("fails closed before invoking storage", async () => {
       const s = new MemoryStorage();
       await bootstrap(s, KEY);
       const writer = new Writer({ storage: s, currentJsonKey: KEY });
@@ -173,13 +178,25 @@ describe("compact", () => {
         });
       }
       const before = await readCurrentJson(s, KEY);
+      const failStorageOperation = (operation: keyof Storage): never => {
+        throw new Error(`compact must validate before storage.${operation}()`);
+      };
+      const storageThatFailsAllOperations: Storage = {
+        get: () => failStorageOperation("get"),
+        put: () => failStorageOperation("put"),
+        delete: () => failStorageOperation("delete"),
+        list: () => failStorageOperation("list"),
+      };
 
       await expect(
-        compact({ storage: s, currentJsonKey: KEY }, {
+        compact({ storage: storageThatFailsAllOperations, currentJsonKey: KEY }, {
           minEntriesToCompact: 1,
           ...overrides,
         } as InternalCompactOptions),
-      ).rejects.toMatchObject({ code: "InvalidConfig" });
+      ).rejects.toMatchObject({
+        code: "InvalidConfig",
+        message: expect.stringContaining(`${option} must be a ${integerContract} integer`),
+      });
 
       // Nothing moved: the floor is intact, no snapshot pointer, and no
       // orphan snapshot object was left on the bucket.

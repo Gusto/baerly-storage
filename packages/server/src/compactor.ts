@@ -48,6 +48,7 @@ import {
   type Storage,
   type StoragePutOptions,
 } from "@baerly/protocol";
+import { requireIntegerOption } from "./option-guards.ts";
 import { walkLogRangeWithBytes } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
@@ -232,14 +233,8 @@ export const compact = async (
   // because nothing has been written yet. The ceilings are deliberately
   // not checked: a NaN there fails the viability comparisons closed
   // (defer), which is the safe direction.
-  const requireSeqOption = (name: string, value: number): void => {
-    if (!Number.isInteger(value) || value < 0) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `compact(${collectionName}): ${name} must be a non-negative integer, got ${String(value)}`,
-      );
-    }
-  };
+  const requireSeqOption = (name: string, value: number): void =>
+    requireIntegerOption("compact", collectionName, name, value, 0);
   requireSeqOption("maxEntriesPerRun", maxPerRun);
   requireSeqOption("knownTail", internal.knownTail ?? 0);
 
