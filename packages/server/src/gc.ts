@@ -6,7 +6,8 @@
  *      run).
  *   2. Marks new orphan candidates by LISTing the three artifact
  *      prefixes — log, snapshot, content — and classifying each key.
- *   3. Sweeps any already-pending candidate whose `due_at` has passed.
+ *   3. Rescues candidates proven live, then sweeps due candidates that
+ *      are safe to classify.
  *   4. CAS-writes the updated `gc/pending.json`.
  *
  * Two-phase by design: every candidate sits in `gc/pending.json` for a
@@ -395,7 +396,7 @@ export const runGc = async (
   const reachedEnd = examinedThisPass < maxMarks;
   const nextContentCursor = reachedEnd ? undefined : lastExaminedKey;
 
-  // ── Step 6. Sweep candidates whose due_at is in the past. ───────
+  // ── Step 6. Rescue live candidates, then sweep due candidates. ──
   // Eligible set = previously-pending entries PLUS this pass's freshly
   // marked entries. Including the new marks lets `runGc({graceMillis:0})`
   // mark-and-sweep in a single pass — useful for tests and for
@@ -403,10 +404,42 @@ export const runGc = async (
   // (they've been waiting longer), then new marks.
   const nowMs = now().getTime();
   const sweepCandidates: GcCandidate[] = [...pending.json.candidates, ...newCandidates];
+  // Snapshot classification used the initial manifest so stale work remains
+  // monotone and deterministic. Re-read only when a due snapshot could be
+  // deleted, as late as possible before DELETE. The fresh pointer rescues a
+  // candidate it names; every other due snapshot still needs a strict
+  // generation-floor proof below before it may enter `toSweep`.
+  const hasDueSnapshot = sweepCandidates.some(
+    (candidate) => candidate.reason === "orphan-snapshot" && Date.parse(candidate.due_at) <= nowMs,
+  );
+  const freshCurrent = hasDueSnapshot
+    ? await readCurrentJson(storage, currentJsonKey, signalOpts)
+    : undefined;
+  const rescuedKeys = new Set<string>();
+  for (const candidate of sweepCandidates) {
+    if (candidate.reason === "orphan-snapshot" && candidate.key === freshCurrent?.json.snapshot) {
+      rescuedKeys.add(candidate.key);
+    }
+  }
   const toSweep: GcCandidate[] = [];
   const remaining: GcCandidate[] = [];
   for (const cand of sweepCandidates) {
+    if (rescuedKeys.has(cand.key)) {
+      continue;
+    }
     if (toSweep.length < maxSweeps && Date.parse(cand.due_at) <= nowMs) {
+      if (cand.reason === "orphan-snapshot") {
+        const maxSeq = parseMaxSeqFromCanonicalSnapshotKey(cand.key, collectionPrefix);
+        // A compactor may publish this candidate after the fresh manifest GET
+        // but before DELETE. The manifest floor is monotone, so only a
+        // canonical snapshot wholly below that observed floor is already
+        // obsolete in every later generation. Equality stays pending: the
+        // internal zero-entry fold seam may publish `[floor, floor)`.
+        if (maxSeq === null || maxSeq >= (freshCurrent?.json.log_seq_start ?? 0)) {
+          remaining.push(cand);
+          continue;
+        }
+      }
       toSweep.push(cand);
     } else {
       remaining.push(cand);
@@ -426,7 +459,10 @@ export const runGc = async (
   // would succeed (fresh etag), so NO conflict is raised and the marks
   // are lost. The mutator is pure + the DELETEs are idempotent + already
   // performed, so the helper safely retries the merge on conflict.
-  const sweptKeys = new Set(toSweep.map((c) => c.key));
+  // `mergeGcPending` drops terminal keys via its existing `sweptKeys`
+  // merge input. Positively-live rescues are terminal ledger resolutions too,
+  // but only `toSweep` drives DELETEs, result counts, timestamps, and metrics.
+  const sweptKeys = new Set([...toSweep.map((candidate) => candidate.key), ...rescuedKeys]);
   // `""` when this pass swept nothing — sourcing the no-sweep truth from
   // `latest` (via the merge's "take later" rule) rather than our stale
   // read. With no contention this is observably identical: `latest`
@@ -529,6 +565,29 @@ const parseSeqFromLogKey = (key: string): number | null => {
   }
   const n = Number.parseInt(match[1]!, 10);
   return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
+/**
+ * Parse the exclusive `max_seq` from the exact key shape emitted by
+ * `snapshotKey`. Unknown levels/layouts and invalid ranges stay opaque so GC
+ * retains them rather than guessing at a generation boundary.
+ */
+const parseMaxSeqFromCanonicalSnapshotKey = (
+  key: string,
+  collectionPrefix: string,
+): number | null => {
+  const snapshotPrefix = `${collectionPrefix}/snapshot/L9/`;
+  if (!key.startsWith(snapshotPrefix)) {
+    return null;
+  }
+  const match = /^(\d{12})-(\d{12})-[0-9a-f]{64}\.json$/.exec(key.slice(snapshotPrefix.length));
+  if (match === null) {
+    return null;
+  }
+  const minSeq = Number(match[1]);
+  const maxSeq = Number(match[2]);
+  // Twelve decimal digits are always safely below MAX_SAFE_INTEGER.
+  return minSeq <= maxSeq ? maxSeq : null;
 };
 
 /**
