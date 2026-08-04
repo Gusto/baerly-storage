@@ -170,6 +170,23 @@ export interface InternalRunGcOptions extends RunGcOptions {
 }
 
 /**
+ * Why a pass skipped orphan-content discovery entirely.
+ *
+ * DEGRADED (never expected; does NOT self-clear) — an artifact that
+ * should be readable was not, so no complete live set can be built while
+ * the fault persists. Orphan content accumulates for as long as it does:
+ *   - `"live-log-unreadable"`: a log entry inside `[log_seq_start, tail)`
+ *     was missing or would not decode.
+ *   - `"snapshot-unreadable"`: reading or hash-verifying the current
+ *     snapshot failed (a persistent `AccessDenied` or a corrupt body
+ *     parks orphan-content GC here indefinitely).
+ *
+ * A DEGRADED reason on consecutive passes is the operator's signal to
+ * look at the named artifact; `admin fsck` walks the same chain.
+ */
+export type ContentDeferralReason = "live-log-unreadable" | "snapshot-unreadable";
+
+/**
  * Return shape of {@link runGc}.
  */
 export interface RunGcResult {
@@ -335,12 +352,16 @@ export const runGc = async (
 
   // ── Step 5. Mark orphan content. ────────────────────────────────
   // Build the live content-hash set by hashing every live post-image:
-  //   - log entries [log_seq_start, tail_hint)
+  //   - log entries [log_seq_start, true tail)
   //   - snapshot rows (via `loadSnapshotAsMap` so the hash check
   //     defends against a tampered snapshot)
   // Hash with the same `versionFromContent` (32-hex truncated SHA-256)
   // the writer used to mint the content key.
-  const liveHashes = await collectLiveContentHashes(
+  let markedOrphanContent = 0;
+  let nextContentCursor: string | undefined;
+  let preserveContentCursor = false;
+  let completeLiveContentHashes: ReadonlySet<string> | undefined;
+  const liveContent = await collectLiveContentHashes(
     storage,
     collectionPrefix,
     collectionName,
@@ -348,20 +369,29 @@ export const runGc = async (
     logSeqStart,
     signal,
   );
-  const contentPass = await markOrphanContent({
-    storage,
-    collectionPrefix,
-    liveHashes,
-    known,
-    maxMarks,
-    cursor: pending.json.content_scan_cursor,
-    now,
-    grace,
-    signal,
-  });
-  newCandidates.push(...contentPass.candidates);
-  const markedOrphanContent = contentPass.candidates.length;
-  const nextContentCursor = contentPass.nextContentCursor;
+  if (!liveContent.complete) {
+    // A partial live set cannot prove ANY content key dead — the missing
+    // post-images are exactly the ones that would look orphan. Defer the
+    // whole category (cursor held, nothing marked, nothing swept) rather
+    // than classify against an incomplete set.
+    preserveContentCursor = true;
+  } else {
+    completeLiveContentHashes = liveContent.hashes;
+    const contentPass = await markOrphanContent({
+      storage,
+      collectionPrefix,
+      liveHashes: liveContent.hashes,
+      known,
+      maxMarks,
+      cursor: pending.json.content_scan_cursor,
+      now,
+      grace,
+      signal,
+    });
+    newCandidates.push(...contentPass.candidates);
+    markedOrphanContent = contentPass.candidates.length;
+    nextContentCursor = contentPass.nextContentCursor;
+  }
 
   // ── Step 6. Rescue live candidates, then sweep due candidates. ──
   // Eligible set = previously-pending entries PLUS this pass's freshly
@@ -386,6 +416,13 @@ export const runGc = async (
   for (const candidate of sweepCandidates) {
     if (candidate.reason === "orphan-snapshot" && candidate.key === freshCurrent?.json.snapshot) {
       rescuedKeys.add(candidate.key);
+      continue;
+    }
+    if (candidate.reason === "orphan-content" && completeLiveContentHashes !== undefined) {
+      const hash = parseHashFromContentKey(candidate.key);
+      if (hash !== null && completeLiveContentHashes.has(hash)) {
+        rescuedKeys.add(candidate.key);
+      }
     }
   }
   const toSweep: GcCandidate[] = [];
@@ -394,7 +431,12 @@ export const runGc = async (
     if (rescuedKeys.has(cand.key)) {
       continue;
     }
-    if (toSweep.length < maxSweeps && Date.parse(cand.due_at) <= nowMs) {
+    // Without a complete live hash set, an orphan-content candidate cannot
+    // be proven dead. Keep it pending while independent stale-log/snapshot
+    // candidates continue through the same bounded sweep.
+    if (cand.reason === "orphan-content" && completeLiveContentHashes === undefined) {
+      remaining.push(cand);
+    } else if (toSweep.length < maxSweeps && Date.parse(cand.due_at) <= nowMs) {
       if (cand.reason === "orphan-snapshot") {
         const maxSeq = parseMaxSeqFromCanonicalSnapshotKey(cand.key, collectionPrefix);
         // A compactor may publish this candidate after the fresh manifest GET
@@ -452,6 +494,7 @@ export const runGc = async (
           lastSweptAt,
           nextContentCursor,
           nextLogCursor,
+          ...(preserveContentCursor && { preserveContentCursor: true }),
           maxCandidates: GC_MAX_PENDING_CANDIDATES,
         }),
       signalOpts,
@@ -592,6 +635,11 @@ const computeDueAt = (now: () => Date, graceMs: number): string =>
  * absent from `liveHashes` and not already pending, and report where the
  * next pass resumes.
  *
+ * `liveHashes` MUST be complete. A partial set marks live content as
+ * orphan, and the grace period does not save it — a marked live key is
+ * only rescued if a LATER pass builds a complete set before the due date.
+ * `runGc` owns that gate; this helper trusts it.
+ *
  * Rotation cursor: bounded passes (`maxMarks` < keyspace) sweep the whole
  * `content/` keyspace over a rotation instead of re-scanning the same
  * lexicographic-first window forever — content keys are hash-named
@@ -653,15 +701,30 @@ const markOrphanContent = async (opts: {
 };
 
 /**
+ * Outcome of one live-content-set build — a discriminated union on
+ * `complete`, so the two invariants are the compiler's to keep rather
+ * than a runtime convention's:
+ *
+ *   - Only the `false` arm exists without a reason, so a deferral can
+ *     never be silent. Independent `complete` + `incompleteReason?`
+ *     fields would admit `{ complete: false }` with no reason, which
+ *     holds the cursor and reports nothing — the exact silent deferral
+ *     {@link ContentDeferralReason} exists to remove.
+ *   - Only the `true` arm carries `hashes`, so a partial set is not
+ *     merely unsafe to classify against, it is unreachable.
+ */
+type LiveContentScan =
+  | { readonly complete: true; readonly hashes: ReadonlySet<string> }
+  | { readonly complete: false; readonly incompleteReason: ContentDeferralReason };
+
+/**
  * Build the live content-hash set. The set covers every live
- * post-image: every `entry.after` in `[logSeqStart, tail_hint)` plus
+ * post-image: every `entry.after` in `[logSeqStart, true tail)` plus
  * every row body in the current snapshot.
  *
- * A snapshot read that throws (corrupt body, hash mismatch) is
- * tolerated — the worst-case effect is missing some live hashes,
- * which could mark a live content blob as orphan. The grace period
- * absorbs the false-positive: a retry that re-PUTs the same hash
- * recreates the key before the sweep deletes it.
+ * Missing or malformed live entries and snapshot read failures yield the
+ * incomplete arm, which carries a reason and no hashes — the caller
+ * cannot reach a partial set to classify against.
  */
 const collectLiveContentHashes = async (
   storage: Storage,
@@ -670,8 +733,15 @@ const collectLiveContentHashes = async (
   current: CurrentJson,
   logSeqStart: number,
   signal: AbortSignal | undefined,
-): Promise<Set<string>> => {
+): Promise<LiveContentScan> => {
   const hashes = new Set<string>();
+  // First cause wins: the log walk runs before the snapshot read, and a
+  // log fault is the earlier link in the same chain. Set ⇒ incomplete;
+  // there is no separate `complete` flag to disagree with it.
+  let incompleteReason: ContentDeferralReason | undefined;
+  const markIncomplete = (reason: ContentDeferralReason): void => {
+    incompleteReason ??= reason;
+  };
   const getOpts = signal !== undefined ? { signal } : undefined;
 
   // Live log tail, bounded to the TRUE tail (probe past a stale-low
@@ -699,14 +769,14 @@ const collectLiveContentHashes = async (
   const ingestLogEntry = async (s: number): Promise<void> => {
     const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
     if (got === null) {
+      markIncomplete("live-log-unreadable");
       return;
     }
     let entry: { after?: unknown };
     try {
       entry = decodeJsonBytes<{ after?: unknown }>(got.body);
     } catch {
-      // A malformed log entry is the writer's concern, not GC's.
-      // Skip and let other invariants catch it.
+      markIncomplete("live-log-unreadable");
       return;
     }
     if (entry.after === undefined) {
@@ -740,9 +810,16 @@ const collectLiveContentHashes = async (
       }
       await Promise.all(rowReads);
     } catch {
-      // Snapshot read failure is non-fatal — see the docstring.
+      // Swallowed deliberately: throwing here would abort the stale-log
+      // and orphan-snapshot categories, which need no snapshot read. The
+      // caller defers only content classification — but a persistent fault
+      // (AccessDenied, corrupt body) parks that category indefinitely, so
+      // the reason must reach the caller rather than die here.
+      markIncomplete("snapshot-unreadable");
     }
   }
 
-  return hashes;
+  return incompleteReason !== undefined
+    ? { complete: false, incompleteReason }
+    : { complete: true, hashes };
 };
