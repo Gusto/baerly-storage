@@ -15,7 +15,7 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
-import { findLogTail, probeTailFrom } from "./log-tail.ts";
+import { findLogTail, probeTailChunk, probeTailFrom } from "./log-tail.ts";
 
 const PREFIX = "app/t/tenant/x/manifests/c";
 
@@ -27,6 +27,24 @@ describe("probeTailFrom", () => {
     const { tail, entries } = await probeTailFrom(storage, PREFIX, 5);
     expect(tail).toBe(10);
     expect(entries.map((e) => e.seq)).toEqual([5, 6, 7, 8, 9]);
+  });
+
+  test("a bounded chunk returns an exact tail when its budget includes the miss", async () => {
+    const storage = new MemoryStorage();
+    await seedLogEntries(storage, PREFIX, 5, 10);
+    await expect(probeTailChunk(storage, PREFIX, 5, { cap: 6 })).resolves.toMatchObject({
+      kind: "exact",
+      tail: 10,
+      complete: true,
+    });
+  });
+
+  test("a full bounded chunk returns a certified exclusive lower bound", async () => {
+    const storage = new MemoryStorage();
+    await seedLogEntries(storage, PREFIX, 5, 11);
+    const result = await probeTailChunk(storage, PREFIX, 5, { cap: 5 });
+    expect(result).toMatchObject({ kind: "at-least", lowerBound: 10, complete: true });
+    expect(result.entries.map((entry) => entry.seq)).toEqual([5, 6, 7, 8, 9]);
   });
 
   test("hint already at the tail returns empty", async () => {
@@ -46,6 +64,10 @@ describe("probeTailFrom", () => {
     const { tail, entries } = await probeTailFrom(storage, PREFIX, 3);
     expect(tail).toBe(8);
     expect(entries.map((e) => e.seq)).toEqual([3, 4, 5, 6, 7]);
+
+    const result = await probeTailChunk(storage, PREFIX, 3, { cap: 10 });
+    expect(result).toMatchObject({ kind: "exact", tail: 8 });
+    expect(result.entries.map((entry) => entry.seq)).not.toContain(9);
   });
 
   test("cap exhausted: THROWS Internal instead of silently truncating", async () => {
@@ -93,6 +115,38 @@ describe("probeTailFrom", () => {
     await expect(probeTailFrom(storage, PREFIX, 5)).rejects.toMatchObject({
       code: "NetworkError",
     });
+  });
+
+  test("a malformed bounded entry identifies probeTailChunk in its error", async () => {
+    // Calling the chunk probe its former `probeTailFrom` name conceals which
+    // contract rejected the body when operators inspect an InvalidResponse.
+    const malformed: Storage = {
+      get: async () => ({ body: new TextEncoder().encode("{"), etag: "x" }),
+      put: async () => ({ etag: "x" }),
+      delete: async () => {},
+      list: () => {
+        throw new Error("list not used by probeTailChunk");
+      },
+    };
+
+    await expect(probeTailChunk(malformed, PREFIX, 0)).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringContaining("probeTailChunk: malformed log entry"),
+    });
+  });
+
+  test("tolerant bounded mode records malformed occupancy as incomplete and keeps probing", async () => {
+    const storage = new MemoryStorage();
+    await seedLogEntries(storage, PREFIX, 5, 8);
+    await storage.put(logObjectKey(PREFIX, 6), new TextEncoder().encode("{"));
+
+    const result = await probeTailChunk(storage, PREFIX, 5, {
+      cap: 10,
+      tolerateMalformed: true,
+    });
+
+    expect(result).toMatchObject({ kind: "exact", tail: 8, complete: false });
+    expect(result.entries.map((entry) => entry.seq)).toEqual([5, 7]);
   });
 
   test("an aborted signal propagates — never silently read as the tail", async () => {
