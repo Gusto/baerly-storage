@@ -1,6 +1,6 @@
 ---
 description: Default bias and backwards-compatibility discipline for code changes
-appliesTo: ["packages/**/*.ts", "packages/**/*.tsx", "scripts/**", "bench/**/*.ts", "examples/**/*.ts", "manual-e2e/**/*.ts"]
+paths: ["packages/**/*.ts", "packages/**/*.tsx", "scripts/**", "bench/**/*.ts", "examples/**/*.ts", "manual-e2e/**/*.ts"]
 title: "Auto-load: change discipline"
 audience: agent
 summary: Triggers on source-code edits; routes the agent to docs/contributing/conventions/change-discipline.md.
