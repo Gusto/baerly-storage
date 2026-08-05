@@ -1,6 +1,6 @@
 ---
 description: Conventions for content under docs/
-appliesTo: docs/**
+paths: docs/**
 title: "Auto-load: docs conventions"
 audience: agent
 summary: Triggers on docs/ edits; routes the agent to docs/contributing/conventions/docs.md.

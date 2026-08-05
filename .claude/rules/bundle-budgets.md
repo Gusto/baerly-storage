@@ -1,6 +1,6 @@
 ---
 description: Bundle-size policy for bundle-affecting edits (delta gate, do-not-golf-comments rule)
-appliesTo:
+paths:
   ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx", "rolldown.config.ts", "bundle-sizes.json"]
 title: "Auto-load: bundle budget policy"
 audience: agent
