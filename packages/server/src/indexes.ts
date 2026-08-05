@@ -29,8 +29,8 @@
  *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
  *
  * Body is zero bytes. Each entry is a fact ("doc `<docId>` has
- * `<field> = <value>`"), not data. Readers list the prefix, extract
- * the doc id from each key, then issue a content GET on each.
+ * `<field> = <value>`"), not data. Readers list the prefix to collect
+ * candidate doc ids, then resolve them through the snapshot+log fold.
  *
  * Encoding is RFC-4648 base-32 (lowercase alphabet `[0-9a-v]`,
  * matching `packages/protocol/src/log.ts:str2uintDesc` style) on a
