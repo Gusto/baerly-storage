@@ -1,7 +1,6 @@
 /**
  * Secondary indexes — declarative collection-config-driven
- * index entries that the writer emits inside the same CAS fence as
- * the log entry and content body.
+ * index entries that the writer emits before the committing log entry.
  *
  * The {@link IndexDefinition} TYPE lives in `@baerly/protocol`
  * (cross-platform). This module owns the runtime helpers that

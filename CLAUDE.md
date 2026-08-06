@@ -2,7 +2,7 @@
 title: CLAUDE.md — agent guidance for baerly-storage
 audience: agent
 summary: Toolchain, verification matrix, module map, conventions, anti-patterns. The main agent entry point.
-last-reviewed: 2026-05-12
+last-reviewed: 2026-08-04
 tags: [agent-entry, conventions, verification]
 related: ["docs/README.md", "docs/architecture.md", "docs/contributing/development.md"]
 ---
@@ -135,10 +135,11 @@ package has its own `AGENTS.md` — read that before its source.
 Two non-obvious invariants in there, because you can't see them by
 skimming:
 
-- **`writer.ts`**: the commit sequence is PUT content → PUT new index
-  entries → create `log/<seq>` via `If-None-Match: "*"`. **That create
-  IS the commit** — there is no `current.json` write on the commit path.
-  Stale index entries are DELETEd only after it succeeds.
+- **`writer.ts`**: serialize the `I` / `U` post-image into
+  `LogEntry.after` → PUT additive index markers → create `log/<seq>` via
+  `If-None-Match: "*"`. **That create IS the commit** — there is no
+  `current.json` write on the commit path. Stale index entries are DELETEd
+  only after it succeeds.
 - **`indexes.ts`**: index keys are lex-order-preserving base-32. The
   writer's emission is deliberately *hybrid-polarity* — new markers
   before the committing log create, stale marker deletes after it.

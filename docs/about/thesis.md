@@ -2,7 +2,7 @@
 title: Product thesis
 audience: product
 summary: Why baerly-storage exists, who it fits, and which boundaries it deliberately keeps.
-last-reviewed: 2026-06-29
+last-reviewed: 2026-08-04
 tags: [positioning, product]
 related: [how-it-works.md, workload-fit.md, cost-model.md, graduation.md, "../contributing/conventions/change-discipline.md"]
 ---
@@ -208,7 +208,7 @@ supported backends, and live probe rules live in
 Each design choice falls out of a criterion above. The rough shape is
 git-like: immutable content, append-only history, and a small compaction
 bookmark. More precisely, baerly-storage stores content-addressed
-documents, immutable numbered log entries, and one conditional log create
+snapshots, immutable numbered log entries, and one conditional log create
 as the commit, per collection.
 
 That architecture is not the thesis by itself. The thesis is that this

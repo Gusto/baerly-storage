@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-08-02
+last-reviewed: 2026-08-04
 tags: [architecture, lifecycle, module-map]
 related: ["spec/sync-protocol.md", "contributing/extending.md", "contributing/features.md"]
 ---
@@ -28,12 +28,13 @@ Everything before the log create prepares data a future reader will need.
 Everything after it is cleanup or maintenance. `current.json` does not
 commit writes.
 
-For an insert or update, the writer uploads the content body and new
-index markers before it creates the `LogEntry` at `log/<seq>.json` with
-`If-None-Match: "*"`. There is no `current.json` write on the commit
-path. `current.json` is compactor-owned state: it names the snapshot,
-stores `log_seq_start` (the first log seq not covered by that snapshot),
-and carries a non-authoritative `tail_hint`.
+For an insert or update, the writer serializes the post-image into
+`LogEntry.after` and uploads additive index markers before it creates
+that entry at `log/<seq>.json` with `If-None-Match: "*"`. There is no
+`current.json` write on the commit path. `current.json` is
+compactor-owned state: it names the snapshot, stores `log_seq_start`
+(the first log seq not covered by that snapshot), and carries a
+non-authoritative `tail_hint`.
 
 The live tail is the first missing sequence after the committed log
 entries. `tail_hint` is only a monotone lower bound on that tail; it may
@@ -57,7 +58,7 @@ protocol is specified in
 covered by the randomized checker in
 [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 
-The useful git comparison is narrow: content-addressed documents,
+The useful git comparison is narrow: content-addressed snapshots,
 immutable numbered log entries, and one conditional log create as the
 commit, per collection. The consistency side of this shape depends on
 S3's December 2020 strong read/write/list consistency; the commit point
@@ -308,11 +309,12 @@ both `baerly deploy --target=cloudflare` and
 
 ## Lifecycle of `db.collection("X").insert(doc)`
 
-Write ordering is asymmetric: content bodies and new index markers are
-visible before the `log/<seq>` create; stale index markers are deleted
-after commit. A row becomes visible only when a committed log entry is
-replayed; content and index objects alone are ignored as rows. Index
-markers are zero-byte objects used to find candidate doc ids.
+Write ordering is asymmetric: the writer serializes `LogEntry.after`
+and writes additive index markers before the `log/<seq>` create; stale
+index markers are deleted after commit. A row becomes visible only when
+a committed log entry is replayed; index objects alone are ignored as
+rows. Index markers are zero-byte objects used to find candidate doc
+ids.
 
 1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`):
    normalises the document, generates a UUIDv7 `_id` if absent,
@@ -323,9 +325,8 @@ markers are zero-byte objects used to find candidate doc ids.
    - reads `current.json` fresh for its snapshot pointer and `tail_hint`;
    - forward-probes from `max(log_seq_start, tail_hint)` to find the
      first empty log slot and mint `seq`;
-   - PUTs the content body under
-     `app/<app>/tenant/<tenant>/manifests/<collection>/content/<sha>.json`
-     and additive (new) index artifacts under
+   - serializes the `I` / `U` post-image into `LogEntry.after`, then
+     PUTs additive (new) index artifacts under
      `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`
      **before** the commit;
    - creates the log entry under
@@ -356,7 +357,7 @@ markers are zero-byte objects used to find candidate doc ids.
        W->>B: GET current.json (snapshot ptr and tail_hint)
        W->>B: GET log/N onward (forward-probe)
        B-->>W: first 404 fixes seq = N
-       W->>B: PUT content/sha (create-if-absent)
+       Note over W: serialize I / U post-image into LogEntry.after
        W->>B: PUT new index markers (create-if-absent)
        W->>B: PUT log/N (create-if-absent)
        alt slot was free
@@ -427,14 +428,14 @@ accrue; no `setInterval`, cron, or operator scheduler is required.
 
 The bounded pass splits that work across two existing primitives:
 
-- `runGc()` (`packages/server/src/gc.ts`) deletes content bodies, stale
-  log entries, and orphan snapshots no longer reachable from
-  `current.json` after the grace window. It uses the two-phase
-  mark/sweep ledger at `gc/pending.json`, is bounded by the maintenance
-  profile's `gcMaxMarks` / `gcMaxSweeps`, and is due on `gcInterval`
-  write-count boundary crossings. In `"single"` phase mode, a fold can
-  take the tick when both are due; the hard-GC guard prevents indefinite
-  starvation.
+- `runGc()` (`packages/server/src/gc.ts`) deletes legacy content side
+  objects, stale log entries, and orphan snapshots no longer reachable
+  from `current.json` after the grace and sweep-time revalidation checks.
+  It uses the two-phase mark/sweep ledger at `gc/pending.json`, is
+  bounded by the maintenance profile's `gcMaxMarks` / `gcMaxSweeps`,
+  and is due on `gcInterval` write-count boundary crossings. In
+  `"single"` phase mode, a fold can take the tick when both are due; the
+  hard-GC guard prevents indefinite starvation.
 - `compact()` (`packages/server/src/compactor.ts`) folds a **sliced**
   tail into a new snapshot and advances `log_seq_start` so future reads
   replay less log. The slice size is `maxFoldEntriesPerPass`, passed to
@@ -556,10 +557,11 @@ adapter package. Platform-specific code belongs in adapters.
 ## Storage layout in the bucket
 
 Every object for one collection lives under one prefix: `log/` holds
-commits; `content/`, `index/`, `snapshot/`, and `gc/` support reads and
-maintenance. For a `Db` constructed with `app="tickets"` and
-`tenant="acme"`, that prefix is the tree root below — shown once here,
-then omitted from the table that follows:
+commits; `index/`, `snapshot/`, and `gc/` support reads and maintenance;
+`content/` is retained for legacy on-bucket compatibility and GC. For a
+`Db` constructed with `app="tickets"` and `tenant="acme"`, that prefix
+is the tree root below — shown once here, then omitted from the table
+that follows:
 
 ```
 app/tickets/tenant/acme/manifests/<collection>/
@@ -567,7 +569,7 @@ app/tickets/tenant/acme/manifests/<collection>/
 ├── log/
 │   └── <seq>.json                 ← one LogEntry; THIS create is the commit
 ├── content/
-│   └── <content-version>.json     ← post-image body (insert / update)
+│   └── <content-version>.json     ← side object emitted by a legacy writer; retained for verified v0.6.0 compatibility
 ├── index/
 │   └── <name>/…                   ← advisory marker (zero-byte)
 ├── snapshot/
@@ -580,16 +582,25 @@ app/tickets/tenant/acme/manifests/<collection>/
 | ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `current.json`                       | — (one per collection)               | Snapshot pointer, `log_seq_start`, the non-authoritative `tail_hint`, and the dormant `writer_fence`. **Not** the commit-path linearization point.                               |
 | `log/<seq>.json`                     | `seq` — monotonic integer            | One `LogEntry`. The `If-None-Match: "*"` create on this key **is the commit**. Readers scan the trusted range `[log_seq_start, tail_hint)`, then forward-probe to the true tail. |
-| `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Content-addressed post-image body for `I` / `U`.                                                                                                                                 |
+| `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Side object emitted by a legacy writer; retained for verified v0.6.0 bucket compatibility.                                                                                      |
 | `index/<name>/…`                     | index name + encoded key             | Zero-byte advisory index marker.                                                                                                                                                 |
 | `snapshot/L9/<min>-<max>-<sha>.json` | `seq` range + content hash           | Content-hashed materialized snapshot.                                                                                                                                            |
 | `gc/pending.json`                    | — (one per collection)               | Two-phase GC candidate ledger.                                                                                                                                                   |
 
+Current writers do not create `content/<sha>.json`. Buckets written by
+legacy writers that emitted content side objects may still contain them;
+during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
+No current kernel reader depends on these objects. Existing orphan-content
+GC remains unchanged: live hashes are rescued, and orphan candidates are
+reclaimed only after the existing grace and revalidation checks. Verified
+v0.6.0 buckets require no migration.
+
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log
 entries into checkpoints and advances `log_seq_start`. GC
-(`packages/server/src/gc.ts`) deletes content bodies, stale log entries,
-and orphan snapshots no longer reachable from `current.json`. Both are
-driven in-band on the write path by `runBoundedMaintenance`
+(`packages/server/src/gc.ts`) deletes legacy content side objects, stale
+log entries, and orphan snapshots no longer reachable from
+`current.json`. Both are driven in-band on the write path by
+`runBoundedMaintenance`
 (`packages/server/src/maintenance.ts`); `runScheduledMaintenance` is the
 opt-in alternative trigger. See
 [After the write — the in-band maintenance tick](#after-the-write--the-in-band-maintenance-tick).

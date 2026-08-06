@@ -140,7 +140,7 @@ derivations, see [cost-model.md](cost-model.md) and
 | Per-collection size | ~100–500 docs (~512 KB snapshot) before compaction defers on CF free | A fold fits the free-tier CPU budget at ~512 KB; erosion, not a cliff — model/estimate, pending real CF-isolate measurement |
 | Fan-out | ~100 collections/tenant (soft guideline) | Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N |
 | Storage | >10 GB/tenant stored = R2 free-tier boundary | A cost line, not a protocol ceiling; billing begins above 10 GB-mo on R2 |
-| Cost | ~$18/mo all-in on R2 (~$13 object-storage ops + $5 Workers Paid floor), ~$26/mo on S3 at M-size | At ~30 writes/min account-wide aggregate; `baerly cost` projects the object-storage-ops portion only (no platform floor); see [cost-model.md](cost-model.md) for the curve |
+| Cost | ~$12/mo all-in on R2 (~$7 object-storage ops + $5 Workers Paid floor), ~$19/mo on S3 or GCS at M-size | At ~30 writes/min account-wide aggregate; `baerly cost` projects the object-storage-ops portion only (no platform floor); see [cost-model.md](cost-model.md) for the curve |
 
 **CPU and throughput walls are surfaced above as model/estimate** — the
 ~11 ms/MB fold-cost model (used to derive the ~512 KB CF-free ceiling)

@@ -5,7 +5,7 @@
  *
  * Three rules:
  *   1. `classAPerMonth = writesPerMin × 60 × 24 × 30 × effectiveWriteAmp`
- *      where `effectiveWriteAmp` (≈3 on Cloudflare, ≈4 on Node) is the
+ *      where `effectiveWriteAmp` (≈2 on Cloudflare/R2, ≈3 on Node/S3) is the
  *      measured Class A ops/write INCLUDING in-band maintenance — see
  *      `docs/spec/attachments/amortized-write-cost-baseline.json`. The
  *      old "× 2" was the commit FLOOR only and undercounted maintenance.
@@ -30,12 +30,12 @@ export interface ProviderPricing {
   readonly usdPerGbMonth: number;
   /**
    * Effective Class A ops per logical write, INCLUDING in-band
-   * maintenance (folds + GC) — NOT just the 2-op commit floor.
-   * Empirically measured: ~3 on Cloudflare (cf-free profile), ~4 on
-   * serverful Node (gcInterval=2 ⇒ ~2× the GC LISTs). Source:
+   * maintenance (folds + GC) — NOT just the one-op commit floor.
+   * Empirically measured: ~2 on Cloudflare (cf-free profile), ~3 on
+   * serverful Node. Source:
    * docs/spec/attachments/amortized-write-cost-baseline.json (bench
    * `pnpm bench:amortized-write-cost`). Provider is the host proxy:
-   * r2 ⇒ Cloudflare ⇒ 3; aws-s3 ⇒ Node ⇒ 4.
+   * r2 ⇒ Cloudflare ⇒ 2; aws-s3 ⇒ Node ⇒ 3.
    */
   readonly effectiveWriteAmp: number;
 }
@@ -52,11 +52,13 @@ export const GRADUATION_CLASS_A_PER_MONTH = 50_000_000;
  *
  * Keyed to a sustained WRITE RATE (100 writes/min, account-wide), not an
  * absolute Class A count, so it fires at the same workload on every
- * provider regardless of write-amp. On R2 (×3) that is ~13M Class A/mo
- * (~$54/mo object-storage ops); on S3 (×4) ~17.3M Class A/mo (~$86/mo).
- * The previous absolute 13M-Class-A threshold was R2-derived and, applied
- * to S3, fired at ~75 writes/min (~$65/mo) while the rendered note quoted
- * the 100-writes/min figure (~$86) — provider-inconsistent. Fires before
+ * provider regardless of write-amp. On R2 (×2) that is 8.64M Class A/mo
+ * (~$34/mo object-storage ops); on Node/S3 (×3) it is 12.96M Class A/mo
+ * (~$65/mo). The 50M hard line is about 580 writes/min at 2× and about
+ * 390 writes/min at 3×. The previous absolute 13M-Class-A threshold was
+ * R2-derived and, applied to S3, fired at ~75 writes/min (~$65/mo) while
+ * the rendered note quoted the 100-writes/min figure (~$86) —
+ * provider-inconsistent. Fires before
  * the 50M hard trigger to surface the ops-vs-cost tradeoff: object storage
  * buys zero ops / no on-call / no migration; a managed DB trades those
  * dollars for a schema, SQL, and an ops surface. Does NOT change the 50M
@@ -103,7 +105,10 @@ export const project = (
     return null;
   }
 
-  const classAPerMonth = writesPerMin * 60 * 24 * 30 * pricing.effectiveWriteAmp;
+  // Group the exact month/write-amp multiplier before applying the sampled
+  // floating-point rate. Left-associative multiplication makes the real R2
+  // 1M boundary drift one ULP high and falsely appear billable.
+  const classAPerMonth = writesPerMin * (60 * 24 * 30 * pricing.effectiveWriteAmp);
 
   const percentOfGraduation = (classAPerMonth / GRADUATION_CLASS_A_PER_MONTH) * 100;
   // Advisory is a write-RATE crossing (provider-agnostic), not an absolute

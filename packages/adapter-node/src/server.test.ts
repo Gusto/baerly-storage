@@ -237,9 +237,9 @@ describe("createApp observability", () => {
     expect(props["method"]).toBe("POST");
     const classA = props["db.storage.class_a_ops_total"];
     expect(typeof classA).toBe("number");
-    // Single-write commit: a write is content + log create = 2 Class-A
-    // PUTs (no current.json CAS-advance).
-    expect(classA).toBeGreaterThanOrEqual(2);
+    // A nonzero Class-A count proves storage-observability reaches the
+    // adapter's canonical line; exact write cost is owned by server tests.
+    expect(classA).toBeGreaterThanOrEqual(1);
   });
 
   test("emits a canonical line for a GET with outcome=read and non-zero class_b_ops", async () => {

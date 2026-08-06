@@ -3,7 +3,7 @@ title: Sync protocol
 audience: spec
 doc_type: current-contract
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-08-03
+last-reviewed: 2026-08-04
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -26,10 +26,10 @@ entry, not on `current.json`.
 
 For each `(app, tenant, collection)`, the bucket holds a
 `log/<seq>.json` series and a `current.json` control object. The writer
-prepares the content body and additive index keys first. Then it creates
-exactly one numbered log object with `If-None-Match: "*"`. If that
-create succeeds, the mutation is committed at that `seq`; no later
-`current.json` CAS is needed.
+serializes the `I` / `U` post-image into `LogEntry.after` and PUTs
+additive index keys first. Then it creates exactly one numbered log
+object with `If-None-Match: "*"`. If that create succeeds, the mutation
+is committed at that `seq`; no later `current.json` CAS is needed.
 
 The live log is dense: writers target the first missing sequence
 number, and readers stop at the first missing sequence number. In this
@@ -61,13 +61,13 @@ The `manifests/` segment is the historical name for a collection's
 control tree; the live control object inside it is `current.json`
 (there is no separate "manifest" object today).
 
-The kernel writes these objects below that prefix:
+The collection prefix may contain these objects:
 
 | Key                                           | Role                                                                                                                                                                    |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `current.json`                                | Compactor-owned compaction-state object: snapshot pointer, `log_seq_start`, snapshot counters, plus the non-authoritative `tail_hint`. **Not** the linearization point. |
 | `log/<seq>.json`                              | One `LogEntry` per mutation, keyed by monotonic integer `seq`. The create-if-absent on this key **is** the linearization point.                                         |
-| `content/<sha>.json`                          | Content-addressed post-image bodies for `I` / `U`.                                                                                                                      |
+| `content/<sha>.json`                          | Side object emitted by a legacy writer, retained for verified v0.6.0 bucket compatibility.                                                                              |
 | `index/<name>/...`                            | Zero-byte advisory index markers.                                                                                                                                       |
 | `snapshot/L9/<000000000000>-<max>-<sha>.json` | Content-hashed materialized snapshot covering `[0, max)`. `min` and `max` are fixed-width 12-digit zero-padded; `min` is always `0`.                                    |
 | `gc/pending.json`                             | Two-phase GC candidate ledger.                                                                                                                                          |
@@ -197,16 +197,15 @@ For a single-document mutation:
    `If-None-Match: "*"` create happens later, at the discovered
    first-empty slot. The walk is capped by `LOG_FORWARD_PROBE_CAP`; cap
    exhaustion is an `Internal` runaway alarm, not normal contention.
-3. **PUT content and additive (new) index keys — before the commit.**
-   `I` / `U` post-images are written under `content/<sha>.json` with
-   `If-None-Match: "*"`; because the body is content-addressed, a retry
-   is a no-op. Additive **new** index keys are PUT
-   (`If-None-Match: "*"`) **before** the committing log create, so a
-   committed row is _always_ index-findable — there is no window in
-   which a committed doc is observed unindexed. (Stale index keys are
-   deleted _after_ the commit; see step 5. Index completeness is its own
-   invariant — see the index access-path notes under
-   "[Read algorithm](#read-algorithm)".)
+3. **Serialize `LogEntry.after` and PUT additive (new) index keys —
+   before the commit.** `I` / `U` post-images are serialized into the
+   `LogEntry.after` field; current writers do not create a content side
+   object. Additive **new** index keys are PUT (`If-None-Match: "*"`)
+   **before** the committing log create, so a committed row is _always_
+   index-findable — there is no window in which a committed doc is
+   observed unindexed. (Stale index keys are deleted _after_ the commit;
+   see step 5. Index completeness is its own invariant — see the index
+   access-path notes under "[Read algorithm](#read-algorithm)".)
 4. **Create `log/<seq>.json` with `If-None-Match: "*"` — this create
    _is_ the commit.** Winning (`200`) means committed; a `412` means
    the slot is occupied (re-probe the next seq, per the
@@ -256,16 +255,25 @@ ordinary `BaerlyError` path.
 
 ### Crash safety
 
-Crashes fall on one side of the commit line: content and additive (new)
-index keys are preparation, the `log/<seq>` create is the commit, and
-stale-key DELETEs are cleanup. The single `log/<seq>` create is the only
-point at which the mutation becomes committed, so every crash either
-leaves the doc fully committed and index-findable or fully uncommitted.
+Crashes fall on one side of the commit line: serializing `LogEntry.after`
+and PUTting additive (new) index keys are preparation, the `log/<seq>`
+create is the commit, and stale-key DELETEs are cleanup. The single
+`log/<seq>` create is the only point at which the mutation becomes
+committed, so every crash either leaves the doc fully committed and
+index-findable or fully uncommitted.
 
-| Crash point                                           | Bucket residue                                                                                                                        | Reader behavior                                                                                                                                                                 |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Before the log create (during content / new-key PUTs) | Unreferenced content body and orphan additive index keys may exist; the doc is **not** committed (no log entry).                      | Invisible — no committed `seq` points at the content, and an orphan additive key is a benign false-positive dropped by `matchesWire`. GC later sweeps the unreferenced content. |
-| After the log create, before the stale-key DELETE     | The doc is **committed** and correctly index-findable (its new keys have already been written); it may transiently carry an extra _stale_ key. | Visible and findable. The extra stale key is a benign false-positive that `matchesWire` drops.                                                                                  |
+| Crash point                                       | Bucket residue                                                                                                                             | Reader behavior                                                                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Before the log create (during new-key PUTs)       | Orphan additive index keys may exist; the doc is **not** committed (no log entry).                                                          | Invisible — an orphan additive key is a benign false-positive dropped by `matchesWire`.                                                |
+| After the log create, before the stale-key DELETE | The doc is **committed** and correctly index-findable (its new keys have already been written); it may transiently carry an extra _stale_ key. | Visible and findable. The extra stale key is a benign false-positive that `matchesWire` drops.                                         |
+
+Current writers do not create `content/<sha>.json`. Buckets written by
+legacy writers that emitted content side objects may still contain them;
+during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
+No current kernel reader depends on these objects. Existing orphan-content
+GC remains unchanged: live hashes are rescued, and orphan candidates are
+reclaimed only after the existing grace and revalidation checks. Verified
+v0.6.0 buckets require no migration.
 
 Index failures are asymmetric: extra candidates are repairable false
 positives, but missing candidates can hide committed rows from
@@ -286,11 +294,12 @@ bounded in-tick reconcile slice was considered and deferred — see
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
 a committed log entry can never be left undiscoverable behind
-`current.json`. Garbage collection later marks and sweeps orphan
-content, stale log objects below `log_seq_start`, and superseded
-snapshots after a grace window. For artifacts outside the committed
-range, GC is cleanup, not reader correctness: readers decide visibility
-from the snapshot, `[log_seq_start, tail_hint)`, and the forward-probe.
+`current.json`. Garbage collection later marks and sweeps orphan legacy
+content side objects, stale log objects below `log_seq_start`, and
+superseded snapshots after the existing grace and revalidation checks.
+For artifacts outside the committed range, GC is cleanup, not reader
+correctness: readers decide visibility from the snapshot,
+`[log_seq_start, tail_hint)`, and the forward-probe.
 
 ## Read algorithm
 
@@ -568,45 +577,47 @@ These are the load-bearing rules.
     | nonce `A`     | `A`     | pass   | Same generation.                                            |
     | nonce `B`     | `A`     | reject | Truncated.                                                  |
 
-14. **A publication window is assumed shorter than the GC grace.** Two
-    paths PUT an artifact before the object that makes it reachable
-    exists, and are therefore observable by a concurrent GC mark:
+14. **Artifact publication windows are assumed shorter than the GC
+    grace.** During a mixed v0.6.0 rollout, legacy v0.6.0 writers that
+    emitted content side objects retain the old content-before-log
+    publication window: they PUT the content object before creating the
+    committing log entry. After every writer has been upgraded, current
+    writers publish no content side object and that window is gone.
 
-    - `Writer.commit` probes its `log/<seq>` slot
-      (`packages/server/src/writer.ts`, step 3), PUTs the content bodies
-      for that commit (step 4), and only then creates the slot (step 5).
-      Between the probe and the create, the content object is on the
-      bucket and no live log entry or snapshot references it, so
-      `runGc` classifies it `orphan-content`.
-    - The compactor PUTs a snapshot (`packages/server/src/compactor.ts`,
-      step 6) before it CASes `current.json` to point at it (step 7).
-      In between, the snapshot key is not `current.snapshot`, so `runGc`
-      classifies it `orphan-snapshot`.
+    The remaining publication window belongs to the compactor. It PUTs a
+    snapshot (`packages/server/src/compactor.ts`, step 6) before it CASes
+    `current.json` to point at it (step 7). In between, the snapshot key
+    is not `current.snapshot`, so `runGc` can classify it
+    `orphan-snapshot`.
 
-    The protocol assumes neither window stays open longer than
-    `GC_GRACE_PERIOD_MILLIS` (`packages/protocol/src/constants.ts`, 7
-    days), which is the delay GC imposes between a mark and the DELETE
-    it authorises. `packages/server/src/gc.ts`'s module JSDoc states the
+    The protocol assumes each applicable window does not stay open
+    longer than `GC_GRACE_PERIOD_MILLIS`
+    (`packages/protocol/src/constants.ts`, 7 days), which is the delay
+    GC imposes between a mark and the DELETE it authorises.
+    `packages/server/src/gc.ts`'s module JSDoc states the
     same bound from the GC side — "The grace bounds the worst plausible
     writer-retry window". Request-bounded runtimes (a Worker invocation,
     a Lambda, an HTTP handler) enforce the assumption in practice.
     Nothing in the kernel checks it, and no error is raised if it is
     violated.
 
-    **The grace alone does not cover these two windows.** Its stated
-    rationale is about a writer that will _retry_: "a paused-process
-    writer that resumes hours later still finds its idempotency anchor
-    on the bucket". A content PUT and a snapshot PUT have already
-    **succeeded**; what is outstanding is the next step, not a repeat of
-    that one, so an argument about retry latency does not bound them.
-    What covers them is `runGc`'s sweep-time revalidation: the sweep
-    gate re-derives liveness from the `current.json`, floor, and
+    **The grace alone does not cover the compactor window.** Its stated
+    rationale does cover the legacy-writer case: a paused writer that
+    resumes within the grace still finds its content idempotency anchor
+    on the bucket. A snapshot PUT has already **succeeded**; what is
+    outstanding is the pointer CAS, not a repeat of the PUT, so an
+    argument about writer retry latency does not bound the compactor's
+    publication window. What covers it is `runGc`'s sweep-time
+    revalidation: the sweep gate
+    re-derives liveness from the `current.json`, floor, and
     live-content-hash set that same pass already read, and drops — never
     deletes — a candidate that now reads live or whose `generation` no
-    longer matches the live manifest. An artifact that became reachable
-    after it was marked is therefore dropped unswept — as far as the
-    freshest manifest that pass holds can see, which is the freshness
-    bound stated in the second limitation below.
+    longer matches the live manifest. This same revalidation protects
+    legacy content side objects that become live after marking. An
+    artifact that became reachable after it was marked is therefore
+    dropped unswept — as far as the freshest manifest that pass holds
+    can see, which is the freshness bound stated in the second
+    limitation below.
 
     **Known limitation: the grace is wall-clock, with no cross-node
     backstop.** `computeDueAt` stamps `due_at` as the marking node's

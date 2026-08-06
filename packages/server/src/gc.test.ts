@@ -36,6 +36,7 @@ import {
   seedLogEntries,
   seedLogEntry,
 } from "../../../tests/fixtures/log-state.ts";
+import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import {
   type ContentDeferralReason,
@@ -611,23 +612,28 @@ describe("runGc", () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const initialBody = { _id: "a", n: 1 };
+    const initialLegacyKey = await seedLegacyContentForBody(s, PREFIX, initialBody);
     await writer.commit({
       op: "I",
       collection: COLL,
       docId: "a",
-      body: { _id: "a", n: 1 },
+      body: initialBody,
     });
+    await expect(s.get(initialLegacyKey)).resolves.not.toBeNull();
     const r = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r.marked.orphan_content).toBe(0);
     // And a second pass after a compaction should still treat the
     // post-snapshot content as live (the snapshot rows feed into the
     // live-hash set).
     for (let i = 0; i < 30; i++) {
+      const body = { _id: `d${i}`, n: i };
+      await seedLegacyContentForBody(s, PREFIX, body);
       await writer.commit({
         op: "I",
         collection: COLL,
         docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
+        body,
       });
     }
     await compact({ storage: s, currentJsonKey: KEY }, {
@@ -638,10 +644,10 @@ describe("runGc", () => {
     expect(r2.marked.orphan_content).toBe(0);
   });
 
-  test("marks a truly orphan content blob (writer crashed pre-log-PUT)", async () => {
+  test("marks a truly orphan content blob (a v0.6.0 writer crashed pre-log-PUT)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
-    // Simulate a crashed writer: PUT a content key without any log
+    // Simulate a v0.6.0 writer crash: PUT a content key without any log
     // entry referencing it. The hash here is 32 hex chars, matching
     // `versionFromContent`'s output shape.
     const orphanBody = new TextEncoder().encode(JSON.stringify({ _id: "ghost", x: 1 }));
@@ -674,18 +680,15 @@ describe("runGc", () => {
     const inner = new MemoryStorage();
     await bootstrap(inner, KEY);
     const writer = new Writer({ storage: inner, currentJsonKey: KEY });
+    const liveBody = { _id: "live-again", n: 1 };
+    const liveContent = await seedLegacyContentForBody(inner, PREFIX, liveBody);
     await writer.commit({
       op: "I",
       collection: COLL,
       docId: "live-again",
-      body: { _id: "live-again", n: 1 },
+      body: liveBody,
     });
-    const liveContentKeys: string[] = [];
-    for await (const entry of inner.list(`${PREFIX}/content/`)) {
-      liveContentKeys.push(entry.key);
-    }
-    expect(liveContentKeys).toHaveLength(1);
-    const liveContent = liveContentKeys[0]!;
+    await expect(inner.get(liveContent)).resolves.not.toBeNull();
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
       candidates: [
@@ -1693,16 +1696,23 @@ describe("runGc", () => {
     // own) — this test must observe the cursor written by exactly ONE
     // controlled runGc pass from a clean (cursor-absent) start.
     const seedCtx = createObservabilityContext({ maintenance: { disabled: true } });
+    const legacyContentKeys: string[] = [];
     await runWithContext(seedCtx, async () => {
       for (let i = 0; i < 30; i++) {
+        const body = { _id: `d${i}`, n: i };
+        legacyContentKeys.push(await seedLegacyContentForBody(s, PREFIX, body));
         await writer.commit({
           op: "I",
           collection: COLL,
           docId: `d${i}`,
-          body: { _id: `d${i}`, n: i },
+          body,
         });
       }
     });
+    expect(legacyContentKeys).toHaveLength(30);
+    for (const key of legacyContentKeys) {
+      await expect(s.get(key)).resolves.not.toBeNull();
+    }
     // maxMarks=10 ⇒ the LIST examines the first 10 (all live), marks
     // zero, but the cursor MUST still advance to the 10th content key so
     // the next pass reaches fresh keys. 10 examined == maxMarks ⇒ NOT
@@ -2054,17 +2064,24 @@ describe("runGc", () => {
     await bootstrap(inner, KEY);
     const writer = new Writer({ storage: inner, currentJsonKey: KEY });
     const seedCtx = createObservabilityContext({ maintenance: { disabled: true } });
+    const liveContentKeys: string[] = [];
     await runWithContext(seedCtx, async () => {
       for (let i = 0; i < 40; i++) {
+        const body = { _id: `d${i}`, n: i };
+        liveContentKeys.push(await seedLegacyContentForBody(inner, PREFIX, body));
         await writer.commit({
           op: "I",
           collection: COLL,
           docId: `d${i}`,
-          body: { _id: `d${i}`, n: i },
+          body,
         });
       }
     });
-    // A truly-orphan content blob (writer crashed pre-log-PUT).
+    expect(liveContentKeys).toHaveLength(40);
+    for (const key of liveContentKeys) {
+      await expect(inner.get(key)).resolves.not.toBeNull();
+    }
+    // A truly-orphan content blob (a v0.6.0 writer crashed pre-log-PUT).
     const orphanKey = "app/t/tenant/x/manifests/c/content/ffffffffffffffffffffffffffffffff.json";
     await inner.put(orphanKey, new TextEncoder().encode(`{"_id":"ghost"}`), {
       contentType: "application/json",

@@ -14,8 +14,8 @@ import type {
  * DELETE, LIST). Class B GET is counted via `gets`; HEAD is not wrapped. `classAOps`
  * is a derived sum used by callers that only care about aggregate
  * cost (e.g. the `maintenance-e2e` idle-reader bound). Callers
- * that need per-verb shape (e.g. "POST should produce exactly 3
- * PUTs and 0 LISTs") read `puts` / `deletes` / `lists` directly.
+ * that need per-verb shape (e.g. "an unindexed POST should produce exactly 1
+ * PUT and 0 LISTs") read `puts` / `deletes` / `lists` directly.
  *
  * Counters are mutable — `reset()` zeroes them. Not thread-safe;
  * tests should not share an instance across concurrent workers.

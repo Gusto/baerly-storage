@@ -35,10 +35,11 @@ For the **cost** side of graduation, see
 [cost-model.md](cost-model.md). The cost signals are separate:
 
 - **Advisory:** sustained ~100 writes/min account-wide
-  (provider-agnostic; ~13M Class A/mo / ~$54/mo object-storage ops on
-  R2, ~17.3M / ~$86/mo on S3), surfaced by `baerly cost`.
+  (provider-agnostic; 8.64M Class A/mo / ~$34/mo object-storage ops on
+  R2, 12.96M / ~$65/mo on S3), surfaced by `baerly cost`.
 - **Hard cost trigger:** 50M Class A/mo, sustained over 7 days
-  (~390 writes/min, ~$220/mo object-storage ops on R2).
+  (~580 writes/min and ~$221/mo object-storage ops on R2; ~390
+  writes/min on Node).
 
 Those write rates are **account-wide aggregate** rates because Class A
 is billed per account. They are distinct from the per-collection
@@ -70,7 +71,7 @@ baerly admin usage \
 | Object count grows while writes are steady | Logs + `admin fsck` | GC sweep throughput no longer keeps up with orphan production | Reduce contention, split the hot collection, or graduate the workload. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
 | Tenant data keeps growing | `admin usage` / bucket inventory | >10 GB/tenant (R2 free-tier storage line; see [cost-model.md](cost-model.md)) or ~100 collections/tenant (soft fan-out guideline; see [workload-fit.md](workload-fit.md#scale-at-a-glance)) | Review graduation cost; neither line is enforced by the protocol. |
-| `baerly cost` prints advisory note | `baerly cost` | ~100 writes/min account-wide (provider-agnostic; ~13M Class A/mo / ~$54/mo R2 object-storage ops, ~17.3M / ~$86/mo S3), advisory only; see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff) | Compare object storage's low operator burden against a managed DB. Hard trigger: 50M/mo (~$220/mo R2). |
+| `baerly cost` prints advisory note | `baerly cost` | ~100 writes/min account-wide (provider-agnostic; 8.64M Class A/mo / ~$34/mo R2 object-storage ops, 12.96M / ~$65/mo S3), advisory only; see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff) | Compare object storage's low operator burden against a managed DB. Hard trigger: 50M/mo (~580 writes/min / ~$221/mo R2; ~390 writes/min on Node). |
 
 ### How to read the output
 
@@ -266,10 +267,12 @@ read-amplification while accepting ~2x compaction
 write-amplification.
 
 This compaction write-amplification is not the cost model's **effective
-Class-A write-amplification** (~3x on the Cloudflare profile / ~4x on
+Class-A write-amplification** (~2x on the Cloudflare profile / ~3x on
 the Node profile). The historic `effective write-amp > 6` graduation
-trigger has been retired because the measured ~3-4x baseline makes it
-unreachable through bounded maintenance; see
+trigger has been retired because the measured ~2-3x baseline makes it
+unreachable through bounded maintenance. Stress peaks at ~3x; CAS
+contention is still the route above that measured maintenance profile.
+See
 [cost-model.md](cost-model.md#alternative-dbs-at-m-size).
 
 ## Per-tier bounds
@@ -337,9 +340,11 @@ and neither is fixed by raising the sweep rate:
 
 - **Mark coverage.** Every budgeted mark phase whose LIST window can
   stall on undeletable keys carries a persisted rotation cursor in
-  `gc/pending.json` (`content_scan_cursor`, `log_scan_cursor`). Without
-  one, the phase starves and the candidate never enters the ledger for
-  the sweep budget to spend itself on.
+  `gc/pending.json` (`content_scan_cursor`, `log_scan_cursor`). The
+  content cursor remains for legacy content side-objects; new writes
+  inline their post-images in the log. Without a cursor, a compatibility
+  phase can starve and the candidate never enters the ledger for the
+  sweep budget to spend itself on.
 - **Ledger depth.** `GC_MAX_PENDING_CANDIDATES` bounds how many
   candidates are in flight at once, across all three reasons together,
   and each cohort waits out `GC_GRACE_PERIOD_MILLIS` before it can be
@@ -446,8 +451,8 @@ collections/tenant guideline comes from the fan-out bench, not
 For rationale, see [workload-ceiling](thesis.md#workload-ceiling). The
 [cost-model](cost-model.md#alternative-dbs-at-m-size) records adjacent
 cost lines: advisory at ~100 writes/min account-wide, and hard Class A
-trigger at `> 50M/mo` (≈390 writes/min on R2 at ~3x, ≈290 on Node at
-~4x). Stored data is a cost signal at the ~10 GB R2 free-tier line, not
+trigger at `> 50M/mo` (≈580 writes/min on R2 at ~2x, ≈390 on Node at
+~3x). Stored data is a cost signal at the ~10 GB R2 free-tier line, not
 a hard trigger. The historic `effective write-amp > 6` trigger is
 retired; maintenance falling behind is signalled by
 `db.compaction.deferred_total` and the defer `console.warn`.
@@ -503,9 +508,9 @@ Safe remedies, in order:
 | Limit | How to raise it | Notes |
 | --- | --- | --- |
 | Static fold-byte ceiling `C` (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT = 512 KB`) | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var | Set out-of-band in the deploy environment; takes effect on the next write tick. Size to what the host can rebuild. |
-| Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | Cloudflare plan upgrade (free → paid), then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. A finer-grained per-platform `cpuLimit` declaration was evaluated and measured unnecessary: the in-band write tick keeps up to ~4x the rate envelope on free, so it is not built. |
+| Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | Cloudflare plan upgrade (free → paid), then raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. A finer-grained per-platform `cpuLimit` declaration was evaluated and measured unnecessary: the in-band write tick keeps up to ~3x the rate envelope under stress on free, so it is not built. |
 | Per-collection commit scope (one ordered log per collection; no cross-collection atomicity) | Cannot be increased; protocol invariant | The write hotspot is the next numbered `log/<seq>` create for one collection. Cross-collection atomicity is not offered. |
-| Content-hash addressing (snapshot/content filenames embed SHA-256) | Cannot be increased; protocol invariant | The snapshot filename is derived from the SHA-256 of its body. Changing this would break the no-corruption guarantee that makes orphan snapshots safe to GC. |
+| Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were not runtime-verified; their GC safety comes from conservative liveness, grace, and sweep-time revalidation, not the snapshot no-corruption guarantee. |
 
 The row ceiling `E` is not in this map because it is a kernel constant,
 not an operator knob.

@@ -10,6 +10,7 @@ import {
   type BaerlyAppConfig,
   CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
+  UNINDEXED_COMMIT_CLASS_A_FLOOR,
   createCurrentJson,
   type Storage,
   type Verifier,
@@ -79,7 +80,7 @@ for (const variant of VARIANTS) {
 
     beforeAll(async () => {
       // This suite measures the LOGICAL per-verb storage-op cost (a
-      // write = 3 PUTs). In-band maintenance is amortized background
+      // write = 1 PUT). In-band maintenance is amortized background
       // work whose op cost is covered separately (the write-tick /
       // drain-rate tests) — and on the Node adapter it would fire on
       // the occasional boundary-crossing write, perturbing the count.
@@ -148,9 +149,9 @@ for (const variant of VARIANTS) {
       }
     });
 
-    test("POST insert costs exactly 2 PUTs (content + log create), 0 deletes, 0 lists", async () => {
+    test("POST insert costs exactly 1 PUT (log create), 0 deletes, 0 lists", async () => {
       // Single-write commit: the numbered log create IS the commit — no
-      // current.json CAS. So an insert is content + log = 2 PUTs.
+      // current.json CAS or writer-side content publication.
       counting.reset();
       const res = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
@@ -158,7 +159,8 @@ for (const variant of VARIANTS) {
         body: JSON.stringify({ doc: { title: "Login broken", status: "open" } }),
       });
       expect(res.status).toBe(201);
-      expect(counting.puts).toBe(2);
+      expect(UNINDEXED_COMMIT_CLASS_A_FLOOR).toBe(1);
+      expect(counting.puts).toBe(UNINDEXED_COMMIT_CLASS_A_FLOOR);
       expect(counting.deletes).toBe(0);
       expect(counting.lists).toBe(0);
     });
@@ -181,7 +183,7 @@ for (const variant of VARIANTS) {
       expect(counting.classAOps).toBe(0);
     });
 
-    test("PATCH update costs exactly 2 PUTs (content + log create), 0 deletes, 0 lists", async () => {
+    test("PATCH update costs exactly 1 PUT (log create), 0 deletes, 0 lists", async () => {
       const insert = await fetch(`${baseUrl}/v1/c/${TABLE}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
@@ -195,7 +197,7 @@ for (const variant of VARIANTS) {
         body: JSON.stringify({ patch: { status: "in-progress" } }),
       });
       expect(res.status).toBe(200);
-      expect(counting.puts).toBe(2);
+      expect(counting.puts).toBe(1);
       expect(counting.deletes).toBe(0);
       expect(counting.lists).toBe(0);
     });

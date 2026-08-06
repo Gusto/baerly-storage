@@ -1,6 +1,6 @@
 /**
- * UTF-8 JSON byte helpers — names the encode/decode idiom used by
- * every content body, log entry, snapshot, and current.json payload.
+ * UTF-8 JSON byte helpers — the common JSON payload encoder/decoder for
+ * log entries, snapshots, current.json, and other protocol payloads.
  */
 
 export const encodeJsonBytes = (value: unknown): Uint8Array =>

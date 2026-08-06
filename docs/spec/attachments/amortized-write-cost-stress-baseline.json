@@ -1,71 +1,71 @@
 {
-  "peak_billable_class_a_per_write": 4.032,
+  "peak_billable_class_a_per_write": 3.032,
   "rows": [
     {
       "profile": "cf-free",
       "workload": "extreme-churn/10-docs/2KB",
       "writes": 3000,
-      "puts": 7047,
+      "puts": 4047,
       "lists": 2238,
-      "deletesFree": 6016,
-      "putsPerWrite": 2.349,
+      "deletesFree": 3097,
+      "putsPerWrite": 1.349,
       "listsPerWrite": 0.746,
-      "billableClassAPerWrite": 3.095
+      "billableClassAPerWrite": 2.095
     },
     {
       "profile": "cf-free",
       "workload": "insert-burst/growing/2KB",
       "writes": 3000,
-      "puts": 6298,
+      "puts": 3298,
       "lists": 807,
-      "deletesFree": 209,
-      "putsPerWrite": 2.099,
+      "deletesFree": 251,
+      "putsPerWrite": 1.099,
       "listsPerWrite": 0.269,
-      "billableClassAPerWrite": 2.368
+      "billableClassAPerWrite": 1.368
     },
     {
       "profile": "cf-free",
       "workload": "rewrite-all/500-docs/2KB",
       "writes": 4000,
-      "puts": 8361,
+      "puts": 4361,
       "lists": 996,
-      "deletesFree": 209,
-      "putsPerWrite": 2.09,
+      "deletesFree": 251,
+      "putsPerWrite": 1.09,
       "listsPerWrite": 0.249,
-      "billableClassAPerWrite": 2.339
+      "billableClassAPerWrite": 1.339
     },
     {
       "profile": "node",
       "workload": "extreme-churn/10-docs/2KB",
       "writes": 3000,
-      "puts": 7621,
+      "puts": 4621,
       "lists": 4476,
-      "deletesFree": 6048,
-      "putsPerWrite": 2.54,
+      "deletesFree": 3059,
+      "putsPerWrite": 1.54,
       "listsPerWrite": 1.492,
-      "billableClassAPerWrite": 4.032
+      "billableClassAPerWrite": 3.032
     },
     {
       "profile": "node",
       "workload": "insert-burst/growing/2KB",
       "writes": 3000,
-      "puts": 7507,
+      "puts": 4507,
       "lists": 4476,
       "deletesFree": 196,
-      "putsPerWrite": 2.502,
+      "putsPerWrite": 1.502,
       "listsPerWrite": 1.492,
-      "billableClassAPerWrite": 3.994
+      "billableClassAPerWrite": 2.994
     },
     {
       "profile": "node",
       "workload": "rewrite-all/500-docs/2KB",
       "writes": 4000,
-      "puts": 10007,
+      "puts": 6007,
       "lists": 5976,
       "deletesFree": 196,
-      "putsPerWrite": 2.502,
+      "putsPerWrite": 1.502,
       "listsPerWrite": 1.494,
-      "billableClassAPerWrite": 3.996
+      "billableClassAPerWrite": 2.996
     }
   ]
 }

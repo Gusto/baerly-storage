@@ -6,7 +6,7 @@
 # The payoff is the final frame: a write went through, and the entire
 # database is visible as plain objects in the bucket. No database server
 # saw any of it. Run against a real (or local Minio) bucket so `aws s3 ls`
-# shows the actual log/snapshot/content objects.
+# shows the actual log entries and current.json in the bucket.
 #
 # The write/read steps hit the kernel's real HTTP surface
 # (`POST`/`GET /v1/c/<collection>`, body `{ doc }`, `{ data, _meta }`
@@ -55,6 +55,7 @@ Sleep 600ms
 Type "aws s3 ls --recursive s3://$DEMO_BUCKET/"
 Enter
 Sleep 1s
-# Expect: tickets/.../log/00000000, the content-addressed doc, snapshot,
-# current.json — plain objects. No database server saw any of this.
+# Expect on a fresh collection: tickets/.../log/0.json carrying the
+# post-image, plus current.json. Snapshots appear after compaction.
+# No database server saw any of this.
 Sleep 4s

@@ -208,6 +208,13 @@ describe("Writer", () => {
     expect(persisted.writer_fence.epoch).toBe(0);
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
 
+    const contentKeys: string[] = [];
+    const contentPrefix = `${CURRENT_KEY.slice(0, CURRENT_KEY.lastIndexOf("/"))}/content/`;
+    for await (const entry of storage.list(contentPrefix)) {
+      contentKeys.push(entry.key);
+    }
+    expect(contentKeys).toEqual([]);
+
     const logEntry = await storage.get(`app/test/tenant/t/manifests/${COLL}/log/0.json`);
     expect(logEntry).not.toBeNull();
     const persistedEntry = decodeJson<typeof result.entry>(logEntry!.body);
@@ -560,10 +567,8 @@ describe("Writer", () => {
       });
     });
 
-    const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
-    expect(samples).toHaveLength(1);
-    // content + log = 2 PUTs on first-try success (no current.json CAS).
-    expect(samples[0]).toBe(2);
+    // An unindexed first-attempt commit is the one committing log create.
+    expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([1]);
     // Collection label travels.
     const hist = ctx.recorder
       .snapshot()
@@ -571,7 +576,7 @@ describe("Writer", () => {
     expect(hist?.labels).toEqual({ collection: COLL });
   });
 
-  test('op:"D" commit emits class_a = 1 (no content PUT, no current.json CAS)', async () => {
+  test("unindexed I, U, and D all have a one-log-create floor", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -583,12 +588,18 @@ describe("Writer", () => {
         docId: "doc-d",
         body: { _id: "doc-d" },
       });
+      await writer.commit({
+        op: "U",
+        collection: COLL,
+        docId: "doc-d",
+        body: { _id: "doc-d", updated: true },
+      });
       await writer.commit({ op: "D", collection: COLL, docId: "doc-d" });
     });
 
-    // I = content + log = 2; D = log only = 1 (no content, no CAS).
+    // Each unindexed commit has one committing log create and no current.json CAS.
     const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
-    expect(samples).toEqual([2, 1]);
+    expect(samples).toEqual([1, 1, 1]);
   });
 
   test("emits db.r2.put.412_total on a log-create conflict + forward re-probe", async () => {
@@ -622,9 +633,9 @@ describe("Writer", () => {
     );
     expect(logPut412).toBeDefined();
     expect(logPut412?.labels["collection"]).toBe(COLL);
-    // Class-A on the winning attempt: content + log = 2 (the foreign
-    // create that 412'd is not billed; the forward-probe GETs are Class B).
-    expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([2]);
+    // A foreign 412 is not billed by the logical-write histogram; the
+    // winning attempt is one log create and the forward-probe GETs are Class B.
+    expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([1]);
   });
 
   test("emits db.r2.put.429_total when storage surfaces a 429 NetworkError", async () => {
@@ -635,17 +646,22 @@ describe("Writer", () => {
         body: Uint8Array,
         opts?: StoragePutOptions,
       ): Promise<StoragePutResult> {
-        // Throttle the first content PUT only.
-        if (!this.thrown && /\/content\//.test(key)) {
+        // Throttle the first additive index PUT only.
+        if (!this.thrown && /\/index\//.test(key)) {
           this.thrown = true;
           throw new BaerlyError("NetworkError", `S3: throttled on ${key}`, { status: 429 });
         }
         return super.put(key, body, opts);
       }
     }
+    const by_status = { name: "by_status", on: "status" } satisfies IndexDefinition;
     const storage = new ThrottlingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { indexes: [by_status] },
+    });
 
     const ctx = createObservabilityContext();
     let thrown: unknown;
@@ -655,7 +671,7 @@ describe("Writer", () => {
           op: "I",
           collection: COLL,
           docId: "doc-429",
-          body: { _id: "doc-429" },
+          body: { _id: "doc-429", status: "open" },
         });
       } catch (error) {
         thrown = error;
@@ -1496,10 +1512,10 @@ describe("Writer — write-tick maintenance dispatch", () => {
 
   test("over-long assembled key surfaces as InvalidConfig, not a storage error", async () => {
     // Each path segment is ≤256 bytes (vetted by assertPathSegment), but
-    // their sum overflows S3/R2's 1024-byte full-key ceiling. The content
-    // key `<prefix>/content/<hash>.json` is the first PUT to overflow; the
-    // guard must reject it EARLY as InvalidConfig rather than let the PUT
-    // succeed silently on memory (or fail late as an opaque provider 400).
+    // their sum overflows S3/R2's 1024-byte full-key ceiling. The first
+    // oversized write is `log/0.json`; the guard must reject it EARLY as
+    // InvalidConfig rather than let the PUT succeed silently on memory (or
+    // fail late as an opaque provider 400).
     const seg = "s".repeat(250);
     const overLongKey = `app/${seg}/tenant/${seg}/manifests/${seg}/${seg}/current.json`;
     const storage = new MemoryStorage();

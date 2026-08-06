@@ -155,15 +155,25 @@ old objects for maintenance/GC. The `writer_fence` field is only bumped
 to keep metadata monotone; it does not perform truncation or protect
 against live writers.
 
+Before a force restore or any copy-in-place workflow, stop writers, stop
+new `runScheduledMaintenance` calls, and wait for every in-flight
+compaction and GC pass to finish. Clearing `gc/pending.json` cannot fence
+a GC pass that already loaded old candidates; such a pass can otherwise
+delete log keys recreated by the restore.
+
 Restore is row-committing, not file-atomic: malformed NDJSON or a
 mid-stream storage failure leaves prior rows committed. Re-run with
 `--force` into the scratch target, or choose a fresh recovery prefix.
 
-On R2's Class A billing meter, a non-empty restore costs `2N + 2`
-write-class operations for N rows: one initial `current.json`
-seed/reseed write, one final metadata/tail write, and one content PUT
-plus one committing `log/<seq>` create per restored row. An empty
-restore performs only the initial `current.json` seed/reseed write.
+On R2's Class A billing meter, before any in-band maintenance from a
+long import, restore's base billable shapes are: fresh non-empty `N + 2`
+for N rows (initial `current.json` seed, one committing `log/<seq>`
+create per row, final metadata/tail write); force non-empty `N + 2 + P`;
+fresh empty `1`; and force empty `1 + P`. `P` is the number of provider
+LIST pages consumed by the one `Storage.list()` iterator in
+`tailFromListedLogKeys`; one iterator invocation can issue multiple
+billable LIST requests. Maintenance adds the same measured profile
+overhead as the main cost model.
 
 For production recovery, treat restore as a cutover to a proven copy,
 not as an overwrite of the live prefix. Do not restore over the live
@@ -187,7 +197,9 @@ invariant 13 in [the sync protocol spec](../spec/sync-protocol.md).
 
 The safe cutover shape is:
 
-1. Pause writers or put the app in read-only mode.
+1. Pause writers or put the app in read-only mode, stop new
+   `runScheduledMaintenance` calls, and wait for in-flight compaction and
+   GC passes to finish.
 2. Restore into a separate recovery bucket or tenant prefix.
 3. Run `baerly admin fsck` on the recovered collection.
 4. For indexed collections, run `baerly admin fsck --indexes
@@ -197,12 +209,15 @@ The safe cutover shape is:
    `baerly admin rebuild-index` for each index before cutover.
 5. Point the app at the recovered bucket/prefix. Prefer this to
    copying. If you must copy the recovery prefix into place, do it
-   inside the maintenance window and copy `current.json` **last** —
-   after the recovered collection's snapshot, log, content, and any
-   rebuilt index objects exist at the destination. If `current.json`
-   lands before snapshot/log/content, readers can reference missing
-   objects; if index markers are missing, index-routed reads can miss
-   rows.
+   only after writers and maintenance have drained, inside the maintenance
+   window, and copy `current.json` **last** —
+   after the snapshot it names (when non-null), the live log objects,
+   and any rebuilt index objects required by indexed reads exist at the
+   destination. If `current.json` lands before its snapshot or live log,
+   readers can reference missing objects; if required index markers are
+   missing, index-routed reads can miss rows. No current kernel reader
+   depends on content side objects. Copy `content/` only when preserving
+   a legacy or mixed-version bucket for legacy writers or tooling.
 6. Resume writers only after a successful authenticated read against
    the recovered route.
 

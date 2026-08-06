@@ -3,11 +3,11 @@
  * CI gate: amortized BILLABLE Class A ops (PUT + LIST; DeleteObject is
  * $0 on R2/S3) per logical write, INCLUDING in-band maintenance. This is
  * the steady-state number that drives the bill — the write-path
- * counterpart to writer.test.ts (which gates only the commit FLOOR of 2)
+ * counterpart to writer.test.ts (which gates only the commit FLOOR of 1)
  * and maintenance-e2e.test.ts (which gates the idle READER at 0).
  *
  * Bands are grounded in docs/spec/attachments/amortized-write-cost-baseline.json
- * (measured 2026-06-22): cf-free ~3.0, node ~3.9. The bench runs the full
+ * (measured 2026-08-05): cf-free ~2.0, node ~3.0. The bench runs the full
  * workload matrix; this gate runs one representative shape fast.
  */
 import { describe, expect, test } from "vitest";
@@ -49,29 +49,31 @@ const measure = async (opts: BoundedMaintenanceOptions): Promise<number> => {
 };
 
 describe("amortized billable Class A per write (cost-model gate)", () => {
-  test("cf-free profile stays in the ~3x band", { timeout: ciTimeout(30_000) }, async () => {
+  test("cf-free profile stays in the ~2x band", { timeout: ciTimeout(30_000) }, async () => {
     const amperWrite = await measure({
       profile: MAINTENANCE_PROFILE_CF_FREE,
       minEntriesToCompact: 50,
       phasesPerTick: "single",
       gcGraceMillis: 0,
     });
-    // Commit floor is 2 (content PUT + log create). Maintenance adds ~1
-    // on cf-free. A regression to ~2 means maintenance stopped ticking;
-    // a blowup past 4 means an extra PUT/LIST crept into the hot path.
-    expect(amperWrite).toBeGreaterThan(2.5);
-    expect(amperWrite).toBeLessThan(4);
+    // Commit floor is 1 (log create). A drop near that floor means
+    // maintenance stopped ticking; a blowup past this band means an extra
+    // PUT/LIST returned to the hot path.
+    expect(amperWrite).toBeGreaterThan(1.5);
+    expect(amperWrite).toBeLessThan(3);
   });
 
-  test("node profile stays in the ~4x band", { timeout: ciTimeout(30_000) }, async () => {
+  test("node profile stays in the ~3x band", { timeout: ciTimeout(30_000) }, async () => {
     const amperWrite = await measure({
       profile: MAINTENANCE_PROFILE_NODE,
       minEntriesToCompact: 50,
       phasesPerTick: "both",
       gcGraceMillis: 0,
     });
-    // Node gcInterval=2 (vs cf 4) ⇒ ~2x GC LISTs ⇒ ~+2 over the floor.
-    expect(amperWrite).toBeGreaterThan(3.4);
-    expect(amperWrite).toBeLessThan(5);
+    // Node's more frequent GC adds LIST work above the commit floor. A
+    // drop near the floor means maintenance stopped ticking; a blowup past
+    // this band means an extra PUT/LIST returned to the hot path.
+    expect(amperWrite).toBeGreaterThan(2.4);
+    expect(amperWrite).toBeLessThan(4);
   });
 });

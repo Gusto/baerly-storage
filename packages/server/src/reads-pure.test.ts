@@ -54,7 +54,7 @@ const makeDb = (storage: Storage): Db => Db.create({ storage, app: APP, tenant: 
 
 /**
  * Provision a MemoryStorage with N real writes through the Writer
- * so log entries and content keys are physically present, then
+ * so real log entries are physically present, then
  * patch `current.json` to make the state OVER the fold-trigger ratio:
  *
  *   mean_entry_bytes = RATIO_TRIPPING_MEAN  (≥ the byte floor)
