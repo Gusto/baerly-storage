@@ -21,12 +21,12 @@
  *   5. (write-tick fold) For every K, aborting the K-th op across a
  *      fold (snapshot PUT → `current.json` CAS) then running `runGc`
  *      never deletes content referenced by the committed snapshot:
- *      every row still reads, and every content key the committed
- *      snapshot's rows hash to survives the sweep.
+ *      every row still reads, and every seeded legacy content key for the
+ *      committed snapshot's rows survives the sweep.
  *   6. (lost-fold contention) A fold whose CAS loses to a concurrent
  *      write leaves an orphan snapshot; after `runGc` drains past the
  *      grace window no orphan snapshot is left unreferenced, and the
- *      committed snapshot's content survives.
+ *      committed snapshot's seeded legacy content survives.
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
@@ -63,6 +63,7 @@ import {
   Writer,
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
+import { seedLegacyContentForBody } from "../fixtures/legacy-content.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
 
 // Every suite in this file injects storage faults (`abortingStorage`).
@@ -139,18 +140,18 @@ const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => 
 };
 
 /**
- * The content keys the COMMITTED snapshot's rows reference. Reads
+ * Seed legacy content keys for the COMMITTED snapshot's rows. Reads
  * `current.json`, then (if a snapshot is committed) the snapshot body,
- * and hashes every row `body` with the exact `versionFromContent` the
- * writer used to mint the content key. Returns the set of
- * `<collectionPrefix>/content/<hash>.json` keys that GC must never
+ * encodes and hashes every row `body` with `versionFromContent`, then
+ * unconditionally writes its v0.6.0-style content object. Returns the
+ * seeded `<collectionPrefix>/content/<hash>.json` keys that GC must never
  * delete. Empty when no snapshot is committed yet.
  *
  * Deliberately re-derives the keys from the customer-visible snapshot
  * body rather than trusting GC's own `collectLiveContentHashes`, so the
  * assertion is independent of the code under test.
  */
-const committedSnapshotContentKeys = async (storage: Storage): Promise<Set<string>> => {
+const seedLegacyCommittedSnapshotContent = async (storage: Storage): Promise<Set<string>> => {
   const collectionPrefix = TABLE_PREFIX;
   const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
   if (read === null || read.json.snapshot === null) {
@@ -160,14 +161,14 @@ const committedSnapshotContentKeys = async (storage: Storage): Promise<Set<strin
   if (got === null) {
     return new Set<string>();
   }
-  const body = decodeJsonBytes<{ docs?: ReadonlyArray<{ body?: unknown }> }>(got.body);
+  const body = decodeJsonBytes<{ docs?: ReadonlyArray<{ body?: DocumentData }> }>(got.body);
   const keys = new Set<string>();
   for (const doc of body.docs ?? []) {
     if (doc.body === undefined) {
       continue;
     }
-    const version = await versionFromContent(encodeJsonBytes(doc.body));
-    keys.add(`${collectionPrefix}/content/${version}.json`);
+    const key = await seedLegacyContentForBody(storage, collectionPrefix, doc.body);
+    keys.add(key);
   }
   return keys;
 };
@@ -186,6 +187,34 @@ describe("abortingStorage harness — fault-injection trap behavior", () => {
     expect(handle.opCount()).toBe(2);
     const got = await handle.storage.get("k");
     expect(got).not.toBeNull();
+  });
+});
+
+describe("Writer empty-tail abort at the committing log PUT", () => {
+  test("op 3 abort leaves no readable row", async () => {
+    const inner = new MemoryStorage();
+    await provision(inner);
+    const handle = abortingStorage(inner);
+    const writer = new Writer({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY });
+
+    // Op 1 is the provisioned current.json GET; op 2 is the empty
+    // log/0.json tail probe; op 3 is the committing log PUT.
+    handle.armAt(3);
+    let caught: unknown;
+    try {
+      await writer.commit({
+        op: "I",
+        collection: COLLECTION,
+        docId: "empty-tail",
+        body: { _id: "empty-tail" },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).name).toBe("AbortError");
+    await expect(readAllRowIds(inner)).resolves.toEqual([]);
   });
 });
 
@@ -401,9 +430,15 @@ describe("Write-tick fold crash never deletes committed-snapshot content", () =>
         // the gate.
       }
 
-      // Capture the content keys the COMMITTED snapshot references
-      // BEFORE GC runs — these must survive the sweep.
-      const protectedKeys = await committedSnapshotContentKeys(inner);
+      // Seed legacy content keys for the COMMITTED snapshot BEFORE GC
+      // runs — these must survive the sweep.
+      const protectedKeys = await seedLegacyCommittedSnapshotContent(inner);
+      const currentAfterAbort = await readCurrentJson(inner, CURRENT_JSON_KEY);
+      if (currentAfterAbort?.json.snapshot === null) {
+        expect(protectedKeys.size).toBe(0);
+      } else {
+        expect(protectedKeys.size).toBeGreaterThan(0);
+      }
 
       // Drain GC with the grace bypassed so any due candidate is swept
       // in-pass. Several passes exercise the content-scan-cursor
@@ -425,8 +460,8 @@ describe("Write-tick fold crash never deletes committed-snapshot content", () =>
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
 
-      // INVARIANT B: every content key the committed snapshot
-      // references is still on the bucket. This is the property a
+      // INVARIANT B: every seeded legacy content key for the committed
+      // snapshot is still on the bucket. This is the property a
       // GC that ignored the committed snapshot's references would
       // violate.
       const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
@@ -517,7 +552,8 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
       expect(snapshotsBefore.length).toBeGreaterThanOrEqual(2);
 
       const before = await readAllRowIds(inner);
-      const protectedKeys = await committedSnapshotContentKeys(inner);
+      const protectedKeys = await seedLegacyCommittedSnapshotContent(inner);
+      expect(protectedKeys.size).toBeGreaterThan(0);
       const committedSnapshotKey = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json.snapshot;
 
       // Drain GC PAST the grace window (now advanced well beyond every

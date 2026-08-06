@@ -3,7 +3,7 @@
  *
  * Each {@link Writer.commit} reads `current.json` FRESH (for
  * `log_seq_start` / `tail_hint` as a probe FLOOR — a lower bound, NOT a
- * CAS precondition), PUTs the content body, then **creates `log/<seq>`
+ * CAS precondition), publishes additive index markers, then **creates `log/<seq>`
  * via `If-None-Match: "*"`. That create IS the commit / linearization
  * point.** The writer writes NOTHING to `current.json` on the commit
  * path; `tail_hint` advances outside ordinary commits via compaction
@@ -20,13 +20,11 @@
  * own lost-ack / crashed-but-durable commit → adopted (not retried), so
  * the write lands at EXACTLY `seq`, never duplicated.
  *
- * **Crash safety.** Order is content + additive index `newKeys` →
- * `log/<seq>` create → stale index-key DELETEs. A crash before the
- * create leaves an unreferenced content body + orphan additive index
- * keys (no log entry references them), not an orphan log entry with
- * missing content — the compactor sweeps the content, and a stray
- * additive key only ever yields a false-POSITIVE candidate that
- * `matchesWire` (read path) drops. Emitting `newKeys` before the commit
+ * **Crash safety.** Order is additive index `newKeys` → `log/<seq>`
+ * create → stale index-key DELETEs. `LogEntry.after` is the authoritative
+ * post-image. A crash before the create leaves only orphan additive index
+ * keys; a stray additive key only ever yields a false-POSITIVE candidate
+ * that `matchesWire` (read path) drops. Emitting `newKeys` before the commit
  * means a committed row is ALWAYS index-findable; the stale-key DELETE
  * stays after the commit so a crash can never de-index a committed
  * doc. See `index-emit-order.test.ts` and ADR-004 Q4.
@@ -68,7 +66,6 @@ import {
   readCurrentJson,
   timestamp,
   uuid,
-  versionFromContent,
 } from "@baerly/protocol";
 import { assertDocId } from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
@@ -115,7 +112,7 @@ export interface WriterOptions {
    * index (when the indexed field is set on the doc) — the additive
    * `newKeys` go down BEFORE the committing `log/<seq>` create, so a
    * committed row is always index-findable. On U/D, the writer reads
-   * the pre-image content body from the log (one back-walk per
+   * the prior `LogEntry.after` post-image from the log (one back-walk per
    * indexed collection, NOT per index) to compute the stale-key set;
    * stale keys are DELETE'd AFTER the commit, computed from the
    * resolved committing seq's pre-image.
@@ -205,7 +202,7 @@ const APPLICATION_JSON = "application/json";
 /**
  * Empty body for index entries. Each index entry is a fact ("doc
  * `<docId>` has `<field> = <value>`"), not data — readers list the
- * prefix, extract the doc id, then GET the content body separately.
+ * prefix, extract the doc id, then read its authoritative `LogEntry.after`.
  * Pre-allocated module-level constant so every index PUT shares one
  * zero-length buffer.
  */
@@ -267,7 +264,7 @@ export class Writer {
      * `app/tickets/tenant/acme/manifests/tickets/current.json`. The
      * collection-prefix half lives at
      * `currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"))` — the
-     * log and content keys are derived from it.
+     * log and index keys are derived from it.
      */
     currentJsonKey: string;
     options?: WriterOptions;
@@ -287,23 +284,22 @@ export class Writer {
 
   /**
    * Atomically commit one mutation. Reads `current.json` fresh (as a
-   * probe FLOOR, not a CAS precondition), PUTs the content body and any
-   * additive index `newKeys`, then creates `log/<seq>` via
+   * probe FLOOR, not a CAS precondition), PUTs any additive index
+   * `newKeys`, then creates `log/<seq>` via
    * `If-None-Match: "*"` — that create IS the commit (single-write
    * commit; no `current.json` CAS follows it). Stale index keys are
    * DELETE'd after the commit.
    *
    * The hot-path cost under no contention on an unindexed collection is
-   * 1 GET + 2 PUTs (content + the committing `log/<seq>` create); each
+   * 1 GET + 1 PUT (the committing `log/<seq>` create); each
    * declared index that projects a key on this write adds one PUT
    * (new key, before the commit) and, on U/D, up to one DELETE (stale
    * key, after the commit). An in-flight peer write costs one extra GET
    * + the backoff sleep per retry.
    *
-   * Idempotency: PUT content uses `If-None-Match: "*"`, so a retry of
-   * the same logical write produces the same content key and the
-   * second PUT no-ops. The `log/<seq>` create also uses
-   * `If-None-Match: "*"`, so two writers racing the same tail cause
+   * Idempotency: `LogEntry.after` carries the full post-image, and the
+   * `log/<seq>` create uses `If-None-Match: "*"`, so two writers racing
+   * the same tail cause
    * exactly one create to win; the loser reads back the occupant,
    * adopts its own lost-ack write or re-probes forward to the next
    * empty slot.
@@ -384,7 +380,7 @@ export class Writer {
 
   /**
    * One full commit attempt — the body of {@link commit}. Reads
-   * `current.json`, PUTs content + additive index `newKeys` in parallel,
+   * `current.json`, PUTs additive index `newKeys`,
    * then forward-probes the tail and creates `log/<seq>` once via
    * `If-None-Match: "*"` — the numbered log create IS the commit
    * (single-write commit; no `current.json` CAS follows it). Stale index
@@ -399,16 +395,13 @@ export class Writer {
    * empty slot. Thrown `BaerlyError`s (Internal, InvalidResponse,
    * NetworkError) propagate.
    *
-   * Crash safety invariant: content + additive index `newKeys` PUTs are
-   * awaited before the log create. A crash before the create leaves
-   * orphan content + additive index keys (no log entry references them)
-   * — the compactor sweeps the content, and a stray additive key only
-   * yields a false-positive candidate that `matchesWire` drops. A crash
+   * Crash safety invariant: additive index `newKeys` PUTs are awaited
+   * before the log create. `LogEntry.after` is the authoritative post-image.
+   * A crash before the create leaves orphan additive index keys only. A crash
    * AFTER the create is a durable, committed write at `seq` whose index
-   * `newKeys` are already present (so it's index-findable); the only
-   * residual is a possibly-undeleted stale OLD-value key, dropped by
-   * `matchesWire` and cleaned by a later write / `rebuild-index`. The
-   * inverse — committed log entry with missing content, or a de-indexed
+   * `newKeys` are already present (so it's index-findable); the only residual
+   * is a possibly-undeleted stale OLD-value key, dropped by `matchesWire` and
+   * cleaned by a later write / `rebuild-index`. The inverse — de-indexing a
    * committed doc — is never produced.
    */
   async #singleAttemptCommit(
@@ -481,15 +474,7 @@ export class Writer {
     });
     let entry = mintEntry(seq);
 
-    // ── Step 4. PUT content bodies + additive index `newKeys` (BEFORE
-    // the commit). ──────────────────────────────────────────────────
-    // Content PUT: `ifNoneMatch: "*"` makes a same-hash re-write a
-    // no-op (412 swallowed). Crash-recovery and same-body replay
-    // both rely on this idempotency property. Content is content-
-    // addressed, so writing it before the commit is crash-safe: a
-    // crash here leaves an unreferenced body the compactor sweeps,
-    // never an orphan log entry with missing content.
-    //
+    // ── Step 4. PUT additive index `newKeys` (BEFORE the commit). ───
     // Additive index `newKeys` (the markers for the doc's NEW value)
     // ALSO go down here, before the committing create. `newKeys`
     // depend only on `body` + `docId` (NOT on `seq`), so they're
@@ -503,27 +488,8 @@ export class Writer {
     // The stale-key DELETEs (de-indexing the OLD value) stay AFTER the
     // commit (Step 5b), so a crash can never de-index a committed doc.
     // See ADR-004 Q4 + `index-emit-order.test.ts`.
-    let contentPutCount = 0;
     let newKeysClassA = 0;
     const parallelPuts: Array<Promise<unknown>> = [];
-    if (input.op !== "D" && input.body !== undefined) {
-      contentPutCount++;
-      const bytes = encodeJsonBytes(input.body);
-      const version = await versionFromContent(bytes);
-      const contentKey = `${logPrefix}/content/${version}.json`;
-      assertKeyWithinLimit(contentKey);
-      parallelPuts.push(
-        this.#storage
-          .put(contentKey, bytes, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-          .catch((error: unknown) => {
-            this.#observe429(error, input.collection);
-            if (isPreconditionFailed(error)) {
-              return;
-            }
-            throw error;
-          }),
-      );
-    }
     // Additive index keys for the NEW value — emitted before the
     // commit on I/U (a D has no new value). `op:"D"` and a missing
     // body project to no keys. Empty `#indexes` short-circuits.
@@ -555,10 +521,10 @@ export class Writer {
     // 200 ⇒ committed at `seq`. 412 ⇒ disambiguate by session read-back:
     //   - own session / own seq ⇒ our crashed-or-lost-ack commit is
     //     already durable at `seq` ⇒ adopt the resolved `seq` and fall
-    //     through to the SAME index emit (Step 5b). The adopted commit
-    //     is EXACTLY the attempt that may have died after creating
-    //     `log/<seq>` but before emitting its index, so re-running the
-    //     (idempotent) emit completes it.
+    //     through to the SAME stale-key cleanup (Step 5b). The adopted
+    //     commit is EXACTLY the attempt that may have died after creating
+    //     `log/<seq>` but before deleting stale keys, so re-running the
+    //     (idempotent) cleanup completes it.
     //   - foreign session / wrong seq ⇒ re-probe forward and retry at the
     //     new first-empty slot (bounded by LOG_FORWARD_PROBE_CAP).
     // A transient NetworkError (e.g. a dropped ack on a create that may
@@ -614,7 +580,7 @@ export class Writer {
         // — adoption compares the full entry) — the logical write lands at
         // EXACTLY `seq`, never duplicated. Fall through to Step 5b: the
         // adopted attempt may have died after the create but before the
-        // index emit, so the (idempotent) emit must still run.
+        // stale-key cleanup, so the (idempotent) cleanup must still run.
         committedEntry = decision.entry;
         break;
       }
@@ -756,12 +722,12 @@ export class Writer {
       );
     }
 
-    // Base class-A op count for this attempt: content PUTs (skipping
-    // `op:"D"`) + the single log create + index PUTs + index DELETEs.
+    // Base class-A op count for this attempt: the single log create +
+    // index PUTs + index DELETEs.
     // No current.json CAS anymore. Forward-probe GETs are Class B and
     // excluded. The caller of `commit()` adds `(attempt - 1)` for retry
     // cost.
-    const classAOps = contentPutCount + 1 + indexClassA;
+    const classAOps = 1 + indexClassA;
     return {
       entries: committedEntries,
       // No current.json write on the commit path — return the manifest
@@ -882,7 +848,7 @@ export class Writer {
   }
 
   /**
-   * Read the pre-image content body for a doc by walking the log
+   * Read a doc's pre-image from authoritative `LogEntry.after` payloads by walking the log
    * backwards from `currentNextSeq` looking for the most-recent I/U
    * entry on this `(collection, docId)`. Returns `undefined` when:
    *

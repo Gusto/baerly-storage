@@ -3,15 +3,14 @@
    test threads it through the writer + reader. */
 
 /**
- * Polarity test for index-emit ordering (ADR-004 Q4).
+ * Polarity test for hybrid index ordering (ADR-004 Q4).
  *
- * The committing write is the `log/<seq>` create. Secondary-index
- * emission (`newKeys` PUT + `staleKeys` DELETE) must happen AFTER that
- * create so the only crash residual is a *committed-but-briefly-
- * unindexed* doc — whose log entry NAMES the docId, so the
- * snapshot+log fold (and `rebuildIndex`) can always re-derive the
- * marker — instead of a *de-indexed committed doc* the fold can't
- * repair.
+ * Additive `newKeys` PUTs must land before the committing `log/<seq>`
+ * create, while `staleKeys` DELETEs must happen after it. The first half
+ * keeps every committed value index-findable; the second prevents a
+ * failed update from de-indexing the still-committed old value. Stale
+ * markers are benign because index reads fold the authoritative
+ * `LogEntry.after` post-image and post-filter candidates.
  *
  * The pre-reorder polarity emits the index BEFORE the commit: a crash
  * after the stale-key DELETE but before the commit de-indexes a
@@ -103,11 +102,12 @@ const liveDocs = async (storage: Storage): Promise<Map<string, Ticket>> => {
 
 const TARGET = "target";
 
-describe("index emit happens AFTER the committing log write (polarity)", () => {
+describe("hybrid index ordering: additive PUTs before commit, stale DELETEs after (polarity)", () => {
   // The crash-armed commit issues a bounded number of storage ops;
-  // 12 comfortably covers content PUT + the commit create + pre-image
-  // GET + the index PUT/DELETE for one declared index either side of
-  // the reorder.
+  // 12 comfortably covers additive index PUTs, the commit create,
+  // pre-image reads, and stale-index DELETEs for one declared index on
+  // either side of the reorder. Higher values intentionally cover clean
+  // completion after the shortened pipeline.
   const ABORT_POINTS = Array.from({ length: 12 }, (_, i) => i + 1);
 
   for (const abortAfter of ABORT_POINTS) {
@@ -165,15 +165,14 @@ describe("index emit happens AFTER the committing log write (polarity)", () => {
 
       if (committedStatus === "open") {
         // The update's commit never landed: the doc is still committed
-        // at the seed value `open`. The reorder guarantees its `open`
-        // index key was NEVER deleted (the emit runs only AFTER a
-        // committing create) — so an index query for `open` must STILL
-        // find it.
+        // at the seed value `open`. The hybrid order guarantees its
+        // `open` index key was NEVER deleted (stale-key cleanup runs only
+        // AFTER a committing create) — so an index query for `open` must
+        // STILL find it.
         //
-        // PRE-REORDER this is RED: the emit ran first, deleting the
-        // `open` stale key before the (never-landing) commit, de-
-        // indexing a committed-old doc with no log entry to drive
-        // repair.
+        // PRE-REORDER this is RED: stale-key cleanup ran first, deleting
+        // the `open` key before the (never-landing) commit, de-indexing a
+        // committed-old doc with no log entry to drive repair.
         const byOpen = (await readDb.collection(COLL).where({ status: "open" }).all()) as Ticket[];
         expect(
           byOpen.map((d) => d._id),
@@ -218,9 +217,9 @@ describe("index emit happens AFTER the committing log write (polarity)", () => {
         `index-routed read must equal full-scan read at "${committedStatus}" (HR-4 parity; abort op ${abortAfter})`,
       ).toEqual(fullScanAtCommitted);
 
-      // INVARIANT (b): a later same-doc write RESTORES the index marker
-      // for the committed value — repairing any briefly-unindexed
-      // residual (the acceptable post-reorder crash window).
+      // INVARIANT (b): a later same-doc write idempotently re-emits the
+      // additive marker for the committed value, preserving
+      // index-findability across the crash residual.
       const repairDb = makeDb(inner);
       // Re-assert the doc at its committed value (idempotent body).
       await repairDb.collection(COLL).update(TARGET, { status: committedStatus });

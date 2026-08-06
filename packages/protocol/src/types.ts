@@ -7,8 +7,8 @@ type Brand<B> = { [brand]: B };
  * Nominal-typing helper. `Branded<string, "UUID">` is a `string` at
  * runtime but the type system rejects mixing it with a plain `string` or
  * a string branded as something else. Used to prevent confusion bugs at
- * protocol boundaries (UUIDs vs. content versions are both strings, but
- * using the wrong one corrupts the per-collection log).
+ * protocol boundaries (UUIDs vs. legacy content versions are both
+ * strings, but using the wrong one corrupts the per-collection log).
  *
  * Construct branded values via the helpers in this file (e.g. {@link uuid})
  * or with a tagged cast at a single, deliberate boundary — never `as string`
@@ -17,20 +17,19 @@ type Brand<B> = { [brand]: B };
 export type Branded<T, B> = T & Brand<B>;
 
 /**
- * A v4 UUID minted by this client. Used as session IDs and content
- * identifiers in non-versioned mode.
+ * A UUID minted by this client. {@link uuid} returns v4 values used for
+ * writer-session entropy and storage probe keys; {@link uuidv7} returns
+ * time-sortable v7 values for caller-facing identifiers. Content side
+ * objects use the separate legacy {@link ContentVersionId} hash brand.
  */
 export type UUID = Branded<string, "UUID">;
 
 /**
- * SHA-256 content digest, lowercase hex truncated to
- * `VERSION_HEX_LENGTH` (32 chars). Minted by
- * `versionFromContent` in `useVersioning=false` mode and used as
- * the `<key>@<version>` suffix in content keys.
- *
- * The synthetic `local-${op}` placeholder used for in-flight
- * optimistic updates also wears this brand — it never round-trips
- * to S3, only flows through local optimistic state.
+ * Legacy content-key digest: lowercase SHA-256 hex truncated to 32
+ * characters (128 bits), minted by `versionFromContent`. v0.6.0 writers
+ * used it to name `content/<hash>.json` side objects; the current kernel
+ * retains the brand only for legacy inspection and GC liveness checks.
+ * Current writers do not mint content side objects.
  */
 export type ContentVersionId = Branded<string, "ContentVersionId">;
 

@@ -15,7 +15,7 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   casUpdateCurrentJson,
   createGcPending,
@@ -66,6 +66,7 @@ describe("baerly admin restore", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -79,6 +80,103 @@ describe("baerly admin restore", () => {
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head).not.toBeNull();
     expect(head?.json.tail_hint).toBe(2);
+  });
+
+  test("fresh non-empty restore (N=2) has N+2 PUTs and no list iterator walk", async () => {
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    const put = vi.spyOn(LocalFsStorage.prototype, "put");
+    const list = vi.spyOn(LocalFsStorage.prototype, "list");
+
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    expect(put).toHaveBeenCalledTimes(4);
+    expect(list).toHaveBeenCalledTimes(0);
+  });
+
+  test("force non-empty restore (N=1) has N+2 PUTs and one list iterator walk", async () => {
+    await writeFile(stdinPath, `{"_id":"old","status":"old"}\n`, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+    const put = vi.spyOn(LocalFsStorage.prototype, "put");
+    const list = vi.spyOn(LocalFsStorage.prototype, "list");
+    put.mockClear();
+    list.mockClear();
+
+    await writeFile(stdinPath, `{"_id":"new","status":"new"}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    expect(put).toHaveBeenCalledTimes(3);
+    // This counts one Storage.list() iterator invocation. A paginated
+    // provider may satisfy that single iterator with P billable LIST requests.
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  test("fresh empty restore has one PUT and no list iterator walk", async () => {
+    await writeFile(stdinPath, "", "utf8");
+    const put = vi.spyOn(LocalFsStorage.prototype, "put");
+    const list = vi.spyOn(LocalFsStorage.prototype, "list");
+
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(list).toHaveBeenCalledTimes(0);
+  });
+
+  test("force empty restore has one PUT and one list iterator walk", async () => {
+    await writeFile(stdinPath, `{"_id":"old","status":"old"}\n`, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+    const put = vi.spyOn(LocalFsStorage.prototype, "put");
+    const list = vi.spyOn(LocalFsStorage.prototype, "list");
+    put.mockClear();
+    list.mockClear();
+
+    await writeFile(stdinPath, "", "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    expect(put).toHaveBeenCalledTimes(1);
+    // This is one iterator walk, not proof of one provider LIST request.
+    expect(list).toHaveBeenCalledTimes(1);
   });
 
   test("re-running without --force on a populated target → Conflict (exit 3)", async () => {
@@ -146,7 +244,7 @@ describe("baerly admin restore", () => {
     // Why it is sound: the reseed floor is `max(listed log seq) + 1`, so it
     // is strictly above every log object still present and the committing
     // `log/<seq>` create cannot collide with the old generation. GC decides
-    // content liveness by reachability rather than by the floor, and the
+    // legacy content-object liveness by reachability rather than by the floor, and the
     // reseed sets `snapshot: null`, so the old generation becomes
     // unreachable and is swept as `orphan-content` — the intent of
     // truncating. See the FLOOR EXEMPTION comment in `restore.ts`.

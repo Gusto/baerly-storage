@@ -188,14 +188,14 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
  * (`docs/about/graduation.md` §Per-tier bounds); R2 binding ops count
  * 1:1, and a `ctx.waitUntil` maintenance continuation draws on the
  * same per-invocation budget. One `op:"U"` commit on a single-index
- * collection already costs ~15 before this walk — 1 GET
+ * collection already costs ~14 before this walk — 1 GET
  * `current.json`, ~10 sequential GETs for `findLogTail`'s gallop over
- * a one-fold-interval `tail_hint` lag, 1 content PUT, 1 index
- * `newKey` PUT, the `log/<seq>` create, 1 stale-key DELETE — and the
+ * a one-fold-interval `tail_hint` lag, 1 index `newKey` PUT, the
+ * `log/<seq>` create, 1 stale-key DELETE — and the
  * write-tick fold branch it may dispatch costs ~26 more (1 runner GET
  * + `compact()`'s 3 + {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS} log
- * GETs + 2 PUTs). `50 - 15 - 26 = 9`, so 8 leaves one subrequest of
- * slack. The walk is strictly SEQUENTIAL, so this is a hard
+ * GETs + 2 PUTs). `50 - 14 - 26 = 10`; `PREIMAGE_SCAN_MAX_GETS = 8`
+ * leaves two spare subrequests. The walk is strictly SEQUENTIAL, so this is a hard
  * per-request cost, not a fan-out bound like
  * {@link MAX_PARALLEL_LOG_READS}.
  *
@@ -640,19 +640,18 @@ export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Architecturally-enforced ceiling: storage ops per logical write.
+ * Pre-provisioned, unindexed, first-attempt Class A commit floor.
  *
- * Two Class A ops: PUT content + the committing `log/<seq>` create
- * (`If-None-Match: "*"`). There is no `current.json` CAS on the commit
- * path — the winning log create IS the commit. The cost-model page
- * derives the free-tier write budget from this multiplier; the
- * maintenance end-to-end test asserts it at CI time. Changing this constant is a
- * cost-model-breaking change.
+ * The floor is the sole committing `log/<seq>` create
+ * (`If-None-Match: "*"`). It is not a ceiling: provisioning, additive
+ * and stale index-marker mutations, contention/retries, and in-band
+ * maintenance can add Class A operations.
  *
- * @see docs/about/cost-model.md §"Cost ceiling"
- * @see tests/integration/maintenance-e2e.test.ts
+ * @see tests/integration/http-cost-shape.test.ts
+ * @see packages/server/src/writer.test.ts
+ * @see tests/integration/write-amp.test.ts
  */
-export const STORAGE_OPS_PER_LOGICAL_WRITE: number = 2;
+export const UNINDEXED_COMMIT_CLASS_A_FLOOR: number = 1;
 
 /**
  * Canonical auth posture identifiers consumed by `BaerlyAppConfig.auth`,

@@ -6,7 +6,7 @@
  *
  *   Can effective billable Class A ops/write ever approach the historic
  *   "> 6" graduation trigger under BOUNDED in-band maintenance + free
- *   DeleteObject, or is it capped near the ~3-4x steady-state baseline?
+ *   DeleteObject, or is it capped near the ~2x/~3x steady-state baseline?
  *
  * Billable Class A = PUT + LIST (DeleteObject is $0 on R2/S3). MEASURES
  * ONLY — changes no constant. No infra (MemoryStorage). Feeds the `> 6`
@@ -17,7 +17,7 @@ import { CF_FREE, measure, NODE, type Workload } from "./lib/write-cost-measure.
 
 // Pathological shapes chosen to maximise each maintenance cost driver:
 //  - extreme-churn:  tiny set, 100% updates  -> fold fires constantly
-//  - insert-burst:   unbounded growth, 2KB   -> snapshot + /content/ LIST grow
+//  - insert-burst:   unbounded growth, 2KB   -> snapshot rebuild work grows
 //  - rewrite-all:    large set, 100% updates -> max stale-index churn + big fold
 const WORKLOADS: Workload[] = [
   {

@@ -74,8 +74,11 @@
  * the `gcGraceMillis: 0` test seam (in-band) / `graceMillis: 0`
  * (scheduled) so a marked orphan is sweepable the same pass — making the
  * steady-state object-count trajectory observable WITHOUT an 8-day clock
- * advance. This models the drain CEILING (does sweep throughput keep up
- * with orphan production `p`?), not the 7-day-delayed production timing.
+ * advance. This deliberately injects one v0.6.0-style content object per
+ * body to measure the retained collector's worst-case drain capacity; it
+ * is not the current writer's steady-state object production. It models
+ * the drain CEILING (does sweep throughput keep up with orphan production
+ * `p`?), not the 7-day-delayed production timing.
  *
  * WORKLOAD. A bounded working set churned by update / delete-reinsert, so
  * the LIVE row set stays ~constant while the tail and orphan content
@@ -127,6 +130,7 @@ import {
 } from "@baerly/server/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { type InternalMaintenanceOptions, Writer } from "@baerly/server/_internal/testing";
+import { seedLegacyContentForBody } from "../tests/fixtures/legacy-content.ts";
 
 // ── Bench config. Pinned — tweak in source if needed. ────────────────
 
@@ -221,11 +225,13 @@ const buildOps = (total: number): readonly Op[] => {
   return ops;
 };
 
-const commitOp = async (writer: Writer, o: Op): Promise<void> => {
+const commitOp = async (storage: Storage, writer: Writer, o: Op): Promise<void> => {
   if (o.op === "D") {
     await writer.commit({ op: "D", collection: COLLECTION, docId: o.docId });
   } else {
-    await writer.commit({ op: o.op, collection: COLLECTION, docId: o.docId, body: o.body! });
+    const body = o.body!;
+    await seedLegacyContentForBody(storage, TABLE_PREFIX, body);
+    await writer.commit({ op: o.op, collection: COLLECTION, docId: o.docId, body });
   }
 };
 
@@ -321,7 +327,7 @@ const runInBand = async (
   await runWithContext(createObservabilityContext({ maintenance }), async () => {
     for (let minute = 1; minute <= SIM_MINUTES; minute++) {
       for (let k = 0; k < rate; k++) {
-        await commitOp(writer, ops[cursor++]!);
+        await commitOp(storage, writer, ops[cursor++]!);
       }
       samples.push(await sampleBacklog(storage, minute, cursor, profile));
     }
@@ -357,7 +363,7 @@ const runScheduled = async (
     async () => {
       for (let minute = 1; minute <= SIM_MINUTES; minute++) {
         for (let k = 0; k < rate; k++) {
-          await commitOp(writer, ops[cursor++]!);
+          await commitOp(storage, writer, ops[cursor++]!);
         }
         // One scheduled tick this minute — alternate phases like the CF
         // even/odd-minute cron. `graceMillis: 0` so a GC tick sweeps the
@@ -573,7 +579,7 @@ const main = async (): Promise<number> => {
       simulated_time:
         "writes/min is the knob; a 'minute' is a unit mapping to `rate` real Db writes — NO wall-clock claim (the bench runs in seconds)",
       gc_grace:
-        "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass — models the drain CEILING (sweep throughput vs orphan production p), not the 7-day-delayed production timing",
+        "gcGraceMillis/graceMillis = 0 so a marked orphan sweeps the same pass; each body deliberately injects one v0.6.0-style content object to measure the retained collector's worst-case drain capacity, not the current writer's steady-state object production or 7-day-delayed timing",
       in_band:
         "every commit ticks runBoundedMaintenance at the profile; phasesPerTick matches each host's PRODUCTION policy — cf-free 'single' (worker.ts), node 'both' (server.ts)",
       scheduled:
@@ -589,7 +595,7 @@ const main = async (): Promise<number> => {
       maintenance_target_ratio: MAINTENANCE_TARGET_RATIO,
       maintenance_min_live_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       gc_starvation_guard: GC_STARVATION_GUARD,
-      cf_free_drain_ratio: `gcMaxSweeps/gcInterval = ${MAINTENANCE_PROFILE_CF_FREE.gcMaxSweeps}/${MAINTENANCE_PROFILE_CF_FREE.gcInterval} = ${cfDrain} (>= orphan-production p keeps object count bounded — graduation.md §7.1)`,
+      cf_free_drain_ratio: `gcMaxSweeps/gcInterval = ${MAINTENANCE_PROFILE_CF_FREE.gcMaxSweeps}/${MAINTENANCE_PROFILE_CF_FREE.gcInterval} = ${cfDrain} (>= deliberately injected v0.6.0-style orphan-production p keeps retained-collector object count bounded — graduation.md §7.1)`,
       node_drain_ratio: `gcMaxSweeps/gcInterval = ${MAINTENANCE_PROFILE_NODE.gcMaxSweeps}/${MAINTENANCE_PROFILE_NODE.gcInterval} = ${nodeDrain}`,
     },
     cells,

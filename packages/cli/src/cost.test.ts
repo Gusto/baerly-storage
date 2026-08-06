@@ -151,6 +151,9 @@ describe("baerly cost", () => {
     expect(text).toContain("trajectory:");
     expect(text).toContain("writes/min");
     expect(text).toContain("Class A/mo");
+    expect(text).toContain("selected collection's write-operation projection");
+    expect(text).toContain("Storage is excluded");
+    expect(text).toContain("R2 free-tier status assumes no other account usage");
   });
 
   test("--provider=self-hosted emits a Trajectory with null usd", async () => {
@@ -358,11 +361,11 @@ describe("baerly cost", () => {
     const text = stdout.captured.join("");
     // The high rate (>> 100 writes/min) should trigger the advisory.
     expect(text).toContain("advisory:");
-    expect(text).toContain("~$54/mo on R2");
+    expect(text).toContain("~$34/mo on R2");
     expect(text).toContain("50M Class A/mo");
   });
 
-  test("--provider=aws-s3 text mode: advisory shows S3 figure (~$86/mo on S3), not R2", async () => {
+  test("--provider=aws-s3 text mode: advisory shows S3 figure (~$65/mo on S3), not R2", async () => {
     await provision(storage);
     await seedEntries(storage, 3);
 
@@ -383,9 +386,9 @@ describe("baerly cost", () => {
     const text = stdout.captured.join("");
     // High rate (>> 100 writes/min) should trigger the advisory.
     expect(text).toContain("advisory:");
-    expect(text).toContain("~$86/mo on S3");
+    expect(text).toContain("~$65/mo on S3");
     // Must NOT show the R2 figure for an S3 user.
-    expect(text).not.toContain("~$54/mo on R2");
+    expect(text).not.toContain("~$34/mo on R2");
     // The hard-trigger line must not leak an R2 dollar figure either.
     expect(text).not.toContain("on R2");
     expect(text).toContain("50M Class A/mo");
@@ -464,14 +467,14 @@ describe("baerly cost", () => {
 
   test("--provider=r2 text mode: advisory suppressed once past the 50M/mo graduation trigger", async () => {
     await provision(storage);
-    // Deterministic: 10 entries inside a sub-second window → the estimator
-    // floors its denominator to a 1 s window → exactly 9 × 60 = 540 writes/min
-    // → ~70M Class A/mo (×3) ⇒ percentOfGraduation ≈ 140%, well past 100 and
+    // Deterministic: 11 entries inside a sub-second window → the estimator
+    // floors its denominator to a 1 s window → exactly 10 × 60 = 600 writes/min
+    // → 51.84M Class A/mo (×2) ⇒ percentOfGraduation ≈ 104%, safely past 100 and
     // independent of wall-clock execution speed. renderAdvisoryLine suppresses
     // the advisory above the hard trigger (percentOfGraduation ≥ 100 guard);
     // project.test.ts proves the math at the projection layer, this exercises
     // the render-layer suppression branch.
-    await seedEntriesDeterministic(storage, 10);
+    await seedEntriesDeterministic(storage, 11);
 
     const stdout = captureStream(process.stdout);
     let exitCode: number;

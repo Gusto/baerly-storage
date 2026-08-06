@@ -2,9 +2,9 @@
  * `baerly cost` — projected cost trajectory for one collection.
  *
  * Sniffs the writes/min rate over the trailing log sample for one
- * collection and projects it into a free-tier-aware monthly Class A
- * + storage cost projection vs. the M-size graduation trigger
- * (50M Class A/mo). Read-only; never mutates anything.
+ * collection and projects the selected collection's monthly Class A
+ * write-operation trajectory against the M-size graduation trigger
+ * (50M Class A/mo). Storage is excluded. Read-only; never mutates anything.
  *
  * Args:
  *   --bucket    Required. Bucket URI.
@@ -73,7 +73,13 @@ const formatOps = (n: number): string => {
   return n.toFixed(0);
 };
 
-/** Advisory line rendered when past 100 writes/min but under the 50M/mo graduation trigger. */
+/**
+ * Advisory line rendered when past 100 writes/min but under the 50M/mo
+ * graduation trigger. At 100 writes/min, the measured 2× R2 projection is
+ * 8.64M Class A/mo and about $34/mo in R2 operation overage; the measured
+ * 3× Node/S3 projection is 12.96M and about $65/mo in S3 PUT/LIST charges.
+ * The 50M hard line is about 580 writes/min at 2× and about 390 at 3×.
+ */
 const renderAdvisoryLine = (t: Trajectory): string => {
   if (t.percentOfAdvisory < 100 || t.percentOfGraduation >= 100) {
     return "";
@@ -85,7 +91,7 @@ const renderAdvisoryLine = (t: Trajectory): string => {
       `                       Hard graduation trigger: 50M Class A/mo. Self-hosted — bill model not modelled.\n`
     );
   }
-  const costNote = t.provider === "r2" ? "~$54/mo on R2" : "~$86/mo on S3";
+  const costNote = t.provider === "r2" ? "~$34/mo on R2" : "~$65/mo on S3";
   return (
     `  advisory:            ~100 writes/min crossed (${costNote}, object-storage ops). Object storage buys\n` +
     `                       zero ops, no on-call, and no migration for your bytes. A managed DB trades those\n` +
@@ -131,7 +137,7 @@ const PROVIDER_TAGS: ReadonlySet<string> = new Set(["r2", "aws-s3", "self-hosted
 const bundle = defineBaerlySubcommand({
   name: "cost",
   meta: {
-    description: "Project a collection's monthly Class A + storage cost trajectory.",
+    description: "Project a collection's monthly Class A write-operation trajectory.",
   },
   args: COST_ARGS,
   handler: async (args, ctx) => {
@@ -177,7 +183,13 @@ const bundle = defineBaerlySubcommand({
     if (isJsonMode()) {
       emitSuccess({ command: "cost", collection: args.collection, trajectory });
     } else {
-      process.stdout.write(`baerly cost ${args.collection}\n${renderTrajectory(trajectory)}\n`);
+      const r2Assumption =
+        provider === "r2" ? " R2 free-tier status assumes no other account usage." : "";
+      process.stdout.write(
+        `baerly cost ${args.collection}\n` +
+          `  scope:               selected collection's write-operation projection. Storage is excluded.${r2Assumption}\n` +
+          `${renderTrajectory(trajectory)}\n`,
+      );
     }
     return 0;
   },

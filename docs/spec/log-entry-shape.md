@@ -3,7 +3,7 @@ title: LogEntry wire shape
 audience: spec
 doc_type: current-contract
 summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; versionless, additive-only 0.3.0 public early-access baseline."
-last-reviewed: 2026-06-23
+last-reviewed: 2026-08-04
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md, "../adr/005-logentry-versionless.md"]
 ---
@@ -110,31 +110,38 @@ benefit is deterministic `GET log/<seq>.json` over that range.
 The full read algorithm is in
 [`sync-protocol.md`](sync-protocol.md#read-algorithm).
 
-### Content body layout
+### Legacy content side-object layout
 
-For `I` / `U` entries, document bodies also land in side objects:
+Current writers do not create `content/<sha>.json`. Direct-bucket
+consumers read the post-image from `LogEntry.after` and must not assume a
+side object exists. For legacy inspection only, v0.6.0 writers used the
+first 32 lowercase hexadecimal characters of SHA-256 over the exact
+`encodeJsonBytes(LogEntry.after)` bytes.
+
+That compatibility statement is specific to v0.6.0. v0.1.0 and v0.1.1
+logs used `new` / `patch`; current folding requires `after`, and the
+current kernel does not add a compatibility shim for those earlier log
+shapes.
+
+Those legacy side objects use this layout:
 
 ```
 <bucket>/<collection-prefix>/content/<hash>.json
 ```
 
-`LogEntry.after` still carries the full JSON post-image inline. The
-side object is the storage copy keyed by content hash, where `<hash>`
-is the **first 32 hex chars (128 bits) of `sha256(body)`**, lowercase.
-The truncation is intentional: 128 bits is comparable to and stronger
-than UUIDv4's 122 random bits, and gives a birthday-bound collision
+The legacy truncation provided 128 bits, comparable to and stronger than
+UUIDv4's 122 random bits, and gives a birthday-bound collision
 probability of ~1.5 × 10⁻²¹ at N=10⁹ writes (≈ N² / 2¹²⁹) — far below
-any plausible per-bucket write volume. A collision is **not** detected
+any plausible per-bucket write volume. A collision was **not** detected
 at runtime: two distinct bodies sharing a truncated hash alias to one
-content key, so the side content artifact cannot distinguish them. The
-log fold itself still reads `LogEntry.after` inline. The probability
-bound is the only guard for the side object. External consumers
-reproducing content keys MUST truncate to 32 hex chars; hashing to the
-full 64-char SHA-256 will not match the key on the bucket.
+content key, so a legacy side object cannot distinguish them. The log
+fold reads the authoritative `LogEntry.after` inline. A direct-bucket
+consumer inspecting a legacy key derives 32 hex characters, not the full
+64-character SHA-256.
 
-A common interoperability mistake is to treat the hash as a digest of
-"the JSON value." It is not. It is a digest of the exact bytes the
-writer emits.
+A common legacy-inspection mistake is to treat the hash as a digest of
+"the JSON value." It is not. It is a digest of the exact bytes the old
+writer emitted.
 
 **`body` is the exact bytes of `encodeJsonBytes(value)` —
 `JSON.stringify(value)` UTF-8-encoded, with NO replacer and NO key
@@ -142,20 +149,18 @@ sorting** (`packages/protocol/src/bytes.ts`). Property order is
 ECMAScript `JSON.stringify` order: array-index-like keys first, then
 other string keys in insertion order. This is _not_ the canonical
 (ASCII-lex-sorted) encoding that `baerly admin dump` uses for
-byte-stable backups — content hashing is deliberately not
+byte-stable backups — legacy content hashing was deliberately not
 canonicalized.
 
-Same body **bytes** ⇒ same content key. The scope of this guarantee is
-**single-writer idempotent replay**: a crash-recovery rewrite of the
-same in-memory value by the same writer reproduces the same content key
-the side object uses (the `ifNoneMatch: "*"` content PUT then no-ops).
-It is **NOT** a cross-writer content-dedup guarantee: two writers
-serializing a logically-equal document to different `JSON.stringify`
-bytes — for example after a read → merge → re-serialize round-trip,
-where `merge` spreads `{...target}` and key order is
-insertion-dependent for non-index string keys — produce **different**
-content keys for the same logical value. Constant lives at
-`VERSION_HEX_LENGTH` in `packages/protocol/src/hashing.ts`.
+Same body **bytes** ⇒ same legacy content key. It was **not** a
+cross-writer content-dedup guarantee: two old writers serializing a
+logically-equal document to different `JSON.stringify` bytes — for
+example after a read → merge → re-serialize round-trip, where `merge`
+spreads `{...target}` and key order is insertion-dependent for non-index
+string keys — produced **different** content keys for the same logical
+value. The retained `VERSION_HEX_LENGTH` constant and hashing primitive
+in `packages/protocol/src/hashing.ts` support legacy inspection and GC;
+they do not imply that current writers publish side objects.
 
 ## Cursor format
 

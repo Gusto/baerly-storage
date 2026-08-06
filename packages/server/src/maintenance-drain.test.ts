@@ -14,9 +14,10 @@
  * These tests drive a steadily-written, BOUNDED-live-set collection
  * (a fixed 50-doc working set under insert/update churn, so the live
  * floor is constant and any unbounded growth is unswept orphans)
- * through the REAL {@link Writer} inside an ALS maintenance context —
- * the true write-tick integration path the adapter exercises in
- * production.
+ * through the REAL {@link Writer} inside an ALS maintenance context. The
+ * content objects are deliberately simulated v0.6.0 legacy objects, not
+ * objects emitted by the current writer; this keeps the retained collector
+ * coverage exercising the pre-change bucket topology.
  *
  * ## What the measured trajectory shows
  *
@@ -74,6 +75,7 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions } from "./gc.ts";
 import { type BoundedMaintenanceOptions } from "./maintenance.ts";
@@ -137,11 +139,13 @@ const driveWriteStream = async (
       // Bounded working set under insert/update churn: the live doc set
       // never exceeds WORKING_SET, so the live floor is constant and any
       // sustained growth in the object count is unswept orphans.
+      const body = { _id: `d${i % WORKING_SET}`, n: i, blob };
+      await seedLegacyContentForBody(storage, KEY.slice(0, KEY.lastIndexOf("/")), body);
       await writer.commit({
         op: i % 2 === 0 ? "I" : "U",
         collection: COLL,
         docId: `d${i % WORKING_SET}`,
-        body: { _id: `d${i % WORKING_SET}`, n: i, blob },
+        body,
       });
       if ((i + 1) % sampleEvery === 0) {
         samples.push({ write: i + 1, objects: await objectCount(storage) });
@@ -254,11 +258,13 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
 
     await runWithContext(ctx, async () => {
       for (let i = 0; i < 1600; i++) {
+        const body = { _id: `d${i % WORKING_SET}`, n: i, blob };
+        await seedLegacyContentForBody(storage, KEY.slice(0, KEY.lastIndexOf("/")), body);
         await writer.commit({
           op: i % 2 === 0 ? "I" : "U",
           collection: COLL,
           docId: `d${i % WORKING_SET}`,
-          body: { _id: `d${i % WORKING_SET}`, n: i, blob },
+          body,
         });
 
         // OLD shape: fold-and-GC ONLY on the compact-threshold tick; GC

@@ -76,12 +76,12 @@
  *     merges, and an L0 key would sort before the L9 live snapshot.
  *     The cardinality argument survives that; the ordering one does
  *     not.
- *   - `orphan-content`: `<collectionPrefix>/content/<sha>.json` whose
- *     32-hex truncated-SHA-256 hash is not in the live content-hash
- *     set (computed by hashing every live `entry.after` post-image —
- *     the same hash the writer's step 4 produces). Surfaces writer
- *     crashes between the content PUT and the log-entry PUT.
- *     **Cursored** (`content_scan_cursor`). Content keys are
+ *   - `orphan-content`: a v0.6.0/mixed-rollout compatibility object at
+ *     `<collectionPrefix>/content/<sha>.json` whose 32-hex truncated-
+ *     SHA-256 hash is not in the live content-hash set (computed by
+ *     hashing every live `entry.after` post-image). It reclaims legacy
+ *     content residue while retaining the same conservative live-key
+ *     protection. **Cursored** (`content_scan_cursor`). Content keys are
  *     hash-named (random lex order) and live content is never deleted,
  *     so a first-`maxMarks` window can be all-live.
  *
@@ -590,12 +590,13 @@ export const runGc = async (
   }
 
   // ── Step 5. Mark orphan content. ────────────────────────────────
-  // Build the live content-hash set by hashing every live post-image:
+  // Build the live content-hash set for v0.6.0/mixed-rollout compatibility
+  // by hashing every live post-image:
   //   - log entries [log_seq_start, true tail)
   //   - snapshot rows (via `loadSnapshotAsMap` so the hash check
   //     defends against a tampered snapshot)
-  // Hash with the same `versionFromContent` (32-hex truncated SHA-256)
-  // the writer used to mint the content key.
+  // Hash with the `versionFromContent` 32-hex truncated-SHA-256 legacy
+  // content-key scheme.
   let markedOrphanContent = 0;
   let nextContentCursor: string | undefined;
   let completeLiveContentHashes: ReadonlySet<string> | undefined;

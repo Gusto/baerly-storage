@@ -30,7 +30,7 @@ log object commits a write. When the request ends, baerly-storage is gone. Poof!
   ticket for a new managed-DB SKU.
 - **Nothing to go down.** No resident service in your critical path, one
   fewer failure domain. Servers that don't exist can't go down.
-- **Built like git.** Content-addressed documents, immutable numbered log
+- **Built like git.** Content-addressed snapshots, immutable numbered log
   entries, and one conditional log create as the commit, per collection.
 
 <!-- Hero demo: render `docs/assets/demo.gif` from `docs/assets/demo.tape`

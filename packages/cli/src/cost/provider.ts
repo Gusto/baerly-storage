@@ -67,7 +67,7 @@ const R2_PRICING: ProviderPricing = {
   usdPerMillionClassA: 4.5,
   freeStorageGb: 10,
   usdPerGbMonth: 0.015,
-  effectiveWriteAmp: 3,
+  effectiveWriteAmp: 2,
 };
 
 /**
@@ -82,7 +82,7 @@ const AWS_S3_PRICING: ProviderPricing = {
   usdPerMillionClassA: 5,
   freeStorageGb: 0,
   usdPerGbMonth: 0.023,
-  effectiveWriteAmp: 4,
+  effectiveWriteAmp: 3,
 };
 
 const SELF_HOSTED_PRICING: ProviderPricing = {
@@ -91,7 +91,7 @@ const SELF_HOSTED_PRICING: ProviderPricing = {
   usdPerMillionClassA: Number.NaN,
   freeStorageGb: 0,
   usdPerGbMonth: Number.NaN,
-  effectiveWriteAmp: 4,
+  effectiveWriteAmp: 3,
 };
 
 const DEV_PRICING: ProviderPricing = {
@@ -100,7 +100,7 @@ const DEV_PRICING: ProviderPricing = {
   usdPerMillionClassA: Number.NaN,
   freeStorageGb: 0,
   usdPerGbMonth: Number.NaN,
-  effectiveWriteAmp: 4,
+  effectiveWriteAmp: 3,
 };
 
 export const pricingFor = (provider: ProviderTag): ProviderPricing => {

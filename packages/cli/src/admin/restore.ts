@@ -28,16 +28,19 @@
  * same seq; the stale ledger's rotation cursors and pending depth no
  * longer describe this collection either. A missing ledger is a no-op.
  *
- * Cost shape: under single-write commit each `Writer.commit` is 2 Class
- *   A PUTs (content + the committing `log/<seq>` create — no per-row
- *   `current.json` write). So: 1 PUT current.json (initial seed) + N × 2
- *   + 1 PUT current.json (final `tail_hint` stamp) = 2N + 2 Class A ops
- *   for N rows.
+ * Cost shape: before any in-band maintenance triggered by a long import,
+ *   the base billable shapes are fresh non-empty `N + 2` (initial seed,
+ *   one committing `log/<seq>` create per row, final `tail_hint` stamp),
+ *   force non-empty `N + 2 + P`, fresh empty `1`, and force empty
+ *   `1 + P`, where `P` is the number of provider LIST pages consumed by
+ *   the one `Storage.list()` iterator in `tailFromListedLogKeys`.
+ *   Maintenance adds the same measured profile overhead as the main
+ *   cost model.
  *
  * Partial-restore semantics: a mid-stream Network / Internal / parse
- * error leaves the target in a partial state (some rows committed,
- * `current.json` advanced to wherever the last successful commit
- * landed). Re-run with `--force` to truncate, or hand-clean. The
+ * error leaves the target in a partial state (some log entries committed,
+ * while the final `tail_hint` stamp may not have landed). Re-run with
+ * `--force` to truncate, or hand-clean. The
  * malformed-line case (missing `_id`, bad JSON) fails fast on that
  * line; rows committed BEFORE it survive.
  *
@@ -46,8 +49,8 @@
  *   1 — InvalidConfig (bad bucket URI, missing args).
  *   2 — Network / storage error mid-stream, or a malformed NDJSON
  *       line (raised as a plain `Error`, not `BaerlyError`).
- *   3 — Conflict from a pre-existing target without --force, or from a
- *       concurrent writer when --force was used.
+ *   3 — Conflict from a pre-existing target without --force, or a lost
+ *       `current.json` CAS against maintenance/compaction during --force.
  */
 
 import { createInterface } from "node:readline";
@@ -95,7 +98,7 @@ const RESTORE_ARGS = {
   },
   force: {
     type: "boolean",
-    description: "Truncate the target if it exists (bump fence + reseed current.json).",
+    description: "Reseed the target when it already exists.",
   },
   json: JSON_ARG,
 } as const satisfies ArgsDef;

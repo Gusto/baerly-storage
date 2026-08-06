@@ -2,7 +2,7 @@
 title: How it works
 audience: integrator
 summary: Plain-language mental model for committing by conditional log create, then exposing typed layers from protocol to React.
-last-reviewed: 2026-06-28
+last-reviewed: 2026-08-04
 tags: [concepts, mental-model, protocol]
 related: [thesis.md, "../spec/sync-protocol.md", "../architecture.md"]
 ---
@@ -50,8 +50,8 @@ collection's key namespace in the bucket. Inside that prefix:
 
 | Object | Role |
 | --- | --- |
-| Content objects | Row bytes, such as `{ body: "buy milk" }`, stored under a content-addressed key (a hash of the bytes). |
-| Numbered log entries | Append-only records: "at this sequence, this row was inserted, updated, or deleted." The log uses `log/0.json`, `log/1.json`, and so on. The _tail_ is the first missing number after committed entries. |
+| Legacy content objects | Side objects emitted by legacy writers, retained for verified v0.6.0 bucket compatibility. |
+| Numbered log entries | Append-only records containing the authoritative `LogEntry.after` post-image for inserts and updates: "at this sequence, this row was inserted, updated, or deleted." The log uses `log/0.json`, `log/1.json`, and so on. The _tail_ is the first missing number after committed entries. |
 | Snapshot objects | Rolled-up older history, created by maintenance so reads do not replay the whole log forever. |
 | Index objects | Small marker files that make lookups fast, so a read does not have to scan everything. |
 | `current.json` | A per-collection _compaction bookmark_. It is **not** the authority on the collection's state. It names the current snapshot, records how far the log has been folded into that snapshot (`log_seq_start`), and carries `tail_hint`, a lower-bound starting point for finding the live tail. |
@@ -71,11 +71,12 @@ formal statement is in [`spec/sync-protocol.md`](../spec/sync-protocol.md).
 
 ## What a write does
 
-A write prepares the objects readers will need, commits with one
-conditional log create, then cleans up old lookup markers. For an insert
-or update:
+A write prepares the entry and index objects readers will need, commits
+with one conditional log create, then cleans up old lookup markers. For
+an insert or update:
 
-1. **PUT the content**: write the row's bytes as a new object.
+1. **Serialize the post-image**: place the complete new row in
+   `LogEntry.after` for an insert or update.
 2. **PUT the new index markers**: write the lookup markers that point
    at this row, _before_ committing, so a committed row is always
    findable.
@@ -86,9 +87,9 @@ or update:
    the markers for the value this write superseded, _after_ committing,
    so a crash can never de-index a committed row.
 
-Steps 1 and 2 are preparation. Step 3 changes the visible database state;
-there is no later `current.json` pointer swap. Step 4 cleans up the old
-value's markers.
+Steps 1 and 2 are preparation. Step 3 writes the serialized entry and
+changes the visible database state; there is no later `current.json`
+pointer swap. Step 4 cleans up the old value's markers.
 
 ## The part that makes it safe
 
@@ -110,9 +111,9 @@ coordinator, no server process holding state. The bucket's atomic
 conditional write is the coordination.
 
 **A retry of the same commit attempt can't create a duplicate commit.**
-Content keys are hashes, so re-writing the same final row bytes is a
-harmless no-op. A lost-ack retry adopts the occupied log slot only when
-all three checks pass:
+The complete post-image travels in `LogEntry.after`; no content side
+object participates in current-writer idempotency. A lost-ack retry
+adopts the occupied log slot only when all three checks pass:
 
 - the same per-commit `session`;
 - the same `seq`;
@@ -178,29 +179,36 @@ yet; it becomes visible the moment its log-entry create wins.
 
 ## What about the ever-growing log?
 
-The append-only log and pre-commit objects create two cleanup problems:
-old history should not make every read longer, and objects from a
-pre-commit crash should not live forever. Both are handled by
-**maintenance**:
+The append-only log and retained legacy side objects create two cleanup
+problems: old history should not make every read longer, and legacy
+objects left by an old-node pre-commit crash should not live forever.
+Both are handled by **maintenance**:
 
 - **Compaction** folds a run of log entries into a fresh snapshot and
   advances `current.json` to point at it, so a read replays a short
   tail instead of the entire history. The old log entries become
   unreferenced.
 - **Garbage collection** sweeps objects no live snapshot or log entry
-  still references: superseded snapshots, compacted-away log entries, and
-  orphaned content from a crashed write. GC deletes wait through a grace
-  window so a retrying writer can still find its earlier attempt.
-  Orphaned index markers are different: they are tolerated false
-  positives during reads and can be repaired by `rebuildIndex`.
+  still references: superseded snapshots, compacted-away log entries,
+  and orphaned legacy content side objects. Orphaned index markers are
+  different: they are tolerated false positives during reads and can be
+  repaired by `rebuildIndex`.
+
+Current writers do not create `content/<sha>.json`. Buckets written by
+legacy writers that emitted content side objects may still contain them;
+during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
+No current kernel reader depends on these objects. Existing orphan-content
+GC remains unchanged: live hashes are rescued, and orphan candidates are
+reclaimed only after the existing grace and revalidation checks. Verified
+v0.6.0 buckets require no migration.
 
 Crashes fall on one side of the commit line. A crash before the log
-create leaves uncommitted residue: content for GC and index markers that
-readers treat as false positives. A crash after the log create leaves a
-committed entry that future writers can pass. Because there is no
-separate `current.json` swap to crash between, a write cannot wedge the
-tail and block all future writes to the collection. The formal version
-lives in
+create can leave additive index markers that readers treat as false
+positives, but no current-writer content side object. A crash after the
+log create leaves a committed entry that future writers can pass.
+Because there is no separate `current.json` swap to crash between, a
+write cannot wedge the tail and block all future writes to the
+collection. The formal version lives in
 [`spec/sync-protocol.md`](../spec/sync-protocol.md#crash-safety).
 
 Maintenance is not a required daemon or scheduler. After a successful
@@ -245,7 +253,7 @@ then exposes the part it can safely execute.
 | Layer | Role |
 | --- | --- |
 | Protocol | Defines the typed menu: `insert`, `update`, `where`, `order`, `first`, `all`, and related shapes. It has no implementation. |
-| Server | Implements that menu against the bucket: PUT content and index objects, then create `log/<seq>.json` as the commit. |
+| Server | Implements that menu against the bucket: serialize `LogEntry.after`, PUT additive index objects, create `log/<seq>.json` as the commit, then DELETE stale index objects. |
 | HTTP router | Decodes the request, calls the server action, and serializes the result. It holds no storage-protocol decision logic of its own. |
 | Client | Exposes the client-safe API over HTTP with the same row types and query vocabulary. It does not touch the bucket and is not the full server protocol surface. |
 | React bindings | Add reactivity, loading state, and error state with `useQuery`, `useMutation`, and `BaerlyProvider`. Database semantics stay in the client/server protocol. |

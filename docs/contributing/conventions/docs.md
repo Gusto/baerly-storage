@@ -2,7 +2,7 @@
 title: Conventions for docs/
 audience: coder
 summary: Source-of-truth rules, markdown style, Mermaid usage, when to update which doc.
-last-reviewed: 2026-06-23
+last-reviewed: 2026-08-04
 tags: [conventions, docs]
 related: [tests.md, "../../README.md"]
 ---
@@ -76,7 +76,7 @@ update every occurrence so they don't silently drift:
 - **"baerly-storage runs wherever the bucket credentials safely
   live."** — the shortest way to distinguish the TypeScript library
   from a hosted database service.
-- **"Built like git: content-addressed documents, immutable numbered
+- **"Built like git: content-addressed snapshots, immutable numbered
   log entries, and one conditional log create as the commit, per
   collection."** — exact lead in `README.md`; architecture and thesis
   may use the same content without the `Built like git:` lead when the

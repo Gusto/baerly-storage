@@ -24,7 +24,7 @@
  *   - skipping the field (assignee absent) skips that index's
  *     key for that doc.
  *
- * Runtime: default `numRuns: 100` with ≤30 ops × ≤4 PUTs each over
+ * Runtime: default `numRuns: 100` with ≤30 ops × ≤3 PUTs each over
  * `MemoryStorage` ≈ <1 s total. Stays well inside the
  * `pnpm test` budget. Also runs at `FC_NUM_RUNS=10000` under
  * `pnpm test:randomize`.
@@ -37,7 +37,7 @@ import { describe, expect } from "vitest";
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default
  * `pnpm test`) each run finishes in well under a second; at
  * `FC_NUM_RUNS=10000` (`pnpm test:randomize`) the property
- * exercises ~10k commits × ~4 PUTs each over `MemoryStorage`
+ * exercises ~10k commits × ~3 PUTs each over `MemoryStorage`
  * and lands in a few seconds even on a busy CI box. The default
  * vitest timeout (5000ms) is far too tight when other heavy
  * property tests are co-resident; mirror `maintenance-crash-fuzz`'s

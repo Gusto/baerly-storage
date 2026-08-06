@@ -11,8 +11,9 @@
  *
  *   (a) every `find()` / `all()` / `where()` result is identical before
  *       vs. after compaction (sorted by `_id`),
- *   (b) the bucket object count drops (stale log entries + orphan
- *       content blobs swept by `runGc()`),
+ *   (b) the bucket object count drops (stale log entries swept by
+ *       `runGc()`; v0.6.0/mixed-rollout content reclamation is covered
+ *       separately),
  *   (c) `current.json.snapshot !== null` and `log_seq_start` has
  *       advanced to within a small live tail of `tail_hint`,
  *   (d) an idle reader doing 1800 `tbl.where({}).all()` calls (≈ 1 hour
@@ -127,8 +128,8 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // bucket before the explicit `runScheduledMaintenance` below,
           // confounding the "before vs after" object-count comparison.
           // Disabling the tick keeps the seed inert and O(N) — a fixed
-          // read + 2 PUTs per commit (content + the committing `log/<seq>`
-          // create; no `current.json` write on the commit path, and
+          // read + one committing `log/<seq>` PUT per commit (no
+          // `current.json` write on the commit path, and
           // `verifyLogIntegrityOnCommit` is off by default, so no
           // per-commit tail walk) — so the topology
           // going into maintenance is exactly N raw commits.
@@ -158,7 +159,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 
           const bucketPrefix = `${TABLE_PREFIX}/`;
           const objectsBefore = await countBucketObjects(storage, bucketPrefix);
-          // 5000 log entries + 5000 content blobs + 1 current.json. The
+          // 5000 log entries + 1 current.json. The
           // exact count isn't asserted (impl detail of the writer) — but
           // it must be greater than N before compaction touches it.
           expect(objectsBefore).toBeGreaterThan(N);
@@ -166,11 +167,11 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // ── (3) Run maintenance to quiescence. ───────────────────────
           // Engine defaults are unbounded (maxEntriesPerRun =
           // Number.MAX_SAFE_INTEGER) so a single compact pass folds
-          // everything. GC marks 5000 stale_log + 5000 orphan_content
-          // = 10000 candidates. We pass an explicit maxSweepsPerRun
-          // override for the test so the sweep finishes in one pass
-          // too — the bounded-budget cases are already covered by the
-          // unit tests in `gc.test.ts`.
+          // everything. GC marks 5000 stale_log candidates.
+          // v0.6.0/mixed-rollout content reclamation is covered separately.
+          // We pass an explicit maxSweepsPerRun override for the test so the
+          // sweep finishes in one pass too — the bounded-budget cases are
+          // already covered by the unit tests in `gc.test.ts`.
           //
           // Pass 1 → compact folds + GC marks + sweeps a budget worth.
           // Pass 2 → quiescence (entriesFolded === 0, swept === 0).
@@ -228,10 +229,9 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 
           // ── (6) Bucket object count dropped. ─────────────────────────
           // Post-compaction + GC sweep: 1 current.json + 1 snapshot +
-          // (small live tail or zero) + (gc/pending.json) + any
-          // remaining content blobs the snapshot references back into
-          // the orphan-mark set. The exact count is impl detail; the
-          // gate is "strictly fewer than before compaction."
+          // (small live tail or zero) + (gc/pending.json). The exact count
+          // is impl detail; the gate is "strictly fewer than before
+          // compaction."
           const objectsAfter = await countBucketObjects(storage, bucketPrefix);
           expect(objectsAfter).toBeLessThan(objectsBefore);
         },
@@ -485,7 +485,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
 
       // Plateau: the second half does not grow beyond a tiny boundary
       // slack. Non-vacuous because the ALTERNATIVE — reclamation NOT
-      // keeping pace — produces ~2 new objects (log entry + content blob)
+      // keeping pace — produces ~1 new object (the log entry)
       // per write, i.e. ~3000 growth over the second-half 3000 writes;
       // SLACK=60 is ~50× below that. (The drain unit test measures dead
       // flat; this gives generous headroom for the larger working set.)
@@ -496,13 +496,13 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       ).toBeLessThanOrEqual(SLACK);
 
       // And the peak stays bounded near the live working set — NOT
-      // proportional to the write count (~2*writes if nothing drained,
-      // i.e. ~12000). WORKING_SET*8 = 400 is two orders of magnitude
+      // proportional to the write count (~writes if nothing drained,
+      // i.e. ~6000). WORKING_SET*8 = 400 is two orders of magnitude
       // below that.
       const maxObjects = Math.max(...samples.map((s) => s.objects));
       expect(
         maxObjects,
-        `trajectory ${trajectory} — peak ${maxObjects} should stay near the live set, far below ~${TOTAL * 2}`,
+        `trajectory ${trajectory} — peak ${maxObjects} should stay near the live set, far below ~${TOTAL}`,
       ).toBeLessThan(WORKING_SET * 8);
     },
   );

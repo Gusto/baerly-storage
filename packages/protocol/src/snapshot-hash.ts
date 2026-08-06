@@ -6,8 +6,8 @@ import { sha256Hex } from "./sha256.ts";
  * readers consume as truth: the filename embeds the hash; readers
  * recompute on load and reject any mismatch as "file missing."
  *
- * Distinct from {@link versionFromContent} (truncated to 32 chars for
- * content keys) — snapshot bodies are larger and longer-lived;
+ * Distinct from {@link versionFromContent} (the legacy 32-hex content-key
+ * scheme) — snapshot bodies are larger and longer-lived;
  * 256-bit collision resistance matters here.
  */
 export const snapshotHash = (bytes: Uint8Array): Promise<string> => sha256Hex(bytes);
