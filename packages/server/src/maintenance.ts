@@ -125,11 +125,15 @@ export const runScheduledMaintenance = async (
   return { compact: compactRes, gc: gcRes };
 };
 
-/** The six host-agnostic write-tick budgets (`maxFoldBytes`=`C`, `maxFoldRows`=`E`). Canonical shape; mirrors the protocol constants (typed there to avoid a cycle). */
+/** Host-agnostic write-tick budgets (`maxFoldBytes`=`C`, `maxFoldRows`=`E`). Canonical shape; mirrors the protocol constants (typed there to avoid a cycle). */
 export interface MaintenanceProfile {
   readonly gcInterval: number;
   readonly gcMaxMarks: number;
   readonly gcMaxSweeps: number;
+  /** Optional bounded tail-probe admission for legacy content liveness. Absent keeps GC unbounded. */
+  readonly gcMaxTailProbeGets?: number;
+  /** Optional live-log admission cap for legacy content liveness. Absent keeps GC unbounded. */
+  readonly gcMaxLiveLogEntriesPerRun?: number;
   readonly maxFoldEntriesPerPass: number;
   readonly maxFoldBytes: number;
   readonly maxFoldRows: number;
@@ -144,20 +148,24 @@ export {
 // Snapshot ceilings aren't part of the scheduled cap surface; omitted.
 const profileToScheduledOptions = (
   profile: MaintenanceProfile,
-  maxTailProbeGets?: number,
+  compactMaxTailProbeGets?: number,
   minEntriesToCompact: number = WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 ): InternalMaintenanceOptions => ({
   compact: {
     maxEntriesPerRun: profile.maxFoldEntriesPerPass,
     minEntriesToCompact,
-    ...(maxTailProbeGets !== undefined && { maxTailProbeGets }),
+    ...(compactMaxTailProbeGets !== undefined && {
+      maxTailProbeGets: compactMaxTailProbeGets,
+    }),
   },
   gc: {
     maxMarksPerRun: profile.gcMaxMarks,
     maxSweepsPerRun: profile.gcMaxSweeps,
-    ...(maxTailProbeGets !== undefined && {
-      maxTailProbeGets,
-      maxLiveLogEntriesPerRun: profile.maxFoldEntriesPerPass,
+    ...(profile.gcMaxTailProbeGets !== undefined && {
+      maxTailProbeGets: profile.gcMaxTailProbeGets,
+    }),
+    ...(profile.gcMaxLiveLogEntriesPerRun !== undefined && {
+      maxLiveLogEntriesPerRun: profile.gcMaxLiveLogEntriesPerRun,
     }),
   },
 });
@@ -176,7 +184,7 @@ const profileToScheduledOptions = (
  *     a due snapshot sweep + S DELETEs + all three final pending CAS attempts
  *     (3 GETs + 3 PUTs).
  *   content-deferred GC: 1 current GET + P tail-probe GETs + 1 `tail_hint`
- *     checkpoint CAS PUT + 3 pending-bootstrap-conflict operations + 2 LIST
+ *     checkpoint CAS PUT + 3 pending-bootstrap-conflict operations + 3 LIST
  *     calls + 1 conditional fresh-current GET before a due snapshot sweep + S
  *     DELETEs + all three final pending CAS attempts (3 GETs + 3 PUTs).
  *
@@ -192,8 +200,10 @@ const profileToScheduledOptions = (
  * Keeping the threshold at N makes a pass fold exactly when one pass's worth
  * of work exists. Any future edit must keep `minEntriesToCompact <= P`.
  *
- * With N=20, P=25, M=20, S=10 the exact worst cases are: compaction ≤49,
- * full content-marking GC ≤46, and content-deferred GC ≤49. Combining a
+ * With N=20, compact P=25, GC P=24, M=20, S=10 the exact worst cases are:
+ * compaction ≤49, full content-marking GC ≤46, and content-deferred GC ≤49.
+ * The write-tick runner's preliminary `current.json` GET raises GC to at
+ * most 50. Combining a
  * compact and GC pass can exceed 50, so the Cloudflare scheduled handler
  * processes one collection and alternates phases per invocation (even minute →
  * compact, odd minute → GC) by calling `compact()` / `runGc()` directly instead of
@@ -362,9 +372,16 @@ export const runBoundedMaintenance = async (
 ): Promise<void> => {
   const { storage, currentJsonKey, prevSeq } = args;
   // Resolve the profile ONCE (the runner's single CF-free-safe default,
-  // preserving the bare-`Db.create()` promise); all six budgets read off it.
+  // preserving the bare-`Db.create()` promise); all phase budgets read off it.
   const profile = options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
-  const { maxFoldEntriesPerPass, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
+  const {
+    maxFoldEntriesPerPass,
+    gcMaxMarks,
+    gcMaxSweeps,
+    gcMaxTailProbeGets,
+    gcMaxLiveLogEntriesPerRun,
+    gcInterval,
+  } = profile;
   const minEntriesToCompact = options?.minEntriesToCompact ?? WRITE_TICK_MIN_ENTRIES_TO_COMPACT;
   const phasesPerTick = options?.phasesPerTick ?? "single";
   const signal = options?.signal;
@@ -379,6 +396,10 @@ export const runBoundedMaintenance = async (
   const gcOpts = {
     maxMarksPerRun: gcMaxMarks,
     maxSweepsPerRun: gcMaxSweeps,
+    ...(gcMaxTailProbeGets !== undefined && { maxTailProbeGets: gcMaxTailProbeGets }),
+    ...(gcMaxLiveLogEntriesPerRun !== undefined && {
+      maxLiveLogEntriesPerRun: gcMaxLiveLogEntriesPerRun,
+    }),
     ...(signal !== undefined && { signal }),
     // @internal test seams — undefined in production, so `runGc` falls
     // back to its 7-day grace and wall-clock `now`.

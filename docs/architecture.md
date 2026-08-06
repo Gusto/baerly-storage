@@ -590,9 +590,10 @@ app/tickets/tenant/acme/manifests/<collection>/
 Current writers do not create `content/<sha>.json`. Buckets written by
 legacy writers that emitted content side objects may still contain them;
 during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
-No current kernel reader depends on these objects. Existing orphan-content
-GC remains unchanged: live hashes are rescued, and orphan candidates are
-reclaimed only after the existing grace and revalidation checks. Verified
+No current kernel reader depends on these objects. Retained orphan-content
+GC still rescues live hashes and reclaims candidates only after the existing
+grace and revalidation checks. A pass with no pending content candidate and
+an empty content window skips legacy liveness admission and hashing. Verified
 v0.6.0 buckets require no migration.
 
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log

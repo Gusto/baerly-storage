@@ -15,9 +15,8 @@
  * (a fixed 50-doc working set under insert/update churn, so the live
  * floor is constant and any unbounded growth is unswept orphans)
  * through the REAL {@link Writer} inside an ALS maintenance context. The
- * content objects are deliberately simulated v0.6.0 legacy objects, not
- * objects emitted by the current writer; this keeps the retained collector
- * coverage exercising the pre-change bucket topology.
+ * provisioned arm deliberately simulates v0.6.0 legacy content objects;
+ * the Cloudflare-Free arm uses the current content-free bucket topology.
  *
  * ## What the measured trajectory shows
  *
@@ -27,40 +26,12 @@
  *    1600 writes) — proving the cadence-decoupled budgeted design
  *    drains correctly.
  *
- * 2. With the CF-FREE caps (`gcMaxMarks = 20`, `gcMaxSweeps = 10`) the
- *    object count ALSO stays BOUNDED, now that BOTH of `runGc`'s
- *    starvable mark phases rotate via a persisted cursor in
- *    `gc/pending.json`. Each bounded pass resumes `startAfter` the prior
- *    pass's last examined key, so over a rotation the whole prefix is
- *    reached and nothing past the first-`maxMarks` lexicographic window
- *    is stranded. The count converges to `live + bounded slack`
- *    (orphans in flight within the grace window plus the per-pass mark
- *    budget) instead of growing linearly.
- *
- *    - `content_scan_cursor` (Task 4.6): content keys are hash-named,
- *      so a bounded window can be all-live. Before it, orphan content
- *      accrued past the first window was unreachable (~0.5
- *      objects/write leak).
- *    - `log_scan_cursor`: log keys are UNPADDED decimal, so the live
- *      keys at/above `log_seq_start` lex-interleave with — and
- *      routinely precede — the stale ones below it. Before it, a
- *      bounded pass filled its window with live keys and stale logs
- *      behind them leaked permanently.
- *
- *    Boundedness needs both. A sweep budget that keeps pace is
- *    necessary but not sufficient: a starved MARK phase never puts the
- *    candidate in the ledger for the sweep to find.
- *
- *    **These arms do not themselves demonstrate the log half**, and
- *    the claim above is design rationale, not something measured here.
- *    Both arms set `gcGraceMillis: 0`, so mark and sweep land in the
- *    same pass and deletion DOES clear the front of the window — the
- *    precondition the stale-log rotation exists for when it does not
- *    hold. They pass identically with and without `log_scan_cursor`.
- *    The stale-log rotation is covered by the micro-fixtures in
- *    `gc.test.ts`, which seed the unpadded-decimal interleaving
- *    directly; a drain-level arm at non-zero grace would be the
- *    stronger guard and does not exist yet.
+ * 2. With the CF-FREE caps (`gcMaxMarks = 20`, `gcMaxSweeps = 10`) and
+ *    the current content-free writer topology, the object count ALSO
+ *    stays BOUNDED. Empty content windows skip legacy liveness admission,
+ *    while the stale-log cursor continues rotating through the unpadded
+ *    decimal log namespace. Legacy cursor and rescue behavior remains
+ *    covered by the focused fixtures in `gc.test.ts`.
  *
  *    The `BITES` arm below still models the pre-decoupling fold-bolted
  *    GC and STILL grows — proving the bounded assertion is not vacuous.
@@ -126,6 +97,7 @@ const driveWriteStream = async (
   profile: BoundedMaintenanceOptions,
   total: number,
   sampleEvery: number,
+  seedLegacyContent = true,
 ): Promise<Array<{ write: number; objects: number }>> => {
   const storage = new MemoryStorage();
   await bootstrap(storage, KEY);
@@ -140,7 +112,9 @@ const driveWriteStream = async (
       // never exceeds WORKING_SET, so the live floor is constant and any
       // sustained growth in the object count is unswept orphans.
       const body = { _id: `d${i % WORKING_SET}`, n: i, blob };
-      await seedLegacyContentForBody(storage, KEY.slice(0, KEY.lastIndexOf("/")), body);
+      if (seedLegacyContent) {
+        await seedLegacyContentForBody(storage, KEY.slice(0, KEY.lastIndexOf("/")), body);
+      }
       await writer.commit({
         op: i % 2 === 0 ? "I" : "U",
         collection: COLL,
@@ -166,6 +140,8 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
         maxFoldEntriesPerPass: 20,
         gcMaxMarks: 100,
         gcMaxSweeps: 50,
+        gcMaxTailProbeGets: 100,
+        gcMaxLiveLogEntriesPerRun: 100,
         gcInterval: 4,
       },
       minEntriesToCompact: 50,
@@ -196,16 +172,10 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     ).toBeLessThan(WORKING_SET * 6); // live + tail + manifests, bounded
   });
 
-  test("CF-free caps now BOUND orphan-content under sustained churn (cursor rotation)", async () => {
-    // CF-free per-tick caps. Before Task 4.6 the object count climbed
-    // linearly because GC's `maxMarksPerRun`-capped content LIST could
-    // not reach orphan content beyond its first-`maxMarks` lexicographic
-    // window. The persisted `content_scan_cursor` rotation now resumes
-    // each bounded pass `startAfter` the prior pass's last examined key,
-    // so over a rotation the whole hash-named `content/` keyspace is
-    // reached and orphan content drains within the CF-free budget. The
-    // count must now PLATEAU near the live working set, not grow with
-    // writes.
+  test("CF-free caps keep the content-free write stream bounded", async () => {
+    // Current writers emit no content side objects. The empty-content proof
+    // lets the CF-free profile skip legacy liveness admission while stale-log
+    // and snapshot collection continue within the write-tick envelope.
     const cfFree: BoundedMaintenanceOptions = {
       profile: {
         ...MAINTENANCE_PROFILE_CF_FREE,
@@ -218,16 +188,13 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
       phasesPerTick: "single",
       gcGraceMillis: 0,
     };
-    const samples = await driveWriteStream(cfFree, 1600, 200);
+    const samples = await driveWriteStream(cfFree, 1600, 200, false);
     const trajectory = samples.map((s) => `${s.write}:${s.objects}`).join(" ");
     const mid = samples[Math.floor(samples.length / 2)]!;
     const last = samples[samples.length - 1]!;
 
-    // Plateau: the second half does not grow beyond a bounded slack
-    // (orphans in flight + the per-pass mark budget). Slack is wider
-    // than the provisioned arm because CF-free rotates the content
-    // window over many passes rather than draining each fold's orphans
-    // immediately — but it is a CONSTANT band, not write-proportional.
+    // Plateau: the second half stays in a constant band rather than growing
+    // with write count.
     const SLACK = 80;
     expect(
       last.objects - mid.objects,

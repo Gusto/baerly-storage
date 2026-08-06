@@ -97,6 +97,7 @@ import {
   type LogEntry,
   type MetricsRecorder,
   type Storage,
+  type StorageListEntry,
   CURRENT_JSON_CONTENT_TYPE,
   GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
@@ -315,11 +316,13 @@ export interface RunGcResult {
    * `marked.stale_log` / `marked.orphan_snapshot` and their sweeps are
    * unaffected — only the content category defers.
    *
-   * Absent means content classification ran on a complete live set. Also
-   * emitted as `db.gc.content_deferred_total` (labelled by reason), but a
-   * cron caller outside any HTTP scope sees no metrics — read this field
-   * and log a reason that {@link isDegradedContentDeferral} accepts when
-   * it repeats across passes.
+   * Absent means the content phase completed safely: either classification
+   * ran on a complete live set, or an empty LIST window with no pending
+   * content candidate proved that no liveness scan was needed. Also emitted
+   * as `db.gc.content_deferred_total` (labelled by reason), but a cron caller
+   * outside any HTTP scope sees no metrics — read this field and log a reason
+   * that {@link isDegradedContentDeferral} accepts when it repeats across
+   * passes.
    */
   readonly contentDeferredReason?: ContentDeferralReason;
 }
@@ -387,14 +390,6 @@ export const runGc = async (
   const current = cur.json;
   const logSeqStart = logSeqStartOf(current);
 
-  // Bounded scheduled GC admits content liveness hashing only after an
-  // exact, affordable proof. Capture decoded suffix entries here so an
-  // admitted pass never pays for those GETs twice. This happens before the
-  // pending-ledger read so a deferred pass can checkpoint its certified
-  // progress without spending bootstrap/CAS budget first.
-  let admittedTailProbe:
-    | { readonly floor: number; readonly tail: number; readonly entries: LogEntry[] }
-    | undefined;
   let preserveContentCursor = false;
   // Why content discovery deferred, for the result field and the metric.
   // Ordered DEGRADED-before-BUDGET where a pass qualifies for both: a
@@ -402,65 +397,6 @@ export const runGc = async (
   // it under an outcome operators are told to expect on Free.
   let contentDeferredReason: ContentDeferralReason | undefined;
   const boundedAdmission = maxTailProbeGets !== undefined || maxLiveLogEntries !== undefined;
-  if (boundedAdmission) {
-    const floor = Math.max(logSeqStart, current.tail_hint);
-    const probe = await probeTailChunk(storage, collectionPrefix, floor, {
-      ...(signal !== undefined && { signal }),
-      ...(maxTailProbeGets !== undefined && { cap: maxTailProbeGets }),
-      tolerateMalformed: true,
-    });
-    const exactTail = probe.kind === "exact" ? probe.tail : undefined;
-    const liveEntryCap = maxLiveLogEntries ?? Number.MAX_SAFE_INTEGER;
-    if (!probe.complete) {
-      contentDeferredReason = "probe-slot-malformed";
-    } else if (probe.kind === "at-least") {
-      contentDeferredReason = "probe-budget";
-    } else if (exactTail !== undefined && exactTail - logSeqStart > liveEntryCap) {
-      contentDeferredReason = "live-tail-over-cap";
-    }
-    preserveContentCursor = contentDeferredReason !== undefined;
-
-    // Tested against the reason rather than `preserveContentCursor` so the
-    // conflict return below narrows to a defined reason — the two are the
-    // same condition, assigned on the line above.
-    if (contentDeferredReason !== undefined) {
-      const certifiedTail = probe.kind === "exact" ? probe.tail : probe.lowerBound;
-      if (certifiedTail > current.tail_hint) {
-        try {
-          await storage.put(
-            currentJsonKey,
-            encodeJsonBytes({ ...current, tail_hint: certifiedTail }),
-            {
-              ifMatch: cur.etag,
-              contentType: CURRENT_JSON_CONTENT_TYPE,
-              ...(signal !== undefined && { signal }),
-            },
-          );
-        } catch (error) {
-          if (error instanceof BaerlyError && error.code === "Conflict") {
-            // One attempt only — a retry spends more budget and could admit
-            // against a different manifest. But the pass DID defer content
-            // classification, and on a DEGRADED reason that is the alertable
-            // fact; a bare zero result renders it as a healthy idle pass,
-            // indistinguishable from a missing `current.json`. Report the
-            // reason on both channels, and count the lost checkpoint the way
-            // `compact()` counts its own.
-            const casLostMetrics = ctxMetrics();
-            const casLostLabels = { collection: collectionName };
-            casLostMetrics.counter("db.gc.cas_lost_total", 1, casLostLabels);
-            casLostMetrics.counter("db.gc.content_deferred_total", 1, {
-              ...casLostLabels,
-              reason: contentDeferredReason,
-            });
-            return { ...zeroGcResult(), contentDeferredReason };
-          }
-          throw error;
-        }
-      }
-    } else if (probe.kind === "exact") {
-      admittedTailProbe = { floor, tail: probe.tail, entries: probe.entries };
-    }
-  }
 
   // ── Step 2. Read or create gc/pending.json. ─────────────────────
   // Race-tolerant create: a concurrent pass may have bootstrapped
@@ -590,8 +526,9 @@ export const runGc = async (
   }
 
   // ── Step 5. Mark orphan content. ────────────────────────────────
-  // Build the live content-hash set for v0.6.0/mixed-rollout compatibility
-  // by hashing every live post-image:
+  // When a listed or pending legacy object needs classification, build the
+  // live content-hash set for v0.6.0/mixed-rollout compatibility by hashing
+  // every live post-image:
   //   - log entries [log_seq_start, true tail)
   //   - snapshot rows (via `loadSnapshotAsMap` so the hash check
   //     defends against a tampered snapshot)
@@ -600,41 +537,102 @@ export const runGc = async (
   let markedOrphanContent = 0;
   let nextContentCursor: string | undefined;
   let completeLiveContentHashes: ReadonlySet<string> | undefined;
-  const liveContent = preserveContentCursor
-    ? undefined
-    : await collectLiveContentHashes(
-        storage,
-        collectionPrefix,
-        collectionName,
-        current,
-        logSeqStart,
-        signal,
-        admittedTailProbe,
-      );
-  if (liveContent !== undefined && !liveContent.complete) {
-    // A partial live set cannot prove ANY content key dead — the missing
-    // post-images are exactly the ones that would look orphan. Defer the
-    // whole category (cursor held, nothing marked, nothing swept) rather
-    // than classify against an incomplete set.
-    preserveContentCursor = true;
-    contentDeferredReason = liveContent.incompleteReason;
-  } else if (liveContent !== undefined) {
-    completeLiveContentHashes = liveContent.hashes;
-    const contentPass = await markOrphanContent({
-      storage,
-      collectionPrefix,
-      liveHashes: liveContent.hashes,
-      known,
-      maxMarks,
-      cursor: pending.json.content_scan_cursor,
-      now,
-      grace,
-      markGeneration,
-      signal,
-    });
-    newCandidates.push(...contentPass.candidates);
-    markedOrphanContent = contentPass.candidates.length;
-    nextContentCursor = contentPass.nextContentCursor;
+  const hasPendingContentCandidates = pending.json.candidates.some(
+    (candidate) => candidate.reason === "orphan-content",
+  );
+  const contentWindow = (): AsyncIterable<StorageListEntry> =>
+    storage.list(
+      `${collectionPrefix}/content/`,
+      listWindow(maxMarks, pending.json.content_scan_cursor, signal),
+    );
+  if (!preserveContentCursor) {
+    let contentEntries: AsyncIterable<StorageListEntry> | undefined;
+    let closeContentEntries: (() => Promise<void>) | undefined;
+
+    // Pending content needs a complete live set even when this cursored
+    // window is empty: sweep-time rescue is independent of discovery. With
+    // no pending content, first prove this window contains work so a
+    // content-free collection never pays the legacy liveness scan.
+    if (!hasPendingContentCandidates) {
+      const peeked = await peekAsyncIterable(contentWindow());
+      if (peeked.empty) {
+        // Fewer than maxMarks entries means end-of-keyspace, including zero:
+        // wrap exactly as the existing classifier does after exhaustion.
+        nextContentCursor = undefined;
+      } else {
+        contentEntries = peeked.entries;
+        closeContentEntries = peeked.close;
+      }
+    }
+
+    if (hasPendingContentCandidates || contentEntries !== undefined) {
+      try {
+        const admission: BoundedContentAdmission | undefined = boundedAdmission
+          ? await admitBoundedContentLiveness({
+              storage,
+              collectionPrefix,
+              currentJsonKey,
+              current,
+              currentEtag: cur.etag,
+              logSeqStart,
+              maxTailProbeGets,
+              maxLiveLogEntries,
+              signal,
+            })
+          : undefined;
+        contentDeferredReason = admission?.deferredReason;
+        preserveContentCursor = contentDeferredReason !== undefined;
+
+        if (admission?.casConflict === true) {
+          const casLostMetrics = ctxMetrics();
+          const casLostLabels = { collection: collectionName };
+          casLostMetrics.counter("db.gc.cas_lost_total", 1, casLostLabels);
+          casLostMetrics.counter("db.gc.content_deferred_total", 1, {
+            ...casLostLabels,
+            reason: admission.deferredReason,
+          });
+          return { ...zeroGcResult(), contentDeferredReason: admission.deferredReason };
+        }
+
+        if (!preserveContentCursor) {
+          const liveContent = await collectLiveContentHashes(
+            storage,
+            collectionPrefix,
+            collectionName,
+            current,
+            logSeqStart,
+            signal,
+            admission?.admittedTailProbe,
+          );
+          if (!liveContent.complete) {
+            // A partial live set cannot prove ANY content key dead — the
+            // missing post-images are exactly the ones that would look
+            // orphan. Hold the cursor and all content candidates.
+            preserveContentCursor = true;
+            contentDeferredReason = liveContent.incompleteReason;
+          } else {
+            completeLiveContentHashes = liveContent.hashes;
+            const contentPass = await markOrphanContent({
+              entries: contentEntries ?? contentWindow(),
+              liveHashes: liveContent.hashes,
+              known,
+              maxMarks,
+              now,
+              grace,
+              markGeneration,
+            });
+            newCandidates.push(...contentPass.candidates);
+            markedOrphanContent = contentPass.candidates.length;
+            nextContentCursor = contentPass.nextContentCursor;
+          }
+        }
+      } finally {
+        // Nonempty peeks suspend the source iterator. Classification claims
+        // and closes it on success; this idempotent close covers incomplete,
+        // rejected, and aborted liveness/admission paths.
+        await closeContentEntries?.();
+      }
+    }
   }
 
   // ── Step 6. Rescue live candidates, then sweep due candidates. ──
@@ -894,6 +892,87 @@ const listWindow = (
   ...(signal !== undefined && { signal }),
 });
 
+type AdmittedTailProbe = {
+  readonly floor: number;
+  readonly tail: number;
+  readonly entries: LogEntry[];
+};
+
+type BoundedContentAdmission =
+  | {
+      readonly admittedTailProbe: AdmittedTailProbe;
+      readonly deferredReason?: never;
+      readonly casConflict?: never;
+    }
+  | {
+      readonly admittedTailProbe?: never;
+      readonly deferredReason: ContentDeferralReason;
+      readonly casConflict?: true;
+    };
+
+/**
+ * Decide whether a bounded pass can afford complete legacy-content
+ * liveness, checkpointing certified occupancy when it cannot. The
+ * checkpoint is deliberately one-shot: retrying could spend beyond the
+ * pass budget or admit against a different manifest.
+ */
+const admitBoundedContentLiveness = async (opts: {
+  readonly storage: Storage;
+  readonly collectionPrefix: string;
+  readonly currentJsonKey: string;
+  readonly current: CurrentJson;
+  readonly currentEtag: string;
+  readonly logSeqStart: number;
+  readonly maxTailProbeGets: number | undefined;
+  readonly maxLiveLogEntries: number | undefined;
+  readonly signal: AbortSignal | undefined;
+}): Promise<BoundedContentAdmission> => {
+  const floor = Math.max(opts.logSeqStart, opts.current.tail_hint);
+  const probe = await probeTailChunk(opts.storage, opts.collectionPrefix, floor, {
+    ...(opts.signal !== undefined && { signal: opts.signal }),
+    ...(opts.maxTailProbeGets !== undefined && { cap: opts.maxTailProbeGets }),
+    tolerateMalformed: true,
+  });
+  const liveEntryCap = opts.maxLiveLogEntries ?? Number.MAX_SAFE_INTEGER;
+  let deferredReason: ContentDeferralReason;
+  if (!probe.complete) {
+    deferredReason = "probe-slot-malformed";
+  } else if (probe.kind === "at-least") {
+    deferredReason = "probe-budget";
+  } else if (probe.tail - opts.logSeqStart > liveEntryCap) {
+    deferredReason = "live-tail-over-cap";
+  } else {
+    // Preserve decoded suffix entries so admitted liveness never pays for
+    // the bounded probe GETs twice.
+    return {
+      admittedTailProbe: { floor, tail: probe.tail, entries: probe.entries },
+    };
+  }
+
+  const certifiedTail = probe.kind === "exact" ? probe.tail : probe.lowerBound;
+  if (certifiedTail <= opts.current.tail_hint) {
+    return { deferredReason };
+  }
+
+  try {
+    await opts.storage.put(
+      opts.currentJsonKey,
+      encodeJsonBytes({ ...opts.current, tail_hint: certifiedTail }),
+      {
+        ifMatch: opts.currentEtag,
+        contentType: CURRENT_JSON_CONTENT_TYPE,
+        ...(opts.signal !== undefined && { signal: opts.signal }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
+      return { deferredReason, casConflict: true };
+    }
+    throw error;
+  }
+  return { deferredReason };
+};
+
 /**
  * Parse `<...>/log/<seq>.json` and return `seq`. Returns `null` on
  * any shape that doesn't look like a log entry key — defensively
@@ -960,11 +1039,63 @@ const parseHashFromContentKey = (key: string): string | null => {
 const computeDueAt = (now: () => Date, graceMs: number): string =>
   new Date(now().getTime() + graceMs).toISOString();
 
+type PeekedAsyncIterable<T> =
+  | { readonly empty: true }
+  | {
+      readonly empty: false;
+      readonly entries: AsyncIterable<T>;
+      readonly close: () => Promise<void>;
+    };
+
 /**
- * One bounded rotation window over `content/`: LIST at most `maxMarks`
- * keys resuming after `cursor`, mark every key whose content hash is
- * absent from `liveHashes` and not already pending, and report where the
- * next pass resumes.
+ * Peek one entry from an async iterable without buffering the rest. The
+ * nonempty arm exposes a one-shot iterable that yields the buffered entry,
+ * then resumes the original iterator. `close` releases the suspended source
+ * when the caller cannot continue classification.
+ */
+const peekAsyncIterable = async <T>(source: AsyncIterable<T>): Promise<PeekedAsyncIterable<T>> => {
+  const iterator = source[Symbol.asyncIterator]();
+  const first = await iterator.next();
+  if (first.done) {
+    return { empty: true };
+  }
+
+  const firstValue = first.value;
+  let claimed = false;
+  const close = async (): Promise<void> => {
+    if (claimed) {
+      return;
+    }
+    claimed = true;
+    await iterator.return?.();
+  };
+  const entries: AsyncIterable<T> = {
+    async *[Symbol.asyncIterator](): AsyncIterator<T> {
+      if (claimed) {
+        return;
+      }
+      claimed = true;
+      try {
+        yield firstValue;
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) {
+            return;
+          }
+          yield next.value;
+        }
+      } finally {
+        await iterator.return?.();
+      }
+    },
+  };
+  return { empty: false, entries, close };
+};
+
+/**
+ * Classify one already-opened bounded rotation window over `content/`:
+ * mark every key whose content hash is absent from `liveHashes` and not
+ * already pending, and report where the next pass resumes.
  *
  * `liveHashes` MUST be complete. A partial set marks live content as
  * orphan, and the grace period does not save it — a marked live key is
@@ -979,12 +1110,10 @@ const computeDueAt = (now: () => Date, graceMs: number): string =>
  * past it. See `content_scan_cursor`.
  */
 const markOrphanContent = async (opts: {
-  readonly storage: Storage;
-  readonly collectionPrefix: string;
+  readonly entries: AsyncIterable<StorageListEntry>;
   readonly liveHashes: ReadonlySet<string>;
   readonly known: ReadonlySet<string>;
   readonly maxMarks: number;
-  readonly cursor: string | undefined;
   readonly now: () => Date;
   readonly grace: number;
   /**
@@ -994,7 +1123,6 @@ const markOrphanContent = async (opts: {
    * `current.json` — see `GcCandidate.generation`.
    */
   readonly markGeneration: { generation?: string };
-  readonly signal: AbortSignal | undefined;
 }): Promise<{
   readonly candidates: GcCandidate[];
   readonly nextContentCursor: string | undefined;
@@ -1002,10 +1130,7 @@ const markOrphanContent = async (opts: {
   const candidates: GcCandidate[] = [];
   let examinedThisPass = 0;
   let lastExaminedKey: string | undefined;
-  for await (const entry of opts.storage.list(
-    `${opts.collectionPrefix}/content/`,
-    listWindow(opts.maxMarks, opts.cursor, opts.signal),
-  )) {
+  for await (const entry of opts.entries) {
     // The cursor advances by EXAMINED keys (not marked), so an all-live
     // window still moves the window forward to fresh keys next pass.
     examinedThisPass++;

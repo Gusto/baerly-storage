@@ -270,10 +270,12 @@ index-findable or fully uncommitted.
 Current writers do not create `content/<sha>.json`. Buckets written by
 legacy writers that emitted content side objects may still contain them;
 during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
-No current kernel reader depends on these objects. Existing orphan-content
-GC remains unchanged: live hashes are rescued, and orphan candidates are
-reclaimed only after the existing grace and revalidation checks. Verified
-v0.6.0 buckets require no migration.
+No current kernel reader depends on these objects. Retained orphan-content
+GC still rescues live hashes and reclaims candidates only after the existing
+grace and revalidation checks. A pass with no pending content candidate and
+an empty content window skips legacy liveness admission and hashing; a pending
+candidate still requires complete liveness admission. Verified v0.6.0 buckets
+require no migration.
 
 Index failures are asymmetric: extra candidates are repairable false
 positives, but missing candidates can hide committed rows from

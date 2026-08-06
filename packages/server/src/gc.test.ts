@@ -608,6 +608,339 @@ describe("runGc", () => {
     );
   });
 
+  describe("content-free liveness fast path", () => {
+    test("proves an empty content window before admitting an over-cap live tail", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(
+        inner,
+        KEY,
+        logStateCurrentJson({
+          log_seq_start: 0,
+          tail_hint: 0,
+        }),
+      );
+      await seedDenseLog(inner, 0, 80);
+
+      const { storage, trace } = tracingStorage(inner);
+      const result = await runGc({ storage, currentJsonKey: KEY }, {
+        maxTailProbeGets: 25,
+        maxLiveLogEntriesPerRun: 20,
+      } as InternalRunGcOptions);
+
+      expect(result.contentDeferredReason).toBeUndefined();
+      expect(result.marked.orphan_content).toBe(0);
+      expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
+      expect(trace.gets.filter((key) => key.startsWith(`${PREFIX}/log/`))).toEqual([]);
+      expect(trace.gets.filter((key) => key.startsWith(`${PREFIX}/snapshot/`))).toEqual([]);
+    });
+
+    test("skips live log and snapshot reads after one empty content LIST", async () => {
+      const inner = new MemoryStorage();
+      const snapshotRows = [
+        { _id: "snapshot-0", body: { _id: "snapshot-0", n: 0 } },
+        { _id: "snapshot-1", body: { _id: "snapshot-1", n: 1 } },
+        { _id: "snapshot-2", body: { _id: "snapshot-2", n: 2 } },
+      ];
+      const snapshotBody = encodeSnapshotBody({
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        min_seq: 0,
+        max_seq: 3,
+        collection: COLL,
+        docs: snapshotRows,
+      });
+      const liveSnapshot = snapshotKey(PREFIX, 0, 3, await snapshotHash(snapshotBody));
+      await inner.put(liveSnapshot, snapshotBody);
+      await createCurrentJson(
+        inner,
+        KEY,
+        logStateCurrentJson({
+          snapshot: liveSnapshot,
+          log_seq_start: 3,
+          tail_hint: 7,
+          snapshot_bytes: snapshotBody.byteLength,
+          snapshot_rows: snapshotRows.length,
+        }),
+      );
+      // Four live log post-images plus the three snapshot rows would require
+      // seven legacy hashes if the empty content window did not short-circuit.
+      await seedDenseLog(inner, 3, 7);
+
+      const { storage, trace } = tracingStorage(inner);
+      const result = await runGc({ storage, currentJsonKey: KEY }, {
+        maxTailProbeGets: 1,
+        maxLiveLogEntriesPerRun: 4,
+      } as InternalRunGcOptions);
+
+      expect(result.marked.orphan_content).toBe(0);
+      expect(
+        trace.gets.filter(
+          (key) => key.startsWith(`${PREFIX}/log/`) || key.startsWith(`${PREFIX}/snapshot/`),
+        ),
+      ).toEqual([]);
+      expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
+      const pending = await readGcPending(inner, PENDING_KEY);
+      expect(pending?.json.content_scan_cursor).toBeUndefined();
+    });
+
+    test("retains live legacy content and sweeps a verified orphan", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 1 }));
+      const liveBody = { _id: "live", n: 1 };
+      const orphanBody = { _id: "orphan", n: 2 };
+      const liveKey = await seedLegacyContentForBody(inner, PREFIX, liveBody);
+      const orphanKey = await seedLegacyContentForBody(inner, PREFIX, orphanBody);
+      await seedLogEntry(inner, PREFIX, 0, { after: liveBody });
+
+      const { storage, trace } = tracingStorage(inner);
+      const result = await runGc({ storage, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxTailProbeGets: 1,
+        maxLiveLogEntriesPerRun: 1,
+        maxSweepsPerRun: 10,
+      } as InternalRunGcOptions);
+
+      expect(result.marked.orphan_content).toBe(1);
+      expect(result.swept).toBe(1);
+      await expect(inner.get(liveKey)).resolves.not.toBeNull();
+      await expect(inner.get(orphanKey)).resolves.toBeNull();
+      expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
+    });
+
+    test("rescues a pending live candidate behind an empty cursored window", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 1 }));
+      const liveBody = { _id: "pending-live", n: 1 };
+      const liveKey = await seedLegacyContentForBody(inner, PREFIX, liveBody);
+      await seedLogEntry(inner, PREFIX, 0, { after: liveBody });
+      await createGcPending(inner, PENDING_KEY, {
+        schema_version: GC_PENDING_SCHEMA_VERSION,
+        candidates: [
+          {
+            key: liveKey,
+            due_at: "2000-01-01T00:00:00.000Z",
+            reason: "orphan-content",
+            generation: LOG_STATE_GENERATION,
+          },
+        ],
+        last_swept_at: "",
+        // `startAfter` is strict, so this pass's content LIST is empty.
+        content_scan_cursor: liveKey,
+      });
+
+      const { storage, trace } = tracingStorage(inner);
+      const result = await runGc({ storage, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxTailProbeGets: 1,
+        maxLiveLogEntriesPerRun: 1,
+        maxSweepsPerRun: 10,
+      } as InternalRunGcOptions);
+
+      expect(trace.gets).toContain(`${PREFIX}/log/0.json`);
+      expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
+      expect(result.dropped.still_live).toBe(1);
+      expect(result.swept).toBe(0);
+      await expect(inner.get(liveKey)).resolves.not.toBeNull();
+      const pending = await readGcPending(inner, PENDING_KEY);
+      expect(pending?.json.candidates).toEqual([]);
+      expect(pending?.json.content_scan_cursor).toBeUndefined();
+    });
+
+    test("wraps an empty window without marking content published after its LIST response", async () => {
+      const inner = new MemoryStorage();
+      await bootstrap(inner, KEY);
+      const publishedBody = { _id: "published-after-list", n: 1 };
+      let publishedKey: string | undefined;
+      let observedEmptyResponse = false;
+      const subject: Storage = {
+        get: (key, opts) => inner.get(key, opts),
+        put: (key, body, opts) => inner.put(key, body, opts),
+        delete: (key, opts) => inner.delete(key, opts),
+        list(prefix, opts) {
+          if (prefix !== `${PREFIX}/content/` || publishedKey !== undefined) {
+            return inner.list(prefix, opts);
+          }
+          return (async function* (): AsyncIterable<StorageListEntry> {
+            const iterator = inner.list(prefix, opts)[Symbol.asyncIterator]();
+            const first = await iterator.next();
+            if (!first.done) {
+              yield first.value;
+              while (true) {
+                const next = await iterator.next();
+                if (next.done) {
+                  return;
+                }
+                yield next.value;
+              }
+            }
+
+            // The backend has linearized an empty LIST response. A mixed-
+            // version writer may publish the legacy side object immediately
+            // afterward, before this consumer observes iterator completion.
+            observedEmptyResponse = true;
+            publishedKey = await seedLegacyContentForBody(inner, PREFIX, publishedBody);
+            await seedLogEntry(inner, PREFIX, 0, { after: publishedBody });
+            await casUpdateCurrentJson(inner, KEY, (current) => ({
+              ...current,
+              tail_hint: 1,
+            }));
+          })();
+        },
+      };
+      const { storage, trace } = tracingStorage(subject);
+      const options = {
+        graceMillis: 0,
+        maxTailProbeGets: 1,
+        maxLiveLogEntriesPerRun: 1,
+        maxSweepsPerRun: 10,
+      } as InternalRunGcOptions;
+
+      const first = await runGc({ storage, currentJsonKey: KEY }, options);
+
+      expect(observedEmptyResponse).toBe(true);
+      expect(first.marked.orphan_content).toBe(0);
+      expect(first.swept).toBe(0);
+      if (publishedKey === undefined) {
+        throw new Error("race fixture did not publish legacy content");
+      }
+      await expect(inner.get(publishedKey)).resolves.not.toBeNull();
+      const afterFirst = await readGcPending(inner, PENDING_KEY);
+      expect(afterFirst?.json.content_scan_cursor).toBeUndefined();
+
+      const second = await runGc({ storage, currentJsonKey: KEY }, options);
+
+      expect(second.marked.orphan_content).toBe(0);
+      expect(second.swept).toBe(0);
+      await expect(inner.get(publishedKey)).resolves.not.toBeNull();
+      expect(trace.deletes).not.toContain(publishedKey);
+      expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(2);
+      const afterSecond = await readGcPending(inner, PENDING_KEY);
+      expect(afterSecond?.json.content_scan_cursor).toBeUndefined();
+    });
+
+    test("closes a peeked content iterator when liveness is incomplete", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 2 }));
+      await seedLogEntry(inner, PREFIX, 1, { after: { _id: "still-live", n: 1 } });
+      const contentKey = await seedLegacyContentForBody(inner, PREFIX, {
+        _id: "unclassifiable",
+        n: 2,
+      });
+      const storedCursor = `${PREFIX}/content/00000000000000000000000000000000.json`;
+      await createGcPending(inner, PENDING_KEY, {
+        schema_version: GC_PENDING_SCHEMA_VERSION,
+        candidates: [],
+        last_swept_at: "",
+        content_scan_cursor: storedCursor,
+      });
+      let contentIteratorClosed = false;
+      const subject: Storage = {
+        get: (key, opts) => inner.get(key, opts),
+        put: (key, body, opts) => inner.put(key, body, opts),
+        delete: (key, opts) => inner.delete(key, opts),
+        list(prefix, opts) {
+          if (prefix !== `${PREFIX}/content/`) {
+            return inner.list(prefix, opts);
+          }
+          return (async function* (): AsyncIterable<StorageListEntry> {
+            try {
+              yield* inner.list(prefix, opts);
+            } finally {
+              contentIteratorClosed = true;
+            }
+          })();
+        },
+      };
+      const { storage, trace } = tracingStorage(subject);
+
+      const result = await runGc({ storage, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxTailProbeGets: 1,
+        maxLiveLogEntriesPerRun: 2,
+        maxSweepsPerRun: 10,
+      } as InternalRunGcOptions);
+
+      expect(result.contentDeferredReason).toBe("live-log-unreadable");
+      expect(result.marked.orphan_content).toBe(0);
+      expect(result.swept).toBe(0);
+      expect(contentIteratorClosed).toBe(true);
+      expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
+      await expect(inner.get(contentKey)).resolves.not.toBeNull();
+      const pending = await readGcPending(inner, PENDING_KEY);
+      expect(pending?.json.content_scan_cursor).toBe(storedCursor);
+    });
+
+    test("closes a peeked content iterator when liveness rejects", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 1 }));
+      await seedLogEntry(inner, PREFIX, 0, { after: { _id: "live", n: 1 } });
+      await seedLegacyContentForBody(inner, PREFIX, { _id: "live", n: 1 });
+      const forced = new Error("forced liveness failure");
+      let contentIteratorClosed = false;
+      const subject: Storage = {
+        get(key, opts) {
+          if (key === `${PREFIX}/log/0.json`) {
+            return Promise.reject(forced);
+          }
+          return inner.get(key, opts);
+        },
+        put: (key, body, opts) => inner.put(key, body, opts),
+        delete: (key, opts) => inner.delete(key, opts),
+        list(prefix, opts) {
+          if (prefix !== `${PREFIX}/content/`) {
+            return inner.list(prefix, opts);
+          }
+          return (async function* (): AsyncIterable<StorageListEntry> {
+            try {
+              yield* inner.list(prefix, opts);
+            } finally {
+              contentIteratorClosed = true;
+            }
+          })();
+        },
+      };
+
+      await expect(runGc({ storage: subject, currentJsonKey: KEY })).rejects.toBe(forced);
+      expect(contentIteratorClosed).toBe(true);
+    });
+
+    test("closes a peeked content iterator when liveness is aborted", async () => {
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 1 }));
+      await seedLogEntry(inner, PREFIX, 0, { after: { _id: "live", n: 1 } });
+      await seedLegacyContentForBody(inner, PREFIX, { _id: "live", n: 1 });
+      const controller = new AbortController();
+      let contentIteratorClosed = false;
+      const subject: Storage = {
+        get(key, opts) {
+          if (key === `${PREFIX}/log/0.json`) {
+            controller.abort();
+            return Promise.reject(controller.signal.reason);
+          }
+          return inner.get(key, opts);
+        },
+        put: (key, body, opts) => inner.put(key, body, opts),
+        delete: (key, opts) => inner.delete(key, opts),
+        list(prefix, opts) {
+          if (prefix !== `${PREFIX}/content/`) {
+            return inner.list(prefix, opts);
+          }
+          return (async function* (): AsyncIterable<StorageListEntry> {
+            try {
+              yield* inner.list(prefix, opts);
+            } finally {
+              contentIteratorClosed = true;
+            }
+          })();
+        },
+      };
+
+      await expect(
+        runGc({ storage: subject, currentJsonKey: KEY }, { signal: controller.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(contentIteratorClosed).toBe(true);
+    });
+  });
+
   test("does NOT mark a live content blob as orphan", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
@@ -1021,6 +1354,7 @@ describe("runGc", () => {
     const dueKey = `${PREFIX}/gc/due-inexact.json`;
     await inner.put(orphanSnapshot, new TextEncoder().encode("{}"));
     await inner.put(orphanContent, new TextEncoder().encode("{}"));
+    await inner.put(`${PREFIX}/content/ffffffffffffffffffffffffffffffff.json`, new Uint8Array());
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
       candidates: [
@@ -1056,7 +1390,7 @@ describe("runGc", () => {
     const checkpointedCurrent = await readCurrentJson(inner, KEY);
     expect(checkpointedCurrent?.json.tail_hint).toBe(25);
     expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
-    expect(trace.lists).not.toContain(`${PREFIX}/content/`);
+    expect(trace.lists).toContain(`${PREFIX}/content/`);
     expect(trace.deletes).toEqual([dueKey]);
     const pending = await readGcPending(inner, PENDING_KEY);
     expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual([orphanSnapshot]);
@@ -1088,6 +1422,7 @@ describe("runGc", () => {
     await inner.put(liveSnapshot, new TextEncoder().encode("{}"));
     await inner.put(orphanSnapshot, new TextEncoder().encode("{}"));
     await inner.put(orphanContent, new TextEncoder().encode("{}"));
+    await inner.put(`${PREFIX}/content/cccccccccccccccccccccccccccccccc.json`, new Uint8Array());
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
       candidates: [
@@ -1119,7 +1454,7 @@ describe("runGc", () => {
     expect(checkpointedCurrent?.json.tail_hint).toBe(60);
     expect(trace.lists).toContain(`${PREFIX}/log/`);
     expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
-    expect(trace.lists).not.toContain(`${PREFIX}/content/`);
+    expect(trace.lists).toContain(`${PREFIX}/content/`);
     expect(trace.gets).not.toContain(liveSnapshot);
     const pending = await readGcPending(inner, PENDING_KEY);
     expect(pending?.json.content_scan_cursor).toBe(
@@ -1220,7 +1555,7 @@ describe("runGc", () => {
       contentDeferredReason: "probe-slot-malformed",
     });
     expect(trace.gets).toContain(`${PREFIX}/log/36.json`);
-    expect(trace.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/`]);
+    expect(trace.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/`, `${PREFIX}/content/`]);
     expect(trace.deletes).toEqual([dueStale, dueSnapshot]);
     await expect(inner.get(orphanContent)).resolves.not.toBeNull();
     const current = await readCurrentJson(inner, KEY);
@@ -1396,7 +1731,9 @@ describe("runGc", () => {
           contentDeferredReason: "snapshot-unreadable",
         });
         expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
-        expect(trace.lists).not.toContain(`${PREFIX}/content/`);
+        // With no pending content candidate, GC peeks this nonempty window
+        // before discovering that snapshot liveness is unavailable.
+        expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
         expect(trace.deletes).toEqual([dueKey]);
         await expect(inner.get(orphanContent)).resolves.not.toBeNull();
         const pending = await readGcPending(inner, PENDING_KEY);
@@ -1441,6 +1778,7 @@ describe("runGc", () => {
         logStateCurrentJson({ snapshot: currentSnapshot, log_seq_start: 0, tail_hint: 0 }),
       );
       await inner.put(currentSnapshot, new TextEncoder().encode("not-a-valid-snapshot"));
+      await seedLegacyContentForBody(inner, PREFIX, { _id: "needs-liveness", n: 1 });
       const denied: Storage = {
         get: (key, opts) => {
           if (key === currentSnapshot) {
@@ -1477,6 +1815,7 @@ describe("runGc", () => {
     test("emits nothing when a complete live set classified content", async () => {
       const inner = new MemoryStorage();
       await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 0 }));
+      await seedLegacyContentForBody(inner, PREFIX, { _id: "orphan", n: 1 });
 
       const ctx = createObservabilityContext();
       let result!: Awaited<ReturnType<typeof runGc>>;
@@ -1504,6 +1843,7 @@ describe("runGc", () => {
       // only return `at-least` — and slot 5 inside that range is malformed.
       await seedDenseLog(inner, 0, 40);
       await inner.put(`${PREFIX}/log/5.json`, new TextEncoder().encode("{"));
+      await seedLegacyContentForBody(inner, PREFIX, { _id: "needs-admission", n: 1 });
 
       const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
         maxTailProbeGets: 25,
@@ -1528,6 +1868,7 @@ describe("runGc", () => {
     const inner = new MemoryStorage();
     await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 0 }));
     await seedDenseLog(inner, 0, 60);
+    await seedLegacyContentForBody(inner, PREFIX, { _id: "needs-admission", n: 1 });
     const conflictOnCheckpoint: Storage = {
       get: (key, opts) => inner.get(key, opts),
       put: async (key, body, opts) => {
@@ -1578,9 +1919,9 @@ describe("runGc", () => {
     const unchangedCurrent = await readCurrentJson(inner, KEY);
     expect(unchangedCurrent?.json.tail_hint).toBe(0);
     expect(trace.puts.filter((put) => put.key === KEY)).toHaveLength(1);
-    expect(trace.gets.filter((key) => key === PENDING_KEY)).toHaveLength(0);
-    expect(trace.puts.filter((put) => put.key === PENDING_KEY)).toHaveLength(0);
-    expect(trace.lists).toEqual([]);
+    expect(trace.gets.filter((key) => key === PENDING_KEY)).toHaveLength(1);
+    expect(trace.puts.filter((put) => put.key === PENDING_KEY)).toHaveLength(1);
+    expect(trace.lists).toEqual([`${PREFIX}/snapshot/`, `${PREFIX}/content/`]);
   });
 
   // Production mutation caught: broad checkpoint error swallowing would hide
@@ -1590,6 +1931,7 @@ describe("runGc", () => {
     const inner = new MemoryStorage();
     await createCurrentJson(inner, KEY, logStateCurrentJson({ tail_hint: 0 }));
     await seedDenseLog(inner, 0, 60);
+    await seedLegacyContentForBody(inner, PREFIX, { _id: "needs-admission", n: 1 });
     const deniedCheckpoint: Storage = {
       get: (key, opts) => inner.get(key, opts),
       put: async (key, body, opts) => {
@@ -1611,8 +1953,8 @@ describe("runGc", () => {
         maxSweepsPerRun: 10,
       } as InternalRunGcOptions),
     ).rejects.toMatchObject({ code: "AccessDenied" });
-    expect(trace.gets.filter((key) => key === PENDING_KEY)).toHaveLength(0);
-    expect(trace.lists).toEqual([]);
+    expect(trace.gets.filter((key) => key === PENDING_KEY)).toHaveLength(1);
+    expect(trace.lists).toEqual([`${PREFIX}/snapshot/`, `${PREFIX}/content/`]);
   });
 
   // ── orphan-content LIST rotation (Task 4.6) ──────────────────────
@@ -2043,6 +2385,9 @@ describe("runGc", () => {
         });
       }
     });
+    // The fast path deliberately skips liveness when `content/` is empty;
+    // seed one reachable legacy object so this remains a concurrency test.
+    await seedLegacyContentForBody(inner, PREFIX, { _id: "d0", n: 0 });
 
     const { storage, peak } = instrumentLogGetConcurrency(inner);
     const r = await runGc({ storage, currentJsonKey: KEY });
@@ -2269,7 +2614,9 @@ describe("runGc", () => {
           contentDeferredReason: "snapshot-unreadable",
         });
         expect(trace.lists).toContain(`${PREFIX}/snapshot/`);
-        expect(trace.lists).not.toContain(`${PREFIX}/content/`);
+        // With no pending content candidate, GC peeks this nonempty window
+        // before discovering that snapshot liveness is unavailable.
+        expect(trace.lists.filter((prefix) => prefix === `${PREFIX}/content/`)).toHaveLength(1);
         expect(trace.deletes).toEqual([dueKey]);
         await expect(inner.get(orphanContent)).resolves.not.toBeNull();
         const pending = await readGcPending(inner, PENDING_KEY);
@@ -2426,9 +2773,9 @@ describe("runGc — sweep-time revalidation", () => {
   test("revalidation adds ZERO storage ops — a dropping pass costs a sweeping pass minus the DELETE", async () => {
     // The gate's cost argument, pinned. Every value it consults is
     // already in lexical scope — `current` and `logSeqStart` from step 1,
-    // the live-hash set from step 5 — so it issues no probe, no HEAD and
-    // no extra LIST. Nothing else in the suite counts operations, so
-    // without this test that claim rests on inspection alone.
+    // plus the content live-hash set when one was needed — so it issues no
+    // probe, no HEAD and no extra LIST. Nothing else in the suite counts
+    // operations, so without this test that claim rests on inspection alone.
     //
     // Two arms, byte-identical but for the candidate's `generation`, so
     // any difference in the op trace IS revalidation cost. Both halves
@@ -2461,7 +2808,7 @@ describe("runGc — sweep-time revalidation", () => {
     // The absolute shape, so an op added to both arms cannot hide behind
     // the equality above. Keys rather than counts: a changed op is then
     // legible in the diff instead of arriving as an off-by-one.
-    expect(swept.gets).toEqual([KEY, PENDING_KEY, `${PREFIX}/log/9.json`, PENDING_KEY]);
+    expect(swept.gets).toEqual([KEY, PENDING_KEY, PENDING_KEY]);
     expect(swept.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/`, `${PREFIX}/content/`]);
     expect(swept.puts.map((p) => p.key)).toEqual([PENDING_KEY]);
   });
