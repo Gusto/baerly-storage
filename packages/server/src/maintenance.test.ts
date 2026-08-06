@@ -134,7 +134,7 @@ describe("runScheduledMaintenance", () => {
     expect(cfFree.compact?.maxEntriesPerRun).toBe(20);
     expect(cfFree.compact?.minEntriesToCompact).toBe(20);
     expect(cfFree.compact?.maxTailProbeGets).toBe(25);
-    expect(cfFree.gc?.maxTailProbeGets).toBe(25);
+    expect(cfFree.gc?.maxTailProbeGets).toBe(24);
     expect(cfFree.gc?.maxLiveLogEntriesPerRun).toBe(20);
     expect(cfFree.gc?.maxMarksPerRun).toBe(20);
     expect(cfFree.gc?.maxSweepsPerRun).toBe(10);

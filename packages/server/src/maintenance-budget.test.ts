@@ -44,6 +44,7 @@ import {
   logStateCurrentJson,
   seedLogEntries,
 } from "../../../tests/fixtures/log-state.ts";
+import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { compact } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { CLOUDFLARE_FREE_TIER, runBoundedMaintenance } from "./maintenance.ts";
@@ -126,6 +127,37 @@ const seed = async (
 describe("CLOUDFLARE_FREE_TIER budget", () => {
   const KEY = "app/t/tenant/x/manifests/c/current.json";
   const COLL = "c";
+
+  test("write-tick hard GC bounds legacy liveness with an 80-entry stale-low tail", async () => {
+    const inner = new MemoryStorage();
+    const prefix = "app/t/tenant/x/manifests/c";
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: 0,
+        tail_hint: 0,
+      }),
+    );
+    await seedLogEntries(inner, prefix, 0, 80, (seq) => ({
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    const liveContent = await seedLegacyContentForBody(inner, prefix, { _id: "d0", n: 0 });
+    const counted = countingStorage(inner);
+
+    await runBoundedMaintenance({
+      storage: counted.storage,
+      currentJsonKey: KEY,
+      prevSeq: 79,
+      observedTail: 80,
+    });
+
+    expect(
+      counted.getOps(),
+      `ops by category: ${JSON.stringify(counted.report())}`,
+    ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    await expect(inner.get(liveContent)).resolves.not.toBeNull();
+  });
 
   test("compact-only ticks converge from a stale-low tail_hint within the 50-op budget", async () => {
     // Even-minute branch of the scheduled handler: compact alone. The
@@ -279,6 +311,9 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     await seedLogEntries(inner, prefix, 40, 60, (seq) => ({
       after: { _id: `d${seq}`, n: seq },
     }));
+    // Keep this the admitted worst case: a nonempty legacy-content window
+    // forces the complete live-log and snapshot liveness scan.
+    await seedLegacyContentForBody(inner, prefix, { _id: "d40", n: 40 });
     const dueCandidates = [
       ...Array.from({ length: 9 }, (_, index) => ({
         key: `${prefix}/gc/due-${index}.json`,
@@ -339,7 +374,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 
-  test("maximally contended content-deferred GC stays at 49 storage operations", async () => {
+  test("maximally contended write-tick content deferral stays at 50 storage operations", async () => {
     const inner = new MemoryStorage();
     const prefix = "app/t/tenant/x/manifests/c";
     await createCurrentJson(
@@ -351,6 +386,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       }),
     );
     await seedLogEntries(inner, prefix, 20, 45);
+    await seedLegacyContentForBody(inner, prefix, { _id: "needs-liveness", n: 1 });
     const dueCandidates = [
       ...Array.from({ length: 9 }, (_, index) => ({
         key: `${prefix}/gc/deferred-due-${index}.json`,
@@ -399,17 +435,27 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     };
     const counted = countingStorage(contended);
 
-    const result = await runGc({ storage: counted.storage, currentJsonKey: KEY }, {
-      ...CLOUDFLARE_FREE_TIER.gc,
-      graceMillis: 0,
-      now: () => new Date("2026-01-01T00:00:00.000Z"),
-    } as InternalRunGcOptions);
+    await runBoundedMaintenance(
+      {
+        storage: counted.storage,
+        currentJsonKey: KEY,
+        prevSeq: 31,
+        observedTail: 45,
+      },
+      {
+        gcGraceMillis: 0,
+        now: () => new Date("2026-01-01T00:00:00.000Z"),
+      },
+    );
 
-    expect(result.swept).toBe(10);
-    expect(counted.listedPrefixes()).toEqual([`${prefix}/log/`, `${prefix}/snapshot/`]);
-    expect(counted.report()).toEqual({ get: 32, put: 5, delete: 10, list: 2 });
+    expect(counted.listedPrefixes()).toEqual([
+      `${prefix}/log/`,
+      `${prefix}/snapshot/`,
+      `${prefix}/content/`,
+    ]);
+    expect(counted.report()).toEqual({ get: 32, put: 5, delete: 10, list: 3 });
     const totalOps = counted.getOps();
-    expect(totalOps).toBe(49);
+    expect(totalOps).toBe(50);
     expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 
