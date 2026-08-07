@@ -124,7 +124,7 @@ export class MemoryStorage implements Storage {
       return null;
     }
     if (opts?.ifNoneMatch !== undefined && opts.ifNoneMatch === stored.etag) {
-      // 304 Not Modified — caller's cached copy is current.
+      // 304, not 404 — see Storage.get
       return null;
     }
     return { body: stored.body, etag: stored.etag };

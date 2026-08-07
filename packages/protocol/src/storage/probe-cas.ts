@@ -72,7 +72,7 @@ export const probeCas = async (
   try {
     const first = await storage.put(key, enc.encode("v1"), { signal });
 
-    // ── Check 1: a stale ifMatch must be rejected. ──────────────────
+    // Check 1
     try {
       // Stryker disable next-line StringLiteral: body content is irrelevant to CAS probe; only the conditional header is tested
       await storage.put(key, enc.encode("v2"), { ifMatch: staleEtag, signal });
@@ -98,9 +98,9 @@ export const probeCas = async (
       );
     }
 
-    // ── Check 2: ifNoneMatch:"*" over an existing key must reject. ──
+    // Check 2
     try {
-      // Stryker disable next-line StringLiteral: body content is irrelevant to CAS probe; only the conditional header is tested
+      // Stryker disable next-line StringLiteral: same rationale as ifMatch-stale above
       await storage.put(key, enc.encode("v3"), { ifNoneMatch: "*", signal });
       checks.push({
         name: "ifNoneMatch-exists",
@@ -124,7 +124,7 @@ export const probeCas = async (
       );
     }
 
-    // ── Check 3: at most one of N concurrent ifNoneMatch:"*" creates wins. ──
+    // Check 3
     // The writer already depends on this today: log entries are PUT with
     // ifNoneMatch:"*", and a 412 means a peer won that seq (writer.ts). Two
     // winners ⇒ two writers believe they appended the same log seq.
@@ -138,7 +138,7 @@ export const probeCas = async (
     try {
       const outcomes = await Promise.allSettled(
         Array.from({ length: RACERS }, (_unused, i) =>
-          // Stryker disable next-line StringLiteral: body content irrelevant; only the conditional header + winner count is tested
+          // Stryker disable next-line StringLiteral: same rationale as ifMatch-stale above (plus winner count)
           storage.put(raceKey, enc.encode(`r${i}`), { ifNoneMatch: "*", signal }),
         ),
       );
