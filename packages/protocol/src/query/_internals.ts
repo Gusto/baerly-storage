@@ -1,12 +1,13 @@
 /**
  * Shared comparator helpers for the predicate algebra. `./satisfiable.ts`
- * is the only in-package importer of this module.
+ * is the only module that consumes the comparator primitives.
  *
  * Only {@link deepEqualDocumentValue} is part of the public surface —
- * it's also re-exported from `./index.ts` and imported directly by
- * `packages/server/src/query-planner-implies.ts`. The comparator
- * primitives (`compareScalar`, `sameComparableType`, `formatPath`) are
- * internal to the protocol package.
+ * it's also re-exported from `./index.ts` and reaches
+ * `packages/server/src/query-planner-implies.ts` through the
+ * `@baerly/protocol` barrel. The comparator primitives (`compareScalar`,
+ * `sameComparableType`, `formatPath`) are internal to the protocol
+ * package.
  */
 
 import type { DocumentValue } from "../json.ts";
