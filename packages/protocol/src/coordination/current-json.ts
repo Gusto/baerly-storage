@@ -580,7 +580,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError("InvalidResponse", `current.json at ${key}: writer_fence missing`);
   }
   const f = fence as Record<string, unknown>;
-  // Stryker disable next-line ConditionalExpression: `typeof f["epoch"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof guard fully subsumed.
+  // Stryker disable next-line ConditionalExpression: same rationale as `log_seq_start` above.
   if (typeof f["epoch"] !== "number" || !Number.isInteger(f["epoch"]) || f["epoch"] < 0) {
     throw new BaerlyError(
       "InvalidResponse",
@@ -606,7 +606,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
-    // Stryker disable next-line ConditionalExpression: `typeof r["snapshot_bytes"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
+    // Stryker disable next-line ConditionalExpression: same rationale as `log_seq_start` above.
     typeof r["snapshot_bytes"] !== "number" ||
     !Number.isInteger(r["snapshot_bytes"]) ||
     r["snapshot_bytes"] < 0
@@ -617,7 +617,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     );
   }
   if (
-    // Stryker disable next-line ConditionalExpression: `typeof r["snapshot_rows"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
+    // Stryker disable next-line ConditionalExpression: same rationale as `log_seq_start` above.
     typeof r["snapshot_rows"] !== "number" ||
     !Number.isInteger(r["snapshot_rows"]) ||
     r["snapshot_rows"] < 0
@@ -629,7 +629,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   }
   if (
     r["last_warned_seq"] !== undefined &&
-    // Stryker disable next-line ConditionalExpression: `typeof r["last_warned_seq"] !== "number"` → false is equivalent — !Number.isInteger rejects all non-numbers, making the typeof check fully subsumed.
+    // Stryker disable next-line ConditionalExpression: same rationale as `log_seq_start` above.
     (typeof r["last_warned_seq"] !== "number" ||
       !Number.isInteger(r["last_warned_seq"]) ||
       r["last_warned_seq"] < 0)
@@ -641,7 +641,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   }
   if (
     r["mean_entry_bytes"] !== undefined &&
-    // Stryker disable next-line ConditionalExpression: typeof → false is subsumed by !Number.isInteger.
+    // Stryker disable next-line ConditionalExpression: same rationale as `log_seq_start` above.
     (typeof r["mean_entry_bytes"] !== "number" ||
       !Number.isInteger(r["mean_entry_bytes"]) ||
       r["mean_entry_bytes"] < 0)
