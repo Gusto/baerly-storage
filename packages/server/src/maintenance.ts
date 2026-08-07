@@ -475,6 +475,13 @@ export const runBoundedMaintenance = async (
       }
     };
 
+    const runGcAndRefreshTailHint = async (): Promise<void> => {
+      const result = await runGc({ storage, currentJsonKey }, gcOpts);
+      if (result.contentDeferredReason === undefined) {
+        await refreshTailHintIfNeeded();
+      }
+    };
+
     // ── Step 0. Phase disable. ───────────────────────────────────────
     // `BAERLY_MAINTENANCE_DISABLE` suppresses fold/GC work, but it must
     // not let `(true_tail - tail_hint)` grow past the read/write
@@ -492,7 +499,7 @@ export const runBoundedMaintenance = async (
     // guarantees ~1 GC tick per GC_STARVATION_GUARD intervals.
     const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
     if (phasesPerTick === "single" && hardGc) {
-      await runGc({ storage, currentJsonKey }, gcOpts);
+      await runGcAndRefreshTailHint();
       return;
     }
 
@@ -584,7 +591,7 @@ export const runBoundedMaintenance = async (
     // Reaching here on "single" means we did NOT fold (gate1 false, or
     // deferred). Run GC iff the cadence boundary was crossed.
     if (gcDue) {
-      await runGc({ storage, currentJsonKey }, gcOpts);
+      await runGcAndRefreshTailHint();
     }
   } catch (error) {
     // CAS contention (Conflict) thrown by compact()/runGc() is an

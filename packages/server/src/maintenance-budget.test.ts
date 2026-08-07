@@ -159,6 +159,46 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     await expect(inner.get(liveContent)).resolves.not.toBeNull();
   });
 
+  test.each([
+    { name: "hard-GC guard", phasesPerTick: "single" as const },
+    { name: "cadence GC", phasesPerTick: "both" as const },
+  ])(
+    "content-free $name refreshes a 128-entry stale tail_hint within budget",
+    async ({ phasesPerTick }) => {
+      const inner = new MemoryStorage();
+      const prefix = "app/t/tenant/x/manifests/c";
+      await createCurrentJson(
+        inner,
+        KEY,
+        logStateCurrentJson({
+          log_seq_start: 0,
+          tail_hint: 0,
+          snapshot_bytes: 10_000_000,
+        }),
+      );
+      await seedLogEntries(inner, prefix, 0, 128);
+      const counted = countingStorage(inner);
+
+      await runBoundedMaintenance(
+        {
+          storage: counted.storage,
+          currentJsonKey: KEY,
+          prevSeq: 127,
+          observedTail: 128,
+        },
+        { phasesPerTick },
+      );
+
+      const current = await readCurrentJson(inner, KEY);
+      expect(current?.json.tail_hint).toBe(128);
+      expect(
+        counted.getOps(),
+        `ops by category: ${JSON.stringify(counted.report())}`,
+      ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+      expect(counted.listedPrefixes()).toContain(`${prefix}/content/`);
+    },
+  );
+
   test("compact-only ticks converge from a stale-low tail_hint within the 50-op budget", async () => {
     // Even-minute branch of the scheduled handler: compact alone. The
     // writer deliberately leaves tail_hint stale, so each invocation must

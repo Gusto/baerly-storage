@@ -543,6 +543,7 @@ describe("runBoundedMaintenance", () => {
     // Force the defer: snapshot over E rows, ratio-tripping mean.
     await casUpdateCurrentJson(inner, KEY, (cur) => ({
       ...cur,
+      tail_hint: 0,
       mean_entry_bytes: RATIO_TRIPPING_MEAN,
       snapshot_bytes: 0,
       snapshot_rows: 1_000_000, // > MAINTENANCE_MAX_FOLD_ROWS ⇒ defer
