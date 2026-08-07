@@ -1,13 +1,12 @@
 /**
- * Shared helpers for the predicate algebras in `./validate.ts`,
- * `./matches.ts`, and `./merge.ts`. These exist as a single module
- * because more than one of those files uses them and duplicating
- * the implementations would drift over time.
+ * Shared comparator helpers for the predicate algebra. `./satisfiable.ts`
+ * is the only in-package importer of this module.
  *
- * Only {@link deepEqualDocumentValue} is part of the public surface;
- * the comparator primitives (`compareScalar`, `sameComparableType`,
- * `formatPath`) are internal to the protocol package and imported
- * by `./validate.ts` / `./merge.ts` / `./normalize.ts` directly.
+ * Only {@link deepEqualDocumentValue} is part of the public surface —
+ * it's also re-exported from `./index.ts` and imported directly by
+ * `packages/server/src/query-planner-implies.ts`. The comparator
+ * primitives (`compareScalar`, `sameComparableType`, `formatPath`) are
+ * internal to the protocol package.
  */
 
 import type { DocumentValue } from "../json.ts";
