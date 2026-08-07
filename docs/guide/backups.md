@@ -207,17 +207,20 @@ The safe cutover shape is:
    restore imports rows; it does not rebuild secondary index markers. If
    the index check reports drift, run it with `--fix` or run
    `baerly admin rebuild-index` for each index before cutover.
-5. Point the app at the recovered bucket/prefix. Prefer this to
-   copying. If you must copy the recovery prefix into place, do it
-   only after writers and maintenance have drained, inside the maintenance
-   window, and copy `current.json` **last** —
-   after the snapshot it names (when non-null), the live log objects,
-   and any rebuilt index objects required by indexed reads exist at the
-   destination. If `current.json` lands before its snapshot or live log,
+5. Point the app at the recovered bucket/prefix. This direct route cutover is
+   preferred. If infrastructure requires copying, copy into a fresh, empty
+   destination collection prefix only; never overlay recovery objects onto a
+   prefix that contains an older collection generation. Old higher-numbered
+   `log/` objects are not fenced by `current.json`: readers forward-probe past
+   the restored `tail_hint` and can replay a consecutive old suffix. Copy only
+   after writers and maintenance have drained, inside the maintenance window,
+   and copy `current.json` **last** — after the snapshot it names (when
+   non-null), every live log object, and rebuilt index objects required by
+   indexed reads exist at the destination. If `current.json` lands first,
    readers can reference missing objects; if required index markers are
-   missing, index-routed reads can miss rows. No current kernel reader
-   depends on content side objects. Copy `content/` only when preserving
-   a legacy or mixed-version bucket for legacy writers or tooling.
+   missing, index-routed reads can miss rows. No current kernel reader depends
+   on content side objects. Copy `content/` only when preserving a legacy or
+   mixed-version bucket for legacy writers or tooling.
 6. Resume writers only after a successful authenticated read against
    the recovered route.
 
