@@ -303,12 +303,13 @@ type _SubPredicate<T> = T extends object
  *    nested object may carry only a subset of keys (open-world
  *    matching against the document).
  *
- * **Operator vocabulary moved to the callback form.** Range / `in`
- * / mixed eq+range queries write
+ * **Operators live on the callback form only.** Range / `in` /
+ * mixed eq+range queries write
  * `.where(q => q.gt("priority", 5).in("status", ["open", "pending"]))`.
- * Operator vocabulary lives on {@link PredicateBuilder} (see there
- * for the locked method list); object-form has no `$`-keyed surface
- * for the same reason. For OR/AND:
+ * That vocabulary lives on {@link PredicateBuilder} (see there for
+ * the locked method list); object-form has no `$`-keyed surface, so
+ * an operator we never implemented cannot be invoked from either
+ * shape. For OR/AND:
  *   - `q.in(field, ["a", "b"])` for OR over one field.
  *   - Chained `.where(p1).where(p2)` for AND across multiple
  *     predicates — the chain AND-merges.
