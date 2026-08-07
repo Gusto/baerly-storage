@@ -77,9 +77,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *    callback; chained `.where(...).where(...)` AND-merges
    *    across calls and across shapes.
    *
-   * Methods that do not exist on {@link PredicateBuilder}
-   * (`or`, `not`, `regex`, `ne`, `exists`, ...) are intentionally
-   * absent — invoking them is a TS compile error.
+   * Operator vocabulary is locked to {@link PredicateBuilder}'s
+   * method list; invoking anything else is a TS compile error.
    *
    * @example
    * ```ts
@@ -307,12 +306,9 @@ type _SubPredicate<T> = T extends object
  * **Operator vocabulary moved to the callback form.** Range / `in`
  * / mixed eq+range queries write
  * `.where(q => q.gt("priority", 5).in("status", ["open", "pending"]))`.
- * The methods on {@link PredicateBuilder} ARE the supported vocabulary
- * — there is no `$`-keyed object surface, so a method we did not
- * write cannot be called.
- *
- * **No top-level boolean connectives.** `or` / `not` are
- * intentionally absent. Use:
+ * Operator vocabulary lives on {@link PredicateBuilder} (see there
+ * for the locked method list); object-form has no `$`-keyed surface
+ * for the same reason. For OR/AND:
  *   - `q.in(field, ["a", "b"])` for OR over one field.
  *   - Chained `.where(p1).where(p2)` for AND across multiple
  *     predicates — the chain AND-merges.
