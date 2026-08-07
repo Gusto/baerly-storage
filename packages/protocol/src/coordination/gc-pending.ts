@@ -1,15 +1,13 @@
 /**
  * `gc/pending.json` — the per-collection GC candidate ledger. CAS-
  * protected; one per `(tenant, collection)` key — for example
- * `<tenant>/<collection>/gc/pending.json`. `runGc()` in
- * `packages/server/src/gc.ts` is the single writer that adds and
- * removes entries. Stays small in steady state because every
- * candidate is deleted once `due_at` passes.
+ * `<tenant>/<collection>/gc/pending.json`. `runGc()` is the single
+ * writer that adds and removes entries. Stays small in steady state
+ * because every candidate is deleted once `due_at` passes.
  *
  * "Mark" appends candidates with a future `due_at`; "sweep" deletes
- * candidates whose `due_at` is in the past. The two phases run in
- * the same compactor pass — see `runGc()` in
- * `packages/server/src/gc.ts`.
+ * candidates whose `due_at` is in the past. Both run in the same
+ * compactor pass, not separate passes.
  *
  * Lives next to {@link CurrentJson} in `coordination/` — same shape
  * of "CAS-protected small control object." Pure module; no Node

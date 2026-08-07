@@ -300,7 +300,6 @@ export async function createCurrentJson(
   initial: CurrentJson,
   opts?: { signal?: AbortSignal },
 ): Promise<CurrentJsonRead> {
-  // Catch shape bugs in callers before they hit storage. Cheap.
   assertCurrentJson(initial, key);
   const body = encodeJson(initial);
   const putOpts: StoragePutOptions = {
@@ -419,10 +418,8 @@ export async function casUpdateCurrentJson(
  *
  * @see {@link ../../../../docs/spec/writer-fence-adversarial-model.md} —
  *   the full failure envelope (absent / lying / non-monotonic Date,
- *   peer-between-PUTs, bounded clock skew).
- * @see {@link ../../../../docs/spec/writer-fence-adversarial-model.md} —
- *   the "Differentiation from mps3" subsection that frames the §103
- *   non-obviousness story.
+ *   peer-between-PUTs, bounded clock skew), and the "Differentiation
+ *   from mps3" subsection framing the §103 non-obviousness story.
  * @see {@link ../../../../docs/spec/prior-art.md} —
  *   IDS-shaped prior-art differentiation against mps3, SlateDB,
  *   Iceberg, Delta, and the broader S3-leader-election literature.
