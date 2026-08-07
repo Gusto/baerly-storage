@@ -1,10 +1,6 @@
 /**
  * AND-merge two validated wire predicates. Powers chained
- * `Query<T>.where(...).where(...)`: each new clause set AND's with
- * the existing wire by clause-list concatenation; the per-field
- * satisfiability check runs across the combined list.
- *
- * Companion modules: `./validate.ts`, `./matches.ts`, `./wire.ts`.
+ * `Query<T>.where(...).where(...)`.
  */
 
 import { assertWireSatisfiable } from "./satisfiable.ts";

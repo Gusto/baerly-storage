@@ -5,9 +5,8 @@
  * {@link PredicateClause} to a private list and returns the same
  * handle for chaining.
  *
- * Why a builder, not imported helpers? The methods that exist on
- * the type ARE the supported vocabulary — there is no
- * "what we don't support" page to maintain. The agent cannot call
+ * Why a builder, not imported helpers? See {@link PredicateBuilder}
+ * for the locked method vocabulary. The agent cannot call
  * `q.regex(...)` because there is no `regex` method; the compiler
  * surfaces the error before the request is sent.
  *
