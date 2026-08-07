@@ -250,11 +250,11 @@ export class BaerlyError extends Error {
     if (issues !== undefined) {
       this.issues = issues;
     }
-    // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
+    // Stryker disable next-line ConditionalExpression: same rationale as `issues` above
     if (status !== undefined) {
       this.status = status;
     }
-    // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
+    // Stryker disable next-line ConditionalExpression: same rationale as `issues` above
     if (resolution !== undefined) {
       this.resolution = resolution;
     }
