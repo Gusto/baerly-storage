@@ -20,7 +20,7 @@ not a convenience.
 ## The cause: baerly-storage requests `encoding-type=url`
 
 baerly-storage sets `encoding-type=url` on every list request
-(`packages/adapter-node/src/s3-http.ts:376`). This moves the entire
+(`packages/adapter-node/src/s3-http.ts`). This moves the entire
 escaping problem **out of XML and into percent-decoding**. With the marker
 set, S3 returns the key family — `Key` / `Prefix` / `Delimiter` /
 `StartAfter` — percent-encoded as `x-www-form-urlencoded`:
