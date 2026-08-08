@@ -300,10 +300,13 @@ interface Counting {
   readonly storage: Storage;
   readonly total: () => number;
   readonly report: () => Record<string, number>;
+  /** PUT keys in call order — the seam for asserting WRITE SHAPE, not just volume. */
+  readonly putKeys: () => string[];
 }
 
 const countingStorage = (inner: Storage): Counting => {
   const counts = { get: 0, put: 0, delete: 0, list: 0 };
+  const putKeys: string[] = [];
   const wrapper: Storage = {
     async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
       counts.get += 1;
@@ -311,6 +314,7 @@ const countingStorage = (inner: Storage): Counting => {
     },
     async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
       counts.put += 1;
+      putKeys.push(key);
       return inner.put(key, body, opts);
     },
     async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
@@ -329,6 +333,7 @@ const countingStorage = (inner: Storage): Counting => {
     storage: wrapper,
     total: (): number => counts.get + counts.put + counts.delete + counts.list,
     report: (): Record<string, number> => ({ ...counts }),
+    putKeys: (): string[] => [...putKeys],
   };
 };
 
@@ -768,6 +773,41 @@ describe("runBoundedMaintenance", () => {
     // GC also ran ⇒ pending.json exists.
     const pending = await inner.get("app/t/tenant/x/manifests/c/gc/pending.json");
     expect(pending).not.toBeNull();
+  });
+
+  test('phasesPerTick "both": a successful fold publishes the hint, so GC does NOT re-CAS it', async () => {
+    // The compactor's Step-7 fold CAS stamps `tail_hint = max(stored,
+    // discoveredTail)` and `discoveredTail >= knownTail === the runner's
+    // nextSeq`, so the hint is already published when GC returns. The outer
+    // refresh evaluates its rate limit against the STALE pre-fold manifest,
+    // which on a >= REFRESH_INTERVAL gap still reads as "due" — and would
+    // spend a second GET+PUT writing back byte-identical bytes.
+    const inner = new MemoryStorage();
+    const observedTail = MAINTENANCE_TAIL_HINT_REFRESH_WRITES + 2;
+    await bootstrap(inner, KEY); // tail_hint = 0 ⇒ the gap is `observedTail`
+    await seedLogEntries(inner, COLLECTION_PREFIX, 0, observedTail);
+    await patchCurrent(inner, KEY, {
+      mean_entry_bytes: RATIO_TRIPPING_MEAN, // ratio >= 1 ⇒ gate1 trips
+      snapshot_bytes: 0,
+      snapshot_rows: 0, // under C and E ⇒ fold-viable
+    });
+    const c = countingStorage(inner);
+
+    await runBoundedMaintenance(
+      {
+        storage: c.storage,
+        currentJsonKey: KEY,
+        prevSeq: 0, // crosses the GC cadence boundary
+        observedTail,
+      },
+      { phasesPerTick: "both", profile: MAINTENANCE_PROFILE_CF_FREE },
+    );
+
+    // Exactly one current.json write this tick: the fold's publication.
+    expect(c.putKeys().filter((key) => key === KEY)).toEqual([KEY]);
+    // The fold both advanced the floor and published the discovered hint.
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
+    await expect(readTailHint(inner, KEY)).resolves.toBe(observedTail);
   });
 
   test("hard-GC starvation guard fires on single: runs GC, skips fold on the hard boundary", async () => {
