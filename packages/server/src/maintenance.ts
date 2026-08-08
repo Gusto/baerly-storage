@@ -349,6 +349,14 @@ export interface BoundedMaintenanceOptions {
  *      defer (and metric); on `"single"` a successful fold attempt is
  *      this tick's one phase.
  *   4. Otherwise (or on `"both"`) → GC iff the cadence boundary crossed.
+ *
+ * Steps 0, 2, 3-defer, and 4 all take the rate-limited `tail_hint`
+ * refresh, but the tick publishes the hint AT MOST ONCE — a landed fold
+ * (Step-7 CAS), GC's legacy-content checkpoint, and the refresh itself
+ * all count as that publication. Ordering matters: Step 3's defer
+ * refreshes and then falls through to Step 4, so without the shared
+ * guard that one tick would CAS `current.json` twice with identical
+ * bytes.
  */
 export const runBoundedMaintenance = async (
   args: {
@@ -457,10 +465,33 @@ export const runBoundedMaintenance = async (
     const foldViable = snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E;
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
+    // ONE `tail_hint` publication per tick, whoever performs it: this
+    // helper's own CAS, a fold that landed (compact()'s Step-7 stamps
+    // `max(stored, discoveredTail)` with a probe floor including
+    // `knownTail = nextSeq`), or GC's bounded-admission checkpoint.
+    //
+    // The rate limit alone cannot enforce this. It tests the in-memory
+    // `current`, which `casUpdateCurrentJson` never writes back, so a
+    // second call on a >= REFRESH_INTERVAL gap still reads as due and
+    // rewrites byte-identical bytes. Every path that reaches GC after
+    // already publishing — a landed fold on `"both"`, and the Step-3
+    // DEFER refresh that falls through — would otherwise spend a second
+    // GET+PUT for no state change.
+    let tailHintPublished = false;
+
     const refreshTailHintIfNeeded = async (): Promise<void> => {
+      if (tailHintPublished) {
+        return;
+      }
       if (nextSeq - current.tail_hint < MAINTENANCE_TAIL_HINT_REFRESH_WRITES) {
         return;
       }
+      // Set before the CAS, so this counts publication ATTEMPTS: a lost
+      // CAS means a peer advanced the hint (the stamp is monotone, so it
+      // is published either way) and a transient error is caught by the
+      // next tick. Retrying inside one tick would reintroduce the extra
+      // ops this guard exists to bound.
+      tailHintPublished = true;
       try {
         await casUpdateCurrentJson(
           storage,
@@ -473,6 +504,31 @@ export const runBoundedMaintenance = async (
         // any transient error. A missed advance just means the next tick
         // catches up; never throw out of write-tick maintenance.
       }
+    };
+
+    const runGcAndRefreshTailHint = async (): Promise<void> => {
+      const result = await runGc({ storage, currentJsonKey }, gcOpts);
+      if (result.contentDeferredReason !== undefined) {
+        // A content deferral raised by GC's BOUNDED ADMISSION already
+        // CAS-checkpointed the tail its capped probe certified, so refreshing
+        // to `nextSeq` on top of it would add a GET+PUT to the proven
+        // Cloudflare-Free 50-op worst case. The checkpoint is not a lossy
+        // stand-in: one pass certifies `CF_FREE_GC_TAIL_PROBE_GETS` entries
+        // while the hard-GC cadence recurs at most every
+        // `gcInterval * GC_STARVATION_GUARD` writes, so on that profile
+        // `(true_tail − tail_hint)` SHRINKS every deferring pass until the
+        // probe reaches the tail and stamps it exactly. Both the per-pass
+        // advance and that constant relation are pinned in
+        // `maintenance-budget.test.ts`.
+        //
+        // Known gap: the two DEGRADED reasons raised downstream of admission
+        // (`live-log-unreadable` / `snapshot-unreadable`) carry NO checkpoint,
+        // so they claim publication without performing it. Still strictly
+        // narrower than the no-refresh-on-any-GC-tick behavior this replaced;
+        // closing it needs a subrequest re-proof on a degraded pass.
+        tailHintPublished = true;
+      }
+      await refreshTailHintIfNeeded();
     };
 
     // ── Step 0. Phase disable. ───────────────────────────────────────
@@ -492,7 +548,7 @@ export const runBoundedMaintenance = async (
     // guarantees ~1 GC tick per GC_STARVATION_GUARD intervals.
     const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
     if (phasesPerTick === "single" && hardGc) {
-      await runGc({ storage, currentJsonKey }, gcOpts);
+      await runGcAndRefreshTailHint();
       return;
     }
 
@@ -503,7 +559,7 @@ export const runBoundedMaintenance = async (
         // above used into compact() as a Node-side belt-and-suspenders.
         // compact() emits `db.compaction.cas_lost_total` itself on a
         // lost CAS, so the runner does NOT (avoids double-count).
-        await compact({ storage, currentJsonKey }, {
+        const foldRes = await compact({ storage, currentJsonKey }, {
           maxEntriesPerRun: maxFoldEntriesPerPass,
           minEntriesToCompact,
           ceilingBytes: C,
@@ -518,6 +574,12 @@ export const runBoundedMaintenance = async (
           knownTail: nextSeq,
           ...(signal !== undefined && { signal }),
         } as InternalCompactOptions);
+        // A `written` fold stamped `max(stored, discoveredTail)` at or past
+        // `nextSeq` via Step-7. A failed, skipped, deferred, or CAS-lost
+        // attempt published nothing, so those still take the refresh below.
+        if (foldRes.written) {
+          tailHintPublished = true;
+        }
         if (phasesPerTick === "single") {
           return; // this tick's one phase was the fold (attempt)
         }
@@ -584,7 +646,7 @@ export const runBoundedMaintenance = async (
     // Reaching here on "single" means we did NOT fold (gate1 false, or
     // deferred). Run GC iff the cadence boundary was crossed.
     if (gcDue) {
-      await runGc({ storage, currentJsonKey }, gcOpts);
+      await runGcAndRefreshTailHint();
     }
   } catch (error) {
     // CAS contention (Conflict) thrown by compact()/runGc() is an
