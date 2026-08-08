@@ -23,9 +23,15 @@
 
 import {
   BaerlyError,
+  CF_FREE_GC_TAIL_PROBE_GETS,
   CURRENT_JSON_SCHEMA_VERSION,
   GC_PENDING_SCHEMA_VERSION,
+  GC_STARVATION_GUARD,
+  MAINTENANCE_MAX_FOLD_ROWS,
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   SNAPSHOT_SCHEMA_VERSION,
+  WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   createCurrentJson,
   createGcPending,
   MemoryStorage,
@@ -47,7 +53,7 @@ import {
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { compact } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
-import { CLOUDFLARE_FREE_TIER, runBoundedMaintenance } from "./maintenance.ts";
+import { CLOUDFLARE_FREE_TIER, crossesGcBoundary, runBoundedMaintenance } from "./maintenance.ts";
 import { encodeSnapshotBody, snapshotKey } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
@@ -158,6 +164,46 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
     await expect(inner.get(liveContent)).resolves.not.toBeNull();
   });
+
+  test.each([
+    { name: "hard-GC guard", phasesPerTick: "single" as const },
+    { name: "cadence GC", phasesPerTick: "both" as const },
+  ])(
+    "content-free $name refreshes a 128-entry stale tail_hint within budget",
+    async ({ phasesPerTick }) => {
+      const inner = new MemoryStorage();
+      const prefix = "app/t/tenant/x/manifests/c";
+      await createCurrentJson(
+        inner,
+        KEY,
+        logStateCurrentJson({
+          log_seq_start: 0,
+          tail_hint: 0,
+          snapshot_bytes: 10_000_000,
+        }),
+      );
+      await seedLogEntries(inner, prefix, 0, 128);
+      const counted = countingStorage(inner);
+
+      await runBoundedMaintenance(
+        {
+          storage: counted.storage,
+          currentJsonKey: KEY,
+          prevSeq: 127,
+          observedTail: 128,
+        },
+        { phasesPerTick },
+      );
+
+      const current = await readCurrentJson(inner, KEY);
+      expect(current?.json.tail_hint).toBe(128);
+      expect(
+        counted.getOps(),
+        `ops by category: ${JSON.stringify(counted.report())}`,
+      ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+      expect(counted.listedPrefixes()).toContain(`${prefix}/content/`);
+    },
+  );
 
   test("compact-only ticks converge from a stale-low tail_hint within the 50-op budget", async () => {
     // Even-minute branch of the scheduled handler: compact alone. The
@@ -374,18 +420,33 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 
-  test("maximally contended write-tick content deferral stays at 50 storage operations", async () => {
+  // A deferring pass keeps the tail hint it CERTIFIED and no more. The
+  // outer write-tick refresh is deliberately suppressed here even though
+  // its rate limit is satisfied (gap === MAINTENANCE_TAIL_HINT_REFRESH_WRITES
+  // below): GC already CAS-checkpointed `floor + CF_FREE_GC_TAIL_PROBE_GETS`
+  // from inside the bounded admission, and an unconditional outer GET+PUT
+  // would push this proven worst case to 52 — over the invocation cap. The
+  // hint still converges, because GC recurs at most every
+  // `gcInterval * GC_STARVATION_GUARD` writes while each pass certifies
+  // another `CF_FREE_GC_TAIL_PROBE_GETS` entries.
+  test("maximally contended write-tick content deferral keeps its certified checkpoint at 50 storage operations", async () => {
     const inner = new MemoryStorage();
     const prefix = "app/t/tenant/x/manifests/c";
+    const logFloor = 20;
+    // Make the outer refresh ELIGIBLE, so this case discriminates the
+    // deferral guard rather than the rate limit. Asserted, not assumed: a
+    // raised interval must fail here instead of silently defanging the test.
+    const observedTail = logFloor + MAINTENANCE_TAIL_HINT_REFRESH_WRITES;
+    expect(observedTail - logFloor).toBeGreaterThanOrEqual(MAINTENANCE_TAIL_HINT_REFRESH_WRITES);
     await createCurrentJson(
       inner,
       KEY,
       logStateCurrentJson({
-        log_seq_start: 20,
-        tail_hint: 20,
+        log_seq_start: logFloor,
+        tail_hint: logFloor,
       }),
     );
-    await seedLogEntries(inner, prefix, 20, 45);
+    await seedLogEntries(inner, prefix, logFloor, observedTail);
     await seedLegacyContentForBody(inner, prefix, { _id: "needs-liveness", n: 1 });
     const dueCandidates = [
       ...Array.from({ length: 9 }, (_, index) => ({
@@ -439,8 +500,10 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       {
         storage: counted.storage,
         currentJsonKey: KEY,
-        prevSeq: 31,
-        observedTail: 45,
+        // 143 → 148 crosses the hard-GC boundary (gcInterval *
+        // GC_STARVATION_GUARD = 16), so this tick's one phase is GC.
+        prevSeq: 143,
+        observedTail,
       },
       {
         gcGraceMillis: 0,
@@ -453,10 +516,109 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       `${prefix}/snapshot/`,
       `${prefix}/content/`,
     ]);
+    // The bounded admission's own CAS, and only it: the hint advances to the
+    // occupancy the capped probe certified, NOT to `observedTail`.
+    const current = await readCurrentJson(inner, KEY);
+    expect(current?.json.tail_hint).toBe(logFloor + CF_FREE_GC_TAIL_PROBE_GETS);
     expect(counted.report()).toEqual({ get: 32, put: 5, delete: 10, list: 3 });
     const totalOps = counted.getOps();
     expect(totalOps).toBe(50);
     expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+  });
+
+  test("a deferring pass certifies more tail than the hard-GC cadence lets accrue", () => {
+    // The test above proves a deferring tick advances `tail_hint` by exactly
+    // CF_FREE_GC_TAIL_PROBE_GETS and suppresses the outer refresh, so that
+    // checkpoint is the ONLY hint advance a never-folding deferring
+    // collection gets. It is sufficient only while one pass certifies more
+    // entries than the worst-case cadence lets accrue between passes: the
+    // hard-GC starvation guard fires at least every
+    // `gcInterval * GC_STARVATION_GUARD` writes, so below that bound the gap
+    // shrinks every pass and converges to an exact stamp. Invert the
+    // relation and `(true_tail − tail_hint)` grows without bound instead,
+    // until every read throws at LOG_FORWARD_PROBE_CAP — retune the outer
+    // guard, do not relax this.
+    const worstCaseWritesBetweenGcPasses =
+      MAINTENANCE_PROFILE_CF_FREE.gcInterval * GC_STARVATION_GUARD;
+    expect(CF_FREE_GC_TAIL_PROBE_GETS).toBeGreaterThan(worstCaseWritesBetweenGcPasses);
+  });
+
+  // A DEFER refreshes `tail_hint` at Step 3 and then falls through to GC,
+  // so the tick has two call sites for one publication. The rate limit
+  // cannot catch the second: it reads the in-memory `current`, which
+  // `casUpdateCurrentJson` never writes back, so an unguarded second call
+  // still evaluates as due and rewrites byte-identical bytes.
+  //
+  // Content-free is the ONLY shape that reaches this. A legacy-content pass
+  // with a due refresh always defers, because admission needs a live range
+  // <= `gcMaxLiveLogEntriesPerRun` while the refresh needs a gap >=
+  // MAINTENANCE_TAIL_HINT_REFRESH_WRITES, and `log_seq_start <= tail_hint`
+  // makes the gap a lower bound on that range. So the redundant write costs
+  // 2 ops on a cheap pass, never on the 46-op admitted one — it is a
+  // correctness-of-op-count pin, NOT a rescue of the 50-op cap.
+  test("a deferring fold that falls through to GC refreshes tail_hint exactly once", async () => {
+    const inner = new MemoryStorage();
+    const prefix = "app/t/tenant/x/manifests/c";
+    const logFloor = 40;
+    // Exactly at the rate limit, so this case discriminates the publication
+    // guard rather than the interval.
+    const observedTail = logFloor + MAINTENANCE_TAIL_HINT_REFRESH_WRITES;
+    // Crosses the gcInterval boundary (Step 4 opens) but NOT the hard-GC one
+    // (Step 2 must not early-return, or we never reach the DEFER branch).
+    const prevSeq = 164;
+    expect(crossesGcBoundary(prevSeq, observedTail, MAINTENANCE_PROFILE_CF_FREE.gcInterval)).toBe(
+      true,
+    );
+    expect(
+      crossesGcBoundary(
+        prevSeq,
+        observedTail,
+        MAINTENANCE_PROFILE_CF_FREE.gcInterval * GC_STARVATION_GUARD,
+      ),
+    ).toBe(false);
+
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({
+        log_seq_start: logFloor,
+        tail_hint: logFloor,
+        // Rows arm trips the fold ceiling -> foldViable false -> DEFER.
+        snapshot_rows: MAINTENANCE_MAX_FOLD_ROWS - WRITE_TICK_FOLD_ENTRIES_PER_PASS + 1,
+        // Bytes arm stays under C, and keeps the ratio denominator pinned to
+        // MAINTENANCE_MIN_LIVE_BYTES so gate1 trips on the mean alone.
+        snapshot_bytes: 1024,
+        mean_entry_bytes: 1024,
+      }),
+    );
+    await seedLogEntries(inner, prefix, logFloor, observedTail);
+    // No legacy content: GC short-circuits before admission and never
+    // checkpoints, which is what exposes the second refresh.
+
+    let currentJsonPuts = 0;
+    const keyCounting: Storage = {
+      get: (key, opts) => inner.get(key, opts),
+      put: (key, body, opts) => {
+        if (key === KEY) {
+          currentJsonPuts += 1;
+        }
+        return inner.put(key, body, opts);
+      },
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (listPrefix, opts) => inner.list(listPrefix, opts),
+    };
+    const counted = countingStorage(keyCounting);
+
+    await runBoundedMaintenance(
+      { storage: counted.storage, currentJsonKey: KEY, prevSeq, observedTail },
+      { gcGraceMillis: 0, now: () => new Date("2026-01-01T00:00:00.000Z") },
+    );
+
+    // One publication, and it lands the observed tail.
+    expect(currentJsonPuts).toBe(1);
+    const current = await readCurrentJson(inner, KEY);
+    expect(current?.json.tail_hint).toBe(observedTail);
+    expect(counted.getOps()).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 
   test("B4: a write-tick fold with a STALE-LOW stored tail_hint stays within budget because observedTail bounds the probe", async () => {

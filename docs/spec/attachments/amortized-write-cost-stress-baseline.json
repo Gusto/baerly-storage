@@ -16,23 +16,23 @@
       "profile": "cf-free",
       "workload": "insert-burst/growing/2KB",
       "writes": 3000,
-      "puts": 3298,
+      "puts": 3318,
       "lists": 807,
       "deletesFree": 251,
-      "putsPerWrite": 1.099,
+      "putsPerWrite": 1.106,
       "listsPerWrite": 0.269,
-      "billableClassAPerWrite": 1.368
+      "billableClassAPerWrite": 1.375
     },
     {
       "profile": "cf-free",
       "workload": "rewrite-all/500-docs/2KB",
       "writes": 4000,
-      "puts": 4361,
+      "puts": 4388,
       "lists": 996,
       "deletesFree": 251,
-      "putsPerWrite": 1.09,
+      "putsPerWrite": 1.097,
       "listsPerWrite": 0.249,
-      "billableClassAPerWrite": 1.339
+      "billableClassAPerWrite": 1.346
     },
     {
       "profile": "node",
@@ -49,23 +49,23 @@
       "profile": "node",
       "workload": "insert-burst/growing/2KB",
       "writes": 3000,
-      "puts": 4507,
+      "puts": 4528,
       "lists": 4476,
       "deletesFree": 196,
-      "putsPerWrite": 1.502,
+      "putsPerWrite": 1.509,
       "listsPerWrite": 1.492,
-      "billableClassAPerWrite": 2.994
+      "billableClassAPerWrite": 3.001
     },
     {
       "profile": "node",
       "workload": "rewrite-all/500-docs/2KB",
       "writes": 4000,
-      "puts": 6007,
+      "puts": 6036,
       "lists": 5976,
       "deletesFree": 196,
-      "putsPerWrite": 1.502,
+      "putsPerWrite": 1.509,
       "listsPerWrite": 1.494,
-      "billableClassAPerWrite": 2.996
+      "billableClassAPerWrite": 3.003
     }
   ]
 }

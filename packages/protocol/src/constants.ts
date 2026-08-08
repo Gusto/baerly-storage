@@ -601,15 +601,30 @@ export const MAINTENANCE_PROFILE_CF_PAID: MaintenanceProfileShape = {
 export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
 
 /**
- * Rate-limit for the maintenance tick's `tail_hint` advance on the
- * DEFER path (HR-2). When the fold defers (snapshot over the CF-CPU-kill
- * ceiling) the compactor never stamps `tail_hint` via its Step-7 fold
- * CAS, so the gap `(true_tail − tail_hint)` would grow without bound and
- * every read would re-walk the whole live tail via `probeTailFrom`. The
- * runner therefore advances `tail_hint` toward the observed tail with a
- * best-effort `current.json` CAS — but only once per this many writes,
- * so it is NOT a per-commit `current.json` write (which is exactly what
- * single-write commit removed).
+ * Rate-limit for the maintenance tick's `tail_hint` advance on every
+ * path where no fold published the hint (originally HR-2, the DEFER
+ * path). When the fold defers (snapshot over the CF-CPU-kill ceiling),
+ * when `BAERLY_MAINTENANCE_DISABLE` suppresses both phases, or when a
+ * tick runs only GC, the compactor never stamps `tail_hint` via its
+ * Step-7 fold CAS — so the gap `(true_tail − tail_hint)` would grow
+ * without bound and every read would re-walk the whole live tail via
+ * `probeTailFrom`. The runner therefore advances `tail_hint` toward the
+ * observed tail with a best-effort `current.json` CAS — but only once
+ * per this many writes, so it is NOT a per-commit `current.json` write
+ * (which is exactly what single-write commit removed).
+ *
+ * This interval is a floor on the rate, not a licence to publish more
+ * than once per tick. A tick publishes `tail_hint` AT MOST ONCE, by
+ * whichever party gets there first, because the interval is measured
+ * against the tick's in-memory `current.json` — which no CAS writes back,
+ * so a repeat call still reads as due and would rewrite identical bytes.
+ * Three parties can publish: the runner's own refresh, a fold that
+ * returned `written` (Step-7 stamped `max(stored, discoveredTail)` with
+ * `discoveredTail >= observedTail`), and a GC pass that deferred
+ * legacy-content classification (its bounded admission already
+ * CAS-checkpointed the tail its capped probe certified — an extra
+ * GET+PUT there would breach the Cloudflare-Free 50-subrequest worst
+ * case that pass is proven at).
  *
  * Sized at 128: it bounds a deferring collection's worst-case
  * read-walk to ≤128 forward GETs (≈one extra read-page sweep — a
