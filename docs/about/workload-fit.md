@@ -136,10 +136,9 @@ derivations, see [cost-model.md](cost-model.md) and
 | Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Why |
 | --- | --- | --- | --- | --- |
 | Shape | 1 important screen = 1 collection | Same | Same | No cross-collection join, query planner, or atomic commit |
-| Documents in one collection | ~100-500 at 1-5 KB/doc | ~2,000 | ~2,000 — a fixed cap, not your hardware | A fold rebuilds the entire snapshot in one pass. Free runs out of CPU on bytes first; past that a 2,048-row guard binds, and that guard is a constant with no override, sized for the smallest host. A bigger box buys bigger documents, not more of them |
+| Documents in one collection | ~100-500 at 1-5 KB/doc | ~2,000 | ~2,000 — a fixed cap, not your hardware | A fold rebuilds the entire snapshot in one pass. Free runs out of CPU on bytes first; past that a 2,048-row guard binds. That guard is a constant with no override, calibrated for the smallest host and never re-measured for larger ones ([#118](https://github.com/Gusto/baerly-storage/issues/118)), so a bigger box buys bigger documents rather than more of them |
 | Writes to one collection | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry |
-| Collections per tenant | ~100 | Same | Same | Nothing enforces a cap. `baerly admin usage` sweeps collections linearly, so ~100 is where that scan gets slow |
-| Cost crossover | ~M-size (~30 writes/min) | Same | Same | Bucket operations are what cross over, and they cost the same wherever compute runs. Below the line, 30 idle internal tools are ~$5 all-in against ~$150-315/mo on Neon or Supabase Pro; above it, D1 or Firestore run ~3× cheaper per op. Compute is a separate flat line — $0 on Workers free, $5/mo on Workers Paid, your hardware on Node — and it is not what moves the crossover |
+| Collections per tenant | ~100 | Same | Same | Nothing enforces a cap, and nothing in the request path scans collections. The cost is operator tooling: `baerly admin usage` walks collections one at a time, spending a LIST plus up to 120 GETs on each, so wall time is round-trips to the bucket rather than CPU — which is why the app's host does not change it |
 
 ¹ A paid Worker still runs the **free-tier** budgets until you set
 `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
@@ -148,9 +147,12 @@ Node adapter selects its profile automatically.
 Past the document ceiling the log stops collapsing into the snapshot:
 reads keep working and get slower — erosion, not a cliff. Stored bytes
 are not a fit limit at all; nothing in baerly-storage measures or
-enforces per-tenant storage, since a tenant is only a key prefix. R2
-simply stops being free above 10 GB-mo, which is a line on your bill.
-[cost-model.md](cost-model.md) owns the rates and the crossover tables;
+enforces per-tenant storage, since a tenant is only a key prefix.
+
+Cost is not in the table because it is not a shape question. For the
+dollar envelope, the write rate where a managed database becomes
+cheaper per operation, and side-by-side figures against D1, Supabase,
+Neon, and Firestore, see [cost-model.md](cost-model.md).
 [graduation.md § Per-tier bounds](graduation.md#per-tier-bounds) owns
 the per-host limits.
 
