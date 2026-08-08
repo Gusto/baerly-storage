@@ -377,8 +377,13 @@ snapshot:
    folds are the primary durable advancer of the hint. Explicitly bounded
    scheduled compaction can instead durably checkpoint an incomplete probe's
    certified lower bound in `tail_hint` without publishing a snapshot; a
-   later pass resumes from that checkpoint. Write-tick maintenance may also
-   rate-limit-refresh the hint when fold/GC work is disabled or deferred.
+   later pass resumes from that checkpoint. Bounded GC checkpoints the
+   tail its own capped probe certified when it defers legacy-content
+   classification. Write-tick maintenance rate-limit-refreshes the hint
+   when fold/GC work is disabled or deferred, and after a GC slice that
+   neither deferred nor followed a landed fold in the same tick — a
+   landed fold has already published a hint at or past the observed
+   tail, so refreshing again would rewrite identical bytes.
    Ordinary writer commits never touch
    `current.json` on the commit path. The fold CAS is therefore the
    only steady-state writer of the snapshot pointer, `log_seq_start`,
@@ -483,7 +488,9 @@ These are the load-bearing rules.
    `tail_hint` is a non-authoritative monotone lower bound, durably advanced
    by compaction folds, explicitly bounded scheduled-compaction probe
    checkpoints, bounded-GC tail checkpoints, and by the write-tick runner's
-   tail refresh when fold/GC work defers or is disabled. Those durable
+   rate-limited tail refresh — which fires when fold/GC work defers or is
+   disabled, and after a non-deferring GC slice whose tick did not already
+   land a fold that published the hint. Those durable
    checkpoint writers use monotone CAS updates and never move `tail_hint`
    past the true first missing log slot. Ordinary writer commits never refresh
    it inline. Other non-commit-path writers are explicit: the one-time
