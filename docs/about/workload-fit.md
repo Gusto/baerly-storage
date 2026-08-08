@@ -133,37 +133,22 @@ The numbers a builder needs before writing the first line of code. For
 derivations, see [cost-model.md](cost-model.md) and
 [graduation.md](graduation.md).
 
-**Read the table as the lowest tier's ceilings, not the product's.** The
-CPU- and request-bound rows are quoted on Cloudflare's free tier
-deliberately: it is the most constrained host baerly-storage supports,
-and a fold that fits its ~10 ms CPU budget forces the kernel to stay
-lean everywhere else. baerly-storage runs against any S3-compatible
-bucket (R2, S3, GCS, MinIO) on any compute host, so reading "~100-500
-docs" as *the* ceiling would be wrong.
+| Dimension | Cloudflare free | Cloudflare paid¹ / serverful Node | Notes |
+| --- | --- | --- | --- |
+| Shape | 1 important screen = 1 collection | Same | Not a host property. The fit test above; fails before size matters |
+| Throughput | ~30 writes/min/collection sustained | Same | Contention for the per-collection log slot, not a host budget — model/estimate, pending real-infra measurement on Cloudflare R2 |
+| Snapshot bytes (`C`) | 512 KB ⇒ ~100-500 docs at 1-5 KB/doc | Tens of MB, once raised | The 512 KB default is identical on all three shipped profiles; it moves only when you set `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, never by changing host. Past ~1 MB on CF free you reach the ~10 ms CPU wall and get an init-time `console.warn` |
+| Snapshot rows (`E`) | ~2028 docs | ~1848 docs — **lower** | `E = 2048` everywhere, with no env override on any host. The gate is `snapshot_rows + maxFoldEntriesPerPass <= E`, and the bigger hosts fold a 200-entry tail slice against free's 20 — so the row cap goes *down*. Small documents hit this arm long before the byte arm |
+| Fan-out | ~100 collections/tenant (soft guideline) | Same | Not a host property. Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N |
+| Storage | >10 GB/tenant stored = R2 free-tier boundary | Same | An R2 storage-billing line, independent of the Workers compute tier; not a protocol ceiling |
+| Cost | Not priced here | ~$10-20/mo all-in at M-size | Tens of dollars, not hundreds — read the range, not a point. Spans R2 / S3 / GCS: provider choice moves it a few dollars, not a multiple. Includes the $5/mo Workers Paid floor; self-hosted Node has none. A model output that moves with write-amplification and provider rates — [cost-model.md](cost-model.md) owns the rates, the M-size breakdown, and the curve; `baerly cost` projects the object-storage-ops portion only |
 
-It is also wrong to read a bigger tier as lifting that ceiling by
-itself. The snapshot ceiling has two arms, and they behave differently:
-
-- **Bytes (`C`, default 512 KB)** rises to tens of MB on Workers Paid or
-  serverful Node — but only when you raise
-  `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`. Changing tiers alone changes
-  nothing; `C` is identical in all three shipped profiles.
-- **Rows (`E = 2048`)** does not move on any tier. There is no env
-  override, and the paid and Node profiles fold a larger tail slice per
-  pass, so their effective row cap is slightly *lower* than free's.
-  Small documents hit this arm long before the byte arm.
-
-See [graduation.md § Per-tier bounds](graduation.md#per-tier-bounds) for
-the full table and citations.
-
-| Dimension | Number | Notes |
-| --- | --- | --- |
-| Shape | 1 important screen = 1 collection | The fit test above; fails before size matters |
-| Throughput | ~30 writes/min/collection sustained | M-size operating point — model/estimate, pending real-infra measurement on Cloudflare R2; not tied to any one tier |
-| Per-collection size (Cloudflare **free** tier) | ~100-500 docs (~512 KB snapshot) before compaction defers | A fold fits free tier's ~10 ms CPU / 50-subrequest budget at ~512 KB — model/estimate, pending real CF-isolate measurement. Erosion, not a cliff, on every tier. Byte arm raisable on paid/Node, row arm (`E = 2048`) not raisable anywhere — see the two-arm note above |
-| Fan-out | ~100 collections/tenant (soft guideline) | Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N; not tied to any one tier |
-| Storage | >10 GB/tenant stored = R2 free-tier boundary | A cost line, not a protocol ceiling; billing begins above 10 GB-mo on R2. This is a storage-billing threshold, unrelated to the Workers CPU/subrequest tier above |
-| Cost | ~$10-20/mo all-in at M-size | Tens of dollars, not hundreds — read the range, not a point. Spans R2 / S3 / GCS: provider choice moves it a few dollars, not a multiple. Includes the $5/mo Workers Paid platform floor; self-hosted Node has none. At ~30 writes/min account-wide aggregate. A model output that moves with write-amplification and provider rates — [cost-model.md](cost-model.md) owns the per-line-item rates, the M-size breakdown, and the curve; `baerly cost` projects the object-storage-ops portion only (no platform floor) |
+¹ A paid Worker still runs the **free-tier** budgets until you set
+`BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
+Node adapter selects its profile automatically. Both ceilings deferring
+is erosion, not a cliff — reads keep working and get slower. See
+[graduation.md § Per-tier bounds](graduation.md#per-tier-bounds) for the
+full table and citations.
 
 **CPU and throughput walls are surfaced above as model/estimate** — the
 ~11 ms/MB fold-cost model (used to derive the ~512 KB CF-free ceiling)
