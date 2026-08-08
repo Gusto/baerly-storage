@@ -133,23 +133,58 @@ The numbers a builder needs before writing the first line of code. For
 derivations, see [cost-model.md](cost-model.md) and
 [graduation.md](graduation.md).
 
-| Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Notes |
-| --- | --- | --- | --- | --- |
-| Host budget | ~10 ms CPU and 50 subrequests per request | 30 s CPU (up to 5 min), 10,000 subrequests, ~128 MB isolate memory | No per-request cap; the CPU and RAM you provision | The walls every row below derives from. Cloudflare's are fixed and published; Node's are whatever the box is, which is why it gets its own column. On Node a fold blocks the event loop |
-| Shape | 1 important screen = 1 collection | Same | Same | Not a host property. The fit test above; fails before size matters |
-| Throughput | ~30 writes/min/collection sustained | Same | Same | Contention for the per-collection log slot, not a host budget — model/estimate, pending real-infra measurement on Cloudflare R2 |
-| Snapshot bytes (`C`) | 512 KB ⇒ ~100-500 docs at 1-5 KB/doc | ~40 MB, bounded by isolate memory | Bounded by host RAM — you size it | The 512 KB default is identical on all three shipped profiles; it moves only when you set `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, never by changing host. A fold holds the old snapshot, the new one, and the tail at once — roughly 2-3× the snapshot. Past ~1 MB on CF free you reach the CPU wall and get an init-time `console.warn` |
-| Snapshot rows (`E`) | ~2028 docs | ~1848 docs — **lower** | ~1848 docs — **lower** | `E = 2048` everywhere, with no env override on any host. The gate is `snapshot_rows + maxFoldEntriesPerPass <= E`, and both larger hosts fold a 200-entry tail slice against free's 20 — so the row cap goes *down*. Small documents hit this arm long before the byte arm |
-| Fan-out | ~100 collections/tenant (soft guideline) | Same | Same | Not a host property. Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N |
-| Storage | >10 GB/tenant stored = R2 free-tier boundary | Same | Whatever your bucket provider bills; S3 has no free tier | A property of the bucket, not the compute host — the column split is about where the fold runs. Not a protocol ceiling |
-| Cost | n/a — M-size needs Workers Paid | ~$10-20/mo all-in at M-size | Your hosting bill; no platform floor | Tens of dollars, not hundreds — read the range, not a point. Across R2 / S3 / GCS, provider choice moves it a few dollars, not a multiple. The Cloudflare figure includes the $5/mo Workers Paid floor. A model output that moves with write-amplification and provider rates — [cost-model.md](cost-model.md) owns the rates, the M-size breakdown, and the curve; `baerly cost` projects the object-storage-ops portion only |
+These fall out of the protocol, so they hold on every host:
+
+| Question | Answer | Where the number comes from |
+| --- | --- | --- |
+| Can the screen be answered from one collection? | The fit test above | Fails before size matters |
+| How many documents in one collection? | **~2,000** | Two ceilings bound a fold; you feel the lower one. See below |
+| How fast can one collection be written? | ~30 writes/min sustained | Writers contend for the same next log slot — model/estimate, pending real-infra measurement on R2 |
+| How many collections can one tenant have? | ~100 before `baerly admin usage` gets slow | Nothing enforces a cap. The sweep costs ≈ N × (1 LIST + up to 120 GETs), strictly linear, so this is where it becomes noticeable — not a limit. Bench: `pnpm bench:collection-fanout` |
+
+**The ~2,000 is the number most projects should check first.** A fold is
+gated on two arms, and a collection stops compacting when either trips:
+
+- **Bytes** — 512 KB by default, raisable with
+  `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`.
+- **Rows** — 2,048, with no override on any host.
+
+On Cloudflare free the byte arm binds first, at roughly 100-500
+documents for 1-5 KB documents. Raise the byte budget on a bigger host
+and the row arm binds instead, at ~1,848. So one collection tops out
+near 2,000 documents wherever you run it, and a bigger host buys room
+only if your documents are large. Past either arm the log stops
+collapsing: reads keep working and get slower — erosion, not a cliff.
+
+The host changes how much of that you can actually reach:
+
+| | Cloudflare free | Cloudflare paid¹ | Serverful Node |
+| --- | --- | --- | --- |
+| Per-request budget | ~10 ms CPU, 50 subrequests | 30 s CPU (up to 5 min), 10,000 subrequests | No per-request cap; the CPU and RAM you provision |
+| Documents in one collection | ~100-500 at 1-5 KB/doc | ~1,848 once the byte budget is raised | ~1,848 once the byte budget is raised |
+
+Isolate memory is **128 MB on Cloudflare free and paid alike** — paid
+buys CPU and subrequests, not memory. That memory is what caps a raised
+byte budget at roughly tens of MB on Workers, since a fold holds the old
+snapshot, the new one, and the tail at once. On Node the equivalent
+limit is the RAM you provisioned, and a fold blocks the event loop.
 
 ¹ A paid Worker still runs the **free-tier** budgets until you set
 `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
-Node adapter selects its profile automatically. Either ceiling deferring
-is erosion, not a cliff — reads keep working and get slower. See
+Node adapter selects its profile automatically. See
 [graduation.md § Per-tier bounds](graduation.md#per-tier-bounds) for the
 full table and citations.
+
+**Cost and storage follow the bucket, not the host.** At M-size, all-in
+is ~$10-20/mo across R2 / S3 / GCS — tens of dollars, not hundreds, and
+provider choice moves it a few dollars rather than a multiple. $5 of
+that is the Workers Paid floor, which self-hosted Node does not pay. R2
+stops being free above 10 GB-mo stored and S3 has no equivalent free
+tier, but nothing in baerly-storage measures or enforces per-tenant
+bytes — a tenant is just a key prefix, so this is a line on your bill,
+not a ceiling in the protocol. [cost-model.md](cost-model.md) owns the
+rates and the curve; `baerly cost` projects the object-storage-ops
+portion only.
 
 **CPU and throughput walls are surfaced above as model/estimate** — the
 ~11 ms/MB fold-cost model (used to derive the ~512 KB CF-free ceiling)
