@@ -2,7 +2,7 @@
 title: Workload fit
 audience: product
 summary: A qualitative shape test for deciding whether an app fits baerly-storage before sizing the workload.
-last-reviewed: 2026-06-26
+last-reviewed: 2026-08-07
 tags: [positioning, product, workload]
 related: [thesis.md, cost-model.md, graduation.md]
 ---
@@ -133,14 +133,28 @@ The numbers a builder needs before writing the first line of code. For
 derivations, see [cost-model.md](cost-model.md) and
 [graduation.md](graduation.md).
 
-| Dimension | Number | Notes |
-| --- | --- | --- |
-| Shape | 1 important screen = 1 collection | The fit test above; fails before size matters |
-| Throughput | ~30 writes/min/collection sustained | M-size operating point — model/estimate, pending real-infra measurement on Cloudflare R2 |
-| Per-collection size | ~100–500 docs (~512 KB snapshot) before compaction defers on CF free | A fold fits the free-tier CPU budget at ~512 KB; erosion, not a cliff — model/estimate, pending real CF-isolate measurement |
-| Fan-out | ~100 collections/tenant (soft guideline) | Bench-grounded linear cost (`pnpm bench:collection-fanout`); nothing in the protocol enforces a cap — cost grows linearly with N |
-| Storage | >10 GB/tenant stored = R2 free-tier boundary | A cost line, not a protocol ceiling; billing begins above 10 GB-mo on R2 |
-| Cost | ~$12/mo all-in on R2 (~$7 object-storage ops + $5 Workers Paid floor), ~$19/mo on S3 or GCS at M-size | At ~30 writes/min account-wide aggregate; `baerly cost` projects the object-storage-ops portion only (no platform floor); see [cost-model.md](cost-model.md) for the curve |
+| Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Why |
+| --- | --- | --- | --- | --- |
+| Shape | 1 important screen = 1 collection | Same | Same | No cross-collection join, query planner, or atomic commit |
+| Documents in one collection | ~100-500 at 1-5 KB/doc | ~2,000 | ~2,000 — a fixed cap, not your hardware | A fold rebuilds the entire snapshot in one pass. Free runs out of CPU on bytes first; past that a 2,048-row guard binds. That guard is a constant with no override, calibrated for the smallest host and never re-measured for larger ones ([#118](https://github.com/Gusto/baerly-storage/issues/118)), so a bigger box buys bigger documents rather than more of them |
+| Writes to one collection | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry |
+| Collections per tenant | ~100 | Same | Same | Nothing enforces a cap, and nothing in the request path scans collections. The cost is operator tooling: `baerly admin usage` walks collections one at a time, spending a LIST plus up to 120 GETs on each, so wall time is round-trips to the bucket rather than CPU — which is why the app's host does not change it |
+
+¹ A paid Worker still runs the **free-tier** budgets until you set
+`BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
+Node adapter selects its profile automatically.
+
+Past the document ceiling the log stops collapsing into the snapshot:
+reads keep working and get slower — erosion, not a cliff. Stored bytes
+are not a fit limit at all; nothing in baerly-storage measures or
+enforces per-tenant storage, since a tenant is only a key prefix.
+
+Cost is not in the table because it is not a shape question. For the
+dollar envelope, the write rate where a managed database becomes
+cheaper per operation, and side-by-side figures against D1, Supabase,
+Neon, and Firestore, see [cost-model.md](cost-model.md).
+[graduation.md § Per-tier bounds](graduation.md#per-tier-bounds) owns
+the per-host limits.
 
 **CPU and throughput walls are surfaced above as model/estimate** — the
 ~11 ms/MB fold-cost model (used to derive the ~512 KB CF-free ceiling)
