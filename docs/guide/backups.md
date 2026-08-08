@@ -207,21 +207,42 @@ The safe cutover shape is:
    restore imports rows; it does not rebuild secondary index markers. If
    the index check reports drift, run it with `--fix` or run
    `baerly admin rebuild-index` for each index before cutover.
-5. Point the app at the recovered bucket/prefix. This direct route cutover is
-   preferred. If infrastructure requires copying, copy into a fresh, empty
-   destination collection prefix only; never overlay recovery objects onto a
-   prefix that contains an older collection generation. Old higher-numbered
-   `log/` objects are not fenced by `current.json`: readers forward-probe past
-   the restored `tail_hint` and can replay a consecutive old suffix. Copy only
-   after writers and maintenance have drained, inside the maintenance window,
-   and copy `current.json` **last** — after the snapshot it names (when
-   non-null), every live log object, and rebuilt index objects required by
-   indexed reads exist at the destination. If `current.json` lands first,
-   readers can reference missing objects; if required index markers are
-   missing, index-routed reads can miss rows. No current kernel reader depends
-   on content side objects. Copy `content/` only when preserving a legacy or
-   mixed-version bucket for legacy writers or tooling.
-6. Resume writers only after a successful authenticated read against
+5. Point the app at the recovered bucket/prefix. This direct route
+   cutover is preferred, and it is the only route that rewrites no keys.
+6. If infrastructure requires a raw object copy instead, copy into a
+   separate bucket or storage namespace at the **identical
+   bucket-relative collection path**. `current.snapshot` and every
+   `gc/pending.json` candidate store complete bucket-relative keys, so a
+   copy that lands the same objects under a different collection path
+   leaves the snapshot pointer aimed at a key that does not exist and
+   gives the destination's GC candidates that address the *source*
+   prefix. If the destination collection path differs at all, do not
+   relocate objects — run `baerly admin restore` directly into that
+   final, fresh prefix. When the path does match:
+   - Copy into a fresh, empty destination collection prefix only; never
+     overlay recovery objects onto a prefix that contains an older
+     collection generation. Old higher-numbered `log/` objects are not
+     fenced by `current.json`: readers forward-probe past the restored
+     `tail_hint` and can replay a consecutive old suffix.
+   - Copy only after writers and maintenance have drained, inside the
+     maintenance window.
+   - Do not copy `gc/pending.json`. Its candidates name source-prefix
+     keys under the source generation; the destination bootstraps a
+     fresh ledger on its first GC pass.
+   - Copy `current.json` **last** — after the snapshot it names (when
+     non-null), every live log object, and rebuilt index objects
+     required by indexed reads exist at the destination. If
+     `current.json` lands first, readers can reference missing objects;
+     if required index markers are missing, index-routed reads can miss
+     rows.
+   - No current kernel reader depends on content side objects. Copy
+     `content/` only when preserving a legacy or mixed-version bucket
+     for legacy writers or tooling.
+7. Run `baerly admin fsck` (plus `--indexes` for indexed collections)
+   against the final destination — the exact route the app will read —
+   before enabling reads. Step 3 checked the recovery prefix, not the
+   copy.
+8. Resume writers only after a successful authenticated read against
    the recovered route.
 
 ## Restore Drill
