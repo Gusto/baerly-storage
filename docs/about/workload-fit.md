@@ -136,10 +136,10 @@ derivations, see [cost-model.md](cost-model.md) and
 | Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Why |
 | --- | --- | --- | --- | --- |
 | Shape | 1 important screen = 1 collection | Same | Same | No cross-collection join, query planner, or atomic commit |
-| Documents in one collection | ~100-500 at 1-5 KB/doc | ~2,000 | ~2,000 | A fold rebuilds the entire snapshot in one pass, so the collection has to fit in one host's budget. Free runs out of CPU on bytes first; past that a ~2,048-row cap binds everywhere |
+| Documents in one collection | ~100-500 at 1-5 KB/doc | ~2,000 | ~2,000 — a fixed cap, not your hardware | A fold rebuilds the entire snapshot in one pass. Free runs out of CPU on bytes first; past that a 2,048-row guard binds, and that guard is a constant with no override, sized for the smallest host. A bigger box buys bigger documents, not more of them |
 | Writes to one collection | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry |
 | Collections per tenant | ~100 | Same | Same | Nothing enforces a cap. `baerly admin usage` sweeps collections linearly, so ~100 is where that scan gets slow |
-| Cost | $0 at idle | ~$16/mo at M-size | No platform floor; your hardware | Below the line, nothing beats a bucket you already own — 30 idle internal tools cost ~$5 all-in, against ~$150-315/mo on Neon or Supabase Pro. Past M-size the per-op economics flip and D1 or Firestore run ~3× cheaper. That crossover, not a capability wall, is the cost reason to graduate |
+| Cost crossover | ~M-size (~30 writes/min) | Same | Same | Bucket operations are what cross over, and they cost the same wherever compute runs. Below the line, 30 idle internal tools are ~$5 all-in against ~$150-315/mo on Neon or Supabase Pro; above it, D1 or Firestore run ~3× cheaper per op. Compute is a separate flat line — $0 on Workers free, $5/mo on Workers Paid, your hardware on Node — and it is not what moves the crossover |
 
 ¹ A paid Worker still runs the **free-tier** budgets until you set
 `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
