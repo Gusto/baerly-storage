@@ -1,10 +1,10 @@
 ---
 title: Graduation thresholds
 audience: operator
-summary: The CPU and memory bounds that tell you when a collection has outgrown its deployment tier, and what to do about it.
-last-reviewed: 2026-08-08
+summary: Operator runbook for a collection at or past a limit — map the symptom, pick the graduation path, and set the env var or move hosts.
+last-reviewed: 2026-08-09
 tags: [operations, cost, capacity, graduation]
-related: [cost-model.md, workload-fit.md, thesis.md, "../adr/002-ephemeral-coordination.md"]
+related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md", "../adr/002-ephemeral-coordination.md"]
 ---
 
 # Graduation thresholds
@@ -28,18 +28,16 @@ defers because either ceiling trips, it bumps
 `db.compaction.deferred_total` and may emit a rate-limited
 `console.warn` naming the dimension.
 
-For the **cost** side of graduation, see
-[cost-model.md](cost-model.md). The cost signals are separate:
+Two of the triggers below are cost lines rather than capacity ones: an
+advisory at sustained ~100 writes/min account-wide, surfaced by
+`baerly cost`, and a hard trigger at 50M Class A ops/mo sustained over
+7 days. Both appear in the decision table with the values to compare
+against;
+[cost-model.md § Cost-side graduation signals](cost-model.md#cost-side-graduation-signals)
+owns the meters and the dollar figures behind them.
 
-- **Advisory:** sustained ~100 writes/min account-wide
-  (provider-agnostic; 8.64M Class A/mo / ~$34/mo object-storage ops on
-  R2, 12.96M / ~$65/mo on S3), surfaced by `baerly cost`.
-- **Hard cost trigger:** 50M Class A/mo, sustained over 7 days
-  (~580 writes/min and ~$221/mo object-storage ops on R2; ~390
-  writes/min on Node).
-
-Those write rates are **account-wide aggregate** rates because Class A
-is billed per account. They are distinct from the per-collection
+Those two are **account-wide aggregate** write rates, because Class A is
+billed per account. They are distinct from the per-collection
 ~30 writes/min contention ceiling in
 [the workload envelope](workload-fit.md#scale-at-a-glance).
 
@@ -186,11 +184,10 @@ trips first —
 CPU vs. free's ~10 ms), then set `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
 That alone moves `C` to 8 MiB and `E` to 32,768 and compaction resumes;
 there is no env override to set for the common case. On paid, CPU stops
-being the practical wall and Worker memory (~128 MB) becomes the limit,
-which is what fixes 8 MiB rather than "tens of MB": peak heap runs
-~2.4x the snapshot, so 8 MiB peaks at ~19.5 MB and the next step up
-(16 MiB ⇒ 37.3 MB) overruns the 4x margin. If you override `C` past the
-profile value, size it to memory, not CPU; see
+being the practical wall and Worker memory (~128 MB) becomes the limit —
+which is why the paid ceiling is 8 MiB rather than "tens of MB"
+([why that number](../spec/scale-ceilings.md#per-tier-bounds)). If you
+override `C` past the profile value, size it to memory, not CPU; see
 [Operations plane](#operations-plane-env-vars).
 
 ### 2. On serverful Node: raise the env var
@@ -199,9 +196,10 @@ When the warning names bytes, this is not a tier graduation. A Node host
 has no per-request CPU wall; the ceiling is host RAM, and the node
 profile already ships `C = 32 MiB` — the top of the measured grid, not
 a measured wall, so a host with headroom can go further. Raise
-`BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, scaling by `C ≈ heap / 10` (peak
-heap ≈ 2.4x snapshot, keeping a 4x margin); the fold completes on the
-next write, with one inline write-latency spike. If the warning names
+`BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, scaling by `C ≈ heap / 10`
+([where that rule comes from](../spec/scale-ceilings.md#what-is-shipped-vs-estimated));
+the fold completes on the next write, with one inline
+write-latency spike. If the warning names
 rows, the env var will not help: `E` has no override, and node already
 runs the largest shipped value (65,536).
 
@@ -323,8 +321,14 @@ it.
 
 ## See also
 
+- [workload-fit.md](workload-fit.md#scale-at-a-glance) — the published
+  envelope this page triggers on, and whether the app fitted in the
+  first place.
 - [cost-model.md](cost-model.md) — Class A ops, write-amp, stored bytes,
-  and the cost side of graduation.
+  and the cost meters behind the two cost triggers.
+- [scale-ceilings.md](../spec/scale-ceilings.md) — why `C`, `E`, and the
+  per-tier walls are the numbers they are. Read it when a threshold here
+  is challenged rather than acted on.
 - [thesis.md](thesis.md#workload-ceiling) — why the envelope is named
   and why graduation is the success path.
 - [adr/002-ephemeral-coordination.md](../adr/002-ephemeral-coordination.md)
