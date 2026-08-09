@@ -143,7 +143,7 @@ export const S3_REQUEST_MAX_RETRIES: number = 8;
  * 16 bounds CONCURRENCY, not the per-request total. `16 * 8 = 128` is
  * the whole-request worst case across the retry budget, which fits the
  * Cloudflare PAID subrequest cap (10,000/request since 2026-02-11) but
- * not the free cap (50/request) — see `docs/about/graduation.md`
+ * not the free cap (50/request) — see `docs/spec/scale-ceilings.md`
  * §Per-tier bounds. A free-tier reader relies on the compactor keeping
  * the live tail short enough that the walk never approaches it. Do not
  * cite this 128 as a per-request budget for anything else.
@@ -185,7 +185,7 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
  *
  * **Sized by the subrequest wall, not by coverage.** Cloudflare free
  * allows 50 subrequests per request total
- * (`docs/about/graduation.md` §Per-tier bounds); R2 binding ops count
+ * (`docs/spec/scale-ceilings.md` §Per-tier bounds); R2 binding ops count
  * 1:1, and a `ctx.waitUntil` maintenance continuation draws on the
  * same per-invocation budget. One `op:"U"` commit on a single-index
  * collection already costs ~14 before this walk — 1 GET
@@ -341,9 +341,9 @@ export const GC_PENDING_CAS_MAX_ATTEMPTS: number = 3;
  * knob — with the ceiling on the snapshot axis (Decision 3a, tail sliced) the
  * auto-maintained snapshot ceiling is S_max = C, NOT C/(1+R). R=1.0 caps steady-state
  * read-amp at ~2× and keeps compaction write-amp (≈1+1/R) moderate. See
- * docs/about/graduation.md for the derivation.
+ * docs/spec/scale-ceilings.md for the derivation.
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  * @see packages/server/src/maintenance.ts
  */
 export const MAINTENANCE_TARGET_RATIO: number = 1;
@@ -469,7 +469,7 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  *
  * @see packages/adapter-node/src/server.ts
  * @see packages/server/src/maintenance.ts
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  */
 export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
 
@@ -494,7 +494,7 @@ export const NODE_MAINTENANCE_GC_INTERVAL: number = 2;
  * ~5.5 ms under CF-free ~10 ms. Raise via BAERLY_MAINTENANCE_MAX_FOLD_BYTES on capable
  * hosts. Auto-maintained snapshot ceiling S_max = C. NOT snapshot+tail (tail is sliced).
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  * @see packages/server/src/maintenance.ts
  */
 // Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
@@ -520,7 +520,7 @@ export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
  *
  * @see packages/adapter-cloudflare/src/worker.ts
  * @see packages/server/src/maintenance.ts
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  */
 // Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
 export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
@@ -538,7 +538,7 @@ export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
  * larger hosts no longer inherit it; see {@link CF_PAID_MAINTENANCE_MAX_FOLD_ROWS}
  * and {@link NODE_MAINTENANCE_MAX_FOLD_ROWS}.
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  * @see packages/server/src/maintenance.ts
  */
 export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
@@ -558,7 +558,7 @@ export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
  * isolate OOM mid-fold strands the `current.json` CAS exactly like a CF-free
  * CPU kill, so the fold silently never advances `log_seq_start`.
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  * @see bench/measurement/fold-ceiling-probe.ts
  */
 // Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
@@ -571,7 +571,7 @@ export const CF_PAID_MAINTENANCE_MAX_FOLD_BYTES: number = 8 * 1024 * 1024;
  * peaks at ~19.7 MB. The next grid cell up (65,536 rows ⇒ 39.4 MB) exceeds the
  * margin.
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  */
 export const CF_PAID_MAINTENANCE_MAX_FOLD_ROWS: number = 32_768;
 
@@ -598,7 +598,7 @@ export const CF_PAID_MAINTENANCE_MAX_FOLD_ROWS: number = 32_768;
  * / `decodeJsonBytes` materialize the whole snapshot as a JS string, so a
  * snapshot at V8's `MAX_STRING_LENGTH` throws mid-fold.
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  * @see bench/measurement/fold-ceiling-probe.ts
  */
 // Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
@@ -612,7 +612,7 @@ export const NODE_MAINTENANCE_MAX_FOLD_BYTES: number = 32 * 1024 * 1024;
  * {@link NODE_MAINTENANCE_MAX_FOLD_BYTES} being a measured floor rather than a
  * wall.
  *
- * @see docs/about/graduation.md
+ * @see docs/spec/scale-ceilings.md
  */
 export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
 

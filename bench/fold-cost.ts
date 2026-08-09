@@ -10,7 +10,7 @@
  *     axis — many tiny docs).
  *
  * This bench MEASURES the actual CPU/memory cost of a snapshot fold, to
- * compare against the *modelled* numbers in `docs/about/graduation.md`
+ * compare against the *modelled* numbers in `docs/spec/scale-ceilings.md`
  * ("≈ 11 ms CPU per MB of snapshot rebuilt", and the PROVISIONAL
  * `E = 2048` row ceiling). It reports BOTH axes because paid Cloudflare
  * is MEMORY-bound where free is CPU-bound. MEASURES ONLY — it changes no
@@ -59,7 +59,7 @@
  *     *shape* (linear in bytes, the per-row slope) is the portable
  *     signal, not the absolute bytes.
  *
- * GRID — tied to the graduation.md cost-model table.
+ * GRID — tied to the scale-ceilings.md fold cost model table.
  *   - **bytes axis** brackets the table's 64 KB / 256 KB / 512 KB (the
  *     default `C`) / 1 MB (≈ CF-free CPU line) / 5 MB rows. We hold
  *     bytes/doc fixed and vary row count to hit each target snapshot
@@ -102,7 +102,7 @@ const MEASURE_ITERS = 11;
 
 /**
  * BYTES axis — fixed bytes/doc, row count chosen to bracket the
- * graduation.md cost-model table's snapshot sizes
+ * scale-ceilings.md fold cost model table's snapshot sizes
  * (64 KB / 256 KB / 512 KB / 1 MB / 5 MB). 2 KB/doc sits in the table's
  * "1–5 KB/doc" band, so the row counts below land each target size.
  */
@@ -167,7 +167,7 @@ interface RunResult {
     readonly memory: "sampled process.memoryUsage().heapUsed peak minus start, reported bytes";
     readonly note: "median only (min/max omitted — sampled-peak min can float to 0 on a GC, and a GC CPU spike is an outlier the median absorbs); byte-axis pad is a single repeated-char string, so absolute byte numbers are a mild lower bound vs. heterogeneous real docs — the linear shape is the portable signal";
   };
-  /** Modelled reference numbers from docs/about/graduation.md (NOT measured). */
+  /** Modelled reference numbers from docs/spec/scale-ceilings.md (NOT measured). */
   readonly modelled_reference: {
     readonly cpu_ms_per_mb: 11;
     readonly row_ceiling_E_provisional: number;
