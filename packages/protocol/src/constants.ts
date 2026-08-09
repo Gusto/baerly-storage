@@ -528,13 +528,93 @@ export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
 /**
  * SNAPSHOT-rebuild ceiling `E`, per-entry CPU axis: gates `snapshot_rows` (per-entry
  * parse/merge/serialize is ~half of fold CPU and scales with ROW COUNT not bytes, VLDB 2021
- * Sarkar — a tiny-doc snapshot can blow CPU under C). PROVISIONAL — bench
- * landed; paid recalibration deferred.
+ * Sarkar — a tiny-doc snapshot can blow CPU under C).
+ *
+ * This is the **cf-free** value and the shared default. `pnpm bench:fold-ceiling`
+ * measures 2048 rows at ~1.5 ms against the ~10 ms free-tier budget (a ~6.6×
+ * margin), and the row axis does not reach 10 ms until ~16,384 rows. The value
+ * stays at 2048 because overrun on a free isolate is CPU-killed MID-REBUILD and
+ * strands the `current.json` CAS — see {@link CF_FREE_MAX_SAFE_FOLD_BYTES}. The
+ * larger hosts no longer inherit it; see {@link CF_PAID_MAINTENANCE_MAX_FOLD_ROWS}
+ * and {@link NODE_MAINTENANCE_MAX_FOLD_ROWS}.
  *
  * @see docs/about/graduation.md
  * @see packages/server/src/maintenance.ts
  */
 export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
+
+/**
+ * Snapshot-rebuild byte ceiling `C` for the **cf-paid** profile.
+ *
+ * A paid isolate's wall is ~128 MB of Worker memory, not CPU — at a 30 s CPU
+ * budget the rebuild is never CPU-bound, but a fold holds the old snapshot, the
+ * new snapshot, and the tail at once. `pnpm bench:fold-ceiling` measures peak
+ * heap at ~2.4× the snapshot on the byte axis, stable across 704 MB–4.3 GB
+ * heaps: 8 MiB peaks at ~19.5 MB, a 4× margin under 128 MB. The next grid cell
+ * up (16 MiB ⇒ 37.3 MB peak) exceeds that margin, which is what fixes this
+ * value.
+ *
+ * The margin is deliberately tight because overrun is NOT graceful here: an
+ * isolate OOM mid-fold strands the `current.json` CAS exactly like a CF-free
+ * CPU kill, so the fold silently never advances `log_seq_start`.
+ *
+ * @see docs/about/graduation.md
+ * @see bench/measurement/fold-ceiling-probe.ts
+ */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
+export const CF_PAID_MAINTENANCE_MAX_FOLD_BYTES: number = 8 * 1024 * 1024;
+
+/**
+ * Snapshot-rebuild row ceiling `E` for the **cf-paid** profile. Same 128 MB
+ * memory wall and same 4× margin as {@link CF_PAID_MAINTENANCE_MAX_FOLD_BYTES};
+ * the row axis costs ~600 B of peak heap per row (measured), so 32,768 rows
+ * peaks at ~19.7 MB. The next grid cell up (65,536 rows ⇒ 39.4 MB) exceeds the
+ * margin.
+ *
+ * @see docs/about/graduation.md
+ */
+export const CF_PAID_MAINTENANCE_MAX_FOLD_ROWS: number = 32_768;
+
+/**
+ * Snapshot-rebuild byte ceiling `C` for the **node** profile.
+ *
+ * Serverful Node has no per-request cap, and its fold is not abortable —
+ * `nodeMaintenanceDispatch` passes no `signal` — so an over-large fold
+ * COMPLETES. The failure mode is one slow write, not a stranded CAS. That
+ * asymmetry is why Node's ceiling is set generously where cf-free's and
+ * cf-paid's are set tightly: UNDER-setting `C` permanently defers the fold,
+ * which is the worse failure on every host. Inline fold latency is budgeted by
+ * {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} (the sliceable tail work), not
+ * by this ceiling (the unsliceable snapshot rebuild).
+ *
+ * 32 MiB is the top of the measured grid, NOT the wall: `pnpm bench:fold-ceiling`
+ * reports `grid-exhausted` for this profile at every margin and at every heap
+ * from 704 MB up. At a 704 MB heap — the smallest realistic container — a
+ * 32 MiB fold peaks at ~37 MB, a ~19× margin. The scaling rule past the grid is
+ * `C ≈ heap / 10` (peak ≈ 2.4× snapshot, 4× margin). Finding the real wall
+ * needs the byte axis extended past 32 MiB.
+ *
+ * A separate hard ceiling sits near 512 MB regardless of heap: `encodeJsonBytes`
+ * / `decodeJsonBytes` materialize the whole snapshot as a JS string, so a
+ * snapshot at V8's `MAX_STRING_LENGTH` throws mid-fold.
+ *
+ * @see docs/about/graduation.md
+ * @see bench/measurement/fold-ceiling-probe.ts
+ */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
+export const NODE_MAINTENANCE_MAX_FOLD_BYTES: number = 32 * 1024 * 1024;
+
+/**
+ * Snapshot-rebuild row ceiling `E` for the **node** profile. 65,536 rows is the
+ * largest row cell with a stable measured peak (~39.4 MB, reproduced within
+ * 0.05 MB across four runs); the 131,072-row cell's peak is not yet reliably
+ * measurable. Against even a 704 MB heap that is a ~17× margin, consistent with
+ * {@link NODE_MAINTENANCE_MAX_FOLD_BYTES} being a measured floor rather than a
+ * wall.
+ *
+ * @see docs/about/graduation.md
+ */
+export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
 
 // Declared here (not the nominal server `MaintenanceProfile`) to avoid a server→protocol cycle; keep field-identical to it.
 type MaintenanceProfileShape = Readonly<{
@@ -560,24 +640,29 @@ export const MAINTENANCE_PROFILE_CF_FREE: MaintenanceProfileShape = {
   maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
 };
 
-/** Node profile; 10× CF-free caps. */
+/** Node profile; 10× CF-free per-pass caps, and its own measured snapshot ceilings. */
 export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
   gcInterval: NODE_MAINTENANCE_GC_INTERVAL,
   gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
   gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
   maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
-  maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
-  maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
+  maxFoldBytes: NODE_MAINTENANCE_MAX_FOLD_BYTES,
+  maxFoldRows: NODE_MAINTENANCE_MAX_FOLD_ROWS,
 };
 
 /**
  * CF-paid profile — opt-in via `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A paid
  * isolate keeps the CPU-killable single-phase shape but has the 10,000-
  * subrequest budget (vs free's 50), so it reuses the `NODE_MAINTENANCE_*`
- * per-pass caps. CRITICAL: snapshot ceilings `maxFoldBytes` (`C`) /
- * `maxFoldRows` (`E`) are UNCHANGED — a profile moves rate, never correctness
- * (the equivalence invariant); the memory wall is raised via
- * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`.
+ * per-pass caps.
+ *
+ * A profile moves RATE and the DEFER THRESHOLD, never the stored data or the
+ * query semantics — that is the equivalence invariant, and it is what
+ * `tests/integration/maintenance-profile-equivalence.test.ts` proves: a read
+ * folds snapshot + live tail, so HOW MUCH a profile has folded is invisible to
+ * a reader. Snapshot ceilings therefore differ per host, sized to each host's
+ * real wall (see {@link CF_PAID_MAINTENANCE_MAX_FOLD_BYTES}). Operators can
+ * still raise `C` out-of-band with `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`.
  *
  * @see packages/adapter-cloudflare/src/worker.ts
  * @see docs/about/graduation.md
@@ -587,8 +672,8 @@ export const MAINTENANCE_PROFILE_CF_PAID: MaintenanceProfileShape = {
   gcMaxMarks: NODE_MAINTENANCE_GC_MAX_MARKS,
   gcMaxSweeps: NODE_MAINTENANCE_GC_MAX_SWEEPS,
   maxFoldEntriesPerPass: NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
-  maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
-  maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
+  maxFoldBytes: CF_PAID_MAINTENANCE_MAX_FOLD_BYTES,
+  maxFoldRows: CF_PAID_MAINTENANCE_MAX_FOLD_ROWS,
 };
 
 /**
