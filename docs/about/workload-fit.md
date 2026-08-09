@@ -129,15 +129,22 @@ here; those pages decide when a working app should graduate.
 
 ## Scale at a glance
 
-The numbers a builder needs before writing the first line of code. Shape
-comes first — if the fit test above failed, no host on this table fixes
-it. Only one dimension moves with the host.
+baerly-storage is built for production apps that live within a defined
+workload envelope: internal tools, admin panels, dashboards, and
+low-to-moderate-traffic line-of-business apps, up to roughly
+~30 writes/min/collection, ~10 GB/tenant stored, and ~100
+collections/tenant. Crossing one of those lines is a scale event, not a
+maturity one; [graduation.md](graduation.md) is what you do about it.
+
+Below are the numbers a builder needs before writing the first line of
+code. Shape comes first — if the fit test above failed, no host on this
+table fixes it. Only one dimension moves with the host.
 
 | Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Why |
 | --- | --- | --- | --- | --- |
 | Documents in one collection² | ~100–500 | ~1,600–8,200 | ~6,500–32,800 | A fold rebuilds the whole snapshot in one pass; the ceiling is where that stops fitting the host |
-| Writes to one collection | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
-| Collections per tenant | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
+| Writes to one collection³ | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
+| Collections per tenant⁴ | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
 
 ¹ A paid Worker keeps the **free-tier** budgets until you set
 `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
@@ -150,16 +157,29 @@ scales with available heap, and the column gives the measured floor on a
 512 MB container. Per-host caps and their derivation:
 [scale-ceilings.md § The auto-maintained snapshot ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling).
 
+³ Per collection, not account-wide. It is a contention ceiling from the
+CAS-livelock regime, hard-coded as
+`M_SIZE_WRITES_PER_MIN_PER_COLLECTION = 30` in
+`packages/cli/src/admin/usage.ts`, which is what `baerly admin usage`
+grades each collection against.
+
+⁴ Derivation:
+[scale-ceilings.md § Collection fan-out](../spec/scale-ceilings.md#collection-fan-out).
+
 **Cloudflare free is the floor, and on Workers it is the default whether
 or not you are paying.** Every host runs the same protocol; a bigger host
 buys a bigger snapshot per fold, nothing else.
 
 Past the ceiling the log stops collapsing into the snapshot: reads keep
-working and get slower — erosion, not a cliff. Stored bytes are not a fit
-limit at all; nothing in baerly-storage measures or enforces per-tenant
-storage, since a tenant is only a key prefix.
+working and get slower — erosion, not a cliff.
 
-Cost is not a shape question. For the dollar envelope and the
+**Stored bytes are not on this table because they are not a fit limit.**
+Nothing in baerly-storage measures or enforces per-tenant storage; a
+tenant is only a key prefix. Above ~10 GB/tenant it becomes a cost line —
+the R2 free-tier storage boundary, where billing starts — and
+[cost-model.md](cost-model.md) owns that figure.
+
+Cost is not a shape question either. For the dollar envelope and the
 per-operation crossover against D1, Supabase, Neon, and Firestore, see
 [cost-model.md](cost-model.md);
 [scale-ceilings.md § Per-tier bounds](../spec/scale-ceilings.md#per-tier-bounds)
