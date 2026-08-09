@@ -9,13 +9,10 @@ related: [cost-model.md, workload-fit.md, thesis.md, "../adr/002-ephemeral-coord
 
 # Graduation thresholds
 
-baerly-storage is built for production apps that live within a defined
-workload envelope: internal tools, admin panels, dashboards, and
-low-to-moderate-traffic line-of-business apps, up to roughly
-~30 writes/min/collection, ~10 GB/tenant stored, and ~100
-collections/tenant. Graduation is what you do when a collection or
-workload crosses one of those documented bounds — a scale event, not a
-maturity one.
+Graduation is what you do when a collection or workload crosses one of
+the documented bounds of the workload envelope — a scale event, not a
+maturity one. [workload-fit.md](workload-fit.md#scale-at-a-glance)
+defines that envelope; this page is the runbook for acting on it.
 
 The threshold concept is **the fold**: the moment maintenance turns many
 small committed writes into one refreshed snapshot. That makes reads
@@ -44,7 +41,7 @@ For the **cost** side of graduation, see
 Those write rates are **account-wide aggregate** rates because Class A
 is billed per account. They are distinct from the per-collection
 ~30 writes/min contention ceiling in
-[the workload envelope](#4-off-baerly-storage--postgres-the-workload-envelope).
+[the workload envelope](workload-fit.md#scale-at-a-glance).
 
 ## Decision table
 
@@ -242,29 +239,22 @@ not defer; only the snapshot axis (`C` bytes / `E` rows) defers.
 Triggers 1-3 ask whether one collection's fold fits one host. This asks
 whether write throughput or total scale still belongs on baerly-storage.
 
-Cross these lines and graduate the workload to D1/Postgres, regardless
-of deployment tier. For Postgres, use `baerly export --target=postgres`.
+**Threshold:** any envelope axis crossed — ~30 logical
+writes/min/collection, >10 GB/tenant stored, or ~100 collections/tenant.
+[workload-fit.md § Scale at a glance](workload-fit.md#scale-at-a-glance)
+defines the envelope and what each axis means; none of the three is
+enforced by the protocol.
 
-| Axis | Threshold | Source and meaning |
-| --- | --- | --- |
-| Write throughput | ~30 logical writes/min/collection | Per-collection contention ceiling, not account-wide. Code constant: `M_SIZE_WRITES_PER_MIN_PER_COLLECTION = 30` in `packages/cli/src/admin/usage.ts`; `baerly admin usage` grades each collection against it. It is hard-coded but still a model/estimate from the CAS-livelock regime, pending real-infra measurement on R2. |
-| Stored bytes | >10 GB/tenant stored | R2 free-tier storage line, not a protocol ceiling. A tenant is a key prefix; baerly-storage does not read, enforce, or compute per-tenant byte totals. Billing begins above 10 GB-mo on R2; see [cost-model.md](cost-model.md). |
-| Collection fan-out | ~100 collections/tenant | Bench-grounded soft linear-cost guideline. `pnpm bench:collection-fanout` writes `docs/spec/attachments/collection-fanout-baseline.json`; `admin usage` costs ≈ N × (1 LIST + up to 120 GETs per collection). Nothing enforces a cap; cost and scan latency grow linearly with N. |
+**What you'll observe:** `baerly admin usage` grades each collection
+against the write line. The other two axes have no runtime signal — a
+tenant is a key prefix, so bucket inventory is what tells you.
 
-Provenance: the 30-writes/min figure is the code constant above; the
->10 GB/tenant line lives in [cost-model.md](cost-model.md) and
-[pricing-log.md](pricing-log.md), not code; and the ~100
-collections/tenant guideline comes from the fan-out bench, not
-`packages/protocol/src/constants.ts`.
-
-For rationale, see [workload-ceiling](thesis.md#workload-ceiling). The
-[cost-model](cost-model.md#alternative-dbs-at-m-size) records adjacent
-cost lines: advisory at ~100 writes/min account-wide, and hard Class A
-trigger at `> 50M/mo` (≈580 writes/min on R2 at ~2x, ≈390 on Node at
-~3x). Stored data is a cost signal at the ~10 GB R2 free-tier line, not
-a hard trigger. The historic `effective write-amp > 6` trigger is
-retired; maintenance falling behind is signalled by
-`db.compaction.deferred_total` and the defer `console.warn`.
+**What to do:** graduate the workload to D1/Postgres, regardless of
+deployment tier. For Postgres, use `baerly export --target=postgres`.
+For why the envelope is drawn where it is, see
+[workload-ceiling](thesis.md#workload-ceiling); for the adjacent cost
+lines, see
+[cost-model.md](cost-model.md#cost-side-graduation-signals).
 
 ## Operations plane (env vars)
 
