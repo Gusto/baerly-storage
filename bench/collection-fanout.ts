@@ -40,7 +40,7 @@
  * FOLLOW-UP: add an `admin usage` warning when N > 100 that the scan will
  * take proportionally longer.
  *
- * @see docs/about/graduation.md — ~100 collections/tenant fan-out guideline.
+ * @see docs/spec/scale-ceilings.md — ~100 collections/tenant fan-out derivation.
  * @see docs/about/workload-fit.md — workload envelope.
  */
 import { writeFile } from "node:fs/promises";

@@ -453,7 +453,7 @@ snapshot is reclaimed by `runGc` past the grace window. **Dispatch is by
 capability:** Cloudflare relocates the maintenance pass past the
 response via `ctx.waitUntil`; everywhere else it runs inline
 (`dispatchInlineAwaited`). See
-[graduation.md](about/graduation.md) for the per-tier envelope
+[scale-ceilings.md](spec/scale-ceilings.md#per-tier-bounds) for the per-tier envelope
 and ceiling math, and "Storage layout in the bucket" below for
 the on-disk shape these passes produce.
 

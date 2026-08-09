@@ -84,7 +84,7 @@
  * the LIVE row set stays ~constant while the tail and orphan content
  * grow — the realistic prototype shape (a notes/tickets app), and the
  * shape that makes the `WRITE_TICK_GC_MAX_SWEEPS / WRITE_TICK_GC_INTERVAL
- * (= 10/4) >= p` drain-rate invariant (graduation.md §7.1) load-bearing:
+ * (= 10/4) >= p` drain-rate invariant (graduation.md §The drain-rate safety invariant) load-bearing:
  * each update/delete orphans one prior content blob, so orphan-production
  * rate `p` ~ writes, and GC must sweep >= `p` per write to stay bounded.
  *
@@ -595,7 +595,7 @@ const main = async (): Promise<number> => {
       maintenance_target_ratio: MAINTENANCE_TARGET_RATIO,
       maintenance_min_live_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       gc_starvation_guard: GC_STARVATION_GUARD,
-      cf_free_drain_ratio: `gcMaxSweeps/gcInterval = ${MAINTENANCE_PROFILE_CF_FREE.gcMaxSweeps}/${MAINTENANCE_PROFILE_CF_FREE.gcInterval} = ${cfDrain} (>= deliberately injected v0.6.0-style orphan-production p keeps retained-collector object count bounded — graduation.md §7.1)`,
+      cf_free_drain_ratio: `gcMaxSweeps/gcInterval = ${MAINTENANCE_PROFILE_CF_FREE.gcMaxSweeps}/${MAINTENANCE_PROFILE_CF_FREE.gcInterval} = ${cfDrain} (>= deliberately injected v0.6.0-style orphan-production p keeps retained-collector object count bounded — graduation.md §The drain-rate safety invariant)`,
       node_drain_ratio: `gcMaxSweeps/gcInterval = ${MAINTENANCE_PROFILE_NODE.gcMaxSweeps}/${MAINTENANCE_PROFILE_NODE.gcInterval} = ${nodeDrain}`,
     },
     cells,

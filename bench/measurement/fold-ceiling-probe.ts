@@ -9,7 +9,7 @@
  * `snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E`. Crossing it
  * defers compaction permanently: the tail grows without bound and the collection
  * must graduate. All three shipped profiles use identical ceilings
- * (`C = 512 KiB`, `E = 2048`), even though `docs/about/graduation.md` gives
+ * (`C = 512 KiB`, `E = 2048`), even though `docs/spec/scale-ceilings.md` gives
  * Cloudflare paid a 30 s CPU budget against Cloudflare free's ~10 ms.
  * `MAINTENANCE_MAX_FOLD_ROWS`'s own JSDoc says `PROVISIONAL — bench landed; paid
  * recalibration deferred`.
@@ -17,7 +17,7 @@
  * RELATIONSHIP TO `bench/fold-cost.ts`. That bench established the METHOD (CPU
  * via `process.cpuUsage()` deltas, peak heap via a 1 ms `heapUsed` sampler,
  * median over N iterations after warmup) and a 12-cell grid tied to the
- * `graduation.md` table. This probe REUSES its fixture builder and sampler
+ * `scale-ceilings.md` table. This probe REUSES its fixture builder and sampler
  * verbatim — literally the same `bench/lib/fold-fixture.ts` module, so same seed,
  * same tail length, same measurement definitions, and the two are directly
  * comparable — and extends the grid where the decision needs resolution. That
@@ -80,7 +80,7 @@ export interface HostBudget {
 }
 
 /**
- * From `docs/about/graduation.md`. Node has no platform-imposed CPU or memory
+ * From `docs/spec/scale-ceilings.md`. Node has no platform-imposed CPU or memory
  * limit, so its row is a STATED ASSUMPTION about a modest container, not a
  * platform fact — flagged as such in `source` so nobody quotes it as one.
  */
@@ -89,13 +89,13 @@ export const HOST_BUDGETS: readonly HostBudget[] = [
     profile: "cf-free",
     cpu_ms: 10,
     memory_bytes: 128 * 1024 * 1024,
-    source: "graduation.md — ~10 ms CPU/request, 128 MB isolate",
+    source: "scale-ceilings.md — ~10 ms CPU/request, 128 MB isolate",
   },
   {
     profile: "cf-paid",
     cpu_ms: 30_000,
     memory_bytes: 128 * 1024 * 1024,
-    source: "graduation.md — 30 s CPU default, ~128 MB Worker memory (memory is the wall)",
+    source: "scale-ceilings.md — 30 s CPU default, ~128 MB Worker memory (memory is the wall)",
   },
   {
     profile: "node",
@@ -624,12 +624,12 @@ export const buildRecommendation = (input: {
         blocked_by: null,
       },
       {
-        file: "docs/about/graduation.md",
+        file: "docs/spec/scale-ceilings.md",
         change:
           "The `≈ 11 ms CPU per MB` model and the `1 MB | ~11 ms` table row overstate " +
           "measured cost. Restate against measurement, or mark the model as a " +
           "deliberate upper bound and say so.",
-        owner: "Performance owner (graduation.md is a §6.2-owned product doc)",
+        owner: "Performance owner (scale-ceilings.md is the owning derivation spec)",
         blocked_by: null,
       },
     ],

@@ -436,8 +436,9 @@ maintenance, so the published idle-reader cost bound holds.
 
 A bucket maintains itself as long as it takes writes. A bucket served read-only does
 not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
-graduate once a collection is large. See docs/about/graduation.md for the per-tier
-envelope and the `BAERLY_MAINTENANCE_*` operator env vars (you almost never need them).
+graduate once a collection is large. See docs/spec/scale-ceilings.md for the per-tier
+envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator
+env vars (you almost never need them).
 
 Operator opt-in is not required for steady-state operation. On Cloudflare Free, run
 exactly one collection and one phase per invocation, alternating the direct primitives:

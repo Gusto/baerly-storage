@@ -15,12 +15,12 @@ Two harnesses live under `bench/`:
 |---|---|---|
 | `bench/r2-contention.ts` | Synthetic `current.json` CAS coordination/historical harness; measures 412/429 rates and validates the idle-reader bound on the wire, but does not exercise the current Writer | When changing coordination primitives or the historical CAS retry model. For current Writer changes, run `packages/server/src/writer.test.ts` and `tests/integration/write-amp.test.ts` instead |
 | `bench/load-harness/` | Object-storage ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model. `--variant=node-gcs` (gated on `GCS=1` + `credentials/gcs.json`) is the source of the measured GCS write-amp behind the GCS row in [docs/about/cost-model.md](../docs/about/cost-model.md#cost-vs-scale-table) | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
-| `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/about/graduation.md](../docs/about/graduation.md) |
+| `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/spec/scale-ceilings.md](../docs/spec/scale-ceilings.md) |
 | `bench/measurement/fold-ceiling-probe-run.ts` | How far above today's `C` / `E` a fold still fits each host profile's CPU + memory budget, at 2× / 4× / 7× safety margins. Reuses the `fold-cost.ts` fixture verbatim so cells stay comparable to its frozen baseline. No infra (MemoryStorage). MEASURES ONLY. **No checked-in baseline yet** — its sampling and axis-aggregation methodology is unresolved; read the caveats in the section below before promoting any output. | When revisiting whether `C` / `E` can be raised on a more capable host |
 | `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + snapshot-over-ceiling minutes) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. Verdict is per-axis (tail + objects) then combined. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
 | `bench/amortized-write-cost.ts` | Amortized BILLABLE Class A ops (PUT+LIST; DeleteObject is $0) per logical write, INCLUDING in-band maintenance (folds + GC), across workload shapes × profile (cf-free / node). The normal measurements are approximately 2× on CF-free and 3× on Node. Source of truth for the write-amp constants in the cost CLI + the effective-write-amp claim in docs/about/cost-model.md. No infra (MemoryStorage). MEASURES ONLY. | When revisiting the write-amplification claim or the cost-CLI projection |
 | `bench/write-amp-stress.ts` | STRESS variant of `amortized-write-cost.ts`: drives pathological churn workloads (100%-update tiny set, unbounded insert growth, 500-doc full rewrite) under aggressive in-band maintenance to find the PEAK billable Class A ops per logical write. Tracks `peak_billable_class_a_per_write` (single-writer; the route past ~3× is a CAS-retry storm, governed by the throughput ceiling, not measured here). Backs the "peaks ~3×, never reaches the retired >6 trigger" claim. No infra (MemoryStorage). MEASURES ONLY. Baseline at `docs/spec/attachments/amortized-write-cost-stress-baseline.json`. | When revisiting whether the retired `write-amp > 6` graduation trigger could ever fire |
-| `bench/collection-fanout.ts` | Storage op cost of `discoverCollections` (LIST count) + full `admin usage` scan (LIST + GET count) vs. N collections under one tenant prefix, measured via a counting Storage proxy on MemoryStorage. No infra. MEASURES ONLY — re-derives the collections/tenant fan-out limit. A checked-in baseline lives at `docs/spec/attachments/collection-fanout-baseline.json`. | When revisiting the collections/tenant fan-out limit in docs/about/graduation.md or docs/about/workload-fit.md |
+| `bench/collection-fanout.ts` | Storage op cost of `discoverCollections` (LIST count) + full `admin usage` scan (LIST + GET count) vs. N collections under one tenant prefix, measured via a counting Storage proxy on MemoryStorage. No infra. MEASURES ONLY — re-derives the collections/tenant fan-out limit. A checked-in baseline lives at `docs/spec/attachments/collection-fanout-baseline.json`. | When revisiting the collections/tenant fan-out limit in docs/spec/scale-ceilings.md or docs/about/workload-fit.md |
 | `bench/measurement/` | Not a harness — the shared measurement **library** the harnesses above build on. `statistics.ts` holds the algorithm-tagged summaries (quantiles, MAD, three bootstraps, two binomial upper bounds, OLS via Householder QR), each carrying its algorithm tag and every parameter that determined the number. `storage-journal.ts` and `storage-factory.ts` hold the recording and isolation seam: a timer-free `Storage` decorator producing an ordered operation journal plus an exact namespace journal, and a per-attempt backend lease whose cleanup authority is one in-memory instance, one `mkdtemp` root, or an explicit key list. `fold-ceiling-probe.ts` is the pure half of the fold-ceiling probe. `canonical-json.ts` is the byte-stable serializer and SHA-256 framing those results are hashed under — RFC 8785 over a narrowed I-JSON domain, with a portable vector corpus at `canonical-json-vectors.json` for cross-language ports. All pure; no infra — the directory's one script is `fold-ceiling-probe-run.ts` (`pnpm bench:fold-ceiling`). | When a bench emits a `p95`, a confidence interval, or a regression coefficient; or when it needs a recorded, disposable backend rather than a shared one |
 
 Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
@@ -349,7 +349,7 @@ prior snapshot of an exact (rows × bytes/doc) shape + a fixed log tail,
 then runs the real `compact()` once (whole tail in a single pass —
 `minEntriesToCompact: 1`, large `maxEntriesPerRun`) so the measured cost
 is the rebuild, not a sliced drain. The bytes axis brackets the
-graduation.md cost-model table (64 KB / 256 KB / 512 KB / 1 MB / 5 MB);
+scale-ceilings.md fold cost model table (64 KB / 256 KB / 512 KB / 1 MB / 5 MB);
 the rows axis sweeps row count from 256 up past the current `E = 2048`
 to 16 384 at tiny bytes/doc to isolate per-entry CPU.
 
@@ -371,7 +371,7 @@ One timestamped JSON per run lands in `bench/results/fold-cost/`
 [`docs/spec/attachments/fold-cost-baseline.json`](../docs/spec/attachments/fold-cost-baseline.json).
 The JSON records each cell's `{rows, snapshot_bytes, cpu_ms_median,
 peak_bytes_median, peak_over_snapshot, iterations}` plus a
-`modelled_reference` block (the graduation.md `11 ms/MB`, `C`, and
+`modelled_reference` block (the scale-ceilings.md `11 ms/MB`, `C`, and
 provisional `E`) so a future reader can compare measured-vs-modelled and
 find where the CPU / memory budget of a target host intersects the grid
 — the input to raising `C` / `E` on paid.
@@ -504,7 +504,7 @@ zero every other minute (so a tail-only verdict would mislabel it
 ~121→2082 at 60/min) because the alternating compact/GC cron can't sweep
 orphans fast enough; only at 120/min does its tail also fall behind
 (`growing (tail+objects)`). This is consistent with the GC drain-rate
-invariant (`gcMaxSweeps / gcInterval = 10/4 ≥ p`, graduation.md §7.1): the
+invariant (`gcMaxSweeps / gcInterval = 10/4 ≥ p`, graduation.md §The drain-rate safety invariant): the
 in-band object counts stay bounded because the write-tick GC sweep keeps
 up, while the scheduled growth is partly a **fold** (compact) backlog and
 partly a **GC-drain** (objects) backlog the one-word tail verdict used to
