@@ -486,10 +486,12 @@ can create a killed-rebuild loop: the gate passes, the rebuild runs in
 `ctx.waitUntil`, the isolate is killed by CPU or memory, no in-band
 backoff fires, and the next write tries again.
 
-The CF adapter `console.warn`s once at handler init when
-`BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES`
+On the free profile, the CF adapter `console.warn`s once at handler init
+when `BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES`
 (1 MiB), the largest snapshot a free isolate can one-shot rebuild under
-the ~10 ms budget. There is still no runtime metric for the kill itself.
+the ~10 ms budget. It stays silent on `cf-paid`, whose own ceiling is
+already 8x that bound and whose wall is memory rather than CPU. There is
+still no runtime metric for the kill itself.
 Watch the snapshot key and object count from `baerly inspect`; a
 snapshot key that never advances while `live_log_tail` grows is a
 rebuild that keeps not landing.

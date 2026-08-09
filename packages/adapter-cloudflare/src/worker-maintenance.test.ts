@@ -19,7 +19,8 @@
  *      `waitUntil` continuation — the ALS store survives past the
  *      response.
  *   4. An over-raised `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` (above
- *      `CF_FREE_MAX_SAFE_FOLD_BYTES`) warns LOUDLY once at handler init.
+ *      `CF_FREE_MAX_SAFE_FOLD_BYTES`) warns LOUDLY once at handler init
+ *      — on the FREE profile only; `cf-paid` carries its own ceiling.
  */
 
 import {
@@ -430,6 +431,34 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
       BUCKET: bucket,
       APP: "t",
       BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(CF_FREE_MAX_SAFE_FOLD_BYTES),
+    } as unknown as BaerlyEnv;
+
+    const noopCtx = mockExecutionContext();
+    await handler.fetch!(
+      new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      noopCtx,
+    );
+    const maintWarns = warnSpy.mock.calls.filter((args) =>
+      String(args[0] ?? "").includes("BAERLY_MAINTENANCE_MAX_FOLD_BYTES"),
+    );
+    expect(maintWarns).toHaveLength(0);
+  });
+
+  // The guardrail is free's CPU wall, and its first stated remedy is "run
+  // on CF PAID". Since the cf-paid profile carries its own 8 MiB ceiling,
+  // warning an operator who already selected it would contradict the
+  // advice the same message gives.
+  test("the same over-raised value does NOT warn under BAERLY_MAINTENANCE_PROFILE=cf-paid", async () => {
+    const bucket = getBinding();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const verifier: Verifier = async () => ({ tenantPrefix: "paid-nowarn-t", identity: {} });
+    const handler = baerlyWorker<BaerlyEnv>(() => ({ config: testConfig, verifier }));
+    const env = {
+      BUCKET: bucket,
+      APP: "t",
+      BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(CF_FREE_MAX_SAFE_FOLD_BYTES + 1),
+      BAERLY_MAINTENANCE_PROFILE: "cf-paid",
     } as unknown as BaerlyEnv;
 
     const noopCtx = mockExecutionContext();

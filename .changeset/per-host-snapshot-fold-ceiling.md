@@ -36,3 +36,9 @@ configuration.
 Bytes now bind before rows on every host for documents of ~512 B and up, so
 `E` acts as the tiny-document backstop it was designed to be rather than as
 the effective ceiling.
+
+The Cloudflare adapter's init-time over-raised-ceiling warning is now scoped to
+the free profile. It reports free's ~10 ms CPU wall and its first stated remedy
+is "run on CF PAID" — an operator on `BAERLY_MAINTENANCE_PROFILE=cf-paid` has
+already taken that remedy, and the paid profile's own ceiling is 8x the bound
+being warned about.
