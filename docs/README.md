@@ -49,9 +49,16 @@ The mental model, then the mechanism.
 ## Evaluate the bet
 
 Whether baerly-storage fits the app, and what it costs.
-Limits are split by the decision they support: shape in workload fit,
-runtime and graduation in graduation thresholds, cost in cost model, and
-backend support in the storage compatibility spec.
+Limits are split by the question the reader arrived with: _should I build
+on this_ in workload fit, _what will it cost_ in cost model, _something's
+wrong, what do I do_ in graduation thresholds, and _why is that number
+that number_ in the scale-ceilings spec. Backend support is in the
+storage compatibility spec.
+
+Exactly one page **owns** each figure — states it with its framing and
+its provenance. Another page may **quote** an owned figure inline where
+the reader needs it in hand, but never carries a second framing or a
+second derivation of it.
 
 - [`about/why-baerly.md`](about/why-baerly.md) — the six things
   baerly-storage is built to be: LLM-legible API, no ceremony, data in
@@ -67,6 +74,9 @@ backend support in the storage compatibility spec.
 - [`about/graduation.md`](about/graduation.md) — the CPU/memory bounds
   that tell you when a collection has outgrown its deployment tier, and
   what to do about it.
+- [`spec/scale-ceilings.md`](spec/scale-ceilings.md) — why each of those
+  published numbers is the number it is: the fold cost model, the
+  measured per-host snapshot ceilings, and the storage-side write walls.
 - [`about/pricing-log.md`](about/pricing-log.md) — append-only audit of
   cost commitments.
 - [`about/alternatives.md`](about/alternatives.md) — how baerly-storage

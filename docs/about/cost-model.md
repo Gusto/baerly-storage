@@ -303,7 +303,8 @@ write per second**, and per-prefix throughput ramps up from a cold start
 rather than beginning at peak QPS. The commit path contends distinct
 `log/<seq>` keys (distinct objects), so the per-object cap does not bite a
 single-writer collection, but a high-fan-in collection hammering one
-`log/` prefix hits the same [hot-prefix cliff](#hot-prefix-cliff-at-high-write-fan-in)
+`log/` prefix hits the same
+[hot-prefix cliff](../spec/scale-ceilings.md#hot-prefix-cliff-at-high-write-fan-in)
 S3 has, plus a prefix ramp-up on cold buckets. GCS's **hierarchical
 namespace (HNS)** buckets start at a materially higher initial QPS
 ceiling than flat-namespace buckets (see the
@@ -591,15 +592,7 @@ These sit alongside the other graduation signals in
 stop), and ~100 collections/tenant (soft fan-out guideline). Today
 `baerly cost` `percentOfGraduation` tracks only the Class A trigger.
 
-### Hot-prefix cliff at high write fan-in
-
-One more graduation cliff lives on the storage side, not the dollar
-side. Under single-write commit, writers racing the same collection all
-try to create the next `log/<seq>` key, so concurrent PUTs concentrate
-on one object-store prefix. S3-class stores cap sustained mutating
-throughput at roughly **3,500 PUT/s per prefix**; a collection near that
-line is hitting a per-prefix ceiling, not a pricing limit. This is
-inherent to a single linearized per-collection log, the same property
-that gives per-collection ordering. It sits well past the published
-~30-writes/min/collection envelope. Spreading load across more
-collections is the lever.
+Not every graduation cliff is a dollar figure: the per-prefix write
+ceiling that a high-fan-in collection hits is a storage-side limit, and
+its derivation lives in
+[scale-ceilings.md § Hot-prefix cliff at high write fan-in](../spec/scale-ceilings.md#hot-prefix-cliff-at-high-write-fan-in).
