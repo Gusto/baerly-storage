@@ -66,37 +66,40 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *
  * ## In-band maintenance ops-plane vars
  *
- * Two OPTIONAL `vars` tune the write-tick maintenance the adapter
+ * Three OPTIONAL `vars` tune the write-tick maintenance the adapter
  * dispatches via `ctx.waitUntil` (CF `vars` are always strings):
  *
- *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` — raise the snapshot-rebuild
- *     ceiling `C`. The default ({@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT},
- *     512 KiB) is sized to rebuild in ~5.5 ms under the CF-free ~10 ms
- *     CPU budget. On CF **paid** (raised CPU limits) an operator raises
- *     this to fold larger snapshots in one shot. A value above
- *     {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns LOUDLY once at init —
- *     on a free isolate that fold risks a mid-rebuild CPU kill.
+ *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` — override the snapshot-rebuild
+ *     ceiling `C` that the resolved profile carries. The `cf-free` value
+ *     (512 KiB) is sized to rebuild in ~5.5 ms under the CF-free ~10 ms
+ *     CPU budget; `cf-paid` carries 8 MiB. This var wins over either. On
+ *     the free profile a value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES}
+ *     warns LOUDLY once at init — on a free isolate that fold risks a
+ *     mid-rebuild CPU kill.
  *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Any non-empty value
  *     other than `"0"` / `"false"` disables write-tick maintenance.
  *   - `BAERLY_MAINTENANCE_PROFILE` — opt-in profile selector. Set to
- *     `"cf-paid"` on a paid Worker to raise the per-pass throughput caps
- *     (GC marks/sweeps, fold entries per pass) to the Node-tier values,
- *     exploiting the paid 10,000-subrequest budget. Default / unknown
- *     values resolve to `cf-free` (unchanged zero-config behaviour). Does
- *     NOT change the snapshot ceilings `C` / `E` — raise those separately
- *     via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`. Must be set consistently on
- *     BOTH the write-tick path and the cron path (use
- *     {@link resolveCfMaintenanceProfile} in your
+ *     `"cf-paid"` on a paid Worker to select
+ *     {@link MAINTENANCE_PROFILE_CF_PAID}, which raises BOTH the per-pass
+ *     throughput caps (GC marks/sweeps, fold entries per pass) to the
+ *     Node-tier values, exploiting the paid 10,000-subrequest budget, AND
+ *     the snapshot ceilings to `C` = 8 MiB / `E` = 32,768. Default /
+ *     unknown values resolve to `cf-free` (unchanged zero-config
+ *     behaviour). `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` still overrides `C`
+ *     on top of whichever profile resolves; `E` has no var, so the
+ *     profile switch is the ONLY way to raise the row arm on Cloudflare.
+ *     Must be set consistently on BOTH the write-tick path and the cron
+ *     path (use {@link resolveCfMaintenanceProfile} in your
  *     {@link WorkerScheduledHandler}).
  */
 export interface BaerlyEnv {
   BUCKET?: R2Bucket;
   APP: string;
   /**
-   * Raise the snapshot-rebuild ceiling `C`. Parsed as a number;
-   * ignored when unset / non-numeric. Default
-   * {@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT}. A value above
-   * {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns once at init.
+   * Override the snapshot-rebuild ceiling `C` the resolved profile
+   * carries (512 KiB on `cf-free`, 8 MiB on `cf-paid`). Parsed as a
+   * number; ignored when unset / non-numeric. On the free profile a
+   * value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns once at init.
    */
   BAERLY_MAINTENANCE_MAX_FOLD_BYTES?: string;
   /**
@@ -106,8 +109,9 @@ export interface BaerlyEnv {
   BAERLY_MAINTENANCE_DISABLE?: string;
   /**
    * Opt-in maintenance profile. `"cf-paid"` raises per-pass throughput
-   * caps to Node-tier values on a paid Worker isolate. Default / unknown
-   * values resolve to `cf-free`. Does NOT change snapshot ceilings.
+   * caps to Node-tier values on a paid Worker isolate AND takes the paid
+   * snapshot ceilings (`C` = 8 MiB, `E` = 32,768). Default / unknown
+   * values resolve to `cf-free`.
    */
   BAERLY_MAINTENANCE_PROFILE?: string;
 }
@@ -115,11 +119,13 @@ export interface BaerlyEnv {
 /**
  * Resolve the maintenance profile from the opt-in operator env var.
  * Default (unset / unknown) is the CPU-killable CF-free profile, so
- * zero-config behavior is unchanged. `cf-paid` raises the per-pass
- * caps to exploit the paid 10,000-subrequest budget; it does NOT change
- * the snapshot ceilings. Used by BOTH the write-tick dispatch and the
- * cron path so the two maintenance triggers stay coherent when the
- * operator wires the recipe below into their scheduled handler.
+ * zero-config behavior is unchanged. `cf-paid` raises the per-pass caps
+ * to exploit the paid 10,000-subrequest budget AND the snapshot ceilings
+ * to `C` = 8 MiB / `E` = 32,768, measured against the paid isolate's own
+ * memory wall rather than free's CPU wall. Used by BOTH the write-tick
+ * dispatch and the cron path so the two maintenance triggers stay
+ * coherent when the operator wires the recipe below into their
+ * scheduled handler.
  */
 export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | undefined) =>
   readEnv("BAERLY_MAINTENANCE_PROFILE") === "cf-paid"
@@ -139,23 +145,26 @@ export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | u
  * On Cloudflare the fold runs in a `ctx.waitUntil` continuation — FIRE
  * AND FORGET off the response ack, so the commit never blocks on it. The
  * isolate stays alive long enough to drain the continuation; the
- * per-pass caps are the TESTED CF-free `WRITE_TICK_*` defaults
+ * per-pass caps default to the TESTED CF-free `WRITE_TICK_*` values
  * (`phasesPerTick: "single"` — a CPU-killable free isolate does ONE of
  * fold/GC per request, never both), sized so a single pass stays well
- * under the free-tier 50-subrequest budget. An operator on CF **paid**
- * raises the ceiling via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the
- * per-pass entry/sweep caps stay fixed here (raising them toward the
- * 10,000-subrequest paid budget — the default since 2026-02-11, up from
- * 1,000, and configurable to 10M — is a future graduation knob, not a
- * var). Free stays at 50 external / 1,000 internal-service subrequests.
+ * under the free-tier 50-subrequest budget. Free stays at 50 external /
+ * 1,000 internal-service subrequests. An operator on CF **paid** opts
+ * into the whole paid tier — per-pass caps AND snapshot ceilings — with
+ * `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which is what exploits the
+ * 10,000-subrequest paid budget (the default since 2026-02-11, up from
+ * 1,000, and configurable to 10M).
  *
- * The two ops-plane vars are read off the `env` BINDING (a string map),
+ * The three ops-plane vars are read off the `env` BINDING (a string map),
  * NOT `process.env` — Workers have no process env:
  *
- *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (`C`). Parsed
- *     as a number; ignored when unset / NaN.
+ *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (`C`), which
+ *     overrides the resolved profile's ceiling. Parsed as a number;
+ *     ignored when unset / NaN.
  *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Truthy
  *     when set to a non-empty value other than `"0"` / `"false"`.
+ *   - `BAERLY_MAINTENANCE_PROFILE` → `options.profile`, via
+ *     {@link resolveCfMaintenanceProfile}.
  *
  * `readEnv` defaults to reading off the bound `env`; the parameter
  * exists for direct unit coverage.
