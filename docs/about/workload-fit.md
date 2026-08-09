@@ -148,7 +148,7 @@ may rebuild — in bytes, and in rows as a backstop for snapshots of many
 tiny documents. Bytes bind at documents this size. On Node the cap
 scales with available heap, and the column gives the measured floor on a
 512 MB container. Per-host caps and their derivation:
-[graduation.md § The auto-maintained snapshot ceiling](graduation.md#the-auto-maintained-snapshot-ceiling).
+[scale-ceilings.md § The auto-maintained snapshot ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling).
 
 **Cloudflare free is the floor, and on Workers it is the default whether
 or not you are paying.** Every host runs the same protocol; a bigger host
@@ -162,8 +162,8 @@ storage, since a tenant is only a key prefix.
 Cost is not a shape question. For the dollar envelope and the
 per-operation crossover against D1, Supabase, Neon, and Firestore, see
 [cost-model.md](cost-model.md);
-[graduation.md § Per-tier bounds](graduation.md#per-tier-bounds) owns the
-per-host derivations.
+[scale-ceilings.md § Per-tier bounds](../spec/scale-ceilings.md#per-tier-bounds)
+owns the per-host derivations.
 
 **How solid these are.** The document ceilings are measured
 (`pnpm bench:fold-ceiling`). The ~30 writes/min contention ceiling is

@@ -44,6 +44,11 @@ Binding descriptions of how the live protocol behaves today.
 - [causal-consistency-checking.md](causal-consistency-checking.md)
   — the low-complexity property-checking technique used to verify
   the sync protocol stays causally consistent under fault injection.
+- [scale-ceilings.md](scale-ceilings.md) — where every published scale
+  limit comes from: the fold cost model, the measured per-host snapshot
+  ceilings `C` / `E`, collection fan-out, and the hot-prefix write wall.
+  The `about/` pages state the figures a reader acts on; this one owns
+  their provenance.
 
 ## Adapter edge cases
 
