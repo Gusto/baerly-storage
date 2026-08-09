@@ -562,20 +562,32 @@ per-collection graduation path.
 
 ### Cost-side graduation signals
 
-- **Advisory:** sustained ~100 writes/min account-wide. This is
-  provider-agnostic: 8.64M Class A/mo on R2 (~$34/mo object-storage ops)
-  and 12.96M on S3 (~$65/mo). It is an eyes-open signal, not a hard
-  stop; `baerly cost` prints an advisory note at this crossing.
-- **Hard cost line:** R2 Class A ops > 50M/month, sustained over 7 days
-  (account/bucket-wide; ~$221/mo object-storage ops on R2). At measured
-  effective write-amp, that is ≈ **580 writes/min** on R2 (~2×). The
-  same op envelope on serverful Node is ≈ **390 writes/min** (~3×), but
+[graduation.md](graduation.md) decides when a crossing means *act*. This
+section is where those cost crossings come from: what each meter counts,
+and what it converts to in dollars. Three meters carry a graduation
+signal.
+
+- **Class A ops/mo, advisory line.** The meter is account-wide Class A
+  ops, but the line is keyed to a **write rate** — sustained ~100
+  writes/min account-wide — so it fires at the same operating point on
+  every provider rather than at a provider-specific op count. Converted
+  through effective write-amp and the per-op rates above, that is 8.64M
+  Class A/mo on R2 (~$34/mo object-storage ops) and 12.96M on S3
+  (~$65/mo). `baerly cost` prints an advisory note at this crossing;
+  nothing enforces it.
+- **Class A ops/mo, hard line.** The same meter read against R2's
+  free-tier-derived op envelope: > 50M Class A/mo, sustained over 7 days,
+  account/bucket-wide, or ~$221/mo in R2 object-storage ops. At measured
+  effective write-amp that envelope is reached at ≈ **580 writes/min** on
+  R2 (~2×) and ≈ **390 writes/min** on serverful Node (~3×) — though
   S3's linear pricing makes the Node line a dollar budget rather than a
   free-tier-derived op count. These replace the previous ≈390/≈290
   measured-profile rates, which included new content side-object PUTs.
-- **Stored data:** a graduation cost signal at the ~10 GB R2 free-tier
-  line, not a hard trigger. The tooling does not enforce a storage hard
-  stop.
+- **Stored bytes.** The meter is R2 storage billed above the 10 GB-mo
+  free tier at $0.015/GB-mo, which is the whole content of the
+  ~10 GB/tenant line. It is a cost signal, not a hard trigger: nothing
+  in baerly-storage reads, enforces, or computes per-tenant byte totals,
+  and the tooling has no storage hard stop.
 - **Retired:** `effective write-amp > 6`. It was calibrated against the
   old assumed 2-op floor. Effective write-amp is now measured at
   ~2× / ~3× and stress-measured to peak at ~3× under pathological churn
@@ -586,11 +598,10 @@ per-collection graduation path.
   falling behind is signalled by `db.compaction.deferred_total` and the
   defer `console.warn` (see [graduation.md](graduation.md)).
 
-These sit alongside the other graduation signals in
-[graduation.md](graduation.md): ~30 logical writes/min/collection
-(throughput estimate), ~10 GB/tenant (R2 storage cost signal, not a hard
-stop), and ~100 collections/tenant (soft fan-out guideline). Today
-`baerly cost` `percentOfGraduation` tracks only the Class A trigger.
+The remaining graduation signals are capacity rather than cost, and
+[graduation.md § Graduation triggers](graduation.md#graduation-triggers)
+lists them all in one place. Of everything on that list, `baerly cost`
+`percentOfGraduation` tracks only the Class A hard line.
 
 Not every graduation cliff is a dollar figure: the per-prefix write
 ceiling that a high-fan-in collection hits is a storage-side limit, and
