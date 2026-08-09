@@ -408,6 +408,15 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     // never lands, so the fold silently never advances `log_seq_start`
     // and the tail grows unbounded. `console.warn` (not LogTape) so the
     // signal survives even when observability is unconfigured.
+    //
+    // Scoped to the FREE profile. `CF_FREE_MAX_SAFE_FOLD_BYTES` is free's
+    // CPU wall, and the warning's own first remedy is "run on CF PAID" —
+    // an operator who set `BAERLY_MAINTENANCE_PROFILE=cf-paid` has taken
+    // it, and the paid profile's own ceiling (8 MiB) is already 8x this
+    // bound. Warning them would contradict the advice. There is no paid
+    // equivalent of this guardrail because paid's ceiling is memory-bound,
+    // not CPU-bound, and no safe-override threshold has been measured
+    // above it.
     if (!maintenanceCeilingWarned) {
       maintenanceCeilingWarned = true;
       const rawFoldBytes = (env as unknown as Record<string, unknown>)[
@@ -418,7 +427,16 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
           ? rawFoldBytes
           : undefined,
       );
-      if (maxFoldBytes !== undefined && maxFoldBytes > CF_FREE_MAX_SAFE_FOLD_BYTES) {
+      const onFreeProfile =
+        resolveCfMaintenanceProfile((k) => {
+          const v = (env as unknown as Record<string, unknown>)[k];
+          return typeof v === "string" ? v : undefined;
+        }) === MAINTENANCE_PROFILE_CF_FREE;
+      if (
+        onFreeProfile &&
+        maxFoldBytes !== undefined &&
+        maxFoldBytes > CF_FREE_MAX_SAFE_FOLD_BYTES
+      ) {
         console.warn(
           `[baerly] BAERLY_MAINTENANCE_MAX_FOLD_BYTES=${rawFoldBytes} exceeds the ` +
             `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
