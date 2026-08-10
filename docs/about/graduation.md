@@ -66,7 +66,7 @@ baerly admin usage \
 | GC-managed object count grows while writes are steady | Prefix inventory + logs + `admin fsck` | Stale-log/orphan-snapshot sweep throughput no longer keeps up with their production | Reduce contention, split the hot collection, or graduate the workload. Growth under `content/` is diagnosed separately: stop legacy writers, then dispose of the inert prefix manually. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
 | Tenant data keeps growing | `admin usage` / bucket inventory | >10 GB/tenant (R2 free-tier storage line; see [cost-model.md](cost-model.md)) or ~100 collections/tenant (soft fan-out guideline; see [workload-fit.md](workload-fit.md#scale-at-a-glance)) | Review graduation cost; neither line is enforced by the protocol. |
-| `baerly cost` prints advisory note | `baerly cost` | ~100 writes/min account-wide (provider-agnostic; 8.64M Class A/mo / ~$34/mo R2 object-storage ops, 12.96M / ~$65/mo S3), advisory only; see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff) | Compare object storage's low operator burden against a managed DB. Hard trigger: 50M/mo (~580 writes/min / ~$221/mo R2; ~390 writes/min on Node). |
+| `baerly cost` prints advisory note | `baerly cost` | ~100 writes/min account-wide (provider-agnostic; 8.64M Class A/mo / ~$34/mo R2 object-storage ops, 12.96M / ~$65/mo S3), advisory only; see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff) | Compare object storage's low operator burden against a managed DB. Hard trigger: 50M/mo (~580 writes/min / ~$221/mo R2; ~460 writes/min on Node). |
 
 ### How to read the output
 

@@ -7,8 +7,15 @@
  * and maintenance-e2e.test.ts (which gates the idle READER at 0).
  *
  * Bands are grounded in docs/spec/attachments/amortized-write-cost-baseline.json
- * (measured 2026-08-05): cf-free ~2.0, node ~3.0. The bench runs the full
- * workload matrix; this gate runs one representative shape fast.
+ * (cf-free ~1.8, node ~2.5). The bench runs the full workload matrix; this
+ * gate runs one representative shape fast.
+ *
+ * Each lower bound sits a PROPORTIONAL distance below the baseline's measured
+ * minimum for its profile (~25% cf-free, ~17% node), not at a fixed number.
+ * `pnpm bench:amortized-write-cost` is deterministic on MemoryStorage, so the
+ * margin absorbs workload drift rather than run-to-run variance — which is
+ * why a re-measurement must re-anchor both bounds to the fresh minima instead
+ * of leaving the old ones to pass by an ever-shrinking accident.
  */
 import { describe, expect, test } from "vitest";
 import {
@@ -58,12 +65,13 @@ describe("amortized billable Class A per write (cost-model gate)", () => {
     });
     // Commit floor is 1 (log create). A drop near that floor means
     // maintenance stopped ticking; a blowup past this band means an extra
-    // PUT/LIST returned to the hot path.
-    expect(amperWrite).toBeGreaterThan(1.5);
+    // PUT/LIST returned to the hot path. 1.3 is ~25% below the baseline's
+    // 1.741 cf-free minimum — see the margin rule in the file header.
+    expect(amperWrite).toBeGreaterThan(1.3);
     expect(amperWrite).toBeLessThan(3);
   });
 
-  test("node profile stays in the ~3x band", { timeout: ciTimeout(30_000) }, async () => {
+  test("node profile stays in the ~2.5x band", { timeout: ciTimeout(30_000) }, async () => {
     const amperWrite = await measure({
       profile: MAINTENANCE_PROFILE_NODE,
       minEntriesToCompact: 50,
@@ -72,8 +80,10 @@ describe("amortized billable Class A per write (cost-model gate)", () => {
     });
     // Node's more frequent GC adds LIST work above the commit floor. A
     // drop near the floor means maintenance stopped ticking; a blowup past
-    // this band means an extra PUT/LIST returned to the hot path.
-    expect(amperWrite).toBeGreaterThan(2.4);
+    // this band means an extra PUT/LIST returned to the hot path. 2.0 is
+    // ~17% below the baseline's 2.404 node minimum — see the margin rule in
+    // the file header.
+    expect(amperWrite).toBeGreaterThan(2);
     expect(amperWrite).toBeLessThan(4);
   });
 });
