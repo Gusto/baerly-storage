@@ -428,12 +428,12 @@ accrue; no `setInterval`, cron, or operator scheduler is required.
 
 The bounded pass splits that work across two existing primitives:
 
-- `runGc()` (`packages/server/src/gc.ts`) deletes legacy content side
-  objects, stale log entries, and orphan snapshots no longer reachable
-  from `current.json` after the grace and sweep-time revalidation checks.
-  It uses the two-phase mark/sweep ledger at `gc/pending.json`, is
-  bounded by the maintenance profile's `gcMaxMarks` / `gcMaxSweeps`,
-  and is due on `gcInterval` write-count boundary crossings. In
+- `runGc()` (`packages/server/src/gc.ts`) deletes stale log entries and
+  orphan snapshots no longer reachable from `current.json` after the
+  grace and sweep-time revalidation checks. It uses the two-phase
+  mark/sweep ledger at `gc/pending.json`, is bounded by the maintenance
+  profile's `gcMaxMarks` / `gcMaxSweeps`, and is due on `gcInterval`
+  write-count boundary crossings. In
   `"single"` phase mode, a fold can take the tick when both are due; the
   hard-GC guard prevents indefinite starvation.
 - `compact()` (`packages/server/src/compactor.ts`) folds a **sliced**

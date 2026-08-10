@@ -291,11 +291,13 @@ read-amplification while accepting ~2x compaction
 write-amplification.
 
 This compaction write-amplification is not the cost model's **effective
-Class-A write-amplification** (~2x on the Cloudflare profile / ~3x on
-the Node profile). The historic `effective write-amp > 6` graduation
-trigger has been retired because the measured ~2-3x baseline makes it
-unreachable through bounded maintenance. Stress peaks at ~3x; CAS
-contention is still the route above that measured maintenance profile.
+Class-A write-amplification** (~2x on the Cloudflare profile / ~2.5x on
+the Node profile). The measured ranges are 1.741-1.843 and 2.404-2.529,
+respectively. The historic `effective write-amp > 6` graduation trigger
+has been retired because that measured baseline makes it unreachable
+through bounded maintenance. Stress peaks at 2.532x under pathological
+churn; CAS contention is still the route above that measured
+maintenance profile.
 See
 [cost-model.md](../about/cost-model.md#alternative-dbs-at-m-size).
 
