@@ -20,13 +20,12 @@
  *      set of successfully-committed `_id`s.
  *   5. (write-tick fold) For every K, aborting the K-th op across a
  *      fold (snapshot PUT → `current.json` CAS) then running `runGc`
- *      never deletes content referenced by the committed snapshot:
- *      every row still reads, and every seeded legacy content key for the
- *      committed snapshot's rows survives the sweep.
+ *      never touches `content/` at all: every row still reads, and every
+ *      seeded legacy content key survives the sweep.
  *   6. (lost-fold contention) A fold whose CAS loses to a concurrent
  *      write leaves an orphan snapshot; after `runGc` drains past the
  *      grace window no orphan snapshot is left unreferenced, and the
- *      committed snapshot's seeded legacy content survives.
+ *      seeded legacy content still survives untouched.
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
@@ -441,13 +440,10 @@ describe("Write-tick fold crash never deletes committed-snapshot content", () =>
       }
 
       // Drain GC with the grace bypassed so any due candidate is swept
-      // in-pass. Several passes exercise the content-scan-cursor
-      // rotation under a tight per-pass mark cap (8 marks × 5 passes
-      // need not reach numInserts at the high end — full keyspace
-      // coverage isn't guaranteed every run). Under-marking is
-      // conservative-safe: it can never wrongly sweep a protected key,
-      // so the invariant below still holds regardless of how far the
-      // cursor advances.
+      // in-pass. Several passes under a tight per-pass mark cap;
+      // under-marking is conservative-safe: it can never wrongly sweep a
+      // protected key, so the invariant below still holds regardless of how
+      // far the log cursor advances.
       for (let pass = 0; pass < 5; pass++) {
         await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
           graceMillis: 0,
@@ -460,10 +456,9 @@ describe("Write-tick fold crash never deletes committed-snapshot content", () =>
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
 
-      // INVARIANT B: every seeded legacy content key for the committed
-      // snapshot is still on the bucket. This is the property a
-      // GC that ignored the committed snapshot's references would
-      // violate.
+      // INVARIANT B: every seeded legacy content key is still on the
+      // bucket. GC never touches `content/`, so any absence here is a
+      // collector that reached outside its two prefixes.
       const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
       for (const key of protectedKeys) {
         expect(contentKeysAfter.has(key)).toBe(true);
@@ -578,7 +573,7 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
       const snapshotsAfter = await listKeys(inner, `${TABLE_PREFIX}/snapshot/`);
       expect(snapshotsAfter).toEqual([committedSnapshotKey]);
 
-      // INVARIANT C: the committed snapshot's content survives.
+      // INVARIANT C: the seeded legacy content survives untouched.
       const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
       for (const key of protectedKeys) {
         expect(contentKeysAfter.has(key)).toBe(true);

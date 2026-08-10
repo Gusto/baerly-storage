@@ -98,7 +98,7 @@ describe("runGc — never deletes a live object", () => {
     ops1: fc.array(opArb, { minLength: 1, maxLength: 20 }),
     ops2: fc.array(opArb, { minLength: 1, maxLength: 20 }),
   })(
-    "after a sweep: reader view unchanged, live objects survive, injected orphan reclaimed",
+    "after a sweep: reader view unchanged, live objects survive, stale log reclaimed",
     async ({ ops1, ops2 }) => {
       const storage = new MemoryStorage();
       await createCurrentJson(storage, CURRENT_JSON_KEY, {
@@ -133,7 +133,7 @@ describe("runGc — never deletes a live object", () => {
         },
       );
 
-      // Inject a guaranteed orphan content key.
+      // Inject a legacy content key — the inertness witness.
       await storage.put(ORPHAN_CONTENT_KEY, new Uint8Array([1, 2, 3]), {
         contentType: "application/json",
       });
@@ -170,12 +170,15 @@ describe("runGc — never deletes a live object", () => {
         ).resolves.toBeInstanceOf(Map);
       }
 
-      // (3) Non-vacuity: the injected orphan content key was reclaimed.
+      // (3) Non-vacuity: a stale log entry below log_seq_start was reclaimed.
+      //     (The injected `content/` key is deliberately NOT a non-vacuity
+      //     witness any more — this collector never touches that prefix, so
+      //     asserting its survival proves the property below vacuously. The
+      //     stale-log arm carries non-vacuity alone.)
       await expect(
         storage.get(ORPHAN_CONTENT_KEY),
-        "orphan content must be swept",
-      ).resolves.toBeNull();
-      // (3) Non-vacuity: a stale log entry below log_seq_start was reclaimed.
+        "legacy content must be left in place",
+      ).resolves.not.toBeNull();
       if (logSeqStart > 0) {
         await expect(
           storage.get(`${LOG_PREFIX}/log/0.json`),

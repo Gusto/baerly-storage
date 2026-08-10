@@ -46,7 +46,6 @@ const STALE_GC_PENDING: GcPending = {
     },
   ],
   last_swept_at: "2020-01-01T00:00:00.000Z",
-  content_scan_cursor: "deadbeef",
   log_scan_cursor: "3",
 };
 

@@ -4,8 +4,8 @@
  * `runGc` is a single-pass garbage collector that:
  *   1. Reads `current.json` (and bootstraps `gc/pending.json` on first
  *      run).
- *   2. Marks new orphan candidates by LISTing the three artifact
- *      prefixes — log, snapshot, content — and classifying each key.
+ *   2. Marks new orphan candidates by LISTing the two artifact
+ *      prefixes — log and snapshot — and classifying each key.
  *   3. Rescues candidates proven live, then sweeps due candidates that
  *      are safe to classify.
  *   4. CAS-writes the updated `gc/pending.json`.
@@ -16,16 +16,16 @@
  * writer-retry window — a paused-process writer that resumes hours
  * later still finds its idempotency anchor on the bucket.
  *
- * Idempotent modulo the rotation cursors: same input bucket state ⇒
- * same candidate set and same DELETEs. The two `*_scan_cursor` fields
- * are position, not state, and advance on every pass by design.
+ * Idempotent modulo the rotation cursor: same input bucket state ⇒
+ * same candidate set and same DELETEs. `log_scan_cursor` is position,
+ * not state, and advances on every pass by design.
  * Unbounded by default — the run marks and sweeps the entire eligible
  * set in one pass. Callers on the Cloudflare 50-subrequest free-tier
- * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's
- * tail-admission, mark, and sweep knobs (`InternalRunGcOptions`, not on
- * the public `RunGcOptions`). One Free invocation processes only this
- * GC phase for one collection; alternate it with a direct bounded
- * `compact()` invocation instead of composing both phases.
+ * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's mark
+ * and sweep knobs (`InternalRunGcOptions`, not on the public
+ * `RunGcOptions`). One Free invocation processes only this GC phase
+ * for one collection; alternate it with a direct bounded `compact()`
+ * invocation instead of composing both phases.
  *
  * **When a bounded pass needs a rotation cursor.** A budget-capped
  * LIST that always starts at the lexicographic beginning only makes
@@ -41,14 +41,14 @@
  * and no budget increase fixes it, because the failure is the window's
  * position, not its size.
  *
- * Two of the three categories below fail that test and carry a
+ * One of the two categories below fails that test and carries a
  * persisted cursor (`gc/pending.json`); each bounded pass resumes
  * `startAfter` the prior pass's last EXAMINED key — examined, not
  * marked, so a window of live or already-pending keys still steps
  * forward — and wraps at end-of-keyspace, so the whole prefix is
  * covered over a rotation within the per-pass budget.
  *
- * Three categories of orphan:
+ * Two categories of orphan:
  *   - `stale-log`: `<collectionPrefix>/log/<seq>.json` with
  *     `seq < log_seq_start`. After `compact()` folds these into a
  *     snapshot, they're unreferenced. **Cursored**
@@ -76,14 +76,16 @@
  *     merges, and an L0 key would sort before the L9 live snapshot.
  *     The cardinality argument survives that; the ordering one does
  *     not.
- *   - `orphan-content`: a v0.6.0/mixed-rollout compatibility object at
- *     `<collectionPrefix>/content/<sha>.json` whose 32-hex truncated-
- *     SHA-256 hash is not in the live content-hash set (computed by
- *     hashing every live `entry.after` post-image). It reclaims legacy
- *     content residue while retaining the same conservative live-key
- *     protection. **Cursored** (`content_scan_cursor`). Content keys are
- *     hash-named (random lex order) and live content is never deleted,
- *     so a first-`maxMarks` window can be all-live.
+ *
+ * A third category, `orphan-content`, existed for v0.6.0/mixed-rollout
+ * `<collectionPrefix>/content/<sha>.json` side objects. It is gone.
+ * Nothing has written those objects since the writer stopped emitting
+ * them, no kernel reader has ever opened one, and this collector no
+ * longer touches the `content/` prefix at all — the objects are inert
+ * and cost only storage. A legacy candidate still in the ledger is
+ * EVICTED rather than swept (see the sweep gate's legacy arm); an
+ * operator who wants the bytes back deletes the prefix directly. See
+ * `docs/guide/backups.md`.
  *
  * CAS-lost on `gc/pending.json` is non-fatal: the DELETEs already
  * issued are durable, so we return a successful result and the next
@@ -91,24 +93,17 @@
  */
 
 import {
-  type CurrentJson,
   type GcCandidate,
   type GcPending,
-  type LogEntry,
   type MetricsRecorder,
   type Storage,
-  type StorageListEntry,
-  CURRENT_JSON_CONTENT_TYPE,
   GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
-  MAX_PARALLEL_LOG_READS,
   NO_GENERATION,
   BaerlyError,
   casUpdateGcPending,
   createGcPending,
-  decodeJsonBytes,
-  encodeJsonBytes,
   gcPendingKey,
   logObjectKey,
   logSeqStartOf,
@@ -116,11 +111,7 @@ import {
   noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
-  versionFromContent,
 } from "@baerly/protocol";
-import { requireIntegerOption } from "./option-guards.ts";
-import { loadSnapshotAsMap } from "./snapshot.ts";
-import { probeTailChunk, probeTailFrom } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
@@ -145,21 +136,6 @@ export interface RunGcOptions {
  * @internal
  */
 export interface InternalRunGcOptions extends RunGcOptions {
-  /**
-   * @internal Maximum GETs used to establish the tail admission proof.
-   * An occupied or malformed chunk defers only the content phase while
-   * preserving safe occupancy progress. Must be a positive integer when
-   * supplied; absent retains exact default probing.
-   */
-  readonly maxTailProbeGets?: number;
-
-  /**
-   * @internal Maximum complete live-log range affordable for content
-   * liveness hashing. Must be a non-negative integer when supplied;
-   * absent retains the exact/unbounded default behavior.
-   */
-  readonly maxLiveLogEntriesPerRun?: number;
-
   /**
    * @internal Override grace-period for tests. Defaults to
    * {@link GC_GRACE_PERIOD_MILLIS} (7 days). Tests use `0` to bypass
@@ -194,87 +170,6 @@ export interface InternalRunGcOptions extends RunGcOptions {
 }
 
 /**
- * Why a pass skipped orphan-content discovery entirely. Two classes,
- * and an operator needs to tell them apart:
- *
- * BUDGET (expected on Cloudflare Free; self-clearing) — the pass could
- * not afford to prove content liveness, checkpointed its progress, and a
- * later pass finishes the job:
- *   - `"probe-budget"`: the bounded tail probe hit `maxTailProbeGets`
- *     without reaching the true tail.
- *   - `"live-tail-over-cap"`: the tail is known exactly but the live
- *     range exceeds `maxLiveLogEntriesPerRun`.
- *
- * DEGRADED (never expected) — an artifact that should be readable was
- * not, so no complete live set can be built while the fault persists.
- * Orphan content accumulates for as long as it does:
- *   - `"probe-slot-malformed"`: an occupied log slot in the probe range
- *     held a body that would not decode.
- *   - `"live-log-unreadable"`: a log entry inside `[log_seq_start, tail)`
- *     was missing or would not decode.
- *   - `"snapshot-unreadable"`: reading or hash-verifying the current
- *     snapshot failed (a persistent `AccessDenied` or a corrupt body
- *     parks orphan-content GC here indefinitely).
- *
- * A reason names the ARTIFACT that could not be read, not the fault
- * class: a one-off transient storage error and a persistent
- * `AccessDenied` on the same object both report
- * `"snapshot-unreadable"`. So a single occurrence does NOT imply a fault
- * that fails to self-clear — a transient one clears on the next pass.
- * Consecutive passes reporting the same reason is the discriminator, and
- * the operator's signal to look at the named artifact; `admin fsck`
- * walks the same chain and surfaces the underlying error.
- *
- * The BUDGET/DEGRADED class is what callers actually branch on, and it is
- * not readable off the string — use {@link isDegradedContentDeferral}
- * rather than re-deriving it from a hardcoded list of members.
- */
-export type ContentDeferralReason =
-  | "probe-budget"
-  | "live-tail-over-cap"
-  | "probe-slot-malformed"
-  | "live-log-unreadable"
-  | "snapshot-unreadable";
-
-/**
- * The BUDGET/DEGRADED split of {@link ContentDeferralReason}, in the one
- * place that owns it. A `Record` over the union rather than a list of the
- * degraded members: adding a sixth reason fails to typecheck until it is
- * classified here, so a new reason cannot silently inherit the wrong class
- * — false alerts for a budget reason, silence for a degraded one.
- */
-const CONTENT_DEFERRAL_IS_DEGRADED: Readonly<Record<ContentDeferralReason, boolean>> = {
-  "probe-budget": false,
-  "live-tail-over-cap": false,
-  "probe-slot-malformed": true,
-  "live-log-unreadable": true,
-  "snapshot-unreadable": true,
-};
-
-/**
- * Whether a deferral reason is DEGRADED — a fault that does not
- * self-clear, so orphan-content GC stays parked until an operator acts on
- * the named artifact. `false` for both a budget reason and `undefined`
- * (no deferral), which makes it a total predicate over
- * `RunGcResult.contentDeferredReason`.
- *
- * This is the alerting predicate for a cron caller, which runs outside any
- * HTTP scope and therefore sees no metrics.
- *
- * @example
- * ```ts
- * import { isDegradedContentDeferral, runGc } from "@gusto/baerly-storage/maintenance";
- *
- * const gc = await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
- * if (isDegradedContentDeferral(gc.contentDeferredReason)) {
- *   console.error("orphan-content GC is degraded:", gc.contentDeferredReason);
- * }
- * ```
- */
-export const isDegradedContentDeferral = (reason: ContentDeferralReason | undefined): boolean =>
-  reason !== undefined && CONTENT_DEFERRAL_IS_DEGRADED[reason];
-
-/**
  * Return shape of {@link runGc}.
  */
 export interface RunGcResult {
@@ -282,7 +177,6 @@ export interface RunGcResult {
   readonly marked: {
     readonly stale_log: number;
     readonly orphan_snapshot: number;
-    readonly orphan_content: number;
   };
   /** Number of keys deleted in this pass. */
   readonly swept: number;
@@ -309,28 +203,12 @@ export interface RunGcResult {
    * see module JSDoc.
    */
   readonly pendingDepth: number;
-  /**
-   * Set iff this pass skipped orphan-content discovery: no content was
-   * marked, no pending content candidate was swept, and
-   * `content_scan_cursor` was held so the next pass resumes in place.
-   * `marked.stale_log` / `marked.orphan_snapshot` and their sweeps are
-   * unaffected — only the content category defers.
-   *
-   * Absent means the content phase completed safely: either classification
-   * ran on a complete live set, or an empty LIST window with no pending
-   * content candidate proved that no liveness scan was needed. Also emitted
-   * as `db.gc.content_deferred_total` (labelled by reason), but a cron caller
-   * outside any HTTP scope sees no metrics — read this field and log a reason
-   * that {@link isDegradedContentDeferral} accepts when it repeats across
-   * passes.
-   */
-  readonly contentDeferredReason?: ContentDeferralReason;
 }
 
 const DEFAULT_MAX_MARKS = Number.MAX_SAFE_INTEGER;
 const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
 const zeroGcResult = (): RunGcResult => ({
-  marked: { stale_log: 0, orphan_snapshot: 0, orphan_content: 0 },
+  marked: { stale_log: 0, orphan_snapshot: 0 },
   swept: 0,
   dropped: { stale_generation: 0, still_live: 0 },
   pendingDepth: 0,
@@ -363,24 +241,12 @@ export const runGc = async (
   const grace = internal.graceMillis ?? GC_GRACE_PERIOD_MILLIS;
   const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
-  const maxTailProbeGets = internal.maxTailProbeGets;
-  const maxLiveLogEntries = internal.maxLiveLogEntriesPerRun;
   const now = internal.now ?? ((): Date => new Date());
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
   const pendingKey = gcPendingKey(collectionPrefix);
   const signal = options.signal;
   const signalOpts = signal !== undefined ? { signal } : undefined;
-
-  // These internal caps feed range arithmetic and must fail before the
-  // first storage operation. Their absence is meaningful: the public/default
-  // path keeps the exact, complete pre-admission behavior.
-  if (maxTailProbeGets !== undefined) {
-    requireIntegerOption("runGc", collectionName, "maxTailProbeGets", maxTailProbeGets, 1);
-  }
-  if (maxLiveLogEntries !== undefined) {
-    requireIntegerOption("runGc", collectionName, "maxLiveLogEntriesPerRun", maxLiveLogEntries, 0);
-  }
 
   // ── Step 1. Read current.json (skip silently if absent). ────────
   const cur = await readCurrentJson(storage, currentJsonKey, signalOpts);
@@ -389,14 +255,6 @@ export const runGc = async (
   }
   const current = cur.json;
   const logSeqStart = logSeqStartOf(current);
-
-  let preserveContentCursor = false;
-  // Why content discovery deferred, for the result field and the metric.
-  // Ordered DEGRADED-before-BUDGET where a pass qualifies for both: a
-  // malformed slot is the actionable fault, and a budget reason would bury
-  // it under an outcome operators are told to expect on Free.
-  let contentDeferredReason: ContentDeferralReason | undefined;
-  const boundedAdmission = maxTailProbeGets !== undefined || maxLiveLogEntries !== undefined;
 
   // ── Step 2. Read or create gc/pending.json. ─────────────────────
   // Race-tolerant create: a concurrent pass may have bootstrapped
@@ -439,8 +297,8 @@ export const runGc = async (
   // NUMERICALLY. The two orders disagree — log keys are unpadded
   // decimal — so the floor is not a lex boundary and there is no
   // `endBefore` that would confine the scan to stale keys. Hence the
-  // rotation cursor: same mechanism as the content scan below, same
-  // advance-on-examined rule. See `log_scan_cursor`.
+  // rotation cursor, advancing on EXAMINED rather than marked keys. See
+  // `log_scan_cursor`.
   const newCandidates: GcCandidate[] = [];
   let markedStaleLog = 0;
   let logExaminedThisPass = 0;
@@ -454,7 +312,7 @@ export const runGc = async (
       // full of already-pending keys) must still move forward.
       logExaminedThisPass++;
       lastExaminedLogKey = entry.key;
-      const seq = parseSeqFromLogKey(entry.key);
+      const seq = parseSeqFromCanonicalLogKey(entry.key, collectionPrefix);
       if (seq === null || seq >= logSeqStart) {
         continue;
       }
@@ -470,12 +328,14 @@ export const runGc = async (
       markedStaleLog++;
     }
   }
-  // Same wrap rule as the content scan. When the phase was SKIPPED
-  // (`log_seq_start === 0`) this is `0 < maxMarks` ⇒ wrap, which is the
-  // intended reading: with no floor the candidate set is empty, so we
-  // trivially examined all of it and the next pass should start from
-  // the beginning. The pass record has no third state for "phase did
-  // not run", and inventing one would buy nothing.
+  // Wrap when the LIST yielded fewer keys than we asked for, since that
+  // means it reached the end of the keyspace. When the phase was SKIPPED
+  // entirely (`log_seq_start === 0`) the comparison is `0 < maxMarks`, so
+  // it also wraps — which is the intended reading: with no floor the
+  // candidate set is empty, so we trivially examined all of it and the
+  // next pass should start from the beginning. The pass record has no
+  // third state for "phase did not run", and inventing one would buy
+  // nothing.
   //
   // Do NOT justify that by calling the floor monotonic. It is not:
   // `admin restore --force` reseeds `log_seq_start` from the surviving
@@ -525,117 +385,7 @@ export const runGc = async (
     markedOrphanSnapshot++;
   }
 
-  // ── Step 5. Mark orphan content. ────────────────────────────────
-  // When a listed or pending legacy object needs classification, build the
-  // live content-hash set for v0.6.0/mixed-rollout compatibility by hashing
-  // every live post-image:
-  //   - log entries [log_seq_start, true tail)
-  //   - snapshot rows (via `loadSnapshotAsMap` so the hash check
-  //     defends against a tampered snapshot)
-  // Hash with the `versionFromContent` 32-hex truncated-SHA-256 legacy
-  // content-key scheme.
-  let markedOrphanContent = 0;
-  let nextContentCursor: string | undefined;
-  let completeLiveContentHashes: ReadonlySet<string> | undefined;
-  const hasPendingContentCandidates = pending.json.candidates.some(
-    (candidate) => candidate.reason === "orphan-content",
-  );
-  const contentWindow = (): AsyncIterable<StorageListEntry> =>
-    storage.list(
-      `${collectionPrefix}/content/`,
-      listWindow(maxMarks, pending.json.content_scan_cursor, signal),
-    );
-  if (!preserveContentCursor) {
-    let contentEntries: AsyncIterable<StorageListEntry> | undefined;
-    let closeContentEntries: (() => Promise<void>) | undefined;
-
-    // Pending content needs a complete live set even when this cursored
-    // window is empty: sweep-time rescue is independent of discovery. With
-    // no pending content, first prove this window contains work so a
-    // content-free collection never pays the legacy liveness scan.
-    if (!hasPendingContentCandidates) {
-      const peeked = await peekAsyncIterable(contentWindow());
-      if (peeked.empty) {
-        // Fewer than maxMarks entries means end-of-keyspace, including zero:
-        // wrap exactly as the existing classifier does after exhaustion.
-        nextContentCursor = undefined;
-      } else {
-        contentEntries = peeked.entries;
-        closeContentEntries = peeked.close;
-      }
-    }
-
-    if (hasPendingContentCandidates || contentEntries !== undefined) {
-      try {
-        const admission: BoundedContentAdmission | undefined = boundedAdmission
-          ? await admitBoundedContentLiveness({
-              storage,
-              collectionPrefix,
-              currentJsonKey,
-              current,
-              currentEtag: cur.etag,
-              logSeqStart,
-              maxTailProbeGets,
-              maxLiveLogEntries,
-              signal,
-            })
-          : undefined;
-        contentDeferredReason = admission?.deferredReason;
-        preserveContentCursor = contentDeferredReason !== undefined;
-
-        if (admission?.casConflict === true) {
-          const casLostMetrics = ctxMetrics();
-          const casLostLabels = { collection: collectionName };
-          casLostMetrics.counter("db.gc.cas_lost_total", 1, casLostLabels);
-          casLostMetrics.counter("db.gc.content_deferred_total", 1, {
-            ...casLostLabels,
-            reason: admission.deferredReason,
-          });
-          return { ...zeroGcResult(), contentDeferredReason: admission.deferredReason };
-        }
-
-        if (!preserveContentCursor) {
-          const liveContent = await collectLiveContentHashes(
-            storage,
-            collectionPrefix,
-            collectionName,
-            current,
-            logSeqStart,
-            signal,
-            admission?.admittedTailProbe,
-          );
-          if (!liveContent.complete) {
-            // A partial live set cannot prove ANY content key dead — the
-            // missing post-images are exactly the ones that would look
-            // orphan. Hold the cursor and all content candidates.
-            preserveContentCursor = true;
-            contentDeferredReason = liveContent.incompleteReason;
-          } else {
-            completeLiveContentHashes = liveContent.hashes;
-            const contentPass = await markOrphanContent({
-              entries: contentEntries ?? contentWindow(),
-              liveHashes: liveContent.hashes,
-              known,
-              maxMarks,
-              now,
-              grace,
-              markGeneration,
-            });
-            newCandidates.push(...contentPass.candidates);
-            markedOrphanContent = contentPass.candidates.length;
-            nextContentCursor = contentPass.nextContentCursor;
-          }
-        }
-      } finally {
-        // Nonempty peeks suspend the source iterator. Classification claims
-        // and closes it on success; this idempotent close covers incomplete,
-        // rejected, and aborted liveness/admission paths.
-        await closeContentEntries?.();
-      }
-    }
-  }
-
-  // ── Step 6. Rescue live candidates, then sweep due candidates. ──
+  // ── Step 5. Rescue live candidates, then sweep due candidates. ──
   // Eligible set = previously-pending entries PLUS this pass's freshly
   // marked entries. Including the new marks lets `runGc({graceMillis:0})`
   // mark-and-sweep in a single pass — useful for tests and for
@@ -664,8 +414,50 @@ export const runGc = async (
   const fenceFloor = logSeqStartOf(fenceCurrent);
   const rescuedKeys = new Set<string>();
   const staleGenerationKeys = new Set<string>();
+  const evictedLegacyKeys = new Set<string>();
+  const evictedUnauthorizedStaleLogKeys = new Set<string>();
   for (const candidate of sweepCandidates) {
-    // Arm 1 — the generation fence, checked before liveness and for
+    // Arm 0 — legacy eviction. A v0.6-era `orphan-content` candidate names
+    // a `content/<sha>.json` side object this build has no way to classify:
+    // nothing writes them, no reader opens one, and the live-hash set that
+    // used to prove such a key dead no longer exists. Resolve it OUT of the
+    // ledger WITHOUT deleting the object — the bytes are inert and an
+    // operator disposes of them directly (docs/guide/backups.md).
+    //
+    // This is not back-compat politeness; it is what keeps GC running.
+    // `mergeGcPending` keeps the FIRST `GC_MAX_PENDING_CANDIDATES` entries,
+    // so a legacy bucket whose ledger head is full of content candidates
+    // would otherwise silently discard every new `stale-log` and
+    // `orphan-snapshot` mark, forever. Retaining them turns a cleanup into
+    // a total GC outage on exactly the buckets this change is meant to
+    // serve.
+    //
+    // Ordered BEFORE the generation fence deliberately. Most legacy
+    // candidates would also fail that fence, and counting them there would
+    // fire an alertable `db.gc.dropped_total{cause="stale-generation"}`
+    // spike on every legacy bucket's first post-upgrade pass, for a reason
+    // that has nothing to do with a restore. Eviction frees no bytes and
+    // means nothing is wrong, so it drives no counter at all.
+    if (candidate.reason === "orphan-content") {
+      evictedLegacyKeys.add(candidate.key);
+      continue;
+    }
+    // Arm 1 — stale-log deletion authority. A persisted candidate can
+    // authorize DELETE only when its key is the exact canonical key for
+    // this collection. The ledger decoder lacks collection context, so
+    // malformed, mislabeled, noncanonical and cross-prefix candidates
+    // are resolved here without DELETE. Waiting for `due_at` would let an
+    // invalid entry wedge the bounded first-N ledger for no safety gain.
+    // Ordered before the generation fence so invalid authority does not
+    // masquerade as a stale-generation event.
+    if (
+      candidate.reason === "stale-log" &&
+      parseSeqFromCanonicalLogKey(candidate.key, collectionPrefix) === null
+    ) {
+      evictedUnauthorizedStaleLogKeys.add(candidate.key);
+      continue;
+    }
+    // Arm 2 — the generation fence, checked before liveness and for
     // every reason. A candidate marked under a manifest that has since
     // been replaced was judged against a keyspace that no longer
     // exists: `baerly admin restore --force` truncates the log, reseeds
@@ -682,45 +474,40 @@ export const runGc = async (
       rescuedKeys.add(candidate.key);
       continue;
     }
-    // Arm 2 — a stale-log candidate that reads live again. Same
+    // Arm 3 — a stale-log candidate that reads live again. Same
     // generation, so this is not a reseed; the floor can still have
     // been rewound by a `--force` that reused the nonce, and a mark
     // taken `GC_GRACE_PERIOD_MILLIS` ago is stale enough to be worth
-    // re-deriving from the floor rather than trusted. An unparseable
-    // key stays sweepable: it was marked as one, and `parseSeqFromLogKey`
-    // returning `null` says nothing about liveness.
+    // re-deriving from the floor rather than trusted. The deletion-authority
+    // arm above has already resolved every key that cannot be classified
+    // canonically for this collection.
     if (candidate.reason === "stale-log") {
-      const seq = parseSeqFromLogKey(candidate.key);
+      const seq = parseSeqFromCanonicalLogKey(candidate.key, collectionPrefix);
       if (seq !== null && seq >= fenceFloor) {
         rescuedKeys.add(candidate.key);
       }
       continue;
     }
-    if (candidate.reason === "orphan-content" && completeLiveContentHashes !== undefined) {
-      const hash = parseHashFromContentKey(candidate.key);
-      if (hash !== null && completeLiveContentHashes.has(hash)) {
-        rescuedKeys.add(candidate.key);
-      }
-    }
   }
-  // Both arms resolve a candidate OUT of the ledger without deleting
+  // All four arms resolve a candidate OUT of the ledger without deleting
   // anything. That is what stops the ledger starving: `mergeGcPending`
   // keeps the FIRST `GC_MAX_PENDING_CANDIDATES` entries, so a
-  // permanently-live candidate at the head would otherwise wedge it
-  // forever and silently discard every later mark.
-  const droppedKeys = new Set([...staleGenerationKeys, ...rescuedKeys]);
+  // permanently-live candidate — or an unclassifiable legacy one — at the
+  // head would otherwise wedge it forever and silently discard every later
+  // mark.
+  const droppedKeys = new Set([
+    ...staleGenerationKeys,
+    ...rescuedKeys,
+    ...evictedLegacyKeys,
+    ...evictedUnauthorizedStaleLogKeys,
+  ]);
   const toSweep: GcCandidate[] = [];
   const remaining: GcCandidate[] = [];
   for (const cand of sweepCandidates) {
     if (droppedKeys.has(cand.key)) {
       continue;
     }
-    // Without a complete live hash set, an orphan-content candidate cannot
-    // be proven dead. Keep it pending while independent stale-log/snapshot
-    // candidates continue through the same bounded sweep.
-    if (cand.reason === "orphan-content" && completeLiveContentHashes === undefined) {
-      remaining.push(cand);
-    } else if (toSweep.length < maxSweeps && Date.parse(cand.due_at) <= nowMs) {
+    if (toSweep.length < maxSweeps && Date.parse(cand.due_at) <= nowMs) {
       if (cand.reason === "orphan-snapshot") {
         const maxSeq = parseMaxSeqFromCanonicalSnapshotKey(cand.key, collectionPrefix);
         // A compactor may publish this candidate after the fresh manifest GET
@@ -743,7 +530,7 @@ export const runGc = async (
   // but the per-key DELETEs that landed are durable.
   await Promise.all(toSweep.map((c) => storage.delete(c.key, signalOpts)));
 
-  // ── Step 7. CAS-write pending.json. ─────────────────────────────
+  // ── Step 6. CAS-write pending.json. ─────────────────────────────
   // MERGE this pass's results INTO the latest stored value rather than
   // overwriting with a precomputed set: `casUpdateGcPending` re-reads
   // `latest` and hands it to `mergeGcPending`, so a concurrent pass's
@@ -764,7 +551,6 @@ export const runGc = async (
   const markedSummary = {
     stale_log: markedStaleLog,
     orphan_snapshot: markedOrphanSnapshot,
-    orphan_content: markedOrphanContent,
   };
   let pendingDepth: number;
   try {
@@ -776,9 +562,7 @@ export const runGc = async (
           sweptKeys,
           newCandidates,
           lastSweptAt,
-          nextContentCursor,
           nextLogCursor,
-          ...(preserveContentCursor && { preserveContentCursor: true }),
           maxCandidates: GC_MAX_PENDING_CANDIDATES,
         }),
       signalOpts,
@@ -811,7 +595,7 @@ export const runGc = async (
     }
   }
 
-  // ── Step 8. Emit metrics. ───────────────────────────────────────
+  // ── Step 7. Emit metrics. ───────────────────────────────────────
   // In-memory only — zero storage ops. Emit regardless of CAS-lost
   // (the operator wants visibility into best-effort runs too).
   const labels = { collection: collectionName };
@@ -826,16 +610,6 @@ export const runGc = async (
     for (const [reason, count] of byReason) {
       metrics.counter("db.gc.swept_total", count, { collection: collectionName, reason });
     }
-  }
-  // Emitted only on a deferred pass, so a flat zero rate is the healthy
-  // signal and any non-zero DEGRADED reason is the alertable one. Without
-  // this, a pass that classified nothing because it COULDN'T is
-  // indistinguishable from one that found no orphans.
-  if (contentDeferredReason !== undefined) {
-    metrics.counter("db.gc.content_deferred_total", 1, {
-      collection: collectionName,
-      reason: contentDeferredReason,
-    });
   }
   // Separate from `db.gc.swept_total` on purpose: a drop frees no bytes,
   // so folding the two would make a pass that reclaimed nothing look
@@ -864,7 +638,6 @@ export const runGc = async (
       still_live: rescuedKeys.size,
     },
     pendingDepth,
-    ...(contentDeferredReason !== undefined && { contentDeferredReason }),
   };
 };
 
@@ -892,99 +665,24 @@ const listWindow = (
   ...(signal !== undefined && { signal }),
 });
 
-type AdmittedTailProbe = {
-  readonly floor: number;
-  readonly tail: number;
-  readonly entries: LogEntry[];
-};
-
-type BoundedContentAdmission =
-  | {
-      readonly admittedTailProbe: AdmittedTailProbe;
-      readonly deferredReason?: never;
-      readonly casConflict?: never;
-    }
-  | {
-      readonly admittedTailProbe?: never;
-      readonly deferredReason: ContentDeferralReason;
-      readonly casConflict?: true;
-    };
-
 /**
- * Decide whether a bounded pass can afford complete legacy-content
- * liveness, checkpointing certified occupancy when it cannot. The
- * checkpoint is deliberately one-shot: retrying could spend beyond the
- * pass budget or admit against a different manifest.
+ * Parse the exact canonical `log/<seq>.json` key for this collection.
+ * Returns `null` for another prefix, malformed or noncanonical decimal,
+ * or a sequence outside JavaScript's safe-integer range.
  */
-const admitBoundedContentLiveness = async (opts: {
-  readonly storage: Storage;
-  readonly collectionPrefix: string;
-  readonly currentJsonKey: string;
-  readonly current: CurrentJson;
-  readonly currentEtag: string;
-  readonly logSeqStart: number;
-  readonly maxTailProbeGets: number | undefined;
-  readonly maxLiveLogEntries: number | undefined;
-  readonly signal: AbortSignal | undefined;
-}): Promise<BoundedContentAdmission> => {
-  const floor = Math.max(opts.logSeqStart, opts.current.tail_hint);
-  const probe = await probeTailChunk(opts.storage, opts.collectionPrefix, floor, {
-    ...(opts.signal !== undefined && { signal: opts.signal }),
-    ...(opts.maxTailProbeGets !== undefined && { cap: opts.maxTailProbeGets }),
-    tolerateMalformed: true,
-  });
-  const liveEntryCap = opts.maxLiveLogEntries ?? Number.MAX_SAFE_INTEGER;
-  let deferredReason: ContentDeferralReason;
-  if (!probe.complete) {
-    deferredReason = "probe-slot-malformed";
-  } else if (probe.kind === "at-least") {
-    deferredReason = "probe-budget";
-  } else if (probe.tail - opts.logSeqStart > liveEntryCap) {
-    deferredReason = "live-tail-over-cap";
-  } else {
-    // Preserve decoded suffix entries so admitted liveness never pays for
-    // the bounded probe GETs twice.
-    return {
-      admittedTailProbe: { floor, tail: probe.tail, entries: probe.entries },
-    };
+const parseSeqFromCanonicalLogKey = (key: string, collectionPrefix: string): number | null => {
+  const logPrefix = `${collectionPrefix}/log/`;
+  if (!key.startsWith(logPrefix)) {
+    return null;
   }
-
-  const certifiedTail = probe.kind === "exact" ? probe.tail : probe.lowerBound;
-  if (certifiedTail <= opts.current.tail_hint) {
-    return { deferredReason };
-  }
-
-  try {
-    await opts.storage.put(
-      opts.currentJsonKey,
-      encodeJsonBytes({ ...opts.current, tail_hint: certifiedTail }),
-      {
-        ifMatch: opts.currentEtag,
-        contentType: CURRENT_JSON_CONTENT_TYPE,
-        ...(opts.signal !== undefined && { signal: opts.signal }),
-      },
-    );
-  } catch (error) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
-      return { deferredReason, casConflict: true };
-    }
-    throw error;
-  }
-  return { deferredReason };
-};
-
-/**
- * Parse `<...>/log/<seq>.json` and return `seq`. Returns `null` on
- * any shape that doesn't look like a log entry key — defensively
- * tolerates an unrelated key under the log prefix.
- */
-const parseSeqFromLogKey = (key: string): number | null => {
-  const match = /\/log\/(\d+)\.json$/.exec(key);
+  const match = /^(\d+)\.json$/.exec(key.slice(logPrefix.length));
   if (match === null) {
     return null;
   }
-  const n = Number.parseInt(match[1]!, 10);
-  return Number.isFinite(n) && n >= 0 ? n : null;
+  const seq = Number(match[1]);
+  return Number.isSafeInteger(seq) && seq >= 0 && logObjectKey(collectionPrefix, seq) === key
+    ? seq
+    : null;
 };
 
 /**
@@ -1011,16 +709,6 @@ const parseMaxSeqFromCanonicalSnapshotKey = (
 };
 
 /**
- * Parse `<...>/content/<sha-32>.json` and return the 32-hex hash.
- * Returns `null` on any shape that doesn't match the writer's
- * `versionFromContent`-produced key format.
- */
-const parseHashFromContentKey = (key: string): string | null => {
-  const match = /\/content\/([0-9a-f]{32})\.json$/.exec(key);
-  return match === null ? null : match[1]!;
-};
-
-/**
  * Anchor `due_at` on the MARK: `now() + graceMs`. Grace measures the
  * writer-retry window from when we judged a key dead, which is
  * unrelated to when the object was written.
@@ -1038,290 +726,3 @@ const parseHashFromContentKey = (key: string): string | null => {
  */
 const computeDueAt = (now: () => Date, graceMs: number): string =>
   new Date(now().getTime() + graceMs).toISOString();
-
-type PeekedAsyncIterable<T> =
-  | { readonly empty: true }
-  | {
-      readonly empty: false;
-      readonly entries: AsyncIterable<T>;
-      readonly close: () => Promise<void>;
-    };
-
-/**
- * Peek one entry from an async iterable without buffering the rest. The
- * nonempty arm exposes a one-shot iterable that yields the buffered entry,
- * then resumes the original iterator. `close` releases the suspended source
- * when the caller cannot continue classification.
- */
-const peekAsyncIterable = async <T>(source: AsyncIterable<T>): Promise<PeekedAsyncIterable<T>> => {
-  const iterator = source[Symbol.asyncIterator]();
-  const first = await iterator.next();
-  if (first.done) {
-    return { empty: true };
-  }
-
-  const firstValue = first.value;
-  let claimed = false;
-  const close = async (): Promise<void> => {
-    if (claimed) {
-      return;
-    }
-    claimed = true;
-    await iterator.return?.();
-  };
-  const entries: AsyncIterable<T> = {
-    async *[Symbol.asyncIterator](): AsyncIterator<T> {
-      if (claimed) {
-        return;
-      }
-      claimed = true;
-      try {
-        yield firstValue;
-        while (true) {
-          const next = await iterator.next();
-          if (next.done) {
-            return;
-          }
-          yield next.value;
-        }
-      } finally {
-        await iterator.return?.();
-      }
-    },
-  };
-  return { empty: false, entries, close };
-};
-
-/**
- * Classify one already-opened bounded rotation window over `content/`:
- * mark every key whose content hash is absent from `liveHashes` and not
- * already pending, and report where the next pass resumes.
- *
- * `liveHashes` MUST be complete. A partial set marks live content as
- * orphan, and the grace period does not save it — a marked live key is
- * only rescued if a LATER pass builds a complete set before the due date.
- * `runGc` owns that gate; this helper trusts it.
- *
- * Rotation cursor: bounded passes (`maxMarks` < keyspace) sweep the whole
- * `content/` keyspace over a rotation instead of re-scanning the same
- * lexicographic-first window forever — content keys are hash-named
- * (random lex order) and live content is never deleted, so a fixed
- * first-`maxMarks` window can be all-live and never reach orphan content
- * past it. See `content_scan_cursor`.
- */
-const markOrphanContent = async (opts: {
-  readonly entries: AsyncIterable<StorageListEntry>;
-  readonly liveHashes: ReadonlySet<string>;
-  readonly known: ReadonlySet<string>;
-  readonly maxMarks: number;
-  readonly now: () => Date;
-  readonly grace: number;
-  /**
-   * The manifest generation to stamp on each candidate, pre-spread by
-   * the caller so an absent generation writes no field. Passed in
-   * rather than derived here because this helper never reads
-   * `current.json` — see `GcCandidate.generation`.
-   */
-  readonly markGeneration: { generation?: string };
-}): Promise<{
-  readonly candidates: GcCandidate[];
-  readonly nextContentCursor: string | undefined;
-}> => {
-  const candidates: GcCandidate[] = [];
-  let examinedThisPass = 0;
-  let lastExaminedKey: string | undefined;
-  for await (const entry of opts.entries) {
-    // The cursor advances by EXAMINED keys (not marked), so an all-live
-    // window still moves the window forward to fresh keys next pass.
-    examinedThisPass++;
-    lastExaminedKey = entry.key;
-    const hash = parseHashFromContentKey(entry.key);
-    if (hash === null || opts.liveHashes.has(hash)) {
-      continue;
-    }
-    if (opts.known.has(entry.key)) {
-      continue;
-    }
-    candidates.push({
-      key: entry.key,
-      due_at: computeDueAt(opts.now, opts.grace),
-      reason: "orphan-content",
-      ...opts.markGeneration,
-    });
-  }
-  // New cursor: if the LIST yielded FEWER than `maxKeys` keys it reached
-  // the end of the keyspace ⇒ WRAP (next pass starts from the beginning,
-  // cursor cleared). The unbounded reconcile path (maxMarks ≈
-  // MAX_SAFE_INTEGER) always yields < maxKeys, so it always WRAPS — but it
-  // does not necessarily scan the whole keyspace first. Bounded and
-  // cursored are INDEPENDENT axes: `listWindow` applies `startAfter`
-  // whenever the ledger carries a cursor, whatever `maxKeys` is, so an
-  // unbounded pass that finds a cursor left by a bounded one covers only
-  // cursor→end. Liveness-only and self-healing — that pass wraps, so the
-  // next starts from the beginning and marks the remainder. Otherwise
-  // carry the last examined key.
-  const reachedEnd = examinedThisPass < opts.maxMarks;
-  return { candidates, nextContentCursor: reachedEnd ? undefined : lastExaminedKey };
-};
-
-/**
- * Outcome of one live-content-set build — a discriminated union on
- * `complete`, so the two invariants are the compiler's to keep rather
- * than a runtime convention's:
- *
- *   - Only the `false` arm exists without a reason, so a deferral can
- *     never be silent. Independent `complete` + `incompleteReason?`
- *     fields would admit `{ complete: false }` with no reason, which
- *     holds the cursor and reports nothing — the exact silent deferral
- *     {@link ContentDeferralReason} exists to remove.
- *   - Only the `true` arm carries `hashes`, so a partial set is not
- *     merely unsafe to classify against, it is unreachable.
- */
-type LiveContentScan =
-  | { readonly complete: true; readonly hashes: ReadonlySet<string> }
-  | { readonly complete: false; readonly incompleteReason: ContentDeferralReason };
-
-/**
- * Build the live content-hash set. The set covers every live
- * post-image: every `entry.after` in `[logSeqStart, true tail)` plus
- * every row body in the current snapshot.
- *
- * A bounded admitted caller supplies the exact probe it already paid for.
- * Entries below `probe.floor` are fetched once; decoded entries from
- * `[probe.floor, probe.tail)` are ingested directly. With no probe the
- * original exact/unbounded probe + complete storage scan remains unchanged.
- *
- * Missing or malformed live entries and snapshot read failures yield the
- * incomplete arm, which carries a reason and no hashes — the caller
- * cannot reach a partial set to classify against.
- */
-const collectLiveContentHashes = async (
-  storage: Storage,
-  collectionPrefix: string,
-  collectionName: string,
-  current: CurrentJson,
-  logSeqStart: number,
-  signal: AbortSignal | undefined,
-  exactProbe?: {
-    readonly floor: number;
-    readonly tail: number;
-    readonly entries: ReadonlyArray<LogEntry>;
-  },
-): Promise<LiveContentScan> => {
-  const hashes = new Set<string>();
-  // First cause wins: the log walk runs before the snapshot read, and a
-  // log fault is the earlier link in the same chain. Set ⇒ incomplete;
-  // there is no separate `complete` flag to disagree with it.
-  let incompleteReason: ContentDeferralReason | undefined;
-  const markIncomplete = (reason: ContentDeferralReason): void => {
-    incompleteReason ??= reason;
-  };
-  const getOpts = signal !== undefined ? { signal } : undefined;
-
-  // Live log tail, bounded to the TRUE tail (probe past a stale-low
-  // hint) so GC never treats a committed post-image as dead. Floor the
-  // probe at `max(log_seq_start, tail_hint)` — entries below
-  // `log_seq_start` are folded and never scanned by the loop below. The
-  // loop 404-tolerates misses, so over-bounding to `tail` is safe.
-  let tail: number;
-  if (exactProbe !== undefined) {
-    tail = exactProbe.tail;
-  } else {
-    const tailProbe = await probeTailFrom(
-      storage,
-      collectionPrefix,
-      Math.max(logSeqStart, current.tail_hint),
-      { signal },
-    );
-    tail = tailProbe.tail;
-  }
-  // Read every live entry in `[logSeqStart, tail)`, but cap the
-  // simultaneous in-flight log GETs at MAX_PARALLEL_LOG_READS. A raw
-  // `Promise.all` over the whole range fans out up to
-  // LOG_FORWARD_PROBE_CAP (100_000) concurrent GETs when a backlogged
-  // tail makes the range large — which blows the Cloudflare Workers
-  // ~50-concurrent-subrequest cap. The walk is COMPLETE (every seq is
-  // visited): this is a concurrency bound, never a partial scan. Unlike
-  // the shared `walkLogRange` helper, this scan is 404-tolerant (a
-  // missing `log/<seq>` past a stale-low hint is skipped, not fatal)
-  // and tolerant of a malformed entry, so it keeps its own bounded loop
-  // rather than borrowing the throwing walker.
-  const ingestDecodedLogEntry = async (entry: Pick<LogEntry, "after">): Promise<void> => {
-    if (entry.after === undefined) {
-      return;
-    }
-    const bodyBytes = encodeJsonBytes(entry.after);
-    hashes.add(await versionFromContent(bodyBytes));
-  };
-  const ingestLogEntry = async (s: number): Promise<void> => {
-    const got = await storage.get(logObjectKey(collectionPrefix, s), getOpts);
-    if (got === null) {
-      markIncomplete("live-log-unreadable");
-      return;
-    }
-    let entry: LogEntry;
-    try {
-      entry = decodeJsonBytes<LogEntry>(got.body);
-    } catch {
-      markIncomplete("live-log-unreadable");
-      return;
-    }
-    await ingestDecodedLogEntry(entry);
-  };
-  const storageScanEnd = exactProbe?.floor ?? tail;
-  for (
-    let chunkStart = logSeqStart;
-    chunkStart < storageScanEnd;
-    chunkStart += MAX_PARALLEL_LOG_READS
-  ) {
-    signal?.throwIfAborted();
-    const chunkEnd = Math.min(chunkStart + MAX_PARALLEL_LOG_READS, storageScanEnd);
-    const chunk: Array<Promise<void>> = [];
-    for (let s = chunkStart; s < chunkEnd; s++) {
-      chunk.push(ingestLogEntry(s));
-    }
-    await Promise.all(chunk);
-  }
-  if (exactProbe !== undefined) {
-    for (
-      let chunkStart = 0;
-      chunkStart < exactProbe.entries.length;
-      chunkStart += MAX_PARALLEL_LOG_READS
-    ) {
-      signal?.throwIfAborted();
-      await Promise.all(
-        exactProbe.entries
-          .slice(chunkStart, chunkStart + MAX_PARALLEL_LOG_READS)
-          .map(ingestDecodedLogEntry),
-      );
-    }
-  }
-
-  // Snapshot rows.
-  if (current.snapshot !== null) {
-    try {
-      const map = await loadSnapshotAsMap(storage, current.snapshot, collectionName, signal);
-      const rowReads: Array<Promise<void>> = [];
-      for (const body of map.values()) {
-        rowReads.push(
-          (async (): Promise<void> => {
-            const bytes = encodeJsonBytes(body);
-            hashes.add(await versionFromContent(bytes));
-          })(),
-        );
-      }
-      await Promise.all(rowReads);
-    } catch {
-      // Swallowed deliberately: throwing here would abort the stale-log
-      // and orphan-snapshot categories, which need no snapshot read. The
-      // caller defers only content classification — but a persistent fault
-      // (AccessDenied, corrupt body) parks that category indefinitely, so
-      // the reason must reach the caller rather than die here.
-      markIncomplete("snapshot-unreadable");
-    }
-  }
-
-  return incompleteReason !== undefined
-    ? { complete: false, incompleteReason }
-    : { complete: true, hashes };
-};

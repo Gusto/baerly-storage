@@ -24,14 +24,6 @@
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
  *   - `db.compact.entries_folded` — histogram (entries folded per run)
  *   - `db.gc.swept_total` — counter (labelled by reason)
- *   - `db.gc.content_deferred_total` — counter (labelled by reason; emitted
- *     only when a pass skipped orphan-content discovery, so any sustained
- *     non-zero rate on a DEGRADED reason is alertable — a single
- *     occurrence may be transient, a repeating one does not self-clear.
- *     `isDegradedContentDeferral` in `@baerly/server` owns which reasons
- *     those are; do not re-enumerate them)
- *   - `db.gc.cas_lost_total` — counter (GC lost its admission-checkpoint CAS
- *     on `current.json`; the GC-side sibling of `db.compaction.cas_lost_total`)
  *   - `db.gc.dropped_total` — counter (labelled by cause: `stale-generation`
  *     / `still-live`). Candidates resolved out of the ledger WITHOUT a
  *     DELETE because the sweep gate re-checked them and found them no
