@@ -433,19 +433,6 @@ export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
 export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
 
 /**
- * Cloudflare Free GC tail-discovery budget. GC peeks the legacy
- * `content/` window before admission, so a maximally contended deferred
- * pass costs one more LIST than the original proof. `P=24` keeps direct
- * GC at 49 storage operations and leaves one operation for
- * `runBoundedMaintenance`'s dispatch-gate `current.json` GET, preserving
- * the 50-subrequest in-band ceiling.
- *
- * @see packages/server/src/maintenance.ts
- * @see packages/server/src/maintenance-budget.test.ts
- */
-export const CF_FREE_GC_TAIL_PROBE_GETS: number = 24;
-
-/**
  * compact()'s minEntriesToCompact, set EXPLICITLY by the runner so it agrees with Gate 1
  * rather than inheriting compact()'s silent default 100 (which would contradict the 64 KB
  * first-fold story — round-4 Tier-3). Adapter-overridable; CF-free value.
@@ -621,8 +608,6 @@ type MaintenanceProfileShape = Readonly<{
   gcInterval: number;
   gcMaxMarks: number;
   gcMaxSweeps: number;
-  gcMaxTailProbeGets?: number;
-  gcMaxLiveLogEntriesPerRun?: number;
   maxFoldEntriesPerPass: number;
   maxFoldBytes: number;
   maxFoldRows: number;
@@ -633,8 +618,6 @@ export const MAINTENANCE_PROFILE_CF_FREE: MaintenanceProfileShape = {
   gcInterval: WRITE_TICK_GC_INTERVAL,
   gcMaxMarks: WRITE_TICK_GC_MAX_MARKS,
   gcMaxSweeps: WRITE_TICK_GC_MAX_SWEEPS,
-  gcMaxTailProbeGets: CF_FREE_GC_TAIL_PROBE_GETS,
-  gcMaxLiveLogEntriesPerRun: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   maxFoldEntriesPerPass: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   maxFoldBytes: MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   maxFoldRows: MAINTENANCE_MAX_FOLD_ROWS,
@@ -703,13 +686,12 @@ export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
  * whichever party gets there first, because the interval is measured
  * against the tick's in-memory `current.json` — which no CAS writes back,
  * so a repeat call still reads as due and would rewrite identical bytes.
- * Three parties can publish: the runner's own refresh, a fold that
+ * Two parties can publish: the runner's own refresh, and a fold that
  * returned `written` (Step-7 stamped `max(stored, discoveredTail)` with
- * `discoveredTail >= observedTail`), and a GC pass that deferred
- * legacy-content classification (its bounded admission already
- * CAS-checkpointed the tail its capped probe certified — an extra
- * GET+PUT there would breach the Cloudflare-Free 50-subrequest worst
- * case that pass is proven at).
+ * `discoveredTail >= observedTail`). A GC slice used to be a third, via
+ * a legacy-content admission checkpoint; with that subsystem gone a GC
+ * tick simply takes the ordinary rate-limited refresh, which is what
+ * makes the bound below unconditional rather than cadence-dependent.
  *
  * Sized at 128: it bounds a deferring collection's worst-case
  * read-walk to ≤128 forward GETs (≈one extra read-page sweep — a

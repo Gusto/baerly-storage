@@ -48,25 +48,14 @@ export interface GcPending {
    */
   last_swept_at: string;
   /**
-   * Rotation cursor for `runGc`'s orphan-content LIST — the last
-   * content key examined last pass. Successive bounded passes resume
-   * `startAfter` this so the whole `content/` keyspace is swept over a
-   * rotation, within the per-pass `maxMarksPerRun` budget. Absent /
-   * reset to `undefined` ⇒ start from the lexicographic beginning
-   * (wrap).
+   * Rotation cursor for `runGc`'s stale-log LIST — the last `log/` key
+   * examined last pass. Successive bounded passes resume `startAfter`
+   * this so the whole `log/` keyspace is covered over a rotation, within
+   * the per-pass `maxMarksPerRun` budget. Absent / reset to `undefined`
+   * ⇒ start from the lexicographic beginning (wrap).
    *
-   * Optional + additive: a v1 `gc/pending.json` written before this
-   * field existed stays valid — absent means "start from the
-   * beginning", so {@link GC_PENDING_SCHEMA_VERSION} is NOT bumped.
-   */
-  content_scan_cursor?: string;
-  /**
-   * Rotation cursor for `runGc`'s stale-log LIST — the last `log/`
-   * key examined last pass. The exact sibling of
-   * {@link GcPending.content_scan_cursor}, over `<prefix>/log/`.
-   *
-   * Needed for the same reason, reached by a different route: log keys
-   * are UNPADDED decimal (`log/9.json`, `log/10.json`), so lex order is
+   * Needed because log keys are UNPADDED
+   * decimal (`log/9.json`, `log/10.json`), so lex order is
    * `0, 1, 10, 100, …, 11, …` and the LIVE keys at/above
    * `log_seq_start` interleave with — and often lex-PRECEDE — the stale
    * ones below it. A bounded pass listing from the lexicographic start
@@ -78,9 +67,9 @@ export interface GcPending {
    * floor: the numeric floor is not a lexicographic boundary, so there
    * is no `endBefore` that bounds the scan to stale keys.
    *
-   * Optional + additive on the same terms as the content cursor —
-   * absent ⇒ start from the lexicographic beginning; no
-   * {@link GC_PENDING_SCHEMA_VERSION} bump.
+   * Optional + additive: a v1 `gc/pending.json` written before this
+   * field existed stays valid — absent ⇒ start from the lexicographic
+   * beginning, so {@link GC_PENDING_SCHEMA_VERSION} is NOT bumped.
    */
   log_scan_cursor?: string;
 }
@@ -95,7 +84,14 @@ export interface GcCandidate {
   key: string;
   /** ISO-8601 server-clock time after which the key may be deleted. */
   due_at: string;
-  /** Why the key is a candidate. */
+  /**
+   * Why the key is a candidate. `"orphan-content"` is **decode-only**: no
+   * pass has emitted one since the content subsystem was removed, and the
+   * sweep gate evicts any it finds from a legacy ledger without deleting
+   * the object. It stays in the union — and in `VALID_REASONS` — because
+   * dropping it would make a v0.6 `gc/pending.json` fail to decode, which
+   * would stall that collection's GC entirely.
+   */
   reason: "stale-log" | "orphan-snapshot" | "orphan-content";
   /**
    * The `current.json` `generation` this candidate was marked under, if
@@ -299,11 +295,11 @@ export const casUpdateGcPending = async (
  *  - **last_swept_at**: the lexicographically LATER of `latest`'s and
  *    this pass's (ISO-8601 UTC; `""` sorts lowest so a real timestamp
  *    always wins). Never regress a concurrent pass's newer sweep time.
- *  - **content_scan_cursor**: rotation cursor — liveness, not
- *    correctness; just don't regress forward progress. The two sides
- *    are NOT symmetric: `pass.nextContentCursor === undefined` means
- *    THIS pass examined to the END of the keyspace (WRAP — the most-
- *    advanced position), whereas `latest.content_scan_cursor` absent
+ *  - **log_scan_cursor**: rotation cursor over the `log/` keyspace —
+ *    liveness, not correctness; just don't regress forward progress. The
+ *    two sides are NOT symmetric: `pass.nextLogCursor === undefined`
+ *    means THIS pass examined to the END of the keyspace (WRAP — the
+ *    most-advanced position), whereas `latest.log_scan_cursor` absent
  *    means the stored ledger has no cursor yet (start-from-beginning).
  *    So:
  *      - our pass WRAPPED ⇒ result wraps (key omitted) — our pass is
@@ -312,14 +308,6 @@ export const casUpdateGcPending = async (
  *          - latest cursor defined ⇒ take the lexicographically GREATER
  *            (don't regress a concurrent pass's advance);
  *          - latest cursor absent ⇒ keep OUR advance (don't lose it).
- *    When `pass.preserveContentCursor` is true the content phase was
- *    deliberately deferred, not completed: copy the latest stored value
- *    verbatim on every CAS retry. This third state is content-only; the log
- *    cursor still follows its normal independent rotation semantics.
- *  - **log_scan_cursor**: the same rule, applied INDEPENDENTLY over the
- *    `log/` keyspace. The two rotations cover disjoint prefixes and
- *    consume their budgets at different rates, so one reaching the end
- *    must never reset or regress the other.
  */
 export const mergeGcPending = (
   latest: GcPending,
@@ -327,9 +315,7 @@ export const mergeGcPending = (
     readonly sweptKeys: ReadonlySet<string>;
     readonly newCandidates: ReadonlyArray<GcCandidate>;
     readonly lastSweptAt: string;
-    readonly nextContentCursor: string | undefined;
     readonly nextLogCursor: string | undefined;
-    readonly preserveContentCursor?: boolean;
     readonly maxCandidates: number;
   },
 ): GcPending => {
@@ -350,18 +336,14 @@ export const mergeGcPending = (
   const lastSweptAt =
     pass.lastSweptAt > latest.last_swept_at ? pass.lastSweptAt : latest.last_swept_at;
 
-  // Both rotation cursors follow the same asymmetric rule, applied
-  // independently over their own prefix — see {@link mergeRotationCursor}.
-  const contentCursor = pass.preserveContentCursor
-    ? latest.content_scan_cursor
-    : mergeRotationCursor(latest.content_scan_cursor, pass.nextContentCursor);
+  // The rotation cursor follows the asymmetric rule — see
+  // {@link mergeRotationCursor}.
   const logCursor = mergeRotationCursor(latest.log_scan_cursor, pass.nextLogCursor);
 
   return {
     schema_version: GC_PENDING_SCHEMA_VERSION,
     candidates,
     last_swept_at: lastSweptAt,
-    ...(contentCursor !== undefined && { content_scan_cursor: contentCursor }),
     ...(logCursor !== undefined && { log_scan_cursor: logCursor }),
   };
 };
@@ -372,8 +354,7 @@ export const mergeGcPending = (
 
 /**
  * Merge one rotation cursor: `latest`'s stored value against this
- * pass's next position. Shared by `content_scan_cursor` and
- * `log_scan_cursor` so the two can't drift apart.
+ * pass's next position.
  *
  * Asymmetric on purpose (see {@link mergeGcPending}): `pass ===
  * undefined` means THIS pass examined to the END of the keyspace
@@ -387,10 +368,10 @@ export const mergeGcPending = (
  *
  * Compares with JS `>` (UTF-16 code units), not `compareKeysUtf8`,
  * which is what `Storage.list` sorts by. The two agree on the ASCII
- * keyspaces both cursors live in — 32-hex content hashes and decimal
- * log seqs — and a mismatch here would cost budget, not correctness,
- * per the paragraph above. Reach for `compareKeysUtf8` if a third
- * cursor ever rotates over caller-supplied keys.
+ * keyspace this cursor lives in — decimal log seqs — and a mismatch
+ * here would cost budget, not correctness, per the paragraph above.
+ * Reach for `compareKeysUtf8` if a second cursor ever rotates over
+ * caller-supplied keys.
  */
 const mergeRotationCursor = (
   latest: string | undefined,
@@ -402,9 +383,10 @@ const mergeRotationCursor = (
   // to preserve.
   pass !== undefined && latest !== undefined && latest > pass ? latest : pass;
 
-/** The optional rotation-cursor fields, validated identically. */
-const ROTATION_CURSOR_FIELDS = ["content_scan_cursor", "log_scan_cursor"] as const;
-
+/**
+ * Accepted `reason` values. `"orphan-content"` is retained for DECODE only —
+ * see {@link GcCandidate.reason}. Removing it would reject a legacy ledger.
+ */
 const VALID_REASONS = new Set<GcCandidate["reason"]>([
   "stale-log",
   "orphan-snapshot",
@@ -486,17 +468,13 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
       `gc/pending.json at ${key}: last_swept_at must be a string`,
     );
   }
-  // Rotation cursors are optional + additive: absent is valid (⇒ that
-  // scan starts from the lexicographic beginning). If present each must
-  // be a string. One loop over both so the two can't validate
-  // differently — and so the shared message template ships once.
-  for (const field of ROTATION_CURSOR_FIELDS) {
-    if (r[field] !== undefined && typeof r[field] !== "string") {
-      throw new BaerlyError(
-        "InvalidResponse",
-        `gc/pending.json at ${key}: ${field} must be a string when present`,
-      );
-    }
+  // `log_scan_cursor` is optional + additive: absent is valid (⇒ the log
+  // scan starts from the lexicographic beginning). Present must be a string.
+  if (r["log_scan_cursor"] !== undefined && typeof r["log_scan_cursor"] !== "string") {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `gc/pending.json at ${key}: log_scan_cursor must be a string when present`,
+    );
   }
   return parsed as GcPending;
 };

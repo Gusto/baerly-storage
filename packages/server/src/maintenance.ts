@@ -45,13 +45,7 @@ import { getCurrentContext } from "./observability/context.ts";
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
-export {
-  type ContentDeferralReason,
-  isDegradedContentDeferral,
-  type RunGcOptions,
-  type RunGcResult,
-  runGc,
-} from "./gc.ts";
+export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
 export {
   type RebuildIndexOptions,
   type RebuildIndexResult,
@@ -130,10 +124,6 @@ export interface MaintenanceProfile {
   readonly gcInterval: number;
   readonly gcMaxMarks: number;
   readonly gcMaxSweeps: number;
-  /** Optional bounded tail-probe admission for legacy content liveness. Absent keeps GC unbounded. */
-  readonly gcMaxTailProbeGets?: number;
-  /** Optional live-log admission cap for legacy content liveness. Absent keeps GC unbounded. */
-  readonly gcMaxLiveLogEntriesPerRun?: number;
   readonly maxFoldEntriesPerPass: number;
   readonly maxFoldBytes: number;
   readonly maxFoldRows: number;
@@ -161,12 +151,6 @@ const profileToScheduledOptions = (
   gc: {
     maxMarksPerRun: profile.gcMaxMarks,
     maxSweepsPerRun: profile.gcMaxSweeps,
-    ...(profile.gcMaxTailProbeGets !== undefined && {
-      maxTailProbeGets: profile.gcMaxTailProbeGets,
-    }),
-    ...(profile.gcMaxLiveLogEntriesPerRun !== undefined && {
-      maxLiveLogEntriesPerRun: profile.gcMaxLiveLogEntriesPerRun,
-    }),
   },
 });
 
@@ -178,15 +162,10 @@ const profileToScheduledOptions = (
  *   compact: 1 current GET + P tail-probe GETs + 1 optional prior-snapshot
  *     GET + N folded-log GETs + 1 snapshot PUT + 1 `current.json` CAS PUT
  *     = 4 + N + P (N = maxEntriesPerRun, P = 25).
- *   full content-marking GC, maximally contended: 1 current GET + (M + 1)
- *     live-log/probe GETs + 3 pending-bootstrap-conflict operations + 3 LIST
- *     calls + 1 optional snapshot GET + 1 conditional fresh-current GET before
- *     a due snapshot sweep + S DELETEs + all three final pending CAS attempts
- *     (3 GETs + 3 PUTs).
- *   content-deferred GC: 1 current GET + P tail-probe GETs + 1 `tail_hint`
- *     checkpoint CAS PUT + 3 pending-bootstrap-conflict operations + 3 LIST
- *     calls + 1 conditional fresh-current GET before a due snapshot sweep + S
- *     DELETEs + all three final pending CAS attempts (3 GETs + 3 PUTs).
+ *   GC, maximally contended: 1 current GET + 3 pending-bootstrap-conflict
+ *     operations + 2 LIST calls (log, snapshot) + 1 conditional
+ *     fresh-current GET before a due snapshot sweep + S DELETEs + all three
+ *     final pending CAS attempts (3 GETs + 3 PUTs) = 13 + S.
  *
  * `minEntriesToCompact` drops to `maxFoldEntriesPerPass` (20) here, from the
  * write-tick default of 50, because a bounded probe changes what "available"
@@ -200,16 +179,18 @@ const profileToScheduledOptions = (
  * Keeping the threshold at N makes a pass fold exactly when one pass's worth
  * of work exists. Any future edit must keep `minEntriesToCompact <= P`.
  *
- * With N=20, compact P=25, GC P=24, M=20, S=10 the exact worst cases are:
- * compaction ≤49, full content-marking GC ≤46, and content-deferred GC ≤49.
- * The write-tick runner's preliminary `current.json` GET raises GC to at
- * most 50. Combining a
- * compact and GC pass can exceed 50, so the Cloudflare scheduled handler
- * processes one collection and alternates phases per invocation (even minute →
- * compact, odd minute → GC) by calling `compact()` / `runGc()` directly instead of
- * `runScheduledMaintenance`; the `maintenance-budget.test.ts`
- * worst-case test proves each phase in isolation sits under 50 ops
- * with these bounds.
+ * With N=20, compact P=25, S=10 the exact worst cases are: compaction ≤49
+ * and GC ≤23. The write-tick runner adds a preliminary `current.json` GET
+ * and, on a GC tick, a rate-limited `tail_hint` refresh (a single
+ * non-retrying `casUpdateCurrentJson`: 1 GET + 1 PUT), taking a GC tick to
+ * ≤26. GC used to sit at 46–50 because it LISTed `content/`, probed the
+ * tail, and hashed the whole live log to prove legacy content dead; none of
+ * that happens now. Combining a compact and GC pass can still exceed 50, so
+ * the Cloudflare scheduled handler processes one collection and alternates
+ * phases per invocation (even minute → compact, odd minute → GC) by calling
+ * `compact()` / `runGc()` directly instead of `runScheduledMaintenance`; the
+ * `maintenance-budget.test.ts` worst-case test proves each phase in
+ * isolation sits under 50 ops with these bounds.
  */
 export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_FREE,
@@ -352,8 +333,8 @@ export interface BoundedMaintenanceOptions {
  *
  * Steps 0, 2, 3-defer, and 4 all take the rate-limited `tail_hint`
  * refresh, but the tick publishes the hint AT MOST ONCE — a landed fold
- * (Step-7 CAS), GC's legacy-content checkpoint, and the refresh itself
- * all count as that publication. Ordering matters: Step 3's defer
+ * (Step-7 CAS) and the refresh itself both count as that publication.
+ * Ordering matters: Step 3's defer
  * refreshes and then falls through to Step 4, so without the shared
  * guard that one tick would CAS `current.json` twice with identical
  * bytes.
@@ -382,14 +363,7 @@ export const runBoundedMaintenance = async (
   // Resolve the profile ONCE (the runner's single CF-free-safe default,
   // preserving the bare-`Db.create()` promise); all phase budgets read off it.
   const profile = options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
-  const {
-    maxFoldEntriesPerPass,
-    gcMaxMarks,
-    gcMaxSweeps,
-    gcMaxTailProbeGets,
-    gcMaxLiveLogEntriesPerRun,
-    gcInterval,
-  } = profile;
+  const { maxFoldEntriesPerPass, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
   const minEntriesToCompact = options?.minEntriesToCompact ?? WRITE_TICK_MIN_ENTRIES_TO_COMPACT;
   const phasesPerTick = options?.phasesPerTick ?? "single";
   const signal = options?.signal;
@@ -404,10 +378,6 @@ export const runBoundedMaintenance = async (
   const gcOpts = {
     maxMarksPerRun: gcMaxMarks,
     maxSweepsPerRun: gcMaxSweeps,
-    ...(gcMaxTailProbeGets !== undefined && { maxTailProbeGets: gcMaxTailProbeGets }),
-    ...(gcMaxLiveLogEntriesPerRun !== undefined && {
-      maxLiveLogEntriesPerRun: gcMaxLiveLogEntriesPerRun,
-    }),
     ...(signal !== undefined && { signal }),
     // @internal test seams — undefined in production, so `runGc` falls
     // back to its 7-day grace and wall-clock `now`.
@@ -466,9 +436,9 @@ export const runBoundedMaintenance = async (
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
     // ONE `tail_hint` publication per tick, whoever performs it: this
-    // helper's own CAS, a fold that landed (compact()'s Step-7 stamps
+    // helper's own CAS, or a fold that landed (compact()'s Step-7 stamps
     // `max(stored, discoveredTail)` with a probe floor including
-    // `knownTail = nextSeq`), or GC's bounded-admission checkpoint.
+    // `knownTail = nextSeq`).
     //
     // The rate limit alone cannot enforce this. It tests the in-memory
     // `current`, which `casUpdateCurrentJson` never writes back, so a
@@ -507,27 +477,7 @@ export const runBoundedMaintenance = async (
     };
 
     const runGcAndRefreshTailHint = async (): Promise<void> => {
-      const result = await runGc({ storage, currentJsonKey }, gcOpts);
-      if (result.contentDeferredReason !== undefined) {
-        // A content deferral raised by GC's BOUNDED ADMISSION already
-        // CAS-checkpointed the tail its capped probe certified, so refreshing
-        // to `nextSeq` on top of it would add a GET+PUT to the proven
-        // Cloudflare-Free 50-op worst case. The checkpoint is not a lossy
-        // stand-in: one pass certifies `CF_FREE_GC_TAIL_PROBE_GETS` entries
-        // while the hard-GC cadence recurs at most every
-        // `gcInterval * GC_STARVATION_GUARD` writes, so on that profile
-        // `(true_tail − tail_hint)` SHRINKS every deferring pass until the
-        // probe reaches the tail and stamps it exactly. Both the per-pass
-        // advance and that constant relation are pinned in
-        // `maintenance-budget.test.ts`.
-        //
-        // Known gap: the two DEGRADED reasons raised downstream of admission
-        // (`live-log-unreadable` / `snapshot-unreadable`) carry NO checkpoint,
-        // so they claim publication without performing it. Still strictly
-        // narrower than the no-refresh-on-any-GC-tick behavior this replaced;
-        // closing it needs a subrequest re-proof on a degraded pass.
-        tailHintPublished = true;
-      }
+      await runGc({ storage, currentJsonKey }, gcOpts);
       await refreshTailHintIfNeeded();
     };
 

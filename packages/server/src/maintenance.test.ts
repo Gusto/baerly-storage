@@ -134,8 +134,6 @@ describe("runScheduledMaintenance", () => {
     expect(cfFree.compact?.maxEntriesPerRun).toBe(20);
     expect(cfFree.compact?.minEntriesToCompact).toBe(20);
     expect(cfFree.compact?.maxTailProbeGets).toBe(25);
-    expect(cfFree.gc?.maxTailProbeGets).toBe(24);
-    expect(cfFree.gc?.maxLiveLogEntriesPerRun).toBe(20);
     expect(cfFree.gc?.maxMarksPerRun).toBe(20);
     expect(cfFree.gc?.maxSweepsPerRun).toBe(10);
   });
@@ -168,8 +166,6 @@ describe("runScheduledMaintenance", () => {
     expect(cfPaid.compact?.maxEntriesPerRun).toBe(200);
     expect(cfPaid.compact?.minEntriesToCompact).toBe(50);
     expect(cfPaid.compact?.maxTailProbeGets).toBeUndefined();
-    expect(cfPaid.gc?.maxTailProbeGets).toBeUndefined();
-    expect(cfPaid.gc?.maxLiveLogEntriesPerRun).toBeUndefined();
     expect(cfPaid.gc?.maxMarksPerRun).toBe(200);
     expect(cfPaid.gc?.maxSweepsPerRun).toBe(100);
   });

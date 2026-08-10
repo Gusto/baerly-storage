@@ -7,16 +7,17 @@
  * The cadence-decoupled, budgeted `runGc` on the write-tick keeps the
  * bucket object count BOUNDED iff steady-state GC throughput keeps pace
  * with orphan production. Each fold retires its slice of log entries
- * (and, under update/delete churn, the superseded content blobs) into
- * `stale-log` / `orphan-content` candidates; with `gcGraceMillis: 0`
+ * into `stale-log` / `orphan-snapshot` candidates; with `gcGraceMillis: 0`
  * GC mark+sweeps them on every cadence boundary.
  *
  * These tests drive a steadily-written, BOUNDED-live-set collection
  * (a fixed 50-doc working set under insert/update churn, so the live
  * floor is constant and any unbounded growth is unswept orphans)
- * through the REAL {@link Writer} inside an ALS maintenance context. The
- * provisioned arm deliberately simulates v0.6.0 legacy content objects;
- * the Cloudflare-Free arm uses the current content-free bucket topology.
+ * through the REAL {@link Writer} inside an ALS maintenance context. Both
+ * arms drive the same collector; the provisioned arm additionally seeds
+ * v0.6.0 legacy `content/` side objects, which proves those inert bytes
+ * neither slow the drain nor perturb its plateau. They are excluded from
+ * the measured count on purpose — see {@link collectableObjectCount}.
  *
  * ## What the measured trajectory shows
  *
@@ -27,11 +28,9 @@
  *    drains correctly.
  *
  * 2. With the CF-FREE caps (`gcMaxMarks = 20`, `gcMaxSweeps = 10`) and
- *    the current content-free writer topology, the object count ALSO
- *    stays BOUNDED. Empty content windows skip legacy liveness admission,
- *    while the stale-log cursor continues rotating through the unpadded
- *    decimal log namespace. Legacy cursor and rescue behavior remains
- *    covered by the focused fixtures in `gc.test.ts`.
+ *    the current writer topology, the object count ALSO stays BOUNDED —
+ *    the stale-log cursor keeps rotating through the unpadded decimal log
+ *    namespace within the per-pass budget.
  *
  *    The `BITES` arm below still models the pre-decoupling fold-bolted
  *    GC and STILL grows — proving the bounded assertion is not vacuous.
@@ -76,11 +75,24 @@ const bootstrap = async (storage: Storage, key: string): Promise<void> => {
   });
 };
 
-/** Count every key currently in the bucket (one `Storage.list` walk). */
-const objectCount = async (storage: Storage): Promise<number> => {
+/**
+ * Count every COLLECTABLE key in the bucket (one `Storage.list` walk).
+ *
+ * `content/` is excluded because `runGc` no longer touches that prefix at
+ * all: v0.6.0 legacy side objects are inert, and the operator disposes of
+ * them directly. Counting them would make this test assert something the
+ * design explicitly rejects — that GC reclaims them — and the provisioned
+ * arm, which seeds one per write, would then "grow" by exactly its own
+ * fixture. The §7.1 invariant is about GC keeping pace with the orphans
+ * this system PRODUCES (stale logs, replaced snapshots), and those are
+ * what remain in scope here.
+ */
+const collectableObjectCount = async (storage: Storage): Promise<number> => {
   let n = 0;
-  for await (const _entry of storage.list("")) {
-    n += 1;
+  for await (const entry of storage.list("")) {
+    if (!entry.key.includes("/content/")) {
+      n += 1;
+    }
   }
   return n;
 };
@@ -90,21 +102,32 @@ const BODY_BYTES = 2000; // big enough bodies that the ratio gate trips and fold
 
 /**
  * Drive `total` real commits through the {@link Writer} under the given
- * write-tick profile, sampling the total bucket object count every
- * `sampleEvery` writes. Returns the samples.
+ * write-tick profile, sampling the collectable bucket object count every
+ * `sampleEvery` writes.
+ *
+ * Returns the samples plus every legacy `content/` key seeded along the way,
+ * so a caller can assert those inert objects SURVIVED. Without that the
+ * provisioned arm's claim would be circular: {@link collectableObjectCount}
+ * filters the prefix out, so a collector that wrongly deleted them would
+ * still plateau.
  */
 const driveWriteStream = async (
   profile: BoundedMaintenanceOptions,
   total: number,
   sampleEvery: number,
   seedLegacyContent = true,
-): Promise<Array<{ write: number; objects: number }>> => {
+): Promise<{
+  samples: Array<{ write: number; objects: number }>;
+  storage: Storage;
+  legacyContentKeys: string[];
+}> => {
   const storage = new MemoryStorage();
   await bootstrap(storage, KEY);
   const writer = new Writer({ storage, currentJsonKey: KEY });
   const ctx = createObservabilityContext({ maintenance: { options: profile } });
   const blob = "x".repeat(BODY_BYTES);
   const samples: Array<{ write: number; objects: number }> = [];
+  const legacyContentKeys: string[] = [];
 
   await runWithContext(ctx, async () => {
     for (let i = 0; i < total; i++) {
@@ -113,7 +136,9 @@ const driveWriteStream = async (
       // sustained growth in the object count is unswept orphans.
       const body = { _id: `d${i % WORKING_SET}`, n: i, blob };
       if (seedLegacyContent) {
-        await seedLegacyContentForBody(storage, KEY.slice(0, KEY.lastIndexOf("/")), body);
+        legacyContentKeys.push(
+          await seedLegacyContentForBody(storage, KEY.slice(0, KEY.lastIndexOf("/")), body),
+        );
       }
       await writer.commit({
         op: i % 2 === 0 ? "I" : "U",
@@ -122,11 +147,11 @@ const driveWriteStream = async (
         body,
       });
       if ((i + 1) % sampleEvery === 0) {
-        samples.push({ write: i + 1, objects: await objectCount(storage) });
+        samples.push({ write: i + 1, objects: await collectableObjectCount(storage) });
       }
     }
   });
-  return samples;
+  return { samples, storage, legacyContentKeys };
 };
 
 describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
@@ -140,15 +165,13 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
         maxFoldEntriesPerPass: 20,
         gcMaxMarks: 100,
         gcMaxSweeps: 50,
-        gcMaxTailProbeGets: 100,
-        gcMaxLiveLogEntriesPerRun: 100,
         gcInterval: 4,
       },
       minEntriesToCompact: 50,
       phasesPerTick: "both",
       gcGraceMillis: 0,
     };
-    const samples = await driveWriteStream(provisioned, 1600, 200);
+    const { samples, storage, legacyContentKeys } = await driveWriteStream(provisioned, 1600, 200);
     const trajectory = samples.map((s) => `${s.write}:${s.objects}`).join(" ");
 
     const mid = samples[Math.floor(samples.length / 2)]!;
@@ -170,12 +193,27 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
       maxObjects,
       `trajectory ${trajectory} — peak ${maxObjects} should stay near the live set, far below ~${last.write * 2}`,
     ).toBeLessThan(WORKING_SET * 6); // live + tail + manifests, bounded
+
+    // The other half of this arm's value, and the half `collectableObjectCount`
+    // cannot carry: the seeded legacy objects are still THERE. The filter makes
+    // the plateau above true by construction — a collector that wrongly deleted
+    // every `content/` key would plateau identically — so without this the
+    // "inert bytes are left alone" claim would be circular. Sampled across the
+    // stream rather than exhaustive: 1600 individual GETs would dominate this
+    // test's runtime for no extra discrimination, and a collector that swept
+    // the prefix would not spare a scattered 1-in-160.
+    expect(legacyContentKeys).toHaveLength(1600);
+    for (let i = 0; i < legacyContentKeys.length; i += 160) {
+      await expect(
+        storage.get(legacyContentKeys[i]!),
+        `legacy content seeded at write ${i} must survive every GC pass`,
+      ).resolves.not.toBeNull();
+    }
   });
 
-  test("CF-free caps keep the content-free write stream bounded", async () => {
-    // Current writers emit no content side objects. The empty-content proof
-    // lets the CF-free profile skip legacy liveness admission while stale-log
-    // and snapshot collection continue within the write-tick envelope.
+  test("CF-free caps keep the write stream bounded", async () => {
+    // Current writers emit no content side objects, so this arm is the plain
+    // stale-log/snapshot drain under the tightest per-pass budgets.
     const cfFree: BoundedMaintenanceOptions = {
       profile: {
         ...MAINTENANCE_PROFILE_CF_FREE,
@@ -188,7 +226,7 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
       phasesPerTick: "single",
       gcGraceMillis: 0,
     };
-    const samples = await driveWriteStream(cfFree, 1600, 200, false);
+    const { samples } = await driveWriteStream(cfFree, 1600, 200, false);
     const trajectory = samples.map((s) => `${s.write}:${s.objects}`).join(" ");
     const mid = samples[Math.floor(samples.length / 2)]!;
     const last = samples[samples.length - 1]!;
@@ -252,7 +290,7 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
         }
 
         if ((i + 1) % 200 === 0) {
-          samples.push({ write: i + 1, objects: await objectCount(storage) });
+          samples.push({ write: i + 1, objects: await collectableObjectCount(storage) });
         }
       }
     });
