@@ -12,11 +12,11 @@
  * `put` / `delete` / `list` invocations as one each.
  *
  * The Cloudflare scheduled handler runs only one phase per tick
- * (even-minute compact, odd-minute GC).
- * These tests check each phase in isolation, mirroring production. If a future refactor
- * inflates either phase's per-tick budget, this is the load-bearing
- * test that fails — do NOT relax the assertion. Tune
- * `CLOUDFLARE_FREE_TIER` or the underlying primitives instead.
+ * (even-minute compact, odd-minute GC), so these tests check each phase
+ * in isolation, mirroring production. If a future refactor inflates
+ * either phase's per-tick budget, this is the load-bearing test that
+ * fails — do NOT relax the assertion. Tune `CLOUDFLARE_FREE_TIER` or the
+ * underlying primitives instead.
  */
 
 import {
@@ -252,9 +252,11 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(finalCurrent!.json).toMatchObject({ log_seq_start: 100, tail_hint: 100 });
   });
 
-  // Production mutation caught: manual tail priming hid the stale-hint
-  // catch-up cost. Real alternating scheduled phases must keep every
-  // invocation bounded and advance manifest positions monotonically.
+  // Drives the real alternating scheduled phases end to end rather than
+  // priming `tail_hint` by hand — hand-priming hides the stale-hint catch-up
+  // cost, which is exactly the cost that has to stay inside the budget. Every
+  // invocation must stay bounded AND advance both manifest positions
+  // monotonically.
   test.each([60, 100])(
     "real compact/GC alternation drains %i entries within budget",
     async (entryCount) => {
@@ -296,9 +298,8 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
           ops,
           `entries=${entryCount}; invocation=${invocation}; phase=${phase}; report=${JSON.stringify(report)}`,
         ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
-        // The drain condition this test already asserts at the end. It
-        // replaces the old "a content-marking pass was admitted" exit, which
-        // no longer has a subject.
+        // Same condition the post-loop assertions pin, so the loop exits
+        // exactly when the drain it is measuring has happened.
         drained =
           current!.json.tail_hint === entryCount && entryCount - current!.json.log_seq_start <= 20;
       }
@@ -315,23 +316,17 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     },
   );
 
-  // Re-derived from scratch after the content subsystem was removed; this is
-  // NOT an edit of the old checkpoint proof. That proof argued convergence
-  // from a bounded content probe's CAS checkpoint, which no longer exists.
-  //
   // Hand-derived maximum for a maximally contended write-tick GC:
   //   1 runner `current.json` GET
   // + 1 runGc Step-1 `current.json` GET
   // + 3 pending bootstrap-conflict ops (GET null, create PUT, re-read GET)
-  // + 2 LISTs (log/, snapshot/) — note: NOT content/
+  // + 2 LISTs (log/, snapshot/)
   // + 1 fresh `current.json` GET forced by a due snapshot candidate
   // + 10 DELETEs (S = WRITE_TICK_GC_MAX_SWEEPS)
   // + 6 final pending CAS ops (GC_PENDING_CAS_MAX_ATTEMPTS x [GET, PUT])
   // + 2 `tail_hint` refresh ops (casUpdateCurrentJson: GET + PUT, single
   //   attempt — it does not retry)
-  // = 26, against a 50-subrequest invocation cap. The old path reached 50
-  // here because it also LISTed `content/`, spent a bounded tail probe's
-  // GETs, and read the snapshot to hash live rows.
+  // = 26, against a 50-subrequest invocation cap.
   test("maximally contended write-tick GC refreshes tail_hint at 26 storage operations", async () => {
     const inner = new MemoryStorage();
     const prefix = "app/t/tenant/x/manifests/c";
@@ -415,8 +410,8 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     );
 
     expect(counted.listedPrefixes()).toEqual([`${prefix}/log/`, `${prefix}/snapshot/`]);
-    // The refresh is now UNCONDITIONAL at the rate limit — no deferral can
-    // suppress it — so the hint reaches the observed tail in one tick.
+    // Nothing on the GC path can suppress the refresh, so once the rate limit
+    // is eligible the hint reaches the observed tail in a single tick.
     const current = await readCurrentJson(inner, KEY);
     expect(current?.json.tail_hint).toBe(observedTail);
     // get 9  = runner current + runGc step-1 current + pending read (null)
@@ -430,12 +425,11 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   });
 
   test("a never-folding GC-only collection's tail_hint gap stays far below the forward-probe cap", () => {
-    // Replaces the checkpoint-convergence relation this file used to pin.
-    // Every GC tick now takes the ordinary rate-limited refresh, so the gap
-    // can exceed MAINTENANCE_TAIL_HINT_REFRESH_WRITES only by the writes
-    // that accrue before the next GC tick — and the hard-GC starvation guard
+    // A GC tick takes the ordinary rate-limited refresh, so the gap can
+    // exceed MAINTENANCE_TAIL_HINT_REFRESH_WRITES only by the writes that
+    // accrue before the next GC tick — and the hard-GC starvation guard
     // fires at least every `gcInterval * GC_STARVATION_GUARD` writes. That
-    // sum is the whole bound; no probe budget enters it.
+    // sum is the whole bound.
     const worstCaseGap =
       MAINTENANCE_TAIL_HINT_REFRESH_WRITES +
       MAINTENANCE_PROFILE_CF_FREE.gcInterval * GC_STARVATION_GUARD;
@@ -448,12 +442,9 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   // `casUpdateCurrentJson` never writes back, so an unguarded second call
   // still evaluates as due and rewrites byte-identical bytes.
   //
-  // This used to cover only content-free collections: a legacy-content pass
-  // with a due refresh always deferred, and a deferral claimed the tick's one
-  // publication. With no deferral left, EVERY collection shape reaches this
-  // path, which strengthens the pin rather than narrowing it. It remains a
-  // correctness-of-op-count pin, not a rescue of the 50-op cap — the
-  // redundant write would cost 2 ops on an already-cheap pass.
+  // Every collection shape reaches this path. It is a correctness-of-op-count
+  // pin, not a rescue of the 50-op cap — the redundant write would cost 2 ops
+  // on an already-cheap pass.
   test("a deferring fold that falls through to GC refreshes tail_hint exactly once", async () => {
     const inner = new MemoryStorage();
     const prefix = "app/t/tenant/x/manifests/c";

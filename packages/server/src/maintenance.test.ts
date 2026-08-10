@@ -158,9 +158,10 @@ describe("runScheduledMaintenance", () => {
 
   test("CLOUDFLARE_PAID_TIER carries the Node-derived per-pass bounds", () => {
     // CF-paid reuses NODE_MAINTENANCE_* per-pass caps: the paid 10,000-
-    // subrequest budget is far above these bounds (compact ≈ 3+200,
-    // gc ≈ 6+200+100). A regression here means the cron-path recipe in
-    // worker.ts is lying about what callers can afford per tick.
+    // subrequest budget is far above these bounds. Exact GC operation
+    // accounting is owned by maintenance-budget.test.ts and the
+    // CLOUDFLARE_FREE_TIER JSDoc. A regression here means the cron-path
+    // recipe in worker.ts is lying about what callers can afford per tick.
     const cfPaid = CLOUDFLARE_PAID_TIER as InternalMaintenanceOptions;
 
     expect(cfPaid.compact?.maxEntriesPerRun).toBe(200);

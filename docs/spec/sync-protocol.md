@@ -3,7 +3,7 @@ title: Sync protocol
 audience: spec
 doc_type: current-contract
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-08-04
+last-reviewed: 2026-08-11
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -67,7 +67,7 @@ The collection prefix may contain these objects:
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `current.json`                                | Compactor-owned compaction-state object: snapshot pointer, `log_seq_start`, snapshot counters, plus the non-authoritative `tail_hint`. **Not** the linearization point. |
 | `log/<seq>.json`                              | One `LogEntry` per mutation, keyed by monotonic integer `seq`. The create-if-absent on this key **is** the linearization point.                                         |
-| `content/<sha>.json`                          | Side object emitted by a legacy writer, retained for verified v0.6.0 bucket compatibility.                                                                              |
+| `content/<sha>.json`                          | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](#legacy-content-side-objects).   |
 | `index/<name>/...`                            | Zero-byte advisory index markers.                                                                                                                                       |
 | `snapshot/L9/<000000000000>-<max>-<sha>.json` | Content-hashed materialized snapshot covering `[0, max)`. `min` and `max` are fixed-width 12-digit zero-padded; `min` is always `0`.                                    |
 | `gc/pending.json`                             | Two-phase GC candidate ledger.                                                                                                                                          |
@@ -122,6 +122,28 @@ valid `current.json`, that normally starts at `tail_hint`. Entries below
 marks the prefix this read can trust: `log/<tail>` was absent when
 probed, and entries at or above it are outside this read's prefix.
 Later commits may appear there.
+
+### Legacy content side objects
+
+Current writers do not create `content/<sha>.json`. Buckets written by
+legacy writers that emitted content side objects may still contain
+them, and during a mixed v0.6.0 rollout v0.6.0 nodes may still create
+them. No kernel reader opens one, and GC never marks, sweeps, or
+otherwise touches the `content/` prefix — the objects are inert and
+cost only storage.
+
+A legacy `orphan-content` candidate left in a v0.6.0 `gc/pending.json`
+is resolved out of the ledger without a DELETE. The collector cannot
+classify a key whose liveness set no longer exists, and retaining the
+candidate would wedge the ledger's bounded head against every later
+mark.
+
+Verified v0.6.0 buckets therefore require no migration. An operator who
+wants the bytes back deletes the prefix directly — see
+[Legacy content cleanup](../guide/backups.md#legacy-content-cleanup).
+The key and hash layout needed to interpret an object that already
+exists is in
+[`log-entry-shape.md`](log-entry-shape.md#legacy-content-side-object-layout).
 
 ## Required storage semantics
 
@@ -267,16 +289,6 @@ index-findable or fully uncommitted.
 | Before the log create (during new-key PUTs)       | Orphan additive index keys may exist; the doc is **not** committed (no log entry).                                                          | Invisible — an orphan additive key is a benign false-positive dropped by `matchesWire`.                                                |
 | After the log create, before the stale-key DELETE | The doc is **committed** and correctly index-findable (its new keys have already been written); it may transiently carry an extra _stale_ key. | Visible and findable. The extra stale key is a benign false-positive that `matchesWire` drops.                                         |
 
-Current writers do not create `content/<sha>.json`. Buckets written by
-legacy writers that emitted content side objects may still contain them;
-during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
-No current kernel reader depends on these objects. Retained orphan-content
-GC still rescues live hashes and reclaims candidates only after the existing
-grace and revalidation checks. A pass with no pending content candidate and
-an empty content window skips legacy liveness admission and hashing; a pending
-candidate still requires complete liveness admission. Verified v0.6.0 buckets
-require no migration.
-
 Index failures are asymmetric: extra candidates are repairable false
 positives, but missing candidates can hide committed rows from
 index-routed queries. The old two-write commit could leave a
@@ -296,12 +308,12 @@ bounded in-tick reconcile slice was considered and deferred — see
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
 a committed log entry can never be left undiscoverable behind
-`current.json`. Garbage collection later marks and sweeps orphan legacy
-content side objects, stale log objects below `log_seq_start`, and
-superseded snapshots after the existing grace and revalidation checks.
-For artifacts outside the committed range, GC is cleanup, not reader
-correctness: readers decide visibility from the snapshot,
-`[log_seq_start, tail_hint)`, and the forward-probe.
+`current.json`. Garbage collection later marks and sweeps stale log
+objects below `log_seq_start` and superseded snapshots after the
+existing grace and revalidation checks. For artifacts outside the
+committed range, GC is cleanup, not reader correctness: readers decide
+visibility from the snapshot, `[log_seq_start, tail_hint)`, and the
+forward-probe.
 
 ## Read algorithm
 
@@ -377,14 +389,12 @@ snapshot:
    folds are the primary durable advancer of the hint. Explicitly bounded
    scheduled compaction can instead durably checkpoint an incomplete probe's
    certified lower bound in `tail_hint` without publishing a snapshot; a
-   later pass resumes from that checkpoint. Bounded GC checkpoints the
-   tail its own capped probe certified when it defers legacy-content
-   classification. Write-tick maintenance rate-limit-refreshes the hint
-   when fold/GC work is disabled or deferred, and after a GC slice that
-   neither deferred nor followed a landed fold in the same tick — a
-   landed fold has already published a hint at or past the observed
-   tail, so refreshing again would rewrite identical bytes.
-   Ordinary writer commits never touch
+   later pass resumes from that checkpoint. Write-tick maintenance
+   rate-limit-refreshes the hint when fold/GC work is disabled or
+   deferred, and after a GC slice that did not follow a landed fold in
+   the same tick — a landed fold has already published a hint at or
+   past the observed tail, so refreshing again would rewrite identical
+   bytes. Ordinary writer commits never touch
    `current.json` on the commit path. The fold CAS is therefore the
    only steady-state writer of the snapshot pointer, `log_seq_start`,
    and snapshot counters, which strengthens compaction-state atomicity.
@@ -418,15 +428,9 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   raised via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, whereas `E`
   (`MAINTENANCE_MAX_FOLD_ROWS`) is a hardcoded constant with no env
   override.
-- GC marks and sweeps bounded batches from `gc/pending.json`. A bounded
-  pass may checkpoint an inexact tail lower bound, or an exact tail that is
-  unaffordable for complete live-content classification, before deferring
-  orphan-content discovery. A malformed occupied slot also advances the safe
-  occupancy proof but makes the live-content set incomplete. An incomplete or
-  deferred live-content set disables both orphan-content marking and pending
-  orphan-content sweeping; the stored content cursor is preserved. With a
-  complete set, pending content candidates whose parsed hash is live are
-  resolved from the ledger without DELETE or sweep accounting.
+- GC marks and sweeps bounded batches from `gc/pending.json`, over the
+  `log/` and `snapshot/` prefixes only — never `content/`
+  ([Legacy content side objects](#legacy-content-side-objects)).
 - Before any due snapshot candidate can be swept, GC re-reads `current.json`
   and resolves every candidate named by the fresh `current.snapshot` pointer.
   Stale-log classification continues to use the initial monotone
@@ -487,11 +491,11 @@ These are the load-bearing rules.
    the snapshot pointer, `log_seq_start`, and snapshot counters.
    `tail_hint` is a non-authoritative monotone lower bound, durably advanced
    by compaction folds, explicitly bounded scheduled-compaction probe
-   checkpoints, bounded-GC tail checkpoints, and by the write-tick runner's
-   rate-limited tail refresh — which fires when fold/GC work defers or is
-   disabled, and after a non-deferring GC slice whose tick did not already
+   checkpoints, and by the write-tick runner's
+   rate-limited tail refresh — which fires when fold work defers or
+   fold/GC work is disabled, and after a GC slice whose tick did not already
    land a fold that published the hint. Those durable
-   checkpoint writers use monotone CAS updates and never move `tail_hint`
+   writers use monotone CAS updates and never move `tail_hint`
    past the true first missing log slot. Ordinary writer commits never refresh
    it inline. Other non-commit-path writers are explicit: the one-time
    `createCurrentJson` bootstrap, operator/import paths such as `admin
@@ -586,20 +590,17 @@ These are the load-bearing rules.
     | nonce `A`     | `A`     | pass   | Same generation.                                            |
     | nonce `B`     | `A`     | reject | Truncated.                                                  |
 
-14. **Artifact publication windows are assumed shorter than the GC
-    grace.** During a mixed v0.6.0 rollout, legacy v0.6.0 writers that
-    emitted content side objects retain the old content-before-log
-    publication window: they PUT the content object before creating the
-    committing log entry. After every writer has been upgraded, current
-    writers publish no content side object and that window is gone.
+14. **The compactor's publication window is assumed shorter than the
+    GC grace.** The compactor owns the only publication window this
+    invariant governs. It PUTs a snapshot (`packages/server/src/compactor.ts`,
+    step 6) before it CASes `current.json` to point at it (step 7). In
+    between, the snapshot key is not `current.snapshot`, so `runGc` can
+    classify it `orphan-snapshot`. The content-before-log window a
+    legacy v0.6.0 writer still opens is not governed here — GC never
+    marks a `content/<sha>.json` object, so the grace has nothing to
+    bound ([Legacy content side objects](#legacy-content-side-objects)).
 
-    The remaining publication window belongs to the compactor. It PUTs a
-    snapshot (`packages/server/src/compactor.ts`, step 6) before it CASes
-    `current.json` to point at it (step 7). In between, the snapshot key
-    is not `current.snapshot`, so `runGc` can classify it
-    `orphan-snapshot`.
-
-    The protocol assumes each applicable window does not stay open
+    The protocol assumes this window does not stay open
     longer than `GC_GRACE_PERIOD_MILLIS`
     (`packages/protocol/src/constants.ts`, 7 days), which is the delay
     GC imposes between a mark and the DELETE it authorises.
@@ -610,19 +611,15 @@ These are the load-bearing rules.
     Nothing in the kernel checks it, and no error is raised if it is
     violated.
 
-    **The grace alone does not cover the compactor window.** Its stated
-    rationale does cover the legacy-writer case: a paused writer that
-    resumes within the grace still finds its content idempotency anchor
-    on the bucket. A snapshot PUT has already **succeeded**; what is
-    outstanding is the pointer CAS, not a repeat of the PUT, so an
-    argument about writer retry latency does not bound the compactor's
-    publication window. What covers it is `runGc`'s sweep-time
+    **The grace alone does not cover the compactor window.** A snapshot
+    PUT has already **succeeded**; what is outstanding is the pointer
+    CAS, not a repeat of the PUT, so an argument about writer retry
+    latency does not bound the compactor's publication window. What
+    covers it is `runGc`'s sweep-time
     revalidation: the sweep gate
-    re-derives liveness from the `current.json`, floor, and
-    live-content-hash set that same pass already read, and drops — never
-    deletes — a candidate that now reads live or whose `generation` no
-    longer matches the live manifest. This same revalidation protects
-    legacy content side objects that become live after marking. An
+    re-derives liveness from the `current.json` and floor that same pass
+    already read, and drops — never deletes — a candidate that now reads
+    live or whose `generation` no longer matches the live manifest. An
     artifact that became reachable after it was marked is therefore
     dropped unswept — as far as the freshest manifest that pass holds
     can see, which is the freshness bound stated in the second
@@ -647,8 +644,8 @@ These are the load-bearing rules.
     re-reads it at step 6 only when a due `orphan-snapshot` candidate
     could actually be deleted. The fence and the floor re-check use
     whichever of the two is newer, so a pass that re-read for the
-    snapshot arm gets the fresher answer for the log and content arms
-    for free — but a pass with no due snapshot never re-reads at all.
+    snapshot arm gets the fresher answer for the log arm for free — but
+    a pass with no due snapshot never re-reads at all.
     That is deliberate: an unconditional second read would add a Class B
     op to every pass, and costing nothing extra is what lets GC ride the
     write tick. So on such a pass the fence detects "the collection was

@@ -23,17 +23,15 @@ position rather than its size: at 100k keys with `log_seq_start =
 and `maxMarks = 200`. The fraction depends on where the floor sits, not
 on the budget — at `log_seq_start = 10000` it is 99.9%.
 
-`gc/pending.json` gains an optional `log_scan_cursor`, the sibling of
-the existing `content_scan_cursor`: each bounded pass resumes
-`startAfter` the prior pass's last EXAMINED key and wraps at
-end-of-keyspace, so the whole `log/` prefix is covered over a rotation
-within the per-pass budget. Unbounded passes always wrap, so from a
-cursorless ledger they still cover the whole prefix in one go. Bounded
-and cursored are independent axes though: an unbounded pass that
-inherits a cursor from a bounded one resumes there and covers only
-cursor→end, then wraps so the next pass starts from the beginning. That
-is liveness-only and self-healing, and it matches how the existing
-`content_scan_cursor` has always behaved.
+`gc/pending.json` gains an optional `log_scan_cursor`, a rotation
+cursor: each bounded pass resumes `startAfter` the prior pass's last
+EXAMINED key and wraps at end-of-keyspace, so the whole `log/` prefix
+is covered over a rotation within the per-pass budget. Unbounded
+passes always wrap, so from a cursorless ledger they still cover the
+whole prefix in one go. Bounded and cursored are independent axes
+though: an unbounded pass that inherits a cursor from a bounded one
+resumes there and covers only cursor→end, then wraps so the next pass
+starts from the beginning. That is liveness-only and self-healing.
 
 Additive and optional, so `GC_PENDING_SCHEMA_VERSION` stays `1` and
 existing buckets keep working untouched: a ledger with no cursor reads

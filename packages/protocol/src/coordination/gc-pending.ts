@@ -3,11 +3,12 @@
  * protected; one per `(tenant, collection)` key — for example
  * `<tenant>/<collection>/gc/pending.json`. `runGc()` is the single
  * writer that adds and removes entries. Stays small in steady state
- * because every candidate is deleted once `due_at` passes.
+ * because every candidate is eventually resolved out of the ledger.
  *
- * "Mark" appends candidates with a future `due_at`; "sweep" deletes
- * candidates whose `due_at` is in the past. Both run in the same
- * compactor pass, not separate passes.
+ * "Mark" appends candidates with a future `due_at`; "sweep" revalidates
+ * due candidates and either DELETEs the named object or resolves the
+ * entry out of the ledger without one. Both run in the same GC pass, not
+ * separate passes.
  *
  * Lives next to {@link CurrentJson} in `coordination/` — same shape
  * of "CAS-protected small control object." Pure module; no Node
@@ -28,17 +29,19 @@ import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/ty
 /**
  * On-bucket body of `gc/pending.json`. Bounded by
  * `GC_MAX_PENDING_CANDIDATES`. The shape is forward-compatible:
- * adding a new optional field is non-breaking. Renaming or removing
- * a field requires bumping {@link GC_PENDING_SCHEMA_VERSION} to `2`;
- * readers MUST reject unknown major versions with
- * `BaerlyError{code:"InvalidResponse"}`.
+ * adding a new optional field is non-breaking. Removing an optional,
+ * ignored field can also remain schema v1 — old ledgers may carry it,
+ * readers ignore it, and a later write may omit it. Renaming or removing
+ * a required or semantically interpreted field is breaking and requires
+ * bumping {@link GC_PENDING_SCHEMA_VERSION} to `2`; readers MUST reject
+ * unknown major versions with `BaerlyError{code:"InvalidResponse"}`.
  */
 export interface GcPending {
   /** Schema version. Today `1`. Readers MUST reject unknown majors. */
   schema_version: 1;
   /**
-   * Candidate deletions. The compactor MUST keep this list bounded —
-   * `runGc()` caps the per-run marks and sweeps.
+   * Candidate ledger entries. `runGc()` keeps this list bounded through
+   * `mergeGcPending`, independently of its per-run mark and sweep caps.
    */
   candidates: ReadonlyArray<GcCandidate>;
   /**
@@ -54,8 +57,8 @@ export interface GcPending {
    * the per-pass `maxMarksPerRun` budget. Absent / reset to `undefined`
    * ⇒ start from the lexicographic beginning (wrap).
    *
-   * Needed because log keys are UNPADDED
-   * decimal (`log/9.json`, `log/10.json`), so lex order is
+   * Needed because log keys are UNPADDED decimal (`log/9.json`,
+   * `log/10.json`), so lex order is
    * `0, 1, 10, 100, …, 11, …` and the LIVE keys at/above
    * `log_seq_start` interleave with — and often lex-PRECEDE — the stale
    * ones below it. A bounded pass listing from the lexicographic start
@@ -75,33 +78,34 @@ export interface GcPending {
 }
 
 /**
- * One pending deletion entry. The `runGc()` mark phase appends these
- * with a future `due_at`; the sweep phase deletes entries whose
- * `due_at` is in the past and prunes them from the list.
+ * One pending ledger entry. The `runGc()` mark phase appends these with
+ * a future `due_at`. Once due, the sweep gate either authorises an object
+ * DELETE or resolves the entry without one, because generation/liveness
+ * revalidation failed.
  */
 export interface GcCandidate {
-  /** Full bucket-relative key of the deletion candidate. */
+  /** Full bucket-relative key of the candidate artifact. */
   key: string;
-  /** ISO-8601 server-clock time after which the key may be deleted. */
+  /** ISO-8601 server-clock time after which sweep may authorise a DELETE. */
   due_at: string;
   /**
-   * Why the key is a candidate. `"orphan-content"` is **decode-only**: no
-   * pass has emitted one since the content subsystem was removed, and the
-   * sweep gate evicts any it finds from a legacy ledger without deleting
-   * the object. It stays in the union — and in `VALID_REASONS` — because
-   * dropping it would make a v0.6 `gc/pending.json` fail to decode, which
-   * would stall that collection's GC entirely.
+   * Why the key is a candidate. `"orphan-content"` is **decode-only**: a
+   * v0.6.0 node can still emit one during a mixed rollout, and the sweep
+   * gate evicts any it finds without deleting the object. It stays in the
+   * union — and in `VALID_REASONS` — because dropping it would make a v0.6
+   * `gc/pending.json` fail to decode, stalling that collection's GC
+   * entirely.
    */
   reason: "stale-log" | "orphan-snapshot" | "orphan-content";
   /**
    * The `current.json` `generation` this candidate was marked under, if
    * the manifest carried one. The sweep drops — never deletes — a
-   * candidate whose generation no longer matches the live manifest,
-   * which is what stops a mark decision taken under one incarnation of
-   * a collection from executing against a different one up to
+   * candidate whose generation no longer matches the live manifest. That
+   * stops a mark decision taken under one incarnation of a collection
+   * from executing against a different one up to
    * `GC_GRACE_PERIOD_MILLIS` later.
    *
-   * Optional and additive on the same terms as the rotation cursors, so
+   * Optional and additive on the same terms as the rotation cursor, so
    * {@link GC_PENDING_SCHEMA_VERSION} is unchanged and a ledger written
    * by an older build stays valid. Absent decodes to `NO_GENERATION` on
    * both sides of the comparison, so a bucket whose manifest carries no
@@ -286,12 +290,12 @@ export const casUpdateGcPending = async (
  *
  * Semantics:
  *  - **candidates**: start from `latest.candidates`, DROP any whose key
- *    this pass already DELETED (`sweptKeys`), then APPEND every fresh
- *    mark whose key is not already present AND was not itself swept
- *    this pass (a `graceMillis: 0` pass can mark-and-sweep a key in one
- *    go — re-adding it to the ledger after deleting it would be wrong;
- *    dedup also drops a key a concurrent pass already marked). Capped at
- *    `maxCandidates`.
+ *    this pass already RESOLVED (`sweptKeys` carries both object DELETEs
+ *    and ledger-only drops/evictions), then APPEND every fresh mark whose
+ *    key is not already present AND was not itself resolved this pass. A
+ *    `graceMillis: 0` pass can mark-and-sweep a key in one go; re-adding a
+ *    terminal key would be wrong. Dedup also drops a key a concurrent pass
+ *    already marked. Capped at `maxCandidates`.
  *  - **last_swept_at**: the lexicographically LATER of `latest`'s and
  *    this pass's (ISO-8601 UTC; `""` sorts lowest so a real timestamp
  *    always wins). Never regress a concurrent pass's newer sweep time.
@@ -323,7 +327,7 @@ export const mergeGcPending = (
   const present = new Set(surviving.map((c) => c.key));
   const appended: GcCandidate[] = [];
   for (const c of pass.newCandidates) {
-    // Skip keys this pass already swept (mark-and-sweep in one pass)
+    // Skip keys this pass already resolved (DELETE, drop, or eviction)
     // and keys already in the surviving ledger (dedup vs. a concurrent
     // pass's mark).
     if (!pass.sweptKeys.has(c.key) && !present.has(c.key)) {
@@ -383,10 +387,7 @@ const mergeRotationCursor = (
   // to preserve.
   pass !== undefined && latest !== undefined && latest > pass ? latest : pass;
 
-/**
- * Accepted `reason` values. `"orphan-content"` is retained for DECODE only —
- * see {@link GcCandidate.reason}. Removing it would reject a legacy ledger.
- */
+/** Accepted `reason` values. `"orphan-content"` is decode-only — see {@link GcCandidate.reason}. */
 const VALID_REASONS = new Set<GcCandidate["reason"]>([
   "stale-log",
   "orphan-snapshot",

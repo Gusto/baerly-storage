@@ -205,16 +205,19 @@ const bundle = defineBaerlySubcommand({
       // so sub-floor objects routinely survive a pass. Old floor 12 with
       // `log/8`, `log/9` left behind yields `truncatedNext` 10 < 12.
       //
-      // Nothing is lost by that. GC decides content liveness by
-      // reachability, not by the floor: it keeps a hash iff the hash is
-      // reachable from the current snapshot or from `[log_seq_start,
-      // tail)` (see `collectLiveContentHashes` in `gc.ts`). Resetting
-      // `snapshot` to `null` here makes the whole old generation
-      // unreachable, so its content is marked `orphan-content` and swept
-      // after the grace period — which is precisely what truncating
-      // means. Readers never see the survivors: they walk from the new
-      // floor, and `fsck` bounds itself by listed keys, so orphans below
-      // it produce no findings.
+      // Nothing is lost by that. Readers never see the survivors: they
+      // walk from the new floor, and `fsck` bounds itself by listed keys,
+      // so sub-floor objects produce no findings. The truncate is complete
+      // with respect to every reader, which is what truncating means.
+      //
+      // It is not complete with respect to BYTES, and deliberately so.
+      // Resetting `snapshot` to `null` makes the whole old generation
+      // unreachable, but GC reclaims only `stale-log` and
+      // `orphan-snapshot`: the surviving sub-floor `log/` objects are
+      // marked stale and swept after the grace period, while legacy
+      // `content/<sha>.json` side objects stay put. No kernel reader opens
+      // one, so they are inert; an operator who wants the bytes back
+      // deletes the prefix directly (`docs/guide/backups.md`).
       //
       // Do not "repair" this with `Math.max`; that reseeds a floor above
       // `tail_hint`, trips `assertCurrentJson`, and breaks truncate.

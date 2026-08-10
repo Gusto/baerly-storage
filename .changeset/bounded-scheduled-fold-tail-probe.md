@@ -20,34 +20,11 @@ checkpoint repeatedly before folding anything.
 Compaction walks at most 25 stale-tail log slots per pass. A pass that cannot
 yet prove the fold threshold durably advances `tail_hint` and returns
 `skippedReason: "probe-budget-checkpointed"`; later scheduled passes resume
-from that checkpoint. Bounded GC likewise checkpoints tail progress before
-deferring only orphan-content discovery. Malformed occupied probe slots retain
-safe occupancy progress but make content classification incomplete.
+from that checkpoint.
 
-Deferring passes report why, via the `contentDeferredReason` field and
-`db.gc.content_deferred_total` metric added alongside this release. Two of the
-reasons are budget-driven and self-clear; the others are degraded and do not.
-The new `isDegradedContentDeferral` predicate is what tells them apart — it is
-the only place that classification lives, so it stays correct as reasons are
-added. A cron handler sees no metrics outside an HTTP scope, so read the field:
-
-```ts
-import { isDegradedContentDeferral, runGc } from "@gusto/baerly-storage/maintenance";
-
-const gc = await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
-if (isDegradedContentDeferral(gc.contentDeferredReason)) {
-  console.error("orphan-content GC is degraded:", gc.contentDeferredReason);
-}
-```
-
-A GC pass that loses its admission-checkpoint CAS now reports the deferral too,
-rather than returning a result indistinguishable from an idle no-op, and counts
-the loss as `db.gc.cas_lost_total`.
-
-The exact Free-tier per-phase maxima are now pinned: compaction 49 operations,
-admitted content-marking GC 46, and content-deferred GC 49 — so every
-alternating single-collection phase remains within the 50-operation invocation
-limit.
+The exact Free-tier per-phase maxima are now pinned: compaction 49 operations
+and GC 23 — so every alternating single-collection phase remains within the
+50-operation invocation limit.
 
 If you exhaustively switch on `CompactResult.skippedReason`, handle the new
 case:

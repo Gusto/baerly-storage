@@ -379,8 +379,9 @@ export const MAINTENANCE_COLD_START_ENTRY_BYTES: number = 128;
  * the TESTED `CLOUDFLARE_FREE_TIER` values in maintenance.ts / maintenance-budget.test.ts).
  * The adapter THREADS per-tier overrides into the context (§8.4); Node/CF-paid raise them.
  * NOT universal constants — a Node-sized value here would silently kill every CF-free fold
- * (round-4 Tier-1). gc pass ≈ 6 + maxMarks + maxSweeps subrequests (both GET/DELETE the
- * bucket — §3.1). Cadence is BOUNDARY-CROSSING (§3.1), not modulo.
+ * (round-4 Tier-1). `gcMaxMarks` bounds each LIST classification window and the resulting
+ * ledger growth; `gcMaxSweeps` bounds DELETEs. Cadence is BOUNDARY-CROSSING (§3.1), not
+ * modulo.
  *
  * @see packages/server/src/maintenance.ts
  * @see packages/server/src/maintenance-budget.test.ts
@@ -398,14 +399,15 @@ export const WRITE_TICK_GC_INTERVAL: number = 4; // tuned so maxSweeps/interval 
 export const GC_STARVATION_GUARD: number = 4;
 
 /**
- * Maximum GC marks per write-tick pass (M in 6+M+S; GETs the live tail to hash).
+ * Maximum keys classified per GC category per write-tick pass. Bounds the LIST window and
+ * the candidate-ledger growth it can cause.
  *
  * @see packages/server/src/maintenance.ts
  */
 export const WRITE_TICK_GC_MAX_MARKS: number = 20;
 
 /**
- * Maximum GC sweeps per write-tick pass (S in 6+M+S; DELETE subrequests).
+ * Maximum candidate DELETEs per write-tick pass.
  *
  * @see packages/server/src/maintenance.ts
  */
@@ -447,12 +449,13 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  * `createFetchHandler` (§8.4). Node v1 runs maintenance INLINE on the commit path (no
  * `waitUntil`), so the cap is NOT the CF subrequest wall — it's the worst-case single-write
  * added latency. A maintenance tick only fires on a ratio/boundary trip (rare), and when it
- * does it costs ~`maxFoldEntriesPerPass` + (6 + `gcMaxMarks` + `gcMaxSweeps`) storage
- * round-trips against a co-located S3/R2 — sub-second on the occasional boundary write at a
- * 10× multiple. These are deliberately BOUNDED (10× CF-free), NOT unbounded: the deleted
- * scheduled full-tail sweep folded the entire live tail in one shot, which a 100× multiple here
- * would reintroduce as multi-second commit stalls. Raise the snapshot ceiling separately via
- * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; these caps slice the per-pass work, not the ceiling.
+ * does it performs bounded fold work plus bounded GC LIST classification and DELETE sweeps
+ * against a co-located S3/R2 — sub-second on the occasional boundary write at a 10×
+ * multiple. These are deliberately BOUNDED (10× CF-free), NOT unbounded: the deleted
+ * scheduled full-tail sweep folded the entire live tail in one shot, which a 100× multiple
+ * here would reintroduce as multi-second commit stalls. Raise the snapshot ceiling separately
+ * via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; these caps slice the per-pass work, not the
+ * ceiling.
  *
  * @see packages/adapter-node/src/server.ts
  * @see packages/server/src/maintenance.ts
@@ -460,10 +463,10 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  */
 export const NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS: number = 200;
 
-/** Node-tier GC marks per pass (M in 6+M+S). 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
+/** Node-tier per-category LIST classification/ledger-growth cap. 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
 export const NODE_MAINTENANCE_GC_MAX_MARKS: number = 200;
 
-/** Node-tier GC sweeps per pass (S in 6+M+S). 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
+/** Node-tier candidate DELETE cap per pass. 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
 export const NODE_MAINTENANCE_GC_MAX_SWEEPS: number = 100;
 
 /**
@@ -686,12 +689,11 @@ export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
  * whichever party gets there first, because the interval is measured
  * against the tick's in-memory `current.json` — which no CAS writes back,
  * so a repeat call still reads as due and would rewrite identical bytes.
- * Two parties can publish: the runner's own refresh, and a fold that
- * returned `written` (Step-7 stamped `max(stored, discoveredTail)` with
- * `discoveredTail >= observedTail`). A GC slice used to be a third, via
- * a legacy-content admission checkpoint; with that subsystem gone a GC
- * tick simply takes the ordinary rate-limited refresh, which is what
- * makes the bound below unconditional rather than cadence-dependent.
+ * Exactly two parties can publish: the runner's own refresh, and a fold
+ * that returned `written` (Step-7 stamped `max(stored, discoveredTail)`
+ * with `discoveredTail >= observedTail`). GC is not one of them — a GC
+ * tick takes the ordinary rate-limited refresh like any other, which is
+ * what makes the bound below unconditional rather than cadence-dependent.
  *
  * Sized at 128: it bounds a deferring collection's worst-case
  * read-walk to ≤128 forward GETs (≈one extra read-page sweep — a

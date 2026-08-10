@@ -143,12 +143,12 @@ const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => 
  * `current.json`, then (if a snapshot is committed) the snapshot body,
  * encodes and hashes every row `body` with `versionFromContent`, then
  * unconditionally writes its v0.6.0-style content object. Returns the
- * seeded `<collectionPrefix>/content/<hash>.json` keys that GC must never
- * delete. Empty when no snapshot is committed yet.
+ * seeded `<collectionPrefix>/content/<hash>.json` keys whose continued
+ * presence proves that GC never enters the prefix. Empty when no snapshot
+ * is committed yet.
  *
- * Deliberately re-derives the keys from the customer-visible snapshot
- * body rather than trusting GC's own `collectLiveContentHashes`, so the
- * assertion is independent of the code under test.
+ * Re-derives the keys from the customer-visible snapshot body so the
+ * seeded names match what a v0.6.0 writer would have produced.
  */
 const seedLegacyCommittedSnapshotContent = async (storage: Storage): Promise<Set<string>> => {
   const collectionPrefix = TABLE_PREFIX;

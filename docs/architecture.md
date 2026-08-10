@@ -2,7 +2,7 @@
 title: Architecture overview
 audience: coder
 summary: Module dependency graph and lifecycle of db.collection(...).insert().
-last-reviewed: 2026-08-04
+last-reviewed: 2026-08-11
 tags: [architecture, lifecycle, module-map]
 related: ["spec/sync-protocol.md", "contributing/extending.md", "contributing/features.md"]
 ---
@@ -551,17 +551,17 @@ adapter package. Platform-specific code belongs in adapters.
   fetches a snapshot from object storage, verifies the SHA-256
   baked into the filename, and returns a `Map<_id, body>`. Internal
   callers: the compactor's fold-base load, the reader
-  (`Query.runRead`), `runGc`, `rebuildIndex`. See
+  (`Query.runRead`), `rebuildIndex`. See
   [extending.md §5](contributing/extending.md#5-shared-utilities-on-the-public-surface).
 
 ## Storage layout in the bucket
 
 Every object for one collection lives under one prefix: `log/` holds
 commits; `index/`, `snapshot/`, and `gc/` support reads and maintenance;
-`content/` is retained for legacy on-bucket compatibility and GC. For a
-`Db` constructed with `app="tickets"` and `tenant="acme"`, that prefix
-is the tree root below — shown once here, then omitted from the table
-that follows:
+`content/` holds inert legacy side objects that neither readers nor GC
+touch. For a `Db` constructed with `app="tickets"` and `tenant="acme"`,
+that prefix is the tree root below — shown once here, then omitted
+from the table that follows:
 
 ```
 app/tickets/tenant/acme/manifests/<collection>/
@@ -569,7 +569,7 @@ app/tickets/tenant/acme/manifests/<collection>/
 ├── log/
 │   └── <seq>.json                 ← one LogEntry; THIS create is the commit
 ├── content/
-│   └── <content-version>.json     ← side object emitted by a legacy writer; retained for verified v0.6.0 compatibility
+│   └── <content-version>.json     ← side object emitted by a legacy writer; inert, neither readers nor GC touch it
 ├── index/
 │   └── <name>/…                   ← advisory marker (zero-byte)
 ├── snapshot/
@@ -582,26 +582,16 @@ app/tickets/tenant/acme/manifests/<collection>/
 | ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `current.json`                       | — (one per collection)               | Snapshot pointer, `log_seq_start`, the non-authoritative `tail_hint`, and the dormant `writer_fence`. **Not** the commit-path linearization point.                               |
 | `log/<seq>.json`                     | `seq` — monotonic integer            | One `LogEntry`. The `If-None-Match: "*"` create on this key **is the commit**. Readers scan the trusted range `[log_seq_start, tail_hint)`, then forward-probe to the true tail. |
-| `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Side object emitted by a legacy writer; retained for verified v0.6.0 bucket compatibility.                                                                                      |
+| `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](spec/sync-protocol.md#legacy-content-side-objects). |
 | `index/<name>/…`                     | index name + encoded key             | Zero-byte advisory index marker.                                                                                                                                                 |
 | `snapshot/L9/<min>-<max>-<sha>.json` | `seq` range + content hash           | Content-hashed materialized snapshot.                                                                                                                                            |
 | `gc/pending.json`                    | — (one per collection)               | Two-phase GC candidate ledger.                                                                                                                                                   |
 
-Current writers do not create `content/<sha>.json`. Buckets written by
-legacy writers that emitted content side objects may still contain them;
-during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
-No current kernel reader depends on these objects. Retained orphan-content
-GC still rescues live hashes and reclaims candidates only after the existing
-grace and revalidation checks. A pass with no pending content candidate and
-an empty content window skips legacy liveness admission and hashing. Verified
-v0.6.0 buckets require no migration.
-
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log
 entries into checkpoints and advances `log_seq_start`. GC
-(`packages/server/src/gc.ts`) deletes legacy content side objects, stale
-log entries, and orphan snapshots no longer reachable from
-`current.json`. Both are driven in-band on the write path by
-`runBoundedMaintenance`
+(`packages/server/src/gc.ts`) deletes stale log entries and orphan
+snapshots no longer reachable from `current.json`. Both are driven
+in-band on the write path by `runBoundedMaintenance`
 (`packages/server/src/maintenance.ts`); `runScheduledMaintenance` is the
 opt-in alternative trigger. See
 [After the write — the in-band maintenance tick](#after-the-write--the-in-band-maintenance-tick).

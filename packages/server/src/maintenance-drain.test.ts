@@ -15,9 +15,9 @@
  * floor is constant and any unbounded growth is unswept orphans)
  * through the REAL {@link Writer} inside an ALS maintenance context. Both
  * arms drive the same collector; the provisioned arm additionally seeds
- * v0.6.0 legacy `content/` side objects, which proves those inert bytes
- * neither slow the drain nor perturb its plateau. They are excluded from
- * the measured count on purpose — see {@link collectableObjectCount}.
+ * v0.6.0 legacy `content/` side objects, proving those inert bytes neither
+ * slow the drain nor perturb its plateau. They are excluded from the
+ * measured count on purpose — see {@link collectableObjectCount}.
  *
  * ## What the measured trajectory shows
  *
@@ -78,14 +78,16 @@ const bootstrap = async (storage: Storage, key: string): Promise<void> => {
 /**
  * Count every COLLECTABLE key in the bucket (one `Storage.list` walk).
  *
- * `content/` is excluded because `runGc` no longer touches that prefix at
- * all: v0.6.0 legacy side objects are inert, and the operator disposes of
- * them directly. Counting them would make this test assert something the
- * design explicitly rejects — that GC reclaims them — and the provisioned
- * arm, which seeds one per write, would then "grow" by exactly its own
- * fixture. The §7.1 invariant is about GC keeping pace with the orphans
- * this system PRODUCES (stale logs, replaced snapshots), and those are
- * what remain in scope here.
+ * `content/` is excluded because `runGc` never touches that prefix: v0.6.0
+ * legacy side objects are inert and the operator disposes of them directly.
+ * Counting them would make this test assert the opposite of the design, and
+ * the provisioned arm — which seeds one per write — would "grow" by exactly
+ * its own fixture. The §7.1 invariant is about GC keeping pace with the
+ * orphans this system PRODUCES: stale logs and replaced snapshots.
+ *
+ * The filter makes any `content/` plateau true by construction, so an arm
+ * that seeds legacy objects has to assert their SURVIVAL separately or its
+ * claim is circular.
  */
 const collectableObjectCount = async (storage: Storage): Promise<number> => {
   let n = 0;
@@ -106,10 +108,8 @@ const BODY_BYTES = 2000; // big enough bodies that the ratio gate trips and fold
  * `sampleEvery` writes.
  *
  * Returns the samples plus every legacy `content/` key seeded along the way,
- * so a caller can assert those inert objects SURVIVED. Without that the
- * provisioned arm's claim would be circular: {@link collectableObjectCount}
- * filters the prefix out, so a collector that wrongly deleted them would
- * still plateau.
+ * so a caller can assert those inert objects SURVIVED — the non-circular
+ * half of the claim, per {@link collectableObjectCount}.
  */
 const driveWriteStream = async (
   profile: BoundedMaintenanceOptions,
@@ -194,14 +194,10 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
       `trajectory ${trajectory} — peak ${maxObjects} should stay near the live set, far below ~${last.write * 2}`,
     ).toBeLessThan(WORKING_SET * 6); // live + tail + manifests, bounded
 
-    // The other half of this arm's value, and the half `collectableObjectCount`
-    // cannot carry: the seeded legacy objects are still THERE. The filter makes
-    // the plateau above true by construction — a collector that wrongly deleted
-    // every `content/` key would plateau identically — so without this the
-    // "inert bytes are left alone" claim would be circular. Sampled across the
-    // stream rather than exhaustive: 1600 individual GETs would dominate this
-    // test's runtime for no extra discrimination, and a collector that swept
-    // the prefix would not spare a scattered 1-in-160.
+    // The half the plateau above cannot carry: the seeded legacy objects are
+    // still THERE. Sampled rather than exhaustive — 1600 GETs would dominate
+    // this test's runtime, and a collector that swept the prefix would not
+    // spare a scattered 1-in-160.
     expect(legacyContentKeys).toHaveLength(1600);
     for (let i = 0; i < legacyContentKeys.length; i += 160) {
       await expect(
@@ -212,8 +208,8 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
   });
 
   test("CF-free caps keep the write stream bounded", async () => {
-    // Current writers emit no content side objects, so this arm is the plain
-    // stale-log/snapshot drain under the tightest per-pass budgets.
+    // No legacy content seeded: the plain stale-log/snapshot drain under the
+    // tightest per-pass budgets.
     const cfFree: BoundedMaintenanceOptions = {
       profile: {
         ...MAINTENANCE_PROFILE_CF_FREE,

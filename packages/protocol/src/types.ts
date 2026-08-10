@@ -28,8 +28,9 @@ export type UUID = Branded<string, "UUID">;
  * Legacy content-key digest: lowercase SHA-256 hex truncated to 32
  * characters (128 bits), minted by `versionFromContent`. v0.6.0 writers
  * used it to name `content/<hash>.json` side objects; the current kernel
- * retains the brand only for legacy inspection and GC liveness checks.
- * Current writers do not mint content side objects.
+ * retains the brand only for legacy inspection or direct-bucket tooling.
+ * Current writers do not mint content side objects, and current GC never
+ * touches `content/`.
  */
 export type ContentVersionId = Branded<string, "ContentVersionId">;
 

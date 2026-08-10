@@ -2,7 +2,7 @@
 title: How it works
 audience: integrator
 summary: Plain-language mental model for committing by conditional log create, then exposing typed layers from protocol to React.
-last-reviewed: 2026-08-04
+last-reviewed: 2026-08-11
 tags: [concepts, mental-model, protocol]
 related: [thesis.md, "../spec/sync-protocol.md", "../architecture.md"]
 ---
@@ -179,28 +179,25 @@ yet; it becomes visible the moment its log-entry create wins.
 
 ## What about the ever-growing log?
 
-The append-only log and retained legacy side objects create two cleanup
-problems: old history should not make every read longer, and legacy
-objects left by an old-node pre-commit crash should not live forever.
-Both are handled by **maintenance**:
+The append-only log creates one cleanup problem: old history should not
+make every read longer. **Maintenance** solves it in two steps —
+compaction removes old history from the read path, and GC reclaims the
+objects that step leaves behind:
 
 - **Compaction** folds a run of log entries into a fresh snapshot and
   advances `current.json` to point at it, so a read replays a short
   tail instead of the entire history. The old log entries become
   unreferenced.
 - **Garbage collection** sweeps objects no live snapshot or log entry
-  still references: superseded snapshots, compacted-away log entries,
-  and orphaned legacy content side objects. Orphaned index markers are
-  different: they are tolerated false positives during reads and can be
-  repaired by `rebuildIndex`.
-
-Current writers do not create `content/<sha>.json`. Buckets written by
-legacy writers that emitted content side objects may still contain them;
-during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
-No current kernel reader depends on these objects. Existing orphan-content
-GC remains unchanged: live hashes are rescued, and orphan candidates are
-reclaimed only after the existing grace and revalidation checks. Verified
-v0.6.0 buckets require no migration.
+  still references: superseded snapshots and compacted-away log
+  entries. Orphaned index markers are different: they are tolerated
+  false positives during reads and can be repaired by `rebuildIndex`.
+- **Legacy `content/<sha>.json` side objects** are different again. GC
+  never touches that prefix, so an object a legacy writer left behind
+  sits inert and costs only storage. Nothing needs migrating; an
+  operator who wants the bytes back deletes the prefix
+  ([how](../guide/backups.md#legacy-content-cleanup),
+  [why](../spec/sync-protocol.md#legacy-content-side-objects)).
 
 Crashes fall on one side of the commit line. A crash before the log
 create can leave additive index markers that readers treat as false

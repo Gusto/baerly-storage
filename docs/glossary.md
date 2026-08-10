@@ -2,7 +2,7 @@
 title: Glossary
 audience: integrator
 summary: One-line definitions of the load-bearing terms used across the docs — commit, log, seq, tail, snapshot, compaction, GC, LSN, session, and the rest.
-last-reviewed: 2026-08-04
+last-reviewed: 2026-08-11
 tags: [reference, glossary, terms]
 related: ["about/how-it-works.md", "spec/sync-protocol.md", "architecture.md"]
 ---
@@ -35,17 +35,9 @@ contract is [`spec/sync-protocol.md`](spec/sync-protocol.md).
 | **Dense log** | The live log has no intended holes: writers fill the first empty sequence and never skip a number. |
 | **Forward-probe** | Reading `log/<seq>` upward from `max(log_seq_start, tail_hint)` until the first 404. That gap is the true tail. |
 | **`tail_hint`** | A non-authoritative lower-bound starting point for the forward-probe, stored in `current.json`. It only ever moves forward; it is not the authoritative tail. |
-| **Legacy content object** | Side object emitted by a legacy writer, retained for verified v0.6.0 bucket compatibility. |
+| **Legacy content object** | Side object emitted by a legacy writer, retained for verified v0.6.0 bucket compatibility. Inert; GC does not reclaim it, and no migration is required. See [Legacy content side objects](spec/sync-protocol.md#legacy-content-side-objects). |
 | **Index marker** | A small (zero-byte) object whose existence records one secondary-index fact. Used to narrow a read to candidate doc ids; never the row truth. |
 | **LSN** | An opaque external cursor shaped `<base32-time>_<session>_<seq>`. Downstream change-feed consumers sort by the integer `seq`, never by the timestamp prefix. |
-
-Current writers do not create `content/<sha>.json`. Buckets written by
-legacy writers that emitted content side objects may still contain them;
-during a mixed v0.6.0 rollout, v0.6.0 nodes may also still create them.
-No current kernel reader depends on these objects. Existing orphan-content
-GC remains unchanged: live hashes are rescued, and orphan candidates are
-reclaimed only after the existing grace and revalidation checks. Verified
-v0.6.0 buckets require no migration.
 
 ## Maintenance
 
@@ -55,5 +47,5 @@ v0.6.0 buckets require no migration.
 | **Snapshot** | A single object holding the rolled-up state of many older log entries, so reads replay a short tail instead of the whole history. Content-hashed and verified by readers. |
 | **`log_seq_start`** | The first log sequence not yet folded into the current snapshot. |
 | **Compaction** | Folding a prefix of the dense log into a fresh snapshot and advancing `current.json` to point at it. |
-| **Garbage collection (GC)** | Sweeping objects no live snapshot or log entry still references — superseded snapshots, compacted-away log entries, and orphaned legacy content side objects — after the existing grace and revalidation checks. |
+| **Garbage collection (GC)** | Sweeping objects no live snapshot or log entry still references — superseded snapshots and compacted-away log entries — after the existing grace and revalidation checks. |
 | **Maintenance** | Compaction plus GC. It is triggered by successful writes in bounded slices; reads never run it. No daemon, timer, or operator scheduler is required. |

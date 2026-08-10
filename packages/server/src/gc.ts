@@ -10,11 +10,13 @@
  *      are safe to classify.
  *   4. CAS-writes the updated `gc/pending.json`.
  *
- * Two-phase by design: every candidate sits in `gc/pending.json` for a
- * grace period (default 7 days, see {@link GC_GRACE_PERIOD_MILLIS})
- * before it is deleted. The grace bounds the worst plausible
- * writer-retry window — a paused-process writer that resumes hours
- * later still finds its idempotency anchor on the bucket.
+ * Two-phase by design: each mark sits in `gc/pending.json` for a grace
+ * period (default 7 days, see {@link GC_GRACE_PERIOD_MILLIS}) before
+ * sweep may delete it. The grace bounds the worst plausible writer-retry
+ * window — a paused-process writer that resumes hours later still finds
+ * its idempotency anchor on the bucket. Sweep can also resolve a
+ * candidate OUT of the ledger without deleting it, when a generation or
+ * liveness recheck fails.
  *
  * Idempotent modulo the rotation cursor: same input bucket state ⇒
  * same candidate set and same DELETEs. `log_scan_cursor` is position,
@@ -77,15 +79,15 @@
  *     The cardinality argument survives that; the ordering one does
  *     not.
  *
- * A third category, `orphan-content`, existed for v0.6.0/mixed-rollout
- * `<collectionPrefix>/content/<sha>.json` side objects. It is gone.
- * Nothing has written those objects since the writer stopped emitting
- * them, no kernel reader has ever opened one, and this collector no
- * longer touches the `content/` prefix at all — the objects are inert
- * and cost only storage. A legacy candidate still in the ledger is
- * EVICTED rather than swept (see the sweep gate's legacy arm); an
- * operator who wants the bytes back deletes the prefix directly. See
- * `docs/guide/backups.md`.
+ * **`content/` is deliberately NOT a third category.** Legacy
+ * `<collectionPrefix>/content/<sha>.json` side objects — written by
+ * v0.6.0, and still written by a v0.6.0 node during a mixed rollout —
+ * are inert: no current writer creates one, no reader opens one. GC
+ * never LISTs, reads, or deletes under that prefix, so they cost storage
+ * and nothing else, and an operator who wants the bytes back deletes the
+ * prefix directly (`docs/guide/backups.md`). An `orphan-content` entry
+ * found in a legacy ledger is EVICTED, not swept — see the sweep gate's
+ * legacy arm.
  *
  * CAS-lost on `gc/pending.json` is non-fatal: the DELETEs already
  * issued are durable, so we return a successful result and the next
@@ -417,39 +419,32 @@ export const runGc = async (
   const evictedLegacyKeys = new Set<string>();
   const evictedUnauthorizedStaleLogKeys = new Set<string>();
   for (const candidate of sweepCandidates) {
-    // Arm 0 — legacy eviction. A v0.6-era `orphan-content` candidate names
-    // a `content/<sha>.json` side object this build has no way to classify:
-    // nothing writes them, no reader opens one, and the live-hash set that
-    // used to prove such a key dead no longer exists. Resolve it OUT of the
-    // ledger WITHOUT deleting the object — the bytes are inert and an
-    // operator disposes of them directly (docs/guide/backups.md).
+    // Arm 0 — legacy eviction. A v0.6-era `orphan-content` candidate names a
+    // `content/<sha>.json` side object this build cannot classify and never
+    // deletes (module header). Resolve it OUT of the ledger, object untouched.
     //
-    // This is not back-compat politeness; it is what keeps GC running.
+    // Eviction is load-bearing, not a courtesy to old buckets:
     // `mergeGcPending` keeps the FIRST `GC_MAX_PENDING_CANDIDATES` entries,
-    // so a legacy bucket whose ledger head is full of content candidates
-    // would otherwise silently discard every new `stale-log` and
-    // `orphan-snapshot` mark, forever. Retaining them turns a cleanup into
-    // a total GC outage on exactly the buckets this change is meant to
-    // serve.
+    // so a ledger head full of content candidates would silently discard
+    // every new `stale-log` and `orphan-snapshot` mark, forever.
     //
-    // Ordered BEFORE the generation fence deliberately. Most legacy
-    // candidates would also fail that fence, and counting them there would
-    // fire an alertable `db.gc.dropped_total{cause="stale-generation"}`
-    // spike on every legacy bucket's first post-upgrade pass, for a reason
-    // that has nothing to do with a restore. Eviction frees no bytes and
-    // means nothing is wrong, so it drives no counter at all.
+    // Ordered BEFORE the generation fence on purpose. Most legacy candidates
+    // would fail that fence too, and counting them there fires an alertable
+    // `db.gc.dropped_total{cause="stale-generation"}` spike on a legacy
+    // bucket's first post-upgrade pass. Eviction frees no bytes and signals
+    // nothing wrong, so it drives no counter at all.
     if (candidate.reason === "orphan-content") {
       evictedLegacyKeys.add(candidate.key);
       continue;
     }
-    // Arm 1 — stale-log deletion authority. A persisted candidate can
-    // authorize DELETE only when its key is the exact canonical key for
-    // this collection. The ledger decoder lacks collection context, so
-    // malformed, mislabeled, noncanonical and cross-prefix candidates
-    // are resolved here without DELETE. Waiting for `due_at` would let an
-    // invalid entry wedge the bounded first-N ledger for no safety gain.
-    // Ordered before the generation fence so invalid authority does not
-    // masquerade as a stale-generation event.
+    // Arm 1 — stale-log deletion authority. A persisted candidate authorizes
+    // DELETE only when its key is the exact canonical `log/<seq>.json` for
+    // THIS collection; the ledger decoder has no collection context, so
+    // malformed, mislabeled, noncanonical, and cross-prefix keys reach here.
+    // Resolve them without DELETE — waiting for `due_at` would let an invalid
+    // entry wedge the bounded first-N ledger for no safety gain. Ordered
+    // before the generation fence so invalid authority does not masquerade as
+    // a stale-generation event.
     if (
       candidate.reason === "stale-log" &&
       parseSeqFromCanonicalLogKey(candidate.key, collectionPrefix) === null
@@ -478,9 +473,8 @@ export const runGc = async (
     // generation, so this is not a reseed; the floor can still have
     // been rewound by a `--force` that reused the nonce, and a mark
     // taken `GC_GRACE_PERIOD_MILLIS` ago is stale enough to be worth
-    // re-deriving from the floor rather than trusted. The deletion-authority
-    // arm above has already resolved every key that cannot be classified
-    // canonically for this collection.
+    // re-deriving from the floor rather than trusted. Arm 1 has already
+    // resolved every non-canonical key, so `null` here is unreachable.
     if (candidate.reason === "stale-log") {
       const seq = parseSeqFromCanonicalLogKey(candidate.key, collectionPrefix);
       if (seq !== null && seq >= fenceFloor) {

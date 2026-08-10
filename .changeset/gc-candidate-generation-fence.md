@@ -8,8 +8,7 @@ ledger on `baerly admin restore`.
 
 **The bug.** A `GcCandidate` was a bare key with no identity. The sweep
 already re-checked a due orphan-snapshot against a freshly-read
-`current.snapshot`, and an orphan-content key against the live
-content-hash set, but nothing tied a candidate to the collection it was
+`current.snapshot`, but nothing tied a candidate to the collection it was
 judged against and nothing re-checked a `stale-log` candidate at all. A
 mark decision taken under one view of the bucket could therefore
 execute up to seven days later against a different one.
@@ -84,10 +83,13 @@ the mark phase is misjudging liveness.
 `GC_PENDING_SCHEMA_VERSION` stays at 1 and a ledger written by an older
 build remains valid; absent compares equal to absent, so a bucket whose
 manifest carries no generation keeps reclaiming normally. Expect one
-`stale-generation` drop spike on the first pass after upgrading — every
-pre-upgrade candidate is dropped for want of a generation and re-marked
-next pass, which delays reclamation of anything already pending by one
-grace period — and one more per `baerly admin restore`. Both are
-self-healing. Operators who alert on
+`stale-generation` drop spike on the first pass after upgrading — each
+pre-upgrade `stale-log` or `orphan-snapshot` candidate is dropped for
+want of a generation and, if still orphaned, re-marked next pass. That
+delays its reclamation by one grace period. A legacy `orphan-content`
+candidate follows a separate path: it is evicted from the ledger without
+a DELETE or drop metric, is not re-marked, and the content object
+survives. Expect another generation-drop spike per `baerly admin restore`;
+those generation-fence drops are self-healing. Operators who alert on
 `db.maintenance.unexpected_error_total` may see one fewer spurious
 source of it.

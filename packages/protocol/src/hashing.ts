@@ -20,17 +20,16 @@ const VERSION_HEX_LENGTH = 32;
 /**
  * Legacy content-key {@link ContentVersionId}: SHA-256 of `body`,
  * lowercase hex, truncated to {@link VERSION_HEX_LENGTH}. Same body
- * bytes ⇒ same ContentVersionId. Retained to inspect and protect side
- * objects emitted by v0.6.0 writers, including during mixed-version
- * rollout; a retry of the same encoded body reproduces the legacy key.
+ * bytes ⇒ same ContentVersionId. Retained only for legacy inspection or
+ * direct-bucket tooling over side objects emitted by v0.6.0 writers,
+ * including during mixed-version rollout; a retry of the same encoded body
+ * reproduces the legacy key. Current GC never touches `content/`.
  * `body` is non-canonical (`JSON.stringify`, insertion key order — see
  * `encodeJsonBytes`), so this is NOT cross-writer content dedup: different
  * key order ⇒ different key for an equal value.
  *
- * Async because {@link crypto.subtle.digest} returns an `ArrayBuffer`
- * via Promise. Workers and browsers both expose `crypto.subtle`
- * synchronously enough that the await fits naturally in the write
- * pipeline.
+ * Async because {@link crypto.subtle.digest} returns its `ArrayBuffer`
+ * via a Promise on every runtime that exposes `crypto.subtle`.
  *
  * @see docs/spec/log-entry-shape.md §"Legacy content side-object layout"
  */
