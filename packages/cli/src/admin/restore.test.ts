@@ -242,11 +242,12 @@ describe("baerly admin restore", () => {
     //
     // Why it is sound: the reseed floor is `max(listed log seq) + 1`, so it
     // is strictly above every log object still present and the committing
-    // `log/<seq>` create cannot collide with the old generation. GC decides
-    // legacy content-object liveness by reachability rather than by the floor, and the
+    // `log/<seq>` create cannot collide with the old generation. The
     // reseed sets `snapshot: null`, so the old generation becomes
-    // unreachable and is swept as `orphan-content` — the intent of
-    // truncating. See the FLOOR EXEMPTION comment in `restore.ts`.
+    // unreachable to every reader — the intent of truncating. Sub-floor
+    // `log/` survivors are swept as `stale-log`; legacy `content/` side
+    // objects are left in place and are inert. See the FLOOR EXEMPTION
+    // comment in `restore.ts`.
     //
     // This case is the empty-prefix extreme (floor → 0); the next test
     // covers the partial-sweep case, which is what actually happens under

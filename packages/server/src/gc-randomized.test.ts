@@ -171,10 +171,9 @@ describe("runGc — never deletes a live object", () => {
       }
 
       // (3) Non-vacuity: a stale log entry below log_seq_start was reclaimed.
-      //     (The injected `content/` key is deliberately NOT a non-vacuity
-      //     witness any more — this collector never touches that prefix, so
-      //     asserting its survival proves the property below vacuously. The
-      //     stale-log arm carries non-vacuity alone.)
+      //     The stale-log arm carries this alone. The `content/` key below is
+      //     an inertness witness, not a non-vacuity one — GC never touches
+      //     that prefix, so its survival would hold vacuously.
       await expect(
         storage.get(ORPHAN_CONTENT_KEY),
         "legacy content must be left in place",

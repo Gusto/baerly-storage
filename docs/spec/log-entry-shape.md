@@ -3,7 +3,7 @@ title: LogEntry wire shape
 audience: spec
 doc_type: current-contract
 summary: "Debezium-style JSON CDC envelope (pgoutput message-tag vocabulary) LogEntry; versionless, additive-only 0.3.0 public early-access baseline."
-last-reviewed: 2026-08-04
+last-reviewed: 2026-08-11
 tags: [protocol, log, cdc, contract]
 related: [sync-protocol.md, "../adr/005-logentry-versionless.md"]
 ---
@@ -118,6 +118,12 @@ side object exists. For legacy inspection only, v0.6.0 writers used the
 first 32 lowercase hexadecimal characters of SHA-256 over the exact
 `encodeJsonBytes(LogEntry.after)` bytes.
 
+This section is the key and hash layout — what a direct-bucket consumer
+needs to interpret an object that already exists. Why the objects are
+inert, what GC does with them, and whether a bucket needs migrating is
+in
+[`sync-protocol.md`](sync-protocol.md#legacy-content-side-objects).
+
 That compatibility statement is specific to v0.6.0. v0.1.0 and v0.1.1
 logs used `new` / `patch`; current folding requires `after`, and the
 current kernel does not add a compatibility shim for those earlier log
@@ -159,8 +165,9 @@ example after a read → merge → re-serialize round-trip, where `merge`
 spreads `{...target}` and key order is insertion-dependent for non-index
 string keys — produced **different** content keys for the same logical
 value. The retained `VERSION_HEX_LENGTH` constant and hashing primitive
-in `packages/protocol/src/hashing.ts` support legacy inspection and GC;
-they do not imply that current writers publish side objects.
+in `packages/protocol/src/hashing.ts` support legacy inspection or
+direct-bucket tooling only. They do not imply that current writers publish
+side objects, and current GC never touches `content/`.
 
 ## Cursor format
 

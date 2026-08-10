@@ -150,10 +150,13 @@ baerly admin restore \
 If the target collection's `current.json` already exists, restore
 refuses with `Conflict`. With `--force`, restore does not delete old
 objects first. It moves the collection's starting log position past the
-old numbered log files, imports rows at new sequence numbers, and leaves
-old objects for maintenance/GC. The `writer_fence` field is only bumped
-to keep metadata monotone; it does not perform truncation or protect
-against live writers.
+old numbered log files and imports rows at new sequence numbers. Current
+maintenance/GC can later reclaim only GC-managed stale logs and orphan
+snapshots; legacy `content/` side objects remain untouched and require the
+optional, writers-quiesced disposal described in
+[Legacy content cleanup](#legacy-content-cleanup) below.
+The `writer_fence` field is only bumped to keep metadata monotone; it does
+not perform truncation or protect against live writers.
 
 Before a force restore or any copy-in-place workflow, stop writers, stop
 new `runScheduledMaintenance` calls, and wait for every in-flight
@@ -235,15 +238,46 @@ The safe cutover shape is:
      `current.json` lands first, readers can reference missing objects;
      if required index markers are missing, index-routed reads can miss
      rows.
-   - No current kernel reader depends on content side objects. Copy
-     `content/` only when preserving a legacy or mixed-version bucket
-     for legacy writers or tooling.
+   - No kernel reader depends on content side objects, and GC does not
+     touch them. Copy `content/` only when preserving a legacy or
+     mixed-version bucket for legacy writers or tooling. Otherwise skip
+     it. See [Legacy content cleanup](#legacy-content-cleanup) to reclaim
+     the source bytes safely.
 7. Run `baerly admin fsck` (plus `--indexes` for indexed collections)
    against the final destination — the exact route the app will read —
    before enabling reads. Step 3 checked the recovery prefix, not the
    copy.
 8. Resume writers only after a successful authenticated read against
    the recovered route.
+
+### Legacy content cleanup
+
+No cleanup of legacy `content/` side objects is required for correctness
+or migration. They are inert; delete them only to reclaim storage, after
+all legacy writers are quiesced.
+
+Build the deletion target from the exact configured bucket URI, including
+its optional key prefix, then append
+`app/<app>/tenant/<tenant>/manifests/<collection>/content/`. For example,
+`s3://bucket/prod` targets
+`s3://bucket/prod/app/acme/tenant/t1/manifests/tickets/content/`; dropping
+`prod/` would address a different namespace. Before any recursive delete,
+review a provider inventory/listing or dry run and confirm that the full
+prefix contains only the intended collection's legacy content objects.
+
+For AWS S3 only:
+
+```sh
+# Copy the exact configured URI, including any bucket key prefix.
+CONTENT_PREFIX='s3://bucket/prod/app/acme/tenant/t1/manifests/tickets/content/'
+aws s3 rm --recursive --dryrun "$CONTENT_PREFIX"
+# After reviewing the dry run:
+aws s3 rm --recursive "$CONTENT_PREFIX"
+```
+
+For R2, MinIO, and native GCS, use the configured endpoint or provider
+tooling against the identical full prefix; the AWS command is not portable
+to those providers.
 
 ## Restore Drill
 

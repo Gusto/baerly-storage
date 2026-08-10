@@ -31,9 +31,9 @@ export type TailProbeChunk =
 /**
  * Probe a bounded chunk of committed entries from `hint`. An occupied
  * chunk certifies only that the tail is at or past its exclusive bound.
- * Decode failures throw by default. GC alone opts into tolerant
- * occupancy probing: malformed slots remain occupied, `complete` becomes
- * false, and probing continues to the first missing slot or cap.
+ * Decode failures throw by default. With tolerant occupancy probing,
+ * malformed slots remain occupied, `complete` becomes false, and probing
+ * continues to the first missing slot or cap.
  */
 export const probeTailChunk = async (
   storage: Storage,
@@ -91,7 +91,7 @@ export const probeTailFrom = async (
   }
   // Cap exhausted without hitting a 404 — the true tail is past `cap`.
   // Returning `hint+cap` here would silently truncate every downstream
-  // read (since.ts / query.ts / GC / export / rebuild-index), so we
+  // read (since.ts / query.ts / export / rebuild-index), so we
   // THROW instead, mirroring `findLogTail`'s cap-exhaustion guard. With
   // the maintenance tick keeping `tail_hint` within
   // `MAINTENANCE_TAIL_HINT_REFRESH_WRITES` of the true tail (HR-2), this

@@ -313,8 +313,11 @@ Cloudflare free has two binding walls:
 - **CPU:** ~10 ms/request, defended by `C` and `E`.
 - **Subrequests:** 50/request, defended by the
   `maxFoldEntriesPerPass ≈ 20` tail slice. A fold pass is about
-  `slice + 3` subrequests, and GC is about `6 + marks + sweeps`; one
-  phase per tick stays under 50.
+  `slice + 3` subrequests. GC's mark cap bounds LIST classification and
+  ledger growth, while its sweep cap bounds DELETEs; one phase per tick
+  stays under 50. Exact GC accounting is maintained in the
+  `CLOUDFLARE_FREE_TIER` JSDoc and
+  `packages/server/src/maintenance-budget.test.ts`.
 
 | Tier | Hardware walls | Binds on | What can actually fold |
 | --- | --- | --- | --- |

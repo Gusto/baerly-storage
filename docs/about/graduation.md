@@ -63,7 +63,7 @@ baerly admin usage \
 | --- | --- | --- | --- |
 | `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `snapshot_bytes` / `snapshot_rows` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` (cf-free: `C = 512 KB`, `E = 2048`) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to 32,768. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
 | Same defer on Node | Warning text plus `snapshot_bytes` / `snapshot_rows` from `baerly inspect` | Node ships `C = 32 MiB`, `E = 65,536`; check the host has RAM for old snapshot + new snapshot + tail | If bytes tripped, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above 32 MiB, sized by `C ≈ heap / 10`; expect one inline write-latency spike. If rows tripped, Node already has the largest shipped `E` and there is no env override — split or graduate the collection. |
-| Object count grows while writes are steady | Logs + `admin fsck` | GC sweep throughput no longer keeps up with orphan production | Reduce contention, split the hot collection, or graduate the workload. |
+| GC-managed object count grows while writes are steady | Prefix inventory + logs + `admin fsck` | Stale-log/orphan-snapshot sweep throughput no longer keeps up with their production | Reduce contention, split the hot collection, or graduate the workload. Growth under `content/` is diagnosed separately: stop legacy writers, then dispose of the inert prefix manually. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
 | Tenant data keeps growing | `admin usage` / bucket inventory | >10 GB/tenant (R2 free-tier storage line; see [cost-model.md](cost-model.md)) or ~100 collections/tenant (soft fan-out guideline; see [workload-fit.md](workload-fit.md#scale-at-a-glance)) | Review graduation cost; neither line is enforced by the protocol. |
 | `baerly cost` prints advisory note | `baerly cost` | ~100 writes/min account-wide (provider-agnostic; 8.64M Class A/mo / ~$34/mo R2 object-storage ops, 12.96M / ~$65/mo S3), advisory only; see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff) | Compare object storage's low operator burden against a managed DB. Hard trigger: 50M/mo (~580 writes/min / ~$221/mo R2; ~390 writes/min on Node). |
@@ -118,34 +118,47 @@ symptoms are:
 
 ### The drain-rate safety invariant
 
-The no-lease model stays bounded only while GC sweep throughput keeps up
-with orphan production:
+The GC-managed stale-log and orphan-snapshot population stays bounded
+only while sweep throughput keeps up with production of those candidates:
 
 > **`WRITE_TICK_GC_MAX_SWEEPS / WRITE_TICK_GC_INTERVAL` (= 10/4) ≥
-> orphan-production rate `p`.**
+> GC-managed orphan-production rate `p`.**
 
-While that holds, orphans drain and total object count stays bounded.
+While that holds, stale logs and orphan snapshots drain and their object
+count stays bounded. This invariant does not bound live log growth behind
+a deferred fold or inert objects under the legacy `content/` prefix.
 
 Two things upstream of the sweep can bind before sweep throughput does,
 and neither is fixed by raising the sweep rate:
 
-- **Mark coverage.** Every budgeted mark phase whose LIST window can
+- **Mark coverage.** The one budgeted mark phase whose LIST window can
   stall on undeletable keys carries a persisted rotation cursor in
-  `gc/pending.json` (`content_scan_cursor`, `log_scan_cursor`). The
-  content cursor remains for legacy content side-objects; new writes
-  inline their post-images in the log. Without a cursor, a compatibility
-  phase can starve and the candidate never enters the ledger for the
-  sweep budget to spend itself on.
+  `gc/pending.json` (`log_scan_cursor`). Without it, that phase can
+  starve and the candidate never enters the ledger for the sweep budget
+  to spend itself on.
 - **Ledger depth.** `GC_MAX_PENDING_CANDIDATES` bounds how many
-  candidates are in flight at once, across all three reasons together,
-  and each cohort waits out `GC_GRACE_PERIOD_MILLIS` before it can be
-  swept. On a large accumulated backlog that ceiling — not the sweep
-  budget — is what paces reclamation.
+  candidates are in flight at once, across `stale-log` and
+  `orphan-snapshot` together, and each cohort waits out
+  `GC_GRACE_PERIOD_MILLIS` before it can be swept. (A legacy
+  `orphan-content` entry on a v0.6.0 ledger counts against the same
+  cap, but is evicted on sight rather than waiting out the grace
+  period — see the eviction arm in `gc.ts`.) On a large accumulated
+  backlog that ceiling — not the sweep budget — is what paces
+  reclamation.
 
-Above-envelope write contention can make writers lose `log/<seq>.json`
-create races and maintenance lose `current.json` CAS often enough to
-produce orphans faster than GC sweeps them. Object count growth is the
-signal; the protocol does not silently lose data.
+Folds continually make sub-floor log entries stale, while replaced or
+CAS-losing snapshot publishes leave orphan snapshots. Under
+above-envelope churn, those candidates can become eligible faster than
+GC sweeps them. Growth in those prefixes is the signal; the protocol does
+not silently lose data.
+
+If bucket inventory instead shows growth under `content/`, do not treat it
+as GC lag. Check for v0.6.0 nodes still writing during a mixed rollout, or
+for a restore/raw copy that preserved a legacy content prefix. Quiesce the
+legacy writers first, then follow the manual disposal guidance in
+[Backups](../guide/backups.md#legacy-content-cleanup). Current GC never marks or deletes
+those objects, so a restored legacy prefix can remain large without
+violating the drain-rate invariant above.
 
 ### Which graduation?
 
@@ -313,7 +326,7 @@ Safe remedies, in order:
 | Static fold-row ceiling `E` (2,048 cf-free / 32,768 cf-paid / 65,536 node) | Move to a larger host profile: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Cloudflare, or a Node host (automatic) | No env var sets `E` directly. Node's 65,536 is the largest shipped value; past it, split or graduate the collection. |
 | Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past 8 MiB. A finer-grained per-platform `cpuLimit` declaration was evaluated and measured unnecessary: the in-band write tick keeps up to ~3x the rate envelope under stress on free, so it is not built. |
 | Per-collection commit scope (one ordered log per collection; no cross-collection atomicity) | Cannot be increased; protocol invariant | The write hotspot is the next numbered `log/<seq>` create for one collection. Cross-collection atomicity is not offered. |
-| Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were not runtime-verified; their GC safety comes from conservative liveness, grace, and sweep-time revalidation, not the snapshot no-corruption guarantee. |
+| Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were never runtime-verified; the objects are now inert and nothing reads or reclaims them, so the truncation carries no remaining safety obligation. |
 
 `E` is in this map, but with a different lever: it is a kernel constant
 per profile rather than an env-var knob, so the profile is what raises

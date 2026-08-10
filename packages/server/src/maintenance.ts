@@ -183,10 +183,8 @@ const profileToScheduledOptions = (
  * and GC ≤23. The write-tick runner adds a preliminary `current.json` GET
  * and, on a GC tick, a rate-limited `tail_hint` refresh (a single
  * non-retrying `casUpdateCurrentJson`: 1 GET + 1 PUT), taking a GC tick to
- * ≤26. GC used to sit at 46–50 because it LISTed `content/`, probed the
- * tail, and hashed the whole live log to prove legacy content dead; none of
- * that happens now. Combining a compact and GC pass can still exceed 50, so
- * the Cloudflare scheduled handler processes one collection and alternates
+ * ≤26. Combining a compact and GC pass can still exceed 50, so the
+ * Cloudflare scheduled handler processes one collection and alternates
  * phases per invocation (even minute → compact, odd minute → GC) by calling
  * `compact()` / `runGc()` directly instead of `runScheduledMaintenance`; the
  * `maintenance-budget.test.ts` worst-case test proves each phase in
@@ -202,12 +200,15 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
  * Tuning profile for the 10,000-subrequest Cloudflare paid-tier budget,
  * derived from {@link MAINTENANCE_PROFILE_CF_PAID} (one source of truth).
  * Keeps the single-phase CPU-killable shape but affords Node-tier per-pass
- * throughput (compact ≈ 3+200, gc ≈ 6+200+100 — far under the 10k cap).
+ * fold, GC classification, and sweep budgets — comfortably within the 10k
+ * cap. Exact per-phase op counts live in {@link CLOUDFLARE_FREE_TIER}.
  *
  * To honour `BAERLY_MAINTENANCE_PROFILE=cf-paid` on the cron path, pass this
  * constant to `runScheduledMaintenance` inside your
  * {@link WorkerScheduledHandler}; the worked recipe lives in the `scheduled`
  * handler docstring of `baerlyWorker` (`@gusto/baerly-storage/cloudflare`).
+ *
+ * @see packages/server/src/maintenance-budget.test.ts
  */
 export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_PAID,
@@ -334,10 +335,9 @@ export interface BoundedMaintenanceOptions {
  * Steps 0, 2, 3-defer, and 4 all take the rate-limited `tail_hint`
  * refresh, but the tick publishes the hint AT MOST ONCE — a landed fold
  * (Step-7 CAS) and the refresh itself both count as that publication.
- * Ordering matters: Step 3's defer
- * refreshes and then falls through to Step 4, so without the shared
- * guard that one tick would CAS `current.json` twice with identical
- * bytes.
+ * Ordering matters: Step 3's defer refreshes and then falls through to
+ * Step 4, so without the shared guard that one tick would CAS
+ * `current.json` twice with identical bytes.
  */
 export const runBoundedMaintenance = async (
   args: {

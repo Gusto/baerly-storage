@@ -1124,21 +1124,20 @@ describe("runGc — sweep-time revalidation", () => {
     } as InternalRunGcOptions);
 
   test("evicts legacy orphan-content candidates from the ledger without deleting the object", async () => {
-    // A v0.6 bucket's ledger head can be entirely orphan-content. This build
-    // cannot classify those keys — nothing writes `content/<sha>.json` and no
-    // reader opens one — so leaving them pending would pin the head forever.
-    // `mergeGcPending` keeps the FIRST GC_MAX_PENDING_CANDIDATES entries, so
-    // that is not a slow leak, it is a total GC outage: every new stale-log
-    // and orphan-snapshot mark gets discarded. Evict, never delete.
+    // A v0.6 bucket's ledger head can be entirely orphan-content, and this
+    // build classifies none of it. Leaving those entries pending pins the head
+    // forever: `mergeGcPending` keeps the FIRST GC_MAX_PENDING_CANDIDATES
+    // entries, so it is not a slow leak but a total GC outage — every new
+    // stale-log and orphan-snapshot mark gets discarded. Evict, never delete.
     const inner = new MemoryStorage();
     await createCurrentJson(inner, KEY, logStateCurrentJson({ log_seq_start: 1, tail_hint: 1 }));
     await inner.put(`${PREFIX}/log/0.json`, new TextEncoder().encode("{}"), {
       contentType: "application/json",
     });
 
-    // Fill the ledger head to the cap with legacy content candidates, then put
-    // one real stale-log candidate BEHIND them. Pre-change, the content
-    // candidates are all retained and this stale log is never reclaimed.
+    // Fill the ledger head to the cap with legacy content candidates and put
+    // one real stale-log candidate BEHIND them: if eviction regresses, that
+    // stale log is never reclaimed.
     const legacyKeys = Array.from(
       { length: GC_MAX_PENDING_CANDIDATES },
       (_, i) => `${PREFIX}/content/${i.toString(16).padStart(32, "0")}.json`,
@@ -1148,10 +1147,9 @@ describe("runGc — sweep-time revalidation", () => {
         contentType: "application/json",
       });
     }
-    // The cast carries `content_scan_cursor` into the seeded JSON even though
-    // the field is gone from `GcPending` — that absence is exactly what makes
-    // this a LEGACY ledger, and `assertGcPending` has no excess-property check
-    // so it still decodes.
+    // The cast is what makes this a LEGACY ledger: `content_scan_cursor` is
+    // not a `GcPending` field, so it can only reach the seeded JSON this way.
+    // `assertGcPending` runs no excess-property check, so it still decodes.
     await createGcPending(inner, PENDING_KEY, {
       schema_version: GC_PENDING_SCHEMA_VERSION,
       candidates: [
@@ -1186,7 +1184,7 @@ describe("runGc — sweep-time revalidation", () => {
     expect(result.dropped).toEqual({ stale_generation: 0, still_live: 0 });
     await expect(inner.get(`${PREFIX}/log/0.json`)).resolves.toBeNull();
 
-    // And every legacy object is still there. This is the whole point.
+    // Evicted from the ledger, but still on the bucket.
     for (const key of legacyKeys) {
       await expect(inner.get(key), `${key} must survive eviction`).resolves.not.toBeNull();
     }
@@ -1341,12 +1339,10 @@ describe("runGc — sweep-time revalidation", () => {
   });
 
   test("drops a candidate marked before the build began stamping generations", async () => {
-    // The upgrade path. A ledger written by an older build carries no
-    // `generation` at all, and absent cannot be proven to match a
-    // manifest that has one — so the whole pre-upgrade ledger is dropped
-    // on the first pass and re-marked on the next with a fresh grace
-    // period. One-time, self-healing, and visible as a single
-    // `stale-generation` spike.
+    // The stale-log upgrade path. A candidate written by an older build
+    // carries no `generation`, and absent cannot be proven to match a
+    // manifest that has one — so it is dropped on the first pass and, if
+    // still stale, re-marked on the next with a fresh grace period.
     const s = new MemoryStorage();
     const key = await seedDueStaleLog(s, { floor: 9, seq: 5 });
 
@@ -1381,10 +1377,9 @@ describe("runGc — sweep-time revalidation", () => {
   });
 
   test("revalidation adds ZERO storage ops — a dropping pass costs a sweeping pass minus the DELETE", async () => {
-    // The gate's cost argument, pinned. Every value it consults is
-    // already in lexical scope — `current` and `logSeqStart` from step 1 —
-    // so it issues no
-    // probe, no HEAD and no extra LIST. Nothing else in the suite counts
+    // The gate's cost argument, pinned. Every value it consults is already in
+    // lexical scope — `current` and `logSeqStart` from step 1 — so it issues
+    // no probe, no HEAD, and no extra LIST. Nothing else in the suite counts
     // operations, so without this test that claim rests on inspection alone.
     //
     // Two arms, byte-identical but for the candidate's `generation`, so

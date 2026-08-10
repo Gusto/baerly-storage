@@ -163,25 +163,6 @@ The load-bearing kernel metrics today (canonical list in
 - `db.gc.entries_swept_per_second` — GC gauge (livelock indicator
   when below writes/s).
 - `db.gc.swept_total` — GC counter, labelled by reason.
-- `db.gc.content_deferred_total` — GC counter, labelled by the
-  `ContentDeferralReason` for a pass that skipped orphan-content
-  discovery. Emitted only on a deferred pass. Budget reasons are
-  expected under `CLOUDFLARE_FREE_TIER` and self-clear; degraded ones
-  do not, and park orphan-content GC for as long as the fault
-  persists. A degraded reason names the unreadable artifact, not the
-  fault class, so a single occurrence can be a transient storage error
-  that clears on the next pass — a SUSTAINED non-zero rate is the
-  alertable signal. `isDegradedContentDeferral` is the authority on
-  which reason is which — branch on it in code rather than on a
-  literal list, and read the union's members off it when writing a
-  label-matching alert rule, because a reason added later will be
-  classified there and nowhere else. Cron callers see no metrics
-  outside an HTTP scope — `RunGcResult.contentDeferredReason` carries
-  the same value for them to pass to that predicate.
-- `db.gc.cas_lost_total` — GC counter for a lost admission-checkpoint
-  CAS on `current.json` (per-collection label). The GC-side sibling of
-  the compactor's `db.compaction.cas_lost_total`; sustained non-zero on
-  either is write contention above the envelope.
 - `db.gc.dropped_total` — GC counter, labelled by `cause`
   (`stale-generation` / `still-live`). A candidate the sweep gate
   resolved out of the ledger without deleting anything, because its
@@ -190,16 +171,20 @@ The load-bearing kernel metrics today (canonical list in
   drop frees no bytes, and folding the two would make a pass that
   reclaimed nothing look productive. Expect one `stale-generation`
   spike per `baerly admin restore` and one on the first pass after
-  upgrading to a build that stamps generations (every pre-upgrade
-  candidate is dropped for want of one and re-marked next pass, so
-  reclamation of anything already pending is delayed by one grace
-  period). Both are self-healing. A `stale-generation` rate that does
-  NOT subside means something is re-minting `generation` repeatedly; a
+  upgrading to a build that stamps generations (each pre-upgrade
+  `stale-log` or `orphan-snapshot` candidate is dropped for want of one
+  and, if still orphaned, re-marked next pass, delaying reclamation by
+  one grace period). Those generation-fence drops are self-healing. A
+  legacy `orphan-content` candidate is different: the eviction arm runs
+  before the generation fence, removes it from the ledger without a
+  DELETE or `db.gc.dropped_total` emission, never re-marks it, and leaves
+  the object on the bucket. A `stale-generation` rate that does NOT
+  subside means something is re-minting `generation` repeatedly; a
   sustained `still-live` rate means the mark phase is misjudging
-  liveness, which is the failure the gate exists to contain rather
-  than to hide — check it against `db.gc.swept_total` before assuming
-  GC is healthy, since a collection can drop steadily while
-  reclaiming nothing.
+  liveness, which is the failure the gate exists to contain rather than
+  to hide — check it against `db.gc.swept_total` before assuming GC is
+  healthy, since a collection can drop steadily while reclaiming
+  nothing.
 - `db.orphan.candidate_count` — GC gauge (`gc/pending.json` depth).
 - `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` /
   `db.storage.<op>.duration_ms` — storage decorator counters +

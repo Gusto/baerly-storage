@@ -196,9 +196,9 @@ interface Op {
  * Deterministic, profile-independent op stream over a bounded id space.
  * A mix of insert / update / delete-then-reinsert that keeps the LIVE set
  * ~constant (so the snapshot row count plateaus) while the tail churns —
- * every U / D supersedes a prior content blob, producing the orphans GC
- * must reclaim. `total` ops are generated up front; the simulation slices
- * `rate` of them per simulated minute.
+ * compaction eventually moves folded entries below the log floor, producing
+ * stale log keys for GC to reclaim. `total` ops are generated up front; the
+ * simulation slices `rate` of them per simulated minute.
  */
 const buildOps = (total: number): readonly Op[] => {
   const blob = "x".repeat(BODY_BYTES);
