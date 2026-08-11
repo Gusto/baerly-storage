@@ -50,7 +50,7 @@ collection's key namespace in the bucket. Inside that prefix:
 
 | Object | Role |
 | --- | --- |
-| Legacy content objects | Side objects emitted by legacy writers, retained for verified v0.6.0 bucket compatibility. |
+| Legacy content objects | Side objects emitted by legacy writers. Inert: no reader opens one and GC never touches the prefix. |
 | Numbered log entries | Append-only records containing the authoritative `LogEntry.after` post-image for inserts and updates: "at this sequence, this row was inserted, updated, or deleted." The log uses `log/0.json`, `log/1.json`, and so on. The _tail_ is the first missing number after committed entries. |
 | Snapshot objects | Rolled-up older history, created by maintenance so reads do not replay the whole log forever. |
 | Index objects | Small marker files that make lookups fast, so a read does not have to scan everything. |

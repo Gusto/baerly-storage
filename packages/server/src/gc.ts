@@ -62,22 +62,15 @@
  *     the lex-first 20 are `0, 1, 10, 100–109, 11, 110–115`: four
  *     stale. Sweep those and the window is `100–119`, twenty live
  *     keys, zero marks, and seqs `2–9` + `12–99` are unreachable.
- *   - `orphan-snapshot`: a `<collectionPrefix>/snapshot/L<n>/...` key not
- *     equal to `current.snapshot`. Each compactor run replaces the
- *     pointer; the prior file becomes unreferenced. **Not cursored** —
- *     the one category the test above exempts, and the exemption rests
- *     on CARDINALITY, not ordering: exactly ONE key under `snapshot/`
- *     is permanently undeletable (the live `current.snapshot`), so for
- *     any `maxMarks >= 2` the window can never be all-undeletable
- *     however the keys sort. Ordering is a second, weaker argument —
- *     today `snapshotKey` zero-pads both seq fields to a fixed width
- *     and `compactor.ts` always passes `minSeq = 0`, so lex order
- *     equals numeric order and the live snapshot (highest `maxSeq`)
- *     sorts LAST. Don't lean on that one: `snapshot.ts` documents the
- *     `L<n>` level prefix as forward-compatible with L0..L8 rolling
- *     merges, and an L0 key would sort before the L9 live snapshot.
- *     The cardinality argument survives that; the ordering one does
- *     not.
+ *   - `orphan-snapshot`: a canonical
+ *     `<collectionPrefix>/snapshot/L9/...` key not equal to
+ *     `current.snapshot`. Each compactor run replaces the pointer; the
+ *     prior file becomes unreferenced. **Not cursored** — within the
+ *     protocol-written keyspace exactly ONE key under `snapshot/` is
+ *     permanently undeletable (the live `current.snapshot`), so for any
+ *     `maxMarks >= 2` the window cannot be all-undeletable. Opaque keys
+ *     are ignored during mark and evicted from legacy ledgers without a
+ *     DELETE; no current writer emits one.
  *
  * **`content/` is deliberately NOT a third category.** Legacy
  * `<collectionPrefix>/content/<sha>.json` side objects — written by
@@ -359,20 +352,18 @@ export const runGc = async (
     `${collectionPrefix}/snapshot/`,
     listWindow(maxMarks, undefined, signal),
   )) {
-    // Liveness HERE is exact key equality with the active pointer,
+    // Liveness starts with exact key equality with the active pointer,
     // never a parsed key range — a snapshot installed directly by
     // `admin restore` or by a replacement fold is live whatever its seq
     // fields say, and one whose name parses as "current-looking" is
     // still dead if `current.snapshot` does not name it.
-    //
-    // That is not in tension with `parseMaxSeqFromCanonicalSnapshotKey`
-    // in the sweep below, which answers a different question. The mark
-    // asks "is this the live snapshot?"; the sweep asks "can this
-    // already-marked, already-graced candidate still become live in a
-    // later generation?" — and only there is a canonical key range
-    // sound, because it is used to RETAIN on doubt rather than to
-    // authorise a DELETE.
     if (entry.key === current.snapshot) {
+      continue;
+    }
+    // Only the exact key shape emitted by `snapshotKey` can ever carry
+    // deletion authority. Leave opaque objects on the bucket without
+    // spending bounded-ledger capacity on an entry that sweep cannot classify.
+    if (parseMaxSeqFromCanonicalSnapshotKey(entry.key, collectionPrefix) === null) {
       continue;
     }
     if (known.has(entry.key)) {
@@ -416,8 +407,7 @@ export const runGc = async (
   const fenceFloor = logSeqStartOf(fenceCurrent);
   const rescuedKeys = new Set<string>();
   const staleGenerationKeys = new Set<string>();
-  const evictedLegacyKeys = new Set<string>();
-  const evictedUnauthorizedStaleLogKeys = new Set<string>();
+  const evictedKeys = new Set<string>();
   for (const candidate of sweepCandidates) {
     // Arm 0 — legacy eviction. A v0.6-era `orphan-content` candidate names a
     // `content/<sha>.json` side object this build cannot classify and never
@@ -434,7 +424,7 @@ export const runGc = async (
     // bucket's first post-upgrade pass. Eviction frees no bytes and signals
     // nothing wrong, so it drives no counter at all.
     if (candidate.reason === "orphan-content") {
-      evictedLegacyKeys.add(candidate.key);
+      evictedKeys.add(candidate.key);
       continue;
     }
     // Arm 1 — stale-log deletion authority. A persisted candidate authorizes
@@ -449,10 +439,22 @@ export const runGc = async (
       candidate.reason === "stale-log" &&
       parseSeqFromCanonicalLogKey(candidate.key, collectionPrefix) === null
     ) {
-      evictedUnauthorizedStaleLogKeys.add(candidate.key);
+      evictedKeys.add(candidate.key);
       continue;
     }
-    // Arm 2 — the generation fence, checked before liveness and for
+    // Arm 2 — snapshot deletion authority. Unknown levels, malformed names,
+    // inverted ranges, and cross-prefix keys provide no floor proof, so GC
+    // never deletes the object they name. Resolve legacy ledger entries
+    // immediately: retaining an opaque candidate would let a full first-N
+    // ledger discard every later useful mark indefinitely.
+    if (
+      candidate.reason === "orphan-snapshot" &&
+      parseMaxSeqFromCanonicalSnapshotKey(candidate.key, collectionPrefix) === null
+    ) {
+      evictedKeys.add(candidate.key);
+      continue;
+    }
+    // Arm 3 — the generation fence, checked before liveness and for
     // every reason. A candidate marked under a manifest that has since
     // been replaced was judged against a keyspace that no longer
     // exists: `baerly admin restore --force` truncates the log, reseeds
@@ -469,7 +471,7 @@ export const runGc = async (
       rescuedKeys.add(candidate.key);
       continue;
     }
-    // Arm 3 — a stale-log candidate that reads live again. Same
+    // Arm 4 — a stale-log candidate that reads live again. Same
     // generation, so this is not a reseed; the floor can still have
     // been rewound by a `--force` that reused the nonce, and a mark
     // taken `GC_GRACE_PERIOD_MILLIS` ago is stale enough to be worth
@@ -483,18 +485,13 @@ export const runGc = async (
       continue;
     }
   }
-  // All four arms resolve a candidate OUT of the ledger without deleting
+  // All five arms resolve a candidate OUT of the ledger without deleting
   // anything. That is what stops the ledger starving: `mergeGcPending`
   // keeps the FIRST `GC_MAX_PENDING_CANDIDATES` entries, so a
   // permanently-live candidate — or an unclassifiable legacy one — at the
   // head would otherwise wedge it forever and silently discard every later
   // mark.
-  const droppedKeys = new Set([
-    ...staleGenerationKeys,
-    ...rescuedKeys,
-    ...evictedLegacyKeys,
-    ...evictedUnauthorizedStaleLogKeys,
-  ]);
+  const droppedKeys = new Set([...staleGenerationKeys, ...rescuedKeys, ...evictedKeys]);
   const toSweep: GcCandidate[] = [];
   const remaining: GcCandidate[] = [];
   for (const cand of sweepCandidates) {
@@ -681,8 +678,9 @@ const parseSeqFromCanonicalLogKey = (key: string, collectionPrefix: string): num
 
 /**
  * Parse the exclusive `max_seq` from the exact key shape emitted by
- * `snapshotKey`. Unknown levels/layouts and invalid ranges stay opaque so GC
- * retains them rather than guessing at a generation boundary.
+ * `snapshotKey`. Unknown levels/layouts and invalid ranges stay opaque: GC
+ * never deletes the object and never retains its candidate in the bounded
+ * ledger.
  */
 const parseMaxSeqFromCanonicalSnapshotKey = (
   key: string,

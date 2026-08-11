@@ -638,7 +638,7 @@ and stable; their JSDoc is the canonical reference.
   (`packages/server/src/snapshot.ts`) — load a content-addressed
   snapshot, verify its SHA-256 against the filename, and return the
   docs as a `Map<_id, body>`. Used internally by the compactor,
-  reader, GC, rebuild-index, export, and fsck paths. Prefer this over
+  reader, rebuild-index, export, and fsck paths. Prefer this over
   hand-rolling a snapshot reader — the function bakes in the hash
   check, schema-version gate, and collection-mismatch guard.
 
