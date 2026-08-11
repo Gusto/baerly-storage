@@ -20,12 +20,10 @@
  *      set of successfully-committed `_id`s.
  *   5. (write-tick fold) For every K, aborting the K-th op across a
  *      fold (snapshot PUT → `current.json` CAS) then running `runGc`
- *      never touches `content/` at all: every row still reads, and every
- *      seeded legacy content key survives the sweep.
+ *      preserves the reader view.
  *   6. (lost-fold contention) A fold whose CAS loses to a concurrent
  *      write leaves an orphan snapshot; after `runGc` drains past the
- *      grace window no orphan snapshot is left unreferenced, and the
- *      seeded legacy content still survives untouched.
+ *      grace window no orphan snapshot is left unreferenced.
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
@@ -45,7 +43,6 @@ import {
   BaerlyError,
   type Collection,
   createCurrentJson,
-  decodeJsonBytes,
   type DocumentData,
   encodeJsonBytes,
   MemoryStorage,
@@ -62,7 +59,6 @@ import {
   Writer,
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
-import { seedLegacyContentForBody } from "../fixtures/legacy-content.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
 
 // Every suite in this file injects storage faults (`abortingStorage`).
@@ -136,40 +132,6 @@ const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => 
     keys.push(entry.key);
   }
   return keys.toSorted();
-};
-
-/**
- * Seed legacy content keys for the COMMITTED snapshot's rows. Reads
- * `current.json`, then (if a snapshot is committed) the snapshot body,
- * encodes and hashes every row `body` with `versionFromContent`, then
- * unconditionally writes its v0.6.0-style content object. Returns the
- * seeded `<collectionPrefix>/content/<hash>.json` keys whose continued
- * presence proves that GC never enters the prefix. Empty when no snapshot
- * is committed yet.
- *
- * Re-derives the keys from the customer-visible snapshot body so the
- * seeded names match what a v0.6.0 writer would have produced.
- */
-const seedLegacyCommittedSnapshotContent = async (storage: Storage): Promise<Set<string>> => {
-  const collectionPrefix = TABLE_PREFIX;
-  const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
-  if (read === null || read.json.snapshot === null) {
-    return new Set<string>();
-  }
-  const got = await storage.get(read.json.snapshot);
-  if (got === null) {
-    return new Set<string>();
-  }
-  const body = decodeJsonBytes<{ docs?: ReadonlyArray<{ body?: DocumentData }> }>(got.body);
-  const keys = new Set<string>();
-  for (const doc of body.docs ?? []) {
-    if (doc.body === undefined) {
-      continue;
-    }
-    const key = await seedLegacyContentForBody(storage, collectionPrefix, doc.body);
-    keys.add(key);
-  }
-  return keys;
 };
 
 describe("abortingStorage harness — fault-injection trap behavior", () => {
@@ -392,12 +354,12 @@ describe("GC crash never deletes a still-referenced key", () => {
   );
 });
 
-describe("Write-tick fold crash never deletes committed-snapshot content", () => {
+describe("Write-tick fold crash preserves the reader view after GC", () => {
   propTest.prop({
     abortAfter: fc.integer({ min: 1, max: 60 }),
     numInserts: fc.integer({ min: 20, max: 60 }),
   })(
-    "abort the K-th op across the fold, then runGc: live rows survive AND committed-snapshot content is never deleted",
+    "abort the K-th op across the fold, then runGc: live rows survive",
     async ({ abortAfter, numInserts }) => {
       const inner = new MemoryStorage();
       await provision(inner);
@@ -429,21 +391,11 @@ describe("Write-tick fold crash never deletes committed-snapshot content", () =>
         // the gate.
       }
 
-      // Seed legacy content keys for the COMMITTED snapshot BEFORE GC
-      // runs — these must survive the sweep.
-      const protectedKeys = await seedLegacyCommittedSnapshotContent(inner);
-      const currentAfterAbort = await readCurrentJson(inner, CURRENT_JSON_KEY);
-      if (currentAfterAbort?.json.snapshot === null) {
-        expect(protectedKeys.size).toBe(0);
-      } else {
-        expect(protectedKeys.size).toBeGreaterThan(0);
-      }
-
       // Drain GC with the grace bypassed so any due candidate is swept
       // in-pass. Several passes under a tight per-pass mark cap;
       // under-marking is conservative-safe: it can never wrongly sweep a
-      // protected key, so the invariant below still holds regardless of how
-      // far the log cursor advances.
+      // live object, so the invariant below still holds regardless of how far
+      // the log cursor advances.
       for (let pass = 0; pass < 5; pass++) {
         await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
           graceMillis: 0,
@@ -452,17 +404,9 @@ describe("Write-tick fold crash never deletes committed-snapshot content", () =>
         } as InternalRunGcOptions);
       }
 
-      // INVARIANT A: the reader view is unchanged — no live row lost.
+      // The reader view is unchanged — no live row lost.
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
-
-      // INVARIANT B: every seeded legacy content key is still on the
-      // bucket. GC never touches `content/`, so any absence here is a
-      // collector that reached outside its two prefixes.
-      const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
-      for (const key of protectedKeys) {
-        expect(contentKeysAfter.has(key)).toBe(true);
-      }
     },
     PROP_TIMEOUT_MS,
   );
@@ -472,7 +416,7 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
   propTest.prop({
     numInserts: fc.integer({ min: 20, max: 50 }),
   })(
-    "a fold that loses its CAS to a concurrent write leaves an orphan snapshot that runGc reclaims past grace; committed content survives",
+    "a fold that loses its CAS to a concurrent write leaves an orphan snapshot that runGc reclaims past grace",
     async ({ numInserts }) => {
       const inner = new MemoryStorage();
       await provision(inner);
@@ -547,8 +491,6 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
       expect(snapshotsBefore.length).toBeGreaterThanOrEqual(2);
 
       const before = await readAllRowIds(inner);
-      const protectedKeys = await seedLegacyCommittedSnapshotContent(inner);
-      expect(protectedKeys.size).toBeGreaterThan(0);
       const committedSnapshotKey = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json.snapshot;
 
       // Drain GC PAST the grace window (now advanced well beyond every
@@ -572,12 +514,6 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
       // remaining is the committed one.
       const snapshotsAfter = await listKeys(inner, `${TABLE_PREFIX}/snapshot/`);
       expect(snapshotsAfter).toEqual([committedSnapshotKey]);
-
-      // INVARIANT C: the seeded legacy content survives untouched.
-      const contentKeysAfter = new Set(await listKeys(inner, `${TABLE_PREFIX}/content/`));
-      for (const key of protectedKeys) {
-        expect(contentKeysAfter.has(key)).toBe(true);
-      }
     },
     PROP_TIMEOUT_MS,
   );

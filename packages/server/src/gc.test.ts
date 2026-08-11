@@ -329,7 +329,7 @@ describe("runGc", () => {
   test("rescues a snapshot that becomes current after the initial manifest read", async () => {
     const inner = new MemoryStorage();
     await bootstrap(inner, KEY);
-    const newSnapshot = `${PREFIX}/snapshot/L9/newly-current.json`;
+    const newSnapshot = snapshotKey(PREFIX, 0, 0, "e".repeat(64));
     const deleted: string[] = [];
     let advanced = false;
     const storage: Storage = {
@@ -521,7 +521,7 @@ describe("runGc", () => {
     expect(pending?.json.candidates.map((entry) => entry.key)).toContain(candidate);
   });
 
-  test("retains malformed and unknown-layout due snapshot candidates", async () => {
+  test("evicts malformed and unknown-layout snapshot candidates without deleting objects", async () => {
     const inner = new MemoryStorage();
     await createCurrentJson(
       inner,
@@ -546,18 +546,76 @@ describe("runGc", () => {
       last_swept_at: "",
     });
 
-    const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+    const { storage, trace } = tracingStorage(inner);
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
       graceMillis: 0,
       maxSweepsPerRun: 10,
     } as InternalRunGcOptions);
 
     expect(result.swept).toBe(0);
+    expect(trace.deletes).toEqual([]);
     await expect(inner.get(malformed)).resolves.not.toBeNull();
     await expect(inner.get(unknownLayout)).resolves.not.toBeNull();
     const pending = await readGcPending(inner, PENDING_KEY);
-    expect(pending?.json.candidates.map((entry) => entry.key).toSorted()).toEqual(
-      [malformed, unknownLayout].toSorted(),
-    );
+    expect(pending?.json.candidates).toEqual([]);
+  });
+
+  test("does not mark non-canonical snapshot objects", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const canonical = snapshotKey(PREFIX, 0, 1, "a".repeat(64));
+    const malformed = `${PREFIX}/snapshot/L9/not-a-canonical-snapshot.json`;
+    const unknownLayout = `${PREFIX}/snapshot/L8/000000000000-000000000001-${"b".repeat(64)}.json`;
+    for (const key of [canonical, malformed, unknownLayout]) {
+      await inner.put(key, new TextEncoder().encode("{}"));
+    }
+
+    const result = await runGc({ storage: inner, currentJsonKey: KEY });
+
+    expect(result.marked.orphan_snapshot).toBe(1);
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual([canonical]);
+    for (const key of [canonical, malformed, unknownLayout]) {
+      await expect(inner.get(key)).resolves.not.toBeNull();
+    }
+  });
+
+  test("evicting a full opaque snapshot ledger lets a stale log age through grace", async () => {
+    const inner = new MemoryStorage();
+    await createCurrentJson(inner, KEY, logStateCurrentJson({ log_seq_start: 1, tail_hint: 1 }));
+    await seedLogEntry(inner, PREFIX, 0);
+    const opaqueCandidates = Array.from({ length: GC_MAX_PENDING_CANDIDATES }, (_, index) => ({
+      key: `${PREFIX}/snapshot/L8/${index.toString().padStart(12, "0")}.json`,
+      due_at: "2000-01-01T00:00:00.000Z",
+      reason: "orphan-snapshot" as const,
+      generation: LOG_STATE_GENERATION,
+    }));
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: opaqueCandidates,
+      last_swept_at: "",
+    });
+    let clock = new Date("2026-01-01T00:00:00.000Z");
+    const options = {
+      graceMillis: 1_000,
+      now: (): Date => clock,
+    } as InternalRunGcOptions;
+
+    const first = await runGc({ storage: inner, currentJsonKey: KEY }, options);
+
+    expect(first.pendingDepth).toBe(1);
+    const marked = await readGcPending(inner, PENDING_KEY);
+    expect(marked?.json.candidates.map((candidate) => candidate.key)).toEqual([
+      `${PREFIX}/log/0.json`,
+    ]);
+    await expect(inner.get(`${PREFIX}/log/0.json`)).resolves.not.toBeNull();
+
+    clock = new Date("2026-01-01T00:00:02.000Z");
+    const second = await runGc({ storage: inner, currentJsonKey: KEY }, options);
+
+    expect(second.swept).toBe(1);
+    expect(second.pendingDepth).toBe(0);
+    await expect(inner.get(`${PREFIX}/log/0.json`)).resolves.toBeNull();
   });
 
   test("bounds new marks per category at maxMarksPerRun", async () => {
