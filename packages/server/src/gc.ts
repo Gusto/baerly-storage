@@ -65,12 +65,14 @@
  *   - `orphan-snapshot`: a canonical
  *     `<collectionPrefix>/snapshot/L9/...` key not equal to
  *     `current.snapshot`. Each compactor run replaces the pointer; the
- *     prior file becomes unreferenced. **Not cursored** — within the
- *     protocol-written keyspace exactly ONE key under `snapshot/` is
+ *     prior file becomes unreferenced. **Not cursored** — discovery is
+ *     scoped to this binary's owned `snapshot/L9/` namespace. Within
+ *     that scanned, protocol-written keyspace at most ONE key is
  *     permanently undeletable (the live `current.snapshot`), so for any
- *     `maxMarks >= 2` the window cannot be all-undeletable. Opaque keys
- *     are ignored during mark and evicted from legacy ledgers without a
- *     DELETE; no current writer emits one.
+ *     `maxMarks >= 2` the window cannot be all-undeletable. Future L0-L8
+ *     layouts stay opaque to this binary and do not consume the bounded
+ *     mark window. Opaque L9 keys are ignored during mark and evicted
+ *     from legacy ledgers without a DELETE; no current writer emits one.
  *
  * **`content/` is deliberately NOT a third category.** Legacy
  * `<collectionPrefix>/content/<sha>.json` side objects — written by
@@ -349,7 +351,7 @@ export const runGc = async (
   // is always the lexicographic first `maxMarks`. See the module JSDoc
   // for why this phase is the one exemption.
   for await (const entry of storage.list(
-    `${collectionPrefix}/snapshot/`,
+    `${collectionPrefix}/snapshot/L9/`,
     listWindow(maxMarks, undefined, signal),
   )) {
     // Liveness starts with exact key equality with the active pointer,
