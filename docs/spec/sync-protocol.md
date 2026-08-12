@@ -527,21 +527,24 @@ These are the load-bearing rules.
     visibility from `seq`, the snapshot, the trusted log range, and the
     forward-probe.
 12. **The fold floor is monotone.** `current.json`'s `log_seq_start`
-    never decreases in steady state. `casUpdateCurrentJson`
-    (`packages/protocol/src/coordination/current-json.ts`) rejects a
-    mutator that lowers it with `BaerlyError{code:"Internal"}`; equality
-    is permitted, so a `tail_hint` refresh or a `last_warned_seq` stamp
-    holds the floor fixed. Two floor writers bypass that helper
-    (invariant 6 names the `current.json` writers). The compactor's fold
-    CAS (`packages/server/src/compactor.ts`) must CAS on the etag of the
-    read it folded from, so it issues its own `If-Match` PUT; it stays
-    monotone by construction instead, because its fold end is
-    `min(probedTail, log_seq_start + maxEntriesPerRun)` and both the
-    probed tail and the validated budget are `>= 0` relative to the
-    pre-fold floor. `baerly admin restore --force` is the deliberate
-    operator exemption: it reseeds a truncated collection to one past
-    the highest _surviving_ log object, which can sit below the old
-    floor when a bounded GC sweep has left sub-floor log objects in
+    never decreases in steady state. `assertCurrentJsonTransition`
+    (`packages/protocol/src/coordination/current-json.ts`) is the single
+    enforcement point: it rejects a transition that lowers the floor
+    with `BaerlyError{code:"Internal"}`. Equality is permitted, so a
+    `tail_hint` refresh, a bounded probe checkpoint, or a
+    `last_warned_seq` stamp holds the floor fixed.
+    `casUpdateCurrentJson` routes its mutator through the validator, and
+    every writer that bypasses that helper calls the validator directly
+    before publishing: the compactor's fold CAS and probe checkpoint
+    (`packages/server/src/compactor.ts`), the `claimWriter` fence bump,
+    and the `admin restore` tail stamp (invariant 6 names the
+    `current.json` writers). The compactor still issues its own
+    `If-Match` PUT because its CAS must be tied to the etag of the read
+    it folded from — centralizing transition admission does not
+    centralize publication. `baerly admin restore --force` is the
+    deliberate operator exemption: it reseeds a truncated collection to
+    one past the highest _surviving_ log object, which can sit below the
+    old floor when a bounded GC sweep has left sub-floor log objects in
     place. That is sound because the reseed value is strictly greater
     than every log object still present, so the committing `log/<seq>`
     create cannot collide with the old generation.

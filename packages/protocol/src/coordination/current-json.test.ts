@@ -6,6 +6,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
   type CurrentJsonRead,
+  assertCurrentJsonTransition,
   casUpdateCurrentJson,
   createCurrentJson,
   encodeJsonBytes,
@@ -26,6 +27,30 @@ const seedJson = (overrides: Partial<CurrentJson> = {}): CurrentJson => ({
   snapshot_bytes: 0,
   snapshot_rows: 0,
   ...overrides,
+});
+
+describe("assertCurrentJsonTransition", () => {
+  const base = (logSeqStart: number): CurrentJson =>
+    seedJson({ tail_hint: 1_000_000, log_seq_start: logSeqStart });
+
+  plainTest("permits an advancing floor", () => {
+    expect(() => assertCurrentJsonTransition(base(10), base(20), "k")).not.toThrow();
+  });
+
+  plainTest("permits an unchanged floor", () => {
+    expect(() => assertCurrentJsonTransition(base(10), base(10), "k")).not.toThrow();
+  });
+
+  plainTest("rejects a lowered floor with Internal", () => {
+    try {
+      assertCurrentJsonTransition(base(20), base(10), "k");
+      expect.unreachable("expected a throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      expect((error as BaerlyError).code).toBe("Internal");
+      expect((error as BaerlyError).message).toContain("log_seq_start must not decrease");
+    }
+  });
 });
 
 describe("wire-contract constants", () => {

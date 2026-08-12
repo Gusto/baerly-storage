@@ -38,6 +38,7 @@ import {
   type CurrentJson,
   type DocumentData,
   type MetricsRecorder,
+  assertCurrentJsonTransition,
   encodeJsonBytes,
   logSeqStartOf,
   BaerlyError,
@@ -249,12 +250,12 @@ export const compact = async (
   // `admin restore --force`, which reads `current.json` before reaching
   // its own floor exemption. Nothing shipped can repair that.
   //
-  // Validating here rather than asserting the floor at the fold also
+  // Validating here rather than leaning on the Step 7 floor guard also
   // buys the monotonicity invariant outright: with `maxPerRun >= 0` and
   // `nextSeq >= logSeqStartBefore` (guaranteed by `probeFloor`),
-  // `foldEnd >= logSeqStartBefore` holds by construction, so the floor
-  // cannot regress here — and a rejected run costs no orphan snapshot,
-  // because nothing has been written yet. The ceilings are deliberately
+  // `foldEnd >= logSeqStartBefore` holds by construction, so that guard
+  // never fires — and a rejected run costs no orphan snapshot, because
+  // nothing has been written yet. The ceilings are deliberately
   // not checked: a NaN there fails the viability comparisons closed
   // (defer), which is the safe direction.
   const requireSeqOption = (name: string, value: number): void =>
@@ -317,6 +318,7 @@ export const compact = async (
         ...current,
         tail_hint: Math.max(current.tail_hint, discoveredTail),
       };
+      assertCurrentJsonTransition(current, checkpoint, currentJsonKey);
       const checkpointBody = encodeJsonBytes(checkpoint);
       const checkpointCasOpts: StoragePutOptions = {
         ifMatch: baseEtag,
@@ -360,9 +362,11 @@ export const compact = async (
 
   // `foldEnd >= logSeqStartBefore` by construction: `maxPerRun` is a
   // validated non-negative integer and `nextSeq >= logSeqStartBefore`
-  // via `probeFloor`. Step 7's CAS bypasses `casUpdateCurrentJson`'s
-  // floor guard (it must If-Match the etag we folded from), so that
-  // construction is what keeps this writer monotone.
+  // via `probeFloor`. Step 7's CAS can't route through
+  // `casUpdateCurrentJson` (it must If-Match the etag we folded from),
+  // so it calls `assertCurrentJsonTransition` directly before its PUT —
+  // that check is what enforces monotonicity here; the construction
+  // above is why it never fires.
   const foldEnd = Math.min(nextSeq, logSeqStartBefore + maxPerRun);
 
   // ── Step 2. Load the previous snapshot (if any) as the fold base.
@@ -499,6 +503,7 @@ export const compact = async (
         ? Math.round(foldedSliceBytes / entriesFolded)
         : (current.mean_entry_bytes ?? 0),
   };
+  assertCurrentJsonTransition(current, next, currentJsonKey);
   const nextBody = encodeJsonBytes(next);
   const casOpts: StoragePutOptions = {
     ifMatch: baseEtag,

@@ -15,6 +15,7 @@
  *   - {@link readCurrentJson}   — fetch + parse + validate
  *   - {@link createCurrentJson} — create-only (CAS via `If-None-Match:"*"`)
  *   - {@link casUpdateCurrentJson} — read-modify-write (CAS via `If-Match`)
+ *   - {@link assertCurrentJsonTransition} — shared before/after admission
  *   - {@link claimWriter}       — bump epoch + stamp server-clock claim time
  *
  * Why the two-round-trip claim protocol: `claimed_at` MUST come from
@@ -90,9 +91,8 @@ export interface CurrentJson {
    * Invariants:
    *   - `0 <= log_seq_start <= tail_hint`
    *   - `log_seq_start` advances monotonically (never decreases).
-   *     {@link casUpdateCurrentJson} rejects a mutator that lowers it;
-   *     `compact()` is monotone by construction once its seq-arithmetic
-   *     options are validated at the seam; `baerly admin restore
+   *     {@link assertCurrentJsonTransition} rejects a writer that lowers
+   *     it; `baerly admin restore
    *     --force` is the deliberate truncate exemption.
    *   - `log_seq_start > 0` implies `snapshot !== null` (the snapshot
    *     covers `[0, log_seq_start)`) — except after a `--force`
@@ -317,6 +317,43 @@ export async function createCurrentJson(
 }
 
 /**
+ * Admission control for a `current.json` state transition.
+ *
+ * Distinct from {@link assertCurrentJson}, which validates one state in
+ * isolation and therefore structurally cannot express a rule about a
+ * pair of states. Every invariant that compares before/after belongs
+ * here, and every writer that bypasses {@link casUpdateCurrentJson}
+ * MUST call it directly — "monotone by construction" is an argument
+ * that has to be re-made every time the writer is reimplemented, and
+ * it does not survive a chunk-aware compactor or a read-banking path.
+ *
+ * `Internal`, not `InvalidResponse`: the fault is a local caller's
+ * mutator, not a malformed storage response, and `InvalidResponse` maps
+ * to HTTP 502 ("storage upstream failed"), which would misattribute a
+ * programmer error to the bucket.
+ *
+ * @throws BaerlyError{code:"Internal"} on any violated transition rule.
+ * @see docs/spec/sync-protocol.md invariant 12
+ */
+export const assertCurrentJsonTransition = (
+  before: CurrentJson,
+  after: CurrentJson,
+  key: string,
+): void => {
+  // A regressed floor makes a stale pre-fold reader cursor pass the
+  // `cursorSeq < log_seq_start` re-bootstrap check (http/since.ts)
+  // instead of failing it. Equality is permitted: the `tail_hint`
+  // refresh and the `last_warned_seq` stamp in maintenance.ts both hold
+  // the floor fixed.
+  if (after.log_seq_start < before.log_seq_start) {
+    throw new BaerlyError(
+      "Internal",
+      `current.json at ${key}: log_seq_start must not decrease (${String(before.log_seq_start)} → ${String(after.log_seq_start)})`,
+    );
+  }
+};
+
+/**
  * Read-modify-write `current.json` under CAS. The `mutator` receives
  * a deep clone of the current parsed JSON (mutate freely) and returns
  * the new state. The new state is written with `If-Match:
@@ -338,12 +375,9 @@ export async function createCurrentJson(
  *         `last_warned_seq` stamp holds it fixed). No *production*
  *         mutator writes the floor, so no shipping caller can regress
  *         it; this guards future ones, and the protocol suite
- *         exercises the branch directly. Two floor writers bypass this
- *         function and are NOT covered by it: `compact()`, which must
- *         CAS on the etag of the read it folded from and so issues its
- *         own If-Match PUT (its fold end cannot dip below the pre-fold
- *         floor once its options are validated at the seam), and
- *         `baerly admin restore --force`, the deliberate truncate
+ *         exercises the branch directly. The compactor calls the same
+ *         transition validator before its direct `If-Match` PUT.
+ *         `baerly admin restore --force` is the deliberate truncate
  *         exemption.
  */
 export async function casUpdateCurrentJson(
@@ -365,20 +399,7 @@ export async function casUpdateCurrentJson(
   // targets Node ≥24 so it is safe.
   const next = mutator(structuredClone(existing.json));
   assertCurrentJson(next, key);
-  // Floor monotonicity is an admission-control invariant, not a shape
-  // one: it needs both sides of the transition, so `assertCurrentJson`
-  // cannot see it. A regressed floor makes a stale pre-fold reader
-  // cursor pass the `cursorSeq < log_seq_start` re-bootstrap check
-  // (http/since.ts) instead of failing it. `Internal`, not
-  // `InvalidResponse`: the fault is a local caller's mutator, not a
-  // malformed storage response. See `CurrentJson.log_seq_start` and
-  // docs/spec/sync-protocol.md invariant 12.
-  if (next.log_seq_start < existing.json.log_seq_start) {
-    throw new BaerlyError(
-      "Internal",
-      `current.json at ${key}: log_seq_start must not decrease (${String(existing.json.log_seq_start)} → ${String(next.log_seq_start)})`,
-    );
-  }
+  assertCurrentJsonTransition(existing.json, next, key);
   const body = encodeJson(next);
   const putOpts: StoragePutOptions = {
     ifMatch: existing.etag,
@@ -457,6 +478,7 @@ export async function claimWriter(
       }),
     },
   };
+  assertCurrentJsonTransition(existing.json, provisional, key);
   const body = encodeJson(provisional);
   const putOpts: StoragePutOptions = {
     ifMatch: existing.etag,
@@ -484,6 +506,7 @@ export async function claimWriter(
       claimed_at: result.serverDate.toISOString(),
     },
   };
+  assertCurrentJsonTransition(provisional, stamped, key);
   const stampedBody = encodeJson(stamped);
   const stampPutOpts: StoragePutOptions = {
     ifMatch: result.etag,

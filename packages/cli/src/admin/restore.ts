@@ -56,6 +56,7 @@
 import { createInterface } from "node:readline";
 import { type ArgsDef } from "citty";
 import {
+  assertCurrentJsonTransition,
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -189,11 +190,10 @@ const bundle = defineBaerlySubcommand({
       baseSeq = truncatedNext;
       // FLOOR EXEMPTION — deliberate. `casUpdateCurrentJson` rejects any
       // write that lowers `log_seq_start`; this PUT is not routed through
-      // it, so `--force` can reseed BELOW the old floor. (The compactor's
-      // fold CAS also bypasses that helper, but it is monotone by
-      // construction — it validates its seq-arithmetic options at the
-      // seam rather than asserting the floor at the fold. `--force` is
-      // the only path that intentionally lowers the floor.)
+      // it, so `--force` can reseed BELOW the old floor. The compactor's
+      // fold CAS also bypasses that helper, but calls the shared transition
+      // validator directly before publication. `--force` is the only path
+      // that intentionally lowers the floor.
       //
       // Why lowering is sound. `truncatedNext` is strictly greater than
       // every log object still on the bucket, so the writer's committing
@@ -366,6 +366,7 @@ const bundle = defineBaerlySubcommand({
           afterLoad.json.log_seq_start,
         );
         const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
+        assertCurrentJsonTransition(afterLoad.json, stamped, currentJsonKey);
         await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
           ifMatch: afterLoad.etag,
           contentType: "application/json",
