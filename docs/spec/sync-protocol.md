@@ -390,8 +390,8 @@ snapshot:
    scheduled compaction can instead durably checkpoint an incomplete probe's
    certified lower bound in `tail_hint` without publishing a snapshot; a
    later pass resumes from that checkpoint. Write-tick maintenance
-   rate-limit-refreshes the hint when fold/GC work is disabled or
-   deferred, and after a GC slice that did not follow a landed fold in
+   rate-limit-refreshes the hint when fold work defers or fold/GC work is
+   disabled, and after a GC slice that did not follow a landed fold in
    the same tick — a landed fold has already published a hint at or
    past the observed tail, so refreshing again would rewrite identical
    bytes. Ordinary writer commits never touch

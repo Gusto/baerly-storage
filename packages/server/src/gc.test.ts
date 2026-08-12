@@ -340,7 +340,7 @@ describe("runGc", () => {
         await inner.delete(key, opts);
       },
       list(prefix, opts) {
-        if (prefix !== `${PREFIX}/snapshot/`) {
+        if (prefix !== `${PREFIX}/snapshot/L9/`) {
           return inner.list(prefix, opts);
         }
         return (async function* (): AsyncIterable<StorageListEntry> {
@@ -578,6 +578,28 @@ describe("runGc", () => {
     for (const key of [canonical, malformed, unknownLayout]) {
       await expect(inner.get(key)).resolves.not.toBeNull();
     }
+  });
+
+  test("does not let an L8 window starve a canonical L9 orphan", async () => {
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const maxMarksPerRun = 20;
+    for (let index = 0; index < maxMarksPerRun; index++) {
+      await inner.put(
+        `${PREFIX}/snapshot/L8/${index.toString().padStart(12, "0")}.json`,
+        new TextEncoder().encode("{}"),
+      );
+    }
+    const canonical = snapshotKey(PREFIX, 0, 1, "c".repeat(64));
+    await inner.put(canonical, new TextEncoder().encode("{}"));
+
+    const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+      maxMarksPerRun,
+    } as InternalRunGcOptions);
+
+    expect(result.marked.orphan_snapshot).toBe(1);
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual([canonical]);
   });
 
   test("evicting a full opaque snapshot ledger lets a stale log age through grace", async () => {
@@ -1259,7 +1281,7 @@ describe("runGc — sweep-time revalidation", () => {
 
     await runGc({ storage, currentJsonKey: KEY }, { graceMillis: 0 } as InternalRunGcOptions);
 
-    expect(trace.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/`]);
+    expect(trace.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/L9/`]);
     expect(trace.gets.filter((key) => key.includes("/content/"))).toEqual([]);
     expect(trace.deletes.filter((key) => key.includes("/content/"))).toEqual([]);
     await expect(inner.get(legacy)).resolves.not.toBeNull();
@@ -1472,7 +1494,7 @@ describe("runGc — sweep-time revalidation", () => {
     // the equality above. Keys rather than counts: a changed op is then
     // legible in the diff instead of arriving as an off-by-one.
     expect(swept.gets).toEqual([KEY, PENDING_KEY, PENDING_KEY]);
-    expect(swept.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/`]);
+    expect(swept.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/L9/`]);
     expect(swept.puts.map((p) => p.key)).toEqual([PENDING_KEY]);
   });
 

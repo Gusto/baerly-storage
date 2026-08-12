@@ -409,7 +409,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       },
     );
 
-    expect(counted.listedPrefixes()).toEqual([`${prefix}/log/`, `${prefix}/snapshot/`]);
+    expect(counted.listedPrefixes()).toEqual([`${prefix}/log/`, `${prefix}/snapshot/L9/`]);
     // Nothing on the GC path can suppress the refresh, so once the rate limit
     // is eligible the hint reaches the observed tail in a single tick.
     const current = await readCurrentJson(inner, KEY);
