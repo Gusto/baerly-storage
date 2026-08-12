@@ -7,6 +7,7 @@ export {
   type CurrentJson,
   type CurrentJsonRead,
   type WriterFence,
+  assertCurrentJsonTransition,
   casUpdateCurrentJson,
   createCurrentJson,
   logSeqStartOf,

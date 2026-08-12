@@ -89,6 +89,31 @@ describe("compact", () => {
     expect(after!.json.generation).toBe("0123456789ab");
   });
 
+  test("an incomplete-probe checkpoint holds the floor fixed", async () => {
+    // The equality arm of `assertCurrentJsonTransition`, which the
+    // checkpoint publication routes through. This PUT bumps only
+    // `tail_hint`, so tightening the shared validator to a STRICT
+    // increase would break the probe-budget checkpoint rather than any
+    // fold — this is the only compactor path that publishes without
+    // moving the floor. The advancing arm is pinned by "subsequent run
+    // extends the snapshot when new writes have landed".
+    const s = new MemoryStorage();
+    const collectionPrefix = KEY.slice(0, KEY.lastIndexOf("/"));
+    await bootstrap(s, KEY);
+    await seedLogEntries(s, collectionPrefix, 0, 100);
+
+    const res = await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 50,
+      maxEntriesPerRun: 20,
+      maxTailProbeGets: 25,
+    } as InternalCompactOptions);
+
+    expect(res.skippedReason).toBe("probe-budget-checkpointed");
+    const after = await readCurrentJson(s, KEY);
+    expect(after!.json.log_seq_start).toBe(0);
+    expect(after!.json.tail_hint).toBeGreaterThan(0);
+  });
+
   test("returns current-json-missing when current.json doesn't exist", async () => {
     const s = new MemoryStorage();
     const res = await compact({ storage: s, currentJsonKey: KEY });
