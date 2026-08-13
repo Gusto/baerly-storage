@@ -4,14 +4,13 @@
  * `.tsx` extensions so workspace source is consumable by Node's
  * native `--experimental-strip-types` runtime.
  *
- * Scope: paths without the autofix capability this script provides (bench/,
- * deploy/, examples/, scripts/, root *.config.ts). oxlint's
- * `import/extensions: ["error","always"]` rule now also covers bench/,
- * examples/, manual-e2e/, scripts/, and the root config files (via
- * verify:agent's lint glob) alongside packages/** and tests/**, but oxlint can
- * only flag a missing extension, not filesystem-resolve `./foo` to `./foo.ts`
- * vs `./foo/index.tsx` and fix it — this script's own GLOBS list below is
- * where the autofix scope for each of those paths is actually tracked.
+ * oxlint's `import/extensions: ["error","always"]` rule enforces this same
+ * requirement over `tests/`, `packages/**`, `bench/`, `examples/`,
+ * `manual-e2e/`, `scripts/`, and the root config files (verify:agent's lint
+ * glob) — but it can only flag a missing extension, not filesystem-resolve
+ * `./foo` to `./foo.ts` vs `./foo/index.tsx` and rewrite it. This script
+ * provides that autofix for the paths listed in GLOBS below, independent of
+ * oxlint's coverage.
  *
  *   node scripts/add-ts-extensions.mjs           # apply
  *   node scripts/add-ts-extensions.mjs --check   # exit non-zero on diff
