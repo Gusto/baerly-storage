@@ -185,9 +185,10 @@ field loads unconditionally at launch instead — silently.
   which consume the workspace `exports."."` → `./src/*.ts` paths
   directly — can resolve relative specifiers. Enforced by
   `oxlint`'s `import/extensions: ["error", "always", { ignorePackages: true }]`
-  on `packages/**` + `tests/**`, and by `scripts/add-ts-extensions.mjs --check`
-  on the paths oxlint doesn't lint (`bench/`, `deploy/`, `examples/`,
-  `scripts/`, root `*.config.ts`).
+  on `packages/**` + `tests/**` + `bench/`, and by
+  `scripts/add-ts-extensions.mjs --check` on the paths oxlint doesn't lint
+  (`deploy/`, `examples/`, `scripts/`, root `*.config.ts`) plus the autofix
+  capability oxlint lacks for `bench/` itself.
 - **Branded types are load-bearing.** `UUID` and `ContentVersionId`
   exist to prevent confusion bugs. Don't paper over a type
   mismatch with `as string`; widen only if you understand why.
