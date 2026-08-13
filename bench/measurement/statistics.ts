@@ -1104,12 +1104,8 @@ export const olsQr = (input: OlsQrInput): OlsQrResult => {
     return first !== 0 && input.rows.every((row) => row.x[j] === first);
   });
 
-  // oxlint's `no-nested-ternary` is repo policy. `bench/` is outside the
-  // `pnpm verify` lint glob (`package.json` → `"lint": "oxlint tests packages"`),
-  // so CI will not catch a violation here — but the lefthook pre-commit hook
-  // lints staged files by extension, and these two files are kept clean under
-  // `oxlint bench/`. Write it as if `verify` did cover it. Const-lift the
-  // inner branch.
+  // oxlint's `no-nested-ternary` is repo policy, enforced here directly:
+  // `bench/` is in the `pnpm verify` lint glob. Const-lift the inner branch.
   const degenerateRSquared = rss === 0 ? 1 : 0;
   const rSquared = tss === 0 ? degenerateRSquared : 1 - rss / tss;
 
