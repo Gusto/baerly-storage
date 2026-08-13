@@ -223,6 +223,37 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
 export const PREIMAGE_SCAN_MAX_GETS: number = 8;
 
 /**
+ * Sequence-distance safety window retained below `log_seq_start` before
+ * `log/<seq>.json` objects become retirable.
+ *
+ * `Writer#readPreImage` is the only production reader deliberately allowed
+ * below the manifest floor it observed. Its reach is capped by
+ * {@link PREIMAGE_SCAN_MAX_GETS}; the 128x multiplier gives the current 8-GET
+ * reach a 1024-sequence window while keeping that relationship explicit if the
+ * pre-image budget changes. This window does not fence a writer paused across
+ * manifest advancement; that coordination must land before deletion is enabled.
+ *
+ * @see packages/server/src/log-retention.ts
+ * @see docs/spec/sync-protocol.md invariant 12
+ */
+export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
+
+/**
+ * Maximum log-object DELETEs a retention pass may attempt on one write tick.
+ * Twenty fits within the most constrained request budget and drains faster than
+ * the fold floor advances in steady state.
+ *
+ * Not yet wired into a write-tick call site — {@link computeRetirableRange}
+ * only computes the range today. Whichever PR adds the DELETE sweep must
+ * validate the combined per-tick subrequest total (GC sweep + fold + this)
+ * against the 50-subrequest free-tier cap, the way
+ * `maintenance-budget.test.ts` already pins for GC and fold alone.
+ *
+ * @see packages/server/src/log-retention.ts
+ */
+export const LOG_RETENTION_MAX_DELETES_PER_TICK: number = 20;
+
+/**
  * Current major version of the `current.json` control-object schema.
  * Readers MUST reject unknown versions with
  * `BaerlyError{code:"InvalidResponse"}` rather than try to coerce.
