@@ -10,6 +10,7 @@ import {
   casUpdateCurrentJson,
   createCurrentJson,
   encodeJsonBytes,
+  logDeleteFloorOf,
   logSeqStartOf,
   MemoryStorage,
   mintGeneration,
@@ -50,6 +51,87 @@ describe("assertCurrentJsonTransition", () => {
       expect((error as BaerlyError).code).toBe("Internal");
       expect((error as BaerlyError).message).toContain("log_seq_start must not decrease");
     }
+  });
+
+  describe("log_delete_floor", () => {
+    plainTest("permits an advancing delete floor", () => {
+      const before = { ...base(100), log_delete_floor: 10 };
+      const after = { ...base(100), log_delete_floor: 20 };
+      expect(() => assertCurrentJsonTransition(before, after, "k")).not.toThrow();
+    });
+
+    plainTest("rejects a lowered delete floor with Internal", () => {
+      const before = { ...base(100), log_delete_floor: 20 };
+      const after = { ...base(100), log_delete_floor: 10 };
+      try {
+        assertCurrentJsonTransition(before, after, "k");
+        expect.unreachable("expected a throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(BaerlyError);
+        expect((error as BaerlyError).code).toBe("Internal");
+        expect((error as BaerlyError).message).toContain("log_delete_floor must not decrease");
+      }
+    });
+
+    plainTest("rejects a delete floor above the live floor", () => {
+      const before = { ...base(100), log_delete_floor: 10 };
+      const after = { ...base(100), log_delete_floor: 101 };
+      try {
+        assertCurrentJsonTransition(before, after, "k");
+        expect.unreachable("expected a throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(BaerlyError);
+        expect((error as BaerlyError).code).toBe("Internal");
+        expect((error as BaerlyError).message).toContain("must not exceed log_seq_start");
+      }
+    });
+
+    // The boundary the rule permits: certifying deletion up to but not
+    // including the lowest live seq. `log_delete_floor === log_seq_start`
+    // means every folded entry is gone and nothing a reader needs was touched.
+    plainTest("permits a delete floor exactly at the live floor", () => {
+      const after = { ...base(100), log_delete_floor: 100 };
+      expect(() => assertCurrentJsonTransition(base(100), after, "k")).not.toThrow();
+    });
+
+    plainTest("treats an absent prior floor as 0 (no deleted prefix certified)", () => {
+      const after = { ...base(100), log_delete_floor: 5 };
+      expect(() => assertCurrentJsonTransition(base(100), after, "k")).not.toThrow();
+    });
+
+    // A pre-field manifest on both sides must be admitted. Kills
+    // `<` → `<=` on the monotonicity check, which would read 0 → 0 as a
+    // decrease and stall every write to every bucket that has never set
+    // the field — i.e. all of them today.
+    plainTest("accepts an absent floor on both sides", () => {
+      expect(() => assertCurrentJsonTransition(base(100), base(100), "k")).not.toThrow();
+    });
+
+    // Kills the mutant that drops the `?? 0` when reading the AFTER side:
+    // `undefined < 20` is false, so an unguarded comparison would let a
+    // present floor silently regress to absent.
+    plainTest("rejects dropping a present delete floor back to absent", () => {
+      const before = { ...base(100), log_delete_floor: 20 };
+      try {
+        assertCurrentJsonTransition(before, base(100), "k");
+        expect.unreachable("expected a throw");
+      } catch (error) {
+        expect((error as BaerlyError).code).toBe("Internal");
+        expect((error as BaerlyError).message).toContain("log_delete_floor must not decrease");
+      }
+    });
+  });
+});
+
+describe("logDeleteFloorOf", () => {
+  plainTest("absent decodes to 0 (no deleted prefix certified)", () => {
+    expect(logDeleteFloorOf(seedJson({ tail_hint: 1_000_000, log_seq_start: 10 }))).toBe(0);
+  });
+
+  plainTest("present is returned as-is", () => {
+    expect(
+      logDeleteFloorOf(seedJson({ tail_hint: 1_000_000, log_seq_start: 10, log_delete_floor: 7 })),
+    ).toBe(7);
   });
 });
 
@@ -1601,6 +1683,76 @@ describe("assertCurrentJson — last_warned_seq guard", () => {
     await putRaw(s, "k", { ...rawSeed(), last_warned_seq: 100 });
     const got = await readCurrentJson(s, "k");
     expect(got!.json.last_warned_seq).toBe(100);
+  });
+});
+
+// Shape only, deliberately. The `log_delete_floor <= log_seq_start` bound is
+// transition-scoped (`assertCurrentJsonTransition`) and NOT checked here —
+// `readCurrentJson` sits on `admin restore`'s own repair path, so rejecting a
+// single state on that bound would leave an out-of-bound floor with no
+// in-product way out. The last case below pins that the read succeeds.
+describe("assertCurrentJson — log_delete_floor guard", () => {
+  plainTest("accepts record with log_delete_floor absent (undefined)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", rawSeed());
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_delete_floor).toBeUndefined();
+  });
+
+  plainTest("accepts log_delete_floor: 0 (boundary)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_delete_floor: 0 });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_delete_floor).toBe(0);
+  });
+
+  plainTest("rejects log_delete_floor: -1 (negative)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_delete_floor: -1 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_delete_floor/),
+    });
+  });
+
+  plainTest("rejects log_delete_floor: 1.5 (non-integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_delete_floor: 1.5 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_delete_floor/),
+    });
+  });
+
+  plainTest("rejects log_delete_floor: 'x' (string, not a number)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_delete_floor: "x" });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringMatching(/log_delete_floor/),
+    });
+  });
+
+  plainTest("accepts log_delete_floor: 100 (positive integer)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", {
+      ...rawSeed(),
+      log_delete_floor: 100,
+      log_seq_start: 100,
+      tail_hint: 100,
+    });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_delete_floor).toBe(100);
+  });
+
+  // The R1 ruling, pinned: a floor ABOVE `log_seq_start` reads back clean.
+  // Fail-safe direction is stall, not lockout — and this is what makes the
+  // clamp in the `Db` read seam reachable and testable.
+  plainTest("accepts log_delete_floor above log_seq_start (transition-scoped bound)", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), log_delete_floor: 5, log_seq_start: 0 });
+    const got = await readCurrentJson(s, "k");
+    expect(got!.json.log_delete_floor).toBe(5);
   });
 });
 

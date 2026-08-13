@@ -3,7 +3,7 @@ title: Causal-consistency property checking
 audience: spec
 doc_type: verification
 summary: Low-complexity verification of causal consistency via a known global timeline.
-last-reviewed: 2026-07-01
+last-reviewed: 2026-08-13
 tags: [protocol, verification, property-testing]
 related: [sync-protocol.md]
 ---
@@ -299,6 +299,23 @@ observed schedule on any causal-consistency violation, so a failing
 interleaving can be inspected and the injected entropy replayed by
 passing the seed back. (Timer-driven interleaving remains wall-clock
 dependent, so replay is not fully deterministic.)
+
+## Deterministic delete-floor coverage
+
+The optional `current.json.log_delete_floor` safety envelope is covered by
+deterministic protocol, reader-seam, and restore tests:
+
+- optional-field shape and the absent-to-`0` default;
+- transition monotonicity for both `log_seq_start` and
+  `log_delete_floor`;
+- the transition bound `log_delete_floor <= log_seq_start`;
+- distinct fold-floor versus certified-delete-floor diagnostics;
+- clamping malformed stored values above `log_seq_start`; and
+- `baerly admin restore --force` resetting the field when it reseeds a
+  new generation below the old certified floor.
+
+No deletion pass writes `log_delete_floor` yet, so there is currently no
+deletion/publication crash schedule to model.
 
 ## Conclusion
 

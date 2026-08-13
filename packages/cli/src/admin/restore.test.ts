@@ -244,7 +244,7 @@ describe("baerly admin restore", () => {
     // is strictly above every log object still present and the committing
     // `log/<seq>` create cannot collide with the old generation. The
     // reseed sets `snapshot: null`, so the old generation becomes
-    // unreachable to every reader — the intent of truncating. Sub-floor
+    // unreachable to every reader — the intent of truncating. Sub-fold-floor
     // `log/` survivors are swept as `stale-log`; legacy `content/` side
     // objects are left in place and are inert. See the FLOOR EXEMPTION
     // comment in `restore.ts`.
@@ -297,8 +297,9 @@ describe("baerly admin restore", () => {
     // The realistic shape, and the one the exemption's soundness argument
     // actually rests on. GC's sweep is budget-bounded and walks `log/` in
     // lex order, so it routinely clears the TOP of the old range while
-    // leaving sub-floor objects behind. The reseed must then land strictly
-    // above the highest survivor — which can be below the old floor.
+    // leaving sub-fold-floor objects behind. The reseed must then land
+    // strictly above the highest survivor — which can be below the old fold
+    // floor.
     //
     // Here: fold the whole range (floor → 2), then sweep only `log/1`.
     // `log/0` survives, so `truncatedNext` is 1 — below the old floor of 2,
@@ -344,6 +345,71 @@ describe("baerly admin restore", () => {
       survivors.push(entry.key);
     }
     expect(survivors).toContain(`${TABLE_PREFIX}/log/0.json`);
+  });
+
+  test("--force drops a certified delete floor before reseeding an empty old log", async () => {
+    // A nonzero delete floor certifies that every lower log object is gone.
+    // When the certified prefix is the entire old log, LIST finds no old
+    // survivor and `--force` safely reseeds at 0, below that old floor.
+    // Carrying the field through the unchecked truncate PUT would publish
+    // `log_delete_floor > log_seq_start`; dropping it correctly resets the
+    // new generation to "no deleted prefix is certified."
+    await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
+    await expect(
+      runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    // First advance the fold floor to the old tail. Delete every old log
+    // object below it, and only then publish the certified delete floor.
+    const folded = await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
+      ...c,
+      log_seq_start: c.tail_hint,
+    }));
+    const oldTail = folded.json.log_seq_start;
+    for (let seq = 0; seq < oldTail; seq += 1) {
+      await storage.delete(`${TABLE_PREFIX}/log/${seq}.json`);
+    }
+    await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
+      ...c,
+      log_delete_floor: oldTail,
+    }));
+
+    const before = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    const oldDeleteFloor = before?.json.log_delete_floor ?? 0;
+    expect(oldDeleteFloor).toBeGreaterThan(0);
+    const oldLogKeys: string[] = [];
+    for await (const entry of storage.list(`${TABLE_PREFIX}/log/`)) {
+      oldLogKeys.push(entry.key);
+    }
+    expect(oldLogKeys).toEqual([]);
+
+    await writeFile(stdinPath, `{"_id":"v-1","x":1}\n`, "utf8");
+    await expect(
+      runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      ),
+    ).resolves.toBe(0);
+
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.log_seq_start).toBe(0);
+    expect(head?.json.log_seq_start).toBeLessThan(oldDeleteFloor);
+    expect(head?.json.log_delete_floor).toBeUndefined();
+
+    // The reseed leaves a manifest that still admits validated transitions.
+    // Had the old floor been carried, this no-op CAS would reject it.
+    await expect(
+      casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({ ...c })),
+    ).resolves.toBeDefined();
   });
 
   test("both restore branches mint a generation, and --force re-mints a different one", async () => {

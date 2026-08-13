@@ -14,6 +14,7 @@ const entry = await db.getLogEntry(collection, seq);
 const tail = await db.probeLogTail(collection, hint);
 // after
 const read = await db.getCurrentJson(collection);
+if (read === null) throw new Error("collection is not provisioned");
 const entry = await db.getLogEntry(collection, seq, read.json);
 const tail = await db.probeLogTail(collection, hint, read.json);
 ```

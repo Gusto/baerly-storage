@@ -199,11 +199,11 @@ const bundle = defineBaerlySubcommand({
       // every log object still on the bucket, so the writer's committing
       // `log/<seq>` create cannot collide with an old-generation object —
       // that 412 hazard is the whole point of the reseed (see above). It
-      // can land below the old floor whenever GC has swept the objects at
-      // the top of the old range but not all of them: the sweep is
-      // budget-bounded and walks `log/` in lex order (`0,1,10,11,2,...`),
-      // so sub-floor objects routinely survive a pass. Old floor 12 with
-      // `log/8`, `log/9` left behind yields `truncatedNext` 10 < 12.
+      // can land below the old FOLD floor whenever GC has swept the objects
+      // at the top of the folded range but not all of them: the sweep is
+      // budget-bounded and walks `log/` in lex order (`0,1,10,11,2,...`).
+      // For example, fold floor 12 and certified delete floor 8 may validly
+      // retain `log/8` and `log/9`, yielding `truncatedNext` 10 < 12.
       //
       // Nothing is lost by that. Readers never see the survivors: they
       // walk from the new floor, and `fsck` bounds itself by listed keys,
@@ -223,6 +223,26 @@ const bundle = defineBaerlySubcommand({
       // `tail_hint`, trips `assertCurrentJson`, and breaks truncate.
       // `restore.test.ts` pins both the empty-prefix and partial-sweep
       // cases.
+      // `log_delete_floor` IS DELIBERATELY ABSENT from this literal. Do not
+      // "repair" that with `...head.json`.
+      //
+      // Dropping it is the correct truncate semantics: the field is the
+      // exclusive upper bound of the contiguous log prefix certified
+      // deleted. A truncate starts a new generation, so its certification
+      // resets to "no deleted prefix is certified."
+      //
+      // Carrying it forward is not merely redundant, it is unsound. This PUT
+      // is the one `current.json` writer that does not call
+      // `assertCurrentJsonTransition` (invariant 12 names it as the deliberate
+      // exemption), so a carried floor is published UNCHECKED. A reseed can
+      // land below the old delete floor only when the certified old prefix —
+      // potentially the entire old log — is gone. With no surviving log
+      // objects, LIST yields `truncatedNext = 0`; restored rows then reuse
+      // slots below the old floor. Carrying that old-generation certificate
+      // would store `log_delete_floor > log_seq_start`, which the very next
+      // validated write rejects — in practice this command's own post-reseed
+      // tail stamp. `restore.test.ts` pins the empty-old-log case, the field
+      // omission, and the subsequent validated transition.
       const reseeded: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
@@ -273,7 +293,12 @@ const bundle = defineBaerlySubcommand({
       // safe whether or not a ledger exists.
       await bucket.storage.delete(pendingKey);
     } else {
-      // Fresh target: seed `current.json` with `tail_hint=0`.
+      // Fresh target: seed `current.json` with `tail_hint=0`. This literal
+      // omits `log_delete_floor` too, and correctly: it routes through
+      // `createCurrentJson`, so no transition rule applies, and "no deleted
+      // prefix is certified" is exactly what an absent field decodes to.
+      // Named here so a sweep for missing-field sites stops rather than
+      // adding it.
       const seed: CurrentJson = {
         schema_version: CURRENT_JSON_SCHEMA_VERSION,
         snapshot: null,
