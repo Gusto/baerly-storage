@@ -1,6 +1,7 @@
 import {
   type BaerlyConfig,
   BaerlyError,
+  type CurrentJson,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
@@ -8,8 +9,19 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
+
+/**
+ * Zero-state manifest for the log-read seams. `log_seq_start: 0` floors
+ * nothing, so tests that assert on some *other* guard (path-segment
+ * validation) pass it and stay unaffected by the floor.
+ *
+ * Routed through the shared factory rather than hand-written, so the
+ * next `CurrentJson` field lands in one place instead of two.
+ */
+const FLOOR_ZERO: CurrentJson = logStateCurrentJson();
 
 describe("Db.create", () => {
   test("returns a Db scoped to the given app and tenant", () => {
@@ -87,7 +99,9 @@ describe("Db.create", () => {
     "db.getLogEntry(%j) rejects InvalidConfig (no unvalidated traversal)",
     async (bad) => {
       const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
-      await expect(db.getLogEntry(bad, 0)).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(db.getLogEntry(bad, 0, FLOOR_ZERO)).rejects.toMatchObject({
+        code: "InvalidConfig",
+      });
     },
   );
 
@@ -205,5 +219,117 @@ describe("Db → per-request metrics emission", () => {
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
     await expect(db.collection(TABLE).insert({ title: "hi" })).resolves.toBeDefined();
+  });
+});
+
+// Required pin 2 of the log-retention safety contract: the two log-read
+// seams on the public `Db` are floored at `log_seq_start`. Before this,
+// `getLogEntry` took an arbitrary `seq` with no floor of any kind and
+// `probeLogTail` an unvalidated `hint`; the only production caller
+// (`http/since.ts`) floored correctly, but the floor lived entirely in
+// that caller. Nothing in the type or a test stopped a future HTTP
+// route, CDC path, or adapter from reading below the floor — which is
+// exactly the range arithmetic log retention will reclaim.
+describe("Db log-read seams are floored at log_seq_start", () => {
+  const APP = "tickets";
+  const TENANT = "acme";
+  const TABLE = "tickets";
+
+  /**
+   * A provisioned collection holding `count` committed entries at
+   * `log/0` … `log/<count-1>`. Commits never advance `log_seq_start`,
+   * so the returned manifest always has floor 0 — raise it with
+   * {@link raiseFloor}.
+   */
+  const seedEntries = async (count = 1): Promise<{ db: Db; current: CurrentJson }> => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(
+      storage,
+      `app/${APP}/tenant/${TENANT}/manifests/${TABLE}/current.json`,
+      FLOOR_ZERO,
+    );
+    const db = Db.create({ storage, app: APP, tenant: TENANT });
+    for (let i = 0; i < count; i++) {
+      await db.collection(TABLE).insert({ title: `row ${i}` });
+    }
+    const read = await db.getCurrentJson(TABLE);
+    if (read === null) {
+      throw new Error("test setup: current.json missing after insert");
+    }
+    return { db, current: read.json };
+  };
+
+  /**
+   * The same manifest with the fold floor raised. `tail_hint` moves with
+   * it because `0 <= log_seq_start <= tail_hint` is a documented
+   * `CurrentJson` invariant and these literals never pass through
+   * `assertCurrentJson`, so nothing else would catch an impossible one.
+   */
+  const raiseFloor = (current: CurrentJson, to: number): CurrentJson => ({
+    ...current,
+    log_seq_start: to,
+    tail_hint: Math.max(current.tail_hint, to),
+  });
+
+  test("getLogEntry reads an entry at the floor", async () => {
+    const { db, current } = await seedEntries();
+    await expect(db.getLogEntry(TABLE, 0, current)).resolves.toMatchObject({ op: "I", seq: 0 });
+  });
+
+  test("getLogEntry throws Internal below the floor", async () => {
+    const { db, current } = await seedEntries();
+    await expect(db.getLogEntry(TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
+      code: "Internal",
+    });
+  });
+
+  // The floor retention actually reclaims against is a NON-ZERO one, and
+  // at floor 0 "at the floor" is indistinguishable from "not negative".
+  // Two entries with the floor raised to 1 separate them: seq 1 is at a
+  // real floor with a folded entry beneath it and must still read.
+  test("getLogEntry reads an entry at a raised floor", async () => {
+    const { db, current } = await seedEntries(2);
+    await expect(db.getLogEntry(TABLE, 1, raiseFloor(current, 1))).resolves.toMatchObject({
+      op: "I",
+      seq: 1,
+    });
+  });
+
+  // The guard is ordering-only, so a negative seq is rejected because it
+  // sorts below a zero floor — NOT because the seam validates its input.
+  // `NaN`, `Infinity`, and fractional seqs still pass (`NaN < 0` is
+  // `false`) and resolve `null` off a `log/NaN.json` GET.
+  test("getLogEntry throws Internal on a seq below a zero floor", async () => {
+    const { db, current } = await seedEntries();
+    await expect(db.getLogEntry(TABLE, -1, current)).rejects.toMatchObject({ code: "Internal" });
+  });
+
+  test("collection validation precedes the floor check", async () => {
+    const db = Db.create({ storage: new MemoryStorage(), app: APP, tenant: TENANT });
+    // Both guards would fire. The path-segment guard is the security
+    // boundary, so it must win — a traversal attempt is never
+    // reclassified as an internal invariant violation.
+    await expect(db.getLogEntry("..", 0, raiseFloor(FLOOR_ZERO, 5))).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+  });
+
+  test("probeLogTail probes from the floor", async () => {
+    const { db, current } = await seedEntries();
+    await expect(db.probeLogTail(TABLE, 0, current)).resolves.toBe(1);
+  });
+
+  // Same reason as the raised-floor read above: the probe must still find
+  // the true tail when it starts at a non-zero floor.
+  test("probeLogTail probes from a raised floor", async () => {
+    const { db, current } = await seedEntries(2);
+    await expect(db.probeLogTail(TABLE, 1, raiseFloor(current, 1))).resolves.toBe(2);
+  });
+
+  test("probeLogTail throws Internal on a sub-floor hint", async () => {
+    const { db, current } = await seedEntries();
+    await expect(db.probeLogTail(TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
+      code: "Internal",
+    });
   });
 });

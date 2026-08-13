@@ -486,6 +486,16 @@ These are the load-bearing rules.
    `[0, log_seq_start)` (carve-out: `baerly admin restore --force`
    leaves `snapshot: null` with a possibly-positive floor, because a
    truncate drops those entries rather than folding them).
+   **No reader depends on a log object below the floor.** Entries in
+   `[0, log_seq_start)` are already represented in the snapshot and may
+   be reclaimed at any time, so a sub-floor read is a protocol
+   violation, not a miss to tolerate. The two `Db` log-read seams —
+   `getLogEntry` and `probeLogTail` — take the `current.json` they are
+   floored against and throw `Internal` below it, so the floor is a
+   property of the seam rather than a discipline each caller has to
+   repeat. The one deliberate sub-floor GET is the writer's pre-image
+   scan, which is 404-tolerant by construction and whose worst case is
+   a redundant index key (invariant 7), never a wrong read.
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.

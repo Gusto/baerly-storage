@@ -308,6 +308,7 @@ async function pollOnce(
   const tail = await db.probeLogTail(
     collection,
     Math.max(logSeqStart, read.json.tail_hint),
+    read.json,
     signalOpt(signal),
   );
 
@@ -362,7 +363,7 @@ async function pollOnce(
   // memory bounded under pathological workloads.
   const entries: LogEntry[] = [];
   for (let s = startSeq; s < endSeq; s++) {
-    const entry = await db.getLogEntry(collection, s, signalOpt(signal));
+    const entry = await db.getLogEntry(collection, s, read.json, signalOpt(signal));
     if (entry === null) {
       // Race: the GC sweeper deleted this entry between
       // `getCurrentJson` and the GET. Skip; don't error.
