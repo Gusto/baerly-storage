@@ -647,24 +647,64 @@ export interface MaintenanceDispatch {
 /**
  * Parse the two host-agnostic ops-plane env vars into the
  * {@link MaintenanceDispatch} overrides. Shared by every host adapter so the
- * cross-host contract has one source of truth: `maxFoldBytes` (`C`) is the
- * finite `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` or undefined; `disabled` is
- * `BAERLY_MAINTENANCE_DISABLE` truthy (set, non-empty, not `"0"`/`"false"`).
+ * cross-host contract has one source of truth.
+ *
+ * `maxFoldBytes` (`C`) is the finite, positive
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` or undefined. A non-numeric value
+ * (`"8mb"`) is ignored and falls back to the active profile's default — a
+ * typo there costs one deploy at the default ceiling. A value that parses
+ * to zero or negative throws instead of falling back: `snapshot_bytes <= C`
+ * would then be false forever, so the fold would defer on every tick and
+ * the live tail would grow unbounded — a config typo reaching the same
+ * stall shape as running past scale.
+ *
+ * `disabled` reads `BAERLY_MAINTENANCE_DISABLE` against a closed,
+ * case-insensitive vocabulary: unset, `""`, `"0"`, `"false"` → `false`;
+ * `"1"`, `"true"` → `true`; anything else throws. The prior truthy-if-
+ * non-empty parsing silently disabled maintenance on `"no"` / `"off"` —
+ * the two most natural ways an operator would try to spell "don't disable".
+ *
+ * @throws {BaerlyError} `InvalidConfig` for a non-positive
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, or a `BAERLY_MAINTENANCE_DISABLE`
+ * value outside the closed vocabulary above.
  */
 export const parseMaintenanceEnv = (
   readEnv: (key: string) => string | undefined,
 ): { maxFoldBytes?: number; disabled: boolean } => {
   const rawFoldBytes = readEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
-  const parsedFoldBytes =
-    rawFoldBytes !== undefined && rawFoldBytes !== "" ? Number(rawFoldBytes) : Number.NaN;
-  const maxFoldBytes = Number.isFinite(parsedFoldBytes) ? parsedFoldBytes : undefined;
+  let maxFoldBytes: number | undefined;
+  if (rawFoldBytes !== undefined && rawFoldBytes !== "") {
+    const parsedFoldBytes = Number(rawFoldBytes);
+    if (Number.isFinite(parsedFoldBytes)) {
+      if (parsedFoldBytes <= 0) {
+        throw new BaerlyError(
+          "InvalidConfig",
+          `BAERLY_MAINTENANCE_MAX_FOLD_BYTES must be a positive number, got ${JSON.stringify(rawFoldBytes)}`,
+        );
+      }
+      maxFoldBytes = parsedFoldBytes;
+    }
+    // Non-numeric (NaN): ignored, falls back to the profile default (Ruling 3).
+  }
 
   const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");
-  const disabled =
-    rawDisable !== undefined &&
-    rawDisable !== "" &&
-    rawDisable !== "0" &&
-    rawDisable.toLowerCase() !== "false";
+  const normalizedDisable = rawDisable?.toLowerCase();
+  let disabled: boolean;
+  if (
+    rawDisable === undefined ||
+    normalizedDisable === "" ||
+    normalizedDisable === "0" ||
+    normalizedDisable === "false"
+  ) {
+    disabled = false;
+  } else if (normalizedDisable === "1" || normalizedDisable === "true") {
+    disabled = true;
+  } else {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `BAERLY_MAINTENANCE_DISABLE must be one of "", "0", "false", "1", "true" (case-insensitive), got ${JSON.stringify(rawDisable)}`,
+    );
+  }
 
   return {
     ...(maxFoldBytes !== undefined && { maxFoldBytes }),

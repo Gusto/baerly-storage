@@ -93,9 +93,13 @@ export interface CreateFetchHandlerOptions {
  * in tests — and a real process env in production — is observed:
  *
  *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (the snapshot
- *     ceiling `C`). Parsed as a number; ignored when unset / NaN.
- *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Truthy
- *     when set to a non-empty value other than `"0"` / `"false"`.
+ *     ceiling `C`). Parsed as a number; a non-numeric value is ignored
+ *     (falls back to the profile default); zero or negative throws
+ *     `BaerlyError{code:"InvalidConfig"}`.
+ *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Closed,
+ *     case-insensitive vocabulary: unset/`""`/`"0"`/`"false"` → `false`;
+ *     `"1"`/`"true"` → `true`; anything else throws
+ *     `BaerlyError{code:"InvalidConfig"}`.
  *
  * `readEnv` defaults to `process.env`; the parameter exists for direct
  * unit coverage.
@@ -114,6 +118,17 @@ export const nodeMaintenanceDispatch = (
       phasesPerTick: "both",
       profile: MAINTENANCE_PROFILE_NODE,
     },
+  };
+};
+
+const mappedErrorResponse = (error: unknown): { status: number; response: Response } => {
+  const { status, envelope } = mapError(error);
+  return {
+    status,
+    response: new Response(JSON.stringify(envelope), {
+      status,
+      headers: { "content-type": "application/json" },
+    }),
   };
 };
 
@@ -176,9 +191,30 @@ export function createFetchHandler(
     // In-band maintenance: the writer reads `getCurrentContext()?.maintenance`
     // at its post-commit dispatch point. Read per request so the ops-plane env
     // vars (and any `vi.stubEnv` in tests) are observed at call time.
+    let maintenance: MaintenanceDispatch;
+    try {
+      maintenance = nodeMaintenanceDispatch();
+    } catch (error) {
+      // Parsing runs before the normal verifier/router boundary because the
+      // result belongs on the context itself. Re-open that same observability
+      // boundary for config failures so they use the canonical HTTP envelope
+      // and emit the request's canonical error line.
+      const obsCtx = createObservabilityContext({ request_id: requestId });
+      return await runWithContext(obsCtx, async () => {
+        const { status, response } = mappedErrorResponse(error);
+        flushCanonicalLine(obsCtx, obsCtx.recorder, {
+          unit: "http",
+          status,
+          outcome: deriveOutcome(request.method, status, error),
+          error,
+          extra: { method: request.method, path },
+        });
+        return response;
+      });
+    }
     const obsCtx = createObservabilityContext({
       request_id: requestId,
-      maintenance: nodeMaintenanceDispatch(),
+      maintenance,
     });
 
     const result = await opts.verifier(request);
@@ -208,12 +244,9 @@ export function createFetchHandler(
         outboundStatus = response.status;
       } catch (error) {
         caughtError = error;
-        const { status, envelope } = mapError(error);
+        const { status, response: mappedResponse } = mappedErrorResponse(error);
         outboundStatus = status;
-        response = new Response(JSON.stringify(envelope), {
-          status,
-          headers: { "content-type": "application/json" },
-        });
+        response = mappedResponse;
       } finally {
         flushCanonicalLine(obsCtx, obsCtx.recorder, {
           unit: "http",

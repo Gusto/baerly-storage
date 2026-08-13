@@ -17,8 +17,10 @@
  * Maintenance (compaction + GC) is in-band: it runs INLINE on the
  * write path the kernel decides needs it — no `setInterval`, no cron,
  * no operator scheduler. Tune via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` /
- * `BAERLY_MAINTENANCE_DISABLE`, or call `runScheduledMaintenance` from
- * `@gusto/baerly-storage` for an explicit out-of-band sweep.
+ * `BAERLY_MAINTENANCE_DISABLE` (see {@link baerlyNode} for the accepted
+ * values); invalid values fail API/database dispatch with
+ * `BaerlyError{code:"InvalidConfig"}`. Call `runScheduledMaintenance`
+ * from `@gusto/baerly-storage` for an explicit out-of-band sweep.
  *
  * @example
  * ```ts
