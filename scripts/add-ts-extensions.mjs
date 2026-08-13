@@ -4,8 +4,12 @@
  * `.tsx` extensions so workspace source is consumable by Node's
  * native `--experimental-strip-types` runtime.
  *
- * Scope: paths oxlint doesn't lint (bench/, deploy/, examples/, scripts/, root *.config.ts).
- * oxlint owns packages/** and tests/** via `import/extensions: ["error","always"]`.
+ * Scope: paths without the autofix capability this script provides (bench/,
+ * deploy/, examples/, scripts/, root *.config.ts). oxlint's
+ * `import/extensions: ["error","always"]` rule now also covers bench/ (via
+ * verify:agent's lint glob) alongside packages/** and tests/**, but oxlint can
+ * only flag a missing extension, not filesystem-resolve `./foo` to `./foo.ts`
+ * vs `./foo/index.tsx` and fix it — this script still owns that for bench/.
  *
  *   node scripts/add-ts-extensions.mjs           # apply
  *   node scripts/add-ts-extensions.mjs --check   # exit non-zero on diff
@@ -25,11 +29,6 @@ const CHECK_MODE = process.argv.includes("--check");
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolvePath(HERE, "..");
 
-// Coverage split: oxlint (configured with `import/extensions: ["error","always"]`)
-// already lints `packages/**` and `tests/**` over `verify:agent`'s glob. This
-// script owns the paths oxlint doesn't lint, plus the autofix capability that
-// stock `import/extensions` can't provide (it can't filesystem-resolve a bare
-// `./foo` to `./foo.ts` vs `./foo/index.tsx`).
 const GLOBS = [
   "bench/**/*.ts",
   "bench/**/*.tsx",
