@@ -760,26 +760,19 @@ describe("subscription-pool", () => {
     }
   });
 
-  test("a cursor rejected on every lap backs off instead of hot-looping", async () => {
+  test("a repeatedly rejected replacement cursor retains backoff across bootstrap success", async () => {
     // The shape a mixed-version fleet produces mid-rolling-deploy: one
     // replica hands back a cursor the other refuses. The
     // `poll.cursor !== ""` guard bounds a same-iteration respin but NOT
     // this two-iteration oscillation — "" succeeds, adopts a cursor,
     // that cursor 400s, repeat. So the SchemaError path must fall
-    // through to the retry backoff rather than `continue` past it;
-    // otherwise this runs at network speed with an invalidate storm
-    // every lap.
-    let requests = 0;
+    // through to the retry backoff rather than `continue` past it. The
+    // successful bootstrap only supplies a candidate replacement; it
+    // must not reset backoff until that replacement cursor succeeds.
+    const callTimes: number[] = [];
     const mock = new MockFetch();
     mock.on("GET", "/v1/since", (req: Request) => {
-      requests += 1;
-      if (requests > 200) {
-        // Circuit breaker. On regression the loop spins at microtask
-        // speed and never yields to a timer, so `advanceTimersByTime`
-        // would pump forever and hang the runner. Parking the poll here
-        // lets the advance return and the bound below fail loudly.
-        return sinceForever();
-      }
+      callTimes.push(Date.now());
       const cursor = new URL(req.url).searchParams.get("cursor");
       if (cursor !== null && cursor.length > 0) {
         return Promise.resolve(
@@ -799,7 +792,8 @@ describe("subscription-pool", () => {
     });
 
     vi.useFakeTimers();
-    vi.spyOn(Math, "random").mockReturnValue(0.999);
+    vi.setSystemTime(0);
+    vi.spyOn(Math, "random").mockReturnValue(0);
     try {
       const client = makeClient(mock);
       const pool = poolFor(client);
@@ -812,18 +806,75 @@ describe("subscription-pool", () => {
       );
 
       await waitMicrotasks(40);
-      for (let i = 0; i < 5; i += 1) {
-        await vi.advanceTimersByTimeAsync(250);
-      }
+      expect(callTimes).toEqual([0, 0]);
+      await vi.advanceTimersByTimeAsync(125);
+      expect(callTimes).toEqual([0, 0, 125, 125]);
+      await vi.advanceTimersByTimeAsync(125);
+      expect(callTimes).toEqual([0, 0, 125, 125]);
+      await vi.advanceTimersByTimeAsync(125);
+      expect(callTimes).toEqual([0, 0, 125, 125, 375, 375]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(callTimes).toEqual([0, 0, 125, 125, 375, 375, 875, 875]);
       unsubscribe();
-
-      // Two requests per backoff cycle (bootstrap + doomed resume), so
-      // ~1.25 simulated seconds stays below 20. A successful bootstrap
-      // resets the attempt counter, so every doomed resume uses the
-      // initial jitter window. Without any backoff the loop is bounded
-      // only by microtask scheduling and blows past this.
-      expect(requests).toBeLessThan(20);
     } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  test("an empty recovery bootstrap resets backoff when it yields no replacement cursor", async () => {
+    const callTimes: number[] = [];
+    const cursors: Array<string | null> = [];
+    let call = 0;
+    let unsubscribe: (() => void) | undefined;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req: Request) => {
+      call += 1;
+      callTimes.push(Date.now());
+      cursors.push(new URL(req.url).searchParams.get("cursor"));
+      if (call === 1) {
+        return sinceOk("deadbeef.aaa_bbb_ccc");
+      }
+      if (call === 2) {
+        return sinceError("SchemaError", 400, false);
+      }
+      if (call === 3) {
+        return sinceOk("");
+      }
+      if (call === 4) {
+        throw new TypeError("transport unavailable");
+      }
+      return sinceForever();
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      unsubscribe = pool.attach(
+        "empty-recovery-tail",
+        ["notes"],
+        new Set(["notes"]),
+        vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
+        vi.fn<() => void>(),
+      );
+
+      await waitMicrotasks(40);
+      expect(callTimes).toEqual([0, 0]);
+      expect(cursors).toEqual(["", "deadbeef.aaa_bbb_ccc"]);
+
+      await vi.advanceTimersByTimeAsync(125);
+      expect(callTimes).toEqual([0, 0, 125, 125]);
+      expect(cursors).toEqual(["", "deadbeef.aaa_bbb_ccc", "", ""]);
+
+      await vi.advanceTimersByTimeAsync(124);
+      expect(callTimes).toHaveLength(4);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callTimes).toEqual([0, 0, 125, 125, 250]);
+    } finally {
+      unsubscribe?.();
       vi.restoreAllMocks();
       vi.useRealTimers();
     }
