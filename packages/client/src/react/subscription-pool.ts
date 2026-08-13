@@ -2,10 +2,7 @@ import { BaerlyError } from "@baerly/protocol";
 import type { BaerlyClient } from "../client.ts";
 import { getClientContext } from "../internal/context.ts";
 import { pollSinceOnce } from "../poll-since-once.ts";
-import {
-  SUBSCRIPTION_RETRY_INITIAL_MILLIS,
-  SUBSCRIPTION_RETRY_MAX_MILLIS,
-} from "./subscription-retry.ts";
+import { retryDelay } from "./subscription-retry.ts";
 
 /**
  * Discriminated snapshot a hook hands back from `getSnapshot`. The
@@ -34,14 +31,6 @@ const toError = (raw: unknown): Error => {
 
 const isAbortError = (raw: unknown): boolean =>
   typeof raw === "object" && raw !== null && "name" in raw && raw.name === "AbortError";
-
-const retryDelay = (attempt: number): number => {
-  const upperBound = Math.min(
-    SUBSCRIPTION_RETRY_MAX_MILLIS,
-    SUBSCRIPTION_RETRY_INITIAL_MILLIS * 2 ** attempt,
-  );
-  return Math.floor(upperBound / 2 + Math.random() * (upperBound / 2));
-};
 
 const waitForRetry = async (delay: number, signal: AbortSignal): Promise<void> => {
   if (signal.aborted) {
