@@ -261,9 +261,11 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     const ctx = getClientContext(client);
     void (async () => {
       let retryAttempt = 0;
+      let deadCursorRecoveryPending = false;
       while (!controller.signal.aborted) {
+        const requestCursor = poll.cursor;
         try {
-          const res = await pollSinceOnce(ctx, table, poll.cursor, controller.signal);
+          const res = await pollSinceOnce(ctx, table, requestCursor, controller.signal);
           if (controller.signal.aborted) {
             return;
           }
@@ -273,7 +275,15 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
               invalidateForTable(table);
             }
           }
-          retryAttempt = 0;
+          // An empty bootstrap is only unproven when it minted a non-empty
+          // replacement cursor. A stable empty tail has no replacement left to
+          // prove, while a non-empty request proves the candidate by succeeding.
+          const recoveryProven =
+            !deadCursorRecoveryPending || requestCursor !== "" || res.next_cursor === "";
+          if (recoveryProven) {
+            retryAttempt = 0;
+            deadCursorRecoveryPending = false;
+          }
         } catch (error) {
           if (controller.signal.aborted) {
             return;
@@ -289,7 +299,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
             // was minted in a generation `restore --force` has since
             // truncated. Retrying the same cursor can never clear
             // either one, so without this the loop would retry it at
-            // 1 req/s forever with the table frozen.
+            // exponential backoff forever with the table frozen.
             //
             // Re-bootstrap: `""` restarts from `log_seq_start`, which
             // is what the server's error text asks for. The invalidate
@@ -310,6 +320,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
             // backoff interval of recovery latency and bounds the
             // pathological cycle.
             poll.cursor = "";
+            deadCursorRecoveryPending = true;
             invalidateForTable(table);
             recoveredDeadCursor = true;
           }
