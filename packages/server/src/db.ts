@@ -3,12 +3,14 @@ import {
   BaerlyError,
   type Collection,
   type CollectionNames,
+  type CurrentJson,
   type CurrentJsonRead,
   decodeJsonBytes,
   type DocumentData,
   type IndexDefinition,
   logObjectKey,
   type LogEntry,
+  logSeqStartOf,
   readCurrentJson,
   type RowOf,
   type SchemaValidator,
@@ -279,17 +281,31 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * entry). Throws `BaerlyError{code:"InvalidResponse"}` on a body
    * that isn't valid JSON.
    *
+   * `current` is the manifest this read is floored against — pass the
+   * same one the `seq` was derived from. It is a parameter rather than
+   * caller-enforced discipline so a new caller cannot introduce a
+   * sub-floor read: entries below `current.log_seq_start` are folded
+   * into the snapshot and may already be reclaimed (invariant 5 in
+   * `docs/spec/sync-protocol.md`).
+   *
+   * @throws BaerlyError code="Internal" — `seq` is below
+   *         `current.log_seq_start`.
+   *
    * @internal — typed seam for the HTTP handler; app code should use
    *             the collection API.
    */
   async getLogEntry(
     collection: string,
     seq: number,
+    current: CurrentJson,
     opts?: { signal?: AbortSignal },
   ): Promise<LogEntry | null> {
     // Defensive at the db layer so ALL callers are covered — same
     // rationale as `getCurrentJson`; the `/v1/since` poll reaches here.
+    // Path validation runs FIRST: a traversal attempt is a security
+    // boundary and must not be reclassified as an invariant violation.
     assertPathSegment(collection, "collection");
+    assertAtOrAboveLogFloor("getLogEntry", seq, current);
     const key = logObjectKey(
       `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`,
       seq,
@@ -315,19 +331,62 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * Forward-probe the TRUE committed log tail from `hint` (a lower
    * bound, typically `tail_hint`). Backs the `/v1/since` end-bound.
    *
+   * `hint` stays a caller-chosen lower bound — the probe is defined
+   * from an arbitrary starting point at or above the floor, and every
+   * other consumer starts at `max(log_seq_start, tail_hint)`. What
+   * `current` adds is that the floor cannot be forgotten (invariant 5
+   * in `docs/spec/sync-protocol.md`).
+   *
+   * @throws BaerlyError code="Internal" — `hint` is below
+   *         `current.log_seq_start`.
+   *
    * @internal — typed seam for the HTTP handler.
    */
   async probeLogTail(
     collection: string,
     hint: number,
+    current: CurrentJson,
     opts?: { signal?: AbortSignal },
   ): Promise<number> {
     assertPathSegment(collection, "collection");
+    assertAtOrAboveLogFloor("probeLogTail", hint, current);
     const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
     const { tail } = await probeTailFrom(this.#storage, logPrefix, hint, opts);
     return tail;
   }
 }
+
+/**
+ * Guard a log-read seq against the fold floor it was derived from.
+ *
+ * Entries below `log_seq_start` have been folded into the snapshot
+ * (invariant 5 in `docs/spec/sync-protocol.md`) and may be reclaimed at
+ * any time, so a sub-floor read is never a legitimate request — it is
+ * either a stale seq the caller failed to screen, or a caller that
+ * never screened at all. Both are protocol-invariant violations by
+ * internal code, hence `Internal` rather than `InvalidConfig`: no
+ * client input reaches these seams unscreened (`/v1/since` rejects a
+ * sub-floor cursor with `SchemaError` before ever getting here).
+ *
+ * The floor arrives as the whole `CurrentJson` rather than a bare
+ * number so it cannot be invented independently of the manifest, and
+ * so a later floor on the same object — the retention delete floor —
+ * lands here without another signature change.
+ *
+ * Loud on purpose. PostgreSQL removed `old_snapshot_threshold` in PG17
+ * because a fixed reclamation window that let a reader proceed
+ * *silently* produced wrong answers; Oracle's `ORA-01555` is the same
+ * trade and survives because it throws.
+ */
+const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson): void => {
+  const floor = logSeqStartOf(current);
+  if (seq < floor) {
+    throw new BaerlyError(
+      "Internal",
+      `${seam}: seq ${seq} is below the fold floor log_seq_start=${floor}; entries beneath the floor are folded into the snapshot and may already be reclaimed`,
+    );
+  }
+};
 
 /**
  * Guard a string used as a path-segment in the bucket-key encoding.

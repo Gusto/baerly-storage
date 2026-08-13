@@ -135,3 +135,16 @@ export const _idIsNotAPredicateKeyOnTypedTables = () => {
   // @ts-expect-error — `_id` is excluded from `Path<T>` on typed shapes.
   void boundCollection.where({ _id: "x" });
 };
+
+// The `Db` log-read seams take the manifest they are floored against.
+// Required pin 2 of the log-retention safety contract: the runtime
+// guard is in `db.test.ts`, but the reason a future HTTP route, CDC
+// path, or adapter cannot read below `log_seq_start` is that omitting
+// the manifest does not compile. Arity is the pin; delete the third
+// parameter and this file fails `tsgo --noEmit`.
+export const _logReadsRequireTheManifest = () => {
+  // @ts-expect-error — `current` is required; a bare seq has no floor.
+  void dbLegacy.getLogEntry("any", 0);
+  // @ts-expect-error — `current` is required; a bare hint has no floor.
+  void dbLegacy.probeLogTail("any", 0);
+};
