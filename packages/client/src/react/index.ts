@@ -15,9 +15,12 @@
  * would silently degrade to `DocumentData` rows and force casts.
  * Binding once at the factory keeps every callback inferred.
  *
- * **Reads:** `useQuery(callback, deps?)` — reactive. Subscribes to every
- * collection the callback touches and re-runs on log events or `deps`
- * change. Return `useQuery.skip` to defer / conditional-render.
+ * **Reads:** `useQuery(callback, deps?, options?)` — live by default.
+ * Subscribes to every collection the callback touches and re-runs on
+ * log events or `deps` change. Pass `{ live: false }` for initial and
+ * dependency-driven reads without `/v1/since`; call the stable
+ * `result.refetch()` for an explicit refresh. Return `useQuery.skip`
+ * to defer / conditional-render.
  *
  * **Mutations:** `useMutation()` → `[mutate, { isPending, error }]`.
  * `mutate(callback)` runs the callback against the real client.
@@ -27,5 +30,5 @@
  */
 
 export { type BaerlyProviderProps, type BaerlyReact, createBaerlyReact } from "./create-react.ts";
-export type { UseQueryResult } from "./use-query.ts";
+export type { UseQueryOptions, UseQueryResult } from "./use-query.ts";
 export type { UseMutationTuple } from "./use-mutation.ts";

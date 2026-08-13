@@ -590,23 +590,21 @@ import { BaerlyProvider, client, useMutation, useQuery } from "./client.ts";
   <App />
 </BaerlyProvider>;
 
-// 2. useQuery(cb, deps) — the callback receives the bound client and
-//    returns a ClientCollection / ClientQuery chain. Re-runs on deps
-//    change OR on long-poll invalidation. Result is a discriminated
-//    union; the row type is inferred from the collection name:
+// 2. useQuery(cb, deps, options?) — inferred rows, live by default.
 const result = useQuery((c) => c.collection("notes").all(), []);
-// result.status: "loading" | "ok" | "error" | "skipped"
-// result.data:   Note[] | undefined      (present iff status === "ok")
-// result.error:  BaerlyError | undefined (present iff status === "error")
+// result has status, data/error, and a stable refetch().
 
-// 3. useQuery.skip — short-circuit to status: "skipped", no
+// 3. live:false reads on mount, deps changes, and refetch—no /v1/since.
+const report = useQuery((c) => c.collection("notes").all(), [reportDate], { live: false });
+
+// 4. useQuery.skip — short-circuit to status: "skipped", no
 //    subscription. Use for conditional or dependent reads.
 const filtered = useQuery(
   (c) => (filter === "all" ? useQuery.skip : c.collection("notes").where({ status: filter }).all()),
   [filter],
 );
 
-// 4. useMutation() — returns [mutate, { isPending, error }].
+// 5. useMutation() — returns [mutate, { isPending, error }].
 //    Run any client call inside mutate; subscribed useQuery reads
 //    re-run automatically once the long-poll sees the write.
 const [mutate, { isPending, error }] = useMutation();

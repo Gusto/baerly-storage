@@ -54,6 +54,28 @@ describe("pollSinceOnce", () => {
     expect(res.next_cursor).toBe("c-3");
   });
 
+  test("rejects malformed JSON from a successful response as InvalidResponse", async () => {
+    const mock = new MockFetch();
+    mock.on(
+      "GET",
+      "/v1/since",
+      () => new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    await expect(pollSinceOnce(ctxFor(mock), "tickets", "", undefined)).rejects.toMatchObject({
+      code: "InvalidResponse",
+    });
+  });
+
+  test("rejects a successful response without the SinceResponse fields", async () => {
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", () => jsonResponse({}));
+
+    await expect(pollSinceOnce(ctxFor(mock), "tickets", "", undefined)).rejects.toMatchObject({
+      code: "InvalidResponse",
+    });
+  });
+
   test("propagates the AbortSignal to the underlying fetch (and rejects when fired)", async () => {
     // Drive the underlying fetcher directly so we can observe signal
     // propagation without depending on MockFetch's regex matcher.

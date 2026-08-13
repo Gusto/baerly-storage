@@ -589,6 +589,8 @@ describe("scaffold", () => {
       if (shape === "react") {
         expect(result.filesWritten).toContain("index.html");
         expect(result.filesWritten).toContain(join("src", "web", "NoteList.tsx"));
+        expect(agents).toContain("{ live: false }");
+        expect(agents).toContain("refetch()");
         const html = await readFile(join(result.outDir, "index.html"), "utf8");
         // "Notes" is deliberate prose, not a slug. The renames manifest
         // only sentinelizes `react-cloudflare` and `react-demo`; bare

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { BaerlyClient } from "../client.ts";
 import { BaerlyProvider, useBaerlyClient } from "./provider.ts";
 import { useMutation, type UseMutationTuple } from "./use-mutation.ts";
-import { useQuery, type UseQueryResult } from "./use-query.ts";
+import { useQuery, type UseQueryOptions, type UseQueryResult } from "./use-query.ts";
 
 /**
  * Props for the config-bound `BaerlyProvider` returned by
@@ -27,14 +27,18 @@ export interface BaerlyReact<TConfig extends BaerlyConfig> {
   /** Wrap your app once; provides the bound client to every hook below it. */
   readonly BaerlyProvider: (props: BaerlyProviderProps<TConfig>) => React.JSX.Element;
   /**
-   * Reactive read. The callback receives `BaerlyClient<TConfig>`, so
-   * the chain is fully typed. `useQuery.skip` short-circuits to
-   * `{ status: "skipped" }`.
+   * Read, live by default. The callback receives
+   * `BaerlyClient<TConfig>`, so the chain is fully typed.
+   * `useQuery.skip` short-circuits to `{ status: "skipped" }`.
+   * Pass `{ live: false }` as the third argument for an initial and
+   * dependency-driven read with no `/v1/since` subscription. Every
+   * result state includes a stable `refetch()` function.
    */
   readonly useQuery: {
     <T>(
       callback: (client: BaerlyClient<TConfig>) => Promise<T> | symbol,
       deps?: ReadonlyArray<unknown>,
+      options?: UseQueryOptions,
     ): UseQueryResult<T>;
     /**
      * Sentinel — return it from the callback to defer the read
@@ -74,6 +78,13 @@ export interface BaerlyReact<TConfig extends BaerlyConfig> {
  * import { useQuery } from "./client.ts";
  * const notes = useQuery((c) => c.collection("notes").all(), []);
  * //    ^? UseQueryResult<Note[]>   — no cast
+ *
+ * const report = useQuery(
+ *   (c) => c.collection("notes").all(),
+ *   [],
+ *   { live: false },
+ * );
+ * // report.refetch() re-runs the read without enabling live updates.
  * ```
  *
  * Omit the type parameter (`createBaerlyReact()`) for an unbound app;

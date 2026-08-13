@@ -27,6 +27,23 @@ export interface RequestContext {
   readonly headers: Headers;
 }
 
+const parseSuccessfulJson = async (
+  res: Response,
+  opts: Pick<RequestOptions, "method" | "path">,
+): Promise<unknown> => {
+  try {
+    return await res.json();
+  } catch (error) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `Response to ${opts.method} ${opts.path} was not valid JSON`,
+      error,
+      undefined,
+      res.status,
+    );
+  }
+};
+
 /**
  * Issue one HTTP request and unwrap the response per the locked
  * status-code policy in `packages/server/src/contract.ts:73-89`:
@@ -66,7 +83,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
   // caller (`insert`) types T = `{ _id }` so we return the parsed
   // body raw.
   if (res.status === 201) {
-    return (await res.json()) as T;
+    return (await parseSuccessfulJson(res, opts)) as T;
   }
 
   // 4xx / 5xx — `HttpErrorEnvelope`. Parse + throw.
@@ -94,7 +111,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
   // 200 — only GET reads ship `HttpOkEnvelope<T>`. PATCH (and any
   // future non-GET mutation that hits 200) ships its body raw. GET
   // /v1/since also ships raw (`SinceResponse`).
-  const body = (await res.json()) as unknown;
+  const body = await parseSuccessfulJson(res, opts);
   if (opts.method !== "GET") {
     return body as T;
   }
