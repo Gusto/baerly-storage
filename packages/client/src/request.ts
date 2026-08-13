@@ -52,8 +52,9 @@ const parseSuccessfulJson = async (
  * - 201 → raw parsed body as T (POST insert success — body `{ _id }`).
  * - 4xx / 5xx → parse `HttpErrorEnvelope` and throw
  *   {@link BaerlyError} with `status` set to the wire HTTP code.
- *   Non-JSON error bodies synthesize an `Internal` code so consumers
- *   still get a structured throw.
+ *   Bodies that carry no envelope (a proxy or CDN answering for the
+ *   server) still get a structured throw, with the code synthesized
+ *   from the status: `NetworkError` for 5xx, `Internal` for 4xx.
  * - 200 on non-`GET` (PATCH, future mutations) → raw parsed body
  *   as T (e.g. `{ modified }`).
  * - 200 on `GET /v1/since` → raw `SinceResponse` as T (no `data` unwrap).
@@ -92,10 +93,24 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     try {
       envelope = (await res.json()) as HttpErrorEnvelope;
     } catch {
-      // Non-JSON body (e.g. an upstream proxy 502). Synthesize an
-      // Internal error so consumers still get a structured throw.
+      // Non-JSON body (e.g. an upstream proxy 502). Fall through to
+      // the synthesized code below so consumers still get a
+      // structured throw.
     }
-    const code: BaerlyErrorCode = envelope?.error?.code ?? "Internal";
+    // No envelope means the response came from something between the
+    // caller and the server — a load balancer, CDN, or service mesh —
+    // so the server's own failure class is unavailable and we infer
+    // one from the status. A 5xx from that layer is a transport
+    // condition that clears when the backend comes back, and
+    // `NetworkError` is the only synthesized code whose default
+    // `retriable` says so. `Internal` does not: the React
+    // subscription pool treats a non-retriable error as permanently
+    // terminal, so labelling a rolling-deploy 502 `Internal` would
+    // park every live query on a dead poll until the user remounted.
+    // A 4xx without an envelope is a caller or routing fault, which
+    // retrying cannot clear — it stays `Internal`.
+    const synthesized: BaerlyErrorCode = res.status >= 500 ? "NetworkError" : "Internal";
+    const code: BaerlyErrorCode = envelope?.error?.code ?? synthesized;
     const message = envelope?.error?.message ?? `HTTP ${res.status}`;
     throw new BaerlyError(
       code,

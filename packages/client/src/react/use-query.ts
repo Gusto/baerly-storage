@@ -3,7 +3,7 @@ import { useCallback, useReducer, useRef, useSyncExternalStore } from "react";
 import type { BaerlyClient } from "../client.ts";
 import { useBaerlyClient } from "./provider.ts";
 import { stableKey } from "./stable-key.ts";
-import { LOADING_SNAPSHOT, poolFor } from "./subscription-pool.ts";
+import { type CachedSnapshot, LOADING_SNAPSHOT, poolFor } from "./subscription-pool.ts";
 
 const SKIP: unique symbol = Symbol("baerly.useQuery.skip");
 
@@ -206,10 +206,10 @@ const discover = (
 };
 
 /**
- * Reactive read against a `baerly` server. The callback receives a
+ * Read against a `baerly` server, live by default. The callback receives a
  * type-compatible `BaerlyClient` proxy that records which collections it
- * touches; the hook subscribes to those collections and re-runs the
- * callback against the real client when any of them mutate.
+ * touches; in live mode, the hook subscribes to those collections and
+ * re-runs the callback against the real client when any of them mutate.
  *
  * Re-runs also fire whenever the `deps` array changes between
  * renders (shallow `stableKey` compare). Closure variables read
@@ -429,7 +429,7 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
       }
     | undefined
   >(undefined);
-  const withRefetch = (base: object): UseQueryResult<T> => {
+  const withRefetch = (base: UseQuerySnapshot<T> | CachedSnapshot): UseQueryResult<T> => {
     if (decoratedSnapshotRef.current?.base === base) {
       return decoratedSnapshotRef.current.snapshot as UseQueryResult<T>;
     }
