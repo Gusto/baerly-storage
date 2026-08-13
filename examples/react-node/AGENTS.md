@@ -611,12 +611,14 @@ const result = useQuery(
 );
 ```
 
-`useQuery` re-runs the callback when `deps` changes OR when the
-`/v1/since?collection=<name>&cursor=<opaque>` long-poll batches a
-non-empty change for any subscribed
-collection. Idle long-poll cycles (empty batches) drop at the
-`subscription-pool` layer, so a steady-state collection costs zero list
-reads. Add a `<select>` bound to `setFilter` and the list narrows live.
+`useQuery` is live by default: it re-runs on dependency changes and
+non-empty `/v1/since` batches for any collection the callback reads.
+Pass `{ live: false }` for mount/dependency reads without `/v1/since`.
+Every result state has a stable `refetch()`; successful data stays
+available while refreshing and on error. A non-retriable subscription
+error stops automatic polling, while explicit `refetch()` retries the
+read and restarts the terminal live subscription. Idle long-poll cycles
+do not re-run the query.
 
 For conditional / deferred reads, return the `useQuery.skip` sentinel
 from the callback — the hook short-circuits to

@@ -1,3 +1,4 @@
+import { BaerlyError } from "@baerly/protocol";
 import type { SinceResponse } from "./contract.ts";
 import { type RequestContext, request } from "./request.ts";
 
@@ -27,9 +28,23 @@ export const pollSinceOnce = async (
   const params = new URLSearchParams();
   params.set("collection", name);
   params.set("cursor", cursor);
-  return request<SinceResponse>(ctx, {
+  const response = await request<unknown>(ctx, {
     method: "GET",
     path: `/v1/since?${params.toString()}`,
     signal,
   });
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    !("events" in response) ||
+    !Array.isArray(response.events) ||
+    !("next_cursor" in response) ||
+    typeof response.next_cursor !== "string"
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      "Response to GET /v1/since must contain an events array and string next_cursor",
+    );
+  }
+  return response as SinceResponse;
 };

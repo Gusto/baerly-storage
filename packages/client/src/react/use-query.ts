@@ -13,19 +13,43 @@ const SKIP: unique symbol = Symbol("baerly.useQuery.skip");
  * into `"loading"` / `"skipped"` gives `data: undefined`; narrowing
  * into `"error"` gives `data: T | undefined` (the prior successful
  * read survives across errors so the UI can keep rendering).
+ * Every state also carries the same stable `refetch()` function, which
+ * starts an explicit refresh without changing the declared dependencies.
  */
-export type UseQueryResult<T> =
+export type UseQueryResult<T> = (
   | { readonly status: "loading"; readonly data: undefined; readonly error: undefined }
   | { readonly status: "refreshing"; readonly data: T; readonly error: undefined }
   | { readonly status: "ok"; readonly data: T; readonly error: undefined }
   | { readonly status: "skipped"; readonly data: undefined; readonly error: undefined }
-  | { readonly status: "error"; readonly data: T | undefined; readonly error: Error };
+  | { readonly status: "error"; readonly data: T | undefined; readonly error: Error }
+) & {
+  /** Re-run this query without changing its declared dependencies. */
+  readonly refetch: () => void;
+};
 
-const SKIPPED_SNAPSHOT: UseQueryResult<never> = Object.freeze({
+/**
+ * A {@link UseQueryResult} before `refetch` is attached. `withRefetch`
+ * decorates one of these into the value the hook returns; keeping the
+ * un-decorated shape named lets the snapshot literals below be checked
+ * against the result type instead of asserted into it.
+ */
+type UseQuerySnapshot<T> = Omit<UseQueryResult<T>, "refetch">;
+
+const SKIPPED_SNAPSHOT = Object.freeze({
   status: "skipped",
   data: undefined,
   error: undefined,
-});
+} satisfies UseQuerySnapshot<never>);
+
+/** Options for a {@link useQuery} read. */
+export interface UseQueryOptions {
+  /**
+   * Subscribe to collection changes through `/v1/since`. Defaults to
+   * `true`. Set `false` for an initial/dependency-driven read that only
+   * refreshes when {@link UseQueryResult.refetch} is called.
+   */
+  readonly live?: boolean;
+}
 
 interface RecorderState {
   readonly collectionsRead: Set<string>;
@@ -197,6 +221,12 @@ const discover = (
  * `{ status: "skipped" }` and registers no subscription — use it
  * for deferred / conditional reads.
  *
+ * Pass `{ live: false }` as the third argument to perform the initial
+ * read and dependency-driven re-reads without opening `/v1/since`.
+ * Every result state includes a stable `refetch()` function for an
+ * explicit refresh; successful data remains available while that
+ * refresh is running and if it fails.
+ *
  * @example
  * ```tsx
  * // Single read
@@ -212,6 +242,14 @@ const discover = (
  * );
  * if (list.status === "skipped") return null;
  *
+ * // Non-live read with an explicit refresh
+ * const report = useQuery(
+ *   (c) => c.collection("notes").all(),
+ *   [],
+ *   { live: false },
+ * );
+ * <button onClick={report.refetch}>Refresh</button>;
+ *
  * // Dependent read (parent → child)
  * const parent  = useQuery((c) => c.collection("notes").get(id), [id]);
  * const replies = useQuery(
@@ -225,9 +263,11 @@ const discover = (
 const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
   callback: (client: BaerlyClient<TConfig>) => Promise<T> | typeof SKIP,
   deps?: ReadonlyArray<unknown>,
+  options?: UseQueryOptions,
 ): UseQueryResult<T> => {
   const client = useBaerlyClient<TConfig>();
   const pool = poolFor(client as unknown as BaerlyClient);
+  const live = options?.live !== false;
 
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -248,8 +288,8 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
   const depsKey = stableKey([deps ?? []]);
   const signatureBase =
     discovery.kind === "ok"
-      ? stableKey([discovery.chainShape, deps ?? []])
-      : `__non_ok__${discovery.kind}__${depsKey}`;
+      ? stableKey([discovery.chainShape, deps ?? [], live])
+      : `__non_ok__${discovery.kind}__${depsKey}__${String(live)}`;
 
   // Reset the captured async error if the signature changed (the
   // user is on a different query now — give them a fresh chance).
@@ -316,7 +356,7 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
   const discoveryErrorRef = useRef<Error | undefined>(undefined);
   discoveryKindRef.current = discovery.kind;
   if (discovery.kind === "ok") {
-    chainCollectionsRef.current = new Set(discovery.collections);
+    chainCollectionsRef.current = live ? new Set(discovery.collections) : new Set();
     discoveryErrorRef.current = undefined;
   } else if (discovery.kind === "error") {
     discoveryErrorRef.current = discovery.error;
@@ -331,7 +371,7 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
       }
       return pool.attach(
         signatureBase,
-        discovery.collections,
+        live ? discovery.collections : [],
         chainCollectionsRef.current,
         () => fetcherRef.current(),
         notify,
@@ -343,6 +383,21 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
     [pool, signatureBase, collectionsJoin],
   );
 
+  const refetchTargetRef = useRef({
+    kind: discovery.kind,
+    pool,
+    signature: signatureBase,
+  });
+  refetchTargetRef.current = { kind: discovery.kind, pool, signature: signatureBase };
+  const refetch = useCallback((): void => {
+    const target = refetchTargetRef.current;
+    if (target.kind === "ok") {
+      target.pool.refetch(target.signature);
+    } else {
+      forceUpdate();
+    }
+  }, []);
+
   // Stable per-error snapshot cache so repeated getSnapshot polls
   // within a single render return the same reference. React's
   // useSyncExternalStore detects identity changes; constructing a
@@ -350,36 +405,54 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
   const errorSnapshotRef = useRef<
     | {
         error: Error;
-        snapshot: UseQueryResult<unknown>;
+        snapshot: { status: "error"; data: undefined; error: Error };
       }
     | undefined
   >(undefined);
-  const snapshotForError = (err: Error): UseQueryResult<T> => {
+  const snapshotForError = (err: Error): UseQuerySnapshot<T> => {
     if (errorSnapshotRef.current?.error === err) {
-      return errorSnapshotRef.current.snapshot as UseQueryResult<T>;
+      return errorSnapshotRef.current.snapshot;
     }
     const snapshot = {
       status: "error" as const,
       data: undefined,
       error: err,
-    } satisfies UseQueryResult<unknown>;
+    } satisfies UseQuerySnapshot<T>;
     errorSnapshotRef.current = { error: err, snapshot };
+    return snapshot;
+  };
+
+  const decoratedSnapshotRef = useRef<
+    | {
+        base: object;
+        snapshot: UseQueryResult<unknown>;
+      }
+    | undefined
+  >(undefined);
+  const withRefetch = (base: object): UseQueryResult<T> => {
+    if (decoratedSnapshotRef.current?.base === base) {
+      return decoratedSnapshotRef.current.snapshot as UseQueryResult<T>;
+    }
+    const snapshot = { ...base, refetch } as UseQueryResult<unknown>;
+    decoratedSnapshotRef.current = { base, snapshot };
     return snapshot as UseQueryResult<T>;
   };
 
   const getSnapshot = useCallback((): UseQueryResult<T> => {
     if (asyncErrorRef.current) {
-      return snapshotForError(asyncErrorRef.current);
+      return withRefetch(snapshotForError(asyncErrorRef.current));
     }
     if (discoveryKindRef.current === "skip") {
-      return SKIPPED_SNAPSHOT as UseQueryResult<T>;
+      return withRefetch(SKIPPED_SNAPSHOT);
     }
     if (discoveryKindRef.current === "error") {
-      return snapshotForError(
-        discoveryErrorRef.current ?? new BaerlyError("Internal", "unknown discovery error"),
+      return withRefetch(
+        snapshotForError(
+          discoveryErrorRef.current ?? new BaerlyError("Internal", "unknown discovery error"),
+        ),
       );
     }
-    return pool.getSnapshot(signatureBase) as UseQueryResult<T>;
+    return withRefetch(pool.getSnapshot(signatureBase));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pool, signatureBase]);
 
@@ -390,20 +463,23 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
 };
 
 /**
- * Reactive read hook. See {@link useQueryImpl} JSDoc for usage.
+ * Read hook, live by default. See {@link useQueryImpl} JSDoc for usage.
  * The `.skip` property is the sentinel that short-circuits the hook
- * into `status: "skipped"`.
+ * into `status: "skipped"`; `{ live: false }` disables `/v1/since`
+ * while retaining initial reads, dependency re-runs, and `refetch()`.
  */
 export const useQuery: {
   <T, TConfig extends BaerlyConfig = UnboundConfig>(
     callback: (client: BaerlyClient<TConfig>) => Promise<T> | typeof SKIP,
     deps?: ReadonlyArray<unknown>,
+    options?: UseQueryOptions,
   ): UseQueryResult<T>;
   readonly skip: typeof SKIP;
 } = Object.assign(useQueryImpl, { skip: SKIP }) as {
   <T, TConfig extends BaerlyConfig = UnboundConfig>(
     callback: (client: BaerlyClient<TConfig>) => Promise<T> | typeof SKIP,
     deps?: ReadonlyArray<unknown>,
+    options?: UseQueryOptions,
   ): UseQueryResult<T>;
   readonly skip: typeof SKIP;
 };

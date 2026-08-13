@@ -2,6 +2,10 @@ import { BaerlyError } from "@baerly/protocol";
 import type { BaerlyClient } from "../client.ts";
 import { getClientContext } from "../internal/context.ts";
 import { pollSinceOnce } from "../poll-since-once.ts";
+import {
+  SUBSCRIPTION_RETRY_INITIAL_MILLIS,
+  SUBSCRIPTION_RETRY_MAX_MILLIS,
+} from "./subscription-retry.ts";
 
 /**
  * Discriminated snapshot a hook hands back from `getSnapshot`. The
@@ -28,8 +32,42 @@ const toError = (raw: unknown): Error => {
   return new BaerlyError("Internal", String(raw));
 };
 
+const isAbortError = (raw: unknown): boolean =>
+  typeof raw === "object" && raw !== null && "name" in raw && raw.name === "AbortError";
+
+const retryDelay = (attempt: number): number => {
+  const upperBound = Math.min(
+    SUBSCRIPTION_RETRY_MAX_MILLIS,
+    SUBSCRIPTION_RETRY_INITIAL_MILLIS * 2 ** attempt,
+  );
+  return Math.floor(upperBound / 2 + Math.random() * (upperBound / 2));
+};
+
+const waitForRetry = (delay: number, signal: AbortSignal): Promise<void> =>
+  (async () => {
+    if (signal.aborted) {
+      return;
+    }
+    const cleanup: Array<() => void> = [];
+    const timeout = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, delay);
+      cleanup.push(() => clearTimeout(timer));
+    });
+    const aborted = new Promise<void>((resolve) => {
+      const onAbort = (): void => resolve();
+      signal.addEventListener("abort", onAbort, { once: true });
+      cleanup.push(() => signal.removeEventListener("abort", onAbort));
+    });
+    await Promise.race([timeout, aborted]);
+    for (const dispose of cleanup) {
+      dispose();
+    }
+  })();
+
 interface CacheEntry {
   snapshot: CachedSnapshot;
+  /** Whether this entry has completed at least one successful read. */
+  hasSuccessfulData: boolean;
   /** Tables this signature's chain references — used for invalidation. */
   readonly chainTables: ReadonlySet<string>;
   /** Aborts the in-flight read for this signature, if any. */
@@ -40,6 +78,7 @@ interface TablePoll {
   refcount: number;
   controller: AbortController;
   cursor: string;
+  terminalError: Error | undefined;
 }
 
 interface SubscriptionPool {
@@ -53,6 +92,8 @@ interface SubscriptionPool {
   ): () => void;
   /** Read the cached snapshot for `signature` (or the canonical loading sentinel). */
   getSnapshot(signature: string): CachedSnapshot;
+  /** Re-run an attached signature's current fetcher. */
+  refetch(signature: string): void;
 }
 
 const poolByClient = new WeakMap<BaerlyClient, SubscriptionPool>();
@@ -82,9 +123,31 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     }
   };
 
+  const terminalErrorFor = (entry: CacheEntry): Error | undefined => {
+    for (const table of entry.chainTables) {
+      const error = tablePolls.get(table)?.terminalError;
+      if (error !== undefined) {
+        return error;
+      }
+    }
+    return undefined;
+  };
+
   const dispatchFetch = (signature: string, fetcher: () => Promise<unknown>): void => {
     const entry = cache.get(signature);
     if (entry === undefined) {
+      return;
+    }
+    const terminalError = terminalErrorFor(entry);
+    if (terminalError !== undefined) {
+      if (entry.snapshot.status !== "error" || entry.snapshot.error !== terminalError) {
+        entry.snapshot = {
+          status: "error",
+          data: entry.snapshot.data,
+          error: terminalError,
+        };
+        notifyAll(signature);
+      }
       return;
     }
     if (entry.inFlight !== undefined) {
@@ -93,8 +156,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     const controller = new AbortController();
     entry.inFlight = controller;
     const prevSnapshot = entry.snapshot;
-    const hadData = entry.snapshot.status === "ok" || entry.snapshot.status === "refreshing";
-    entry.snapshot = hadData
+    entry.snapshot = entry.hasSuccessfulData
       ? { status: "refreshing", data: entry.snapshot.data, error: undefined }
       : LOADING_SNAPSHOT;
     if (entry.snapshot !== prevSnapshot) {
@@ -111,6 +173,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
           return;
         }
         live.snapshot = { status: "ok", data, error: undefined };
+        live.hasSuccessfulData = true;
         live.inFlight = undefined;
         notifyAll(signature);
       } catch (error) {
@@ -152,18 +215,44 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     }
   };
 
+  const failForTable = (table: string, error: Error): void => {
+    for (const [signature, entry] of cache) {
+      if (!entry.chainTables.has(table)) {
+        continue;
+      }
+      const subs = subscribersBySignature.get(signature);
+      if (subs === undefined || subs.size === 0) {
+        continue;
+      }
+      entry.inFlight?.abort();
+      entry.inFlight = undefined;
+      entry.snapshot = {
+        status: "error",
+        data: entry.snapshot.data,
+        error,
+      };
+      notifyAll(signature);
+    }
+  };
+
   /** Per-signature fetcher; last writer wins (all fetchers for a signature are equivalent). */
   const signatureFetchers = new Map<string, () => Promise<unknown>>();
 
-  const startTablePoll = (table: string): void => {
+  const startTablePoll = (table: string, initialRefcount = 1): void => {
     if (tablePolls.has(table)) {
       return;
     }
     const controller = new AbortController();
-    const poll: TablePoll = { refcount: 1, controller, cursor: "" };
+    const poll: TablePoll = {
+      refcount: initialRefcount,
+      controller,
+      cursor: "",
+      terminalError: undefined,
+    };
     tablePolls.set(table, poll);
     const ctx = getClientContext(client);
     void (async () => {
+      let retryAttempt = 0;
       while (!controller.signal.aborted) {
         try {
           const res = await pollSinceOnce(ctx, table, poll.cursor, controller.signal);
@@ -176,13 +265,15 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
               invalidateForTable(table);
             }
           }
+          retryAttempt = 0;
         } catch (error) {
           if (controller.signal.aborted) {
             return;
           }
-          if (error instanceof DOMException && error.name === "AbortError") {
+          if (isAbortError(error)) {
             return;
           }
+          let recoveredDeadCursor = false;
           if (error instanceof BaerlyError && error.code === "SchemaError" && poll.cursor !== "") {
             // The cursor is unrecoverable, not the request. `/v1/since`
             // returns this for exactly two states, both permanent: the
@@ -208,18 +299,34 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
             // rejected again. Skipping the backoff would make that
             // cycle run at network speed, with an `invalidateForTable`
             // refetch storm on every lap. Falling through costs one
-            // second of recovery latency and bounds the pathological
-            // case at 1 cycle/s.
+            // backoff interval of recovery latency and bounds the
+            // pathological cycle.
             poll.cursor = "";
             invalidateForTable(table);
+            recoveredDeadCursor = true;
           }
-          // 1-second backoff on error to avoid hot-spinning on a
-          // persistent failure; downstream subscribers' next fetch
-          // sees the same error if it doesn't clear.
-          await new Promise((r) => setTimeout(r, 1000));
+          if (!recoveredDeadCursor && error instanceof BaerlyError && !error.retriable) {
+            poll.terminalError = error;
+            failForTable(table, error);
+            return;
+          }
+          const delay = retryDelay(retryAttempt);
+          retryAttempt += 1;
+          await waitForRetry(delay, controller.signal);
         }
       }
     })();
+  };
+
+  const restartTerminalPoll = (table: string): void => {
+    const poll = tablePolls.get(table);
+    if (poll?.terminalError === undefined) {
+      return;
+    }
+    const refcount = poll.refcount;
+    poll.controller.abort();
+    tablePolls.delete(table);
+    startTablePoll(table, refcount);
   };
 
   const stopTablePoll = (table: string): void => {
@@ -247,12 +354,24 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     getSnapshot(signature: string): CachedSnapshot {
       return cache.get(signature)?.snapshot ?? LOADING_SNAPSHOT;
     },
+    refetch(signature: string): void {
+      const entry = cache.get(signature);
+      const fetcher = signatureFetchers.get(signature);
+      if (entry === undefined || fetcher === undefined) {
+        return;
+      }
+      for (const table of entry.chainTables) {
+        restartTerminalPoll(table);
+      }
+      dispatchFetch(signature, fetcher);
+    },
     attach(signature, tables, chainTables, fetcher, notify) {
       let entry = cache.get(signature);
       const isFirstSubscriber = entry === undefined;
       if (entry === undefined) {
         entry = {
           snapshot: LOADING_SNAPSHOT,
+          hasSuccessfulData: false,
           chainTables,
           inFlight: undefined,
         };
