@@ -398,7 +398,11 @@ describe("subscription-pool", () => {
     await waitMicrotasks(16);
 
     expect(firstFetcher).toHaveBeenCalledTimes(2);
-    expect(secondFetcher).toHaveBeenCalledTimes(2);
+    // Three, not two: the first refetch revived the shared poll and
+    // swept the second signature out of its stale error, then the
+    // second refetch dispatched it again on its own account. The
+    // second refetch finds a healthy poll, so `sinceCalls` stays at 2.
+    expect(secondFetcher).toHaveBeenCalledTimes(3);
     expect(sinceCalls).toBe(2);
     expect(pollSignals.size).toBe(2);
     const [oldSignal, recoveredSignal] = [...pollSignals];
@@ -409,6 +413,159 @@ describe("subscription-pool", () => {
     expect(recoveredSignal?.aborted).toBe(false);
     secondUnsubscribe();
     expect(recoveredSignal?.aborted).toBe(true);
+  });
+
+  test("refetch on one signature also clears the stale error on its siblings", async () => {
+    let sinceCalls = 0;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", () => {
+      sinceCalls += 1;
+      return sinceCalls === 1
+        ? Promise.resolve(sinceError("Unauthorized", 401, false))
+        : sinceForever();
+    });
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const callerFetcher = vi.fn<() => Promise<unknown>>().mockResolvedValue([{ _id: "caller" }]);
+    const bystanderFetcher = vi
+      .fn<() => Promise<unknown>>()
+      .mockResolvedValue([{ _id: "bystander" }]);
+    const callerUnsubscribe = pool.attach(
+      "sibling-caller",
+      ["notes"],
+      new Set(["notes"]),
+      callerFetcher,
+      vi.fn<() => void>(),
+    );
+    const bystanderUnsubscribe = pool.attach(
+      "sibling-bystander",
+      ["notes"],
+      new Set(["notes"]),
+      bystanderFetcher,
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(16);
+    expect(pool.getSnapshot("sibling-caller").status).toBe("error");
+    expect(pool.getSnapshot("sibling-bystander").status).toBe("error");
+
+    // Only the caller refetches. The revived poll is healthy but the
+    // collection is quiet, so no `/v1/since` event will ever arrive to
+    // invalidate the bystander — reviving the poll has to clear it.
+    pool.refetch("sibling-caller");
+    await waitMicrotasks(16);
+
+    expect(pool.getSnapshot("sibling-caller")).toMatchObject({
+      status: "ok",
+      data: [{ _id: "caller" }],
+      error: undefined,
+    });
+    expect(pool.getSnapshot("sibling-bystander")).toMatchObject({
+      status: "ok",
+      data: [{ _id: "bystander" }],
+      error: undefined,
+    });
+    // Each signature is dispatched exactly once by the refetch — the
+    // caller directly, the bystander through the revival sweep that
+    // skips it.
+    expect(callerFetcher).toHaveBeenCalledTimes(2);
+    expect(bystanderFetcher).toHaveBeenCalledTimes(2);
+
+    callerUnsubscribe();
+    bystanderUnsubscribe();
+  });
+
+  test("refetch dispatches a multi-table sibling once when both terminal polls revive", async () => {
+    const sinceCalls = new Map<string, number>();
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req) => {
+      const collection = new URL(req.url).searchParams.get("collection") ?? "";
+      const calls = (sinceCalls.get(collection) ?? 0) + 1;
+      sinceCalls.set(collection, calls);
+      return calls === 1 ? Promise.resolve(sinceError("Unauthorized", 401, false)) : sinceForever();
+    });
+    const client = makeClient(mock);
+    const pool = poolFor(client);
+    const callerFetcher = vi.fn<() => Promise<unknown>>().mockResolvedValue([{ _id: "caller" }]);
+    const siblingFetcher = vi.fn<() => Promise<unknown>>().mockResolvedValue([{ _id: "sibling" }]);
+    const tables = ["comments", "notes"];
+    const chainTables = new Set(tables);
+    const callerUnsubscribe = pool.attach(
+      "multi-table-caller",
+      tables,
+      chainTables,
+      callerFetcher,
+      vi.fn<() => void>(),
+    );
+    const siblingUnsubscribe = pool.attach(
+      "multi-table-sibling",
+      tables,
+      chainTables,
+      siblingFetcher,
+      vi.fn<() => void>(),
+    );
+    await waitMicrotasks(16);
+    expect(pool.getSnapshot("multi-table-caller").status).toBe("error");
+    expect(pool.getSnapshot("multi-table-sibling").status).toBe("error");
+
+    pool.refetch("multi-table-caller");
+    await waitMicrotasks(16);
+
+    expect(callerFetcher).toHaveBeenCalledTimes(2);
+    expect(siblingFetcher).toHaveBeenCalledTimes(2);
+    expect(sinceCalls).toEqual(
+      new Map([
+        ["comments", 2],
+        ["notes", 2],
+      ]),
+    );
+
+    callerUnsubscribe();
+    siblingUnsubscribe();
+  });
+
+  test("a non-envelope gateway 5xx retries instead of killing the poll", async () => {
+    let sinceCalls = 0;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", () => {
+      sinceCalls += 1;
+      // What a load balancer returns mid-rolling-deploy: a 5xx whose
+      // body is not an `HttpErrorEnvelope`, so the client has to infer
+      // the failure class from the status alone.
+      return Promise.resolve(
+        new Response("<html><body>502 Bad Gateway</body></html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+      );
+    });
+    vi.useFakeTimers();
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribe = pool.attach(
+        "gateway-5xx",
+        ["notes"],
+        new Set(["notes"]),
+        vi.fn<() => Promise<unknown>>().mockResolvedValue([{ _id: "last-good" }]),
+        vi.fn<() => void>(),
+      );
+      await waitMicrotasks(16);
+      expect(sinceCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(sinceCalls).toBeGreaterThan(1);
+      // A retriable poll failure never fails the query, so subscribers
+      // keep their data instead of being parked on a terminal error.
+      expect(pool.getSnapshot("gateway-5xx")).toMatchObject({
+        status: "ok",
+        data: [{ _id: "last-good" }],
+        error: undefined,
+      });
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("retriable transport failures use jittered exponential backoff and reset after success", async () => {

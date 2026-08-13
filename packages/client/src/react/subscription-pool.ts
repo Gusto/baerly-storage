@@ -43,26 +43,25 @@ const retryDelay = (attempt: number): number => {
   return Math.floor(upperBound / 2 + Math.random() * (upperBound / 2));
 };
 
-const waitForRetry = (delay: number, signal: AbortSignal): Promise<void> =>
-  (async () => {
-    if (signal.aborted) {
-      return;
-    }
-    const cleanup: Array<() => void> = [];
-    const timeout = new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, delay);
-      cleanup.push(() => clearTimeout(timer));
-    });
-    const aborted = new Promise<void>((resolve) => {
-      const onAbort = (): void => resolve();
-      signal.addEventListener("abort", onAbort, { once: true });
-      cleanup.push(() => signal.removeEventListener("abort", onAbort));
-    });
-    await Promise.race([timeout, aborted]);
-    for (const dispose of cleanup) {
-      dispose();
-    }
-  })();
+const waitForRetry = async (delay: number, signal: AbortSignal): Promise<void> => {
+  if (signal.aborted) {
+    return;
+  }
+  const cleanup: Array<() => void> = [];
+  const timeout = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, delay);
+    cleanup.push(() => clearTimeout(timer));
+  });
+  const aborted = new Promise<void>((resolve) => {
+    const onAbort = (): void => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+    cleanup.push(() => signal.removeEventListener("abort", onAbort));
+  });
+  await Promise.race([timeout, aborted]);
+  for (const dispose of cleanup) {
+    dispose();
+  }
+};
 
 interface CacheEntry {
   snapshot: CachedSnapshot;
@@ -196,9 +195,17 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     })();
   };
 
-  const invalidateForTable = (table: string): void => {
+  const invalidateForTable = (
+    table: string,
+    skipSignature?: string,
+    dispatchedSignatures?: Set<string>,
+  ): void => {
     for (const [signature, entry] of cache) {
-      if (!entry.chainTables.has(table)) {
+      if (
+        !entry.chainTables.has(table) ||
+        signature === skipSignature ||
+        dispatchedSignatures?.has(signature)
+      ) {
         continue;
       }
       const subs = subscribersBySignature.get(signature);
@@ -210,6 +217,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
       // (signature is hashed on chain shape + deps).
       const fetcher = signatureFetchers.get(signature);
       if (fetcher !== undefined) {
+        dispatchedSignatures?.add(signature);
         dispatchFetch(signature, fetcher);
       }
     }
@@ -318,15 +326,16 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     })();
   };
 
-  const restartTerminalPoll = (table: string): void => {
+  const restartTerminalPoll = (table: string): boolean => {
     const poll = tablePolls.get(table);
     if (poll?.terminalError === undefined) {
-      return;
+      return false;
     }
     const refcount = poll.refcount;
     poll.controller.abort();
     tablePolls.delete(table);
     startTablePoll(table, refcount);
+    return true;
   };
 
   const stopTablePoll = (table: string): void => {
@@ -360,10 +369,24 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
       if (entry === undefined || fetcher === undefined) {
         return;
       }
+      const revived: Array<string> = [];
       for (const table of entry.chainTables) {
-        restartTerminalPoll(table);
+        if (restartTerminalPoll(table)) {
+          revived.push(table);
+        }
       }
       dispatchFetch(signature, fetcher);
+      // `failForTable` parked *every* signature on the dead table, not
+      // just this one. The revived poll only re-invalidates once the
+      // server has an event to report, so on a quiet collection the
+      // siblings would sit on a stale error forever even though the
+      // poll behind them is healthy again. Refresh them here; the
+      // caller is already dispatched above and is skipped so it isn't
+      // aborted and re-issued.
+      const dispatchedSignatures = new Set<string>();
+      for (const table of revived) {
+        invalidateForTable(table, signature, dispatchedSignatures);
+      }
     },
     attach(signature, tables, chainTables, fetcher, notify) {
       let entry = cache.get(signature);

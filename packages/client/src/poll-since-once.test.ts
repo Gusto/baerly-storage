@@ -118,6 +118,37 @@ describe("pollSinceOnce", () => {
     });
   });
 
+  test("a 5xx with no error envelope is retriable, a 4xx with none is not", async () => {
+    // Proxies, load balancers, and CDNs answer with their own bodies,
+    // so the server's failure class is unavailable and the status is
+    // all there is to go on. Consumers that gate retries on
+    // `retriable` — the React subscription pool treats a
+    // non-retriable poll failure as permanently terminal — depend on
+    // a transient gateway 5xx not being classified as a caller fault.
+    const gatewayBody = () =>
+      new Response("<html>upstream unavailable</html>", {
+        status: 503,
+        headers: { "content-type": "text/html" },
+      });
+    const notFoundBody = () =>
+      new Response("<html>no route</html>", {
+        status: 404,
+        headers: { "content-type": "text/html" },
+      });
+
+    const gatewayMock = new MockFetch();
+    gatewayMock.on("GET", "/v1/since", gatewayBody);
+    await expect(
+      pollSinceOnce(ctxFor(gatewayMock), "tickets", "", undefined),
+    ).rejects.toMatchObject({ code: "NetworkError", status: 503, retriable: true });
+
+    const notFoundMock = new MockFetch();
+    notFoundMock.on("GET", "/v1/since", notFoundBody);
+    await expect(
+      pollSinceOnce(ctxFor(notFoundMock), "tickets", "", undefined),
+    ).rejects.toMatchObject({ code: "Internal", status: 404, retriable: false });
+  });
+
   test("collection names are URL-encoded so '/' and '&' round-trip cleanly", async () => {
     const mock = new MockFetch();
     mock.on("GET", "/v1/since", (req) => {
