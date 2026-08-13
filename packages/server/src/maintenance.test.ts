@@ -10,6 +10,7 @@
  */
 
 import {
+  type BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   casUpdateCurrentJson,
@@ -908,20 +909,47 @@ describe("parseMaintenanceEnv", () => {
     });
   });
 
-  test("non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES is ignored (NaN → undefined)", () => {
+  test("non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES is ignored (NaN → undefined, does not throw)", () => {
     expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "lots" }))).toEqual({
       disabled: false,
     });
   });
 
-  test("BAERLY_MAINTENANCE_DISABLE truthiness matches the documented rules", () => {
+  test("non-positive BAERLY_MAINTENANCE_MAX_FOLD_BYTES throws InvalidConfig", () => {
+    for (const v of ["0", "-1", "-1048576"]) {
+      let caughtError: unknown;
+      try {
+        parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: v }));
+      } catch (error) {
+        caughtError = error;
+      }
+      expect((caughtError as BaerlyError).code).toBe("InvalidConfig");
+    }
+  });
+
+  test("BAERLY_MAINTENANCE_DISABLE closed vocabulary matches the documented rules", () => {
     // Falsy: unset / "" / "0" / "false" / "FALSE" (case-insensitive).
+    expect(parseMaintenanceEnv(reader({})).disabled).toBe(false);
     for (const v of ["", "0", "false", "FALSE"]) {
       expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v })).disabled).toBe(false);
     }
-    // Truthy: any other non-empty value.
-    for (const v of ["1", "true", "TRUE", "yes", "on"]) {
+    // Truthy: "1" / "true" / "TRUE" (case-insensitive) — and ONLY these.
+    for (const v of ["1", "true", "TRUE"]) {
       expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v })).disabled).toBe(true);
+    }
+  });
+
+  test("BAERLY_MAINTENANCE_DISABLE outside the closed vocabulary throws InvalidConfig", () => {
+    // "yes"/"on" used to be silently truthy; "no"/"off" used to be silently
+    // truthy too (the original bug this vocabulary closes). All now throw.
+    for (const v of ["yes", "on", "no", "off", "2", "disable"]) {
+      let caughtError: unknown;
+      try {
+        parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v }));
+      } catch (error) {
+        caughtError = error;
+      }
+      expect((caughtError as BaerlyError).code).toBe("InvalidConfig");
     }
   });
 });

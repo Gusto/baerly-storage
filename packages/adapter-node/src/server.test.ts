@@ -22,6 +22,7 @@ import {
   NODE_MAINTENANCE_GC_INTERVAL,
   NODE_MAINTENANCE_GC_MAX_MARKS,
   NODE_MAINTENANCE_GC_MAX_SWEEPS,
+  type BaerlyError,
   type Verifier,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_INTERVAL,
@@ -141,6 +142,26 @@ describe("nodeMaintenanceDispatch", () => {
       );
       expect(m.disabled).toBeUndefined();
     }
+  });
+
+  test("rejects a BAERLY_MAINTENANCE_DISABLE value outside the closed vocabulary", () => {
+    let error: unknown;
+    try {
+      nodeMaintenanceDispatch((k) => (k === "BAERLY_MAINTENANCE_DISABLE" ? "yes" : undefined));
+    } catch (caughtError) {
+      error = caughtError;
+    }
+    expect((error as BaerlyError).code).toBe("InvalidConfig");
+  });
+
+  test("rejects a non-positive BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
+    let error: unknown;
+    try {
+      nodeMaintenanceDispatch((k) => (k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "0" : undefined));
+    } catch (caughtError) {
+      error = caughtError;
+    }
+    expect((error as BaerlyError).code).toBe("InvalidConfig");
   });
 });
 
@@ -403,6 +424,58 @@ describe("createFetchHandler", () => {
     const res = await handler(new Request("http://x/v1/healthz", { method: "GET" }));
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ ok: true });
+  });
+
+  test("maps invalid maintenance env through the public app and recovers after correction", async () => {
+    const records: LogRecord[] = [];
+    const sink: Sink = (record) => records.push(record);
+    await configureObservability({ level: "debug", sink });
+
+    const storage = new MemoryStorage();
+    await provisionTable(storage, "acme", "c");
+    const app = createApp({
+      app: "t",
+      storage,
+      verifier: okVerifier,
+      observability: { level: "debug", sink },
+    });
+
+    vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "yes");
+    try {
+      const health = await app.fetch(new Request("http://x/v1/healthz"));
+      expect(health.status).toBe(200);
+      await expect(health.json()).resolves.toEqual({ ok: true });
+
+      const spec = await app.fetch(new Request("http://x/v1/spec"));
+      expect(spec.status).toBe(200);
+
+      const invalid = await app.fetch(new Request("http://x/v1/c/c"));
+      expect(invalid.status).toBe(400);
+      expect(invalid.headers.get("content-type")).toContain("application/json");
+      await expect(invalid.json()).resolves.toMatchObject({
+        error: { code: "InvalidConfig", message: "invalid server configuration" },
+      });
+
+      const line = records.find(
+        (record) =>
+          record.message.join("") === "canonical" &&
+          record.category.join(".") === "baerly.http" &&
+          record.properties["status"] === 400,
+      );
+      expect(line?.properties).toMatchObject({
+        status: 400,
+        outcome: "error",
+        method: "GET",
+        path: "/v1/c/c",
+        error: { code: "InvalidConfig" },
+      });
+
+      vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "false");
+      const recovered = await app.fetch(new Request("http://x/v1/c/c"));
+      expect(recovered.status).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("returns 401 envelope when the verifier returns null on a /v1/t path", async () => {

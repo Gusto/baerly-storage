@@ -75,9 +75,12 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     CPU budget; `cf-paid` carries 8 MiB. This var wins over either. On
  *     the free profile a value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES}
  *     warns LOUDLY once at init — on a free isolate that fold risks a
- *     mid-rebuild CPU kill.
- *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Any non-empty value
- *     other than `"0"` / `"false"` disables write-tick maintenance.
+ *     mid-rebuild CPU kill. Zero or negative throws
+ *     `BaerlyError{code:"InvalidConfig"}` when the binding is read.
+ *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Closed, case-insensitive
+ *     vocabulary: unset / `""` / `"0"` / `"false"` → not disabled;
+ *     `"1"` / `"true"` → disabled; anything else throws
+ *     `BaerlyError{code:"InvalidConfig"}` when maintenance dispatch is built.
  *   - `BAERLY_MAINTENANCE_PROFILE` — opt-in profile selector. Set to
  *     `"cf-paid"` on a paid Worker to select
  *     {@link MAINTENANCE_PROFILE_CF_PAID}, which raises BOTH the per-pass
@@ -98,13 +101,21 @@ export interface BaerlyEnv {
   /**
    * Override the snapshot-rebuild ceiling `C` the resolved profile
    * carries (512 KiB on `cf-free`, 8 MiB on `cf-paid`). Parsed as a
-   * number; ignored when unset / non-numeric. On the free profile a
+   * number; ignored when unset, empty, or non-numeric. Zero or negative throws
+   * `BaerlyError{code:"InvalidConfig"}` when read. On the free profile a
    * value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns once at init.
    */
   BAERLY_MAINTENANCE_MAX_FOLD_BYTES?: string;
   /**
-   * Write-tick maintenance kill switch. Truthy (non-empty, not
-   * `"0"` / `"false"`) disables the in-band fold + GC dispatch.
+   * Write-tick maintenance kill switch. Closed, case-insensitive
+   * vocabulary: unset / `""` / `"0"` / `"false"` → not disabled;
+   * `"1"` / `"true"` → disabled; anything else throws
+   * `BaerlyError{code:"InvalidConfig"}` when maintenance dispatch is built.
+   * As with a missing `SHARED_SECRET`, that throw leaves `fetch` through
+   * the ExportedHandler's exception path — the request surfaces as a
+   * Worker exception (visible in CF's error telemetry), not as the
+   * canonical JSON error envelope the Node adapter returns. Health, dev,
+   * and `/v1/spec` routes short-circuit ahead of the parse and stay up.
    */
   BAERLY_MAINTENANCE_DISABLE?: string;
   /**
@@ -160,9 +171,12 @@ export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | u
  *
  *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (`C`), which
  *     overrides the resolved profile's ceiling. Parsed as a number;
- *     ignored when unset / NaN.
- *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Truthy
- *     when set to a non-empty value other than `"0"` / `"false"`.
+ *     ignored when unset / NaN; zero or negative throws
+ *     `BaerlyError{code:"InvalidConfig"}`.
+ *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Closed,
+ *     case-insensitive vocabulary: unset/`""`/`"0"`/`"false"` → `false`;
+ *     `"1"`/`"true"` → `true`; anything else throws
+ *     `BaerlyError{code:"InvalidConfig"}`.
  *   - `BAERLY_MAINTENANCE_PROFILE` → `options.profile`, via
  *     {@link resolveCfMaintenanceProfile}.
  *
@@ -356,11 +370,12 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
   // contract documented on `auth: "shared-secret"` + missing env.
   let resolutionError: unknown;
   let observabilityConfigured = false;
-  // Fired at most once per isolate: an operator who raised the snapshot
-  // ceiling above what a free CF isolate can rebuild in one shot gets a
-  // loud warning. Init-scoped (not per-request) so a busy Worker doesn't
-  // spam the log stream.
-  let maintenanceCeilingWarned = false;
+  // Completed at most once per handler/isolate: an operator who raised the
+  // snapshot ceiling above what a free CF isolate can rebuild in one shot
+  // gets a loud warning. A throwing parse leaves this false so the bad
+  // binding keeps failing until corrected; a successful check suppresses
+  // per-request warning work thereafter.
+  let maintenanceCeilingChecked = false;
 
   const ensureResolved = async (env: E): Promise<ResolvedState> => {
     if (resolutionError !== undefined) {
@@ -417,8 +432,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     // equivalent of this guardrail because paid's ceiling is memory-bound,
     // not CPU-bound, and no safe-override threshold has been measured
     // above it.
-    if (!maintenanceCeilingWarned) {
-      maintenanceCeilingWarned = true;
+    if (!maintenanceCeilingChecked) {
       const rawFoldBytes = (env as unknown as Record<string, unknown>)[
         "BAERLY_MAINTENANCE_MAX_FOLD_BYTES"
       ];
@@ -446,6 +460,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             `NODE, or wait for §11 chunked snapshots. Leave this var unset on free CF.`,
         );
       }
+      maintenanceCeilingChecked = true;
     }
     return resolved;
   };
