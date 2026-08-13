@@ -960,14 +960,32 @@ export function defineStorageConformanceSuite(
     });
 
     describe.skipIf(!opts.supportsAbort)("AbortSignal", () => {
-      test("pre-aborted signal rejects get/put/delete", async () => {
+      test("pre-aborted signal rejects get", async () => {
         const ac = new AbortController();
         ac.abort();
         await expect(s.get("k", { signal: ac.signal })).rejects.toBeDefined();
+      });
+
+      test("pre-aborted signal rejects put without creating the key", async () => {
+        const key = "aborted-put";
+        const ac = new AbortController();
+        ac.abort();
         await expect(
-          s.put("k", new TextEncoder().encode("v"), { signal: ac.signal }),
+          s.put(key, new TextEncoder().encode("v"), { signal: ac.signal }),
         ).rejects.toBeDefined();
-        await expect(s.delete("k", { signal: ac.signal })).rejects.toBeDefined();
+        await expect(s.get(key)).resolves.toBeNull();
+      });
+
+      test("pre-aborted signal rejects delete without removing the key", async () => {
+        const key = "aborted-delete";
+        const original = new TextEncoder().encode("original");
+        await s.put(key, original);
+        const ac = new AbortController();
+        ac.abort();
+        await expect(s.delete(key, { signal: ac.signal })).rejects.toBeDefined();
+        const got = await s.get(key);
+        expect(got).not.toBeNull();
+        expect(bytesEqual(got!.body, original)).toBe(true);
       });
 
       test("pre-aborted signal rejects list", async () => {
