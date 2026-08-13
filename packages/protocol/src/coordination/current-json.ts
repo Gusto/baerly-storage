@@ -135,6 +135,39 @@ export interface CurrentJson {
   last_warned_seq?: number;
 
   /**
+   * The exclusive upper bound of the contiguous log prefix certified
+   * deleted. Every `log/<seq>.json` with `seq < log_delete_floor` is
+   * gone from the bucket. Distinct from {@link log_seq_start}, which is the
+   * lowest sequence a READER may need: the gap between them is the
+   * deliberately-retained safety window, which absorbs a paused writer
+   * resuming against its idempotency anchor.
+   *
+   * A FLOOR, not a rotation cursor. The deletable set is a contiguous
+   * range over integer `seq` order that only ever grows at one end, so
+   * this never wraps and never re-scans — which is why retiring stale
+   * logs needs no LIST and no `gc/pending.json` entry. Compare
+   * `GcPending.log_scan_cursor`, which drives a budget-bounded LIST in
+   * LEXICOGRAPHIC key order (`0,1,10,11,2,…`) and therefore must be a
+   * wrapping position rather than a bound.
+   *
+   * Optional because it postdates `schema_version: 3`. Absent is a
+   * well-defined state meaning "no deleted prefix is certified" and
+   * decodes to `0` via {@link logDeleteFloorOf}; a bucket written by an
+   * earlier build simply starts its first retention pass from the bottom
+   * of the keyspace.
+   *
+   * Invariants:
+   *   - advances monotonically (never decreases)
+   *   - `0 <= log_delete_floor <= log_seq_start`
+   *
+   * Both are transition-scoped and enforced in
+   * {@link assertCurrentJsonTransition}. The single-state guard checks
+   * shape only, so a retirement pass must clamp against
+   * {@link log_seq_start} rather than trust this value.
+   */
+  log_delete_floor?: number;
+
+  /**
    * Opaque non-empty generation nonce, re-minted by every writer that
    * *replaces* this collection rather than advancing it — the two
    * `baerly admin restore` seeds and the writer/dev auto-provision
@@ -351,6 +384,26 @@ export const assertCurrentJsonTransition = (
       `current.json at ${key}: log_seq_start must not decrease (${String(before.log_seq_start)} → ${String(after.log_seq_start)})`,
     );
   }
+  // Same argument one floor down, and read through the accessor on BOTH
+  // sides: absent means "no deleted prefix is certified", so a pre-field
+  // manifest compares as 0 rather than as `undefined`.
+  const beforeDeleteFloor = logDeleteFloorOf(before);
+  const afterDeleteFloor = logDeleteFloorOf(after);
+  if (afterDeleteFloor < beforeDeleteFloor) {
+    throw new BaerlyError(
+      "Internal",
+      `current.json at ${key}: log_delete_floor must not decrease (${String(beforeDeleteFloor)} → ${String(afterDeleteFloor)})`,
+    );
+  }
+  // Deleting at or above the live floor would remove an object a reader
+  // walking `[log_seq_start, tail_hint)` still needs. This is the hard
+  // safety line for both maintenance triggers.
+  if (afterDeleteFloor > after.log_seq_start) {
+    throw new BaerlyError(
+      "Internal",
+      `current.json at ${key}: log_delete_floor must not exceed log_seq_start (${String(afterDeleteFloor)} > ${String(after.log_seq_start)})`,
+    );
+  }
 };
 
 /**
@@ -369,16 +422,12 @@ export const assertCurrentJsonTransition = (
  * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist
  *         (use {@link createCurrentJson} instead) or body doesn't
  *         parse / fails the shape guard.
- * @throws BaerlyError{code:"Internal"} — the mutator lowered
- *         `log_seq_start`. The floor is monotone non-decreasing;
- *         equality is permitted (a `tail_hint` refresh or
- *         `last_warned_seq` stamp holds it fixed). No *production*
- *         mutator writes the floor, so no shipping caller can regress
- *         it; this guards future ones, and the protocol suite
- *         exercises the branch directly. The compactor calls the same
- *         transition validator before its direct `If-Match` PUT.
- *         `baerly admin restore --force` is the deliberate truncate
- *         exemption.
+ * @throws BaerlyError{code:"Internal"} — the mutator decreased
+ *         `log_seq_start`, decreased `log_delete_floor`, or set
+ *         `log_delete_floor > log_seq_start`. Equality is permitted.
+ *         The compactor calls the same transition validator before its
+ *         direct `If-Match` PUT; `baerly admin restore --force` is the
+ *         deliberate truncate exemption.
  */
 export async function casUpdateCurrentJson(
   storage: Storage,
@@ -532,6 +581,13 @@ export async function claimWriter(
  */
 export const logSeqStartOf = (c: CurrentJson): number => c.log_seq_start;
 
+/**
+ * Read `log_delete_floor`, defaulting an absent field to `0`. Absent
+ * means "no deleted prefix is certified", which is exactly what a
+ * pre-field bucket records even if older GC deleted sparse log objects.
+ */
+export const logDeleteFloorOf = (c: CurrentJson): number => c.log_delete_floor ?? 0;
+
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
@@ -660,6 +716,25 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
     throw new BaerlyError(
       "InvalidResponse",
       `current.json at ${key}: last_warned_seq must be a non-negative integer if present`,
+    );
+  }
+  // Shape only. `log_delete_floor <= log_seq_start` is deliberately NOT
+  // checked here: `readCurrentJson` sits on `admin restore`'s own path
+  // (it reads `head` before it can reseed), so rejecting a single state
+  // on that bound would turn an out-of-bound floor into a bucket with no
+  // in-product repair path. The bound is transition-scoped in
+  // {@link assertCurrentJsonTransition}, and consumers of the field
+  // clamp against `log_seq_start` rather than trust it.
+  if (
+    r["log_delete_floor"] !== undefined &&
+    // Stryker disable next-line ConditionalExpression: same rationale as `log_seq_start` above.
+    (typeof r["log_delete_floor"] !== "number" ||
+      !Number.isInteger(r["log_delete_floor"]) ||
+      r["log_delete_floor"] < 0)
+  ) {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `current.json at ${key}: log_delete_floor must be a non-negative integer if present`,
     );
   }
   if (

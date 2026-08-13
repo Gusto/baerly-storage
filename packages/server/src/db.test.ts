@@ -301,7 +301,15 @@ describe("Db log-read seams are floored at log_seq_start", () => {
   // `false`) and resolve `null` off a `log/NaN.json` GET.
   test("getLogEntry throws Internal on a seq below a zero floor", async () => {
     const { db, current } = await seedEntries();
-    await expect(db.getLogEntry(TABLE, -1, current)).rejects.toMatchObject({ code: "Internal" });
+    await expect(db.getLogEntry(TABLE, -1, current)).rejects.toMatchObject({
+      code: "Internal",
+      // The FOLD-floor wording, not the certified-delete-floor one. An absent
+      // `log_delete_floor` decodes to 0, so a negative seq sorts below it
+      // arithmetically — but no deleted prefix is certified, and reporting
+      // the nonexistent object as reclaimed would be a lie. Pinning the
+      // message stops the certified-delete-floor arm swallowing this case.
+      message: expect.stringContaining("below the fold floor log_seq_start=0"),
+    });
   });
 
   test("collection validation precedes the floor check", async () => {
@@ -330,6 +338,98 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     const { db, current } = await seedEntries();
     await expect(db.probeLogTail(TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
       code: "Internal",
+    });
+  });
+
+  // Required pin 5. The fold floor says "folded, and MAY already be
+  // reclaimed"; the certified delete floor says "DELETED, and is gone."
+  // Both throw `Internal`, so only the message tells an operator reading
+  // the throw which state applies — the reason these floors are separate.
+  // `old_snapshot_threshold` was
+  // removed from PostgreSQL in PG17 as dangerously broken while Oracle's
+  // `ORA-01555` survives the identical trade: the lethal property was
+  // silence, not the window.
+  describe("and at the certified delete floor", () => {
+    /** `current` with a stored `log_delete_floor`, set independently of the fold floor. */
+    const withDeleteFloor = (current: CurrentJson, to: number): CurrentJson => ({
+      ...current,
+      log_delete_floor: to,
+    });
+
+    test("getLogEntry names the certified delete floor below it", async () => {
+      const { db, current } = await seedEntries(4);
+      const manifest = withDeleteFloor(raiseFloor(current, 3), 2);
+      await expect(db.getLogEntry(TABLE, 1, manifest)).rejects.toMatchObject({
+        code: "Internal",
+        message: expect.stringContaining("below the certified delete floor 2"),
+      });
+    });
+
+    test("probeLogTail names the certified delete floor below it", async () => {
+      const { db, current } = await seedEntries(4);
+      const manifest = withDeleteFloor(raiseFloor(current, 3), 2);
+      await expect(db.probeLogTail(TABLE, 1, manifest)).rejects.toMatchObject({
+        code: "Internal",
+        message: expect.stringContaining("below the certified delete floor 2"),
+      });
+    });
+
+    // A seq in the gap between the two floors is folded but not yet
+    // deleted, and must keep the weaker "may already be reclaimed"
+    // wording. This is what a MERGED single arm would break, and what
+    // `Math.min` → `Math.max` would break; the two cases above are what
+    // an arm appended AFTER the fold-floor check would break, since a
+    // sub-delete-floor seq is also sub-fold-floor and would take the
+    // first arm.
+    test("a seq between the two floors keeps the fold-floor wording", async () => {
+      const { db, current } = await seedEntries(4);
+      const manifest = withDeleteFloor(raiseFloor(current, 3), 1);
+      await expect(db.getLogEntry(TABLE, 2, manifest)).rejects.toMatchObject({
+        code: "Internal",
+        message: expect.stringContaining("below the fold floor log_seq_start=3"),
+      });
+    });
+
+    // The effective floor is CLAMPED to `log_seq_start`. An out-of-bound
+    // `log_delete_floor` is readable off disk on purpose — the
+    // `<= log_seq_start` bound is transition-scoped, not enforced by the
+    // single-state guard, so that a manifest in that state stays
+    // repairable by `admin restore`. Unclamped, this seam would report an
+    // entry that is demonstrably PRESENT as gone.
+    test("clamps an out-of-bound delete floor to log_seq_start", async () => {
+      const { db, current } = await seedEntries(2);
+      const manifest = withDeleteFloor(raiseFloor(current, 1), 5);
+      await expect(db.getLogEntry(TABLE, 1, manifest)).resolves.toMatchObject({
+        op: "I",
+        seq: 1,
+      });
+    });
+
+    // When the clamp bites, the message must not attribute the clamped
+    // value to the field. An operator debugging an out-of-bound floor is
+    // the one reader who most needs the stored number, and "the manifest
+    // says 5, I am using 3" is the whole diagnosis.
+    test("reports the stored floor alongside the clamped one", async () => {
+      const { db, current } = await seedEntries(4);
+      const manifest = withDeleteFloor(raiseFloor(current, 3), 5);
+      await expect(db.getLogEntry(TABLE, 1, manifest)).rejects.toMatchObject({
+        code: "Internal",
+        message: expect.stringContaining(
+          "below the certified delete floor 3 (stored log_delete_floor=5, clamped to log_seq_start=3)",
+        ),
+      });
+    });
+
+    // A manifest that certifies no deleted prefix must never take this arm,
+    // even for a seq that sorts below its zero delete floor.
+    test("stays silent when no deleted prefix is certified", async () => {
+      const { db, current } = await seedEntries(2);
+      await expect(
+        db.getLogEntry(TABLE, -1, withDeleteFloor(raiseFloor(current, 1), 0)),
+      ).rejects.toMatchObject({
+        code: "Internal",
+        message: expect.stringContaining("below the fold floor log_seq_start=1"),
+      });
     });
   });
 });

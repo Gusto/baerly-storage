@@ -10,6 +10,7 @@ export {
   assertCurrentJsonTransition,
   casUpdateCurrentJson,
   createCurrentJson,
+  logDeleteFloorOf,
   logSeqStartOf,
   mintGeneration,
   readCurrentJson,

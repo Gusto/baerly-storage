@@ -8,6 +8,7 @@ import {
   decodeJsonBytes,
   type DocumentData,
   type IndexDefinition,
+  logDeleteFloorOf,
   logObjectKey,
   type LogEntry,
   logSeqStartOf,
@@ -289,7 +290,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * `docs/spec/sync-protocol.md`).
    *
    * @throws BaerlyError code="Internal" — `seq` is below
-   *         `current.log_seq_start`.
+   *         `current.log_seq_start`, or below the certified prefix bound
+   *         `current.log_delete_floor` (a distinct message: the object is
+   *         gone, not merely reclaimable).
    *
    * @internal — typed seam for the HTTP handler; app code should use
    *             the collection API.
@@ -338,7 +341,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * in `docs/spec/sync-protocol.md`).
    *
    * @throws BaerlyError code="Internal" — `hint` is below
-   *         `current.log_seq_start`.
+   *         `current.log_seq_start`, or below the certified prefix bound
+   *         `current.log_delete_floor` (a distinct message: the object is
+   *         gone, not merely reclaimable).
    *
    * @internal — typed seam for the HTTP handler.
    */
@@ -357,7 +362,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
 }
 
 /**
- * Guard a log-read seq against the fold floor it was derived from.
+ * Guard a log-read seq against both floors on the manifest it was
+ * derived from.
  *
  * Entries below `log_seq_start` have been folded into the snapshot
  * (invariant 5 in `docs/spec/sync-protocol.md`) and may be reclaimed at
@@ -368,10 +374,14 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
  * client input reaches these seams unscreened (`/v1/since` rejects a
  * sub-floor cursor with `SchemaError` before ever getting here).
  *
- * The floor arrives as the whole `CurrentJson` rather than a bare
- * number so it cannot be invented independently of the manifest, and
- * so a later floor on the same object — the retention delete floor —
- * lands here without another signature change.
+ * Below `log_delete_floor` the contiguous prefix is certified deleted,
+ * so the object is not merely *reclaimable* but already *reclaimed*.
+ * The two floors get distinct messages. Same code, because both are the
+ * same class of caller bug; different wording, because an operator
+ * reading the throw has to know whether the bytes are recoverable.
+ *
+ * The floors arrive as the whole `CurrentJson` rather than as bare
+ * numbers so neither can be invented independently of the manifest.
  *
  * Loud on purpose. PostgreSQL removed `old_snapshot_threshold` in PG17
  * because a fixed reclamation window that let a reader proceed
@@ -380,6 +390,38 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
  */
 const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson): void => {
   const floor = logSeqStartOf(current);
+  // The delete floor is checked FIRST, and clamped.
+  //
+  // First, because `log_delete_floor <= log_seq_start` is a transition
+  // invariant: any seq below the delete floor is also below the fold
+  // floor, so an arm appended after the check below would be unreachable
+  // dead code. Ordering it here changes no accept/reject outcome — only
+  // which diagnostic wins — and lets the more specific one win.
+  //
+  // Clamped, because that `<= log_seq_start` bound is transition-scoped
+  // and NOT enforced by the single-state read guard (deliberately: the
+  // guard sits on `admin restore`'s own path, so failing it would leave
+  // an out-of-bound floor unrepairable). An out-of-bound value therefore
+  // arrives here off disk, and unclamped it would report an entry that is
+  // present as already deleted.
+  const storedDeleteFloor = logDeleteFloorOf(current);
+  const deleteFloor = Math.min(storedDeleteFloor, floor);
+  // `deleteFloor === 0` means no deleted prefix is certified, so this arm
+  // has nothing to say and must stay silent: a negative seq against a
+  // zero floor is a fold-floor rejection, and claiming its nonexistent
+  // object was reclaimed would be the misdiagnosis this floor prevents.
+  if (deleteFloor > 0 && seq < deleteFloor) {
+    // Render the stored value too when the clamp bit, so an operator is
+    // not told the field holds a number it does not hold.
+    const clamped =
+      storedDeleteFloor === deleteFloor
+        ? ""
+        : ` (stored log_delete_floor=${storedDeleteFloor}, clamped to log_seq_start=${floor})`;
+    throw new BaerlyError(
+      "Internal",
+      `${seam}: seq ${seq} is below the certified delete floor ${deleteFloor}${clamped}; the log object is GONE — it has been reclaimed, not merely made reclaimable`,
+    );
+  }
   if (seq < floor) {
     throw new BaerlyError(
       "Internal",

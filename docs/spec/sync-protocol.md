@@ -90,6 +90,8 @@ interface CurrentJson {
   snapshot_bytes: number;
   snapshot_rows: number;
   last_warned_seq?: number;
+  log_delete_floor?: number;
+  generation?: string;
 }
 ```
 
@@ -108,6 +110,11 @@ size that drives the derived live-tail estimate after the first fold. It
 is a maintenance sizing estimate, not tail authority. It replaces the
 old exact stored-byte counter, which can no longer be writer-incremented
 once commits skip `current.json`.
+
+`log_delete_floor` is the exclusive upper bound of the contiguous log
+prefix certified deleted: every `log/<seq>.json` below it is gone from
+the bucket. An absent field or `0` means no deleted prefix is certified;
+it does not claim that existing GC has never deleted a sparse log object.
 
 `writer_fence` is **dormant** authority metadata: no production
 commit/read path uses it for authority. Its drop is deferred (see
@@ -496,6 +503,20 @@ These are the load-bearing rules.
    repeat. The one deliberate sub-floor GET is the writer's pre-image
    scan, which is 404-tolerant by construction and whose worst case is
    a redundant index key (invariant 7), never a wrong read.
+
+   A **second, stricter floor** sits beneath it. `log_seq_start` marks
+   what a reader may *need*; the optional `log_delete_floor` is the
+   exclusive upper bound of the contiguous log prefix certified deleted.
+   Every lower log object is gone; absent or `0` means no deleted prefix
+   is certified. The gap between the floors is the deliberately-retained
+   safety window. Both seams check it, and the two throws carry different
+   messages on purpose: below `log_seq_start` an object is folded and
+   *may* already be reclaimed, while below `log_delete_floor` it is
+   **gone**. An operator reading the throw has to be able to tell those
+   apart. The seams clamp the effective delete floor to
+   `min(log_delete_floor, log_seq_start)` rather than trusting the stored
+   value — see invariant 12 for why an out-of-bound value is readable at
+   all.
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.
@@ -554,10 +575,36 @@ These are the load-bearing rules.
     centralize publication. `baerly admin restore --force` is the
     deliberate operator exemption: it reseeds a truncated collection to
     one past the highest _surviving_ log object, which can sit below the
-    old floor when a bounded GC sweep has left sub-floor log objects in
-    place. That is sound because the reseed value is strictly greater
-    than every log object still present, so the committing `log/<seq>`
-    create cannot collide with the old generation.
+    old fold floor when a bounded GC sweep has left folded log objects in
+    place. Any such survivor must be at or above the certified delete
+    floor. The reseed is sound because it remains strictly greater than
+    every log object still present, so the committing `log/<seq>` create
+    cannot collide with the old generation.
+
+    The optional `log_delete_floor` (invariant 5) obeys two rules in the
+    same validator: it never decreases, and it never exceeds
+    `log_seq_start`. Both are **transition-scoped**. The single-state
+    read guard `assertCurrentJson` checks shape only — optional
+    non-negative integer — and deliberately does not carry the
+    `<= log_seq_start` bound, unlike the `log_seq_start <= tail_hint`
+    bound it does carry. That asymmetry is intentional: an inverted live
+    *read* range must stop a reader, whereas an out-of-bound delete
+    floor affects only *deletion*, and `readCurrentJson` sits on `admin
+    restore`'s own path, so rejecting the state there would leave the
+    bucket with no in-product repair path. Fail-safe direction is stall,
+    not lockout. The consequence is that an out-of-bound floor **can**
+    be read back off disk, so every consumer of the field — the read
+    seams and any retirement pass that deletes against it — must clamp
+    to `min(log_delete_floor, log_seq_start)` rather than trust the
+    stored value. `baerly admin restore --force` **drops** the field
+    entirely because the truncate starts a new generation. A reseed can
+    land below the old delete floor when the certified old prefix — and
+    potentially the entire old log — is gone: LIST then finds no surviving
+    log object and returns `truncatedNext = 0`. Restored rows reuse slots
+    below the old floor, so carrying the old-generation certificate through
+    that unchecked raw PUT could persist
+    `log_delete_floor > log_seq_start`. Dropping it resets the new
+    generation to no deleted prefix certified.
 13. **A `/v1/since` cursor is valid only within the generation that
     minted it.** `current.json` carries an opaque `generation` nonce,
     and the cursor the server hands a long-poll client is
