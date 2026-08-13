@@ -7,7 +7,7 @@
  * runner only captures per-phase metrics.
  */
 
-import { Db, type BaerlyConfig } from "@baerly/server";
+import type { Db, BaerlyConfig } from "@baerly/server";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 import type { Op } from "../generators/ops.ts";
