@@ -6,10 +6,12 @@
  *
  * Scope: paths without the autofix capability this script provides (bench/,
  * deploy/, examples/, scripts/, root *.config.ts). oxlint's
- * `import/extensions: ["error","always"]` rule now also covers bench/ (via
+ * `import/extensions: ["error","always"]` rule now also covers bench/,
+ * examples/, manual-e2e/, scripts/, and the root config files (via
  * verify:agent's lint glob) alongside packages/** and tests/**, but oxlint can
  * only flag a missing extension, not filesystem-resolve `./foo` to `./foo.ts`
- * vs `./foo/index.tsx` and fix it — this script still owns that for bench/.
+ * vs `./foo/index.tsx` and fix it — this script's own GLOBS list below is
+ * where the autofix scope for each of those paths is actually tracked.
  *
  *   node scripts/add-ts-extensions.mjs           # apply
  *   node scripts/add-ts-extensions.mjs --check   # exit non-zero on diff
