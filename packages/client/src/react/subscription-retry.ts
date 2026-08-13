@@ -22,3 +22,23 @@ export const SUBSCRIPTION_RETRY_INITIAL_MILLIS: number = 250;
  * @see ./subscription-pool.ts
  */
 export const SUBSCRIPTION_RETRY_MAX_MILLIS: number = 10_000;
+
+/**
+ * Equal-jitter backoff delay for the `attempt`-th consecutive
+ * retriable `/v1/since` failure, counting from zero.
+ *
+ * The upper bound doubles per attempt from
+ * {@link SUBSCRIPTION_RETRY_INITIAL_MILLIS} and saturates at
+ * {@link SUBSCRIPTION_RETRY_MAX_MILLIS}; the returned delay is drawn
+ * uniformly from the top half of that bound. Half the bound is fixed
+ * so a wedged table still backs off monotonically, and half is random
+ * so a fleet of clients that lost the same server does not re-converge
+ * into a synchronised retry wave.
+ */
+export const retryDelay = (attempt: number): number => {
+  const upperBound = Math.min(
+    SUBSCRIPTION_RETRY_MAX_MILLIS,
+    SUBSCRIPTION_RETRY_INITIAL_MILLIS * 2 ** attempt,
+  );
+  return Math.floor(upperBound / 2 + Math.random() * (upperBound / 2));
+};

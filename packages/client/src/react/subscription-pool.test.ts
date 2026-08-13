@@ -621,15 +621,17 @@ describe("subscription-pool", () => {
     }
   });
 
-  test("retriable poll backoff stops growing at its configured cap", async () => {
+  test("a poll that keeps failing keeps retrying at a bounded interval", async () => {
+    // The delay arithmetic — doubling, the cap, the jitter band — is
+    // pinned in `subscription-retry.test.ts` against `retryDelay`
+    // directly. What only the pool can show is that it feeds that
+    // function a monotonically rising attempt and never gives up: no
+    // max-attempts bail-out parks a table on a transport blip.
     const callTimes: number[] = [];
     const mock = new MockFetch();
     mock.on("GET", "/v1/since", () => {
       callTimes.push(Date.now());
-      if (callTimes.length < 9) {
-        throw new TypeError("transport unavailable");
-      }
-      return sinceForever();
+      throw new TypeError("transport unavailable");
     });
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -645,12 +647,16 @@ describe("subscription-pool", () => {
         vi.fn<() => void>(),
       );
       await waitMicrotasks(12);
-      await vi.advanceTimersByTimeAsync(17_875);
+      await vi.advanceTimersByTimeAsync(60_000);
 
-      expect(callTimes).toHaveLength(9);
-      expect(callTimes.slice(1).map((time, index) => time - callTimes[index]!)).toEqual([
-        125, 250, 500, 1_000, 2_000, 4_000, 5_000, 5_000,
-      ]);
+      const gaps = callTimes.slice(1).map((time, index) => time - callTimes[index]!);
+      // Rising while the bound doubles, then flat once it saturates,
+      // with polls still arriving at the far end of the window.
+      expect(gaps.length).toBeGreaterThan(8);
+      for (let index = 1; index < 6; index += 1) {
+        expect(gaps[index]!, `gap ${index}`).toBeGreaterThan(gaps[index - 1]!);
+      }
+      expect(new Set(gaps.slice(7)).size).toBe(1);
       unsubscribe();
     } finally {
       vi.restoreAllMocks();
