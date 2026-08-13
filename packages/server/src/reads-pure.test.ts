@@ -18,7 +18,7 @@
  * is OVER the fold-trigger ratio (derived tail estimate ≥ snapshot_bytes AND
  * derived estimate ≥ MAINTENANCE_MIN_LIVE_BYTES) — the exact condition that
  * would cause the write-tick to fire maintenance — repeated reads
- * through the collection API produce ZERO Class A (mutating) storage
+ * through the collection API produce ZERO mutating storage
  * ops and leave `current.json` byte-identical.
  */
 
@@ -103,18 +103,14 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
 // ── Counting proxy (mutation guard: PUT + DELETE) ──────────────────────
 //
 // Reuses the same shape as the `countingStorage` helper in
-// `maintenance.test.ts`. `classA()` sums PUT + DELETE because this file
+// `maintenance.test.ts`. `mutatingOps()` sums PUT + DELETE because this file
 // is a MUTATION guard: its job is proving a read leaves the bucket
 // byte-identical, and PUT + DELETE is exactly the set that could change
-// it. That predicate is deliberately NOT the billing meter — on both R2
-// and S3, LIST is Class A and DELETE is free. For cost measurement use
-// `billableClassAOps` (PUT + LIST) from `tests/fixtures/counting-storage.ts`;
-// `tests/unit/read-class-a-cost.test.ts` gates the read-path cost claim
-// in `docs/about/cost-model.md` on that meter.
+// it. Cost-accounting coverage uses a separate counting fixture and test.
 
 interface CountingProxy {
   readonly storage: Storage;
-  readonly classA: () => number;
+  readonly mutatingOps: () => number;
   readonly report: () => Record<string, number>;
 }
 
@@ -143,7 +139,7 @@ const countingProxy = (inner: Storage): CountingProxy => {
   };
   return {
     storage: wrapper,
-    classA: (): number => counts.put + counts.delete,
+    mutatingOps: (): number => counts.put + counts.delete,
     report: (): Record<string, number> => ({ ...counts }),
   };
 };
@@ -152,7 +148,7 @@ const countingProxy = (inner: Storage): CountingProxy => {
 
 describe("reads are pure — never tick maintenance", () => {
   test(
-    "many reads over an over-ratio collection produce ZERO Class A ops",
+    "many reads over an over-ratio collection produce ZERO mutating ops",
     { timeout: 30_000 },
     async () => {
       // 60 entries — well over the CLOUDFLARE_FREE_TIER minEntriesToCompact
@@ -179,8 +175,8 @@ describe("reads are pure — never tick maintenance", () => {
       }
 
       // Assert: ZERO mutating ops across all reads.
-      const classAOps = proxy.classA();
-      expect(classAOps, `Expected 0 Class A ops; got ${JSON.stringify(proxy.report())}`).toBe(0);
+      const mutatingOps = proxy.mutatingOps();
+      expect(mutatingOps, `Expected 0 mutating ops; got ${JSON.stringify(proxy.report())}`).toBe(0);
 
       // Assert: current.json is byte-identical — no fold happened.
       const afterBody = await inner.get(currentJsonKey());
@@ -270,10 +266,11 @@ describe("reads are pure — never tick maintenance", () => {
         "dispatch spy was called — a read path consulted the maintenance context",
       ).not.toHaveBeenCalled();
 
-      // Class A ops are still zero.
-      expect(proxy.classA(), `Expected 0 Class A ops; got ${JSON.stringify(proxy.report())}`).toBe(
-        0,
-      );
+      // Mutating ops are still zero.
+      expect(
+        proxy.mutatingOps(),
+        `Expected 0 mutating ops; got ${JSON.stringify(proxy.report())}`,
+      ).toBe(0);
     },
   );
 });
