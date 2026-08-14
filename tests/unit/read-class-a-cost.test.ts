@@ -6,10 +6,12 @@
 //     per equality value, so `$in` over N values costs N calls.
 //
 // `packages/server/src/reads-pure.test.ts` guards the neighbouring but
-// distinct property — that a read mutates nothing — on a PUT + DELETE
-// predicate. That predicate cannot see a LIST, and LIST is Class A on both
-// R2 and S3, so it cannot gate the cost claim. This file uses
-// `billableClassAOps` (PUT + LIST) for that.
+// distinct property — that repeated reads over an over-ratio collection
+// neither mutate nor enumerate — on `classAOps` (PUT + DELETE + LIST) over
+// unindexed collections only. That gate cannot express the indexed
+// exception below, and it counts DELETE, which is $0. This file uses
+// `billableClassAOps` (PUT + LIST) because the claim it gates is a dollar
+// cost.
 //
 // Assertions here pin each counter individually rather than a sum. A sum of
 // non-negative counters at zero is also satisfied by a read that did no work

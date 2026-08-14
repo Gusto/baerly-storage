@@ -16,9 +16,9 @@
  *       separately),
  *   (c) `current.json.snapshot !== null` and `log_seq_start` has
  *       advanced to within a small live tail of `tail_hint`,
- *   (d) an idle reader doing 1800 `tbl.where({}).all()` calls (≈ 1 hour
- *       at 2s polling) issues < 1 Class A op (PUT / DELETE / LIST).
- *       Real expectation: exactly 0.
+ *   (d) an idle reader doing 10 `tbl.where({}).all()` calls, projected to
+ *       an hour at 2s polling (1800 calls), issues < 1 Class A op
+ *       (PUT / DELETE / LIST). Real expectation: exactly 0.
  *
  * Variants: `memory` (zero infra, < 3s) and `local-fs` (real I/O, < 30s).
  * The `node-minio` and `cloudflare-r2` variants are deferred per the
@@ -286,8 +286,9 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // `current.json` + the snapshot + the live-tail log entries, all
           // by deterministic key → all `get`). A small sample proves the
           // per-poll rate is exactly zero; `reads-pure.test.ts` already
-          // covers the broader repetition/mutation-spy guard, so this gate
-          // doesn't need to replay all 1800 polls to defend the projection.
+          // covers the broader repetition/Class-A-spy guard (PUT + DELETE +
+          // LIST, not just mutation), so this gate doesn't need to replay
+          // all 1800 polls to defend the projection.
           //
           // For broader workload analysis, see bench/README.md — the load
           // harness externalizes derived.class_a_per_tenant_per_hour.

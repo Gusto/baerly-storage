@@ -463,19 +463,24 @@ describe("operation journal", () => {
 describe("billing class", () => {
   /**
    * ONE definition, deliberately NOT a resolution. Manifest §11 item 1 records
-   * three live and mutually inconsistent "Class A" definitions in this repo:
+   * three live and mutually inconsistent "Class A" definitions in this repo.
+   * D1 is now closed — `reads-pure.test.ts` counted put + delete and has since
+   * been moved onto the shared fixture's `classAOps`, i.e. D2 — leaving two:
    *
-   *   D1  packages/server/src/reads-pure.test.ts   put + delete
-   *   D2  tests/integration/maintenance-e2e.test.ts put + delete + list
-   *   D3  docs/about/cost-model.md                 put + list   (DELETE is $0)
-   *       — matching bench/storage.ts's `billableClassAOps` getter and
-   *         coordination design §4.5's `billableClassAOps = puts + lists`
+   *   D2  tests/fixtures/counting-storage.ts  put + delete + list
+   *       — `classAOps`; a subrequest/op count, DELETE included because it is
+   *         still a real CF subrequest. Backs the published "< 1 Class A op /
+   *         writer / hour" claim via `maintenance-e2e.test.ts`, and the
+   *         read-purity CI gate via `reads-pure.test.ts`.
+   *   D3  docs/about/cost-model.md            put + list   (DELETE is $0)
+   *       — a dollar cost. Matches `billableClassAOps` on both that fixture
+   *         and bench/storage.ts, and coordination design §4.5's
+   *         `billableClassAOps = puts + lists`. Governs the fold program's
+   *         cost arguments.
    *
-   * D1 governs a CI gate; D2 backs the published "< 1 Class A op / writer /
-   * hour" claim; D3 governs the fold program's cost arguments. The journal uses
-   * D3 because that is what §4.5 binds it to. This test exists so the
-   * disagreement is discoverable evidence for the Protocol/product owner named
-   * in §11, not so this lane resolves it.
+   * The journal uses D3 because that is what §4.5 binds it to. This test
+   * exists so the remaining disagreement is discoverable evidence for the
+   * Protocol/product owner named in §11, not so this lane resolves it.
    */
   test("uses the cost-model definition: puts and lists bill, deletes are free", () => {
     expect(billingClassOf("put")).toBe("A");
