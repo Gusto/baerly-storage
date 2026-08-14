@@ -58,6 +58,13 @@ The vitest runner uses worker threads, and worker threads reject that flag in
 `execArgv`; passing it to the host lets the threads inherit Uint8Array base64
 support so bytes/hashing mutants are not falsely reported as killed.
 
+Config note: `pnpm-workspace.yaml` adds `typescript` to
+`@stryker-mutator/core` under `packageExtensions`. Stryker's sandbox parses
+`tsconfig.json` with the classic compiler API but never declares `typescript`,
+so it otherwise picks up the hoisted TypeScript 7, which no longer exports that
+API, and the run dies in sandbox setup before the first mutant. The rationale
+is in a comment above that block.
+
 ### Agent-readable survivor list
 
 After `pnpm test:mutate` has produced `reports/mutation/mutation.json`, treat
