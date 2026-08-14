@@ -242,7 +242,7 @@
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "@changesets/cli": "^2.31.0",
-    "@cloudflare/vitest-pool-workers": "0.18.4",
+    "@cloudflare/vitest-pool-workers": "0.21.2",
     "@cloudflare/workers-types": "^5.20260715.1",
     "@fast-check/vitest": "^0.4.1",
     "@hono/node-server": "^2.1.1",
@@ -275,7 +275,7 @@
     "rolldown": "^1.2.4",
     "rolldown-plugin-dts": "^0.28.2",
     "rollup-license-plugin": "3.2.1",
-    "vite": "^8.1.4",
+    "vite": "^8.2.1",
     "vitest": "^4.1.10",
     "yaml": "2.9.0"
   },
