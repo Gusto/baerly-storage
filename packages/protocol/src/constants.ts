@@ -230,11 +230,23 @@ export const PREIMAGE_SCAN_MAX_GETS: number = 8;
  * below the manifest floor it observed. Its reach is capped by
  * {@link PREIMAGE_SCAN_MAX_GETS}; the 128x multiplier gives the current 8-GET
  * reach a 1024-sequence window while keeping that relationship explicit if the
- * pre-image budget changes. This window does not fence a writer paused across
- * manifest advancement; that coordination must land before deletion is enabled.
+ * pre-image budget changes.
+ *
+ * The window also fences a stale writer, which is why it is a safety parameter
+ * and not only a pre-image cost margin. A committing writer picks its slot at
+ * or above the `max(log_seq_start, tail_hint)` of the manifest it read
+ * (`writer.ts:446`), and a pass only certifies
+ * `seq < log_seq_start - LOG_RETENTION_SEQ_WINDOW` deleted, so a commit can
+ * land in a certified-deleted slot only if `log_seq_start` advanced by more
+ * than this window while that single commit was in flight — i.e. only if more
+ * than 1024 entries were committed and folded inside one request's commit
+ * path. Do not lower this value on cost grounds without re-deriving that
+ * bound: it is what closes the paused-writer schedule in place of a
+ * commit-path fence.
  *
  * @see packages/server/src/log-retention.ts
  * @see docs/spec/sync-protocol.md invariant 12
+ * @see docs/adr/002-ephemeral-coordination.md § Closed paths
  */
 export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
 
@@ -243,11 +255,24 @@ export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
  * Twenty fits within the most constrained request budget and drains faster than
  * the fold floor advances in steady state.
  *
- * Not yet wired into a write-tick call site — {@link computeRetirableRange}
- * only computes the range today. Whichever PR adds the DELETE sweep must
- * validate the combined per-tick subrequest total (GC sweep + fold + this)
- * against the 50-subrequest free-tier cap, the way
- * `maintenance-budget.test.ts` already pins for GC and fold alone.
+ * `retireLogRange` is the pass that spends this budget; it exists but is not
+ * yet wired into a write-tick call site. Whichever PR adds the call site owns
+ * validating the combined per-tick subrequest total (GC sweep + fold + this)
+ * against the 50-subrequest free-tier cap that `maintenance-budget.test.ts`
+ * pins for GC and fold alone. That arithmetic, against the worst cases
+ * `maintenance.ts`'s `CLOUDFLARE_FREE_TIER` JSDoc documents:
+ *
+ * - One retirement pass, worst case, is 23 subrequests: 1 advisory-gate GET
+ *   + `casUpdateCurrentJson`'s own GET + 1 CAS PUT + up to 20 DELETEs.
+ * - A GC tick is ≤26, so GC + retirement is 49 of 50 — one op of headroom.
+ * - A compaction pass is ≤49, so compact + retirement is 72. **Retirement
+ *   cannot share a tick with a fold**; the call site has to phase them apart
+ *   the way the Cloudflare scheduled handler already alternates compact and
+ *   GC.
+ *
+ * A pass whose range is empty returns `{deleted: 0}` and spends 1 GET, so a
+ * permanently-stalled retirement is silent — the call site also owes an
+ * observability decision.
  *
  * @see packages/server/src/log-retention.ts
  */
