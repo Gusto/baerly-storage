@@ -298,3 +298,110 @@ describe("retireLogRange vs. a concurrent current.json writer", () => {
     }
   });
 });
+
+describe("retireLogRange edge paths", () => {
+  test("is a no-op when current.json does not exist yet (a not-yet-provisioned collection)", async () => {
+    const storage = new MemoryStorage();
+
+    await expect(retireLogRange(storage, CURRENT_KEY)).resolves.toEqual({ deleted: 0 });
+  });
+
+  test("rejects immediately on a pre-aborted signal, before any CAS", async () => {
+    const storage = new MemoryStorage();
+    await seedIdle(storage, 50);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      retireLogRange(storage, CURRENT_KEY, {
+        window: 5,
+        maxDeletes: 20,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    const after = await readCurrentJson(storage, CURRENT_KEY);
+    expect(after!.json.log_delete_floor).toBeUndefined();
+  });
+
+  test("plumbs the abort signal into the DELETE loop specifically", async () => {
+    const storage = new MemoryStorage();
+    await seedIdle(storage, 50);
+    const controller = new AbortController();
+    const origDelete = storage.delete.bind(storage);
+    let deleteCalls = 0;
+    storage.delete = (async (key: string, opts?: { signal?: AbortSignal }) => {
+      deleteCalls++;
+      if (deleteCalls === 1) {
+        controller.abort();
+      }
+      return origDelete(key, opts);
+    }) as typeof storage.delete;
+
+    try {
+      await expect(
+        retireLogRange(storage, CURRENT_KEY, {
+          window: 5,
+          maxDeletes: 20,
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      storage.delete = origDelete;
+    }
+
+    // The loop stopped at the DELETE that saw the abort rather than swallowing
+    // it and continuing. `MemoryStorage.delete` calls `throwIfAborted` before
+    // removing anything, so the first call both aborts and removes nothing.
+    expect(deleteCalls).toBe(1);
+    let remaining = 0;
+    for (let seq = 0; seq < 20; seq++) {
+      if ((await storage.get(logObjectKey(PREFIX, seq))) !== null) {
+        remaining++;
+      }
+    }
+    expect(remaining).toBe(20);
+
+    // The floor CAS precedes the loop, so it published the full 20-wide range
+    // even though no object was removed — the same CAS-before-delete ordering
+    // the crash-leak test pins, here on the abort path.
+    const after = await readCurrentJson(storage, CURRENT_KEY);
+    expect(after!.json.log_delete_floor).toBe(20);
+  });
+});
+
+describe("retireLogRange crash-leak", () => {
+  test("a crash mid-DELETE-loop leaks the undeleted slice below the already-advanced floor", async () => {
+    const storage = new MemoryStorage();
+    await seedIdle(storage, 50);
+    const origDelete = storage.delete.bind(storage);
+    let deleteCalls = 0;
+    storage.delete = (async (key: string, opts?: { signal?: AbortSignal }) => {
+      deleteCalls++;
+      if (deleteCalls === 6) {
+        throw new Error("simulated crash mid-DELETE-loop");
+      }
+      return origDelete(key, opts);
+    }) as typeof storage.delete;
+
+    try {
+      await expect(
+        retireLogRange(storage, CURRENT_KEY, { window: 5, maxDeletes: 20 }),
+      ).rejects.toThrow("simulated crash mid-DELETE-loop");
+    } finally {
+      storage.delete = origDelete;
+    }
+
+    // The floor CASed to 20 before the loop ran, so it survives the crash —
+    // the deliberate fail-safe direction: leak, never corruption.
+    const after = await readCurrentJson(storage, CURRENT_KEY);
+    expect(after!.json.log_delete_floor).toBe(20);
+    for (let seq = 0; seq < 5; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.toBeNull();
+    }
+    // The leak: certified deleted by the floor, but still physically present.
+    for (let seq = 5; seq < 20; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.not.toBeNull();
+    }
+  });
+});
