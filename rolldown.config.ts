@@ -98,7 +98,11 @@ export default defineConfig({
   // `unacceptableLicenseTest` fails the build on any non-permissive
   // (e.g. copyleft) bundled license. See scripts/third-party-licenses.mjs.
   plugins: [
-    dts({ generator: "tsgo" }),
+    // `tsconfig.build.json`, not the root tsconfig: the root program excludes
+    // `packages/adapter-cloudflare/src` so that Workers ambient globals stay off
+    // Node-only code, and declaration emit for the `./cloudflare` entry needs
+    // that directory in its program. See the comment in `tsconfig.build.json`.
+    dts({ generator: "tsgo", tsconfig: "tsconfig.build.json" }),
     createRollupLicensePlugin(licensePluginOptions(PARTIAL_LIB_FILENAME)),
     copyApiQuickref(),
   ],

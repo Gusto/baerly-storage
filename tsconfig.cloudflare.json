@@ -1,0 +1,36 @@
+{
+  // Workers-typed half of the typecheck. Everything reachable from here runs on
+  // workerd or asserts a workerd surface, so it gets `@cloudflare/workers-types`'
+  // ambient globals (`R2Bucket`, `ExecutionContext`, `Cloudflare.Env`, …) — which
+  // the root program deliberately does not have, because that package is a global
+  // script whose Node-compat shims (`declare const Buffer: any`) retype
+  // `Buffer.from(…)` and break `.toString("utf8")` / `.equals()` in Node-only
+  // code. See the `types` comment in `tsconfig.json`.
+  //
+  // `include` is the import-closed Workers surface and must stay in sync with the
+  // matching `exclude` block in `tsconfig.json` — a file listed in one belongs in
+  // the other. Together the two programs cover every file the former single
+  // program did.
+  //
+  // `public-surface.test.ts` is here because it imports *every* published entry,
+  // `./cloudflare` among them, so it cannot be typechecked without Workers
+  // globals. That makes it a bridge: it also drags `adapter-node`, `dev`, and
+  // `client` sources into this program. That is safe but not free — those files
+  // are checked here under `Buffer: any` as well as in the root program under
+  // real Node types, so a Node-only regression is still caught by the root pass.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": [
+    "packages/adapter-cloudflare/src",
+    "tests/fixtures/mock-execution-context.ts",
+    "tests/integration/public-surface.test.ts",
+    "tests/integration/s3-worker-e2e.test.ts",
+    "tests/setup/http-conformance-worker.ts",
+    "tests/setup/r2-binding.ts"
+  ],
+  // `extends` would otherwise inherit the root program's exclusions, which are
+  // exactly this program's includes.
+  "exclude": []
+}

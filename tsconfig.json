@@ -31,7 +31,19 @@
     "jsx": "react-jsx",
 
     "skipLibCheck": true,
-    "types": ["node", "@cloudflare/workers-types"]
+
+    // Node-only global scope. `@cloudflare/workers-types` is deliberately NOT
+    // listed here. It is a pure ambient global script — no top-level exports
+    // and no `types`/`exports` field in its package.json — so naming it
+    // injects every Workers global into the whole program, and it ships
+    // Node-compat shims (`declare const Buffer: any`, `declare const process:
+    // any`) that collide with @types/node's real types in Node-only code such
+    // as `packages/cli/src/runner.ts` and `bench/r2-contention.ts`. Having no
+    // module surface, it cannot be narrowed with a per-file `import type`, and
+    // a `/// <reference types>` would pollute this same global scope — so the
+    // only way to scope Workers globals is by program. The Workers-typed files
+    // are excluded below and typechecked by `tsconfig.cloudflare.json`.
+    "types": ["node"]
   },
   "include": [
     "tests",
@@ -43,5 +55,31 @@
     "examples/*/types.ts",
     "examples/*/smoke.test.ts"
   ],
-  "exclude": ["tests/integration/conformance.test.ts", "tests/fixtures/check-acceptance"]
+  // The second group is the Workers-typed surface, hoisted into
+  // `tsconfig.cloudflare.json` so its ambient globals stay off Node-only code.
+  // It must stay in sync with that file's `include`.
+  //
+  // Excluding a file only drops it as a program *root* — it comes back if
+  // anything still included imports it — so this list has to be import-closed,
+  // and that is what makes `public-surface.test.ts` a member: it imports every
+  // published entry, `@gusto/baerly-storage/cloudflare` among them, which the
+  // root `exports` map resolves to `packages/adapter-cloudflare/src/index.ts`.
+  // Excluding the adapter without it would pull the adapter straight back in.
+  // Nothing imports `r2-binding.ts` or `http-conformance-worker.ts` at all
+  // (vitest loads those by config path), and `mock-execution-context.ts` is
+  // imported only from within this group.
+  //
+  // Using a Workers global in a file outside this list fails with
+  // `Cannot find name 'R2Bucket'`; the fix is to move the file in here.
+  "exclude": [
+    "tests/integration/conformance.test.ts",
+    "tests/fixtures/check-acceptance",
+
+    "packages/adapter-cloudflare/src",
+    "tests/fixtures/mock-execution-context.ts",
+    "tests/integration/public-surface.test.ts",
+    "tests/integration/s3-worker-e2e.test.ts",
+    "tests/setup/http-conformance-worker.ts",
+    "tests/setup/r2-binding.ts"
+  ]
 }
