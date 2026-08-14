@@ -120,6 +120,18 @@ jobs:
       - name: Test (Cloudflare adapter)
         run: pnpm test:adapter-cloudflare
 
+      # Mutation-testing tripwire, NOT a mutation run: `--dryRunOnly` builds
+      # the Stryker sandbox, runs its tsconfig preprocessor, boots the vitest
+      # runner and runs the protocol suite once, then stops before testing a
+      # single mutant (~20s). The full run stays manual and report-only — see
+      # docs/contributing/mutation-testing.md — but its *setup* is fragile in
+      # ways no other gate covers: it resolves `typescript` by pnpm hoisting
+      # and copies the working tree into a sandbox, so a dependency bump
+      # elsewhere in the repo can break `pnpm test:mutate` while every other
+      # check stays green. That happened, and went unnoticed for a month.
+      - name: Test (mutation dry run)
+        run: pnpm run test:mutate:dry-run
+
       # Packaging-contract gate: attw (every entry point resolves for
       # consumers post-publishConfig rewrite) + publint (both published
       # manifests are well-formed), run against the packed tarball. dist/ is

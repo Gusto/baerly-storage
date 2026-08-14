@@ -188,6 +188,7 @@
     "test:parity": "vitest run --project=default packages/protocol/src/storage/memory.test.ts packages/dev/src/local-fs.test.ts packages/adapter-node/src/s3-http.conformance.test.ts tests/integration/collection-api.test.ts tests/integration/randomized.test.ts",
     "test:manual-e2e": "vitest run --project=default manual-e2e/cloudflare/e2e.test.ts manual-e2e/node/e2e.test.ts",
     "test:mutate": "stryker run",
+    "test:mutate:dry-run": "stryker run --dryRunOnly",
     "mutate:survivors": "node scripts/mutation-survivors.mjs",
     "test:coverage:protocol": "vitest run --config stryker.vitest.config.ts --coverage --coverage.provider=v8 --coverage.include='packages/protocol/src/**/*.ts' --coverage.exclude='**/*.test.ts' --coverage.exclude='**/*.test-d.ts' --coverage.exclude='**/index.ts'",
     "gate:day-one": "vitest run --project=default tests/integration/day-one-handshake.test.ts",
