@@ -19,8 +19,8 @@ importers:
   .:
     dependencies:
       '@logtape/logtape':
-        specifier: 2.2.4
-        version: 2.2.4
+        specifier: 2.3.1
+        version: 2.3.1
     devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.18.5
@@ -433,8 +433,8 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       '@logtape/logtape':
-        specifier: 2.2.4
-        version: 2.2.4
+        specifier: 2.3.1
+        version: 2.3.1
       hono:
         specifier: ^4.13.2
         version: 4.13.2
@@ -1314,8 +1314,8 @@ packages:
   '@loaderkit/resolve@1.0.6':
     resolution: {integrity: sha512-G8FdIoF5CypfwmD9rl8BXod5HDn8JqB0CCNBXDTaRZ+yRYhARrrSToX1zg1zy9jX3zLqigsELwhT4gNtkdQAUg==}
 
-  '@logtape/logtape@2.2.4':
-    resolution: {integrity: sha512-2rALzv9m4ibE5FyB8/FMm5MPMMlK7ujgy3ufricVKIxj6e7SZbw4w6J16/fRAsXgdDlOXPUA0aa6XoEQvdlKxw==}
+  '@logtape/logtape@2.3.1':
+    resolution: {integrity: sha512-nYLsBWMKk0Llp62U6cDbQxNcEKc0E0s5hWbAxkmUM8ax6VchGkPSjPrVp3ixFQUuvUB9ku7MSgPzFhmVTSh2Jw==}
 
   '@manypkg/find-root@3.1.0':
     resolution: {integrity: sha512-BcSqCyKhBVZ5YkSzOiheMCV41kqAFptW6xGqYSTjkVTl9XQpr+pqHhwgGCOHQtjDCv7Is6EFyA14Sm5GVbVABA==}
@@ -5174,7 +5174,7 @@ snapshots:
     dependencies:
       '@braidai/lang': 1.1.2
 
-  '@logtape/logtape@2.2.4': {}
+  '@logtape/logtape@2.3.1': {}
 
   '@manypkg/find-root@3.1.0':
     dependencies:
