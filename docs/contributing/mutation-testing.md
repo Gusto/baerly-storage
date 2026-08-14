@@ -43,6 +43,20 @@ of `pnpm verify`, `pnpm test`, or CI: a full run mutates well over a thousand
 mutants and takes several minutes. Because `thresholds.break: null`, the
 command exits 0 regardless of score.
 
+What CI does run is the setup half:
+
+```sh
+pnpm test:mutate:dry-run   # stryker run --dryRunOnly
+```
+
+That builds the sandbox, runs the tsconfig preprocessor, boots the vitest
+runner and runs the protocol suite once, then stops before testing any mutant
+— about 20 seconds. No mutants means no score and nothing to gate on; it is
+purely a tripwire. Stryker's setup depends on things no other check touches
+(which `typescript` pnpm hoists, what the sandbox copy walks into), so
+`pnpm test:mutate` can break from an unrelated dependency bump while every
+other gate stays green — which is how it sat broken for a month.
+
 Output:
 - A clear-text mutation-score table per file in the terminal.
 
