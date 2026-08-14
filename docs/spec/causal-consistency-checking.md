@@ -310,12 +310,27 @@ deterministic protocol, reader-seam, and restore tests:
   `log_delete_floor`;
 - the transition bound `log_delete_floor <= log_seq_start`;
 - distinct fold-floor versus certified-delete-floor diagnostics;
-- clamping malformed stored values above `log_seq_start`; and
+- clamping malformed stored values above `log_seq_start`;
 - `baerly admin restore --force` resetting the field when it reseeds a
-  new generation below the old certified floor.
+  new generation below the old certified floor;
+- the floor CAS that `retireLogRange`
+  (`packages/server/src/log-retention.ts`) publishes *before* it deletes
+  anything, under two concurrent-`current.json`-writer schedules — a
+  `restore --force`-shaped reseed that lowers `log_seq_start` in the gap
+  between the pass's advisory gate read and the CAS's own read, which
+  aborts the pass with `Conflict` and zero DELETEs; and a rival that
+  legally advances `log_delete_floor` in that same gap, after which the
+  pass deletes the range its own CAS validated rather than the wider
+  advisory gate; and
+- the deletion/publication crash schedule: a crash mid-DELETE-loop
+  leaves the undeleted remainder physically present but already
+  certified deleted by the advanced floor — the deliberate fail-safe
+  direction, a leak rather than corruption.
 
-No deletion pass writes `log_delete_floor` yet, so there is currently no
-deletion/publication crash schedule to model.
+`retireLogRange` is the first pass to write `log_delete_floor`. It is not
+yet wired into a write-tick call site, so no deletion pass runs in
+production and the randomized cascade does not schedule one; the crash
+and concurrency schedules above are covered deterministically instead.
 
 ## Conclusion
 
