@@ -71,14 +71,22 @@ interface Ticket extends BaseTicket {
   rev: number;
 }
 
-const bootstrap = (storage: Storage): Promise<void> =>
-  bootstrapCurrentJson(storage, "profile-equivalence");
-
 const WORKING_SET = 50; // bounded live doc set ⇒ constant live floor
 const BODY_BYTES = 2000; // bodies big enough that the ratio gate trips and folds fire
-// Exact cold-start first-fold threshold: 64 KiB live-byte floor / 128 B
-// per-entry estimate. This guarantees one fold while bounding four replays.
-const TOTAL_OPS = 512;
+
+const bootstrap = (storage: Storage): Promise<void> =>
+  // Pre-stamp mean_entry_bytes to this suite's real ~2 KB body size so the
+  // ratio TRIGGER's live-tail estimate reflects it from the first write,
+  // instead of the small cold-start fallback (128 B) that would otherwise
+  // require a much longer tail before the first fold fires.
+  bootstrapCurrentJson(storage, "profile-equivalence", BODY_BYTES);
+
+// 128 * BODY_BYTES (2000) = 256 KiB, well above the 64 KiB live-byte fold
+// floor once mean_entry_bytes is pre-stamped — well above
+// minEntriesToCompact (50) too, so every profile still lands a snapshot
+// and advances log_seq_start, and fold progress still diverges across
+// profiles (see the non-vacuity assertions in case (A) below).
+const TOTAL_OPS = 128;
 
 interface Op {
   readonly op: "I" | "U" | "D";
