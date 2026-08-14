@@ -17,8 +17,8 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.44.0",
     "@cloudflare/workers-types": "^5.20260715.1",
-    "@types/node": "^26.1.1",
-    "happy-dom": "^20.10.6",
+    "@types/node": "^26.2.0",
+    "happy-dom": "^20.11.2",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
     "vitest": "^4.1.10",
