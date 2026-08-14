@@ -1,0 +1,20 @@
+{
+  // Declaration-emit program for `rolldown-plugin-dts` (see `rolldown.config.ts`).
+  //
+  // The published entries span both hosts — `./node`, `./s3`, `./gcs` need Node
+  // types and `./cloudflare` needs Workers types — so unlike the two typechecking
+  // programs this one carries both `types` at once, which is what the root
+  // tsconfig did before the Node/Workers split. That is safe here because this
+  // program only emits `.d.ts` for `packages/*/src` entry barrels: it never sees
+  // the Node-only CLI, bench, or test files where the `Buffer: any` shim in
+  // `@cloudflare/workers-types` actually causes trouble.
+  //
+  // Correctness of the emitted declarations is still gated by `pnpm verify`'s two
+  // typecheck passes and by `check:exports` / `check:publint` in `verify:package`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "@cloudflare/workers-types"]
+  },
+  "include": ["packages/*/src"],
+  "exclude": []
+}

@@ -159,7 +159,7 @@
     "access": "public"
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit && tsgo --noEmit -p tsconfig.cloudflare.json",
     "pretest": "node scripts/build-if-needed.mjs",
     "test": "vitest run --project=default",
     "test:agent": "vitest run --project=default --reporter=minimal --silent=passed-only --maxWorkers=4",
@@ -203,7 +203,7 @@
     "verify:rest": "pnpm run verify:examples && pnpm run format:check && node scripts/add-ts-extensions.mjs --check && node scripts/lint-use-query.mjs && node scripts/lint-package-layers.mjs && node scripts/lint-format-coverage.mjs && node scripts/check-spec-drift.ts && node scripts/check-version-matrix.ts",
     "verify:code": "pnpm run typecheck && pnpm run lint && pnpm run verify:rest",
     "verify": "pnpm run verify:code && pnpm run verify:docs",
-    "verify:agent": "tsgo --noEmit --pretty false && oxlint --format=unix --quiet tests packages bench examples manual-e2e scripts rolldown.config.ts stryker.config.mjs stryker.vitest.config.ts vitest.config.ts .remarkrc.mjs && pnpm run verify:rest && pnpm run verify:docs",
+    "verify:agent": "tsgo --noEmit --pretty false && tsgo --noEmit --pretty false -p tsconfig.cloudflare.json && oxlint --format=unix --quiet tests packages bench examples manual-e2e scripts rolldown.config.ts stryker.config.mjs stryker.vitest.config.ts vitest.config.ts .remarkrc.mjs && pnpm run verify:rest && pnpm run verify:docs",
     "verify:spec": "node scripts/check-spec-drift.ts",
     "verify:version-matrix": "node scripts/check-version-matrix.ts",
     "verify:artifacts": "node scripts/check-spec-drift.ts && node scripts/check-version-matrix.ts",
