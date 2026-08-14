@@ -20,6 +20,29 @@ export default {
     "!packages/protocol/src/**/index.ts",
     "!packages/protocol/src/storage/conformance.ts",
   ],
+  // Stryker copies the whole project into `.stryker-tmp/sandbox-*/` and does
+  // NOT read `.gitignore` — only `node_modules`, `.git`, `/reports`,
+  // `*.tsbuildinfo`, `/stryker.log`, and `.stryker-tmp` are ignored for free.
+  // Everything here is gitignored local state that no protocol unit test
+  // reads, and each entry earns its place:
+  //   - `credentials/` holds real AWS/R2/GCS keys for the manual-e2e suites.
+  //     Copying live secrets into a temp dir that outlives a crashed run is
+  //     not something a mutation run should ever do.
+  //   - `.pnpm-store/` is a repo-local pnpm store whose `v11/projects/*`
+  //     entries are symlinks to worktrees. Once a worktree is removed its
+  //     symlink dangles, and the sandbox copy dies on it with
+  //     `ENOENT: copyfile`.
+  //   - the worktree roots and agent scratch are gigabytes of sibling
+  //     checkouts; `dist/` is build output the mutated sources don't use.
+  ignorePatterns: [
+    "credentials",
+    ".pnpm-store",
+    ".worktrees",
+    ".claude",
+    ".plans",
+    ".superpowers",
+    "dist",
+  ],
   // pnpm isolates each package under .pnpm/; the vitest-runner lives in its
   // own bucket, invisible to Stryker's default "@stryker-mutator/*" glob
   // (which resolves relative to core's own isolated node_modules). Adding an
