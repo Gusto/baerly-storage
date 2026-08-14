@@ -98,7 +98,7 @@ export default defineConfig({
   // `unacceptableLicenseTest` fails the build on any non-permissive
   // (e.g. copyleft) bundled license. See scripts/third-party-licenses.mjs.
   plugins: [
-    dts({ tsgo: true }),
+    dts({ generator: "tsgo" }),
     createRollupLicensePlugin(licensePluginOptions(PARTIAL_LIB_FILENAME)),
     copyApiQuickref(),
   ],
