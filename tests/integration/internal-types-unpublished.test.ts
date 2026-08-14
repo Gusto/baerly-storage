@@ -53,54 +53,75 @@ const pkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) a
 };
 
 /**
- * Collect the names an entry `.d.ts` exports. Handles `export {...}` and
- * `export type {...}`, the inline `type ` modifier, and `X as Y` (the
- * exported name is `Y`).
+ * Extract the name(s) a single top-level `export` line introduces, or
+ * `undefined` if the line matches none of the known emitter forms.
  *
- * Deliberately understands ONLY the trailing-brace form, which is what
- * rolldown-dts emits today: a source-level `export interface Foo` arrives
- * here as `declare interface Foo` plus a `Foo` entry in the trailing
- * block. Rather than grow a parser for declaration forms that never
- * appear, the caller asserts that precondition — see
- * {@link assertBraceExportShape}.
+ * Two families, both observed in current rolldown-dts output:
+ *
+ *   1. Trailing re-export block — `export {...}` / `export type {...}`.
+ *      Handles the inline `type ` modifier and `X as Y` (the exported
+ *      name is `Y`).
+ *   2. Inline declaration — `export declare const NAME`, `export
+ *      declare function NAME`, `export interface NAME`. rolldown-dts
+ *      emits top-level functions/consts this way directly rather than
+ *      funneling them through the trailing block; only pure-type
+ *      re-exports land there.
+ *
+ * Kept as a closed allow list of exactly these forms — see
+ * {@link assertKnownExportShape} for why a closed list, not a deny list,
+ * is load-bearing here.
  */
+const classifyExportLine = (line: string): string[] | undefined => {
+  const brace = /^export\s+(?:type\s+)?\{([^}]*)\}/.exec(line);
+  if (brace) {
+    return brace[1]!
+      .split(",")
+      .map((spec) => spec.trim().replace(/^type\s+/, ""))
+      .map((spec) => (spec.includes(" as ") ? spec.slice(spec.lastIndexOf(" as ") + 4) : spec))
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+  }
+  const inline = /^export (?:declare (?:const|function)|interface) (\w+)/.exec(line);
+  return inline ? [inline[1]!] : undefined;
+};
+
+/** {@link classifyExportLine} applied across every export line in a `.d.ts` source. */
 const exportedNames = (source: string): string[] =>
-  [...source.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}/g)]
-    .flatMap((m) => m[1]!.split(","))
-    .map((spec) => spec.trim().replace(/^type\s+/, ""))
-    .map((spec) => (spec.includes(" as ") ? spec.slice(spec.lastIndexOf(" as ") + 4) : spec))
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0);
+  source
+    .split("\n")
+    .filter((line) => line.startsWith("export"))
+    .flatMap((line) => classifyExportLine(line) ?? []);
 
 /**
  * Assert the emitter shape {@link exportedNames} depends on.
  *
  * Without this, the scan is unsound rather than merely incomplete: an
- * inline `export interface InternalFoo` or an `export * from ...`
- * produces no match, so the name silently vanishes and the entry passes
- * — and the `names.length > 0` non-vacuity check does NOT save us,
- * because unrelated brace exports on the same entry satisfy it.
+ * `export * from ...`, or any declaration form outside the two families
+ * {@link classifyExportLine} knows, produces no match, so the name
+ * silently vanishes and the entry passes — and the `names.length > 0`
+ * non-vacuity check does NOT save us, because unrelated exports on the
+ * same entry satisfy it.
  *
  * Asserting the precondition converts that silent degradation into a red
- * test: if rolldown-dts ever changes shape, a human looks.
+ * test: if rolldown-dts ever changes shape again, a human looks.
  *
- * Stated as a closed allow list — every top-level `export` line must be
- * a brace re-export — rather than a deny list of declaration forms. A
- * deny list has to enumerate `interface | type | class | const |
- * function | enum | namespace | let | var | abstract class | default`
- * and stays wrong the moment TypeScript grows another one; each miss is
- * a silent pass, which is the exact failure this guard exists to
- * prevent. The allow list is closed in both directions and shorter.
+ * Stated as a closed allow list — every top-level `export` line must
+ * classify — rather than a deny list of declaration forms. A deny list
+ * has to enumerate `interface | type | class | const | function | enum |
+ * namespace | let | var | abstract class | default` and stays wrong the
+ * moment TypeScript grows another one; each miss is a silent pass, which
+ * is the exact failure this guard exists to prevent. The allow list is
+ * closed in both directions and shorter.
  *
  * Line-anchored on purpose: entry `.d.ts` files are not all thin shims
  * (`./http` inlines ~1600 lines of `declare` + JSDoc), and a fenced
  * `@example` can contain `export default {...}` — always indented under
  * ` * `, so a true column-0 anchor skips it.
  */
-const assertBraceExportShape = (source: string): void => {
+const assertKnownExportShape = (source: string): void => {
   const exportLines = source.split("\n").filter((line) => line.startsWith("export"));
   expect(exportLines.length).toBeGreaterThan(0);
-  expect(exportLines.filter((line) => !/^export\s+(?:type\s+)?\{/.test(line))).toEqual([]);
+  expect(exportLines.filter((line) => classifyExportLine(line) === undefined)).toEqual([]);
 };
 
 const publishedEntries = Object.entries(pkg.publishConfig.exports)
@@ -114,7 +135,7 @@ describe("internal option widenings stay off the published type surface", () => 
 
   test.each(publishedEntries)("$subpath exports no Internal* name", ({ types }) => {
     const source = readFileSync(resolve(pkgRoot, types), "utf8");
-    assertBraceExportShape(source);
+    assertKnownExportShape(source);
 
     const names = exportedNames(source);
     // Non-vacuous: every published entry exports *something*.
