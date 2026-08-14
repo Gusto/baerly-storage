@@ -210,7 +210,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
 
       test(
         "(A) materialized state is byte-for-byte identical across every profile (and the fold/GC-disabled reference)",
-        // 120s is contention headroom for four 512-commit replays. Disabled
+        // 120s is contention headroom for four 128-commit replays. Disabled
         // maintenance still refreshes tail_hint periodically; the maintained
         // profiles additionally run cadence-driven GC plus one cold-start
         // fold, whose LocalFs prefix lists repeatedly walk the bucket.

@@ -286,8 +286,8 @@ Three behaviours to know before you consume a snapshot:
 
 `billingClassOf` implements the [cost-model](../docs/about/cost-model.md)
 definition — puts and lists bill, DELETE is $0. That is one definition,
-not a resolution: a test records all three live and mutually
-inconsistent definitions in the tree as evidence for their owner. Note
+not a resolution: a test records the live and mutually inconsistent
+definitions still in the tree as evidence for their owner. Note
 it counts `Storage` calls, not billable requests, so against a remote
 backend that paginates or retries inside one call it understates Class A.
 

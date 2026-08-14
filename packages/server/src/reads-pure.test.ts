@@ -18,8 +18,8 @@
  * is OVER the fold-trigger ratio (derived tail estimate ≥ snapshot_bytes AND
  * derived estimate ≥ MAINTENANCE_MIN_LIVE_BYTES) — the exact condition that
  * would cause the write-tick to fire maintenance — repeated reads
- * through the collection API produce ZERO mutating storage
- * ops and leave `current.json` byte-identical.
+ * through the collection API produce ZERO Class A storage ops
+ * (PUT / DELETE / LIST) and leave `current.json` byte-identical.
  */
 
 import {
@@ -31,13 +31,12 @@ import {
   MemoryStorage,
   readCurrentJson,
   type Storage,
-  type StorageGetOptions,
-  type StorageGetResult,
-  type StorageListEntry,
-  type StoragePutOptions,
-  type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, test, vi } from "vitest";
+import {
+  type CountingStorage,
+  wrapCountingStorage,
+} from "../../../tests/fixtures/counting-storage.ts";
 import { Db } from "./db.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { Writer } from "./writer.ts";
@@ -100,55 +99,32 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
   return storage;
 };
 
-// ── Counting proxy (mutation guard: PUT + DELETE) ──────────────────────
+// ── Counting (guard predicate: Class A = PUT + DELETE + LIST) ──────────
 //
-// Reuses the same shape as the `countingStorage` helper in
-// `maintenance.test.ts`. `mutatingOps()` sums PUT + DELETE because this file
-// is a MUTATION guard: its job is proving a read leaves the bucket
-// byte-identical, and PUT + DELETE is exactly the set that could change
-// it. Cost-accounting coverage uses a separate counting fixture and test.
+// The predicate is the shared fixture's `classAOps` (PUT + DELETE +
+// LIST), not just PUT + DELETE, because this file's job is proving a
+// read leaves the bucket byte-identical AND enumerates nothing — and
+// because `maintenance-e2e.test.ts`'s idle-reader gate delegates its
+// repetition coverage here, on that same definition.
+//
+// Dollar cost is a separate concern: `read-class-a-cost.test.ts` pins
+// per-terminal cost with `billableClassAOps` (PUT + LIST, DELETE
+// being $0), including the one LIST an indexed `.where()` legitimately
+// issues. Collections here are unindexed, so zero is correct under
+// either definition.
 
-interface CountingProxy {
-  readonly storage: Storage;
-  readonly mutatingOps: () => number;
-  readonly report: () => Record<string, number>;
-}
-
-const countingProxy = (inner: Storage): CountingProxy => {
-  const counts = { get: 0, put: 0, delete: 0, list: 0 };
-  const wrapper: Storage = {
-    async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
-      counts.get += 1;
-      return inner.get(key, opts);
-    },
-    async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
-      counts.put += 1;
-      return inner.put(key, body, opts);
-    },
-    async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
-      counts.delete += 1;
-      return inner.delete(key, opts);
-    },
-    list(
-      prefix: string,
-      opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
-    ): AsyncIterable<StorageListEntry> {
-      counts.list += 1;
-      return inner.list(prefix, opts);
-    },
-  };
-  return {
-    storage: wrapper,
-    mutatingOps: (): number => counts.put + counts.delete,
-    report: (): Record<string, number> => ({ ...counts }),
-  };
-};
+const report = (counting: CountingStorage): Record<string, number> => ({
+  get: counting.gets,
+  put: counting.puts,
+  delete: counting.deletes,
+  list: counting.lists,
+});
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
 describe("reads are pure — never tick maintenance", () => {
   test(
-    "many reads over an over-ratio collection produce ZERO mutating ops",
+    "many reads over an over-ratio collection produce ZERO Class A ops",
     { timeout: 30_000 },
     async () => {
       // 60 entries — well over the CLOUDFLARE_FREE_TIER minEntriesToCompact
@@ -156,8 +132,8 @@ describe("reads are pure — never tick maintenance", () => {
       // sets mean_entry_bytes = RATIO_TRIPPING_MEAN, snapshot_bytes = 0
       // ⇒ ratio = 1.0 ≥ MAINTENANCE_TARGET_RATIO = 1.0.
       const inner = await seedOverRatio(60);
-      const proxy = countingProxy(inner);
-      const db = makeDb(proxy.storage);
+      const counting = wrapCountingStorage(inner);
+      const db = makeDb(counting.storage);
 
       // Take a snapshot of current.json BEFORE the reads.
       const beforeBody = await inner.get(currentJsonKey());
@@ -174,9 +150,11 @@ describe("reads are pure — never tick maintenance", () => {
         await db.collection(COLL).count();
       }
 
-      // Assert: ZERO mutating ops across all reads.
-      const mutatingOps = proxy.mutatingOps();
-      expect(mutatingOps, `Expected 0 mutating ops; got ${JSON.stringify(proxy.report())}`).toBe(0);
+      // Assert: ZERO Class A ops (PUT/DELETE/LIST) across all reads.
+      expect(
+        counting.classAOps,
+        `Expected 0 Class A ops; got ${JSON.stringify(report(counting))}`,
+      ).toBe(0);
 
       // Assert: current.json is byte-identical — no fold happened.
       const afterBody = await inner.get(currentJsonKey());
@@ -191,8 +169,7 @@ describe("reads are pure — never tick maintenance", () => {
     { timeout: 30_000 },
     async () => {
       const inner = await seedOverRatio(60);
-      const proxy = countingProxy(inner);
-      const db = makeDb(proxy.storage);
+      const db = makeDb(inner);
 
       const key = currentJsonKey();
       const beforeResult = await readCurrentJson(inner, key);
@@ -236,8 +213,8 @@ describe("reads are pure — never tick maintenance", () => {
       // Maintenance dispatch lives ONLY in Writer.#singleAttemptCommit
       // (via `getCurrentContext()?.maintenance`), not in query.ts.
       const inner = await seedOverRatio(60);
-      const proxy = countingProxy(inner);
-      const db = makeDb(proxy.storage);
+      const counting = wrapCountingStorage(inner);
+      const db = makeDb(counting.storage);
 
       const dispatchSpy = vi.fn<(task: () => Promise<void>) => void | Promise<void>>(() => {
         // If this is ever called from a read, the test will fail.
@@ -266,10 +243,10 @@ describe("reads are pure — never tick maintenance", () => {
         "dispatch spy was called — a read path consulted the maintenance context",
       ).not.toHaveBeenCalled();
 
-      // Mutating ops are still zero.
+      // Class A ops are still zero.
       expect(
-        proxy.mutatingOps(),
-        `Expected 0 mutating ops; got ${JSON.stringify(proxy.report())}`,
+        counting.classAOps,
+        `Expected 0 Class A ops; got ${JSON.stringify(report(counting))}`,
       ).toBe(0);
     },
   );
