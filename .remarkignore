@@ -3,6 +3,12 @@ docs/superpowers/
 **/*.excalidraw.md
 # Gitignored content dirs that remark would otherwise walk (it reads the
 # filesystem, not git). Keep mirrored with .gitignore's markdown-bearing paths.
+# The two worktree roots are the expensive ones — they hold whole sibling
+# checkouts, so remark was re-validating another branch's docs on every run
+# (~9s of a ~19s pass) and would have failed this branch's gate over a broken
+# link in a doc that isn't on this branch.
 .claude/research/
 .stryker-tmp/
+.worktrees/
+.claude/worktrees/
 dist/
