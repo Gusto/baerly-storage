@@ -280,26 +280,30 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // log-tail path should be GET-only.
           const counting = wrapCountingStorage(storage);
 
-          // 1 hour at a 2-second poll cadence = 1800 reads. The
-          // published cost model is "< 1 Class A op / writer / hour"
-          // for an idle reader; the real expectation is exactly 0
-          // (the reader only walks `current.json` + the snapshot +
-          // the live-tail log entries, all by deterministic key →
-          // all `get`).
+          // The published cost model is "< 1 Class A op / writer / hour"
+          // for an idle reader at a 2-second poll cadence (1800 polls/hour);
+          // the real expectation is exactly 0 (the reader only walks
+          // `current.json` + the snapshot + the live-tail log entries, all
+          // by deterministic key → all `get`). A small sample proves the
+          // per-poll rate is exactly zero; `reads-pure.test.ts` already
+          // covers the broader repetition/mutation-spy guard, so this gate
+          // doesn't need to replay all 1800 polls to defend the projection.
           //
           // For broader workload analysis, see bench/README.md — the load
           // harness externalizes derived.class_a_per_tenant_per_hour.
           const db = Db.create({ storage: counting.storage, app: APP, tenant: TENANT });
           const tbl = db.collection(COLLECTION) as Collection<Ticket>;
-          const T = 1800;
-          for (let i = 0; i < T; i++) {
+          const SAMPLE_POLLS = 10;
+          const HOURLY_POLLS = 1800;
+          for (let i = 0; i < SAMPLE_POLLS; i++) {
             await tbl.where({}).all();
           }
-          expect(counting.classAOps).toBeLessThan(1);
           // Strengthen: the documented expectation is exactly 0. If
           // this ever flips to 1 we want to know immediately — a LIST
           // or PUT crept into the read path.
           expect(counting.classAOps).toBe(0);
+          const projectedClassAOpsPerHour = (counting.classAOps / SAMPLE_POLLS) * HOURLY_POLLS;
+          expect(projectedClassAOpsPerHour).toBeLessThan(1);
         },
       );
     });

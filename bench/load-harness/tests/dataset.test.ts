@@ -21,20 +21,13 @@ describe("dataset determinism", () => {
       schema: { collection: "notes" },
       recordSizeBuckets: tinyBodies,
     });
-    expect(a.totalRecords).toBe(b.totalRecords);
-    expect(a.totalBytes).toBe(b.totalBytes);
-    for (let i = 0; i < a.tenants.length; i++) {
-      const ta = a.tenants[i]!;
-      const tb = b.tenants[i]!;
-      expect(ta.tenantId).toBe(tb.tenantId);
-      expect(ta.records.length).toBe(tb.records.length);
-      for (let j = 0; j < ta.records.length; j++) {
-        expect(ta.records[j]!.recordId).toBe(tb.records[j]!.recordId);
-        expect(ta.records[j]!.bytes).toBe(tb.records[j]!.bytes);
-        // Byte-level body comparison
-        expect([...ta.records[j]!.bodyBytes]).toEqual([...tb.records[j]!.bodyBytes]);
-      }
-    }
+    // Whole-dataset deep equality covers every field (tenantId, record
+    // counts and IDs, bytes, bodyBytes, timestamps, popularity rank,
+    // traffic share, totals) in one comparison. Vitest compares
+    // Uint8Array values byte-for-byte, so this is still an exact
+    // byte-identical check — just without per-record assertion/spread
+    // overhead that dominated this test's wall-clock under load.
+    expect(a).toEqual(b);
   });
 
   test("tenant-size distribution roughly matches the buckets", () => {
