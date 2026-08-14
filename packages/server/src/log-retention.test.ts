@@ -1,9 +1,12 @@
 import {
   type CurrentJson,
   createCurrentJson,
+  encodeJsonBytes,
   LOG_RETENTION_SEQ_WINDOW,
+  logDeleteFloorOf,
   logObjectKey,
   MemoryStorage,
+  mintGeneration,
   readCurrentJson,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
@@ -188,5 +191,110 @@ describe("retireLogRange", () => {
       code: "Internal",
       message: expect.stringContaining("certified delete floor"),
     });
+  });
+});
+
+describe("retireLogRange vs. a concurrent current.json writer", () => {
+  test("recomputes the authorized range against the state the CAS validates", async () => {
+    const storage = new MemoryStorage();
+    await seedIdle(storage, 50);
+    // Captured before the interceptor is installed, so the rival's own write
+    // does not perturb the GET counter below.
+    const seeded = await readCurrentJson(storage, CURRENT_KEY);
+
+    // Land a `restore --force`-shaped reseed — a raw, monotonicity-bypassing
+    // PUT that LOWERS log_seq_start; restore is the one writer allowed to do
+    // that (restore.ts:191-206) — in the gap between retireLogRange's gate
+    // read (GET 1) and casUpdateCurrentJson's own read (GET 2).
+    const origGet = storage.get.bind(storage);
+    let currentGets = 0;
+    storage.get = (async (key: string, getOpts?: { signal?: AbortSignal }) => {
+      if (key === CURRENT_KEY) {
+        currentGets++;
+        if (currentGets === 2) {
+          await storage.put(
+            CURRENT_KEY,
+            encodeJsonBytes({
+              ...seeded!.json,
+              snapshot: null,
+              log_seq_start: 5,
+              tail_hint: 5,
+              log_delete_floor: undefined,
+              generation: mintGeneration(),
+            }),
+            { ifMatch: seeded!.etag, contentType: "application/json" },
+          );
+        }
+      }
+      return origGet(key, getOpts);
+    }) as typeof storage.get;
+
+    try {
+      await expect(
+        retireLogRange(storage, CURRENT_KEY, { window: 5, maxDeletes: 20 }),
+      ).rejects.toMatchObject({ code: "Conflict" });
+    } finally {
+      storage.get = origGet;
+    }
+
+    // Zero DELETEs, and no floor published above the reseeded live floor.
+    for (let seq = 0; seq < 20; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.not.toBeNull();
+    }
+    const after = await readCurrentJson(storage, CURRENT_KEY);
+    expect(logDeleteFloorOf(after!.json)).toBe(0);
+    expect(after!.json.log_seq_start).toBe(5);
+  });
+
+  test("deletes the CAS-validated range, not the advisory gate, when a rival advances the floor first", async () => {
+    const storage = new MemoryStorage();
+    await seedIdle(storage, 50);
+    // Captured before the interceptor is installed, so the rival's own write
+    // does not perturb the GET counter below.
+    const seeded = await readCurrentJson(storage, CURRENT_KEY);
+
+    // Land a legal monotone floor advance — unlike the reseed above, this
+    // does not touch log_seq_start and needs no generation remint — in the
+    // gap between retireLogRange's gate read (GET 1) and
+    // casUpdateCurrentJson's own read (GET 2). Gate from GET 1 is
+    // {start: 0, end: 20}; GET 2 sees floor 20 and the mutator recomputes
+    // {start: 20, end: 40}. A loop that deleted `gate` instead of the
+    // CAS-validated `range` would wipe [0, 20) instead.
+    const origGet = storage.get.bind(storage);
+    let currentGets = 0;
+    storage.get = (async (key: string, getOpts?: { signal?: AbortSignal }) => {
+      if (key === CURRENT_KEY) {
+        currentGets++;
+        if (currentGets === 2) {
+          await storage.put(
+            CURRENT_KEY,
+            encodeJsonBytes({ ...seeded!.json, log_delete_floor: 20 }),
+            { ifMatch: seeded!.etag, contentType: "application/json" },
+          );
+        }
+      }
+      return origGet(key, getOpts);
+    }) as typeof storage.get;
+
+    try {
+      const result = await retireLogRange(storage, CURRENT_KEY, { window: 5, maxDeletes: 20 });
+      expect(result).toEqual({ deleted: 20 });
+    } finally {
+      storage.get = origGet;
+    }
+
+    const after = await readCurrentJson(storage, CURRENT_KEY);
+    expect(after!.json.log_delete_floor).toBe(40);
+    // The discriminator: a gate-based loop would have deleted exactly
+    // [0, 20) instead of the CAS-validated [20, 40).
+    for (let seq = 0; seq < 20; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.not.toBeNull();
+    }
+    for (let seq = 20; seq < 40; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.toBeNull();
+    }
+    for (let seq = 40; seq < 50; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.not.toBeNull();
+    }
   });
 });
