@@ -137,6 +137,17 @@ describe("walkLogRange", () => {
     });
   });
 
+  test("a reclaimed prefix makes a sub-floor walk throw Internal", async () => {
+    const storage = new MemoryStorage();
+    const logSeqStart = 5;
+    await seedRange(storage, logSeqStart, 8);
+
+    await expect(walkLogRange(storage, PREFIX, 0, 8)).rejects.toMatchObject({
+      code: "Internal",
+    });
+    await expect(walkLogRange(storage, PREFIX, logSeqStart, 8)).resolves.toHaveLength(3);
+  });
+
   test("throws InvalidResponse on a malformed body", async () => {
     const inner = new MemoryStorage();
     await inner.put(`${PREFIX}/log/0.json`, new TextEncoder().encode("not json"));

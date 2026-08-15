@@ -25,13 +25,15 @@ import { describe, expect, test } from "vitest";
 // ---------------------------------------------------------------------------
 // @gusto/baerly-storage (root barrel)
 // ---------------------------------------------------------------------------
-import { BaerlyError, Db, MemoryStorage } from "@gusto/baerly-storage";
+import { BaerlyError, Db, MemoryStorage, probeTailFrom, walkLogRange } from "@gusto/baerly-storage";
 
 describe("@gusto/baerly-storage", () => {
   test("imports resolve", () => {
     expect(typeof Db).toBe("function");
     expect(typeof BaerlyError).toBe("function");
     expect(typeof MemoryStorage).toBe("function");
+    expect(typeof walkLogRange).toBe("function");
+    expect(typeof probeTailFrom).toBe("function");
   });
 });
 

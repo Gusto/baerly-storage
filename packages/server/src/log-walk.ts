@@ -94,6 +94,14 @@ const readLogEntryWithBytes = async (
  * in chunks of {@link MAX_PARALLEL_LOG_READS} concurrent GETs.
  * Returns the materialised entries in seq order.
  *
+ * Retention precondition: derive `fromSeq` from a fresh `current.json`
+ * read and require `fromSeq >= current.log_seq_start`. The floor and
+ * starting sequence must come from that same manifest read. Entries below
+ * the floor may already be reclaimed; a sub-floor walk that reaches one of
+ * those holes throws `Internal` even when later live entries still exist.
+ * This storage-level helper intentionally accepts no manifest and cannot
+ * enforce the precondition for its caller.
+ *
  * Empty range (`fromSeq >= toSeqExclusive`) returns `[]` and issues
  * zero GETs.
  *

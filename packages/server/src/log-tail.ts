@@ -75,9 +75,19 @@ export const probeTailChunk = async (
 /**
  * Discover the true committed tail and fold entries in `[hint, tail)`.
  * `tail` is the first empty seq (>= hint); `entries` are the
- * LogEntries in `[hint, tail)` in seq order. `cap` bounds the walk;
- * exhausting it THROWS `Internal` (never silently truncates) — see
- * the cap-exhaustion comment below.
+ * LogEntries in `[hint, tail)` in seq order.
+ *
+ * Retention precondition: derive `hint` from a fresh `current.json` read
+ * and require `hint >= current.log_seq_start`; the usual start is
+ * `Math.max(current.log_seq_start, current.tail_hint)`. The floor and hint
+ * must come from that same manifest read. Entries below the floor may
+ * already be reclaimed, and this probe interprets the first missing slot
+ * as the tail. A sub-floor hint may therefore report a false tail and omit
+ * later live entries. This storage-level helper intentionally accepts no
+ * manifest and cannot enforce the precondition for its caller.
+ *
+ * `cap` bounds the walk; exhausting it THROWS `Internal` (never silently
+ * truncates) — see the cap-exhaustion comment below.
  */
 export const probeTailFrom = async (
   storage: Storage,
