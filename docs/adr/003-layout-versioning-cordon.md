@@ -3,9 +3,9 @@ title: Layout versioning and the reserved-namespace cordon
 audience: adr
 doc_type: adr
 summary: ADR 003 — schema_version is a per-artifact shape sentinel; the bucket key-layout axis is distinct and deferred (layout_version, additive-optional); the leading-underscore namespace is reserved now. The tolerant-reader rule lives in extending.md; this record keeps the reservation and the rejected upcaster/cordon paths.
-last-reviewed: 2026-07-16
+last-reviewed: 2026-08-14
 tags: [decision, adr, runtime-model]
-related: [README.md, "../about/thesis.md", "../contributing/extending.md", 001-tenant-cas-isolation.md, 002-ephemeral-coordination.md]
+related: [README.md, "../about/thesis.md", "../contributing/extending.md", 001-tenant-cas-isolation.md, 002-ephemeral-coordination.md, 007-chunked-snapshot-layout.md]
 ---
 
 # 003 — Layout versioning and the reserved-namespace cordon
@@ -30,6 +30,11 @@ Accepted (2026-06-01).
    keys under a reserved `_v<N>/` prefix is **not** a shape change; when
    needed it ships as additive-optional `layout_version` (default `1`). Not
    introduced now — a bucket written today is unambiguously layout 1.
+
+   **Accepted amendment.** [ADR-007](007-chunked-snapshot-layout.md) amends
+   this item for its future atomic layout-2 cut: `current.json` schema 4 makes
+   `layout_version: 2` required and intentionally rejects layout 1. The live
+   version matrix remains unchanged until that cut activates.
 4. **The leading-`_` namespace is reserved now.** Collection, index, app,
    and tenant names MUST NOT begin with `_` (enforced by the shared
    `assertKeySegment`). This is the one genuinely-irreversible-after-launch
@@ -71,4 +76,3 @@ coordination request-bounded in [ADR-002](002-ephemeral-coordination.md).
 - **Ad-hoc `/^_v/` carve-out** — rejected for the systematic leading-`_`
   reservation, which subsumes `_v<N>` and matches the Mongo/Firestore
   convention.
-
