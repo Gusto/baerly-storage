@@ -175,6 +175,38 @@ void runScheduledMaintenance;
 `,
   },
   {
+    name: "positive-public-log-helper-surface",
+    expect: "compiles",
+    source: `
+import {
+  probeTailFrom,
+  type Storage,
+  walkLogRange,
+} from "@gusto/baerly-storage";
+
+declare const storage: Storage;
+declare const signal: AbortSignal;
+
+const walkSignature: (
+  storage: Storage,
+  logPrefix: string,
+  fromSeq: number,
+  toSeqExclusive: number,
+  opts?: { signal?: AbortSignal },
+) => Promise<Array<{ seq: number }>> = walkLogRange;
+
+const probeSignature: (
+  storage: Storage,
+  logPrefix: string,
+  hint: number,
+  opts?: { signal?: AbortSignal; cap?: number },
+) => Promise<{ tail: number; entries: Array<{ seq: number }> }> = probeTailFrom;
+
+void walkSignature(storage, "app/a/tenant/t/manifests/c", 5, 9, { signal });
+void probeSignature(storage, "app/a/tenant/t/manifests/c", 9, { signal, cap: 32 });
+`,
+  },
+  {
     name: "negative-internal-compact-options-from-root",
     expect: "fails",
     codes: ["TS2305", "TS2724"],

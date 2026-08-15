@@ -70,6 +70,20 @@ describe("probeTailFrom", () => {
     expect(result.entries.map((entry) => entry.seq)).not.toContain(9);
   });
 
+  test("a reclaimed prefix makes a sub-floor hint report a false tail", async () => {
+    const storage = new MemoryStorage();
+    const logSeqStart = 5;
+    await seedLogEntries(storage, PREFIX, logSeqStart, 8);
+
+    await expect(probeTailFrom(storage, PREFIX, 0)).resolves.toEqual({
+      tail: 0,
+      entries: [],
+    });
+    const safe = await probeTailFrom(storage, PREFIX, logSeqStart);
+    expect(safe.tail).toBe(8);
+    expect(safe.entries.map((entry) => entry.seq)).toEqual([5, 6, 7]);
+  });
+
   test("cap exhausted: THROWS Internal instead of silently truncating", async () => {
     // A dense run longer than the cap means the true tail is past the cap.
     // Returning `hint+cap` would silently truncate every downstream read
