@@ -8,7 +8,7 @@
  *   1. `setJsonMode(args.json === true)` before any emission.
  *   2. A `KNOWN_KEYS` whitelist asserting unknown `--flag` rejection.
  *   3. An `errorToExitCode(code)` mapping —
- *      `InvalidConfig → 1`, `Conflict|Internal|InvalidResponse → 3`,
+ *      `InvalidConfig → 1`, `Conflict|Internal|InvalidResponse|AmbiguousCommit → 3`,
  *      else `2`.
  *   4. `resolveAppTenant(args)` falling back through `baerly.config.*`
  *      to either real values or hard-coded `"app"` / `"tenant"`
@@ -155,7 +155,12 @@ const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {
     return 1;
   }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+  if (
+    code === "Conflict" ||
+    code === "Internal" ||
+    code === "InvalidResponse" ||
+    code === "AmbiguousCommit"
+  ) {
     return 3;
   }
   return 2;

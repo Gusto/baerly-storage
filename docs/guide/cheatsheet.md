@@ -80,19 +80,20 @@ and won't typecheck. Pair with `.order({ field: "asc" | "desc" })` and
 One class, `BaerlyError`. Discriminate by `.code` (survives realm
 boundaries), never `instanceof` chains.
 
-| `code`                   | HTTP | When                                                    |
-| ------------------------ | ---- | ------------------------------------------------------- |
-| `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate)          |
-| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc     |
-| `Conflict`               | 409  | `insert` `_id` collision (duplicate `_id`)              |
-| `Unauthorized`           | 401  | Verifier returned no identity                           |
-| `AccessDenied`           | 403  | S3 403 or bucket policy denied                          |
-| `NotFound`               | 404  | Row by id not found                                     |
-| `PayloadTooLarge`        | 413  | Body > 1 MiB                                            |
-| `UnsatisfiablePredicate` | 400  | Well-formed predicate that contradicts itself           |
-| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                   |
-| `InvalidResponse`        | 502  | Server returned unparseable body                        |
-| `Internal`               | 500  | Invariant violation — file a bug                        |
+| `code`                   | HTTP | When                                                                   |
+| ------------------------ | ---- | ---------------------------------------------------------------------- |
+| `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate)                         |
+| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
+| `Conflict`               | 409  | `insert` `_id` collision (duplicate `_id`)                             |
+| `AmbiguousCommit`        | 409  | Commit landed below the certified delete floor; retry is at-least-once |
+| `Unauthorized`           | 401  | Verifier returned no identity                                          |
+| `AccessDenied`           | 403  | S3 403 or bucket policy denied                                         |
+| `NotFound`               | 404  | Row by id not found                                                    |
+| `PayloadTooLarge`        | 413  | Body > 1 MiB                                                           |
+| `UnsatisfiablePredicate` | 400  | Well-formed predicate that contradicts itself                          |
+| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                                  |
+| `InvalidResponse`        | 502  | Server returned unparseable body                                       |
+| `Internal`               | 500  | Invariant violation — file a bug                                       |
 
 ## HTTP wire (reach for `curl` only when debugging)
 

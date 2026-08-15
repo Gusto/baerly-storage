@@ -432,6 +432,7 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["AccessDenied", 403],
   ["NotFound", 404],
   ["Conflict", 409],
+  ["AmbiguousCommit", 409],
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
@@ -471,6 +472,10 @@ const ERROR_CODE_POLICY = {
   AccessDenied: {
     messagePolicy: "scrubbed",
     scrubbedMessage: "access denied",
+  },
+  AmbiguousCommit: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage: "commit outcome is ambiguous; the mutation may or may not have been applied",
   },
   Conflict: {
     messagePolicy: "contextual",

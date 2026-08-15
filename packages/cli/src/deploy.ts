@@ -12,8 +12,9 @@
  *   - 1 user error (InvalidConfig, missing config, unknown target).
  *   - 2 storage / external error (NetworkError, Wrangler returned
  *     non-zero, anything non-BaerlyError).
- *   - 3 protocol invariant (Conflict, Internal, InvalidResponse —
- *     should not happen here unless someone hand-edited mid-flight).
+ *   - 3 protocol invariant (Conflict, Internal, InvalidResponse,
+ *     AmbiguousCommit — should not happen here unless someone
+ *     hand-edited mid-flight).
  */
 
 import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
@@ -53,7 +54,12 @@ const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {
     return 1;
   }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+  if (
+    code === "Conflict" ||
+    code === "Internal" ||
+    code === "InvalidResponse" ||
+    code === "AmbiguousCommit"
+  ) {
     return 3;
   }
   return 2;

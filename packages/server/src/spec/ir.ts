@@ -72,6 +72,7 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   Internal: "Internal invariant violation — file a bug.",
   SchemaError: "Document body failed schema validation; carries .issues.",
   Conflict: "Write conflicted (CAS exhausted, duplicate _id, guarded key).",
+  AmbiguousCommit: "Commit landed below the certified delete floor; retry is at-least-once.",
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",

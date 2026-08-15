@@ -33,6 +33,26 @@ export type BaerlyErrorCode =
    */
   | "Conflict"
   /**
+   * A committing `log/<seq>` create won at a sequence the collection has
+   * already certified deleted (`seq < min(log_delete_floor, log_seq_start)`),
+   * so the object it wrote is beneath every reader's floor and invisible.
+   *
+   * The logical mutation's fate is genuinely unknown, not merely unreported: an
+   * earlier attempt by the same writer may have landed and been folded into the
+   * snapshot before retirement removed the slot, and no durable state
+   * distinguishes that history from one where a foreign writer's entry was
+   * folded instead (`docs/spec/sync-protocol.md` invariant 11 —
+   * `writer_fence` is not a replay filter — and `SnapshotBody.docs`, which
+   * keeps no writer identity).
+   *
+   * Retrying the same logical write is permitted and is the intended recovery,
+   * but the write contract under this fault is **at-least-once**: a retry may
+   * apply the mutation a second time. That is why this is a distinct code and
+   * why `retriable` is `false` — a generic conflict-retry wrapper must not
+   * absorb it silently. HTTP layer maps this to 409.
+   */
+  | "AmbiguousCommit"
+  /**
    * `Verifier` returned no identity. HTTP server maps to 401.
    * Code is reserved here so the union locks.
    */
@@ -124,6 +144,7 @@ export const ERROR_CODES = [
   "Internal",
   "SchemaError",
   "Conflict",
+  "AmbiguousCommit",
   "Unauthorized",
   "NotFound",
   "PayloadTooLarge",

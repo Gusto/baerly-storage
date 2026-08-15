@@ -268,6 +268,6 @@ describe("spec artifact emission", () => {
     const ir = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
     expect(ir["specVersion"]).toBe("1");
     expect(Array.isArray(ir["errorCodes"])).toBe(true);
-    expect((ir["errorCodes"] as unknown[]).length).toBe(14);
+    expect((ir["errorCodes"] as unknown[]).length).toBe(15);
   });
 });

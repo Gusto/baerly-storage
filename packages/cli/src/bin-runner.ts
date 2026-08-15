@@ -25,7 +25,7 @@
  *     …)` semantics.
  *   - Maps `BaerlyError.code` through the same 3-bucket exit-code
  *     table the per-subcommand wrappers use (`InvalidConfig → 1`,
- *     `Conflict|Internal|InvalidResponse → 3`, else 2).
+ *     `Conflict|Internal|InvalidResponse|AmbiguousCommit → 3`, else 2).
  */
 
 import {
@@ -43,7 +43,12 @@ const errorToExitCode = (code: string): number => {
   if (code === "InvalidConfig") {
     return 1;
   }
-  if (code === "Conflict" || code === "Internal" || code === "InvalidResponse") {
+  if (
+    code === "Conflict" ||
+    code === "Internal" ||
+    code === "InvalidResponse" ||
+    code === "AmbiguousCommit"
+  ) {
     return 3;
   }
   return 2;
