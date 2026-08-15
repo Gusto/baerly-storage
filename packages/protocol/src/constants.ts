@@ -232,17 +232,25 @@ export const PREIMAGE_SCAN_MAX_GETS: number = 8;
  * reach a 1024-sequence window while keeping that relationship explicit if the
  * pre-image budget changes.
  *
- * The window also fences a stale writer, which is why it is a safety parameter
- * and not only a pre-image cost margin. A committing writer picks its slot at
- * or above the `max(log_seq_start, tail_hint)` of the manifest it read
- * (`writer.ts:446`), and a pass only certifies
- * `seq < log_seq_start - LOG_RETENTION_SEQ_WINDOW` deleted, so a commit can
- * land in a certified-deleted slot only if `log_seq_start` advanced by more
- * than this window while that single commit was in flight — i.e. only if more
- * than 1024 entries were committed and folded inside one request's commit
- * path. Do not lower this value on cost grounds without re-deriving that
- * bound: it is what closes the paused-writer schedule in place of a
- * commit-path fence.
+ * **This window is NOT a paused-writer fence, and no safety property may be
+ * derived from it.** It is a pre-image cost margin and a rate limit on how fast
+ * retirement approaches the live floor — nothing more. The withdrawn argument
+ * was that a certified-deleted slot needs `log_seq_start` to advance by more
+ * than this window "during one in-flight commit". The arithmetic is correct and
+ * the quantifier is vacuous: one in-flight commit bounds no wall-clock and no
+ * commit count, so this is a rate x duration assumption expressed in sequences,
+ * the same class as `GC_GRACE_PERIOD_MILLIS` in seconds. Lowering the value on
+ * cost grounds costs pre-image coverage and retirement smoothness; it does not
+ * weaken a safety proof, because there was never one here.
+ *
+ * Withdrawing the claim leaves the stale-writer schedule **open**. Nothing on
+ * the commit path compares the committing `seq` against the certified
+ * `log_delete_floor` today, so a create that wins below the floor is
+ * acknowledged as a successful mutation that no reader can see. The planned
+ * replacement is a commit-path check that fails such a create with
+ * `BaerlyError{code:"AmbiguousCommit"}` instead of acknowledging it; it is not
+ * implemented yet. Do not cite this JSDoc as evidence that the schedule is
+ * closed.
  *
  * @see packages/server/src/log-retention.ts
  * @see docs/spec/sync-protocol.md invariant 12

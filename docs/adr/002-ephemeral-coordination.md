@@ -107,6 +107,36 @@ is a **graduation signal, not silent breakage**.
   long — which is when the read alone sits closest to the 50-subrequest
   ceiling. Anti-precedent: Cassandra's `read_repair_chance`, removed in
   4.0 ([CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)).
+- **The log-retention sequence window as a paused-writer fence.** Withdrawn.
+  `LOG_RETENTION_SEQ_WINDOW` was recorded as the reason a stale writer cannot
+  commit into a certified-deleted slot: the floor would have to advance by more
+  than the window "during one in-flight commit". The arithmetic holds and the
+  quantifier does not — one in-flight commit bounds no wall-clock and no commit
+  count, so a delayed create PUT, an isolate suspension, or the writer's own
+  transient-retry loop can each straddle an unbounded number of peer commits and
+  folds. It is a rate x duration assumption in sequences, the same class as
+  `GC_GRACE_PERIOD_MILLIS` in seconds. The window survives as a pre-image cost
+  margin and a retirement rate limit, with no safety property attached.
+- **Post-create manifest revalidation with discard-and-re-probe.** Insufficient,
+  and for a stronger reason than the per-commit GET cost. Re-reading
+  `current.json` after the create detects that the commit landed below the floor,
+  but discarding and re-probing cannot distinguish "my create landed and was
+  folded" from "a foreign create landed and was folded": the fold keeps no writer
+  identity (`SnapshotBody.docs` is `{_id, body}`), tombstones are purged,
+  `current.json` holds no per-writer completion state, and `writer_fence` is not
+  a replay filter (invariant 11). The two histories leave byte-identical durable
+  state and demand opposite outcomes, so re-probing silently re-applies a folded
+  mutation — clobbering a concurrent newer value, minting a second `lsn` for one
+  logical mutation, and emitting it twice on `/v1/since`. What is planned
+  instead — **not yet implemented** — is an explicit failure keyed on the
+  certified delete floor: a winning create at
+  `seq < min(log_delete_floor, log_seq_start)` throws
+  `BaerlyError{code:"AmbiguousCommit"}`. That would make the write contract
+  at-least-once under this fault, which is a stated contract rather than a silent
+  wrong answer. Until it lands, the schedule above is open: such a create is
+  acknowledged. A pre-create re-read closes neither schedule — a GET cannot
+  constrain a later PUT to a different key, and the lost-ack arm must not re-read
+  at all without breaking own-session adoption.
 
 ## What would break the property
 
