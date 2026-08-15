@@ -196,12 +196,19 @@ A changed group splits greedily at the longest non-empty prefix within both
 target thresholds. One document over a target becomes a singleton when its
 exact chunk fits the hard maximum; otherwise publication fails explicitly as
 oversized. An output is underfull only when both bytes and rows are strictly
-below half the selected targets. At most once per pass, the leftmost underfull
-output may inspect its preselected captured neighbor: the immediate right of
-the leftmost directly touched captured descriptor, or its immediate left when
-no right descriptor exists. It merges only when the exact result fits both
-targets. It does not try the other side, redistribute, recurse, or move later
-untouched boundaries.
+below half the selected targets. The locked owner is a captured descriptor. If
+its selected neighbor is immediately right, only the rightmost non-empty output
+emitted while rebuilding that owner group is merge-eligible; if the selected
+neighbor is immediately left, which occurs only when no right neighbor exists,
+only the leftmost owner-group output is eligible. That boundary output may
+consume only the adjacent selected untouched neighbor, and only when it is
+underfull and their exact combined encoding fits both targets. If the owner
+group is deleted to no output or remains canonically unchanged, the selected
+neighbor is itself directly touched, or the boundary output is not underfull or
+does not fit, the neighbor is unused. Other directly touched groups never
+consume it, including a later underfull group separated from it by an
+intervening descriptor. The builder does not try another group or side,
+redistribute, recurse, or move later untouched boundaries.
 
 Prefix planning is an implementable two-phase pure algorithm:
 
@@ -213,26 +220,36 @@ Prefix planning is an implementable two-phase pure algorithm:
    are the exact canonical bytes of each final post-image; a routed delete is
    the UTF-8 byte length of its ID; replacing an earlier mutation for the same
    ID first removes its contribution. Gap deletes contribute zero and cause no
-   touch. Once the first directly touched captured descriptor fixes the
-   neighbor slot (immediate right, else left), that index stays fixed. The
-   window ends before an entry would introduce an earlier directly touched
-   descriptor and thereby change neighbor ownership.
-2. The metadata result carries the candidate sequence endpoints, unique direct
+   touch. For every prospective endpoint, metadata recomputes the final
+   mutation map and routes its remaining mutations against the captured
+   descriptors. Its `leftmost_direct_owner_index` is the lowest directly
+   touched descriptor index, or `null`; its `selected_neighbor_index` is
+   that owner's immediate right descriptor, otherwise its immediate left, or
+   `null` when no neighbor exists.
+2. The first prospective endpoint with a non-null direct owner locks the exact
+   `(leftmost_direct_owner_index, selected_neighbor_index)` pair.
+   Endpoints with no owner before that point do not lock it. Every later
+   endpoint is admitted only when its recomputed pair is identical. Metadata
+   stops before the first entry that removes or cancels the owner, transitions
+   to no owner, introduces an earlier or different owner, or otherwise selects
+   a different neighbor. Thus every accepted endpoint uses the one preselected
+   neighbor and exact accounting for its current final mutations.
+3. The metadata result carries the candidate sequence endpoints, unique direct
    and prefetch chunk indexes, `touched_bytes` as the exact sum of their
    authenticated descriptor byte lengths counted once, and
-   `selected_neighbor_chunk_index` or `null`. Integration fetches only that
-   bounded set. The prefetch set may include chunks needed only by a later
-   candidate endpoint, but may never include another neighbor.
-3. The exact phase evaluates candidate endpoints in sequence by dry-running
+   the locked owner and selected-neighbor indexes. Integration fetches only
+   that bounded set. The prefetch set may include chunks needed only by a
+   later candidate endpoint, but may never include another neighbor.
+4. The exact phase evaluates candidate endpoints in sequence by dry-running
    the already-defined builder on the loaded subset for that endpoint. A split
    increment is `max(0, output_chunk_count - 1)` for each directly rewritten
    source group, measured after greedy splitting and before the optional merge;
    deleting a group and creating the first chunk in an empty collection each
-   count zero. Neighbor use is one only when the builder consumes the selected
-   otherwise-untouched neighbor body to inspect or merge it. Selection stops
-   before the first endpoint whose exact total exceeds four split increments or
-   one neighbor.
-4. The returned plan recomputes its mutations, directly touched indexes and
+   count zero. Neighbor use is one only when the builder emits the permitted
+   owner-boundary merge with the selected otherwise-untouched neighbor; a
+   prefetched but unmerged neighbor is unused. Selection stops before the first
+   endpoint whose exact total exceeds four split increments or one neighbor.
+5. The returned plan recomputes its mutations, directly touched indexes and
    ranges, exact mutation bytes, split increments, neighbor use, and builder
    output solely from entries through its final `log_seq_end`. Bounded prefetch
    metadata may describe suffix candidates, but those entries cannot influence
@@ -241,11 +258,12 @@ Prefix planning is an implementable two-phase pure algorithm:
 
 `ChunkedFoldBudget` therefore includes `max_touched_bytes` in addition to the
 entry, mutation, direct-chunk, split-increment, and neighbor caps. The plan's
-prefetch state owns `touched_bytes` and the optional selected neighbor index;
-the final-prefix state separately owns exact accounted mutation bytes, direct
-touched indexes, split increments, and actual neighbor use. Builder/evaluator
-tests prove these fields before exact prefix selection is implemented, avoiding
-a planner that must perform unbounded or circular reads.
+prefetch state owns `touched_bytes` and the exact locked direct-owner and
+optional selected-neighbor indexes; the final-prefix state separately owns
+exact accounted mutation bytes, direct touched indexes, split increments, and
+actual neighbor use. Builder/evaluator tests prove these fields before exact
+prefix selection is implemented, avoiding a planner that must perform
+unbounded or circular reads.
 
 The first individually admissible mutation must fit alone. Publication refuses
 more than 32 descriptors. Crossing any static bound is a graduation signal,
