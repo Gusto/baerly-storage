@@ -98,9 +98,15 @@ export interface RetireLogRangeResult {
  * slice permanently below the newly-advanced floor: deliberate, and the
  * fail-safe direction this program picked — leak, never corruption.
  *
- * Why no writer-side fence accompanies this: see the stale-writer bound on
- * {@link LOG_RETENTION_SEQ_WINDOW} and `docs/adr/002-ephemeral-coordination.md`
- * § Closed paths.
+ * The writer-side counterpart belongs on the commit path, not here — and it
+ * does not exist yet. {@link LOG_RETENTION_SEQ_WINDOW} is a cost margin and a
+ * rate limit, never a fence — see its JSDoc. So nothing currently stops a
+ * paused or uncertain writer's create from landing in a slot this pass has
+ * already retired, and the commit path acknowledges it. Closing that is
+ * planned, as a commit-path check that fails such a create with
+ * `BaerlyError{code:"AmbiguousCommit"}`. See
+ * `docs/adr/002-ephemeral-coordination.md` § Closed paths for the two
+ * approaches that were tried and rejected, and why that check is what remains.
  *
  * @param opts.signal Threaded to every storage call this makes (the gate
  *   read, the CAS's own read + write, and each DELETE in the loop) — an
