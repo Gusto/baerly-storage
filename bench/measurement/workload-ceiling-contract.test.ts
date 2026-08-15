@@ -115,6 +115,15 @@ describe("workload-ceiling study contract", () => {
     ).toBe(true);
   });
 
+  test("bounds general index-routed reads by the descriptor ceiling", () => {
+    expect(WORKLOAD_CEILING_STUDY.read_fan_out_limits).toEqual({
+      point: 1,
+      "bounded-range": 8,
+      "index-routed": 32,
+      complete: 32,
+    });
+  });
+
   test("admits only complete deployed Workers evidence", () => {
     const deployedEvidence: WorkloadCeilingStudyEvidence = {
       source: "deployed-workers",

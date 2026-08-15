@@ -84,7 +84,7 @@ export const WORKLOAD_CEILING_STUDY = {
   read_fan_out_limits: {
     point: 1,
     "bounded-range": 8,
-    "index-routed": 1,
+    "index-routed": 32,
     complete: 32,
   },
   axis_sweeps: {
