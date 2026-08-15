@@ -159,26 +159,15 @@ PUT current.json with If-Match
 
 Reused descriptors cause no chunk PUT. Every referenced chunk exists before
 the manifest PUT, no referenced object is written after the head CAS, and a CAS
-loser leaves only authenticated unreachable objects.
+loser leaves only authenticated unreachable objects. In schema 4, publication
+transition validation also preserves the captured `artifact_gc_epoch` exactly;
+the final `If-Match` prevents a publisher from overwriting a GC fence.
 
-Artifact GC retains the existing seven-day minimum grace
-(`604_800_000` milliseconds), while one publication attempt has a static
-one-hour maximum lifetime (`3_600_000` milliseconds) measured from before its
-first artifact PUT (the first changed chunk, or the manifest when no chunk is
-written). The publisher checks the deadline before and after every artifact PUT
-and again before the head CAS. If the deadline expires before the manifest or
-head is published, the attempt abandons its unreachable artifacts, rereads the
-head, and restarts with a new incarnation. It never resumes the old
-incarnation. A storage call that crosses the deadline may finish, but no later
-publication phase may begin.
-
-This proof depends only on a monotonic elapsed-time source that covers awaits
-within the attempt. Tests inject that clock. A host that resumes execution
-without being able to prove both monotonic continuity and an age below one hour
-must treat the attempt as expired and restart; wall-clock adjustment or host
-suspension cannot extend the proof window. This is an integration assumption,
-not a new durable object: the four-phase journal above is unchanged, and the
-one-hour limit remains strictly shorter than artifact grace on every host.
+The existing seven-day artifact grace remains a churn and contention control,
+not a safety proof. Correctness does not depend on a publisher finishing within
+any wall-clock or monotonic-clock interval. Reducing or elapsing grace may make
+GC contend with more publication attempts, but the storage-native fence below
+still prevents deletion of an artifact that can become live.
 
 ### Deterministic chunk policy and work bounds
 
@@ -289,42 +278,71 @@ descriptors is classified as complete. Point and range misses fetch no
 unrelated body, empty manifests fetch no chunks, and reads are pure: they never
 publish, repair, delete, or tick maintenance.
 
-Artifact GC is admitted only with executable proofs that:
+Schema-4 `current.json` adds required `artifact_gc_epoch`, a non-negative safe
+integer initialized to zero for a fresh layout-2 collection. It never
+decreases. Every transition other than an artifact-GC fence preserves it
+exactly. A fence increments it by exactly one while preserving every other
+logical snapshot, log, total, generation, and writer-fence field. Reaching
+`Number.MAX_SAFE_INTEGER` fails closed with no DELETE and is a graduation
+condition; the epoch never wraps or loses integer precision.
 
-- the one-hour attempt deadline and seven-day minimum grace protect every
-  changed-chunk and manifest PUT through its head CAS, and an expired or
-  unprovably aged attempt cannot resume its incarnation;
-- a CAS loser cannot make a winner-reachable chunk collectible;
-- every reused descriptor was reachable from the captured manifest and stays
-  reachable through each manifest that reuses it;
-- immediately before a bounded DELETE batch, a fresh strict head and manifest
-  remove their own keys and every live descriptor key from the batch;
-- a key proven unreachable by that fresh view cannot later be republished;
-- chunk PUT, concurrent GC work, manifest PUT, and head CAS cannot publish a
-  missing chunk;
-- missing, corrupt, unsupported, stale-pending, or unclassifiable data never
-  authorizes deletion of a possibly live key; and
-- bounded discovery fairly revisits both artifact prefixes through LIST
-  pagination, live windows, and pending backpressure, and converges on repeated
-  write ticks without a scheduler.
+Before each bounded manifest/chunk DELETE batch, artifact GC performs this
+storage-native authority journal:
 
-The exact filename grammar classifies candidates but never establishes
-liveness. Only the fresh strict head-and-manifest view establishes liveness.
+```text
+GET and strictly validate current.json, retaining its ETag
+GET and strictly validate its referenced manifest, when non-null
+validate the bounded candidate keys and remove the manifest and every live chunk key
+PUT identical current.json with artifact_gc_epoch + 1, If-Match the retained ETag
+persist the exact fenced deletion authority in gc/pending.json
+DELETE only keys named by that authority
+persist the exact remaining authority or its completion
+```
+
+The authority is written only after the fence CAS succeeds. Its strict,
+canonical record retains the fenced epoch, the ETag returned by the fence PUT,
+the sorted unique exact candidate keys, and a SHA-256 over that tuple. A lost
+pending-state CAS, missing record, malformed field, digest mismatch, invalid
+artifact key, unproved fence, or epoch contradiction authorizes no DELETE. A
+crash after the fence but before authority persistence leaks candidates until a
+later pass but cannot delete them. A crash after persistence resumes only the
+exact remaining keys; before issuing a resumed DELETE batch it rereads the head
+and manifest and repeats the fence for those keys. Already completed DELETEs
+are idempotent. Discovery can never widen a persisted batch during resume.
+
+The fence closes both publication races. If a publisher's head CAS wins first,
+the GC `If-Match` conflicts and GC rereads, then removes the newly live manifest
+and chunks. If the fence wins first, every publisher captured on the prior ETag
+must lose its head CAS and can leave only unreachable artifacts. A publisher
+starting after the fence captures the new head, mints a fresh incarnation, and
+may reuse only descriptors reachable from that head, so none of the fenced
+unreachable keys can become live later.
+
+Artifact GC is admitted only with executable proofs that the journal, conflict
+paths, crash points, and safe-integer exhaustion enforce those outcomes; a CAS
+loser cannot make a winner-reachable chunk collectible; every reused descriptor
+stays reachable through each manifest that reuses it; and bounded discovery
+fairly revisits both artifact prefixes through LIST pagination, live windows,
+and pending backpressure. Static operation budgets count the fresh head GET,
+manifest GET, fence CAS, authority persistence, DELETEs, and authority-progress
+write separately. The exact filename grammar and seven-day grace classify and
+pace candidates but never establish liveness or deletion authority.
 
 ### Activation, upgrade, and public exports
 
 The atomic pre-1.0 minor cut proposes snapshot schema 2,
-`CURRENT_JSON_SCHEMA_VERSION = 4`, and required `layout_version: 2`. It changes
-every producer, reader, CLI consumer, restore path, integrity tool, and
-artifact-GC path together and intentionally rejects absent/layout-1 state. The
-supported upgrade is an old-release logical dump restored by the new release
-into an empty layout-2 bucket. Restore validates the scalar-ID, non-null
-`DocumentValue`, and document-size domains; a dump containing stored JSON
-`null` document values must be remediated first. Merge-patch deletion markers
-are operation syntax rather than dump values. The immutable fold-stage0 corpus
-and its hashes remain byte-for-byte historical rejection evidence; a separate
-old-release dump fixture proves the supported restore path. The live version
-matrix does not change until activation.
+`CURRENT_JSON_SCHEMA_VERSION = 4`, required `layout_version: 2`, and required
+`artifact_gc_epoch: 0` on fresh creation. It changes every producer, reader,
+CLI consumer, restore path, integrity tool, and artifact-GC path together and
+intentionally rejects absent/layout-1 state. The supported upgrade is an
+old-release logical dump restored by the new release into an empty layout-2
+bucket. Restore validates the scalar-ID, non-null `DocumentValue`, and
+document-size domains; a dump containing stored JSON `null` document values
+must be remediated first. Merge-patch deletion markers are operation syntax
+rather than dump values. The immutable fold-stage0 corpus and its hashes remain
+byte-for-byte historical rejection evidence; a separate old-release dump
+fixture proves the supported restore path. The live version matrix does not
+change until activation.
 
 This ADR explicitly amends item 3 of [ADR-003](003-layout-versioning-cordon.md):
 layout 2 activates the formerly deferred axis as a required field in
@@ -370,6 +388,9 @@ in the minor changeset and upgrade note.
   neighbor.
 - **Orphan republishing.** Fresh incarnations plus captured-live-only reuse make
   once-unreachable keys permanently ineligible for publication.
+- **Grace or local-clock deletion authority.** Artifact age paces collection;
+  only a successful storage CAS fence plus strict persisted authority permits
+  DELETE.
 
 ## Consequences
 
@@ -381,8 +402,11 @@ bounded chunk fan-out.
 
 The cost is a breaking stored layout and three removed public construction
 exports. Activation requires coordinated snapshot/current schema changes, a
-real layout-axis update, strict consumer integration, artifact-GC crash proofs,
-a pre-1.0 minor changeset, and an explicit upgrade note. Collections outside
+real layout-axis update, strict consumer integration, an authority-bearing
+pending-state schema, artifact-GC crash proofs, a pre-1.0 minor changeset, and
+an explicit upgrade note. Each non-empty artifact DELETE batch also spends one
+`current.json` fence CAS and authority persistence/progress operations; CAS
+contention delays collection instead of weakening safety. Collections outside
 the scalar-ID, non-null `DocumentValue`, object-size, descriptor, or
 bounded-work envelope must be remediated or treated as graduation cases rather
 than handled by a runtime knob.
