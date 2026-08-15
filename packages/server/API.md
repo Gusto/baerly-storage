@@ -353,6 +353,7 @@ try {
 | `Internal`               | 500  | Invariant violation — file a bug                                       |
 | `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
 | `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision                |
+| `AmbiguousCommit`        | 409  | Commit landed below the certified delete floor; retry is at-least-once |
 | `Unauthorized`           | 401  | Verifier returned no identity                                          |
 | `NotFound`               | 404  | Row by id not found                                                    |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                       |

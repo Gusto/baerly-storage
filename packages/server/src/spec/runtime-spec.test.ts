@@ -7,7 +7,7 @@ describe("buildSpecResponse", () => {
   test("anonymous: static IR only, no collections field", () => {
     const res = buildSpecResponse();
     expect(res.specVersion).toBe("1");
-    expect(res.errorCodes.length).toBe(14);
+    expect(res.errorCodes.length).toBe(15);
     expect("collections" in res).toBe(false);
     expectValidAgainstIrSchema(res);
   });

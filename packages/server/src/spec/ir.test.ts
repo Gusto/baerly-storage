@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { CLIENT_RUNTIME_CODES, ERROR_CODES, PREDICATE_OPS } from "@baerly/protocol";
+import {
+  CLIENT_RUNTIME_CODES,
+  ERROR_CODES,
+  isRetriableCode,
+  PREDICATE_OPS,
+} from "@baerly/protocol";
 import { expectValidAgainstIrSchema } from "../../../../tests/fixtures/ir-schema.ts";
 import { buildSpecIR } from "./ir.ts";
 
@@ -67,6 +72,18 @@ describe("buildSpecIR", () => {
 
   test("serverVersion matches the root package version", () => {
     expect(ir.serverVersion).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  test("AmbiguousCommit is on the contract with a non-retriable 409", () => {
+    const entry = ir.errorCodes.find((e) => e.code === "AmbiguousCommit");
+    expect(entry).toBeDefined();
+    expect(entry?.httpStatus).toBe(409);
+    expect(entry?.retriable).toBe(false);
+    expect(entry?.messagePolicy).toBe("scrubbed");
+  });
+
+  test("AmbiguousCommit is not retriable by default", () => {
+    expect(isRetriableCode("AmbiguousCommit")).toBe(false);
   });
 
   test("declares the /v1 routes including the new /v1/spec", () => {

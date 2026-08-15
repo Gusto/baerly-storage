@@ -53,6 +53,13 @@
       "summary": "Write conflicted (CAS exhausted, duplicate _id, guarded key)."
     },
     {
+      "code": "AmbiguousCommit",
+      "httpStatus": 409,
+      "retriable": false,
+      "messagePolicy": "scrubbed",
+      "summary": "Commit landed below the certified delete floor; retry is at-least-once."
+    },
+    {
       "code": "Unauthorized",
       "httpStatus": 401,
       "retriable": false,
