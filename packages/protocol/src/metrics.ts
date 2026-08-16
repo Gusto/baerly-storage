@@ -1,5 +1,5 @@
 /**
- * `MetricsRecorder` — internal emission contract for the six
+ * `MetricsRecorder` — internal emission contract for the twelve
  * load-bearing kernel metrics. Writer / compactor / GC emit through
  * an instance of this interface; in production the instance is the
  * per-request `RequestScopedMetricsRecorder` on the active
@@ -19,6 +19,22 @@
  *   - `db.r2.put.429_total` — counter (R2 prefix-partition rate-limit)
  *   - `db.write.index_ops_per_logical_write` — histogram.
  *     `K (PUT) + L (DELETE)` per commit. Per-collection label.
+ *   - `db.write.ambiguous_commit_total` — counter, labelled by `collection`
+ *     and `cleanup` (`deleted` / `failed`). A committing create won at a
+ *     sequence already certified deleted, so the commit failed with
+ *     `AmbiguousCommit` rather than acknowledging a mutation whose
+ *     visibility cannot be determined.
+ *     `cleanup` reports whether the phantom log object was reclaimed. Any
+ *     sustained rate means writers are pausing across a fold plus a
+ *     retirement pass; a `failed` rate leaves behind sub-floor objects that
+ *     GC's `stale-log` arm still reclaims today, and that leak permanently
+ *     only once PR 5 replaces that arm with computed-range retirement
+ *   - `db.write.delete_floor_check_skipped_total` — counter, labelled by
+ *     `collection`. The post-create re-read of `current.json` inside
+ *     `Writer#assertCommitAboveDeleteFloor` failed with a non-abort error, so
+ *     the delete-floor check was skipped for that commit rather than
+ *     evaluated. A sustained rate means the check is not covering the writes
+ *     it exists to protect, even though no individual commit is rejected.
  *   - `db.manifest.lag_window_depth` — gauge (alert at >100)
  *   - `db.gc.entries_swept_per_second` — gauge (livelock indicator when <writes/s)
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
