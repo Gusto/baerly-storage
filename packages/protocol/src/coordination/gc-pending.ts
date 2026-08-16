@@ -50,31 +50,6 @@ export interface GcPending {
    * Empty string `""` before the first sweep.
    */
   last_swept_at: string;
-  /**
-   * Rotation cursor for `runGc`'s stale-log LIST — the last `log/` key
-   * examined last pass. Successive bounded passes resume `startAfter`
-   * this so the whole `log/` keyspace is covered over a rotation, within
-   * the per-pass `maxMarksPerRun` budget. Absent / reset to `undefined`
-   * ⇒ start from the lexicographic beginning (wrap).
-   *
-   * Needed because log keys are UNPADDED decimal (`log/9.json`,
-   * `log/10.json`), so lex order is
-   * `0, 1, 10, 100, …, 11, …` and the LIVE keys at/above
-   * `log_seq_start` interleave with — and often lex-PRECEDE — the stale
-   * ones below it. A bounded pass listing from the lexicographic start
-   * can therefore fill its whole budget with live keys it may never
-   * delete, and never reach the stale keys past them. Deletion does not
-   * advance the window when the window is all-live.
-   *
-   * Rotation is over the WHOLE `log/` keyspace, not just below the
-   * floor: the numeric floor is not a lexicographic boundary, so there
-   * is no `endBefore` that bounds the scan to stale keys.
-   *
-   * Optional + additive: a v1 `gc/pending.json` written before this
-   * field existed stays valid — absent ⇒ start from the lexicographic
-   * beginning, so {@link GC_PENDING_SCHEMA_VERSION} is NOT bumped.
-   */
-  log_scan_cursor?: string;
 }
 
 /**
@@ -299,19 +274,6 @@ export const casUpdateGcPending = async (
  *  - **last_swept_at**: the lexicographically LATER of `latest`'s and
  *    this pass's (ISO-8601 UTC; `""` sorts lowest so a real timestamp
  *    always wins). Never regress a concurrent pass's newer sweep time.
- *  - **log_scan_cursor**: rotation cursor over the `log/` keyspace —
- *    liveness, not correctness; just don't regress forward progress. The
- *    two sides are NOT symmetric: `pass.nextLogCursor === undefined`
- *    means THIS pass examined to the END of the keyspace (WRAP — the
- *    most-advanced position), whereas `latest.log_scan_cursor` absent
- *    means the stored ledger has no cursor yet (start-from-beginning).
- *    So:
- *      - our pass WRAPPED ⇒ result wraps (key omitted) — our pass is
- *        the most advanced; this is the single-writer rotation reset.
- *      - else (our pass advanced to a defined cursor):
- *          - latest cursor defined ⇒ take the lexicographically GREATER
- *            (don't regress a concurrent pass's advance);
- *          - latest cursor absent ⇒ keep OUR advance (don't lose it).
  */
 export const mergeGcPending = (
   latest: GcPending,
@@ -340,15 +302,10 @@ export const mergeGcPending = (
   const lastSweptAt =
     pass.lastSweptAt > latest.last_swept_at ? pass.lastSweptAt : latest.last_swept_at;
 
-  // The rotation cursor follows the asymmetric rule — see
-  // {@link mergeRotationCursor}.
-  const logCursor = mergeRotationCursor(latest.log_scan_cursor, pass.nextLogCursor);
-
   return {
     schema_version: GC_PENDING_SCHEMA_VERSION,
     candidates,
     last_swept_at: lastSweptAt,
-    ...(logCursor !== undefined && { log_scan_cursor: logCursor }),
   };
 };
 
@@ -365,31 +322,9 @@ export const mergeGcPending = (
  * (WRAP — the most-advanced position), whereas `latest === undefined`
  * means the stored ledger has no cursor yet (least-advanced).
  *
- * Rotation is liveness, not correctness: the only obligation is never
- * to regress forward progress. Losing a wrap would spin the window;
- * regressing to a concurrent pass's older position would re-examine
- * keys, which costs budget but marks nothing wrong.
- *
- * Compares with JS `>` (UTF-16 code units), not `compareKeysUtf8`,
- * which is what `Storage.list` sorts by. The two agree on the ASCII
- * keyspace this cursor lives in — decimal log seqs — and a mismatch
- * here would cost budget, not correctness, per the paragraph above.
- * Reach for `compareKeysUtf8` if a second cursor ever rotates over
- * caller-supplied keys.
- */
-const mergeRotationCursor = (
-  latest: string | undefined,
-  pass: string | undefined,
-): string | undefined =>
-  // Keep `latest` only when it is a real, strictly-more-advanced
-  // position. Both `undefined` cases fall through to `pass`: a wrap
-  // (pass undefined) must win, and a latest-absent ledger has nothing
-  // to preserve.
-  pass !== undefined && latest !== undefined && latest > pass ? latest : pass;
-
 /** Accepted `reason` values. `"orphan-content"` is decode-only — see {@link GcCandidate.reason}. */
 const VALID_REASONS = new Set<GcCandidate["reason"]>([
-  "stale-log",
+  "stale-log", // Decode-only for v0.6.0 backward compatibility
   "orphan-snapshot",
   "orphan-content",
 ]);
@@ -469,8 +404,9 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
       `gc/pending.json at ${key}: last_swept_at must be a string`,
     );
   }
-  // `log_scan_cursor` is optional + additive: absent is valid (⇒ the log
-  // scan starts from the lexicographic beginning). Present must be a string.
+  // `log_scan_cursor` is deprecated: stale log objects are now reclaimed
+  // by a sequence window (see `log-retention.ts`) rather than a LIST/mark/cursor.
+  // Retained for decode compatibility with legacy ledgers; dropped on merge.
   if (r["log_scan_cursor"] !== undefined && typeof r["log_scan_cursor"] !== "string") {
     throw new BaerlyError(
       "InvalidResponse",

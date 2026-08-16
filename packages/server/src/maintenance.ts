@@ -38,8 +38,13 @@ import {
 } from "@baerly/protocol";
 import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions, type RunGcResult } from "./gc.ts";
-import type { InternalMaintenanceOptions, MaintenanceOptions } from "./maintenance-options.ts";
+import type {
+  InternalMaintenanceOptions,
+  LogRetentionOptions,
+  MaintenanceOptions,
+} from "./maintenance-options.ts";
 import { probeTailFrom } from "./log-tail.ts";
+import { retireLogRange } from "./log-retention.ts";
 import { getCurrentContext } from "./observability/context.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
@@ -116,6 +121,28 @@ export const runScheduledMaintenance = async (
     ...options.gc,
     ...(options.signal !== undefined && { signal: options.signal }),
   });
+
+  // Retire stale log objects. Cheap and bounded — a computed key range,
+  // no LIST — and placed after GC so it runs on every maintenance pass.
+  // This is a best-effort call: if it fails (Conflict or any error), we
+  // still return the compact + GC results rather than throwing.
+  const signal = options.signal;
+  try {
+    const collectionPrefix = args.currentJsonKey.slice(0, args.currentJsonKey.lastIndexOf("/"));
+    const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+    const retired = await retireLogRange(args.storage, args.currentJsonKey, {
+      ...(options as InternalMaintenanceOptions).logRetention,
+      ...(signal !== undefined && { signal }),
+    });
+    ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
+      collection,
+    });
+  } catch {
+    // Swallow errors — log retirement is best-effort. If the CAS loses
+    // to another writer or a transient error occurs, the next maintenance
+    // pass will retry.
+  }
+
   return { compact: compactRes, gc: gcRes };
 };
 
@@ -304,6 +331,11 @@ export interface BoundedMaintenanceOptions {
    * Production never sets this.
    */
   readonly now?: () => Date;
+  /**
+   * @internal — test seam. Log retention options (window size, max deletes).
+   * Production callers should omit it and take the defaults.
+   */
+  readonly logRetention?: LogRetentionOptions;
   readonly signal?: AbortSignal;
 }
 
@@ -499,6 +531,18 @@ export const runBoundedMaintenance = async (
     const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
     if (phasesPerTick === "single" && hardGc) {
       await runGcAndRefreshTailHint();
+      // Retire stale logs after GC even on the early-return path.
+      try {
+        const retired = await retireLogRange(storage, currentJsonKey, {
+          ...options?.logRetention,
+          ...(signal !== undefined && { signal }),
+        });
+        ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
+          collection,
+        });
+      } catch {
+        // Swallow errors — log retirement is best-effort.
+      }
       return;
     }
 
@@ -597,6 +641,24 @@ export const runBoundedMaintenance = async (
     // deferred). Run GC iff the cadence boundary was crossed.
     if (gcDue) {
       await runGcAndRefreshTailHint();
+    }
+
+    // ── Step 5. Retire stale log objects. ──────────────────────────────
+    // Cheap and bounded — a computed key range, no LIST — and placed
+    // after GC so it runs on every maintenance pass. This is best-effort:
+    // if it fails (Conflict or any error), we swallow it and continue.
+    try {
+      const retired = await retireLogRange(storage, currentJsonKey, {
+        ...options?.logRetention,
+        ...(signal !== undefined && { signal }),
+      });
+      ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
+        collection,
+      });
+    } catch {
+      // Swallow errors — log retirement is best-effort. If the CAS loses
+      // to another writer or a transient error occurs, the next maintenance
+      // pass will retry.
     }
   } catch (error) {
     // CAS contention (Conflict) thrown by compact()/runGc() is an

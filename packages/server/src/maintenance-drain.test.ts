@@ -170,6 +170,7 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
       minEntriesToCompact: 50,
       phasesPerTick: "both",
       gcGraceMillis: 0,
+      logRetention: { window: 100, maxDeletes: 1000 },
     };
     const { samples, storage, legacyContentKeys } = await driveWriteStream(provisioned, 1600, 200);
     const trajectory = samples.map((s) => `${s.write}:${s.objects}`).join(" ");
@@ -221,6 +222,7 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
       minEntriesToCompact: 50,
       phasesPerTick: "single",
       gcGraceMillis: 0,
+      logRetention: { window: 100, maxDeletes: 1000 },
     };
     const { samples } = await driveWriteStream(cfFree, 1600, 200, false);
     const trajectory = samples.map((s) => `${s.write}:${s.objects}`).join(" ");

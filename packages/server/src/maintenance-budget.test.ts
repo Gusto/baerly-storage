@@ -409,16 +409,19 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       },
     );
 
-    expect(counted.listedPrefixes()).toEqual([`${prefix}/log/`, `${prefix}/snapshot/L9/`]);
+    // GC no longer lists log/ (stale-log mark phase removed in Task 8),
+    // so only snapshot/ is listed.
+    expect(counted.listedPrefixes()).toEqual([`${prefix}/snapshot/L9/`]);
     // Nothing on the GC path can suppress the refresh, so once the rate limit
     // is eligible the hint reaches the observed tail in a single tick.
     const current = await readCurrentJson(inner, KEY);
     expect(current?.json.tail_hint).toBe(observedTail);
-    // get 9  = runner current + runGc step-1 current + pending read (null)
+    // get 10 = runner current + runGc step-1 current + pending read (null)
     //          + pending re-read after the bootstrap conflict + fresh current
-    //          + 3 final CAS reads + tail_hint refresh read
+    //          + 3 final CAS reads + tail_hint refresh read + retireLogRange gate read
     // put 5  = pending bootstrap create + 3 final CAS writes + refresh write
-    expect(counted.report()).toEqual({ get: 9, put: 5, delete: 10, list: 2 });
+    // list 1  = snapshot/ LIST (log/ LIST removed in Task 8)
+    expect(counted.report()).toEqual({ get: 10, put: 5, delete: 10, list: 1 });
     const totalOps = counted.getOps();
     expect(totalOps).toBe(26);
     expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);

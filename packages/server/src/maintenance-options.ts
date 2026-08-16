@@ -23,6 +23,26 @@ export interface MaintenanceOptions {
 }
 
 /**
+ * Log retention options for stale log retirement.
+ *
+ * @internal
+ */
+export interface LogRetentionOptions {
+  /**
+   * Retention window size (default: {@link LOG_RETENTION_SEQ_WINDOW}).
+   * A test seam that overrides the default window; production callers
+   * should omit it and take the default.
+   */
+  readonly window?: number;
+  /**
+   * Maximum DELETEs per maintenance pass (default:
+   * {@link LOG_RETENTION_MAX_DELETES_PER_TICK}). A test seam for
+   * exercising the budget boundary; production callers should omit it.
+   */
+  readonly maxDeletes?: number;
+}
+
+/**
  * Internal-only widening of {@link MaintenanceOptions}. Surfaced via
  * the `@baerly/server/_internal/testing` subpath (NOT in the published
  * `publishConfig.exports`); production callers should use
@@ -54,4 +74,6 @@ export interface InternalMaintenanceOptions extends MaintenanceOptions {
   readonly compact?: InternalCompactOptions;
   /** @internal Internal GC options (budget caps + clock seam + grace). */
   readonly gc?: InternalRunGcOptions;
+  /** @internal Log retention options (window size, max deletes per pass). */
+  readonly logRetention?: LogRetentionOptions;
 }

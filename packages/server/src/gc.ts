@@ -4,8 +4,8 @@
  * `runGc` is a single-pass garbage collector that:
  *   1. Reads `current.json` (and bootstraps `gc/pending.json` on first
  *      run).
- *   2. Marks new orphan candidates by LISTing the two artifact
- *      prefixes — log and snapshot — and classifying each key.
+ *   2. Marks new orphan candidates by LISTing the snapshot prefix and
+ *      classifying each key.
  *   3. Rescues candidates proven live, then sweeps due candidates that
  *      are safe to classify.
  *   4. CAS-writes the updated `gc/pending.json`.
@@ -18,9 +18,10 @@
  * candidate OUT of the ledger without deleting it, when a generation or
  * liveness recheck fails.
  *
- * Idempotent modulo the rotation cursor: same input bucket state ⇒
- * same candidate set and same DELETEs. `log_scan_cursor` is position,
- * not state, and advances on every pass by design.
+ * Stale log objects are reclaimed by a sequence window rather than a
+ * timed mark-and-sweep. See `log-retention.ts` for the computed-range
+ * deletion path.
+ *
  * Unbounded by default — the run marks and sweeps the entire eligible
  * set in one pass. Callers on the Cloudflare 50-subrequest free-tier
  * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's mark
@@ -29,52 +30,20 @@
  * for one collection; alternate it with a direct bounded `compact()`
  * invocation instead of composing both phases.
  *
- * **When a bounded pass needs a rotation cursor.** A budget-capped
- * LIST that always starts at the lexicographic beginning only makes
- * progress if deletion clears the front of its window. The test is:
- * *is the set of PERMANENTLY-undeletable keys under this prefix
- * unbounded, and lex-interleaved with the deletable set?* Both halves
- * matter. Unbounded, because a window can only be entirely undeletable
- * if at least `maxMarks` such keys cluster at its front — one of them
- * sorting first is not enough. Permanently, because a key that is
- * merely already-marked and awaiting grace blocks marking without
- * blocking progress. Where the test passes, a fixed first-`maxMarks`
- * window can be all-undeletable and the pass marks nothing, forever —
- * and no budget increase fixes it, because the failure is the window's
- * position, not its size.
- *
- * One of the two categories below fails that test and carries a
- * persisted cursor (`gc/pending.json`); each bounded pass resumes
- * `startAfter` the prior pass's last EXAMINED key — examined, not
- * marked, so a window of live or already-pending keys still steps
- * forward — and wraps at end-of-keyspace, so the whole prefix is
- * covered over a rotation within the per-pass budget.
- *
- * Two categories of orphan:
- *   - `stale-log`: `<collectionPrefix>/log/<seq>.json` with
- *     `seq < log_seq_start`. After `compact()` folds these into a
- *     snapshot, they're unreferenced. **Cursored**
- *     (`log_scan_cursor`). `logObjectKey` builds UNPADDED decimal, so
- *     lex order is `0, 1, 10, 100…109, 11, …`: a numeric prefix is not
- *     a lexicographic prefix, and the permanently-undeletable live
- *     keys at/above the floor interleave with — and routinely precede
- *     — the stale ones. With `log_seq_start = 100` and keys `0..999`,
- *     the lex-first 20 are `0, 1, 10, 100–109, 11, 110–115`: four
- *     stale. Sweep those and the window is `100–119`, twenty live
- *     keys, zero marks, and seqs `2–9` + `12–99` are unreachable.
+ * One category of orphan:
  *   - `orphan-snapshot`: a canonical
  *     `<collectionPrefix>/snapshot/L9/...` key not equal to
  *     `current.snapshot`. Each compactor run replaces the pointer; the
- *     prior file becomes unreferenced. **Not cursored** — discovery is
- *     scoped to this binary's owned `snapshot/L9/` namespace. Within
- *     that scanned, protocol-written keyspace at most ONE key is
- *     permanently undeletable (the live `current.snapshot`), so for any
- *     `maxMarks >= 2` the window cannot be all-undeletable. Future L0-L8
- *     layouts stay opaque to this binary and do not consume the bounded
- *     mark window. Opaque L9 keys are ignored during mark and evicted
- *     from legacy ledgers without a DELETE; no current writer emits one.
+ *     prior file becomes unreferenced. Discovery is scoped to this
+ *     binary's owned `snapshot/L9/` namespace. Within that scanned,
+ *     protocol-written keyspace at most ONE key is permanently
+ *     undeletable (the live `current.snapshot`), so for any `maxMarks
+ *     >= 2` the window cannot be all-undeletable. Future L0-L8 layouts
+ *     stay opaque to this binary and do not consume the bounded mark
+ *     window. Opaque L9 keys are ignored during mark and evicted from
+ *     legacy ledgers without a DELETE; no current writer emits one.
  *
- * **`content/` is deliberately NOT a third category.** Legacy
+ * **`content/` is deliberately NOT a category.** Legacy
  * `<collectionPrefix>/content/<sha>.json` side objects — written by
  * v0.6.0, and still written by a v0.6.0 node during a mixed rollout —
  * are inert: no current writer creates one, no reader opens one. GC
@@ -172,7 +141,6 @@ export interface InternalRunGcOptions extends RunGcOptions {
 export interface RunGcResult {
   /** Per-category counts of newly-marked candidates in this pass. */
   readonly marked: {
-    readonly stale_log: number;
     readonly orphan_snapshot: number;
   };
   /** Number of keys deleted in this pass. */
@@ -205,7 +173,7 @@ export interface RunGcResult {
 const DEFAULT_MAX_MARKS = Number.MAX_SAFE_INTEGER;
 const DEFAULT_MAX_SWEEPS = Number.MAX_SAFE_INTEGER;
 const zeroGcResult = (): RunGcResult => ({
-  marked: { stale_log: 0, orphan_snapshot: 0 },
+  marked: { orphan_snapshot: 0 },
   swept: 0,
   dropped: { stale_generation: 0, still_live: 0 },
   pendingDepth: 0,
@@ -223,7 +191,7 @@ const zeroGcResult = (): RunGcResult => ({
  * import { runGc } from "@gusto/baerly-storage";
  *
  * const r = await runGc({ storage, currentJsonKey });
- * console.log(`marked ${r.marked.stale_log} stale logs, swept ${r.swept}`);
+ * console.log(`marked ${r.marked.orphan_snapshot} orphan snapshots, swept ${r.swept}`);
  * ```
  */
 export const runGc = async (
@@ -251,7 +219,6 @@ export const runGc = async (
     return zeroGcResult();
   }
   const current = cur.json;
-  const logSeqStart = logSeqStartOf(current);
 
   // ── Step 2. Read or create gc/pending.json. ─────────────────────
   // Race-tolerant create: a concurrent pass may have bootstrapped
@@ -289,63 +256,8 @@ export const runGc = async (
   const markGeneration: { generation?: string } =
     current.generation !== undefined ? { generation: current.generation } : {};
 
-  // ── Step 3. Mark stale log entries (seq < log_seq_start). ───────
-  // A LEXICOGRAPHIC window of the whole `log/` prefix, filtered
-  // NUMERICALLY. The two orders disagree — log keys are unpadded
-  // decimal — so the floor is not a lex boundary and there is no
-  // `endBefore` that would confine the scan to stale keys. Hence the
-  // rotation cursor, advancing on EXAMINED rather than marked keys. See
-  // `log_scan_cursor`.
+  // ── Step 3. Mark orphan snapshots. ──────────────────────────────
   const newCandidates: GcCandidate[] = [];
-  let markedStaleLog = 0;
-  let logExaminedThisPass = 0;
-  let lastExaminedLogKey: string | undefined;
-  if (logSeqStart > 0) {
-    for await (const entry of storage.list(
-      `${collectionPrefix}/log/`,
-      listWindow(maxMarks, pending.json.log_scan_cursor, signal),
-    )) {
-      // Advance on EXAMINED, not marked — an all-live window (or one
-      // full of already-pending keys) must still move forward.
-      logExaminedThisPass++;
-      lastExaminedLogKey = entry.key;
-      const seq = parseSeqFromCanonicalLogKey(entry.key, collectionPrefix);
-      if (seq === null || seq >= logSeqStart) {
-        continue;
-      }
-      if (known.has(entry.key)) {
-        continue;
-      }
-      newCandidates.push({
-        key: entry.key,
-        due_at: computeDueAt(now, grace),
-        reason: "stale-log",
-        ...markGeneration,
-      });
-      markedStaleLog++;
-    }
-  }
-  // Wrap when the LIST yielded fewer keys than we asked for, since that
-  // means it reached the end of the keyspace. When the phase was SKIPPED
-  // entirely (`log_seq_start === 0`) the comparison is `0 < maxMarks`, so
-  // it also wraps — which is the intended reading: with no floor the
-  // candidate set is empty, so we trivially examined all of it and the
-  // next pass should start from the beginning. The pass record has no
-  // third state for "phase did not run", and inventing one would buy
-  // nothing.
-  //
-  // Do NOT justify that by calling the floor monotonic. It is not:
-  // `admin restore --force` reseeds `log_seq_start` from the surviving
-  // log objects and can move it DOWN (invariant 12, and the read-to-
-  // delete window in invariant 14). The argument that actually holds is
-  // narrower and does not need monotonicity — a `0` floor has no key
-  // beneath it, so there is no stale key for a wrap to strand, and the
-  // only writer that reseeds `0` is `tailFromListedLogKeys` returning
-  // `maxSeq + 1 == 0`, which happens exactly when the log prefix listed
-  // empty.
-  const nextLogCursor = logExaminedThisPass < maxMarks ? undefined : lastExaminedLogKey;
-
-  // ── Step 4. Mark orphan snapshots. ──────────────────────────────
   let markedOrphanSnapshot = 0;
   // Uncursored on purpose — `listWindow` with no cursor, so the window
   // is always the lexicographic first `maxMarks`. See the module JSDoc
@@ -380,7 +292,7 @@ export const runGc = async (
     markedOrphanSnapshot++;
   }
 
-  // ── Step 5. Rescue live candidates, then sweep due candidates. ──
+  // ── Step 4. Rescue live candidates, then sweep due candidates. ──
   // Eligible set = previously-pending entries PLUS this pass's freshly
   // marked entries. Including the new marks lets `runGc({graceMillis:0})`
   // mark-and-sweep in a single pass — useful for tests and for
@@ -523,7 +435,7 @@ export const runGc = async (
   // but the per-key DELETEs that landed are durable.
   await Promise.all(toSweep.map((c) => storage.delete(c.key, signalOpts)));
 
-  // ── Step 6. CAS-write pending.json. ─────────────────────────────
+  // ── Step 5. CAS-write pending.json. ─────────────────────────────
   // MERGE this pass's results INTO the latest stored value rather than
   // overwriting with a precomputed set: `casUpdateGcPending` re-reads
   // `latest` and hands it to `mergeGcPending`, so a concurrent pass's
@@ -542,7 +454,6 @@ export const runGc = async (
   // equals our read, so the later-of-the-two is the same value.
   const lastSweptAt = toSweep.length > 0 ? now().toISOString() : "";
   const markedSummary = {
-    stale_log: markedStaleLog,
     orphan_snapshot: markedOrphanSnapshot,
   };
   let pendingDepth: number;
@@ -555,7 +466,7 @@ export const runGc = async (
           sweptKeys,
           newCandidates,
           lastSweptAt,
-          nextLogCursor,
+          nextLogCursor: undefined,
           maxCandidates: GC_MAX_PENDING_CANDIDATES,
         }),
       signalOpts,
@@ -588,7 +499,7 @@ export const runGc = async (
     }
   }
 
-  // ── Step 7. Emit metrics. ───────────────────────────────────────
+  // ── Step 6. Emit metrics. ───────────────────────────────────────
   // In-memory only — zero storage ops. Emit regardless of CAS-lost
   // (the operator wants visibility into best-effort runs too).
   const labels = { collection: collectionName };

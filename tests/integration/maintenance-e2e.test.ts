@@ -307,6 +307,62 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           expect(projectedClassAOpsPerHour).toBeLessThan(1);
         },
       );
+
+      test(
+        "retires stale log objects below the retention window",
+        { timeout: ciTimeout(60_000) },
+        async () => {
+          const made = await variant.build();
+          cleanup = made.cleanup;
+          const { storage } = made;
+          await bootstrap(storage);
+          const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
+
+          // Seed 5000 entries to create a substantial log
+          const N = 5000;
+          await runWithContext(
+            createObservabilityContext({ maintenance: { disabled: true } }),
+            async () => {
+              for (let i = 0; i < N; i++) {
+                const id = `t-${i.toString().padStart(5, "0")}`;
+                await writer.commit({
+                  op: "I",
+                  collection: COLLECTION,
+                  docId: id,
+                  body: { _id: id, status: "open", priority: 1 },
+                });
+              }
+            },
+          );
+
+          // Run scheduled maintenance with log retention
+          await runScheduledMaintenance(
+            { storage, currentJsonKey: CURRENT_JSON_KEY },
+            {
+              gc: { graceMillis: 0, maxSweepsPerRun: 100_000 } as InternalRunGcOptions,
+            },
+          );
+
+          const collectionPrefix = CURRENT_JSON_KEY.slice(0, CURRENT_JSON_KEY.lastIndexOf("/"));
+          const current = await readCurrentJson(storage, CURRENT_JSON_KEY);
+          expect(current).not.toBeNull();
+
+          const floor = current!.json.log_seq_start ?? 0;
+          const deleteFloor = current!.json.log_delete_floor ?? 0;
+
+          // log_delete_floor should have been advanced by retireLogRange
+          expect(deleteFloor).toBeGreaterThan(0);
+          // deleteFloor should be at most floor - window (100)
+          expect(deleteFloor).toBeLessThanOrEqual(Math.max(0, floor - 100));
+
+          // Log entries below deleteFloor should be deleted
+          const { logObjectKey } = await import("@baerly/protocol");
+          await expect(storage.get(logObjectKey(collectionPrefix, 0))).resolves.toBeNull();
+          // Log entries above floor (in the live tail) should still exist
+          // The last seeded entry (N-1) should definitely be in the live tail
+          await expect(storage.get(logObjectKey(collectionPrefix, N - 1))).resolves.not.toBeNull();
+        },
+      );
     });
   }
 });
@@ -453,8 +509,16 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       const storage = new MemoryStorage();
       await bootstrap(storage);
       const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
+      // Use a smaller retention window for this test so the peak stays
+      // near the live working set. The default window (1024) would make
+      // the test pass only with a much higher threshold.
       const ctx = createObservabilityContext({
-        maintenance: { options: WRITE_TICK_TEST_PROFILE },
+        maintenance: {
+          options: {
+            ...WRITE_TICK_TEST_PROFILE,
+            logRetention: { window: 100, maxDeletes: 1000 },
+          },
+        },
       });
       const blob = "x".repeat(BODY_BYTES);
       const bucketPrefix = `${TABLE_PREFIX}/`;
@@ -502,8 +566,11 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
 
       // And the peak stays bounded near the live working set — NOT
       // proportional to the write count (~writes if nothing drained,
-      // i.e. ~6000). WORKING_SET*8 = 400 is two orders of magnitude
-      // below that.
+      // i.e. ~6000). With a retention window of 100, we expect:
+      // - 50 working set entries (live)
+      // - ~100 entries in the retention window (stale but not yet deleted)
+      // - Some overhead (current.json, snapshots, etc.)
+      // So ~200-300 total is reasonable. WORKING_SET*8 = 400 is generous.
       const maxObjects = Math.max(...samples.map((s) => s.objects));
       expect(
         maxObjects,

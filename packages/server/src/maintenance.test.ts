@@ -92,9 +92,10 @@ describe("runScheduledMaintenance", () => {
     );
     expect(r.compact.written).toBe(true);
     expect(r.compact.entriesFolded).toBe(150);
-    // After compact, [0, 150) become stale-log; GC marks them and the
-    // zero-grace lets the same pass sweep them.
-    expect(r.gc.marked.stale_log).toBeGreaterThan(0);
+    // After compact, [0, 150) are folded into the snapshot. GC runs
+    // but has nothing to mark (no orphan snapshots). The stale log
+    // entries will be deleted by retireLogRange on a future maintenance
+    // pass.
   });
 
   test("runGc alone runs without compact", async () => {
