@@ -13,7 +13,8 @@
  *           args, unparseable config).
  *   - `2` — storage error (NetworkError, AccessDenied, anything
  *           non-BaerlyError).
- *   - `3` — protocol invariant (Conflict, Internal, InvalidResponse).
+ *   - `3` — protocol invariant (Conflict, Internal, InvalidResponse,
+ *           AmbiguousCommit).
  *
  * Idempotent — re-running on a healthy index is `{ removed: 0,
  * added: 0 }`; re-running after a crashed mid-commit reconciles

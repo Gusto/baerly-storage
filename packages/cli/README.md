@@ -38,7 +38,7 @@ path stays small.
 | `0`  | success                             | handler returned normally                                                      |
 | `1`  | user/config error                   | `BaerlyError.code = InvalidConfig`, missing/unknown flag                       |
 | `2`  | storage or external process error   | `BaerlyError.code = NetworkError` / `AccessDenied`, anything non-`BaerlyError` |
-| `3`  | protocol invariant / conflict class | `BaerlyError.code = Conflict` / `Internal` / `InvalidResponse`                 |
+| `3`  | protocol invariant / conflict class | `BaerlyError.code = Conflict` / `Internal` / `InvalidResponse` / `AmbiguousCommit` |
 | `4`  | `admin fsck` findings               | `fsck` walk surfaced ≥1 finding                                                |
 
 ## `--json` mode

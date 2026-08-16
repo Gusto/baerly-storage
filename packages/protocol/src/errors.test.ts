@@ -56,6 +56,7 @@ describe("retriable classification", () => {
     expect(isRetriableCode("Conflict")).toBe(true);
     expect(isRetriableCode("SchemaError")).toBe(false);
     expect(isRetriableCode("NotFound")).toBe(false);
+    expect(isRetriableCode("AmbiguousCommit")).toBe(false);
   });
   test("BaerlyError.retriable defaults from code", () => {
     expect(new BaerlyError("Conflict", "x").retriable).toBe(true);

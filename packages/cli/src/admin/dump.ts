@@ -39,7 +39,8 @@
  *   0 — dump completed.
  *   1 — InvalidConfig (bad bucket URI, missing args).
  *   2 — Storage / Network / Internal protocol violation.
- *   3 — Protocol invariant (Conflict / Internal / InvalidResponse).
+ *   3 — Protocol invariant (Conflict / Internal / InvalidResponse /
+ *       AmbiguousCommit).
  */
 
 import { type Writable } from "node:stream";
