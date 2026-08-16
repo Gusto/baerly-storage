@@ -139,16 +139,16 @@ export interface CurrentJson {
    * deleted. Every `log/<seq>.json` with `seq < log_delete_floor` is
    * gone from the bucket. Distinct from {@link log_seq_start}, which is the
    * lowest sequence a READER may need: the gap between them is the
-   * deliberately-retained safety window, which absorbs a paused writer
-   * resuming against its idempotency anchor.
+   * deliberately-retained safety window (`LOG_RETENTION_SEQ_WINDOW`),
+   * sized from intentional point-in-time readers below the floor, not from
+   * the writer-retry window that `GC_GRACE_PERIOD_MILLIS` covers.
    *
    * A FLOOR, not a rotation cursor. The deletable set is a contiguous
    * range over integer `seq` order that only ever grows at one end, so
    * this never wraps and never re-scans — which is why retiring stale
-   * logs needs no LIST and no `gc/pending.json` entry. Compare
-   * `GcPending.log_scan_cursor`, which drives a budget-bounded LIST in
-   * LEXICOGRAPHIC key order (`0,1,10,11,2,…`) and therefore must be a
-   * wrapping position rather than a bound.
+   * logs needs no LIST and no `gc/pending.json` entry. The window is
+   * **not** a paused-writer fence — it bounds no wall-clock and no
+   * commit count. The commit-path check closes that schedule instead.
    *
    * Optional because it postdates `schema_version: 3`. Absent is a
    * well-defined state meaning "no deleted prefix is certified" and
