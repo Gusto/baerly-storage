@@ -70,7 +70,7 @@ The collection prefix may contain these objects:
 | `content/<sha>.json`                          | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](#legacy-content-side-objects).   |
 | `index/<name>/...`                            | Zero-byte advisory index markers.                                                                                                                                       |
 | `snapshot/L9/<000000000000>-<max>-<sha>.json` | Content-hashed materialized snapshot covering `[0, max)`. `min` and `max` are fixed-width 12-digit zero-padded; `min` is always `0`.                                    |
-| `gc/pending.json`                             | Two-phase GC candidate ledger.                                                                                                                                          |
+| `gc/pending.json`                             | Two-phase GC candidate ledger (orphan-snapshot and orphan-content only; stale logs are reclaimed by computed range, not listed).                                                                                                                                          |
 
 `current.json` carries compaction state plus a tail-discovery hint:
 
@@ -532,6 +532,17 @@ These are the load-bearing rules.
    identically, keeping no writer identity) and rejecting it would fail
    every ordinary post-fold commit. The invisible half of that band is
    the residual invariant 14 records.
+
+    Stale log objects are reclaimed by a sequence window rather than a
+    timed mark-and-sweep. The retention pass deletes every
+    `log/<seq>.json` with `seq < log_delete_floor` in a bounded slice
+    on each write tick and on scheduled maintenance. No LIST is required:
+    log keys are computable from `seq` alone. The gap between the two
+    floors (`LOG_RETENTION_SEQ_WINDOW`) is sized from intentional
+    point-in-time readers below the floor, not from the writer-retry
+    window that `GC_GRACE_PERIOD_MILLIS` covers. The window is **not** a
+    paused-writer fence — it bounds no wall-clock and no commit count.
+    The commit-path check in this invariant closes that schedule instead.
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.
@@ -637,6 +648,20 @@ These are the load-bearing rules.
     folded before retirement removed the slot — the fold keeps no writer
     identity, so the two histories leave identical durable state (invariant
     11). Retrying is the intended recovery and may apply the mutation twice.
+
+    Every `log/<seq>.json` with `seq < log_delete_floor` is certified
+    deleted and must never be read. A crash after the floor CAS may
+    leave physical objects in that prefix; they are a deliberate leak,
+    not live data. The gap between `log_delete_floor` and
+    `log_seq_start` is the retention window (`LOG_RETENTION_SEQ_WINDOW`).
+    Retention is a logical bound on the same axis as the floor, so it
+    depends on no clock and no per-adapter object metadata — which is why
+    retiring a log object needs neither a LIST nor a `gc/pending.json`
+    entry.
+
+    Both maintenance triggers route floor movement through the same
+    checked retirement path. `admin restore --force` remains the
+    deliberate truncate exemption and resets this floor.
 
 13. **A `/v1/since` cursor is valid only within the generation that
     minted it.** `current.json` carries an opaque `generation` nonce,
