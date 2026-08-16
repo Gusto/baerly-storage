@@ -154,6 +154,22 @@ The load-bearing kernel metrics today (canonical list in
   CI-gated check).
 - `db.write.index_ops_per_logical_write` — writer histogram
   (`K (PUT) + L (DELETE)` per commit, per-collection label).
+- `db.write.ambiguous_commit_total` — writer counter, labelled by
+  `collection` and `cleanup` (`deleted` / `failed`). A committing create
+  won at a sequence already certified deleted, so the commit failed with
+  `AmbiguousCommit` rather than acknowledging a mutation whose visibility
+  cannot be determined.
+  `cleanup` reports whether the phantom log object was reclaimed. Any
+  sustained rate means writers are pausing across a fold plus a
+  retirement pass. A `failed` rate leaves sub-floor objects behind that
+  GC's `stale-log` arm still reclaims today; they become permanent leaks
+  only once PR 5 replaces that arm with computed-range retirement.
+- `db.write.delete_floor_check_skipped_total` — writer counter, labelled
+  by `collection`. The post-create re-read of `current.json` inside
+  `Writer#assertCommitAboveDeleteFloor` failed with a non-abort error, so
+  the delete-floor check was skipped for that commit instead of
+  evaluated. A sustained rate means the check is not covering the writes
+  it exists to protect, even though no individual commit is rejected.
 - `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`
   loss counter.
 - `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.

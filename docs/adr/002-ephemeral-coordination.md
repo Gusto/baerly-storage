@@ -127,14 +127,12 @@ is a **graduation signal, not silent breakage**.
   a replay filter (invariant 11). The two histories leave byte-identical durable
   state and demand opposite outcomes, so re-probing silently re-applies a folded
   mutation — clobbering a concurrent newer value, minting a second `lsn` for one
-  logical mutation, and emitting it twice on `/v1/since`. What is planned
-  instead — **not yet implemented** — is an explicit failure keyed on the
-  certified delete floor: a winning create at
-  `seq < min(log_delete_floor, log_seq_start)` throws
-  `BaerlyError{code:"AmbiguousCommit"}`. That would make the write contract
+  logical mutation, and emitting it twice on `/v1/since`. What ships
+  instead is an explicit failure keyed on the certified delete floor: a winning
+  create at `seq < min(log_delete_floor, log_seq_start)` throws
+  `BaerlyError{code:"AmbiguousCommit"}`. That makes the write contract
   at-least-once under this fault, which is a stated contract rather than a silent
-  wrong answer. Until it lands, the schedule above is open: such a create is
-  acknowledged. A pre-create re-read closes neither schedule — a GET cannot
+  wrong answer. A pre-create re-read closes neither schedule — a GET cannot
   constrain a later PUT to a different key, and the lost-ack arm must not re-read
   at all without breaking own-session adoption.
 

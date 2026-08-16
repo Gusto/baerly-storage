@@ -303,7 +303,7 @@ dependent, so replay is not fully deterministic.)
 ## Deterministic delete-floor coverage
 
 The optional `current.json.log_delete_floor` safety envelope is covered by
-deterministic protocol, reader-seam, and restore tests:
+deterministic protocol, reader-seam, restore, and commit-path tests:
 
 - optional-field shape and the absent-to-`0` default;
 - transition monotonicity for both `log_seq_start` and
@@ -321,11 +321,37 @@ deterministic protocol, reader-seam, and restore tests:
   aborts the pass with `Conflict` and zero DELETEs; and a rival that
   legally advances `log_delete_floor` in that same gap, after which the
   pass deletes the range its own CAS validated rather than the wider
-  advisory gate; and
+  advisory gate;
 - the deletion/publication crash schedule: a crash mid-DELETE-loop
   leaves the undeleted remainder physically present but already
   certified deleted by the advanced floor — the deliberate fail-safe
-  direction, a leak rather than corruption.
+  direction, a leak rather than corruption; and
+- the commit-path rejection that keys on the same clamped floor
+  (`Writer#assertCommitAboveDeleteFloor`,
+  `packages/server/src/writer.ts`, exercised by
+  `packages/server/src/log-retirement-aba.test.ts`): a create that resolved
+  below `min(log_delete_floor, log_seq_start)` fails with a non-retriable
+  `AmbiguousCommit` because the log object it wrote sits beneath every reader's
+  floor, which does not prove the logical mutation is invisible, under the two
+  schedules that reach it — a create PUT delayed across a fold plus a drained
+  retirement pass, and a lost-ack retry of the same `seq` across the same —
+  with the phantom log object DELETEd best-effort and each rejection counted on
+  `db.write.ambiguous_commit_total`, whose `cleanup` label reports that DELETE
+  and whose failure arm never masks the throw; the check itself sits after both
+  the fresh-win and the own-session-adoption break in the commit loop, so
+  neither path can acknowledge such a commit; the over-rejection guards on the
+  other side of it, namely a commit at the live tail of a collection that now
+  carries a positive floor, the merely-folded band (`log_seq_start` advanced,
+  `log_delete_floor` still absent and so decoding to `0`) which is accepted
+  rather than rejected, and an out-of-bound stored floor which is clamped to
+  `min(log_delete_floor, log_seq_start)` rather than trusted; the one
+  over-rejection that is deliberately accepted, a create folded *and* retired
+  before the post-create read, whose mutation is visible through the snapshot
+  and whose commit fails anyway; and the two-history result that argues for
+  explicit failure over discard-and-re-probe — every object in the bucket at
+  the retry decision point is byte-identical whether the writer's own create
+  or a foreign writer's landed and was folded, and no surviving object names
+  the writer's session.
 
 `retireLogRange` is the first pass to write `log_delete_floor`. It is not
 yet wired into a write-tick call site, so no deletion pass runs in
