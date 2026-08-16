@@ -9,6 +9,7 @@ export {
   type WriterFence,
   assertCurrentJsonTransition,
   casUpdateCurrentJson,
+  certifiedDeleteFloor,
   createCurrentJson,
   logDeleteFloorOf,
   logSeqStartOf,
