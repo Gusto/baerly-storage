@@ -106,6 +106,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *
    * @throws BaerlyError{code: "Conflict"} — `_id` collision on
    *         caller-supplied id.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
+   *         create landed below the collection's certified delete
+   *         floor, so the row may or may not have been inserted.
+   *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
    *         schema-validation failure (when a schema is declared
    *         for the collection via `Db.create({ collections })`).
@@ -127,6 +131,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *
    * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
+   *         create landed below the collection's certified delete
+   *         floor, so the update may or may not have been applied.
+   *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    *
@@ -142,6 +150,11 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Whole-document replace on one row by primary key. Throws
    * `BaerlyError{code:"NotFound"}` when no row exists at `id`.
    *
+   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
+   *         create landed below the collection's certified delete
+   *         floor, so the replace may or may not have been applied.
+   *         Not retriable-by-default; handle the code explicitly.
+   *
    * @example
    * ```ts
    * await db.collection("tickets")
@@ -154,6 +167,12 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Delete one row by primary key. Returns `{ deleted: 0 }` when the
    * id is unknown rather than throwing. For predicate-aware bulk
    * delete, use `.where(predicate).delete()` on {@link Query}.
+   *
+   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
+   *         create landed below the collection's certified delete
+   *         floor, so the tombstone may or may not have been
+   *         applied. Not retriable-by-default; handle the code
+   *         explicitly.
    *
    * @example
    * ```ts
@@ -391,6 +410,12 @@ export interface Query<T extends DocumentData = DocumentData> {
    *
    * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
+   *         committing create landed below the collection's
+   *         certified delete floor. Rows before it in the batch are
+   *         already applied and that row's own fate is unknown; the
+   *         partial-progress `modified` count is NOT returned, so a
+   *         caller that needs to resume must re-read.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    *
@@ -406,6 +431,12 @@ export interface Query<T extends DocumentData = DocumentData> {
   /**
    * Predicate-aware bulk delete: every matching document. For the
    * single-row case prefer {@link Collection.delete}(id).
+   *
+   * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
+   *         committing create landed below the collection's
+   *         certified delete floor. Rows before it in the batch are
+   *         already tombstoned and that row's own fate is unknown;
+   *         the partial-progress `deleted` count is NOT returned.
    *
    * @example
    * ```ts

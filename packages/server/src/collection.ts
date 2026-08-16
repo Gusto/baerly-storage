@@ -84,12 +84,53 @@ export const makeCollection = <T extends DocumentData>(
      *
      * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit
      *   check) or CAS retry budget exhausted.
+     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
+     *   below the collection's certified delete floor, so the row may or may not
+     *   have been inserted. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — from the per-collection
      *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
      */
     insert: (doc) => runInsert<T>(ctx, doc),
+    /**
+     * Update the row at `id` by JSON-merge-patch. Forwards to the
+     * predicate-form `runUpdate` through a `byId` wire, so at most one row
+     * is matched.
+     *
+     * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
+     *   `Writer.commit()`.
+     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
+     *   below the collection's certified delete floor, so the update may or may
+     *   not have been applied. Not retriable-by-default; see `Writer.commit`.
+     * @throws BaerlyError code="SchemaError" — merged post-image rejected by the
+     *   collection's bound validator, or `merge(prev, patch)` produced
+     *   `undefined`.
+     */
     update: (id, patch) => makeQuery<T>(ctx, byId(id)).update(patch),
+    /**
+     * Replace the row at `id` wholesale, preserving doc identity.
+     *
+     * @throws BaerlyError code="NotFound" — no row exists at `id`.
+     * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
+     *   `Writer.commit()`.
+     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
+     *   below the collection's certified delete floor, so the replace may or may
+     *   not have been applied. Not retriable-by-default; see `Writer.commit`.
+     * @throws BaerlyError code="SchemaError" — post-image rejected by the
+     *   collection's bound validator.
+     */
     replace: (id, doc) => runReplaceById<T>(ctx, id, doc),
+    /**
+     * Tombstone the row at `id`. Forwards to the predicate-form `runDelete`
+     * through a `byId` wire, so at most one row is matched. A missing row is
+     * not an error — `deleted` is `0`.
+     *
+     * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
+     *   `Writer.commit()`.
+     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
+     *   below the collection's certified delete floor, so the tombstone may or
+     *   may not have been applied. Not retriable-by-default; see
+     *   `Writer.commit`.
+     */
     delete: (id) => makeQuery<T>(ctx, byId(id)).delete(),
   };
 };

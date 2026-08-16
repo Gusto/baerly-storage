@@ -516,7 +516,22 @@ These are the load-bearing rules.
    apart. The seams clamp the effective delete floor to
    `min(log_delete_floor, log_seq_start)` rather than trusting the stored
    value — see invariant 12 for why an out-of-bound value is readable at
-   all.
+   all. The commit path checks the same clamped floor. After the
+   committing `log/<seq>` create resolves — on both the fresh-win and the
+   own-session-adoption paths — the writer re-reads `current.json`, and a
+   `seq` below `min(log_delete_floor, log_seq_start)` fails the commit with
+   `BaerlyError{code:"AmbiguousCommit"}`. A winning create means the slot
+   was empty immediately before the PUT, so a sub-floor `seq` proves the
+   object it wrote is beneath every reader's floor. It does **not** prove
+   the logical mutation is invisible: a create that landed live and was
+   then folded *and* retired reads identically here, and is rejected too.
+   That over-rejection is the accepted safe direction. The band
+   `log_delete_floor <= seq < log_seq_start` is **not** a failure — not
+   because it is provably safe, but because it is undecidable the same
+   way (a fold absorbs our own earlier attempt and a foreign entry
+   identically, keeping no writer identity) and rejecting it would fail
+   every ordinary post-fold commit. The invisible half of that band is
+   the residual invariant 14 records.
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.
@@ -605,6 +620,24 @@ These are the load-bearing rules.
     that unchecked raw PUT could persist
     `log_delete_floor > log_seq_start`. Dropping it resets the new
     generation to no deleted prefix certified.
+
+    The retention window between the two floors
+    (`LOG_RETENTION_SEQ_WINDOW`) is a pre-image cost margin and a rate limit
+    on how fast retirement approaches the live floor. It is **not** a
+    paused-writer fence and no safety property may be derived from it: it
+    bounds no wall-clock and no commit count, so a delayed create PUT, an
+    isolate suspension, or a writer's own transient-retry loop can each
+    straddle an unbounded number of peer commits and folds. What closes that
+    schedule is the commit-path check in invariant 5, which fails rather than
+    acknowledging an invisible mutation.
+
+    The consequence for the write contract is stated rather than hidden: under
+    this fault a commit is **at-least-once**, not exactly-once. The writer
+    cannot determine whether an earlier attempt of its own landed and was
+    folded before retirement removed the slot — the fold keeps no writer
+    identity, so the two histories leave identical durable state (invariant
+    11). Retrying is the intended recovery and may apply the mutation twice.
+
 13. **A `/v1/since` cursor is valid only within the generation that
     minted it.** `current.json` carries an opaque `generation` nonce,
     and the cursor the server hands a long-poll client is
@@ -696,6 +729,16 @@ These are the load-bearing rules.
     that observes it. The consequence is that the grace stops bounding
     anything, and the sweep-time revalidation above becomes the only
     check standing between a mark and its DELETE.
+
+    **The same limitation reaches the log arm, and only PR 5 removes it.**
+    `runGc`'s `stale-log` sweep deletes sub-floor log objects **without**
+    advancing `log_delete_floor`, so a create that re-fills a GC-swept hole is
+    not caught by the commit-path check in invariant 5 — that check keys on the
+    certified floor, and GC certifies nothing. On a node clocked far enough
+    ahead the grace collapses to zero and the window is unbounded. Replacing
+    stale-log discovery with computed-range retirement, which CASes the floor
+    before it deletes, is what closes it; until then the exposure is the
+    pre-existing one this invariant already describes.
 
     **Known limitation: the revalidation is only as fresh as the
     freshest manifest the pass already holds.** `runGc` reads
