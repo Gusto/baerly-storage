@@ -37,22 +37,7 @@ import {
   showUsage,
 } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { emitError, setJsonMode } from "./output.ts";
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (
-    code === "Conflict" ||
-    code === "Internal" ||
-    code === "InvalidResponse" ||
-    code === "AmbiguousCommit"
-  ) {
-    return 3;
-  }
-  return 2;
-};
+import { emitError, setJsonMode, errorToExitCode } from "./output.ts";
 
 const resolve = async <T>(v: Resolvable<T>): Promise<T> => {
   if (typeof v === "function") {

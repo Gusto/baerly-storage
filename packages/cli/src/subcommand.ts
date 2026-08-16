@@ -40,7 +40,7 @@ import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs, type CommandDe
 import { BaerlyError } from "@baerly/protocol";
 import { assertPathSegment } from "@baerly/server/_internal/testing";
 import { loadAppConfig } from "./config.ts";
-import { emitError, setJsonMode } from "./output.ts";
+import { emitError, setJsonMode, errorToExitCode } from "./output.ts";
 
 /**
  * Shared citty arg fragments for the flags every operator command
@@ -149,22 +149,6 @@ export interface SubcommandBundle<TArgs extends ArgsDef> {
     options?: { readonly streams?: SubcommandStreams },
   ) => Promise<number>;
 }
-
-/** Shared exit-code mapping for caught `BaerlyError`s. */
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (
-    code === "Conflict" ||
-    code === "Internal" ||
-    code === "InvalidResponse" ||
-    code === "AmbiguousCommit"
-  ) {
-    return 3;
-  }
-  return 2;
-};
 
 /**
  * Validate a `--collection` arg through the same shared rule the

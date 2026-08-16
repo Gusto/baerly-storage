@@ -81,3 +81,19 @@ export const emitSuccess = (data: Record<string, unknown>): void => {
     process.stdout.write(`${JSON.stringify({ result: data })}\n`);
   }
 };
+
+/** Shared exit-code mapping for caught `BaerlyError`s. */
+export const errorToExitCode = (code: string): number => {
+  if (code === "InvalidConfig") {
+    return 1;
+  }
+  if (
+    code === "Conflict" ||
+    code === "Internal" ||
+    code === "InvalidResponse" ||
+    code === "AmbiguousCommit"
+  ) {
+    return 3;
+  }
+  return 2;
+};

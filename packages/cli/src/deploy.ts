@@ -21,7 +21,7 @@ import { defineCommand, type ArgsDef, type ParsedArgs } from "citty";
 import { BaerlyError } from "@baerly/protocol";
 import { loadAppConfig } from "./config.ts";
 import { deployCloudflare } from "./deploy/cloudflare.ts";
-import { emitError, emitSuccess, setJsonMode } from "./output.ts";
+import { emitError, emitSuccess, setJsonMode, errorToExitCode } from "./output.ts";
 
 const DEPLOY_ARGS = {
   target: {
@@ -49,21 +49,6 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   "probe-bucket",
   "_",
 ]);
-
-const errorToExitCode = (code: string): number => {
-  if (code === "InvalidConfig") {
-    return 1;
-  }
-  if (
-    code === "Conflict" ||
-    code === "Internal" ||
-    code === "InvalidResponse" ||
-    code === "AmbiguousCommit"
-  ) {
-    return 3;
-  }
-  return 2;
-};
 
 const handleDeploy = async (args: ParsedArgs<typeof DEPLOY_ARGS>): Promise<number> => {
   setJsonMode(args.json === true);
