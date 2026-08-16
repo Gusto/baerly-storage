@@ -188,16 +188,20 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
  * (`docs/spec/scale-ceilings.md` §Per-tier bounds); R2 binding ops count
  * 1:1, and a `ctx.waitUntil` maintenance continuation draws on the
  * same per-invocation budget. One `op:"U"` commit on a single-index
- * collection already costs ~14 before this walk — 1 GET
+ * collection already costs ~15 before this walk — 1 GET
  * `current.json`, ~10 sequential GETs for `findLogTail`'s gallop over
  * a one-fold-interval `tail_hint` lag, 1 index `newKey` PUT, the
- * `log/<seq>` create, 1 stale-key DELETE — and the
+ * `log/<seq>` create, 1 GET re-reading `current.json` after that create
+ * resolves to reject a create that landed below the certified delete floor
+ * (`Writer#assertCommitAboveDeleteFloor`), 1 stale-key DELETE — and the
  * write-tick fold branch it may dispatch costs ~26 more (1 runner GET
  * + `compact()`'s 3 + {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS} log
- * GETs + 2 PUTs). `50 - 14 - 26 = 10`; `PREIMAGE_SCAN_MAX_GETS = 8`
- * leaves two spare subrequests. The walk is strictly SEQUENTIAL, so this is a hard
- * per-request cost, not a fan-out bound like
- * {@link MAX_PARALLEL_LOG_READS}.
+ * GETs + 2 PUTs). `50 - 15 - 26 = 9`; `PREIMAGE_SCAN_MAX_GETS = 8`
+ * leaves one spare subrequest. The post-create delete-floor re-read adds no
+ * billable cost — `billableClassAOps = puts + lists` excludes GET — but it
+ * does consume the subrequest headroom, so this budget cannot rise without
+ * re-deriving the total. The walk is strictly SEQUENTIAL, so this is a hard
+ * per-request cost, not a fan-out bound like {@link MAX_PARALLEL_LOG_READS}.
  *
  * **What that budget actually covers.** The pre-image sits roughly
  * one working-set of seqs back, so 8 reaches a doc rewritten within
@@ -243,15 +247,16 @@ export const PREIMAGE_SCAN_MAX_GETS: number = 8;
  * cost grounds costs pre-image coverage and retirement smoothness; it does not
  * weaken a safety proof, because there was never one here.
  *
- * Withdrawing the claim leaves the stale-writer schedule **open**. Nothing on
- * the commit path compares the committing `seq` against the certified
- * `log_delete_floor` today, so a create that wins below the floor is
- * acknowledged as a successful mutation that no reader can see. The planned
- * replacement is a commit-path check that fails such a create with
- * `BaerlyError{code:"AmbiguousCommit"}` instead of acknowledging it; it is not
- * implemented yet. Do not cite this JSDoc as evidence that the schedule is
- * closed.
+ * Withdrawing the claim does not leave the schedule open, because the commit
+ * path closes it directly. After the committing `log/<seq>` create resolves,
+ * `Writer#assertCommitAboveDeleteFloor` re-reads `current.json` and fails a
+ * create that won at a `seq` below `min(log_delete_floor, log_seq_start)` with
+ * `BaerlyError{code:"AmbiguousCommit"}`, rather than acknowledging a mutation
+ * no reader can see. That check keys on the certified delete floor, not on this
+ * window, which is exactly why the window may keep being a cost margin without
+ * carrying a safety obligation. Do not re-derive a fence from this value.
  *
+ * @see packages/server/src/writer.ts (`Writer#assertCommitAboveDeleteFloor`)
  * @see packages/server/src/log-retention.ts
  * @see docs/spec/sync-protocol.md invariant 12
  * @see docs/adr/002-ephemeral-coordination.md § Closed paths
@@ -277,6 +282,11 @@ export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
  *   cannot share a tick with a fold**; the call site has to phase them apart
  *   the way the Cloudflare scheduled handler already alternates compact and
  *   GC.
+ * - The write-tick host request now also spends one `current.json` GET on the
+ *   commit path's certified-delete-floor check, so PR 5's combined arithmetic
+ *   starts one subrequest lower than the scheduled-handler figures above. The
+ *   call site still owes that derivation; nothing here changes the value 20,
+ *   because retirement already cannot share a tick with a fold.
  *
  * A pass whose range is empty returns `{deleted: 0}` and spends 1 GET, so a
  * permanently-stalled retirement is silent — the call site also owes an

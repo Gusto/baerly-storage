@@ -50,6 +50,7 @@ import {
   createCurrentJson,
   decodeJsonBytes,
   encodeJsonBytes,
+  logDeleteFloorOf,
   logObjectKey,
   logSeqStartOf,
   mintGeneration,
@@ -81,6 +82,8 @@ import {
 import { getCurrentContext } from "./observability/context.ts";
 
 const CAS_CONFLICT_RESOLUTION = "Re-read and retry.";
+const AMBIGUOUS_COMMIT_RESOLUTION =
+  "Re-read the row before retrying: the mutation may already have been applied.";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
@@ -291,7 +294,12 @@ export class Writer {
    * DELETE'd after the commit.
    *
    * The hot-path cost under no contention on an unindexed collection is
-   * 1 GET + 1 PUT (the committing `log/<seq>` create); each
+   * 3 GETs + 1 PUT: the Step 1 `current.json` read, `findLogTail`'s
+   * forward probe (one 404 GET when `tail_hint` is accurate, `O(log gap)`
+   * GETs when it lags a fold interval), the committing `log/<seq>`
+   * create, and the post-create `current.json` re-read that rejects a
+   * create landing below the certified delete floor
+   * (`#assertCommitAboveDeleteFloor`). Each
    * declared index that projects a key on this write adds one PUT
    * (new key, before the commit) and, on U/D, up to one DELETE (stale
    * key, after the commit). An in-flight peer write costs one extra GET
@@ -304,6 +312,21 @@ export class Writer {
    * adopts its own lost-ack write or re-probes forward to the next
    * empty slot.
    *
+   * **At-least-once under one fault.** If the committing create wins at a
+   * `seq` the collection has already certified deleted — reachable when a
+   * create PUT or a lost-ack retry straddles a fold plus a retirement pass —
+   * the object it wrote is beneath every reader's floor. The commit then fails
+   * with `AmbiguousCommit` rather than acknowledging a mutation no fresh
+   * reader can see. The writer cannot tell whether an earlier attempt of its
+   * own landed and was folded before retirement removed the slot, so the
+   * mutation may or may not have been applied: retrying is the intended
+   * recovery and may apply it twice. `err.retriable` is `false` precisely so a
+   * generic conflict-retry wrapper cannot absorb this silently. Every other
+   * path remains exactly-once.
+   *
+   * @throws BaerlyError code="AmbiguousCommit" when the committing create
+   *   landed below `min(log_delete_floor, log_seq_start)`. The mutation's fate
+   *   is unknown; see the at-least-once note above.
    * @throws BaerlyError code="Conflict" when a retryable conflict
    *   escapes the single-attempt helper and exhausts the retry budget
    *   (presently unreachable on the log-create 412 path).
@@ -595,6 +618,16 @@ export class Writer {
       seq = await findLogTail(this.#storage, logPrefix, seq + 1);
       entry = mintEntry(seq);
     }
+
+    // ── Step 5a. Refuse a create that re-filled a retired hole. ─────
+    // Both break paths above land here with the resolved committing
+    // `seq`: the fresh win and the own-session adoption. This check
+    // runs BEFORE Step 5b on purpose — an invisible commit must not
+    // get to delete the OLD value's index keys, because the doc's
+    // live value may still BE that old value, and de-indexing it
+    // would be the one failure the hybrid emission polarity exists to
+    // prevent (invariant 7).
+    await this.#assertCommitAboveDeleteFloor(logPrefix, seq, input.collection, errorPrefix);
     const committedEntries: readonly LogEntry[] = [committedEntry];
 
     // ── Step 5b. DELETE stale secondary-index keys (AFTER the commit). ─
@@ -947,6 +980,146 @@ export class Writer {
   }
 
   /**
+   * Fail the commit if the create landed at a sequence the collection has
+   * already certified deleted.
+   *
+   * **What a sub-floor `seq` proves, and what it does not.** A winning
+   * `If-None-Match: "*"` create means the slot was empty immediately before the
+   * PUT, so the object this commit just wrote sits beneath every reader's floor
+   * and no reader will ever consult it. What a sub-floor `seq` does NOT prove
+   * is that the *logical mutation* is invisible. Two histories reach this
+   * branch: the create re-filled a hole retirement had already certified
+   * deleted (invisible — the defect this check exists for), or it landed in a
+   * live empty slot that a fold and then a retirement pass swept out from under
+   * it (visible through the snapshot). That second history is a real
+   * over-rejection, pinned as contract by a test in
+   * `./log-retirement-aba.test.ts`, not an accident. It is the safe direction,
+   * and "What the caller is being told" below is why guessing between the two
+   * is worse than reporting both as ambiguous.
+   *
+   * **`log_delete_floor <= seq < log_seq_start` is NOT a failure.** Not because
+   * that band is provably safe — it is undecidable in the very same way. A
+   * winning create means the slot was empty just before the PUT, so what a fold
+   * absorbed there was either an earlier attempt of ours (mutation visible) or
+   * a foreign writer's entry (ours invisible), and the fold keeps no writer
+   * identity to tell them apart. The band is accepted because keying the check
+   * on `log_seq_start` would reject ordinary post-fold commits — a far
+   * larger harm than the residual it would catch. That residual is the exposure
+   * `docs/spec/sync-protocol.md` invariant 14 records and PR 5 closes.
+   *
+   * The floor is clamped to `min(log_delete_floor, log_seq_start)` for the
+   * reason invariant 12 gives: the `<= log_seq_start` bound is
+   * transition-scoped, so an out-of-bound stored floor is readable off disk
+   * and would otherwise fail a perfectly good commit.
+   *
+   * **What the caller is being told.** Not "your write failed" —
+   * `AmbiguousCommit`. An earlier attempt by this same writer may have landed
+   * and been folded before retirement removed the slot, and nothing durable
+   * distinguishes that history from a foreign writer's entry being folded
+   * instead: the fold keeps no writer identity, tombstones are purged,
+   * `current.json` holds no per-writer completion state, and `writer_fence` is
+   * not a replay filter (invariant 11). So the write contract under this fault
+   * is at-least-once, and re-probing-and-re-applying is emphatically not a
+   * safe default: `LogEntry.after` is a full post-image, so a duplicate
+   * clobbers a concurrent newer value and mints a second `lsn` for one logical
+   * mutation.
+   *
+   * The phantom object is DELETEd best-effort. Today it would also be reclaimed
+   * without this DELETE: `runGc`'s `stale-log` arm marks any `log/<seq>` below
+   * `log_seq_start` with no delete-floor awareness (`./gc.ts` — the mark loop
+   * keys on `seq >= logSeqStart` alone), and the sweep-time rescue spares only
+   * `seq >= log_seq_start`, so a sub-floor phantom is swept once the grace
+   * elapses. PR 5 removes that arm in favour of computed-range retirement, and
+   * from then on this DELETE is the only thing standing between a rejected
+   * commit and a permanently leaked object — which is why it is here now rather
+   * than deferred. Deleting it is safe: no reader may read below the certified
+   * floor (invariant 5), and the one deliberate sub-floor reader,
+   * `#readPreImage`, treats a hole as "keep descending" rather than a stop
+   * signal. A failed cleanup is recorded on the counter and never masks the
+   * throw.
+   *
+   * **The Step 4 additive index keys are left behind.** The failure path does
+   * not roll back the `newKeys` PUTs, and deliberately so — it is the same
+   * benign residual invariant 7 already covers. If the mutation did land, those
+   * keys are correct; if it did not, each is a false-positive candidate that
+   * `matchesWire` drops on read, never a missing one.
+   *
+   * **A failed manifest read skips the check rather than failing the commit —
+   * except an abort, which propagates.** The check runs over an already-durable
+   * create, and an unreadable manifest is no evidence of a sub-floor `seq`, so a
+   * transient read failure is swallowed. An `AbortError` is rethrown instead: it
+   * is the caller's own cancellation rather than a blip, and it carries none of
+   * the `retriable` re-run hazard that motivates swallowing the rest. The skip
+   * is recorded on `db.write.delete_floor_check_skipped_total` so a sustained
+   * rate is visible to an operator rather than silent.
+   *
+   * Cost: one Class B GET per commit.
+   * `billableClassAOps = puts + lists` excludes GET, so billing is unchanged;
+   * the subrequest arithmetic on {@link PREIMAGE_SCAN_MAX_GETS} carries the
+   * re-derivation.
+   *
+   * @throws BaerlyError code="AmbiguousCommit"
+   */
+  async #assertCommitAboveDeleteFloor(
+    logPrefix: string,
+    seq: number,
+    collection: string,
+    errorPrefix: string,
+  ): Promise<void> {
+    let read: CurrentJsonRead | null;
+    try {
+      read = await readCurrentJson(this.#storage, this.#currentJsonKey);
+    } catch (error) {
+      if (isAbortError(error)) {
+        // An abort is the caller's deliberate cancellation, not a transient
+        // blip, and the caller already knows it cancelled. The hazard the
+        // swallow below exists for is specific to `retriable` errors; an
+        // `AbortError` is not one, so rethrowing costs that reasoning nothing.
+        throw error;
+      }
+      // A failed read is not evidence of a sub-floor commit, so skipping the
+      // check preserves the pre-existing commit contract exactly and forgoes
+      // only a safety net on a rare blip. Propagating instead would be worse
+      // than useless: the create already committed, and `NetworkError` is
+      // `retriable`, so a generic retry wrapper would re-run the whole logical
+      // write at a fresh tail — duplicating the mutation and minting a second
+      // `lsn`. The other post-create steps here swallow their non-abort
+      // failures for the same reason (`#cleanupStaleIndexKeysBestEffort`, the
+      // maintenance dispatch). Failing closed is not the answer either
+      // — throwing `AmbiguousCommit` on an unreadable manifest would reject
+      // durable commits far more often than the fault this check catches.
+      ctxMetrics().counter("db.write.delete_floor_check_skipped_total", 1, { collection });
+      return;
+    }
+    if (read === null) {
+      // The manifest vanished between Step 1 and here. Unreachable in
+      // practice (Step 1 read or provisioned it), and a missing manifest
+      // certifies no deleted prefix, so there is nothing to reject against.
+      return;
+    }
+    const storedDeleteFloor = logDeleteFloorOf(read.json);
+    const deleteFloor = Math.min(storedDeleteFloor, logSeqStartOf(read.json));
+    // `deleteFloor === 0` means no deleted prefix is certified — same silent
+    // arm as `Db.assertAtOrAboveLogFloor`.
+    if (deleteFloor <= 0 || seq >= deleteFloor) {
+      return;
+    }
+    let cleanup: "deleted" | "failed" = "deleted";
+    await this.#storage.delete(logObjectKey(logPrefix, seq)).catch(() => {
+      cleanup = "failed";
+    });
+    ctxMetrics().counter("db.write.ambiguous_commit_total", 1, { collection, cleanup });
+    throw new BaerlyError(
+      "AmbiguousCommit",
+      `${errorPrefix}: the committing create at seq ${seq} on ${this.#currentJsonKey} landed below the certified delete floor ${deleteFloor}; that log object is beneath every reader's floor, and this mutation may or may not have been applied by an earlier attempt — retry is at-least-once`,
+      undefined,
+      undefined,
+      undefined,
+      AMBIGUOUS_COMMIT_RESOLUTION,
+    );
+  }
+
+  /**
    * Walk `log/<logSeqStart>.json` … `log/<nextSeq - 1>.json` with
    * bounded parallelism via `walkLogRange`. Materialised entries are
    * discarded — the walk's only job is to surface a hole or a
@@ -1026,6 +1199,19 @@ const isPreconditionFailed = (err: unknown): boolean =>
  */
 const isTransientWrite = (err: unknown): boolean =>
   err instanceof BaerlyError && err.code === "NetworkError";
+
+/**
+ * `true` when a rejection is an `AbortError` — the caller's own cancellation
+ * through an `AbortSignal`, never a transient storage failure. Matched
+ * structurally on `name` rather than `instanceof DOMException` because a host
+ * may surface an abort as a plain `Error` so named (as `Storage` impls and the
+ * test fixtures do). `@baerly/client` carries the same predicate; it is
+ * duplicated rather than shared because `server` may not import `client`
+ * (`scripts/lint-package-layers.mjs`) and one predicate does not earn a new
+ * module in `@baerly/protocol`.
+ */
+const isAbortError = (err: unknown): boolean =>
+  typeof err === "object" && err !== null && "name" in err && err.name === "AbortError";
 
 /**
  * `true` when the underlying storage surfaced an R2 prefix-partition
