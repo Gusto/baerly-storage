@@ -588,6 +588,18 @@ export const logSeqStartOf = (c: CurrentJson): number => c.log_seq_start;
  */
 export const logDeleteFloorOf = (c: CurrentJson): number => c.log_delete_floor ?? 0;
 
+/**
+ * The certified delete floor: `log_delete_floor` clamped down to
+ * `log_seq_start`. Every consumer of "is `seq` reclaimed" must go through
+ * this clamp rather than trusting the raw stored field — invariant 12
+ * (`docs/spec/sync-protocol.md`) allows an out-of-bound stored floor to be
+ * readable off disk (the single-state read guard deliberately doesn't
+ * reject it, so `admin restore` stays repairable), and an unclamped floor
+ * would report a still-live entry as already deleted.
+ */
+export const certifiedDeleteFloor = (c: CurrentJson): number =>
+  Math.min(logDeleteFloorOf(c), logSeqStartOf(c));
+
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------

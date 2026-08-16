@@ -47,10 +47,10 @@ import {
   type DocumentData,
   type LogEntry,
   type MetricsRecorder,
+  certifiedDeleteFloor,
   createCurrentJson,
   decodeJsonBytes,
   encodeJsonBytes,
-  logDeleteFloorOf,
   logObjectKey,
   logSeqStartOf,
   mintGeneration,
@@ -1097,8 +1097,7 @@ export class Writer {
       // certifies no deleted prefix, so there is nothing to reject against.
       return;
     }
-    const storedDeleteFloor = logDeleteFloorOf(read.json);
-    const deleteFloor = Math.min(storedDeleteFloor, logSeqStartOf(read.json));
+    const deleteFloor = certifiedDeleteFloor(read.json);
     // `deleteFloor === 0` means no deleted prefix is certified — same silent
     // arm as `Db.assertAtOrAboveLogFloor`.
     if (deleteFloor <= 0 || seq >= deleteFloor) {

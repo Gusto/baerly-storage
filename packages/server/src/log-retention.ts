@@ -11,10 +11,10 @@
 import {
   BaerlyError,
   casUpdateCurrentJson,
+  certifiedDeleteFloor,
   type CurrentJson,
   LOG_RETENTION_MAX_DELETES_PER_TICK,
   LOG_RETENTION_SEQ_WINDOW,
-  logDeleteFloorOf,
   logObjectKey,
   logSeqStartOf,
   readCurrentJson,
@@ -35,7 +35,7 @@ export const computeRetirableRange = (
   const window = opts?.window ?? LOG_RETENTION_SEQ_WINDOW;
   const maxDeletes = opts?.maxDeletes ?? LOG_RETENTION_MAX_DELETES_PER_TICK;
   const liveFloor = logSeqStartOf(current);
-  const start = Math.min(logDeleteFloorOf(current), liveFloor);
+  const start = certifiedDeleteFloor(current);
   const boundary = Math.min(liveFloor - window, liveFloor);
   const end = Math.max(start, Math.min(boundary, start + maxDeletes));
   return { start, end };

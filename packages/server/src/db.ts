@@ -1,6 +1,7 @@
 import {
   type BaerlyConfig,
   BaerlyError,
+  certifiedDeleteFloor,
   type Collection,
   type CollectionNames,
   type CurrentJson,
@@ -405,7 +406,7 @@ const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson
   // arrives here off disk, and unclamped it would report an entry that is
   // present as already deleted.
   const storedDeleteFloor = logDeleteFloorOf(current);
-  const deleteFloor = Math.min(storedDeleteFloor, floor);
+  const deleteFloor = certifiedDeleteFloor(current);
   // `deleteFloor === 0` means no deleted prefix is certified, so this arm
   // has nothing to say and must stay silent: a negative seq against a
   // zero floor is a fold-floor rejection, and claiming its nonexistent
