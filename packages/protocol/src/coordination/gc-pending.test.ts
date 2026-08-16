@@ -542,59 +542,6 @@ describe("gc-pending", () => {
     await expect(readGcPending(s, KEY)).rejects.toMatchObject({ code: "InvalidResponse" });
   });
 
-  // ---- log_scan_cursor validation ----
-
-  test("accepts log_scan_cursor absent (optional)", async () => {
-    const s = new MemoryStorage();
-    await createGcPending(s, KEY, initial());
-    const read = await readGcPending(s, KEY);
-    expect(read?.json.log_scan_cursor).toBeUndefined();
-  });
-
-  test("accepts log_scan_cursor as a non-empty string", async () => {
-    const s = new MemoryStorage();
-    const withCursor: GcPending = { ...initial(), log_scan_cursor: "log/42.json" };
-    await createGcPending(s, KEY, withCursor);
-    const read = await readGcPending(s, KEY);
-    expect(read?.json.log_scan_cursor).toBe("log/42.json");
-  });
-
-  test("rejects log_scan_cursor as a number", async () => {
-    const s = new MemoryStorage();
-    await s.put(
-      KEY,
-      new TextEncoder().encode(
-        JSON.stringify({
-          schema_version: 1,
-          candidates: [],
-          last_swept_at: "",
-          log_scan_cursor: 42,
-        }),
-      ),
-      { contentType: GC_PENDING_CONTENT_TYPE },
-    );
-    const err = await readGcPending(s, KEY).catch((error: unknown) => error);
-    expect((err as BaerlyError).code).toBe("InvalidResponse");
-    expect((err as BaerlyError).message).toContain("log_scan_cursor");
-  });
-
-  test("rejects log_scan_cursor as boolean false (!== undefined but not string)", async () => {
-    const s = new MemoryStorage();
-    await s.put(
-      KEY,
-      new TextEncoder().encode(
-        JSON.stringify({
-          schema_version: 1,
-          candidates: [],
-          last_swept_at: "",
-          log_scan_cursor: false,
-        }),
-      ),
-      { contentType: GC_PENDING_CONTENT_TYPE },
-    );
-    await expect(readGcPending(s, KEY)).rejects.toMatchObject({ code: "InvalidResponse" });
-  });
-
   // ---- casUpdateGcPending: missing key error message (L173) ----
 
   test("cas-update on missing key error message mentions 'does not exist'", async () => {
@@ -1059,78 +1006,6 @@ describe("gc-pending", () => {
     expect("log_scan_cursor" in merged).toBe(false);
   });
 
-  test("mergeGcPending: log cursor takes the more-advanced of the two", () => {
-    const latest: GcPending = {
-      schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [],
-      last_swept_at: "",
-      log_scan_cursor: "log/9.json",
-    };
-    // Our pass advanced LESS far than the concurrent pass; don't regress.
-    // NB lexicographic, not numeric: "log/9.json" > "log/12.json".
-    const merged = mergeGcPending(latest, {
-      sweptKeys: new Set<string>(),
-      newCandidates: [],
-      lastSweptAt: "",
-      nextLogCursor: "log/12.json",
-      maxCandidates: 1000,
-    });
-    expect(merged.log_scan_cursor).toBe("log/9.json");
-  });
-
-  test("mergeGcPending: log cursor — OUR advance wins when it is the greater", () => {
-    // The other direction of the `>` comparison. The content side only
-    // pins the latest-wins direction, so a mutant flipping the operator
-    // survives there; pin both here.
-    const latest: GcPending = {
-      schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [],
-      last_swept_at: "",
-      log_scan_cursor: "log/12.json",
-    };
-    const merged = mergeGcPending(latest, {
-      sweptKeys: new Set<string>(),
-      newCandidates: [],
-      lastSweptAt: "",
-      nextLogCursor: "log/9.json",
-      maxCandidates: 1000,
-    });
-    expect(merged.log_scan_cursor).toBe("log/9.json");
-  });
-
-  test("mergeGcPending: latest has no log cursor, we advanced ⇒ keep our advance", () => {
-    const latest: GcPending = {
-      schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [],
-      last_swept_at: "",
-    };
-    const merged = mergeGcPending(latest, {
-      sweptKeys: new Set<string>(),
-      newCandidates: [],
-      lastSweptAt: "",
-      nextLogCursor: "log/7.json",
-      maxCandidates: 1000,
-    });
-    expect(merged.log_scan_cursor).toBe("log/7.json");
-  });
-
-  test("mergeGcPending: our pass wrapped the log scan (undefined) ⇒ result wraps", () => {
-    const latest: GcPending = {
-      schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [],
-      last_swept_at: "",
-      log_scan_cursor: "log/55.json",
-    };
-    const merged = mergeGcPending(latest, {
-      sweptKeys: new Set<string>(),
-      newCandidates: [],
-      lastSweptAt: "",
-      nextLogCursor: undefined,
-      maxCandidates: 1000,
-    });
-    expect("log_scan_cursor" in merged).toBe(false);
-  });
-
   test("mergeGcPending: returns the current schema_version", () => {
     const merged = mergeGcPending(initial(), {
       sweptKeys: new Set<string>(),
@@ -1248,22 +1123,18 @@ describe("gcPendingKey", () => {
 const candidateArb: fc.Arbitrary<GcCandidate> = fc.record({
   key: fc.string({ minLength: 1, maxLength: 24 }),
   due_at: fc.string({ maxLength: 24 }),
-  reason: fc.constantFrom<GcCandidate["reason"]>("stale-log", "orphan-snapshot", "orphan-content"),
+  reason: fc.constantFrom<GcCandidate["reason"]>("orphan-snapshot", "orphan-content"),
 });
 
-// Optionally carries `log_scan_cursor` — present (string) or the key
+// Note: log_scan_cursor was removed in GC simplification
 // omitted entirely (the optional-additive contract).
 const gcPendingArb: fc.Arbitrary<GcPending> = fc
   .record({
     candidates: fc.array(candidateArb, { maxLength: 8 }),
     last_swept_at: fc.string({ maxLength: 24 }),
-    logCursor: fc.option(fc.string({ maxLength: 24 }), { nil: undefined }),
   })
-  .map(({ candidates, last_swept_at, logCursor }) => {
+  .map(({ candidates, last_swept_at }) => {
     const out: GcPending = { schema_version: GC_PENDING_SCHEMA_VERSION, candidates, last_swept_at };
-    if (logCursor !== undefined) {
-      out.log_scan_cursor = logCursor;
-    }
     return out;
   });
 

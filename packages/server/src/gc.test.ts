@@ -12,7 +12,6 @@ import {
   type GcPending,
   type Storage,
   type StorageListEntry,
-  GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_CAS_MAX_ATTEMPTS,
   GC_PENDING_SCHEMA_VERSION,
@@ -23,16 +22,13 @@ import {
   createCurrentJson,
   createGcPending,
   encodeJsonBytes,
+  logObjectKey,
   readCurrentJson,
   readGcPending,
   snapshotHash,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import {
-  LOG_STATE_GENERATION,
-  logStateCurrentJson,
-  seedLogEntry,
-} from "../../../tests/fixtures/log-state.ts";
+import { LOG_STATE_GENERATION, logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
@@ -97,7 +93,7 @@ describe("runGc", () => {
     await bootstrap(s, KEY);
     const r = await runGc({ storage: s, currentJsonKey: KEY });
     expect(r).toEqual({
-      marked: { stale_log: 0, orphan_snapshot: 0 },
+      marked: { orphan_snapshot: 0 },
       swept: 0,
       dropped: { stale_generation: 0, still_live: 0 },
       pendingDepth: 0,
@@ -111,178 +107,10 @@ describe("runGc", () => {
   test("returns zeros when current.json is missing", async () => {
     const s = new MemoryStorage();
     const r = await runGc({ storage: s, currentJsonKey: KEY });
-    expect(r.marked).toEqual({ stale_log: 0, orphan_snapshot: 0 });
+    expect(r.marked).toEqual({ orphan_snapshot: 0 });
     expect(r.swept).toBe(0);
     // Nothing was bootstrapped either — pending.json is absent.
     await expect(readGcPending(s, PENDING_KEY)).resolves.toBeNull();
-  });
-
-  test("marks stale log entries after compaction (no sweep at default grace)", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 50; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 40,
-    } as InternalCompactOptions);
-    const r = await runGc({ storage: s, currentJsonKey: KEY });
-    expect(r.marked.stale_log).toBe(40);
-    expect(r.swept).toBe(0); // 7-day grace not elapsed.
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.candidates).toHaveLength(40);
-    for (const c of pending?.json.candidates ?? []) {
-      expect(c.reason).toBe("stale-log");
-      expect(c.key).toMatch(/\/log\/\d+\.json$/);
-    }
-  });
-
-  test("sweeps stale log entries when grace is bypassed", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 50; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 40,
-    } as InternalCompactOptions);
-    // grace=0 ⇒ due_at is `now` (or earlier) at mark time, so the
-    // same pass marks AND sweeps.
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-      graceMillis: 0,
-      maxSweepsPerRun: 40,
-    } as InternalRunGcOptions);
-    expect(r.marked.stale_log).toBe(40);
-    expect(r.swept).toBe(40);
-    // The swept keys really were deleted from the bucket.
-    for (let i = 0; i < 40; i++) {
-      await expect(s.get(`app/t/tenant/x/manifests/c/log/${i}.json`)).resolves.toBeNull();
-    }
-    // Live tail [40, 50) untouched.
-    for (let i = 40; i < 50; i++) {
-      await expect(s.get(`app/t/tenant/x/manifests/c/log/${i}.json`)).resolves.not.toBeNull();
-    }
-  });
-
-  test("sweeps in a second pass after grace elapses (clock injection)", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 50; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 40,
-    } as InternalCompactOptions);
-
-    let nowMs = Date.parse("2025-01-01T00:00:00.000Z");
-    const clock = (): Date => new Date(nowMs);
-
-    const first = await runGc({ storage: s, currentJsonKey: KEY }, {
-      now: clock,
-      maxSweepsPerRun: 40,
-    } as InternalRunGcOptions);
-    expect(first.marked.stale_log).toBe(40);
-    expect(first.swept).toBe(0); // grace not yet elapsed
-
-    nowMs += 8 * 24 * 60 * 60 * 1000;
-    const second = await runGc({ storage: s, currentJsonKey: KEY }, {
-      now: clock,
-      maxSweepsPerRun: 40,
-    } as InternalRunGcOptions);
-    expect(second.swept).toBe(40);
-    // pending.json is empty after the sweep + last_swept_at is set.
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.candidates).toEqual([]);
-    expect(pending?.json.last_swept_at).toBe(new Date(nowMs).toISOString());
-  });
-
-  // ── grace anchoring ──────────────────────────────────────────────
-  // `due_at` measures the writer-retry window from the MARK, never
-  // from the listed object's write time. GC used to anchor on an
-  // optional `StorageListEntry.lastModified` that only the S3/GCS/R2
-  // adapters populated, giving production an effective grace of
-  // `max(0, grace − object age)` — zero past the 7-day default, for
-  // exactly the old objects GC marks — while `MemoryStorage` and
-  // `LocalFsStorage`, the backends this suite runs, omitted it and
-  // showed a full window.
-  //
-  // The field is gone, so the type no longer permits this and the
-  // storage conformance suite compares list entries whole. The cast
-  // below is what keeps the behavioural guard alive anyway: TypeScript
-  // cannot stop an adapter attaching an extra property at RUNTIME, and
-  // this asserts `computeDueAt` reads nothing off the entry regardless.
-  // Delete this only together with the assertion it protects.
-  const withListedTimestamp = (inner: Storage, lastModified: Date): Storage => ({
-    get: (key, opts) => inner.get(key, opts),
-    put: (key, body, opts) => inner.put(key, body, opts),
-    delete: (key, opts) => inner.delete(key, opts),
-    list: async function* (prefix, opts) {
-      for await (const entry of inner.list(prefix, opts)) {
-        yield { ...entry, lastModified } as StorageListEntry;
-      }
-    },
-  });
-
-  test("grants full grace from the mark even when listed objects are older than it", async () => {
-    const inner = new MemoryStorage();
-    await bootstrap(inner, KEY);
-    const writer = new Writer({ storage: inner, currentJsonKey: KEY });
-    for (let i = 0; i < 12; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    // Folds [0, 10) ⇒ ten stale-log candidates. The snapshot it writes
-    // is the live one, so stale-log is the only category marked.
-    await compact({ storage: inner, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 10,
-    } as InternalCompactOptions);
-
-    const markedAt = new Date("2026-01-08T00:00:00.000Z");
-    // A month old — comfortably past the 7-day default, which is what
-    // makes an age-anchored horizon land in the past at mark time.
-    const storage = withListedTimestamp(inner, new Date("2025-12-08T00:00:00.000Z"));
-
-    // Default grace (no `graceMillis` override) — the production knob.
-    const r = await runGc({ storage, currentJsonKey: KEY }, {
-      now: () => markedAt,
-    } as InternalRunGcOptions);
-    expect(r.marked.stale_log).toBe(10);
-    // The absorber must still be armed: nothing is due in the pass
-    // that marked it, however old the objects are.
-    expect(r.swept).toBe(0);
-
-    const pending = await readGcPending(inner, PENDING_KEY);
-    expect(pending?.json.candidates).toHaveLength(10);
-    const dueAts = new Set((pending?.json.candidates ?? []).map((c) => c.due_at));
-    expect(dueAts).toEqual(
-      new Set([new Date(markedAt.getTime() + GC_GRACE_PERIOD_MILLIS).toISOString()]),
-    );
   });
 
   test("marks the replaced snapshot after a second compaction run", async () => {
@@ -602,135 +430,6 @@ describe("runGc", () => {
     expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual([canonical]);
   });
 
-  test("evicting a full opaque snapshot ledger lets a stale log age through grace", async () => {
-    const inner = new MemoryStorage();
-    await createCurrentJson(inner, KEY, logStateCurrentJson({ log_seq_start: 1, tail_hint: 1 }));
-    await seedLogEntry(inner, PREFIX, 0);
-    const opaqueCandidates = Array.from({ length: GC_MAX_PENDING_CANDIDATES }, (_, index) => ({
-      key: `${PREFIX}/snapshot/L8/${index.toString().padStart(12, "0")}.json`,
-      due_at: "2000-01-01T00:00:00.000Z",
-      reason: "orphan-snapshot" as const,
-      generation: LOG_STATE_GENERATION,
-    }));
-    await createGcPending(inner, PENDING_KEY, {
-      schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: opaqueCandidates,
-      last_swept_at: "",
-    });
-    let clock = new Date("2026-01-01T00:00:00.000Z");
-    const options = {
-      graceMillis: 1_000,
-      now: (): Date => clock,
-    } as InternalRunGcOptions;
-
-    const first = await runGc({ storage: inner, currentJsonKey: KEY }, options);
-
-    expect(first.pendingDepth).toBe(1);
-    const marked = await readGcPending(inner, PENDING_KEY);
-    expect(marked?.json.candidates.map((candidate) => candidate.key)).toEqual([
-      `${PREFIX}/log/0.json`,
-    ]);
-    await expect(inner.get(`${PREFIX}/log/0.json`)).resolves.not.toBeNull();
-
-    clock = new Date("2026-01-01T00:00:02.000Z");
-    const second = await runGc({ storage: inner, currentJsonKey: KEY }, options);
-
-    expect(second.swept).toBe(1);
-    expect(second.pendingDepth).toBe(0);
-    await expect(inner.get(`${PREFIX}/log/0.json`)).resolves.toBeNull();
-  });
-
-  test("bounds new marks per category at maxMarksPerRun", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 200; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 200,
-    } as InternalCompactOptions);
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 50,
-    } as InternalRunGcOptions);
-    expect(r.marked.stale_log).toBe(50);
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.candidates).toHaveLength(50);
-  });
-
-  test("idempotent across two consecutive runs (no double-marking)", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 20; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 20,
-    } as InternalCompactOptions);
-
-    const r1 = await runGc({ storage: s, currentJsonKey: KEY });
-    expect(r1.marked.stale_log).toBe(20);
-    const r2 = await runGc({ storage: s, currentJsonKey: KEY });
-    // Second pass marks nothing — every stale log is already in
-    // pending.json.
-    expect(r2.marked.stale_log).toBe(0);
-    expect(r2.swept).toBe(0);
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.candidates).toHaveLength(20);
-  });
-
-  test("emits db.orphan.candidate_count, db.gc.entries_swept_per_second, and db.gc.swept_total", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 50; i++) {
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: `d${i}`,
-        body: { _id: `d${i}`, n: i },
-      });
-    }
-    await compact({ storage: s, currentJsonKey: KEY }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 40,
-    } as InternalCompactOptions);
-    const ctx = createObservabilityContext();
-    let r!: Awaited<ReturnType<typeof runGc>>;
-    await runWithContext(ctx, async () => {
-      r = await runGc({ storage: s, currentJsonKey: KEY }, {
-        graceMillis: 0,
-        maxSweepsPerRun: 40,
-      } as InternalRunGcOptions);
-    });
-    expect(r.marked.stale_log).toBe(40);
-    expect(r.swept).toBe(40);
-    const snap = ctx.recorder.snapshot();
-    // Post-sweep, pendingDepth = 0 (everything swept).
-    const candidate = snap.gauges.findLast((g) => g.name === "db.orphan.candidate_count");
-    expect(candidate?.value).toBe(0);
-    // Sweep count is the swept-per-pass observation.
-    const sweptGauge = snap.gauges.findLast((g) => g.name === "db.gc.entries_swept_per_second");
-    expect(sweptGauge?.value).toBe(40);
-    // Counter labelled by reason; one bucket since all were stale-log.
-    const swept = snap.counters.find((c) => c.name === "db.gc.swept_total");
-    expect(swept?.value).toBe(40);
-    expect(swept?.labels["reason"]).toBe("stale-log");
-  });
-
   test("emits zero-sweep observations when nothing swept this pass", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
@@ -910,243 +609,6 @@ describe("runGc", () => {
     expect(r.pendingDepth).toBe(0);
     expect(stuck?.json.candidates).toHaveLength(1);
   });
-
-  // ── stale-log LIST rotation ──────────────────────────────────────
-  // `logObjectKey` builds UNPADDED decimal keys, so
-  // lex order is `0, 1, 10, 100…109, 11, …` and the LIVE keys at/above
-  // `log_seq_start` interleave with — and routinely lex-PRECEDE — the
-  // stale ones below it. A bounded pass listing from the lexicographic
-  // start can therefore spend its whole budget on live keys it will
-  // never delete, and never reach the stale keys behind them. Deletion
-  // cannot advance a window that is entirely live.
-  //
-  // NOTE these seeds must NOT be zero-padded: the interleaving IS the
-  // defect, and a padded seed (lex order == numeric order) would pass
-  // against the broken code.
-  const STALE_LOG_PREFIX = "app/t/tenant/x/manifests/c/log";
-  const logKey = (seq: number): string => `${STALE_LOG_PREFIX}/${seq}.json`;
-
-  /**
-   * Floor at 100 with a five-entry live tail `[100, 105)` plus two
-   * stale entries `11` and `12`. Lex order is
-   * `100, 101, 102, 103, 104, 11, 12` — the five LIVE keys sort FIRST
-   * and the two stale ones are stranded behind them.
-   */
-  const seedInterleavedLog = async (s: MemoryStorage): Promise<void> => {
-    await createCurrentJson(
-      s,
-      KEY,
-      logStateCurrentJson({
-        log_seq_start: 100,
-        tail_hint: 105,
-        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
-      }),
-    );
-    for (const seq of [100, 101, 102, 103, 104, 11, 12]) {
-      await seedLogEntry(s, "app/t/tenant/x/manifests/c", seq);
-    }
-  };
-
-  test("advances the log cursor on an all-live (zero-mark) window", async () => {
-    const s = new MemoryStorage();
-    await seedInterleavedLog(s);
-    // maxMarks=5 ⇒ the LIST examines exactly the five live keys
-    // 100..104 and marks nothing. The cursor MUST still advance to the
-    // last one so the next pass reaches the stale keys behind them.
-    // 5 examined == maxMarks ⇒ NOT end-of-keyspace ⇒ carried, not wrapped.
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 5,
-    } as InternalRunGcOptions);
-    expect(r.marked.stale_log).toBe(0);
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.log_scan_cursor).toBe(logKey(104));
-  });
-
-  test("rotates the stale-log LIST so sub-floor keys behind the first window are eventually swept", async () => {
-    const s = new MemoryStorage();
-    await seedInterleavedLog(s);
-    // Pass 1 examines the all-live window and marks nothing; pass 2
-    // resumes past it and reaches 11 + 12. Without rotation pass 2 is a
-    // verbatim replay of pass 1 and the two stale keys leak forever.
-    let totalSwept = 0;
-    for (let pass = 0; pass < 2; pass++) {
-      const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-        graceMillis: 0,
-        maxMarksPerRun: 5,
-        maxSweepsPerRun: 5,
-      } as InternalRunGcOptions);
-      totalSwept += r.swept;
-    }
-    expect(totalSwept).toBe(2);
-    await expect(s.get(logKey(11))).resolves.toBeNull();
-    await expect(s.get(logKey(12))).resolves.toBeNull();
-    // The live tail is untouched.
-    for (let seq = 100; seq < 105; seq++) {
-      await expect(s.get(logKey(seq))).resolves.not.toBeNull();
-    }
-  });
-
-  test("persists log_scan_cursor across passes and WRAPS to undefined at the end", async () => {
-    const s = new MemoryStorage();
-    await seedInterleavedLog(s);
-    // Pass 1: 5 examined == maxMarks ⇒ cursor carried at the 5th key.
-    await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 5,
-    } as InternalRunGcOptions);
-    const after1 = await readGcPending(s, PENDING_KEY);
-    expect(after1?.json.log_scan_cursor).toBe(logKey(104));
-
-    // Pass 2: resumes startAfter log/104.json, examines [11, 12] = 2
-    // keys < maxMarks ⇒ reached the end ⇒ WRAP (cursor cleared).
-    await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 5,
-    } as InternalRunGcOptions);
-    const after2 = await readGcPending(s, PENDING_KEY);
-    expect(after2?.json.log_scan_cursor).toBeUndefined();
-  });
-
-  test("unbounded runGc from a CURSORLESS ledger marks ALL stale logs in one pass and wraps", async () => {
-    const s = new MemoryStorage();
-    await seedInterleavedLog(s);
-    // No maxMarksPerRun ⇒ DEFAULT_MAX_MARKS. The LIST yields all seven
-    // keys (< maxKeys) in one pass, so the reconcile path is unchanged.
-    // "Cursorless" is load-bearing in the name — see the next test.
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-      graceMillis: 0,
-    } as InternalRunGcOptions);
-    expect(r.marked.stale_log).toBe(2);
-    expect(r.swept).toBe(2);
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.log_scan_cursor).toBeUndefined();
-  });
-
-  test("an unbounded pass RESUMES from a cursor a bounded pass left, then wraps", async () => {
-    // BOUNDED and CURSORED are independent axes: `listWindow` applies
-    // `startAfter` whenever the ledger carries a cursor, whatever
-    // `maxKeys` is. So "unbounded" does NOT mean "scans the whole
-    // keyspace" — it means "cannot be cut short by the budget". An
-    // unbounded pass that inherits a bounded pass's cursor covers only
-    // cursor→end.
-    //
-    // This is liveness-only and self-healing (the pass wraps, so the
-    // next one starts from the beginning), which is why it is specified
-    // rather than fixed: suppressing the cursor on the unbounded path
-    // would cost a branch in a tight closure to defend a claim we can
-    // simply state accurately. Pinned so the behavior is a decision,
-    // not an accident. Surfaced by Fresh Eyes on PR #82.
-    const s = new MemoryStorage();
-    await seedInterleavedLog(s);
-    // Park the cursor at the very END of the keyspace: 7 keys examined
-    // == maxMarks ⇒ no wrap, cursor at the lex-last key (log/12.json).
-    await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 7,
-    } as InternalRunGcOptions);
-    const parked = await readGcPending(s, PENDING_KEY);
-    expect(parked?.json.log_scan_cursor).toBe(logKey(12));
-
-    // Add a stale key that sorts FIRST ("0" < "1"), i.e. strictly
-    // BEHIND the parked cursor. This is what makes the assertion
-    // decisive: a from-the-beginning scan would mark it, a resuming
-    // scan cannot see it. Counting marks alone would not distinguish
-    // the two, because both reach the same set from log/104 onward.
-    await seedLogEntry(s, "app/t/tenant/x/manifests/c", 0);
-
-    const resumed = await runGc({ storage: s, currentJsonKey: KEY }, {
-      graceMillis: 0,
-    } as InternalRunGcOptions);
-    // Unbounded, yet it marks NOTHING new — it resumed past log/0.json.
-    expect(resumed.marked.stale_log).toBe(0);
-    await expect(s.get(logKey(0))).resolves.not.toBeNull();
-    // ...and it wrapped, which is the self-healing half.
-    const wrapped = await readGcPending(s, PENDING_KEY);
-    expect(wrapped?.json.log_scan_cursor).toBeUndefined();
-
-    // Next pass is cursorless, so the whole keyspace is in scope again
-    // and the straggler is reclaimed. One extra pass, nothing stranded.
-    const healed = await runGc({ storage: s, currentJsonKey: KEY }, {
-      graceMillis: 0,
-    } as InternalRunGcOptions);
-    expect(healed.marked.stale_log).toBe(1);
-    await expect(s.get(logKey(0))).resolves.toBeNull();
-  });
-
-  test("the cursor advances past a window of already-pending (known) keys", async () => {
-    const s = new MemoryStorage();
-    // A FULL window of stale keys, so one window can be entirely
-    // already-marked. Floor 100, stale 11..15, live 100..104 — lex order
-    // is 100,101,102,103,104,11,12,13,14,15, so the two groups are
-    // exactly one maxMarks=5 window each.
-    await createCurrentJson(
-      s,
-      KEY,
-      logStateCurrentJson({
-        log_seq_start: 100,
-        tail_hint: 105,
-        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
-      }),
-    );
-    for (const seq of [100, 101, 102, 103, 104, 11, 12, 13, 14, 15]) {
-      await seedLogEntry(s, "app/t/tenant/x/manifests/c", seq);
-    }
-    const pass = async (): Promise<void> => {
-      // DEFAULT grace — marks accumulate in the ledger and are NOT
-      // swept, which is the production shape for a full 7 days.
-      await runGc({ storage: s, currentJsonKey: KEY }, {
-        maxMarksPerRun: 5,
-      } as InternalRunGcOptions);
-    };
-    await pass(); // 1: all-live window        ⇒ cursor log/104
-    await pass(); // 2: marks 11..15           ⇒ cursor log/15
-    await pass(); // 3: nothing left           ⇒ wrap
-    await pass(); // 4: all-live window again  ⇒ cursor log/104
-    const before = await readGcPending(s, PENDING_KEY);
-    expect(before?.json.log_scan_cursor).toBe(logKey(104));
-
-    // Pass 5 is the one that matters: the window is 11..15, every key
-    // already in `known` and awaiting grace. Zero marks — but the
-    // cursor MUST still step past them. Advancing only on marked (or
-    // only on not-`known`) keys would leave the cursor here forever, so
-    // a ledger full of pending candidates re-creates the exact stall
-    // the rotation removes — and under the 7-day default that state
-    // lasts a week, making it the DOMINANT case, not an edge one.
-    const r5 = await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 5,
-    } as InternalRunGcOptions);
-    expect(r5.marked.stale_log).toBe(0);
-    expect(r5.swept).toBe(0);
-    const after = await readGcPending(s, PENDING_KEY);
-    expect(after?.json.log_scan_cursor).toBe(logKey(15));
-    expect(after?.json.candidates).toHaveLength(5);
-  });
-
-  test("a collection with no floor (log_seq_start = 0) CLEARS an existing log cursor", async () => {
-    const s = new MemoryStorage();
-    await bootstrap(s, KEY);
-    await seedLogEntry(s, "app/t/tenant/x/manifests/c", 0);
-    // Seed a cursor first, so this pins the DECISION rather than the
-    // absence of one: starting from a ledger with no cursor would make
-    // `toBeUndefined()` trivially true and the opposite decision
-    // (echo the stored cursor back) would pass too.
-    await createGcPending(s, PENDING_KEY, {
-      schema_version: GC_PENDING_SCHEMA_VERSION,
-      candidates: [],
-      last_swept_at: "",
-      log_scan_cursor: "app/t/tenant/x/manifests/c/log/9.json",
-    });
-    // The stale-log phase is skipped entirely when there is no floor.
-    // We treat that as a WRAP: the candidate set is empty, so "examined
-    // all of it" is trivially true and the correct next position is the
-    // beginning. The alternative — echo the stored cursor back, which
-    // the greater-of merge would turn into a no-op — is expressible,
-    // but it re-skips the head of the keyspace for a rotation after a
-    // concurrent wrap. Both are liveness-only; this pins which we chose.
-    const r = await runGc({ storage: s, currentJsonKey: KEY }, {
-      maxMarksPerRun: 1,
-    } as InternalRunGcOptions);
-    expect(r.marked.stale_log).toBe(0);
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.log_scan_cursor).toBeUndefined();
-  });
 });
 
 // ---------------------------------------------------------------------
@@ -1281,7 +743,7 @@ describe("runGc — sweep-time revalidation", () => {
 
     await runGc({ storage, currentJsonKey: KEY }, { graceMillis: 0 } as InternalRunGcOptions);
 
-    expect(trace.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/L9/`]);
+    expect(trace.lists).toEqual([`${PREFIX}/snapshot/L9/`]);
     expect(trace.gets.filter((key) => key.includes("/content/"))).toEqual([]);
     expect(trace.deletes.filter((key) => key.includes("/content/"))).toEqual([]);
     await expect(inner.get(legacy)).resolves.not.toBeNull();
@@ -1494,29 +956,8 @@ describe("runGc — sweep-time revalidation", () => {
     // the equality above. Keys rather than counts: a changed op is then
     // legible in the diff instead of arriving as an off-by-one.
     expect(swept.gets).toEqual([KEY, PENDING_KEY, PENDING_KEY]);
-    expect(swept.lists).toEqual([`${PREFIX}/log/`, `${PREFIX}/snapshot/L9/`]);
+    expect(swept.lists).toEqual([`${PREFIX}/snapshot/L9/`]);
     expect(swept.puts.map((p) => p.key)).toEqual([PENDING_KEY]);
-  });
-
-  test("drops a due stale-log candidate that the floor has made live again", async () => {
-    // The second arm, independent of the first: same generation
-    // throughout, but the floor has moved DOWN beneath the candidate.
-    // Only `admin restore --force` writes that shape — its deliberate
-    // floor exemption reseeds `log_seq_start` from the surviving log
-    // objects. `log/5` was dead under a floor of 9; under a floor of 3 it
-    // is a live entry readers walk.
-    const s = new MemoryStorage();
-    const key = await seedDueStaleLog(s, {
-      floor: 3,
-      seq: 5,
-      candidateGeneration: LOG_STATE_GENERATION,
-    });
-
-    const r = await sweep(s);
-
-    await expect(s.get(key)).resolves.not.toBeNull();
-    expect(r.swept).toBe(0);
-    expect(r.dropped).toEqual({ stale_generation: 0, still_live: 1 });
   });
 
   test("a drop advances neither last_swept_at nor db.gc.swept_total", async () => {
@@ -1545,26 +986,31 @@ describe("runGc — sweep-time revalidation", () => {
     expect(dropped[0]?.labels).toMatchObject({ cause: "stale-generation" });
   });
 
-  test("stamps the marking manifest's generation onto every new candidate", async () => {
-    // The other half of the fence: a candidate with no generation is
-    // fenced against nothing on the next pass. Marks must carry it, or
-    // the sweep arm above degenerates into the upgrade path forever.
-    const s = new MemoryStorage();
-    await createCurrentJson(s, KEY, logStateCurrentJson({ log_seq_start: 4, tail_hint: 4 }));
-    for (let seq = 0; seq < 3; seq++) {
-      await s.put(`${PREFIX}/log/${String(seq)}.json`, new TextEncoder().encode("{}"));
+  test("does not mark stale log entries below the floor", async () => {
+    const storage = new MemoryStorage();
+    const prefix = "app/a/tenant/t/manifests/c";
+    await createCurrentJson(
+      storage,
+      `${prefix}/current.json`,
+      logStateCurrentJson({
+        log_seq_start: 100,
+        tail_hint: 100,
+        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
+      }),
+    );
+    for (const seq of [0, 1, 2, 50, 99]) {
+      await storage.put(logObjectKey(prefix, seq), encodeJsonBytes({ seq }), {
+        ifNoneMatch: "*",
+      });
     }
 
-    await runGc({ storage: s, currentJsonKey: KEY }, {
-      // A grace far in the future, so everything marked stays pending
-      // and this test reads marks rather than sweeps.
-      graceMillis: 60 * 60 * 1000,
+    const result = await runGc({ storage, currentJsonKey: `${prefix}/current.json` }, {
+      graceMillis: 0,
     } as InternalRunGcOptions);
 
-    const pending = await readGcPending(s, PENDING_KEY);
-    expect(pending?.json.candidates.length).toBeGreaterThan(0);
-    for (const candidate of pending!.json.candidates) {
-      expect(candidate.generation).toBe(LOG_STATE_GENERATION);
+    expect(result.marked).not.toHaveProperty("stale_log");
+    for (const seq of [0, 1, 2, 50, 99]) {
+      await expect(storage.get(logObjectKey(prefix, seq))).resolves.not.toBeNull();
     }
   });
 });

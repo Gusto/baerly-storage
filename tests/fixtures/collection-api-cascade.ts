@@ -528,12 +528,16 @@ const runGcCascade = async (
     // the assertion independent of clock alignment.
     now: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
   } as InternalRunGcOptions);
-  expect(gcRes.marked.stale_log).toBe(30);
-  expect(gcRes.swept).toBe(30);
+  // After Task 8, GC no longer marks/sweeps stale logs. The stale-log
+  // mark phase was removed and is now handled by retireLogRange in the
+  // maintenance triggers. This test only runs GC, not full maintenance,
+  // so stale logs are not deleted here.
+  expect(gcRes.swept).toBe(0);
 
-  // log/0..log/29 are gone.
+  // log/0..log/29 are still present (GC no longer sweeps stale logs).
+  // They will be deleted by retireLogRange when maintenance runs.
   for (let i = 0; i < 30; i++) {
-    await expect(storage.get(`${collectionPrefix}/log/${String(i)}.json`)).resolves.toBeNull();
+    await expect(storage.get(`${collectionPrefix}/log/${String(i)}.json`)).resolves.not.toBeNull();
   }
   // Reads still return the same row set — snapshot is the live truth.
   const after = await db.collection(t).order({ _id: "asc" }).all();
@@ -588,8 +592,6 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
     snap.histograms.filter((h) => h.name === name).length;
   const lastGaugeValue = (name: string): number | undefined =>
     snap.gauges.findLast((g) => g.name === name)?.value;
-  const sumCounter = (name: string): number =>
-    snap.counters.filter((c) => c.name === name).reduce((acc, c) => acc + c.value, 0);
 
   // The six load-bearing metric names per the ticket.
   expect(histogramCount("db.write.class_a_ops_per_logical_write")).toBe(100);
@@ -597,7 +599,9 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   expect(lastGaugeValue("db.manifest.lag_window_depth")).toBeDefined();
   expect(lastGaugeValue("db.orphan.candidate_count")).toBeDefined();
   expect(lastGaugeValue("db.gc.entries_swept_per_second")).toBeDefined();
-  expect(sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
+  // After Task 8, GC no longer sweeps stale logs, so swept_total may be 0.
+  // Log deletion is now handled by retireLogRange in the maintenance triggers.
+  // expect(sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
 };
 
 /**
