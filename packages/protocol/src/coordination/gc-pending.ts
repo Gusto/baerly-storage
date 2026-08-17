@@ -64,12 +64,21 @@ export interface GcCandidate {
   /** ISO-8601 server-clock time after which sweep may authorise a DELETE. */
   due_at: string;
   /**
-   * Why the key is a candidate. `"orphan-content"` is **decode-only**: a
-   * v0.6.0 node can still emit one during a mixed rollout, and the sweep
-   * gate evicts any it finds without deleting the object. It stays in the
-   * union — and in `VALID_REASONS` — because dropping it would make a v0.6
+   * Why the key is a candidate. `"orphan-snapshot"` is the only reason the
+   * mark phase still emits; the other two survive in the union — and in
+   * `VALID_REASONS` — because dropping either would make a v0.6
    * `gc/pending.json` fail to decode, stalling that collection's GC
-   * entirely.
+   * entirely. They are not equivalent at sweep time:
+   *
+   * - `"orphan-content"` is **decode-only**: a v0.6.0 node can still emit
+   *   one during a mixed rollout, and the sweep gate evicts any it finds
+   *   *without* deleting the object.
+   * - `"stale-log"` is **decode-and-sweep**: no current build marks one —
+   *   sub-floor log objects are reclaimed by computed-range retirement
+   *   (`packages/server/src/log-retention.ts`) — but a legacy entry that
+   *   clears the canonicality, generation, and liveness arms is still
+   *   DELETEd. That path advances no `log_delete_floor`, so it certifies
+   *   nothing; it is one-shot, since nothing re-marks the category.
    */
   reason: "stale-log" | "orphan-snapshot" | "orphan-content";
   /**
@@ -80,7 +89,7 @@ export interface GcCandidate {
    * from executing against a different one up to
    * `GC_GRACE_PERIOD_MILLIS` later.
    *
-   * Optional and additive on the same terms as the rotation cursor, so
+   * Optional and additive — an older reader ignores it — so
    * {@link GC_PENDING_SCHEMA_VERSION} is unchanged and a ledger written
    * by an older build stays valid. Absent decodes to `NO_GENERATION` on
    * both sides of the comparison, so a bucket whose manifest carries no
@@ -312,10 +321,18 @@ export const mergeGcPending = (
 // Internals
 // ---------------------------------------------------------------------
 
-/** Accepted `reason` values. `"orphan-content"` is decode-only — see {@link GcCandidate.reason}. */
+/**
+ * Accepted `reason` values. Only `"orphan-snapshot"` is still emitted; the
+ * other two are legacy-ledger inputs with different sweep fates — see
+ * {@link GcCandidate.reason}.
+ */
 const VALID_REASONS = new Set<GcCandidate["reason"]>([
-  "stale-log", // Decode-only for v0.6.0 backward compatibility
+  // No longer emitted — sub-floor log objects are reclaimed by
+  // computed-range retirement. Still accepted so a legacy ledger decodes,
+  // and a legacy entry is still SWEPT (with a DELETE), not evicted.
+  "stale-log",
   "orphan-snapshot",
+  // Legacy-only AND decode-only: evicted without a DELETE.
   "orphan-content",
 ]);
 
@@ -374,9 +391,9 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
         `gc/pending.json at ${key}: candidates[${String(i)}].reason must be one of stale-log|orphan-snapshot|orphan-content`,
       );
     }
-    // Optional, like the rotation cursors: absent is valid and means
-    // "marked under a manifest with no generation". Present-but-not-a-
-    // string is a producer bug, and this guard runs inside
+    // Optional: absent is valid and means "marked under a manifest with
+    // no generation". Present-but-not-a-string is a producer bug, and
+    // this guard runs inside
     // `readGcPending` — GC's step-2 read — so rejecting here stalls the
     // collection's GC rather than letting a malformed candidate reach
     // the sweep gate, where a non-string would compare unequal to every
