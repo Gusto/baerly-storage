@@ -1,12 +1,12 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
-import { type DocumentData, type DocumentValue, snapshotHash } from "@baerly/protocol";
+import { type DocumentData, type DocumentValue } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import {
   foldChunkedSnapshotReference,
   type ReferenceMutation,
   type ReferenceRow,
 } from "./chunked-snapshot-reference.ts";
-import { decodeSnapshotChunk, encodeSnapshotChunk, snapshotChunkKey } from "./snapshot-chunk.ts";
+import { decodeSnapshotChunk } from "./snapshot-chunk.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
 import {
   buildSnapshotChunks,
@@ -16,6 +16,7 @@ import {
   type SnapshotChunkBoundaryPolicy,
 } from "./snapshot-chunk-builder.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
 
 const collection = "tickets";
 const collectionPrefix = "app/demo/tenant/acme/manifests/tickets";
@@ -23,33 +24,11 @@ const incarnation = "00112233445566778899aabbccddeeff";
 
 const doc = (id: string, value: DocumentValue = 1): DocumentData => ({ _id: id, value });
 
-const createChunkBytes = (
-  docs: readonly DocumentData[],
-  chunkIncarnation = incarnation,
-): Uint8Array =>
-  encodeSnapshotChunk({
-    schema_version: 2,
-    collection,
-    incarnation: chunkIncarnation,
-    first_id: docs[0]!["_id"] as string,
-    last_id: docs.at(-1)!["_id"] as string,
-    docs,
-  });
-
-const createDescriptor = async (
-  docs: readonly DocumentData[],
-  chunkIncarnation = incarnation,
-): Promise<SnapshotChunkDescriptor> => {
-  const bytes = createChunkBytes(docs, chunkIncarnation);
-  const digest = await snapshotHash(bytes);
-  return {
-    first_id: docs[0]!["_id"] as string,
-    last_id: docs.at(-1)!["_id"] as string,
-    key: snapshotChunkKey(collectionPrefix, chunkIncarnation, digest),
-    byte_length: bytes.byteLength,
-    row_count: docs.length,
-  };
-};
+const { createDescriptor } = makeSnapshotChunkFixtures({
+  collection,
+  collectionPrefix,
+  incarnation,
+});
 
 describe("snapshot chunk builder", () => {
   test("creates a new chunk for an empty collection and accounts 0 split increments", async () => {
