@@ -69,6 +69,7 @@ variants for environments where the env var isn't propagated.
 | `pnpm test:http-conformance` | runs the HTTP cascade on `memory` + `local-fs` (default project) | ~3s | ✅ |
 | `pnpm test:parity` | cross-adapter parity — one shared `Storage` conformance + cascade contract across memory / local-fs (+ minio under `MINIO=1`); the canonical `green locally ⇒ green in cloud` gate. See [docs/contributing/conventions/tests.md](docs/contributing/conventions/tests.md#cross-adapter-parity-gate). | ~3s (base) | ✅ — no-infra rows; minio gated; R2 via `test:adapter-cloudflare` |
 | `pnpm build` | rolldown bundle to `dist/` | ~seconds | ✅ |
+| `pnpm build:agent` | same build as `pnpm build`, with rolldown's per-asset/chunk size table (no CLI suppress flag exists) captured and replayed only on failure — mirrors `verify:agent`/`test:agent`. Prefer this over `pnpm build` before `pnpm test:agent` | ~seconds | ✅ — same gate as `build`, just quieter |
 | `pnpm test:randomize` | property-based fuzzer (`FC_NUM_RUNS=10000`) over the default project, excluding the dedicated crash fuzzer and the expensive non-property `maintenance-profile-equivalence` / `maintenance-e2e` suites. The randomized cascade itself is fault-injection-driven, so `FC_NUM_RUNS` is a no-op for `randomized.test.ts`; its enabled default-project variants run once while property tests scale up | run for minutes | use when changing protocol code |
 | `pnpm test:fuzz-maintenance` | crash-injection fuzzer for the maintenance loop (`maintenance-crash-fuzz.test.ts`) — aborts the K-th storage op inside `Writer` / `compact()` / `runGc()` and asserts the reader still sees a consistent row set | minutes-hours at `FC_NUM_RUNS=10000` | use after touching `compactor.ts` / `gc.ts` / `writer.ts` |
 | `pnpm worktree:bootstrap` | `pnpm install --frozen-lockfile` (the `install`-triggered `prepare` hook builds `dist/`; no separate build step). Run this once after `git worktree add` to prime `dist/` so `baerly`, `pnpm bundle-sizes`, and any dist-consuming test work. `verify:agent` itself doesn't need it; everything else does | ~10-30s | n/a |
@@ -262,13 +263,13 @@ field loads unconditionally at launch instead — silently.
   stale and producing spurious failures in bundle-size / dist-consuming tests.
   **`pnpm test:agent` has the same gap** — npm/pnpm only auto-runs a
   `pre<script>` hook for a script's exact name, so `pretest` fires for
-  `pnpm test` but not for `pnpm test:agent`. Run `pnpm build` first (or run
-  `pnpm test` once to prime `dist/`) before `pnpm test:agent`. `pnpm
+  `pnpm test` but not for `pnpm test:agent`. Run `pnpm build:agent` first (or
+  run `pnpm test` once to prime `dist/`) before `pnpm test:agent`. `pnpm
   bundle-sizes` is the one command here that genuinely self-builds — its
   script calls the build itself rather than relying on a lifecycle hook.
-  Same idea for the other tools: prefer `pnpm verify:agent` / `pnpm build`
-  over `pnpm exec tsgo` / `pnpm exec rolldown` so the canonical flags
-  (`--pretty false`, `--format=unix --quiet`, etc.) come along.
+  Same idea for the other tools: prefer `pnpm verify:agent` / `pnpm
+  build:agent` over `pnpm exec tsgo` / `pnpm exec rolldown` so the canonical
+  flags (`--pretty false`, `--format=unix --quiet`, etc.) come along.
 - ❌ Proposing maintenance/cleanup/coordination mechanisms that require
   _operator-installed_ scheduling (`wrangler.jsonc` `triggers.crons`,
   `node-cron`, k8s `CronJob`, systemd timer, DO Alarms). The kernel must
