@@ -1,52 +1,21 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary key. */
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
+import { type DocumentData, logSeqStartOf, MemoryStorage, readCurrentJson } from "@baerly/protocol";
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type DocumentData,
-  logSeqStartOf,
-  MemoryStorage,
-  readCurrentJson,
-} from "@baerly/protocol";
+  applyOps,
+  COLLECTION,
+  CURRENT_JSON_KEY,
+  type Doc,
+  LOG_PREFIX,
+  opArb,
+  PROP_TIMEOUT_MS,
+  seedCurrentJson,
+} from "./_internal/randomized-model.ts";
 import { compact } from "./compactor.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
-
-const PROP_TIMEOUT_MS = 600_000;
-const CURRENT_JSON_KEY = "app/x/tenant/t/manifests/tickets/current.json";
-const LOG_PREFIX = "app/x/tenant/t/manifests/tickets";
-const COLLECTION = "tickets";
-
-type Doc = DocumentData & { _id: string; v: number };
-
-const opArb = fc.oneof(
-  fc.record({
-    kind: fc.constant("I" as const),
-    id: fc.constantFrom("a", "b", "c", "d"),
-    v: fc.integer({ min: 0, max: 99 }),
-  }),
-  fc.record({
-    kind: fc.constant("U" as const),
-    id: fc.constantFrom("a", "b", "c", "d"),
-    v: fc.integer({ min: 0, max: 99 }),
-  }),
-  fc.record({ kind: fc.constant("D" as const), id: fc.constantFrom("a", "b", "c", "d") }),
-);
-
-const seedCurrentJson = async (storage: MemoryStorage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
-};
 
 // Reconstruct the reader's materialized view from current.json: snapshot
 // base + folded log tail. This is what a real reader does in `runRead`.
@@ -82,29 +51,7 @@ describe("compact — materialized view is unchanged by compaction", () => {
       const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY, options: {} });
 
       const model = new Map<string, Doc>();
-      for (const op of ops) {
-        if (op.kind === "I") {
-          if (model.has(op.id)) {
-            continue;
-          }
-          const doc: Doc = { _id: op.id, v: op.v };
-          await writer.commit({ op: "I", collection: COLLECTION, docId: op.id, body: doc });
-          model.set(op.id, doc);
-        } else if (op.kind === "U") {
-          if (!model.has(op.id)) {
-            continue;
-          }
-          const doc: Doc = { _id: op.id, v: op.v };
-          await writer.commit({ op: "U", collection: COLLECTION, docId: op.id, body: doc });
-          model.set(op.id, doc);
-        } else {
-          if (!model.has(op.id)) {
-            continue;
-          }
-          await writer.commit({ op: "D", collection: COLLECTION, docId: op.id });
-          model.delete(op.id);
-        }
-      }
+      await applyOps(writer, model, ops);
 
       // View BEFORE compaction must already equal the model (sanity anchor).
       expect(asObj(await reconstructView(storage))).toEqual(asObj(model));
