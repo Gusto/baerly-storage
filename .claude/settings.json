@@ -1,6 +1,5 @@
 {
   "env": {
-    "NO_COLOR": "1",
     "LEFTHOOK_CONFIG": "lefthook.agent.yml"
   },
   "permissions": {
