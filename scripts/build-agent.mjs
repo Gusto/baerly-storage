@@ -5,18 +5,6 @@
 // replayed on failure. Bare `pnpm build` is left untouched: a human running
 // it directly may want to see the size table, unlike here where the point is
 // just to populate dist/ before pnpm test:agent.
-import { spawnSync } from "node:child_process";
+import { spawnQuiet } from "./lib/quiet-spawn.mjs";
 
-const result = spawnSync("pnpm", ["run", "build"], {
-  stdio: ["inherit", "pipe", "pipe"],
-  encoding: "utf8",
-});
-if (result.status !== 0) {
-  if (result.stdout) {
-    process.stdout.write(result.stdout);
-  }
-  if (result.stderr) {
-    process.stderr.write(result.stderr);
-  }
-  process.exit(result.status ?? 1);
-}
+spawnQuiet("pnpm", ["run", "build"]);

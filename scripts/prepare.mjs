@@ -9,6 +9,7 @@
 // Detection: `git rev-parse --git-dir` differs from `--git-common-dir`
 // when called inside a secondary worktree.
 import { execSync, spawnSync } from "node:child_process";
+import { spawnQuiet } from "./lib/quiet-spawn.mjs";
 
 function isSecondaryWorktree() {
   try {
@@ -25,24 +26,15 @@ function run(cmd, args, { quiet = false } = {}) {
   // `quiet` captures stdout/stderr instead of inheriting it: the rolldown
   // build prints a ~125-line per-asset/chunk size table that has no clean
   // CLI suppress flag and is pure noise on a green `pnpm install` (it runs
-  // via this hook on every CI install). On failure the captured output is
-  // replayed so nothing is lost. Same capture-and-replay-on-failure shape as
-  // scripts/check-exports.mjs, but that one inherits stderr (its noise is on
-  // stdout); here we also capture stderr to fully silence a green build, which
-  // means build warnings that don't fail the build are dropped on success.
-  const result = spawnSync(cmd, args, {
-    stdio: quiet ? ["inherit", "pipe", "pipe"] : "inherit",
-    ...(quiet ? { encoding: "utf8" } : {}),
-  });
+  // via this hook on every CI install). Delegated to the shared helper so the
+  // replay logic (and its maxBuffer override) lives in one place — see
+  // scripts/lib/quiet-spawn.mjs.
+  if (quiet) {
+    spawnQuiet(cmd, args);
+    return;
+  }
+  const result = spawnSync(cmd, args, { stdio: "inherit" });
   if (result.status !== 0) {
-    if (quiet) {
-      if (result.stdout) {
-        process.stdout.write(result.stdout);
-      }
-      if (result.stderr) {
-        process.stderr.write(result.stderr);
-      }
-    }
     process.exit(result.status ?? 1);
   }
 }
