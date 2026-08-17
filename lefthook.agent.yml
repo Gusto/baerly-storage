@@ -1,0 +1,11 @@
+# Agent-only pre-commit config. Selected via LEFTHOOK_CONFIG, set in
+# .claude/settings.json's env block — so this only takes effect inside
+# Claude Code sessions. Humans and CI keep lefthook.yml's full banner and
+# summary output unchanged. `extends` inherits every command from there;
+# `output: [failure]` is the only override — silent on a clean pass, full
+# command name + stdout on failure (lefthook always prints failure detail
+# regardless of the `output` list).
+extends:
+  - lefthook.yml
+output:
+  - failure
