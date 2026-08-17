@@ -381,8 +381,21 @@ async function runCli(): Promise<void> {
   }
 
   if (!process.env["BAERLY_SKIP_BUILD"]) {
-    const built = spawnSync("pnpm", ["run", "build"], { stdio: "inherit" });
+    // Capture instead of inherit: the rolldown build prints a ~150-line
+    // per-asset/chunk size table that has no clean CLI suppress flag and is
+    // pure noise ahead of the size report this command actually exists to
+    // print. Same capture-and-replay-on-failure shape as scripts/prepare.mjs.
+    const built = spawnSync("pnpm", ["run", "build"], {
+      stdio: ["inherit", "pipe", "pipe"],
+      encoding: "utf8",
+    });
     if (built.status !== 0) {
+      if (built.stdout) {
+        process.stdout.write(built.stdout);
+      }
+      if (built.stderr) {
+        process.stderr.write(built.stderr);
+      }
       process.exit(built.status ?? 1);
     }
   }

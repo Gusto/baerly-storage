@@ -170,6 +170,7 @@
     "test:export-smoke": "EXPORT_SMOKE=1 vitest run --project=default tests/integration/export-smoke.test.ts",
     "test:export-round-trip": "vitest run --project=default tests/integration/export-round-trip.test.ts",
     "build": "rolldown -c && pnpm -r --filter \"./packages/*\" build && node scripts/merge-third-party-licenses.mjs",
+    "build:agent": "node scripts/build-agent.mjs",
     "baerly": "node dist/baerly.js",
     "release": "node scripts/publish.mjs",
     "changeset": "changeset",
