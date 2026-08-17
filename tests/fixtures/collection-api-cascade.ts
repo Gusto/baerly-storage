@@ -476,14 +476,16 @@ const runCompactionCascade = async (
 
 /**
  * [gc] After 30 writes + a compaction that folds them all into a
- * snapshot, `runGc()` with `graceMillis: 0` MUST mark and sweep
- * every stale log entry in one pass. Asserts: post-sweep the log
- * keys are gone, and the reader still returns the same row set
- * (snapshot is the live source).
+ * snapshot, `runGc()` with `graceMillis: 0` MUST leave every log object
+ * in place: log reclamation is `retireLogRange`'s computed-range job,
+ * not GC's. Asserts: the 30 log keys survive the pass, `gc/pending.json`
+ * is created, and the reader still returns the same row set (snapshot is
+ * the live source).
  *
  * Runs across all four storage adapters via the variant table — this
- * is the cross-adapter regression that the GC mark + sweep + DELETE
- * + CAS-on-`gc/pending.json` work uniformly under every {@link Storage}.
+ * is the cross-adapter regression that GC's mark + CAS-on-
+ * `gc/pending.json` work uniformly under every {@link Storage}, and
+ * that none of them reclaims a log object behind retirement's back.
  */
 const runGcCascade = async (
   db: Db,
@@ -511,31 +513,31 @@ const runGcCascade = async (
   expect(compactRes.written).toBe(true);
   expect(compactRes.logSeqStartAfter).toBe(30);
 
-  // grace=0 ⇒ same pass marks AND sweeps the 30 stale log entries.
+  // A single fold leaves no orphan snapshot, and `orphan-snapshot` is the
+  // only category GC marks — so this pass has nothing to mark and nothing
+  // to sweep, whatever the grace. `graceMillis: 0` and the caps below stay
+  // to pin that the emptiness is structural, not a grace or budget artifact.
   const gcRes = await runGc({ storage, currentJsonKey }, {
     graceMillis: 0,
     maxSweepsPerRun: 50,
     maxMarksPerRun: 50,
-    // Pinned a day ahead, belt-and-braces. grace=0 now sets due_at to
-    // this same injected `now` on every backend, and the sweep test is
-    // `due_at <= now`, so the pass marks + sweeps all 30 regardless.
+    // Pinned a day ahead, belt-and-braces. grace=0 sets due_at to this
+    // same injected `now` on every backend, and the sweep test is
+    // `due_at <= now`, so nothing is held back by a clock difference.
     // The offset used to be load-bearing: `due_at` was anchored to the
     // storage `lastModified`, which on node-minio is the *server* clock
     // at *second* resolution and could sit a beat ahead of the local
-    // one, leaving 1-3 of the 30 just-written entries due in the local
-    // future and sweeping 27-29. `gc.ts` anchoring on the mark removed
-    // that skew coupling; keeping the offset costs nothing and holds
-    // the assertion independent of clock alignment.
+    // one, leaving just-written entries due in the local future. `gc.ts`
+    // anchoring on the mark removed that skew coupling; keeping the
+    // offset costs nothing and holds the assertion independent of clock
+    // alignment.
     now: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
   } as InternalRunGcOptions);
-  // After Task 8, GC no longer marks/sweeps stale logs. The stale-log
-  // mark phase was removed and is now handled by retireLogRange in the
-  // maintenance triggers. This test only runs GC, not full maintenance,
-  // so stale logs are not deleted here.
   expect(gcRes.swept).toBe(0);
 
-  // log/0..log/29 are still present (GC no longer sweeps stale logs).
-  // They will be deleted by retireLogRange when maintenance runs.
+  // log/0..log/29 survive: GC never reclaims log objects. They are
+  // retired by `retireLogRange` over a computed sequence range, which
+  // runs from the maintenance triggers this cascade does not drive.
   for (let i = 0; i < 30; i++) {
     await expect(storage.get(`${collectionPrefix}/log/${String(i)}.json`)).resolves.not.toBeNull();
   }
@@ -549,10 +551,10 @@ const runGcCascade = async (
 };
 
 /**
- * [metrics] Full lifecycle cycle (writes + compact + runGc) wired
- * through a per-request observability context — the six load-bearing
- * metric names MUST appear in the context's recorder. This runs
- * across every adapter via the variant table — the assertion is
+ * [metrics] Full lifecycle cycle (writes + two compactions + runGc)
+ * wired through a per-request observability context — the six
+ * load-bearing metric names MUST appear in the context's recorder. This
+ * runs across every adapter via the variant table — the assertion is
  * "the emission sites fire correctly on every {@link Storage}
  * backend."
  *
@@ -567,19 +569,35 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   const ctx = createObservabilityContext();
   await runWithContext(ctx, async () => {
     const writer = new Writer({ storage, currentJsonKey });
-    for (let i = 0; i < 100; i++) {
+    const commit = async (i: number): Promise<void> => {
       await writer.commit({
         op: "I",
         collection: t,
         docId: `m${i}`,
         body: { _id: `m${i}`, n: i },
       });
-    }
+    };
+    const fold = async (): Promise<void> => {
+      await compact({ storage, currentJsonKey }, {
+        minEntriesToCompact: 10,
+        maxEntriesPerRun: 100,
+      } as InternalCompactOptions);
+    };
 
-    await compact({ storage, currentJsonKey }, {
-      minEntriesToCompact: 10,
-      maxEntriesPerRun: 100,
-    } as InternalCompactOptions);
+    // Two folds, 100 commits total. The second fold republishes
+    // `current.snapshot`, so the first fold's snapshot becomes an
+    // `orphan-snapshot` — the only category `runGc` still marks, and
+    // therefore the only way this cascade can reach a `db.gc.swept_total`
+    // emission. One fold leaves nothing for GC to sweep.
+    for (let i = 0; i < 90; i++) {
+      await commit(i);
+    }
+    await fold();
+    for (let i = 90; i < 100; i++) {
+      await commit(i);
+    }
+    await fold();
+
     await runGc({ storage, currentJsonKey }, {
       graceMillis: 0,
       maxSweepsPerRun: 100,
@@ -592,6 +610,8 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
     snap.histograms.filter((h) => h.name === name).length;
   const lastGaugeValue = (name: string): number | undefined =>
     snap.gauges.findLast((g) => g.name === name)?.value;
+  const sumCounter = (name: string): number =>
+    snap.counters.filter((c) => c.name === name).reduce((acc, c) => acc + c.value, 0);
 
   // The six load-bearing metric names per the ticket.
   expect(histogramCount("db.write.class_a_ops_per_logical_write")).toBe(100);
@@ -599,9 +619,7 @@ const runMetricsCascade = async (storage: Storage, app: string, tenant: string):
   expect(lastGaugeValue("db.manifest.lag_window_depth")).toBeDefined();
   expect(lastGaugeValue("db.orphan.candidate_count")).toBeDefined();
   expect(lastGaugeValue("db.gc.entries_swept_per_second")).toBeDefined();
-  // After Task 8, GC no longer sweeps stale logs, so swept_total may be 0.
-  // Log deletion is now handled by retireLogRange in the maintenance triggers.
-  // expect(sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
+  expect(sumCounter("db.gc.swept_total")).toBeGreaterThan(0);
 };
 
 /**
@@ -969,7 +987,8 @@ export const runCollectionApiCascade = async (opts: {
   //    through it. Runs across every adapter via the variant table.
   await runCompactionCascade(db, opts.storage, APP, tenant);
 
-  // 6. GC — mark + sweep stale log entries with grace bypassed.
+  // 6. GC — a pass over a freshly-folded collection reclaims nothing and
+  //    leaves the log objects for computed-range retirement.
   //    Runs across every adapter via the variant table.
   await runGcCascade(db, opts.storage, APP, tenant);
 
