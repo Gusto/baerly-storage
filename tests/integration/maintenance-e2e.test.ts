@@ -35,6 +35,8 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   type Collection,
+  LOG_RETENTION_MAX_DELETES_PER_TICK,
+  LOG_RETENTION_SEQ_WINDOW,
   MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   readCurrentJson,
@@ -352,8 +354,17 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 
           // log_delete_floor should have been advanced by retireLogRange
           expect(deleteFloor).toBeGreaterThan(0);
-          // deleteFloor should be at most floor - window (100)
-          expect(deleteFloor).toBeLessThanOrEqual(Math.max(0, floor - 100));
+          // No logRetention was passed, so retirement ran with the defaults:
+          // window LOG_RETENTION_SEQ_WINDOW (1024) and at most
+          // LOG_RETENTION_MAX_DELETES_PER_TICK (20) deletes per tick. Starting
+          // from 0, the gate end is min(floor - window, maxDeletes) — here
+          // maxDeletes binds (5000 - 1024 >> 20), so the floor lands at 20.
+          expect(deleteFloor).toBeLessThanOrEqual(
+            Math.min(
+              Math.max(0, floor - LOG_RETENTION_SEQ_WINDOW),
+              LOG_RETENTION_MAX_DELETES_PER_TICK,
+            ),
+          );
 
           // Log entries below deleteFloor should be deleted
           const { logObjectKey } = await import("@baerly/protocol");

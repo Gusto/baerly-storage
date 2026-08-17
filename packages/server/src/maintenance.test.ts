@@ -10,12 +10,13 @@
  */
 
 import {
-  type BaerlyError,
+  BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   casUpdateCurrentJson,
   type CurrentJson,
   GC_STARVATION_GUARD,
+  logDeleteFloorOf,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
@@ -52,7 +53,7 @@ import { probeTailFrom } from "./log-tail.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
 import { Writer } from "./writer.ts";
-import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
+import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const COLL = "c";
@@ -731,7 +732,6 @@ describe("runBoundedMaintenance", () => {
       ): Promise<StoragePutResult> {
         if (!failedOnce && key === KEY && opts?.ifMatch !== undefined) {
           failedOnce = true;
-          const { BaerlyError } = await import("@baerly/protocol");
           throw new BaerlyError("Conflict", "simulated CAS loss");
         }
         return inner.put(key, body, opts);
@@ -883,6 +883,132 @@ describe("runBoundedMaintenance", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+});
+
+describe("retireLogs error policy (via the runners)", () => {
+  /**
+   * A fully-folded idle collection: `log_seq_start` at the tail (50), no
+   * snapshot, and log objects [0, 50) seeded directly (not via Writer).
+   * `compact()` finds `available = 0` (no fold, so no current.json CAS)
+   * and `runGc()` has no orphan snapshots or candidates, so with
+   * `{ logRetention: { window: 5 } }` the retirement gate is `{0, 20}` and
+   * retirement's floor CAS is the ONLY conditional current.json PUT the
+   * runners issue in this state. That lets the wrappers below target
+   * `retireLogs`'s two catch arms by key + precondition instead of by
+   * op counting.
+   */
+  const seedIdleFolded = async (storage: Storage): Promise<void> => {
+    await createCurrentJson(
+      storage,
+      KEY,
+      logStateCurrentJson({ log_seq_start: 50, tail_hint: 50 }),
+    );
+    await seedLogEntries(storage, COLLECTION_PREFIX, 0, 50);
+  };
+
+  /**
+   * Throws `Conflict` on any conditional (`ifMatch`) current.json PUT —
+   * retirement's floor CAS in this state. GC's `gc/pending.json`
+   * bootstrap PUTs with `ifNoneMatch` and passes through untouched.
+   */
+  const conflictOnCurrentJsonCas = (inner: Storage): Storage => ({
+    get: inner.get.bind(inner),
+    delete: inner.delete.bind(inner),
+    list: inner.list.bind(inner),
+    async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
+      if (key === KEY && opts?.ifMatch !== undefined) {
+        throw new BaerlyError("Conflict", "simulated retirement floor CAS loss");
+      }
+      return inner.put(key, body, opts);
+    },
+  });
+
+  /**
+   * Throws `NetworkError` on every DELETE of a log object
+   * (`…/log/<seq>.json`) — the retirement DELETE loop. Gated on the log
+   * prefix so a future GC delete can never misfire into this injection.
+   */
+  const networkErrorOnLogDelete = (inner: Storage): Storage => ({
+    get: inner.get.bind(inner),
+    put: inner.put.bind(inner),
+    list: inner.list.bind(inner),
+    async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
+      if (key.startsWith(`${COLLECTION_PREFIX}/log/`)) {
+        throw new BaerlyError("NetworkError", "simulated log DELETE failure");
+      }
+      return inner.delete(key, opts);
+    },
+  });
+
+  test("Conflict from the floor CAS is swallowed — runScheduledMaintenance resolves, floor unpublished", async () => {
+    const inner = new MemoryStorage();
+    await seedIdleFolded(inner);
+    // `Conflict` is routine CAS contention (the next pass retries), per
+    // the helper's documented error policy — must NOT reject.
+    await runScheduledMaintenance(
+      { storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY },
+      { logRetention: { window: 5 } } as InternalMaintenanceOptions,
+    );
+    // Non-vacuity: the swallowed Conflict came from retirement's own
+    // floor CAS, so the floor was never published. (A wrapper hit on an
+    // earlier compact/GC current.json CAS would have REJECTED the call —
+    // runScheduledMaintenance propagates those — so resolving here plus
+    // floor === 0 pins that retirement, and only retirement, ran.)
+    const after = await readCurrentJson(inner, KEY);
+    expect(logDeleteFloorOf(after!.json)).toBe(0);
+  });
+
+  test("a non-Conflict DELETE failure re-throws out of runScheduledMaintenance — after the floor CAS landed", async () => {
+    const inner = new MemoryStorage();
+    await seedIdleFolded(inner);
+    await expect(
+      runScheduledMaintenance({ storage: networkErrorOnLogDelete(inner), currentJsonKey: KEY }, {
+        logRetention: { window: 5 },
+      } as InternalMaintenanceOptions),
+    ).rejects.toMatchObject({ code: "NetworkError" });
+    // CAS-before-delete ordering: the floor was published (= 20, the
+    // `{0, 20}` gate end) before the DELETE loop rejected. The slice
+    // below it stays leaked on disk — leak, never corruption.
+    const after = await readCurrentJson(inner, KEY);
+    expect(logDeleteFloorOf(after!.json)).toBe(20);
+  });
+
+  test("the same failure through runBoundedMaintenance never rejects — unexpected_error_total + stack log", async () => {
+    const inner = new MemoryStorage();
+    await seedIdleFolded(inner);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const recorder = await withRecorder(async () => {
+        // prevSeq == tail ⇒ no GC cadence boundary, and the empty live
+        // tail keeps gate1 cold, so retirement is the only phase with
+        // work this tick.
+        await runBoundedMaintenance(
+          { storage: networkErrorOnLogDelete(inner), currentJsonKey: KEY, prevSeq: 50 },
+          { logRetention: { window: 5 } },
+        );
+      });
+      // Runner contract: never throws on the write-tick path — the
+      // outer catch counts it, logs the stack, and swallows.
+      expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBeGreaterThan(0);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("Conflict through runBoundedMaintenance stays expected — no unexpected_error_total bump", async () => {
+    const inner = new MemoryStorage();
+    await seedIdleFolded(inner);
+    const recorder = await withRecorder(async () => {
+      await runBoundedMaintenance(
+        { storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY, prevSeq: 50 },
+        { logRetention: { window: 5 } },
+      );
+    });
+    // The helper swallows Conflict itself — it must never reach the
+    // outer catch, which is reserved for unexpected errors.
+    expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBe(0);
   });
 });
 
