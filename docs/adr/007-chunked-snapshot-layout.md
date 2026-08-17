@@ -3,7 +3,7 @@ title: Incarnation-scoped chunked snapshot layout
 audience: adr
 doc_type: adr
 summary: ADR 007 — the next snapshot layout is one strict manifest over immutable, incarnation-scoped, content-authenticated chunks, activated through one pre-1.0 atomic format cut.
-last-reviewed: 2026-08-14
+last-reviewed: 2026-08-16
 tags: [decision, adr, snapshot, storage-layout, versioning]
 related:
   [
@@ -195,8 +195,17 @@ a no-op. Each directly touched chunk is rebuilt independently.
 A changed group splits greedily at the longest non-empty prefix within both
 target thresholds. One document over a target becomes a singleton when its
 exact chunk fits the hard maximum; otherwise publication fails explicitly as
-oversized. An output is underfull only when both bytes and rows are strictly
-below half the selected targets. The locked owner is a captured descriptor. If
+oversized. Oversized documents are rejected at caller ingress first: the
+writer refuses an insert or update whose exact canonical post-image exceeds
+the 1 MiB hard maximum with `InvalidConfig` before commit. The writer already
+serializes the post-image to construct the log entry, so the check adds no
+new work class. The fold-time oversized failure remains as the fail-closed
+backstop for a stored oversized post-image (reachable solely from a pre-cut
+or foreign writer) and uses `InvalidResponse`, since a fold-time failure has
+no caller to inform; without the ingress check, such an entry would wedge
+the fold at its sequence while every later read replays it. An output is
+underfull only when both bytes and rows are strictly below half the selected
+targets. The locked owner is a captured descriptor. If
 its selected neighbor is immediately right, only the rightmost non-empty output
 emitted while rebuilding that owner group is merge-eligible; if the selected
 neighbor is immediately left, which occurs only when no right neighbor exists,
@@ -296,6 +305,15 @@ descriptors is classified as complete. Point and range misses fetch no
 unrelated body, empty manifests fetch no chunks, and reads are pure: they never
 publish, repair, delete, or tick maintenance.
 
+These fan-out and descriptor ceilings derive from the Cloudflare Free
+50-subrequest-per-request budget, accounted as outer storage operations, not
+from the chunk format itself. A complete read spends one head GET, one
+manifest GET, and up to 32 chunk GETs, for 34 operations total, leaving 16
+for the index-marker GETs and remaining query-path calls an index-routed read
+also makes; a bounded-range read spends at most 10. Raising a ceiling
+therefore re-derives this budget and is a format amendment, never a profile
+tuning change.
+
 Schema-4 `current.json` adds required `artifact_gc_epoch`, a non-negative safe
 integer initialized to zero for a fresh layout-2 collection. It never
 decreases. Every transition other than an artifact-GC fence preserves it
@@ -346,13 +364,25 @@ manifest GET, fence CAS, authority persistence, DELETEs, and authority-progress
 write separately. The exact filename grammar and seven-day grace classify and
 pace candidates but never establish liveness or deletion authority.
 
+Those proofs establish safety, not liveness: sustained publication can keep
+the fence CAS losing against writer head churn. The tick arbitration policy
+is deliberately not fixed here: how one request-bounded maintenance tick is
+shared among folding, sequence retirement, and artifact collection, and why
+that sharing cannot starve the fence. That policy is owned by the
+increase-workload-ceiling program record, ranks as a protocol-constant
+decision alongside the chunk policy, and must be fixed together with its
+executable no-starvation evidence before production artifact-GC integration.
+
 ### Activation, upgrade, and public exports
 
 The atomic pre-1.0 minor cut proposes snapshot schema 2,
 `CURRENT_JSON_SCHEMA_VERSION = 4`, required `layout_version: 2`, and required
 `artifact_gc_epoch: 0` on fresh creation. It changes every producer, reader,
 CLI consumer, restore path, integrity tool, and artifact-GC path together and
-intentionally rejects absent/layout-1 state. The supported upgrade is an
+intentionally rejects absent/layout-1 state. The same cut applies scalar-only
+ID ingress and the canonical post-image size limit to the write path, so no
+new-format log entry can carry a post-image the fold cannot chunk. The
+supported upgrade is an
 old-release logical dump restored by the new release into an empty layout-2
 bucket. Restore validates the scalar-ID, non-null `DocumentValue`, and
 document-size domains; a dump containing stored JSON `null` document values
@@ -424,10 +454,18 @@ real layout-axis update, strict consumer integration, an authority-bearing
 pending-state schema, artifact-GC crash proofs, a pre-1.0 minor changeset, and
 an explicit upgrade note. Each non-empty artifact DELETE batch also spends one
 `current.json` fence CAS and authority persistence/progress operations; CAS
-contention delays collection instead of weakening safety. Collections outside
-the scalar-ID, non-null `DocumentValue`, object-size, descriptor, or
-bounded-work envelope must be remediated or treated as graduation cases rather
-than handled by a runtime knob.
+contention delays collection instead of weakening safety. The layout also
+carries fixed per-operation costs: a point read spends a head GET, a manifest
+GET, and one chunk GET where the monolithic layout spent two; every fold
+rewrites the complete manifest and head object however little changed; and a
+complete read pays per-chunk strict validation on top of hashing and parsing.
+A descriptor-ceiling refusal is a graduation condition that would otherwise
+present only as growing read-tail latency while the fold floor stalls, so
+activation must ship a descriptor-pressure maintenance signal alongside the
+existing fold-defer signals, making that graduation condition observable
+before it binds. Collections outside the scalar-ID, non-null `DocumentValue`,
+object-size, descriptor, or bounded-work envelope must be remediated or
+treated as graduation cases rather than handled by a runtime knob.
 
 ## Live Owner
 
