@@ -85,6 +85,22 @@ function assertStoredEntryDocId(id: string): void {
   }
 }
 
+/**
+ * Convert one stored log entry into the mutation both fold phases operate on.
+ * A missing post-image on an insert or update is a stored-data failure, so it
+ * raises InvalidResponse rather than InvalidConfig.
+ */
+function entryToMutation(entry: LogEntry): ReferenceMutation {
+  assertStoredEntryDocId(entry.doc_id);
+  if (entry.op === "D") {
+    return { op: "D", doc_id: entry.doc_id };
+  }
+  if (entry.after === undefined) {
+    invalid("InvalidResponse", "insert or update log entry missing after post-image");
+  }
+  return { op: entry.op, doc_id: entry.doc_id, after: entry.after };
+}
+
 function isRoutedDelete(docId: string, descriptors: readonly SnapshotChunkDescriptor[]): boolean {
   const low = firstDescriptorEndingAtOrAfter(descriptors, docId);
   if (low < descriptors.length) {
@@ -140,16 +156,7 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
       break;
     }
 
-    assertStoredEntryDocId(entry.doc_id);
-    let mutation: ReferenceMutation;
-    if (entry.op === "D") {
-      mutation = { op: "D", doc_id: entry.doc_id };
-    } else {
-      if (entry.after === undefined) {
-        invalid("InvalidResponse", "insert or update log entry missing after post-image");
-      }
-      mutation = { op: entry.op, doc_id: entry.doc_id, after: entry.after };
-    }
+    const mutation = entryToMutation(entry);
 
     const previousMutation = runningMutations.get(entry.doc_id);
     if (previousMutation !== undefined) {
@@ -316,19 +323,7 @@ export const planChunkedFold = async (
 
     const mutationMap = new Map<string, ReferenceMutation>();
     for (const entry of prefixEntries) {
-      assertStoredEntryDocId(entry.doc_id);
-      if (entry.op === "D") {
-        mutationMap.set(entry.doc_id, { op: "D", doc_id: entry.doc_id });
-      } else {
-        if (entry.after === undefined) {
-          invalid("InvalidResponse", "insert or update missing after post-image");
-        }
-        mutationMap.set(entry.doc_id, {
-          op: entry.op,
-          doc_id: entry.doc_id,
-          after: entry.after,
-        });
-      }
+      mutationMap.set(entry.doc_id, entryToMutation(entry));
     }
 
     const directIndexes = new Set<number>();
