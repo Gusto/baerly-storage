@@ -27,7 +27,7 @@ function run(cmd, args, { quiet = false } = {}) {
   // build prints a ~125-line per-asset/chunk size table that has no clean
   // CLI suppress flag and is pure noise on a green `pnpm install` (it runs
   // via this hook on every CI install). Delegated to the shared helper so the
-  // replay logic (and its maxBuffer override) lives in one place — see
+  // capture-and-replay logic lives in one place — see
   // scripts/lib/quiet-spawn.mjs.
   if (quiet) {
     spawnQuiet(cmd, args);
