@@ -1,12 +1,14 @@
-import { BaerlyError, decodeJsonBytes, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
+import { decodeJsonBytes, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { assertPathSegment } from "./path-segment.ts";
 import {
   assertCodecDocId,
   assertExactFields,
+  type CodecCode,
   DIGEST_PATTERN,
   equalBytes,
   INCARNATION_PATTERN,
+  makeCodecFail,
   MAX_CHUNK_BYTES,
   MAX_CHUNK_ROWS,
   normalizeCodecFailure,
@@ -35,12 +37,9 @@ export interface SnapshotManifest {
   readonly chunks: readonly SnapshotChunkDescriptor[];
 }
 
-function invalid(
-  code: "InvalidConfig" | "InvalidResponse",
-  message: string,
-  cause?: unknown,
-): never {
-  throw new BaerlyError(code, `snapshot manifest: ${message}`, cause);
+const failManifest = makeCodecFail("snapshot manifest");
+function invalid(code: CodecCode, message: string, cause?: unknown): never {
+  return failManifest(code, message, cause);
 }
 
 function positiveSafeInteger(
