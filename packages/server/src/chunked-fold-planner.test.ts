@@ -1,5 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import {
+  type BaerlyError,
   type DocumentData,
   type DocumentValue,
   type LogEntry,
@@ -94,6 +95,65 @@ describe("chunked fold planner", () => {
     expect(prefetch.candidate_log_seq_ends).toEqual([1, 2]);
   });
 
+  test("prefetch stops before exceeding max_touched_chunks", async () => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d1Docs = [doc("m", 10), doc("n", 20)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const d1Desc = await createDescriptor(d1Docs);
+
+    const entries: LogEntry[] = [
+      makeLogEntry(1, "U", "a", doc("a", 10)), // direct = {0}; locks (0, 1)
+      makeLogEntry(2, "U", "m", doc("m", 99)), // direct = {0, 1} -> size 2 > 1
+    ];
+
+    const prefetch = prefetchChunkedFold({
+      entries,
+      descriptors: [d0Desc, d1Desc],
+      budget: { ...defaultBudget, max_touched_chunks: 1 },
+    });
+
+    // The size check breaks before entry 2 is admitted.
+    expect(prefetch.candidate_log_seq_ends).toEqual([1]);
+    expect(prefetch.directly_touched_chunk_indexes).toEqual([0]);
+  });
+
+  test("regression: cumulative touched-chunk count stops the walk when the union across endpoints crosses the ceiling", async () => {
+    // D0: [a, b], D1: [m], D2: [p]. Entry 1 updates a D0 doc and locks
+    // (owner 0, neighbor 1). The insert/delete pair for "n" (gap between
+    // D1 and D2) adds D1's direct touch and then collapses it away (gap
+    // delete -> null target, D1 refcount drops to 0), so every endpoint's
+    // live direct set stays within 2 — but the union across accepted
+    // endpoints keeps D1, and the final "z" insert (gap right of D2,
+    // direct {0, 2}) would push the union to {0, 1, 2} > 2. Only the
+    // cumulative count check stops it: the locked pair (0, 1) is
+    // re-derived unchanged at every endpoint, so the pair lock never fires.
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d1Docs = [doc("m", 10)];
+    const d2Docs = [doc("p", 20)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const d1Desc = await createDescriptor(d1Docs);
+    const d2Desc = await createDescriptor(d2Docs);
+
+    const entries: LogEntry[] = [
+      makeLogEntry(1, "U", "a", doc("a", 10)), // direct {0}; locks (0, 1)
+      makeLogEntry(2, "I", "n", doc("n", 3)), // gap right of D1 -> direct {0, 1}
+      makeLogEntry(3, "D", "n"), // gap delete -> direct {0}; union keeps {0, 1}
+      makeLogEntry(4, "I", "z", doc("z", 4)), // direct {0, 2}; union {0, 1, 2} -> 3 > 2
+    ];
+
+    const prefetch = prefetchChunkedFold({
+      entries,
+      descriptors: [d0Desc, d1Desc, d2Desc],
+      budget: { ...defaultBudget, max_touched_chunks: 2 },
+    });
+
+    expect(prefetch.candidate_log_seq_ends).toEqual([1, 2, 3]);
+    expect(prefetch.directly_touched_chunk_indexes).toEqual([0, 1]);
+    // The pair stayed locked — the count check is what fired, not the pair lock.
+    expect(prefetch.leftmost_direct_owner_index).toBe(0);
+    expect(prefetch.selected_neighbor_index).toBe(1);
+  });
+
   test("prefetch accounts mutation bytes with subtraction for updated and deleted IDs", async () => {
     const d0Docs = [doc("a", 1), doc("b", 2)];
     const d0Desc = await createDescriptor(d0Docs);
@@ -168,6 +228,107 @@ describe("chunked fold planner", () => {
     expect(prefetch.selected_neighbor_index).toBe(1);
   });
 
+  test("regression: cumulative touched-byte bound stops the walk when the union across endpoints crosses the ceiling", async () => {
+    // Four byte-identical descriptors D0..D3. Entry 1 updates a D0 doc and
+    // locks (owner 0, neighbor 1). Each [I, D] pair inserts into the gap
+    // right of D_k (direct {0, k}) and deletes it again (collapses to a gap
+    // delete, direct {0}) — the locked pair never changes, so the pair lock
+    // cannot stop the walk. Every endpoint's per-endpoint direct ∪ neighbor
+    // set stays within 3 descriptors, but the union across accepted
+    // endpoints grows to {0, 1, 2, 3}; only the cumulative bound stops it.
+    const pad = "x".repeat(700);
+    const d0Docs = [doc("a", pad), doc("b", pad)];
+    const d1Docs = [doc("m", pad), doc("n", pad)];
+    const d2Docs = [doc("q", pad), doc("r", pad)];
+    const d3Docs = [doc("u", pad), doc("v", pad)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const d1Desc = await createDescriptor(d1Docs);
+    const d2Desc = await createDescriptor(d2Docs);
+    const d3Desc = await createDescriptor(d3Docs);
+    const perDescriptorBytes = d0Desc.byte_length;
+    expect(d1Desc.byte_length).toBe(perDescriptorBytes);
+    expect(d2Desc.byte_length).toBe(perDescriptorBytes);
+    expect(d3Desc.byte_length).toBe(perDescriptorBytes);
+
+    const descriptors = [d0Desc, d1Desc, d2Desc, d3Desc];
+    const budget: ChunkedFoldBudget = {
+      ...defaultBudget,
+      // Union {0, 1, 2} plus the locked neighbor {1} reaches exactly the
+      // ceiling; {0, 1, 2, 3} crosses it. Under per-endpoint accounting the
+      // 6th endpoint ({0, 3} plus neighbor {1} = 3 descriptors) would pass.
+      max_touched_bytes: 3 * perDescriptorBytes,
+    };
+
+    const entries: LogEntry[] = [
+      makeLogEntry(1, "U", "a", doc("a", 99)), // direct {0}; locks (0, 1)
+      makeLogEntry(2, "I", "p", doc("p", 5)), // gap right of D1 -> direct {0, 1}
+      makeLogEntry(3, "D", "p"), // gap delete -> direct {0}
+      makeLogEntry(4, "I", "s", doc("s", 5)), // gap right of D2 -> direct {0, 2}; union hits the ceiling
+      makeLogEntry(5, "D", "s"), // gap delete -> direct {0}
+      makeLogEntry(6, "I", "z", doc("z", 5)), // union would cross the ceiling -> stop
+      makeLogEntry(7, "D", "z"), // never reached
+    ];
+
+    const prefetch = prefetchChunkedFold({ entries, descriptors, budget });
+
+    expect(prefetch.candidate_log_seq_ends).toEqual([1, 2, 3, 4, 5]);
+    expect(prefetch.directly_touched_chunk_indexes).toEqual([0, 1, 2]);
+    expect(prefetch.chunk_indexes).toEqual([0, 1, 2]);
+    expect(prefetch.touched_bytes).toBe(3 * perDescriptorBytes);
+
+    const loadedChunks = new Map<string, readonly DocumentData[]>([
+      [d0Desc.key, d0Docs],
+      [d1Desc.key, d1Docs],
+      [d2Desc.key, d2Docs],
+      [d3Desc.key, d3Docs],
+    ]);
+    const plan = await planChunkedFold({
+      collection,
+      collectionPrefix,
+      entries,
+      descriptors,
+      loadedChunks,
+      budget,
+      incarnation,
+      policy: { target_chunk_bytes: 10_000, target_rows: 4 },
+    });
+    expect(plan!.log_seq_end).toBe(5);
+    expect(plan!.touched_chunk_indexes).toEqual([0]);
+  });
+
+  test("stored log entry with non-scalar doc_id fails with InvalidResponse", async () => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+
+    const entries: LogEntry[] = [
+      makeLogEntry(1, "U", "a", doc("a", 10)),
+      makeLogEntry(2, "I", "bad\ud800id", doc("bad\ud800id", 5)),
+    ];
+
+    // A stored doc_id that is not scalar-orderable is a stored-data failure
+    // (ADR-007: InvalidResponse), even though assertSnapshotDocId itself
+    // throws InvalidConfig for caller ingress.
+    try {
+      prefetchChunkedFold({ entries, descriptors: [d0Desc], budget: defaultBudget });
+      expect.unreachable("prefetchChunkedFold must throw on a non-scalar stored doc_id");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidResponse");
+    }
+
+    await expect(
+      planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries,
+        descriptors: [d0Desc],
+        loadedChunks: new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]),
+        budget: defaultBudget,
+        incarnation,
+        policy: CHUNK_BOUNDARY_POLICIES["c128-r512"],
+      }),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
   test("exact selection stops before exceeding split increments budget", async () => {
     const customPolicy: SnapshotChunkBoundaryPolicy = {
       target_chunk_bytes: 1024 * 1024,
@@ -198,6 +359,48 @@ describe("chunked fold planner", () => {
     expect(plan).not.toBeNull();
     expect(plan!.log_seq_end).toBe(2);
     expect(plan!.split_increments).toBe(1);
+  });
+
+  test("exact selection stops before exceeding the neighbor budget", async () => {
+    // Underfull is strict on both axes: with target_rows 4, a D0 group of 2
+    // rows is not underfull, 1 row is. Endpoint 1 (update a) leaves D0 at 2
+    // rows -> no merge; endpoint 2 (delete b) drops D0 to 1 row -> the
+    // facing merge consumes the locked neighbor D1.
+    const policy: SnapshotChunkBoundaryPolicy = { target_chunk_bytes: 10_000, target_rows: 4 };
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d1Docs = [doc("m", 10)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const d1Desc = await createDescriptor(d1Docs);
+
+    const loadedChunks = new Map<string, readonly DocumentData[]>([
+      [d0Desc.key, d0Docs],
+      [d1Desc.key, d1Docs],
+    ]);
+
+    const entries: LogEntry[] = [
+      makeLogEntry(1, "U", "a", doc("a", 100)), // D0 keeps 2 rows -> not underfull -> no merge
+      makeLogEntry(2, "D", "b"), // D0 -> 1 row -> underfull -> facing merge with D1
+    ];
+
+    const input = (budget: ChunkedFoldBudget) => ({
+      collection,
+      collectionPrefix,
+      entries,
+      descriptors: [d0Desc, d1Desc],
+      loadedChunks,
+      budget,
+      incarnation,
+      policy,
+    });
+
+    const admitted = await planChunkedFold(input(defaultBudget));
+    expect(admitted!.log_seq_end).toBe(2);
+    expect(admitted!.used_neighbor_chunk_index).toBe(1);
+    expect(admitted!.split_increments).toBe(0);
+
+    const stopped = await planChunkedFold(input({ ...defaultBudget, max_neighbor_chunks: 0 }));
+    expect(stopped!.log_seq_end).toBe(1);
+    expect(stopped!.used_neighbor_chunk_index).toBeNull();
   });
 
   test("empty entries plan is a no-op that echoes descriptors and honors baseLogSeq", async () => {

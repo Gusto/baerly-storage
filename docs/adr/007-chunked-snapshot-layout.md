@@ -3,7 +3,7 @@ title: Incarnation-scoped chunked snapshot layout
 audience: adr
 doc_type: adr
 summary: ADR 007 — the next snapshot layout is one strict manifest over immutable, incarnation-scoped, content-authenticated chunks, activated through one pre-1.0 atomic format cut.
-last-reviewed: 2026-08-16
+last-reviewed: 2026-08-17
 tags: [decision, adr, snapshot, storage-layout, versioning]
 related:
   [
@@ -232,7 +232,12 @@ Prefix planning is an implementable two-phase pure algorithm:
    that would push that union past the ceiling. Per-endpoint accounting alone
    does not bound the fetch set, because final-mutation collapse can move
    direct touches between descriptors while the locked owner and neighbor
-   stay fixed. Insert/update bytes
+   stay fixed. The directly-touched-descriptor ceiling is likewise cumulative
+   across every accepted endpoint: metadata stops before the first entry
+   whose accepted-prefix union of directly touched descriptors would exceed
+   `max_touched_chunks`. The one selected neighbor is not counted against it
+   (the byte ceiling covers it), so the prefetch set is bounded at
+   `max_touched_chunks` + 1. Insert/update bytes
    are the exact canonical bytes of each final post-image; a routed delete is
    the UTF-8 byte length of its ID; replacing an earlier mutation for the same
    ID first removes its contribution. Gap deletes contribute zero and cause no
