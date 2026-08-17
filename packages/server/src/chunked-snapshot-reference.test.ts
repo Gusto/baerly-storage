@@ -173,6 +173,26 @@ describe("chunked snapshot reference fold", () => {
       ),
     );
   });
+
+  test("normalizes pathological row and mutation nesting as BaerlyError", () => {
+    const depth = 100_000;
+    let nested: unknown = true;
+    for (let level = 0; level < depth; level++) {
+      nested = [nested];
+    }
+    expectInvalidResponse(() =>
+      foldChunkedSnapshotReference(
+        [{ _id: "a", body: { _id: "a", value: nested } as unknown as DocumentData }],
+        [],
+      ),
+    );
+    expectInvalidResponse(() =>
+      foldChunkedSnapshotReference(
+        [],
+        [{ op: "I", doc_id: "a", after: { _id: "a", value: nested } as unknown as DocumentData }],
+      ),
+    );
+  });
 });
 
 const idArb = fc.oneof(
