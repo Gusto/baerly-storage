@@ -846,7 +846,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set(["p/content/abc.json"]),
       newCandidates: [],
       lastSweptAt: "",
-      nextLogCursor: undefined,
       maxCandidates: 100,
     });
     expect(merged.candidates).toEqual([]);
@@ -875,7 +874,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [cand("mine.json")],
       lastSweptAt: "",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     const keys = merged.candidates.map((c) => c.key);
@@ -893,7 +891,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set(["a.json", "c.json"]),
       newCandidates: [],
       lastSweptAt: "2026-01-03T00:00:00.000Z",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.candidates.map((c) => c.key)).toEqual(["b.json"]);
@@ -911,7 +908,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [cand("dup.json"), cand("fresh.json")],
       lastSweptAt: "",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     const keys = merged.candidates.map((c) => c.key);
@@ -932,7 +928,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set(["fast.json"]),
       newCandidates: [cand("fast.json"), cand("slow.json")],
       lastSweptAt: "2026-01-03T00:00:00.000Z",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.candidates.map((c) => c.key)).toEqual(["slow.json"]);
@@ -948,7 +943,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [cand("c.json"), cand("d.json")],
       lastSweptAt: "",
-      nextLogCursor: undefined,
       maxCandidates: 3,
     });
     expect(merged.candidates).toHaveLength(3);
@@ -968,7 +962,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [],
       lastSweptAt: "2026-05-01T00:00:00.000Z",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.last_swept_at).toBe("2026-06-01T00:00:00.000Z");
@@ -984,7 +977,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [],
       lastSweptAt: "2026-05-01T00:00:00.000Z",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.last_swept_at).toBe("2026-05-01T00:00:00.000Z");
@@ -1000,7 +992,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [],
       lastSweptAt: "",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect("log_scan_cursor" in merged).toBe(false);
@@ -1011,7 +1002,6 @@ describe("gc-pending", () => {
       sweptKeys: new Set<string>(),
       newCandidates: [],
       lastSweptAt: "",
-      nextLogCursor: undefined,
       maxCandidates: 1000,
     });
     expect(merged.schema_version).toBe(GC_PENDING_SCHEMA_VERSION);
@@ -1053,7 +1043,6 @@ describe("gc-pending", () => {
         sweptKeys: new Set<string>(),
         newCandidates: [cand("mine.json")],
         lastSweptAt: "",
-        nextLogCursor: undefined,
         maxCandidates: 1000,
       }),
     );

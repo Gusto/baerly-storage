@@ -24,6 +24,11 @@
  *   6. (lost-fold contention) A fold whose CAS loses to a concurrent
  *      write leaves an orphan snapshot; after `runGc` drains past the
  *      grace window no orphan snapshot is left unreferenced.
+ *   7. (retirement) An abort anywhere inside `retireLogRange` — at the
+ *      advisory gate, at the floor CAS, or between the CAS and the
+ *      DELETE loop — leaves the reader's row set unchanged. Objects
+ *      leaked below an already-published floor are the documented
+ *      fail-safe, never corruption.
  *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
@@ -56,6 +61,7 @@ import { compact, runGc } from "@baerly/server/maintenance";
 import {
   type InternalCompactOptions,
   type InternalRunGcOptions,
+  retireLogRange,
   Writer,
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
@@ -354,6 +360,63 @@ describe("GC crash never deletes a still-referenced key", () => {
   );
 });
 
+describe("Retirement crash never deletes a live log", () => {
+  propTest.prop({
+    abortAfter: fc.integer({ min: 1, max: 66 }),
+    numInserts: fc.integer({ min: 20, max: 60 }),
+  })(
+    "retireLogRange() with mid-op abort: reader still returns all live rows",
+    async ({ abortAfter, numInserts }) => {
+      const inner = new MemoryStorage();
+      await provision(inner);
+      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      for (let i = 0; i < numInserts; i++) {
+        const id = `d-${i}`;
+        await writer.commit({
+          op: "I",
+          collection: COLLECTION,
+          docId: id,
+          body: { _id: id, n: i },
+        });
+      }
+      // Fold the whole tail so `log_seq_start = numInserts` and the
+      // entire `log/[0, numInserts)` prefix is retirable. `window: 0`
+      // erases the default safety margin so the pass has real work to
+      // do at this scale; `maxDeletes` covers the whole prefix so the
+      // armed abort can land anywhere from the advisory gate through
+      // the last DELETE.
+      await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+        minEntriesToCompact: 10,
+        maxEntriesPerRun: numInserts,
+      } as InternalCompactOptions);
+      const before = await readAllRowIds(inner);
+
+      const handle = abortingStorage(inner);
+      handle.armAt(abortAfter);
+      try {
+        await retireLogRange(handle.storage, CURRENT_JSON_KEY, {
+          window: 0,
+          maxDeletes: numInserts,
+        });
+      } catch {
+        // Expected — the injected abort (or the CAS `Conflict` it can
+        // surface as). Either way the reader contract is the gate.
+      }
+
+      // INVARIANT: the reader view is unchanged. Every slot retirement
+      // may delete sits below `log_seq_start` — already folded into the
+      // snapshot — so no abort point can cost a live row. A slot leaked
+      // below an already-published floor (abort between the floor CAS
+      // and the DELETE loop) is the documented fail-safe direction,
+      // pinned by the crash-leak unit test in `log-retention.test.ts`;
+      // this arm is its randomized generalization.
+      const after = await readAllRowIds(inner);
+      expect(after).toEqual(before);
+    },
+    PROP_TIMEOUT_MS,
+  );
+});
+
 describe("Write-tick fold crash preserves the reader view after GC", () => {
   propTest.prop({
     abortAfter: fc.integer({ min: 1, max: 60 }),
@@ -540,6 +603,10 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
                 kind: fc.constant("gc" as const),
                 abortAfter: fc.option(fc.integer({ min: 1, max: 20 }), { nil: undefined }),
               }),
+              fc.record({
+                kind: fc.constant("retire" as const),
+                abortAfter: fc.option(fc.integer({ min: 1, max: 20 }), { nil: undefined }),
+              }),
             ),
             { minLength: 50, maxLength: 200 },
           ),
@@ -593,6 +660,25 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
                         graceMillis: 0,
                         maxSweepsPerRun: 200,
                       } as InternalRunGcOptions);
+                    }
+                    break;
+                  }
+                  case "retire": {
+                    // Same seams as the dedicated retirement arm above:
+                    // `window: 0` so the pass has real sub-floor work at
+                    // this scale, abort-armed per the generated op.
+                    if (op.abortAfter === undefined) {
+                      await retireLogRange(inner, CURRENT_JSON_KEY, {
+                        window: 0,
+                        maxDeletes: 20,
+                      });
+                    } else {
+                      const handle = abortingStorage(inner);
+                      handle.armAt(op.abortAfter);
+                      await retireLogRange(handle.storage, CURRENT_JSON_KEY, {
+                        window: 0,
+                        maxDeletes: 20,
+                      });
                     }
                     break;
                   }

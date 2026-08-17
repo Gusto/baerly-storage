@@ -20,11 +20,11 @@ recovery and may apply the mutation a second time. `err.retriable` is `false` so
 a generic conflict-retry wrapper cannot absorb it silently; handle the code
 explicitly. Every other commit path is unchanged and remains exactly-once.
 
-In this release the error is not yet reachable in practice: `log_delete_floor`
-is written only by the log-retirement pass, which nothing calls yet, so on a
-running deployment the floor stays absent and the check always takes its silent
-arm. Handling the code now is forward-looking — a later release wires retirement
-into the maintenance triggers and makes the fault reachable.
+The fault is reachable in this release: the log-retirement pass that
+writes `log_delete_floor` runs after the GC slice on every maintenance
+pass — on each write tick and on scheduled maintenance — so a collection
+with enough history to fold and retire can surface the code. Handle it
+from day one.
 
 `AmbiguousCommit` is a new `BaerlyErrorCode`. It maps to HTTP 409 with a scrubbed
 message and to CLI exit 3.

@@ -3,9 +3,10 @@
  *
  * Log keys are derivable, so retirement uses a half-open sequence range rather
  * than LIST-based discovery. This module computes the range and owns the
- * CAS-then-delete retirement pass. Nothing calls `retireLogRange` yet; PR 5
- * wires it into the two maintenance triggers and removes the `stale-log`
- * discovery it replaces.
+ * CAS-then-delete retirement pass. Every maintenance trigger runs it through
+ * the shared `retireLogs` helper in `maintenance.ts`: `runScheduledMaintenance`
+ * after its GC phase, and `runBoundedMaintenance` on the hard-GC early-return
+ * path and as its final step.
  */
 
 import {
@@ -122,10 +123,11 @@ export interface RetireLogRangeResult {
  *   a scoped override for exercising the budget boundary in tests, not a
  *   knob meant to reach a config surface.
  * @throws BaerlyError{code:"Conflict"} if the floor CAS loses to another
- *   `current.json` writer, or if the fresh state authorizes nothing. Callers on
- *   the maintenance path already treat `Conflict` from `compact()` / `runGc()`
- *   as an expected, swallowed signal (`maintenance.ts:602-604`); this matches
- *   that idiom rather than swallowing it here.
+ *   `current.json` writer, or if the fresh state authorizes nothing. The
+ *   maintenance call sites' shared `retireLogs` helper (`maintenance.ts`)
+ *   swallows exactly this code and re-throws everything else, matching how
+ *   `Conflict` from `compact()` / `runGc()` is treated at every call site;
+ *   returning it unwrapped here is what keeps that policy in one place.
  */
 export async function retireLogRange(
   storage: Storage,
@@ -169,9 +171,20 @@ export async function retireLogRange(
     readOpts,
   );
 
+  // Idempotent DELETE on every in-tree Storage impl — a 404 is a no-op —
+  // so a crash-leaked slot below the already-advanced floor stays leaked
+  // regardless of ordering (leak, never corruption — the deliberate
+  // fail-safe above). Parallel via Promise.all for the same reason the GC
+  // sweep is: the DELETEs are independent, so serialization only adds
+  // round-trip latency — up to `maxDeletes` serial trips on the Node
+  // write-tick path, where the retirement pass runs inline on the commit
+  // ack. One failure rejects the aggregate while the landed DELETEs stay
+  // durable; the floor already authorizes every slot in the range.
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  for (let seq = range.start; seq < range.end; seq++) {
-    await storage.delete(logObjectKey(collectionPrefix, seq), readOpts);
-  }
+  await Promise.all(
+    Array.from({ length: range.end - range.start }, (_, i) =>
+      storage.delete(logObjectKey(collectionPrefix, range.start + i), readOpts),
+    ),
+  );
   return { deleted: range.end - range.start };
 }

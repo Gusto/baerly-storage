@@ -73,6 +73,48 @@ export interface MaintenanceResult {
 }
 
 /**
+ * One log-retirement pass: run {@link retireLogRange} and emit its
+ * counter. Shared by every maintenance trigger that retires stale logs
+ * (`runScheduledMaintenance` and both retirement points inside
+ * `runBoundedMaintenance`), so the metric name, option threading, and
+ * error policy cannot drift between call sites.
+ *
+ * Error policy — deliberately NOT a bare swallow: `Conflict` (the floor
+ * CAS lost to another writer, or a concurrent fold moved `log_seq_start`)
+ * is routine contention, swallowed here and retried by the next pass.
+ * Anything else is re-thrown for the caller's own error path, matching
+ * how `compact()` / `runGc()` failures are treated at every call site:
+ * `runBoundedMaintenance`'s outer catch counts
+ * `db.maintenance.unexpected_error_total` and logs the stack, and
+ * `runScheduledMaintenance` propagates per its documented "errors
+ * propagate" contract. Retirement is the only mechanism bounding the
+ * steady-state log-object count — a persistent unexpected failure must
+ * not fail silently while objects accumulate unbounded.
+ */
+const retireLogs = async (
+  storage: Storage,
+  currentJsonKey: string,
+  opts?: { logRetention?: LogRetentionOptions; signal?: AbortSignal },
+): Promise<void> => {
+  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
+  const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+  try {
+    const retired = await retireLogRange(storage, currentJsonKey, {
+      ...opts?.logRetention,
+      ...(opts?.signal !== undefined && { signal: opts.signal }),
+    });
+    ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
+      collection,
+    });
+  } catch (error) {
+    if (error instanceof BaerlyError && error.code === "Conflict") {
+      return; // routine CAS contention — the next pass retries
+    }
+    throw error;
+  }
+};
+
+/**
  * Single maintenance pass for one collection. Always runs `compact()` then
  * `runGc()` (in that order; the compactor's advance of `log_seq_start`
  * produces the stale-log candidates the GC then marks). It is not safe to
@@ -124,24 +166,12 @@ export const runScheduledMaintenance = async (
 
   // Retire stale log objects. Cheap and bounded — a computed key range,
   // no LIST — and placed after GC so it runs on every maintenance pass.
-  // This is a best-effort call: if it fails (Conflict or any error), we
-  // still return the compact + GC results rather than throwing.
-  const signal = options.signal;
-  try {
-    const collectionPrefix = args.currentJsonKey.slice(0, args.currentJsonKey.lastIndexOf("/"));
-    const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
-    const retired = await retireLogRange(args.storage, args.currentJsonKey, {
-      ...(options as InternalMaintenanceOptions).logRetention,
-      ...(signal !== undefined && { signal }),
-    });
-    ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
-      collection,
-    });
-  } catch {
-    // Swallow errors — log retirement is best-effort. If the CAS loses
-    // to another writer or a transient error occurs, the next maintenance
-    // pass will retry.
-  }
+  // `Conflict` is swallowed inside `retireLogs`; an unexpected error
+  // propagates like a compact()/runGc() error, per the contract above.
+  await retireLogs(args.storage, args.currentJsonKey, {
+    logRetention: (options as InternalMaintenanceOptions).logRetention,
+    ...(options.signal !== undefined && { signal: options.signal }),
+  });
 
   return { compact: compactRes, gc: gcRes };
 };
@@ -532,17 +562,12 @@ export const runBoundedMaintenance = async (
     if (phasesPerTick === "single" && hardGc) {
       await runGcAndRefreshTailHint();
       // Retire stale logs after GC even on the early-return path.
-      try {
-        const retired = await retireLogRange(storage, currentJsonKey, {
-          ...options?.logRetention,
-          ...(signal !== undefined && { signal }),
-        });
-        ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
-          collection,
-        });
-      } catch {
-        // Swallow errors — log retirement is best-effort.
-      }
+      // Non-Conflict errors re-throw into the outer catch below
+      // (unexpected_error_total + stack log), like every other phase.
+      await retireLogs(storage, currentJsonKey, {
+        logRetention: options?.logRetention,
+        ...(signal !== undefined && { signal }),
+      });
       return;
     }
 
@@ -645,21 +670,14 @@ export const runBoundedMaintenance = async (
 
     // ── Step 5. Retire stale log objects. ──────────────────────────────
     // Cheap and bounded — a computed key range, no LIST — and placed
-    // after GC so it runs on every maintenance pass. This is best-effort:
-    // if it fails (Conflict or any error), we swallow it and continue.
-    try {
-      const retired = await retireLogRange(storage, currentJsonKey, {
-        ...options?.logRetention,
-        ...(signal !== undefined && { signal }),
-      });
-      ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
-        collection,
-      });
-    } catch {
-      // Swallow errors — log retirement is best-effort. If the CAS loses
-      // to another writer or a transient error occurs, the next maintenance
-      // pass will retry.
-    }
+    // after GC so it runs on every maintenance pass. `Conflict` is
+    // swallowed inside `retireLogs`; anything unexpected re-throws into
+    // this runner's outer catch (counter + stack log), never out of the
+    // write-tick path.
+    await retireLogs(storage, currentJsonKey, {
+      logRetention: options?.logRetention,
+      ...(signal !== undefined && { signal }),
+    });
   } catch (error) {
     // CAS contention (Conflict) thrown by compact()/runGc() is an
     // EXPECTED signal — swallow without the unexpected-error counter.

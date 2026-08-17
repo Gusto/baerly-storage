@@ -12,6 +12,7 @@
 export type { InternalCompactOptions } from "../compactor.ts";
 export type { InternalRunGcOptions } from "../gc.ts";
 export type { InternalMaintenanceOptions } from "../maintenance-options.ts";
+export { type RetireLogRangeResult, retireLogRange } from "../log-retention.ts";
 export { type CommitInput, type CommitResult, type WriterOptions, Writer } from "../writer.ts";
 export { assertPathSegment, MAX_SEGMENT_BYTES } from "../path-segment.ts";
 export {

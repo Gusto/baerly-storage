@@ -281,7 +281,6 @@ export const mergeGcPending = (
     readonly sweptKeys: ReadonlySet<string>;
     readonly newCandidates: ReadonlyArray<GcCandidate>;
     readonly lastSweptAt: string;
-    readonly nextLogCursor: string | undefined;
     readonly maxCandidates: number;
   },
 ): GcPending => {
@@ -313,15 +312,6 @@ export const mergeGcPending = (
 // Internals
 // ---------------------------------------------------------------------
 
-/**
- * Merge one rotation cursor: `latest`'s stored value against this
- * pass's next position.
- *
- * Asymmetric on purpose (see {@link mergeGcPending}): `pass ===
- * undefined` means THIS pass examined to the END of the keyspace
- * (WRAP — the most-advanced position), whereas `latest === undefined`
- * means the stored ledger has no cursor yet (least-advanced).
- *
 /** Accepted `reason` values. `"orphan-content"` is decode-only — see {@link GcCandidate.reason}. */
 const VALID_REASONS = new Set<GcCandidate["reason"]>([
   "stale-log", // Decode-only for v0.6.0 backward compatibility
