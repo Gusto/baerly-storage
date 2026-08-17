@@ -330,7 +330,8 @@ export const runGc = async (
     // Eviction is load-bearing, not a courtesy to old buckets:
     // `mergeGcPending` keeps the FIRST `GC_MAX_PENDING_CANDIDATES` entries,
     // so a ledger head full of content candidates would silently discard
-    // every new `stale-log` and `orphan-snapshot` mark, forever.
+    // every new `orphan-snapshot` mark — the only category this build
+    // emits — forever.
     //
     // Ordered BEFORE the generation fence on purpose. Most legacy candidates
     // would fail that fence too, and counting them there fires an alertable
@@ -341,14 +342,25 @@ export const runGc = async (
       evictedKeys.add(candidate.key);
       continue;
     }
-    // Arm 1 — stale-log deletion authority. A persisted candidate authorizes
-    // DELETE only when its key is the exact canonical `log/<seq>.json` for
-    // THIS collection; the ledger decoder has no collection context, so
-    // malformed, mislabeled, noncanonical, and cross-prefix keys reach here.
-    // Resolve them without DELETE — waiting for `due_at` would let an invalid
-    // entry wedge the bounded first-N ledger for no safety gain. Ordered
-    // before the generation fence so invalid authority does not masquerade as
-    // a stale-generation event.
+    // Arm 1 — stale-log deletion authority. No current build marks
+    // `stale-log`: sub-floor log objects are reclaimed by computed-range
+    // retirement (`log-retention.ts`), which CASes `log_delete_floor`
+    // before it deletes, so invariant 5's commit-path check covers every
+    // slot it reclaims. This arm exists for the legacy residual — a
+    // v0.6.0-era ledger can still carry `stale-log` candidates, and a
+    // canonical, same-generation, sub-floor one is still DELETEd here
+    // WITHOUT advancing the floor, so those deletions certify nothing.
+    // One-shot and self-extinguishing: nothing re-marks the category, so
+    // the residual drains with the ledger.
+    //
+    // A persisted candidate authorizes DELETE only when its key is the
+    // exact canonical `log/<seq>.json` for THIS collection; the ledger
+    // decoder has no collection context, so malformed, mislabeled,
+    // noncanonical, and cross-prefix keys reach here. Resolve them without
+    // DELETE — waiting for `due_at` would let an invalid entry wedge the
+    // bounded first-N ledger for no safety gain. Ordered before the
+    // generation fence so invalid authority does not masquerade as a
+    // stale-generation event.
     if (
       candidate.reason === "stale-log" &&
       parseSeqFromCanonicalLogKey(candidate.key, collectionPrefix) === null

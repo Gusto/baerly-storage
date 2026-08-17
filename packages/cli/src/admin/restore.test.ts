@@ -222,8 +222,8 @@ describe("baerly admin restore", () => {
     );
     expect(second).toBe(0);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
-    // --force advances tail_hint past the old log entries (stale log
-    // files are unreferenced and reclaimed on the next GC pass);
+    // --force advances tail_hint past the old log entries (the old log
+    // files are unreferenced and reclaimed by computed-range retirement);
     // the second run's 3 inserts add 3 more, giving tail_hint = 5.
     expect(head?.json.tail_hint).toBe(5);
     // log_seq_start tracks the truncation point — every entry from
@@ -244,13 +244,13 @@ describe("baerly admin restore", () => {
     // `log/<seq>` create cannot collide with the old generation. The
     // reseed sets `snapshot: null`, so the old generation becomes
     // unreachable to every reader — the intent of truncating. Sub-fold-floor
-    // `log/` survivors are swept as `stale-log`; legacy `content/` side
-    // objects are left in place and are inert. See the FLOOR EXEMPTION
-    // comment in `restore.ts`.
+    // `log/` survivors are reclaimed by computed-range retirement; legacy
+    // `content/` side objects are left in place and are inert. See the
+    // FLOOR EXEMPTION comment in `restore.ts`.
     //
     // This case is the empty-prefix extreme (floor → 0); the next test
-    // covers the partial-sweep case, which is what actually happens under
-    // a budget-bounded GC.
+    // covers the partial-survivor case, which is what a budget-bounded
+    // or crash-interrupted retirement pass leaves behind.
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     await expect(
       runRestore(
@@ -260,7 +260,7 @@ describe("baerly admin restore", () => {
     ).resolves.toBe(0);
 
     // Drive the collection to the post-compaction steady state: floor
-    // advanced to the tail, every stale log object swept by GC.
+    // advanced to the tail, every sub-floor log object retired.
     await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
       ...c,
       log_seq_start: c.tail_hint,

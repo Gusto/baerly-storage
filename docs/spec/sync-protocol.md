@@ -315,12 +315,16 @@ bounded in-tick reconcile slice was considered and deferred — see
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
 a committed log entry can never be left undiscoverable behind
-`current.json`. Garbage collection later marks and sweeps stale log
-objects below `log_seq_start` and superseded snapshots after the
-existing grace and revalidation checks. For artifacts outside the
-committed range, GC is cleanup, not reader correctness: readers decide
-visibility from the snapshot, `[log_seq_start, tail_hint)`, and the
-forward-probe.
+`current.json`. Two separate passes reclaim what the fold leaves
+behind. Superseded snapshots are marked and swept by garbage
+collection, under the existing grace and revalidation checks. Log
+objects below `log_seq_start` are not: they are retired over a computed
+sequence range with no grace and no ledger, because a certified
+`log_delete_floor` — CASed before the DELETEs — is a stronger guarantee
+than a timer. For artifacts outside the
+committed range, both passes are cleanup, not reader correctness:
+readers decide visibility from the snapshot, `[log_seq_start,
+tail_hint)`, and the forward-probe.
 
 ## Read algorithm
 
@@ -530,8 +534,8 @@ These are the load-bearing rules.
    because it is provably safe, but because it is undecidable the same
    way (a fold absorbs our own earlier attempt and a foreign entry
    identically, keeping no writer identity) and rejecting it would fail
-   every ordinary post-fold commit. The invisible half of that band is
-   the residual invariant 14 records.
+   every ordinary post-fold commit. The invisible half of that band is a
+   residual this check does not reach, by construction.
 
     Stale log objects are reclaimed by a sequence window rather than a
     timed mark-and-sweep. The retention pass deletes every
@@ -543,6 +547,23 @@ These are the load-bearing rules.
     window that `GC_GRACE_PERIOD_MILLIS` covers. The window is **not** a
     paused-writer fence — it bounds no wall-clock and no commit count.
     The commit-path check in this invariant closes that schedule instead.
+
+    **Retirement certifies before it deletes, and that is what makes the
+    check total.** `retireLogRange`
+    ([`packages/server/src/log-retention.ts`](../../packages/server/src/log-retention.ts))
+    CASes `log_delete_floor` to the end of its authorized range *before*
+    issuing a single DELETE. So every physically-deleted slot is already
+    below a certified floor by the time it is gone, and a later create
+    that re-fills a retired hole necessarily lands sub-floor — exactly the
+    condition this invariant's commit-path check rejects with
+    `AmbiguousCommit`. Nothing reclaims a log object outside that path:
+    GC does not LIST or delete under `log/`. The one exception is a
+    legacy `gc/pending.json` written before retirement existed, which can
+    still carry `stale-log` candidates that `runGc` DELETEs without
+    advancing the floor; that residual is one-shot and self-extinguishing,
+    because no current build marks the category. See
+    [`packages/server/src/gc.ts`](../../packages/server/src/gc.ts)'s Arm 1
+    comment.
 6. **`current.json` is compaction state; the commit path does not write
    it.** The compactor's fold CAS is the only steady-state writer of
    the snapshot pointer, `log_seq_start`, and snapshot counters.
@@ -755,39 +776,30 @@ These are the load-bearing rules.
     anything, and the sweep-time revalidation above becomes the only
     check standing between a mark and its DELETE.
 
-    **The same limitation reaches the log arm, and only PR 5 removes it.**
-    `runGc`'s `stale-log` sweep deletes sub-floor log objects **without**
-    advancing `log_delete_floor`, so a create that re-fills a GC-swept hole is
-    not caught by the commit-path check in invariant 5 — that check keys on the
-    certified floor, and GC certifies nothing. On a node clocked far enough
-    ahead the grace collapses to zero and the window is unbounded. Replacing
-    stale-log discovery with computed-range retirement, which CASes the floor
-    before it deletes, is what closes it; until then the exposure is the
-    pre-existing one this invariant already describes.
-
     **Known limitation: the revalidation is only as fresh as the
     freshest manifest the pass already holds.** `runGc` reads
     `current.json` at step 1
     ([`packages/server/src/gc.ts`](../../packages/server/src/gc.ts)) and
-    re-reads it at step 6 only when a due `orphan-snapshot` candidate
+    re-reads it at step 4 only when a due `orphan-snapshot` candidate
     could actually be deleted. The fence and the floor re-check use
     whichever of the two is newer, so a pass that re-read for the
-    snapshot arm gets the fresher answer for the log arm for free — but
-    a pass with no due snapshot never re-reads at all.
+    snapshot arm gets the fresher answer for the legacy log arm for free
+    — but a pass with no due snapshot never re-reads at all.
     That is deliberate: an unconditional second read would add a Class B
     op to every pass, and costing nothing extra is what lets GC ride the
     write tick. So on such a pass the fence detects "the collection was
     replaced since this candidate was MARKED", not "since this pass
-    started reading", and the difference is a real window. The worked
-    case below is exactly that shape — `stale-log` candidates, no due
-    snapshot, therefore no re-read.
+    started reading", and the difference is a real window.
 
-    Pass `P` reads generation `G1` and floor 12 and loads
-    the due candidates naming `log/10` and `log/11`. `P` then spends
-    seconds on LISTs and log GETs. Meanwhile `baerly admin restore
+    The worked case below is exactly that shape, and it is reachable only
+    through a legacy ledger: it needs due `stale-log` candidates and no
+    due snapshot, and no current build marks `stale-log` at all. Pass `P`
+    reads generation `G1` and floor 12 and loads the due candidates
+    naming `log/10` and `log/11`. `P` then spends seconds on the snapshot
+    LIST and its own manifest work. Meanwhile `baerly admin restore
     --force` reseeds the collection to generation `G2` at floor 10,
     clears `gc/pending.json`, and re-creates `log/10` and `log/11` as
-    live entries of the new generation. `P` reaches step 6 still holding
+    live entries of the new generation. `P` reaches step 4 still holding
     its stale `current`: the fence compares `G1` against `G1` and passes,
     `10 < 12` reads dead, and both live keys are deleted. The restore's
     ledger clear does not help — `P` loaded those candidates into memory

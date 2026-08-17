@@ -197,7 +197,7 @@ interface Op {
  * A mix of insert / update / delete-then-reinsert that keeps the LIVE set
  * ~constant (so the snapshot row count plateaus) while the tail churns —
  * compaction eventually moves folded entries below the log floor, producing
- * stale log keys for GC to reclaim. `total` ops are generated up front; the
+ * sub-floor log keys for retirement to reclaim. `total` ops are generated up front; the
  * simulation slices `rate` of them per simulated minute.
  */
 const buildOps = (total: number): readonly Op[] => {

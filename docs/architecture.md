@@ -125,7 +125,7 @@ flowchart TD
     engine["Read / write engine<br/>query · writer · log/snapshot fold"]
     storage["Storage<br/>R2 · S3 · memory · local-fs"]
     protocol["Protocol contracts<br/>pure, no I/O"]
-    maintenance["Maintenance<br/>compact · gc, post-commit"]
+    maintenance["Maintenance<br/>compact · gc · log retention, post-commit"]
 
     hosts --> http
     hosts --> api
@@ -426,14 +426,14 @@ write-tick gate is due. **Reads are pure — they never tick.** A bare
 Cloudflare Workers' free-tier subrequest budget once enough writes
 accrue; no `setInterval`, cron, or operator scheduler is required.
 
-The bounded pass splits that work across two existing primitives:
+The bounded pass splits that work across three primitives:
 
-- `runGc()` (`packages/server/src/gc.ts`) deletes stale log entries and
-  orphan snapshots no longer reachable from `current.json` after the
-  grace and sweep-time revalidation checks. It uses the two-phase
-  mark/sweep ledger at `gc/pending.json`, is bounded by the maintenance
-  profile's `gcMaxMarks` / `gcMaxSweeps`, and is due on `gcInterval`
-  write-count boundary crossings. In
+- `runGc()` (`packages/server/src/gc.ts`) deletes orphan snapshots no
+  longer reachable from `current.json` after the grace and sweep-time
+  revalidation checks. It uses the two-phase mark/sweep ledger at
+  `gc/pending.json`, is bounded by the maintenance profile's
+  `gcMaxMarks` / `gcMaxSweeps`, and is due on `gcInterval` write-count
+  boundary crossings. In
   `"single"` phase mode, a fold can take the tick when both are due; the
   hard-GC guard prevents indefinite starvation.
 - `compact()` (`packages/server/src/compactor.ts`) folds a **sliced**
@@ -444,6 +444,14 @@ The bounded pass splits that work across two existing primitives:
   `snapshot_rows + maxFoldEntriesPerPass <= E`). The byte ceiling is
   overridable by `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the row ceiling is
   a kernel constant.
+- `retireLogRange()` (`packages/server/src/log-retention.ts`) reclaims
+  log objects the fold left behind. It runs as Step 5 of every pass, and
+  on the hard-GC early-return path, via the shared `retireLogs` helper in
+  `maintenance.ts`. No LIST and no mark/sweep ledger: log keys are
+  computable from `seq`, so the pass deletes a budgeted slice of the
+  half-open range `[log_delete_floor, log_seq_start - window)`, CASing
+  `log_delete_floor` to the end of that range *before* it deletes. The
+  per-tick budget is `LOG_RETENTION_MAX_DELETES_PER_TICK`.
 
 Snapshot pointer advancement: a fold writes a new snapshot, then
 advances `current.json` with a **full-fence CAS** — a conditional update
@@ -588,9 +596,11 @@ app/tickets/tenant/acme/manifests/<collection>/
 | `gc/pending.json`                    | — (one per collection)               | Two-phase GC candidate ledger.                                                                                                                                                   |
 
 Compaction (`packages/server/src/compactor.ts`) folds adjacent log
-entries into checkpoints and advances `log_seq_start`. GC
-(`packages/server/src/gc.ts`) deletes stale log entries and orphan
-snapshots no longer reachable from `current.json`. Both are driven
+entries into checkpoints and advances `log_seq_start`. Log retention
+(`packages/server/src/log-retention.ts`) then reclaims the log objects
+below that floor over a computed sequence range. GC
+(`packages/server/src/gc.ts`) deletes orphan snapshots no longer
+reachable from `current.json`. All three are driven
 in-band on the write path by `runBoundedMaintenance`
 (`packages/server/src/maintenance.ts`); `runScheduledMaintenance` is the
 opt-in alternative trigger. See

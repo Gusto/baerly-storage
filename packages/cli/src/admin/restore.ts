@@ -25,8 +25,8 @@
  * `gc/pending.json` for the collection before the first row commits. A
  * candidate marked before the reseed names a key from the old
  * incarnation of the log, which the commits below may re-create at the
- * same seq; the stale ledger's rotation cursors and pending depth no
- * longer describe this collection either. A missing ledger is a no-op.
+ * same seq; the stale ledger's pending depth no longer describes this
+ * collection either. A missing ledger is a no-op.
  *
  * Cost shape: before any in-band maintenance triggered by a long import,
  *   the base billable shapes are fresh non-empty `N + 2` (initial seed,
@@ -164,16 +164,19 @@ const bundle = defineBaerlySubcommand({
       // writes. (We still bump the fence epoch to keep the field
       // monotone, but nothing reads it.)
       //
-      // That contract covers concurrent GC PASSES too, not only
-      // concurrent writers, and `runScheduledMaintenance` fires GC on a
+      // That contract covers concurrent MAINTENANCE PASSES too, not only
+      // concurrent writers, and `runScheduledMaintenance` fires them on a
       // cron independent of writes — so "no live writes" is not by
-      // itself enough. A pass reads `current.json` once at its top and
+      // itself enough. A GC pass reads `current.json` once at its top and
       // never re-reads it before issuing its sweep DELETEs, so a pass
       // that started before this reseed carries the pre-reseed floor
-      // all the way through and can delete log objects the reseed
-      // below re-creates. The ledger clear does not close that window:
-      // such a pass loaded its candidates into memory before the clear
-      // landed.
+      // all the way through and, if a legacy ledger hands it `stale-log`
+      // candidates, can delete log objects the reseed below re-creates.
+      // The ledger clear does not close that window: such a pass loaded
+      // its candidates into memory before the clear landed. A concurrent
+      // `retireLogRange` is fenced instead of raced — it recomputes its
+      // range inside the CAS mutator, so a reseed that lands first makes
+      // it abort with `Conflict` and zero DELETEs.
       //
       // CRITICAL: stale log entries from the old generation still
       // live on disk under `log/<seq>.json` paths. The writer's
@@ -181,8 +184,9 @@ const bundle = defineBaerlySubcommand({
       // at 0 and collide with `log/0.json`. We instead advance
       // `tail_hint` and `log_seq_start` past the old data so new
       // commits land at fresh sequence numbers and the old log files
-      // become unreferenced orphans (the compactor / GC sweep them on
-      // the next maintenance pass). Do this from LISTed log keys, not
+      // become unreferenced orphans (computed-range retirement reclaims
+      // them once the new generation's fold floor advances past them).
+      // Do this from LISTed log keys, not
       // by folding the old log bodies: `--force` must be able to recover
       // from malformed old entries, and a hole must not make us
       // under-shoot a later old entry.
@@ -199,11 +203,17 @@ const bundle = defineBaerlySubcommand({
       // every log object still on the bucket, so the writer's committing
       // `log/<seq>` create cannot collide with an old-generation object —
       // that 412 hazard is the whole point of the reseed (see above). It
-      // can land below the old FOLD floor whenever GC has swept the objects
-      // at the top of the folded range but not all of them: the sweep is
-      // budget-bounded and walks `log/` in lex order (`0,1,10,11,2,...`).
-      // For example, fold floor 12 and certified delete floor 8 may validly
-      // retain `log/8` and `log/9`, yielding `truncatedNext` 10 < 12.
+      // can land below the old FOLD floor whenever the surviving log
+      // objects stop short of it. Retirement is budget-bounded, so it
+      // normally leaves a contiguous suffix and `truncatedNext` reaches
+      // the fold floor — but two paths break that. A pass that crashes
+      // between its floor CAS and the end of its DELETE loop leaves an
+      // arbitrary subset of the authorized range behind
+      // (`log-retention.ts`: leak, never corruption), and a failed
+      // phantom cleanup on the `AmbiguousCommit` path leaves an isolated
+      // sub-floor object. So fold floor 12 with `log/8` and `log/9`
+      // retained and `log/10`, `log/11` gone is reachable, yielding
+      // `truncatedNext` 10 < 12.
       //
       // Nothing is lost by that. Readers never see the survivors: they
       // walk from the new floor, and `fsck` bounds itself by listed keys,
@@ -212,12 +222,14 @@ const bundle = defineBaerlySubcommand({
       //
       // It is not complete with respect to BYTES, and deliberately so.
       // Resetting `snapshot` to `null` makes the whole old generation
-      // unreachable, but GC reclaims only `stale-log` and
-      // `orphan-snapshot`: the surviving sub-floor `log/` objects are
-      // marked stale and swept after the grace period, while legacy
-      // `content/<sha>.json` side objects stay put. No kernel reader opens
-      // one, so they are inert; an operator who wants the bytes back
-      // deletes the prefix directly (`docs/guide/backups.md`).
+      // unreachable. The surviving sub-floor `log/` objects are reclaimed
+      // by computed-range retirement once the new generation's fold floor
+      // advances past them — the reseed literal below omits
+      // `log_delete_floor`, so it decodes to 0 and the computed range
+      // starts there, covering every survivor. Legacy `content/<sha>.json`
+      // side objects stay put: no kernel reader opens one, so they are
+      // inert, and an operator who wants the bytes back deletes the prefix
+      // directly (`docs/guide/backups.md`).
       //
       // Do not "repair" this with `Math.max`; that reseeds a floor above
       // `tail_hint`, trips `assertCurrentJson`, and breaks truncate.
@@ -284,8 +296,8 @@ const bundle = defineBaerlySubcommand({
       // Clear the GC ledger the old incarnation left behind. A
       // candidate marked before this reseed names a key from the
       // truncated log, which the commits below may re-create at the
-      // same seq; the ledger's rotation cursors and pending depth no
-      // longer describe this collection either. Clear it before the
+      // same seq; the ledger's pending depth no longer describes this
+      // collection either. Clear it before the
       // writer's first commit below — write-tick maintenance runs
       // `runGc` inline (CF-free profile, `gcInterval = 4`), so a GC
       // pass can happen during the restore itself. `Storage.delete` is
