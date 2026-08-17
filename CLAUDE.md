@@ -94,6 +94,13 @@ keeps a budget-blowing kernel edit from committing green and surfacing
 late (in CI or a manual `pnpm test`). The hook does **not** run the
 full `pnpm test`suite. Bypass with`git commit --no-verify` when needed.
 
+Claude Code sessions run the same commands through `lefthook.agent.yml`
+instead (`extends: [lefthook.yml]` + `output: [failure]`), selected via
+`LEFTHOOK_CONFIG` in `.claude/settings.json`'s `env` block — silent on a
+clean commit, full command name + output on failure. Humans and CI are
+unaffected; they never set that env var, so they keep `lefthook.yml`'s
+banner and summary output.
+
 ### Test gating
 
 `pnpm test` runs green on a fresh checkout with zero infrastructure deps.
@@ -253,7 +260,12 @@ field loads unconditionally at launch instead — silently.
 - ❌ Calling `vitest` via `pnpm exec vitest` or `./node_modules/.bin/vitest` —
   both skip the `pretest` hook (`pnpm run build`), leaving `dist/` empty or
   stale and producing spurious failures in bundle-size / dist-consuming tests.
-  Use `pnpm test:agent` or `pnpm bundle-sizes` (whose script self-builds).
+  **`pnpm test:agent` has the same gap** — npm/pnpm only auto-runs a
+  `pre<script>` hook for a script's exact name, so `pretest` fires for
+  `pnpm test` but not for `pnpm test:agent`. Run `pnpm build` first (or run
+  `pnpm test` once to prime `dist/`) before `pnpm test:agent`. `pnpm
+  bundle-sizes` is the one command here that genuinely self-builds — its
+  script calls the build itself rather than relying on a lifecycle hook.
   Same idea for the other tools: prefer `pnpm verify:agent` / `pnpm build`
   over `pnpm exec tsgo` / `pnpm exec rolldown` so the canonical flags
   (`--pretty false`, `--format=unix --quiet`, etc.) come along.
