@@ -4,36 +4,33 @@ import {
   type DocumentData,
   type DocumentValue,
   encodeJsonBytes,
-  MAX_KEY_BYTES,
   snapshotHash,
 } from "@baerly/protocol";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { assertPathSegment } from "./path-segment.ts";
-import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
+import {
+  assertCodecDocId,
+  assertExactFields,
+  DIGEST_PATTERN,
+  equalBytes,
+  INCARNATION_PATTERN,
+  MAX_CHUNK_BYTES,
+  MAX_CHUNK_ROWS,
+  normalizeCodecFailure,
+  parseArtifactKey,
+} from "./snapshot-codec.ts";
+import { compareDocIds } from "./snapshot-doc-id.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 
 const SNAPSHOT_CHUNK_SCHEMA_VERSION = 2;
-const MAX_CHUNK_BYTES = 1024 * 1024;
-const MAX_CHUNK_ROWS = 4096;
-const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
-const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
-const CHUNK_KEY_PATTERN =
-  /^(.+)\/_v2\/snapshot\/chunks\/([0-9a-f]{32})\/sha256\/([0-9a-f]{64})\.json$/;
-const utf8 = new TextEncoder();
 
 export interface SnapshotChunk {
-  readonly schema_version: number;
+  readonly schema_version: typeof SNAPSHOT_CHUNK_SCHEMA_VERSION;
   readonly collection: string;
   readonly incarnation: string;
   readonly first_id: string;
   readonly last_id: string;
   readonly docs: readonly DocumentData[];
-}
-
-interface ParsedChunkKey {
-  readonly prefix: string;
-  readonly incarnation: string;
-  readonly digest: string;
 }
 
 function invalid(
@@ -44,45 +41,6 @@ function invalid(
   throw new BaerlyError(code, `snapshot chunk: ${message}`, cause);
 }
 
-function normalizeCodecFailure<T>(
-  code: "InvalidConfig" | "InvalidResponse",
-  operation: () => T,
-): T {
-  try {
-    return operation();
-  } catch (error) {
-    if (error instanceof BaerlyError) {
-      throw error;
-    }
-    invalid(code, "body exceeds supported JSON validation depth", error);
-  }
-}
-
-function assertExactFields(
-  value: unknown,
-  expected: readonly string[],
-  where: string,
-  code: "InvalidConfig" | "InvalidResponse",
-): asserts value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    invalid(code, `${where} must be an object`);
-  }
-  const prototype = Object.getPrototypeOf(value);
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Object.keys(descriptors);
-  if (
-    (prototype !== Object.prototype && prototype !== null) ||
-    Object.getOwnPropertySymbols(value).length !== 0 ||
-    keys.length !== expected.length ||
-    expected.some((key) => {
-      const descriptor = descriptors[key];
-      return descriptor === undefined || !descriptor.enumerable || !("value" in descriptor);
-    })
-  ) {
-    invalid(code, `${where} must contain exactly the required fields`);
-  }
-}
-
 function assertCallerSegment(value: unknown, role: string): asserts value is string {
   if (typeof value !== "string") {
     invalid("InvalidConfig", `${role} must be a string`);
@@ -91,17 +49,6 @@ function assertCallerSegment(value: unknown, role: string): asserts value is str
     assertPathSegment(value, role);
   } catch (error) {
     invalid("InvalidConfig", `${role} is invalid`, error);
-  }
-}
-
-function assertStoredDocId(value: unknown, where: string): asserts value is string {
-  if (typeof value !== "string") {
-    invalid("InvalidResponse", `${where} must be a string`);
-  }
-  try {
-    assertSnapshotDocId(value);
-  } catch (error) {
-    invalid("InvalidResponse", `${where} is invalid`, error);
   }
 }
 
@@ -215,16 +162,7 @@ function canonicalizeDocument(
     new Set<object>(),
   ) as DocumentData;
   const id = Object.getOwnPropertyDescriptor(canonical, "_id")?.value;
-  if (code === "InvalidConfig") {
-    assertCallerSegment(id, `${where}._id`);
-    try {
-      assertSnapshotDocId(id);
-    } catch (error) {
-      invalid(code, `${where}._id is invalid`, error);
-    }
-  } else {
-    assertStoredDocId(id, `${where}._id`);
-  }
+  assertCodecDocId(id, `${where}._id`, code, invalid);
   return canonical;
 }
 
@@ -237,6 +175,7 @@ function canonicalizeChunk(
     ["schema_version", "collection", "incarnation", "first_id", "last_id", "docs"],
     "body",
     code,
+    invalid,
   );
   if (value["schema_version"] !== SNAPSHOT_CHUNK_SCHEMA_VERSION) {
     invalid(code, "unsupported schema_version");
@@ -281,33 +220,20 @@ function canonicalizeChunk(
   };
 }
 
-function parseChunkKey(key: string, code: "InvalidConfig" | "InvalidResponse"): ParsedChunkKey {
-  if (utf8.encode(key).byteLength > MAX_KEY_BYTES) {
-    invalid(code, `key exceeds ${MAX_KEY_BYTES} bytes`);
-  }
-  const match = CHUNK_KEY_PATTERN.exec(key);
-  if (match === null) {
-    invalid(code, "key does not match the schema-v2 chunk grammar");
-  }
-  if (match[1]!.endsWith("/")) {
-    invalid(code, "key collection prefix contains an empty trailing segment");
-  }
-  return { prefix: match[1]!, incarnation: match[2]!, digest: match[3]! };
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
-
 export const encodeSnapshotChunk = (chunk: SnapshotChunk): Uint8Array => {
-  return normalizeCodecFailure("InvalidConfig", () => {
-    const canonical = canonicalizeChunk(chunk, "InvalidConfig");
-    const bytes = encodeJsonBytes(canonical);
-    if (bytes.byteLength > MAX_CHUNK_BYTES) {
-      invalid("InvalidConfig", `canonical body exceeds ${MAX_CHUNK_BYTES} bytes`);
-    }
-    return bytes;
-  });
+  return normalizeCodecFailure(
+    invalid,
+    "InvalidConfig",
+    "body exceeds supported JSON validation depth",
+    () => {
+      const canonical = canonicalizeChunk(chunk, "InvalidConfig");
+      const bytes = encodeJsonBytes(canonical);
+      if (bytes.byteLength > MAX_CHUNK_BYTES) {
+        invalid("InvalidConfig", `canonical body exceeds ${MAX_CHUNK_BYTES} bytes`);
+      }
+      return bytes;
+    },
+  );
 };
 
 export const snapshotChunkKey = (
@@ -339,7 +265,7 @@ export const decodeSnapshotChunk = async (
     invalid("InvalidResponse", "body length is outside the chunk ceiling");
   }
   const bodyBytes = bytes.slice();
-  const parsedKey = parseChunkKey(key, "InvalidResponse");
+  const parsedKey = parseArtifactKey(key, "chunk", "InvalidResponse", invalid);
   if (descriptor.key !== key || descriptor.byte_length !== bodyBytes.byteLength) {
     invalid("InvalidResponse", "body does not match its descriptor key or byte length");
   }
@@ -354,14 +280,19 @@ export const decodeSnapshotChunk = async (
   } catch (error) {
     invalid("InvalidResponse", "body is not valid JSON", error);
   }
-  const canonical = normalizeCodecFailure("InvalidResponse", () => {
-    const value = canonicalizeChunk(parsed, "InvalidResponse");
-    const canonicalBytes = encodeJsonBytes(value);
-    if (!equalBytes(bodyBytes, canonicalBytes)) {
-      invalid("InvalidResponse", "body is not canonical JSON");
-    }
-    return value;
-  });
+  const canonical = normalizeCodecFailure(
+    invalid,
+    "InvalidResponse",
+    "body exceeds supported JSON validation depth",
+    () => {
+      const value = canonicalizeChunk(parsed, "InvalidResponse");
+      const canonicalBytes = encodeJsonBytes(value);
+      if (!equalBytes(bodyBytes, canonicalBytes)) {
+        invalid("InvalidResponse", "body is not canonical JSON");
+      }
+      return value;
+    },
+  );
   if (canonical.collection !== expectedCollection) {
     invalid("InvalidResponse", "body collection does not match the expected collection");
   }

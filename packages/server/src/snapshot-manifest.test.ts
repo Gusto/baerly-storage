@@ -118,6 +118,20 @@ describe("snapshot manifest codec", () => {
       },
     ],
     [
+      "mismatched descriptor prefixes",
+      {
+        ...manifest(),
+        chunks: [
+          descriptor({ first_id: "a", last_id: "b" }),
+          descriptor({
+            first_id: "c",
+            last_id: "d",
+            key: fixedChunkKey.replace(prefix, "app/other"),
+          }),
+        ],
+      },
+    ],
+    [
       "overlapping ranges",
       {
         ...manifest(),
@@ -296,6 +310,21 @@ describe("snapshot manifest codec", () => {
     expect(() => encodeSnapshotManifest(symbolField)).toThrowError(
       expect.objectContaining({ code: "InvalidConfig" }),
     );
+
+    expect(() =>
+      encodeSnapshotManifest(
+        manifest({
+          chunks: [
+            descriptor({ first_id: "a", last_id: "b" }),
+            descriptor({
+              first_id: "c",
+              last_id: "d",
+              key: fixedChunkKey.replace(prefix, "app/other"),
+            }),
+          ],
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "InvalidConfig" }));
   });
 });
 
