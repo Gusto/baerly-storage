@@ -8,7 +8,10 @@ import {
   type SnapshotChunkBuildResult,
 } from "./snapshot-chunk-builder.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
-import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+import {
+  firstDescriptorEndingAtOrAfter,
+  type SnapshotChunkDescriptor,
+} from "./snapshot-manifest.ts";
 
 const utf8 = new TextEncoder();
 
@@ -56,9 +59,7 @@ export interface PlanChunkedFoldInput {
   readonly collectionPrefix: string;
   readonly entries: readonly LogEntry[];
   readonly descriptors: readonly SnapshotChunkDescriptor[];
-  readonly loadedChunks:
-    | ReadonlyMap<string, readonly DocumentData[]>
-    | ReadonlyMap<number, readonly DocumentData[]>;
+  readonly loadedChunks: ReadonlyMap<string, readonly DocumentData[]>;
   readonly budget: ChunkedFoldBudget;
   readonly incarnation: string;
   readonly policy: SnapshotChunkBoundaryPolicy;
@@ -74,19 +75,7 @@ function invalid(
 }
 
 function isRoutedDelete(docId: string, descriptors: readonly SnapshotChunkDescriptor[]): boolean {
-  if (descriptors.length === 0) {
-    return false;
-  }
-  let low = 0;
-  let high = descriptors.length;
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    if (compareDocIds(descriptors[middle]!.last_id, docId) < 0) {
-      low = middle + 1;
-    } else {
-      high = middle;
-    }
-  }
+  const low = firstDescriptorEndingAtOrAfter(descriptors, docId);
   if (low < descriptors.length) {
     const descriptor = descriptors[low]!;
     return compareDocIds(descriptor.first_id, docId) <= 0;
@@ -125,6 +114,12 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
 
   const runningMutations = new Map<string, ReferenceMutation>();
   let runningMutationBytes = 0;
+  // Routing is a pure function of (doc_id, op) against the fixed descriptor
+  // array, so each doc's target is computed once and maintained incrementally
+  // (with refcounts over touched descriptor indexes) instead of re-routing
+  // every accumulated mutation on each entry.
+  const docTargetIndexes = new Map<string, number | null>();
+  const targetRefCount = new Map<number, number>();
 
   for (let m = 0; m < entries.length; m++) {
     const entry = entries[m]!;
@@ -156,13 +151,25 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
       break;
     }
 
-    const currentDirectIndexes = new Set<number>();
-    for (const [docId, mut] of runningMutations) {
-      const target = routeMutationToDescriptor(docId, mut.op, descriptors);
-      if (target !== null) {
-        currentDirectIndexes.add(target);
+    const previousTarget = docTargetIndexes.get(entry.doc_id);
+    const nextTarget =
+      previousMutation !== undefined && previousMutation.op === mutation.op
+        ? previousTarget!
+        : routeMutationToDescriptor(entry.doc_id, mutation.op, descriptors);
+    if (previousTarget !== undefined && previousTarget !== nextTarget && previousTarget !== null) {
+      const remaining = (targetRefCount.get(previousTarget) ?? 1) - 1;
+      if (remaining > 0) {
+        targetRefCount.set(previousTarget, remaining);
+      } else {
+        targetRefCount.delete(previousTarget);
       }
     }
+    if (nextTarget !== null && nextTarget !== previousTarget) {
+      targetRefCount.set(nextTarget, (targetRefCount.get(nextTarget) ?? 0) + 1);
+    }
+    docTargetIndexes.set(entry.doc_id, nextTarget);
+
+    const currentDirectIndexes = new Set(targetRefCount.keys());
 
     if (currentDirectIndexes.size > budget.max_touched_chunks) {
       break;
@@ -272,8 +279,15 @@ export const planChunkedFold = async (
 
   let lastAdmittedPlan: ChunkedFoldPlan | null = null;
 
+  // Candidates are pushed in entry order during prefetch, so their indexes
+  // advance monotonically — walk a pointer instead of re-scanning entries.
+  let endpointSearchFrom = 0;
   for (const endpointSeq of prefetch.candidate_log_seq_ends) {
-    const endpointIndex = entries.findIndex((e) => e.seq === endpointSeq);
+    let endpointIndex = endpointSearchFrom;
+    while (entries[endpointIndex]!.seq !== endpointSeq) {
+      endpointIndex++;
+    }
+    endpointSearchFrom = endpointIndex;
     const prefixEntries = entries.slice(0, endpointIndex + 1);
 
     const mutationMap = new Map<string, ReferenceMutation>();
@@ -309,6 +323,12 @@ export const planChunkedFold = async (
       last_id: descriptors[idx]!.last_id,
     }));
 
+    // The prefetch locks (owner, neighbor) once and breaks the walk the moment
+    // the pair would change, so every candidate from the locking entry onward
+    // re-derives exactly this pair. Earlier candidates (gap-only prefixes)
+    // touch no descriptor, and the builder gates the merge on the owner being
+    // directly touched, so passing the locked pair for them is inert. Preserve
+    // this contract if the builder ever consults the pair outside that guard.
     const buildResult = await buildSnapshotChunks({
       collection,
       collectionPrefix,

@@ -2,7 +2,10 @@ import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
 import { encodeSnapshotChunk, snapshotChunkKey, type SnapshotChunk } from "./snapshot-chunk.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
-import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+import {
+  firstDescriptorEndingAtOrAfter,
+  type SnapshotChunkDescriptor,
+} from "./snapshot-manifest.ts";
 
 const MAX_CHUNK_BYTES = 1024 * 1024;
 const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
@@ -34,9 +37,7 @@ export interface BuildSnapshotChunksInput {
   readonly collection: string;
   readonly collectionPrefix: string;
   readonly descriptors: readonly SnapshotChunkDescriptor[];
-  readonly loadedChunks:
-    | ReadonlyMap<string, readonly DocumentData[]>
-    | ReadonlyMap<number, readonly DocumentData[]>;
+  readonly loadedChunks: ReadonlyMap<string, readonly DocumentData[]>;
   readonly mutations: ReadonlyMap<string, ReferenceMutation> | readonly ReferenceMutation[];
   readonly incarnation: string;
   readonly policy: SnapshotChunkBoundaryPolicy;
@@ -80,16 +81,7 @@ export function routeMutationToDescriptor(
     return null;
   }
 
-  let low = 0;
-  let high = descriptors.length;
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    if (compareDocIds(descriptors[middle]!.last_id, docId) < 0) {
-      low = middle + 1;
-    } else {
-      high = middle;
-    }
-  }
+  const low = firstDescriptorEndingAtOrAfter(descriptors, docId);
 
   if (low < descriptors.length) {
     const descriptor = descriptors[low]!;
@@ -151,19 +143,12 @@ export function isUnderfull(
 }
 
 function getLoadedDocs(
-  loadedChunks:
-    | ReadonlyMap<string, readonly DocumentData[]>
-    | ReadonlyMap<number, readonly DocumentData[]>,
+  loadedChunks: ReadonlyMap<string, readonly DocumentData[]>,
   descriptor: SnapshotChunkDescriptor,
-  index: number,
 ): readonly DocumentData[] {
-  const byKey = (loadedChunks as ReadonlyMap<string, readonly DocumentData[]>).get(descriptor.key);
-  if (byKey !== undefined) {
-    return byKey;
-  }
-  const byIndex = (loadedChunks as ReadonlyMap<number, readonly DocumentData[]>).get(index);
-  if (byIndex !== undefined) {
-    return byIndex;
+  const docs = loadedChunks.get(descriptor.key);
+  if (docs !== undefined) {
+    return docs;
   }
   invalid("InvalidResponse", `missing loaded chunk for descriptor ${descriptor.key}`);
 }
@@ -191,6 +176,133 @@ interface SplitChunkItem {
   docs: readonly DocumentData[];
   bytes: Uint8Array;
 }
+
+interface FacingMergeInput {
+  readonly descriptors: readonly SnapshotChunkDescriptor[];
+  readonly loadedChunks: ReadonlyMap<string, readonly DocumentData[]>;
+  readonly collection: string;
+  readonly incarnation: string;
+  readonly policy: SnapshotChunkBoundaryPolicy;
+  readonly lockedDirectOwnerIndex: number;
+  readonly selectedNeighborIndex: number;
+  readonly directTouchedIndexes: ReadonlySet<number>;
+  readonly unchangedGroupIndexes: ReadonlySet<number>;
+  readonly ownerSplitChunks: SplitChunkItem[] | undefined;
+}
+
+/**
+ * ADR-007 facing-boundary merge. Eligibility, as guard clauses:
+ * - the owner produced at least one rewrite output;
+ * - both locked indices are in range;
+ * - the owner is directly touched and NOT byte-identical after rewrite
+ *   (an unchanged owner has no underfull facing output to merge);
+ * - the neighbor is NOT directly touched (only untouched neighbors merge);
+ * - the neighbor sits on the owner's facing boundary: the immediate right
+ *   neighbor, or the immediate left neighbor when the owner has no right
+ *   neighbor (i.e. the owner is the rightmost descriptor);
+ * - the owner's facing output is underfull and the neighbor's docs fit
+ *   alongside it within the target.
+ *
+ * When eligible, the neighbor's docs fold into the facing output in place.
+ * Returns the consumed neighbor index, or null when not merge-eligible.
+ */
+function applyFacingMerge(input: FacingMergeInput): number | null {
+  const {
+    descriptors,
+    loadedChunks,
+    collection,
+    incarnation,
+    policy,
+    lockedDirectOwnerIndex: ownerIndex,
+    selectedNeighborIndex: neighborIndex,
+    directTouchedIndexes,
+    unchangedGroupIndexes,
+    ownerSplitChunks,
+  } = input;
+
+  if (ownerSplitChunks === undefined || ownerSplitChunks.length === 0) {
+    return null;
+  }
+  if (ownerIndex < 0 || ownerIndex >= descriptors.length) {
+    return null;
+  }
+  if (neighborIndex < 0 || neighborIndex >= descriptors.length) {
+    return null;
+  }
+  if (
+    !directTouchedIndexes.has(ownerIndex) ||
+    unchangedGroupIndexes.has(ownerIndex) ||
+    directTouchedIndexes.has(neighborIndex)
+  ) {
+    return null;
+  }
+
+  let facingChunkIndex: number;
+  let isFacingRight: boolean;
+  if (neighborIndex === ownerIndex + 1) {
+    // Right neighbor: facing output is rightmost.
+    facingChunkIndex = ownerSplitChunks.length - 1;
+    isFacingRight = true;
+  } else if (neighborIndex === ownerIndex - 1 && ownerIndex === descriptors.length - 1) {
+    // Left neighbor (only when the owner has no right neighbor): facing output is leftmost.
+    facingChunkIndex = 0;
+    isFacingRight = false;
+  } else {
+    return null;
+  }
+
+  const facingChunk = ownerSplitChunks[facingChunkIndex]!;
+  if (!isUnderfull(facingChunk.bytes.byteLength, facingChunk.docs.length, policy)) {
+    return null;
+  }
+
+  const neighborDesc = descriptors[neighborIndex]!;
+  const neighborDocs = getLoadedDocs(loadedChunks, neighborDesc);
+  const combinedDocs = isFacingRight
+    ? [...facingChunk.docs, ...neighborDocs]
+    : [...neighborDocs, ...facingChunk.docs];
+  const candidateChunk: SnapshotChunk = {
+    schema_version: 2,
+    collection,
+    incarnation,
+    first_id: combinedDocs[0]!["_id"] as string,
+    last_id: combinedDocs.at(-1)!["_id"] as string,
+    docs: combinedDocs,
+  };
+  const combinedBytes = encodeBuilderChunk(candidateChunk);
+  if (
+    combinedBytes.byteLength > policy.target_chunk_bytes ||
+    combinedDocs.length > policy.target_rows
+  ) {
+    return null;
+  }
+
+  ownerSplitChunks[facingChunkIndex] = { docs: combinedDocs, bytes: combinedBytes };
+  return neighborIndex;
+}
+
+/**
+ * Mint the descriptor and changed-chunk output for one encoded split output.
+ */
+const appendChunkOutput = async (
+  chunkItem: SplitChunkItem,
+  collectionPrefix: string,
+  incarnation: string,
+  finalDescriptors: SnapshotChunkDescriptor[],
+  changedChunks: EncodedChunkOutput[],
+): Promise<void> => {
+  const digest = await snapshotHash(chunkItem.bytes);
+  const key = snapshotChunkKey(collectionPrefix, incarnation, digest);
+  const descriptor: SnapshotChunkDescriptor = {
+    first_id: chunkItem.docs[0]!["_id"] as string,
+    last_id: chunkItem.docs.at(-1)!["_id"] as string,
+    key,
+    byte_length: chunkItem.bytes.byteLength,
+    row_count: chunkItem.docs.length,
+  };
+  finalDescriptors.push(descriptor);
+  changedChunks.push({ descriptor, bytes: chunkItem.bytes });
+};
 
 /**
  * Pure builder/evaluator for snapshot chunks.
@@ -293,7 +405,7 @@ export const buildSnapshotChunks = async (
   } else {
     for (const groupIndex of directTouchedIndexes) {
       const descriptor = descriptors[groupIndex]!;
-      const initialDocs = getLoadedDocs(loadedChunks, descriptor, groupIndex);
+      const initialDocs = getLoadedDocs(loadedChunks, descriptor);
       const mutationsForGroup = groupMutations.get(groupIndex)!;
 
       const docMap = new Map<string, DocumentData>();
@@ -326,75 +438,21 @@ export const buildSnapshotChunks = async (
   }
 
   // Facing-boundary merge evaluation
-  let usedNeighborChunkIndex: number | null = null;
-
-  if (!isInitialEmpty && lockedDirectOwnerIndex !== null && selectedNeighborIndex !== null) {
-    const O = lockedDirectOwnerIndex;
-    const NB = selectedNeighborIndex;
-    const isOwnerTouched = directTouchedIndexes.has(O);
-    const isOwnerUnchanged = unchangedGroupIndexes.has(O);
-    const isNeighborTouched = directTouchedIndexes.has(NB);
-
-    if (
-      O >= 0 &&
-      O < descriptors.length &&
-      NB >= 0 &&
-      NB < descriptors.length &&
-      isOwnerTouched &&
-      !isOwnerUnchanged &&
-      !isNeighborTouched
-    ) {
-      const ownerSplitChunks = rewrittenGroupSplitChunks.get(O);
-      if (ownerSplitChunks !== undefined && ownerSplitChunks.length > 0) {
-        let facingChunkIndex: number | null = null;
-        let isFacingRight = false;
-
-        if (NB === O + 1) {
-          // Right neighbor: facing output is rightmost
-          facingChunkIndex = ownerSplitChunks.length - 1;
-          isFacingRight = true;
-        } else if (NB === O - 1 && O === descriptors.length - 1) {
-          // Left neighbor (only when owner has no right neighbor): facing output is leftmost
-          facingChunkIndex = 0;
-          isFacingRight = false;
-        }
-
-        if (facingChunkIndex !== null) {
-          const facingChunk = ownerSplitChunks[facingChunkIndex]!;
-          if (isUnderfull(facingChunk.bytes.byteLength, facingChunk.docs.length, policy)) {
-            const neighborDesc = descriptors[NB]!;
-            const neighborDocs = getLoadedDocs(loadedChunks, neighborDesc, NB);
-
-            const combinedDocs = isFacingRight
-              ? [...facingChunk.docs, ...neighborDocs]
-              : [...neighborDocs, ...facingChunk.docs];
-
-            const candidateChunk: SnapshotChunk = {
-              schema_version: 2,
-              collection,
-              incarnation,
-              first_id: combinedDocs[0]!["_id"] as string,
-              last_id: combinedDocs.at(-1)!["_id"] as string,
-              docs: combinedDocs,
-            };
-            const combinedBytes = encodeBuilderChunk(candidateChunk);
-
-            if (
-              combinedBytes.byteLength <= policy.target_chunk_bytes &&
-              combinedDocs.length <= policy.target_rows
-            ) {
-              // Merge succeeds!
-              ownerSplitChunks[facingChunkIndex] = {
-                docs: combinedDocs,
-                bytes: combinedBytes,
-              };
-              usedNeighborChunkIndex = NB;
-            }
-          }
-        }
-      }
-    }
-  }
+  const usedNeighborChunkIndex =
+    isInitialEmpty || lockedDirectOwnerIndex === null || selectedNeighborIndex === null
+      ? null
+      : applyFacingMerge({
+          descriptors,
+          loadedChunks,
+          collection,
+          incarnation,
+          policy,
+          lockedDirectOwnerIndex,
+          selectedNeighborIndex,
+          directTouchedIndexes,
+          unchangedGroupIndexes,
+          ownerSplitChunks: rewrittenGroupSplitChunks.get(lockedDirectOwnerIndex),
+        });
 
   // Assemble final descriptor array and changed chunks
   const finalDescriptors: SnapshotChunkDescriptor[] = [];
@@ -403,17 +461,13 @@ export const buildSnapshotChunks = async (
   if (isInitialEmpty) {
     const splitChunks = rewrittenGroupSplitChunks.get(0) ?? [];
     for (const chunkItem of splitChunks) {
-      const digest = await snapshotHash(chunkItem.bytes);
-      const key = snapshotChunkKey(collectionPrefix, incarnation, digest);
-      const descriptor: SnapshotChunkDescriptor = {
-        first_id: chunkItem.docs[0]!["_id"] as string,
-        last_id: chunkItem.docs.at(-1)!["_id"] as string,
-        key,
-        byte_length: chunkItem.bytes.byteLength,
-        row_count: chunkItem.docs.length,
-      };
-      finalDescriptors.push(descriptor);
-      changedChunks.push({ descriptor, bytes: chunkItem.bytes });
+      await appendChunkOutput(
+        chunkItem,
+        collectionPrefix,
+        incarnation,
+        finalDescriptors,
+        changedChunks,
+      );
     }
   } else {
     for (let i = 0; i < descriptors.length; i++) {
@@ -426,17 +480,13 @@ export const buildSnapshotChunks = async (
       }
       const splitChunks = rewrittenGroupSplitChunks.get(i) ?? [];
       for (const chunkItem of splitChunks) {
-        const digest = await snapshotHash(chunkItem.bytes);
-        const key = snapshotChunkKey(collectionPrefix, incarnation, digest);
-        const descriptor: SnapshotChunkDescriptor = {
-          first_id: chunkItem.docs[0]!["_id"] as string,
-          last_id: chunkItem.docs.at(-1)!["_id"] as string,
-          key,
-          byte_length: chunkItem.bytes.byteLength,
-          row_count: chunkItem.docs.length,
-        };
-        finalDescriptors.push(descriptor);
-        changedChunks.push({ descriptor, bytes: chunkItem.bytes });
+        await appendChunkOutput(
+          chunkItem,
+          collectionPrefix,
+          incarnation,
+          finalDescriptors,
+          changedChunks,
+        );
       }
     }
   }

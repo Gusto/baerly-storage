@@ -195,6 +195,29 @@ export const snapshotManifestKey = (
   return key;
 };
 
+/**
+ * Lower-bound search over strictly ordered, gap-tolerant descriptors: the
+ * index of the first descriptor whose `last_id` sorts at or after `id` — the
+ * candidate owner for `id` in descriptor routing. Returns
+ * `descriptors.length` when `id` sorts after every descriptor.
+ */
+export function firstDescriptorEndingAtOrAfter(
+  descriptors: readonly SnapshotChunkDescriptor[],
+  id: string,
+): number {
+  let low = 0;
+  let high = descriptors.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (compareDocIds(descriptors[middle]!.last_id, id) < 0) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
 export const decodeSnapshotManifest = async (
   bytes: Uint8Array,
   key: string,

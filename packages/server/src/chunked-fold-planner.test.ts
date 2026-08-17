@@ -200,6 +200,64 @@ describe("chunked fold planner", () => {
     expect(plan!.split_increments).toBe(1);
   });
 
+  test("empty entries plan is a no-op that echoes descriptors and honors baseLogSeq", async () => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+
+    const loadedChunks = new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]);
+
+    const planChunk = (baseLogSeq?: number) =>
+      planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries: [],
+        descriptors: [d0Desc],
+        loadedChunks,
+        budget: defaultBudget,
+        incarnation,
+        policy: CHUNK_BOUNDARY_POLICIES["c128-r512"],
+        baseLogSeq,
+      });
+
+    const withBase = await planChunk(41);
+    expect(withBase).not.toBeNull();
+    expect(withBase!.log_seq_end).toBe(41);
+    expect(withBase!.touched_chunk_indexes).toEqual([]);
+    expect(withBase!.touched_ranges).toEqual([]);
+    expect(withBase!.mutation_bytes).toBe(0);
+    expect(withBase!.split_increments).toBe(0);
+    expect(withBase!.used_neighbor_chunk_index).toBeNull();
+    expect(withBase!.mutations.size).toBe(0);
+    expect(withBase!.build.chunks).toEqual([d0Desc]);
+    expect(withBase!.build.changed_chunks).toEqual([]);
+
+    const withoutBase = await planChunk();
+    expect(withoutBase).not.toBeNull();
+    expect(withoutBase!.log_seq_end).toBe(0);
+  });
+
+  test("non-empty entries with no admissible candidate returns null", async () => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+
+    const loadedChunks = new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]);
+
+    const entries: LogEntry[] = [makeLogEntry(1, "U", "a", doc("a", "x".repeat(100)))];
+
+    const plan = await planChunkedFold({
+      collection,
+      collectionPrefix,
+      entries,
+      descriptors: [d0Desc],
+      loadedChunks,
+      budget: { ...defaultBudget, max_mutation_bytes: 10 },
+      incarnation,
+      policy: CHUNK_BOUNDARY_POLICIES["c128-r512"],
+    });
+
+    expect(plan).toBeNull();
+  });
+
   test("suffix non-interference: appending suffix entries after admitted prefix does not alter plan output", async () => {
     const d0Docs = [doc("a", 1), doc("b", 2)];
     const d1Docs = [doc("m", 10), doc("n", 20)];
@@ -252,7 +310,7 @@ describe("chunked fold planner", () => {
     expect(planBase!.build.chunks).toEqual(planExtended!.build.chunks);
   });
 
-  test("exercise D0/D1 lock with non-underfull D0 and underfull D3 separated by D2", async () => {
+  test("admits a prefix spanning the locked pair and a distant chunk", async () => {
     const policy: SnapshotChunkBoundaryPolicy = {
       target_chunk_bytes: 10_000,
       target_rows: 4,
@@ -290,10 +348,14 @@ describe("chunked fold planner", () => {
       policy,
     });
 
+    // Planner-level contract only: both entries are admitted into one plan
+    // whose touched set spans the locked pair (D0/D1) and the distant D3.
+    // The builder-internal merge non-interference for this exact layout is
+    // covered by snapshot-chunk-builder.test.ts ("regression: D0 locks D1,
+    // ... D1 and D3 must NOT merge").
     expect(plan).not.toBeNull();
-    expect(plan!.used_neighbor_chunk_index).toBeNull();
-    expect(plan!.build.chunks.length).toBe(4);
-    expect(plan!.build.chunks[1]).toBe(d1Desc); // D1 untouched reuse
+    expect(plan!.log_seq_end).toBe(2);
+    expect(plan!.touched_chunk_indexes).toEqual([0, 3]);
   });
 });
 
