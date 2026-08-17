@@ -120,7 +120,10 @@ export const WORKLOAD_CEILING_STUDY = {
 /**
  * The study's deliberately small admission predicate. It evaluates only
  * preregistered evidence fields; provision, collection, and telemetry details
- * remain the concern of the later measurement harness.
+ * remain the concern of the later measurement harness. The `admission`
+ * `requires_*` flags are the declarative record of these requirements — each
+ * is pinned to `true` by the contract type, so the predicate asserts the
+ * requirements directly rather than guarding on flags that can never flip.
  */
 export const satisfiesWorkloadCeilingAdmission = (
   evidence: WorkloadCeilingStudyEvidence,
@@ -130,10 +133,10 @@ export const satisfiesWorkloadCeilingAdmission = (
     admission.accepted_evidence_sources;
 
   return (
-    (!admission.requires_deployed_workers || acceptedSources.includes(evidence.source)) &&
+    acceptedSources.includes(evidence.source) &&
     evidence.profile === admission.primary_profile &&
-    (!admission.requires_zero_failures_upper_bound || evidence.has_zero_failures_upper_bound) &&
+    evidence.has_zero_failures_upper_bound &&
     admission.required_statistics.every((statistic) => evidence.statistics.includes(statistic)) &&
-    (!admission.requires_repeated_tail_drain || evidence.has_repeated_tail_drain)
+    evidence.has_repeated_tail_drain
   );
 };

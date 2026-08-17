@@ -165,7 +165,10 @@ describe("log retirement vs. the numbered-log create", () => {
     await advanceFloorAndRetire(inner);
     gate.release();
 
-    await expect(pausedCommit).rejects.toMatchObject({ code: "AmbiguousCommit" });
+    await expect(pausedCommit).rejects.toMatchObject({
+      code: "AmbiguousCommit",
+      retriable: false,
+    });
     const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
       .collection("c")
       .get(DOC_ID);
@@ -195,35 +198,14 @@ describe("log retirement vs. the numbered-log create", () => {
     await advanceFloorAndRetire(inner);
     gate.release();
 
-    await expect(pausedCommit).rejects.toMatchObject({ code: "AmbiguousCommit" });
-    const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
-      .collection("c")
-      .get(DOC_ID);
-    expect(visible).toBeUndefined();
-  });
-
-  test("the ambiguous failure is not retriable", async () => {
-    const inner = new MemoryStorage();
-    await seedManifest(inner);
-    const gate = gatedPutStorage(inner, logObjectKey(PREFIX, 0), "delay");
-
-    const pausedCommit = runWithContext(MAINTENANCE_OFF, () =>
-      new Writer({ storage: gate.storage, currentJsonKey: CURRENT_KEY }).commit({
-        op: "I",
-        collection: "c",
-        docId: DOC_ID,
-        body: { ...DOC_BODY },
-      }),
-    );
-    await gate.reached;
-    await seedLogEntry(inner, PREFIX, 0, { doc_id: "peer-doc", after: { _id: "peer-doc" } });
-    await advanceFloorAndRetire(inner);
-    gate.release();
-
     await expect(pausedCommit).rejects.toMatchObject({
       code: "AmbiguousCommit",
       retriable: false,
     });
+    const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
+      .collection("c")
+      .get(DOC_ID);
+    expect(visible).toBeUndefined();
   });
 
   test('a rejected commit records db.write.ambiguous_commit_total with cleanup="deleted"', async () => {
