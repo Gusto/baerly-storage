@@ -1,5 +1,4 @@
 import {
-  BaerlyError,
   decodeJsonBytes,
   type DocumentData,
   type DocumentValue,
@@ -11,9 +10,11 @@ import { assertPathSegment } from "./path-segment.ts";
 import {
   assertCodecDocId,
   assertExactFields,
+  type CodecCode,
   DIGEST_PATTERN,
   equalBytes,
   INCARNATION_PATTERN,
+  makeCodecFail,
   MAX_CHUNK_BYTES,
   MAX_CHUNK_ROWS,
   normalizeCodecFailure,
@@ -33,12 +34,9 @@ export interface SnapshotChunk {
   readonly docs: readonly DocumentData[];
 }
 
-function invalid(
-  code: "InvalidConfig" | "InvalidResponse",
-  message: string,
-  cause?: unknown,
-): never {
-  throw new BaerlyError(code, `snapshot chunk: ${message}`, cause);
+const failChunk = makeCodecFail("snapshot chunk");
+function invalid(code: CodecCode, message: string, cause?: unknown): never {
+  return failChunk(code, message, cause);
 }
 
 function assertCallerSegment(value: unknown, role: string): asserts value is string {

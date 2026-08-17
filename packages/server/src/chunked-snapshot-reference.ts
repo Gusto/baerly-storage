@@ -1,5 +1,10 @@
-import { BaerlyError, type DocumentData, type DocumentValue } from "@baerly/protocol";
-import { assertCodecDocId, normalizeCodecFailure } from "./snapshot-codec.ts";
+import type { DocumentData, DocumentValue } from "@baerly/protocol";
+import {
+  assertCodecDocId,
+  type CodecCode,
+  makeCodecFail,
+  normalizeCodecFailure,
+} from "./snapshot-codec.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
 
 export interface ReferenceRow {
@@ -20,12 +25,9 @@ export type ReferenceFold = (
   mutations: readonly ReferenceMutation[],
 ) => readonly ReferenceRow[];
 
-function invalid(
-  code: "InvalidConfig" | "InvalidResponse",
-  message: string,
-  cause?: unknown,
-): never {
-  throw new BaerlyError(code, `chunked snapshot reference: ${message}`, cause);
+const failReference = makeCodecFail("chunked snapshot reference");
+function invalid(code: CodecCode, message: string, cause?: unknown): never {
+  return failReference(code, message, cause);
 }
 
 function assertDocumentValue(value: unknown, where: string, ancestors: Set<object>): void {

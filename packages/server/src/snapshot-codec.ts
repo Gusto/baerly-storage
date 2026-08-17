@@ -19,6 +19,20 @@ export type CodecCode = "InvalidConfig" | "InvalidResponse";
 /** Artifact-scoped failure constructor bound by each codec. */
 export type CodecFail = (code: CodecCode, message: string, cause?: unknown) => never;
 
+/**
+ * Build a `CodecFail` that prefixes every message with the codec's artifact
+ * name. Callers must wrap this in a `function` declaration annotated
+ * `: never` (`function invalid(...): never { return makeCodecFail(...)(...); }`)
+ * rather than binding it directly to a `const` — TS control-flow narrowing
+ * after an `invalid(...)` call only recognizes a `function` declaration's own
+ * annotated `never` return, not a variable holding a `never`-returning value.
+ */
+export function makeCodecFail(prefix: string): CodecFail {
+  return (code, message, cause) => {
+    throw new BaerlyError(code, `${prefix}: ${message}`, cause);
+  };
+}
+
 /** Chunk bodies encode to at most 1 MiB of canonical bytes (ADR-007). */
 export const MAX_CHUNK_BYTES = 1024 * 1024;
 
@@ -32,11 +46,11 @@ export const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
 export const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
 /** The only chunk key grammar under a collection prefix (ADR-007). */
-export const CHUNK_KEY_PATTERN =
+const CHUNK_KEY_PATTERN =
   /^(.+)\/_v2\/snapshot\/chunks\/([0-9a-f]{32})\/sha256\/([0-9a-f]{64})\.json$/;
 
 /** The only manifest key grammar under a collection prefix (ADR-007). */
-export const MANIFEST_KEY_PATTERN =
+const MANIFEST_KEY_PATTERN =
   /^(.+)\/_v2\/snapshot\/manifests\/([0-9a-f]{32})\/sha256\/([0-9a-f]{64})\.json$/;
 
 const utf8 = new TextEncoder();
