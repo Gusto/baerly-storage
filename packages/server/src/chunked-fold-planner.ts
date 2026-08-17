@@ -253,6 +253,14 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
 /**
  * Phase 2: Exact prefix selection through the builder.
  * Dry-runs candidate endpoints in sequence and selects the longest sequentially admitted prefix.
+ *
+ * Cost: one full builder run per candidate endpoint, hashing included, with all
+ * but the last discarded. Sequential evaluation is required by ADR-007 item 4 —
+ * `split_increments` is non-monotone, so a binary search over the boundary would
+ * not agree with this scan. The bounded fix is a hash-free dry-run mode; see
+ * "Chunked fold selection rebuilds and re-hashes once per candidate endpoint" in
+ * `docs/superpowers/trackers/deferred-defects.md`, which gates that work on this
+ * function acquiring a production caller.
  */
 export const planChunkedFold = async (
   input: PlanChunkedFoldInput,
