@@ -142,12 +142,6 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
 
   const runningMutations = new Map<string, ReferenceMutation>();
   let runningMutationBytes = 0;
-  // Routing is a pure function of (doc_id, op) against the fixed descriptor
-  // array, so each doc's target is computed once and maintained incrementally
-  // (with refcounts over touched descriptor indexes) instead of re-routing
-  // every accumulated mutation on each entry.
-  const docTargetIndexes = new Map<string, number | null>();
-  const targetRefCount = new Map<number, number>();
 
   for (let m = 0; m < entries.length; m++) {
     const entry = entries[m]!;
@@ -170,25 +164,17 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
       break;
     }
 
-    const previousTarget = docTargetIndexes.get(entry.doc_id);
-    const nextTarget =
-      previousMutation !== undefined && previousMutation.op === mutation.op
-        ? previousTarget!
-        : routeMutationToDescriptor(entry.doc_id, mutation.op, descriptors);
-    if (previousTarget !== undefined && previousTarget !== nextTarget && previousTarget !== null) {
-      const remaining = (targetRefCount.get(previousTarget) ?? 1) - 1;
-      if (remaining > 0) {
-        targetRefCount.set(previousTarget, remaining);
-      } else {
-        targetRefCount.delete(previousTarget);
+    // Routing is a pure function of (doc_id, op) against the fixed descriptor
+    // array, so the live direct-target set is re-derived from the retained
+    // final mutations. This is the same expression phase 2 uses to build its
+    // directIndexes, so both phases share one idiom.
+    const currentDirectIndexes = new Set<number>();
+    for (const [docId, mut] of runningMutations) {
+      const target = routeMutationToDescriptor(docId, mut.op, descriptors);
+      if (target !== null) {
+        currentDirectIndexes.add(target);
       }
     }
-    if (nextTarget !== null && nextTarget !== previousTarget) {
-      targetRefCount.set(nextTarget, (targetRefCount.get(nextTarget) ?? 0) + 1);
-    }
-    docTargetIndexes.set(entry.doc_id, nextTarget);
-
-    const currentDirectIndexes = new Set(targetRefCount.keys());
 
     const { leftmostOwnerIndex, selectedNeighborIndex } = deriveOwnerAndNeighbor(
       currentDirectIndexes,
