@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { closureFiles, measureMinGz, measureRawGz } from "./bundle-measure.ts";
+import { spawnQuiet } from "./lib/quiet-spawn.mjs";
 
 /** A measured size axis. */
 export type Axis = "raw" | "gz" | "minGz";
@@ -381,23 +382,11 @@ async function runCli(): Promise<void> {
   }
 
   if (!process.env["BAERLY_SKIP_BUILD"]) {
-    // Capture instead of inherit: the rolldown build prints a ~150-line
-    // per-asset/chunk size table that has no clean CLI suppress flag and is
-    // pure noise ahead of the size report this command actually exists to
-    // print. Same capture-and-replay-on-failure shape as scripts/prepare.mjs.
-    const built = spawnSync("pnpm", ["run", "build"], {
-      stdio: ["inherit", "pipe", "pipe"],
-      encoding: "utf8",
-    });
-    if (built.status !== 0) {
-      if (built.stdout) {
-        process.stdout.write(built.stdout);
-      }
-      if (built.stderr) {
-        process.stderr.write(built.stderr);
-      }
-      process.exit(built.status ?? 1);
-    }
+    // The rolldown build prints a ~150-line per-asset/chunk size table that
+    // has no clean CLI suppress flag and is pure noise ahead of the size
+    // report this command actually exists to print. spawnQuiet captures it
+    // and only replays on failure — see scripts/lib/quiet-spawn.mjs.
+    spawnQuiet("pnpm", ["run", "build"]);
   }
 
   const snapshot = loadSnapshot();
