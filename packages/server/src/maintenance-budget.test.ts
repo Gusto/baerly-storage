@@ -411,8 +411,8 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       },
     );
 
-    // GC no longer lists log/ (stale-log mark phase removed in Task 8),
-    // so only snapshot/ is listed.
+    // GC does not list log/ — log keys are computable from `seq`, so
+    // retirement needs no discovery — leaving snapshot/ as the only LIST.
     expect(counted.listedPrefixes()).toEqual([`${prefix}/snapshot/L9/`]);
     // Nothing on the GC path can suppress the refresh, so once the rate limit
     // is eligible the hint reaches the observed tail in a single tick.
@@ -422,7 +422,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     //          + pending re-read after the bootstrap conflict + fresh current
     //          + 3 final CAS reads + tail_hint refresh read + retireLogRange gate read
     // put 5  = pending bootstrap create + 3 final CAS writes + refresh write
-    // list 1  = snapshot/ LIST (log/ LIST removed in Task 8)
+    // list 1  = snapshot/ LIST (GC never LISTs log/)
     expect(counted.report()).toEqual({ get: 10, put: 5, delete: 10, list: 1 });
     const totalOps = counted.getOps();
     expect(totalOps).toBe(26);

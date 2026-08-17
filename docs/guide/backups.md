@@ -150,11 +150,12 @@ baerly admin restore \
 If the target collection's `current.json` already exists, restore
 refuses with `Conflict`. With `--force`, restore does not delete old
 objects first. It moves the collection's starting log position past the
-old numbered log files and imports rows at new sequence numbers. Current
-maintenance/GC can later reclaim only GC-managed stale logs and orphan
-snapshots; legacy `content/` side objects remain untouched and require the
-optional, writers-quiesced disposal described in
-[Legacy content cleanup](#legacy-content-cleanup) below.
+old numbered log files and imports rows at new sequence numbers.
+Maintenance can later reclaim the surviving `log/` objects via
+computed-range retirement, once the new generation's fold floor advances
+past them, and orphan snapshots via GC. Legacy `content/` side objects
+remain untouched and require the optional, writers-quiesced disposal
+described in [Legacy content cleanup](#legacy-content-cleanup) below.
 The `writer_fence` field is only bumped to keep metadata monotone; it does
 not perform truncation or protect against live writers.
 

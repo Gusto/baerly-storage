@@ -1004,8 +1004,10 @@ export class Writer {
    * a foreign writer's entry (ours invisible), and the fold keeps no writer
    * identity to tell them apart. The band is accepted because keying the check
    * on `log_seq_start` would reject ordinary post-fold commits — a far
-   * larger harm than the residual it would catch. That residual is the exposure
-   * `docs/spec/sync-protocol.md` invariant 14 records and PR 5 closes.
+   * larger harm than the residual it would catch. That residual is the
+   * invisible half of the undecidable band `docs/spec/sync-protocol.md`
+   * invariant 5 describes; it is not reachable by the certified-floor check,
+   * by construction.
    *
    * The floor is clamped to `min(log_delete_floor, log_seq_start)` for the
    * reason invariant 12 gives: the `<= log_seq_start` bound is
@@ -1024,15 +1026,15 @@ export class Writer {
    * clobbers a concurrent newer value and mints a second `lsn` for one logical
    * mutation.
    *
-   * The phantom object is DELETEd best-effort. Today it would also be reclaimed
-   * without this DELETE: `runGc`'s `stale-log` arm marks any `log/<seq>` below
-   * `log_seq_start` with no delete-floor awareness (`./gc.ts` — the mark loop
-   * keys on `seq >= logSeqStart` alone), and the sweep-time rescue spares only
-   * `seq >= log_seq_start`, so a sub-floor phantom is swept once the grace
-   * elapses. PR 5 removes that arm in favour of computed-range retirement, and
-   * from then on this DELETE is the only thing standing between a rejected
-   * commit and a permanently leaked object — which is why it is here now rather
-   * than deferred. Deleting it is safe: no reader may read below the certified
+   * The phantom object is DELETEd best-effort, and it is the only thing
+   * standing between a rejected commit and a permanently leaked object.
+   * Nothing reclaims the phantom afterwards: it sits at a seq *below*
+   * `log_delete_floor` — that is the precondition for reaching this branch —
+   * and `computeRetirableRange` (`./log-retention.ts`) *starts* at the
+   * certified floor, so retirement never revisits a slot beneath its own
+   * floor. GC does not reclaim log objects at all. So a `cleanup: "failed"`
+   * on `db.write.ambiguous_commit_total` is a genuine permanent leak, not a
+   * deferral. Deleting it is safe: no reader may read below the certified
    * floor (invariant 5), and the one deliberate sub-floor reader,
    * `#readPreImage`, treats a hole as "keep descending" rather than a stop
    * signal. A failed cleanup is recorded on the counter and never masks the

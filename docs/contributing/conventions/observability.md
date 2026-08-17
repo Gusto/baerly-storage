@@ -161,9 +161,9 @@ The load-bearing kernel metrics today (canonical list in
   cannot be determined.
   `cleanup` reports whether the phantom log object was reclaimed. Any
   sustained rate means writers are pausing across a fold plus a
-  retirement pass. A `failed` rate leaves sub-floor objects behind that
-  GC's `stale-log` arm still reclaims today; they become permanent leaks
-  only once PR 5 replaces that arm with computed-range retirement.
+  retirement pass. A `failed` rate leaves sub-floor objects behind as
+  permanent leaks: they sit below `log_delete_floor`, which is where
+  computed-range retirement starts, so nothing revisits them.
 - `db.write.delete_floor_check_skipped_total` — writer counter, labelled
   by `collection`. The post-create re-read of `current.json` inside
   `Writer#assertCommitAboveDeleteFloor` failed with a non-abort error, so
@@ -188,9 +188,12 @@ The load-bearing kernel metrics today (canonical list in
   reclaimed nothing look productive. Expect one `stale-generation`
   spike per `baerly admin restore` and one on the first pass after
   upgrading to a build that stamps generations (each pre-upgrade
-  `stale-log` or `orphan-snapshot` candidate is dropped for want of one
-  and, if still orphaned, re-marked next pass, delaying reclamation by
-  one grace period). Those generation-fence drops are self-healing. A
+  `stale-log` or `orphan-snapshot` candidate is dropped for want of one).
+  An `orphan-snapshot` drop is self-healing: if the key is still orphaned
+  it is re-marked next pass, delaying reclamation by one grace period. A
+  dropped legacy `stale-log` candidate is not re-marked — no current
+  build marks that category — but nothing is lost, because the log object
+  it named is reclaimed by computed-range retirement instead. A
   legacy `orphan-content` candidate is different: the eviction arm runs
   before the generation fence, removes it from the ledger without a
   DELETE or `db.gc.dropped_total` emission, never re-marks it, and leaves

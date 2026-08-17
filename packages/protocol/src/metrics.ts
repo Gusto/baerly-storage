@@ -27,8 +27,8 @@
  *     `cleanup` reports whether the phantom log object was reclaimed. Any
  *     sustained rate means writers are pausing across a fold plus a
  *     retirement pass; a `failed` rate leaves behind sub-floor objects that
- *     GC's `stale-log` arm still reclaims today, and that leak permanently
- *     only once PR 5 replaces that arm with computed-range retirement
+ *     leak permanently — they sit below `log_delete_floor`, where
+ *     computed-range retirement starts, so nothing revisits them
  *   - `db.write.delete_floor_check_skipped_total` — counter, labelled by
  *     `collection`. The post-create re-read of `current.json` inside
  *     `Writer#assertCommitAboveDeleteFloor` failed with a non-abort error, so

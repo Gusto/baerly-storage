@@ -118,39 +118,58 @@ symptoms are:
 
 ### The drain-rate safety invariant
 
-The GC-managed stale-log and orphan-snapshot population stays bounded
-only while sweep throughput keeps up with production of those candidates:
+Folds continually push log entries below the floor, while replaced or
+CAS-losing snapshot publishes leave orphan snapshots. Two independent
+passes reclaim them at two independent rates, so there are two
+invariants, not one.
+
+**Orphan snapshots, paced by the GC sweep budget.** The
+orphan-snapshot population stays bounded only while sweep throughput
+keeps up with production:
 
 > **`WRITE_TICK_GC_MAX_SWEEPS / WRITE_TICK_GC_INTERVAL` (= 10/4) ≥
-> GC-managed orphan-production rate `p`.**
+> orphan-snapshot production rate `p`.**
 
-While that holds, stale logs and orphan snapshots drain and their object
-count stays bounded. This invariant does not bound live log growth behind
-a deferred fold or inert objects under the legacy `content/` prefix.
+Since each fold that republishes `current.snapshot` orphans exactly one
+predecessor, `p` is bounded by the fold rate.
 
-Two things upstream of the sweep can bind before sweep throughput does,
-and neither is fixed by raising the sweep rate:
+**Sub-floor log objects, paced by the retention budget.** These are not
+GC-managed. `retireLogRange` deletes a computed sequence range, so the
+bound is arithmetic rather than discovery-limited:
 
-- **Mark coverage.** The one budgeted mark phase whose LIST window can
-  stall on undeletable keys carries a persisted rotation cursor in
-  `gc/pending.json` (`log_scan_cursor`). Without it, that phase can
-  starve and the candidate never enters the ledger for the sweep budget
-  to spend itself on.
+> **`LOG_RETENTION_MAX_DELETES_PER_TICK` per retiring tick ≥ the rate at
+> which folds push entries below `log_seq_start`.**
+
+Retirement runs on every maintenance pass rather than on the
+`gcInterval` boundary, and its floor trails `log_seq_start` by
+`LOG_RETENTION_SEQ_WINDOW`, so a steady-state collection retires at the
+fold rate and the window is the standing residual.
+
+Neither invariant bounds live log growth behind a deferred fold, or
+inert objects under the legacy `content/` prefix.
+
+One thing upstream of the GC sweep can bind before sweep throughput
+does, and raising the sweep rate does not fix it:
+
 - **Ledger depth.** `GC_MAX_PENDING_CANDIDATES` bounds how many
-  candidates are in flight at once, across `stale-log` and
-  `orphan-snapshot` together, and each cohort waits out
-  `GC_GRACE_PERIOD_MILLIS` before it can be swept. (A legacy
-  `orphan-content` entry on a v0.6.0 ledger counts against the same
-  cap, but is evicted on sight rather than waiting out the grace
-  period — see the eviction arm in `gc.ts`.) On a large accumulated
-  backlog that ceiling — not the sweep budget — is what paces
-  reclamation.
+  `orphan-snapshot` candidates are in flight at once, and each cohort
+  waits out `GC_GRACE_PERIOD_MILLIS` before it can be swept. Legacy
+  entries on a v0.6.0 ledger count against the same cap: an
+  `orphan-content` entry is evicted on sight rather than waiting out the
+  grace period, and a `stale-log` entry — a category no current build
+  marks — is still swept under the grace if it clears the canonicality,
+  generation, and liveness arms. See the eviction and authority arms in
+  `gc.ts`. On a large accumulated backlog that ceiling — not the sweep
+  budget — is what paces reclamation.
 
-Folds continually make sub-floor log entries stale, while replaced or
-CAS-losing snapshot publishes leave orphan snapshots. Under
-above-envelope churn, those candidates can become eligible faster than
-GC sweeps them. Growth in those prefixes is the signal; the protocol does
-not silently lose data.
+Mark coverage is not on this list. GC's one remaining mark phase scans
+`snapshot/L9/`, where at most one key is permanently undeletable (the
+live `current.snapshot`), so any `maxMarks >= 2` makes progress and the
+phase cannot stall. That is why nothing carries a rotation cursor.
+
+Under above-envelope churn, artifacts can become eligible faster than
+either pass reclaims them. Growth in those prefixes is the signal; the
+protocol does not silently lose data.
 
 If bucket inventory instead shows growth under `content/`, do not treat it
 as GC lag. Check for v0.6.0 nodes still writing during a mixed rollout, or
@@ -158,7 +177,7 @@ for a restore/raw copy that preserved a legacy content prefix. Quiesce the
 legacy writers first, then follow the manual disposal guidance in
 [Backups](../guide/backups.md#legacy-content-cleanup). Current GC never marks or deletes
 those objects, so a restored legacy prefix can remain large without
-violating the drain-rate invariant above.
+violating the drain-rate invariants above.
 
 ### Which graduation?
 
