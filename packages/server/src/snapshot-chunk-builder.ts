@@ -1,14 +1,17 @@
 import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
+import {
+  type CodecCode,
+  INCARNATION_PATTERN,
+  makeCodecFail,
+  MAX_CHUNK_BYTES,
+} from "./snapshot-codec.ts";
 import { encodeSnapshotChunk, snapshotChunkKey, type SnapshotChunk } from "./snapshot-chunk.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
 import {
   firstDescriptorEndingAtOrAfter,
   type SnapshotChunkDescriptor,
 } from "./snapshot-manifest.ts";
-
-const MAX_CHUNK_BYTES = 1024 * 1024;
-const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
 
 export interface SnapshotChunkBoundaryPolicy {
   readonly target_chunk_bytes: number;
@@ -45,12 +48,9 @@ export interface BuildSnapshotChunksInput {
   readonly selectedNeighborIndex: number | null;
 }
 
-function invalid(
-  code: "InvalidConfig" | "InvalidResponse",
-  message: string,
-  cause?: unknown,
-): never {
-  throw new BaerlyError(code, `snapshot chunk builder: ${message}`, cause);
+const failBuilder = makeCodecFail("snapshot chunk builder");
+function invalid(code: CodecCode, message: string, cause?: unknown): never {
+  return failBuilder(code, message, cause);
 }
 
 function encodeBuilderChunk(chunk: SnapshotChunk): Uint8Array {

@@ -1,4 +1,4 @@
-import { BaerlyError, type DocumentData, encodeJsonBytes, type LogEntry } from "@baerly/protocol";
+import { type DocumentData, encodeJsonBytes, type LogEntry } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
 import {
   buildSnapshotChunks,
@@ -7,6 +7,7 @@ import {
   type SnapshotChunkBoundaryPolicy,
   type SnapshotChunkBuildResult,
 } from "./snapshot-chunk-builder.ts";
+import { makeCodecFail, type CodecCode } from "./snapshot-codec.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
 import {
   firstDescriptorEndingAtOrAfter,
@@ -66,12 +67,22 @@ export interface PlanChunkedFoldInput {
   readonly baseLogSeq?: number;
 }
 
-function invalid(
-  code: "InvalidConfig" | "InvalidResponse",
-  message: string,
-  cause?: unknown,
-): never {
-  throw new BaerlyError(code, `chunked fold planner: ${message}`, cause);
+const failPlanner = makeCodecFail("chunked fold planner");
+function invalid(code: CodecCode, message: string, cause?: unknown): never {
+  return failPlanner(code, message, cause);
+}
+
+/**
+ * Stored log entries carry doc IDs written by past writers, so a doc_id that
+ * fails scalar-orderability is a stored-data failure — InvalidResponse per
+ * ADR-007 — not caller ingress (InvalidConfig).
+ */
+function assertStoredEntryDocId(id: string): void {
+  try {
+    assertSnapshotDocId(id);
+  } catch (error) {
+    invalid("InvalidResponse", "stored log entry doc_id is not scalar-orderable", error);
+  }
 }
 
 function isRoutedDelete(docId: string, descriptors: readonly SnapshotChunkDescriptor[]): boolean {
@@ -101,7 +112,8 @@ function computeMutationContribution(
  * Phase 1: Metadata prefetch phase.
  * Walks log entries in sequence using only authenticated descriptor metadata and post-images.
  * Retains final last-write-wins mutations, locks the (owner, neighbor) pair on first non-null owner,
- * and bounds candidate endpoints by entry count, mutation bytes, direct chunks, and touched bytes.
+ * and bounds candidate endpoints by entry count, mutation bytes, direct chunks,
+ * and cumulative touched bytes across accepted endpoints.
  */
 export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFoldPrefetch => {
   const { entries, descriptors, budget } = input;
@@ -128,7 +140,7 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
       break;
     }
 
-    assertSnapshotDocId(entry.doc_id);
+    assertStoredEntryDocId(entry.doc_id);
     let mutation: ReferenceMutation;
     if (entry.op === "D") {
       mutation = { op: "D", doc_id: entry.doc_id };
@@ -171,10 +183,6 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
 
     const currentDirectIndexes = new Set(targetRefCount.keys());
 
-    if (currentDirectIndexes.size > budget.max_touched_chunks) {
-      break;
-    }
-
     const { leftmostOwnerIndex, selectedNeighborIndex } = deriveOwnerAndNeighbor(
       currentDirectIndexes,
       descriptors.length,
@@ -192,16 +200,32 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
       }
     }
 
-    const endpointChunks = new Set(currentDirectIndexes);
-    if (selectedNeighborIndex !== null) {
-      endpointChunks.add(selectedNeighborIndex);
-    }
-    let endpointTouchedBytes = 0;
-    for (const chunkIndex of endpointChunks) {
-      endpointTouchedBytes += descriptors[chunkIndex]!.byte_length;
+    // ADR-007 item 1: both touched-chunk ceilings are cumulative across
+    // every accepted endpoint — per-endpoint accounting alone would not
+    // bound the fetch set, because final-mutation collapse can move direct
+    // touches between descriptors while the locked owner and neighbor stay
+    // fixed. The directly-touched-descriptor ceiling counts the union of
+    // direct touches only; the one selected neighbor is covered by the
+    // byte ceiling instead, so the prefetch set is bounded at
+    // max_touched_chunks + 1.
+    const cumulativeChunks = new Set(allDirectIndexes);
+    for (const index of currentDirectIndexes) {
+      cumulativeChunks.add(index);
     }
 
-    if (endpointTouchedBytes > budget.max_touched_bytes) {
+    if (cumulativeChunks.size > budget.max_touched_chunks) {
+      break;
+    }
+
+    if (lockedNeighbor !== null) {
+      cumulativeChunks.add(lockedNeighbor);
+    }
+    let cumulativeTouchedBytes = 0;
+    for (const chunkIndex of cumulativeChunks) {
+      cumulativeTouchedBytes += descriptors[chunkIndex]!.byte_length;
+    }
+
+    if (cumulativeTouchedBytes > budget.max_touched_bytes) {
       break;
     }
 
@@ -292,7 +316,7 @@ export const planChunkedFold = async (
 
     const mutationMap = new Map<string, ReferenceMutation>();
     for (const entry of prefixEntries) {
-      assertSnapshotDocId(entry.doc_id);
+      assertStoredEntryDocId(entry.doc_id);
       if (entry.op === "D") {
         mutationMap.set(entry.doc_id, { op: "D", doc_id: entry.doc_id });
       } else {
