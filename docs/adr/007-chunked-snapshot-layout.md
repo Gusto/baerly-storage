@@ -225,7 +225,14 @@ Prefix planning is an implementable two-phase pure algorithm:
    last-write-wins mutations and stops before the first entry that would exceed
    `max_log_entries`, 1 MiB of final mutation bytes, eight distinct directly
    touched descriptors, or 2 MiB of authenticated declared bytes across the
-   union of those descriptors and one optional neighbor. Insert/update bytes
+   union of those descriptors and one optional neighbor. The declared-byte
+   ceiling is cumulative: the sum over the union of directly touched
+   descriptors across every accepted endpoint, plus the selected neighbor,
+   never exceeds `max_touched_bytes`; metadata stops before the first entry
+   that would push that union past the ceiling. Per-endpoint accounting alone
+   does not bound the fetch set, because final-mutation collapse can move
+   direct touches between descriptors while the locked owner and neighbor
+   stay fixed. Insert/update bytes
    are the exact canonical bytes of each final post-image; a routed delete is
    the UTF-8 byte length of its ID; replacing an earlier mutation for the same
    ID first removes its contribution. Gap deletes contribute zero and cause no
