@@ -29,6 +29,7 @@ import {
 } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
+import { indexKeyFor, type IndexDefinition } from "./indexes.ts";
 import { retireLogRange } from "./log-retention.ts";
 import {
   createObservabilityContext,
@@ -95,11 +96,18 @@ const dumpBucket = async (storage: Storage): Promise<Array<[string, string]>> =>
   return out;
 };
 
-/** Wrap `inner` so the first PUT of `gatedKey` blocks until released. */
+/**
+ * Wrap `inner` so the first PUT of `gatedKey` blocks until released. The
+ * `behavior` arm decides what happens on release: `"delay"` passes the PUT
+ * through, `"fail"` throws instead of ever calling `inner.put` (a create
+ * that never reached the bucket), and `"landThenFail"` calls `inner.put`
+ * and THEN throws `NetworkError` — the true lost-ack shape, where the
+ * create is durable but the response never arrives.
+ */
 const gatedPutStorage = (
   inner: Storage,
   gatedKey: string,
-  behavior: "delay" | "fail",
+  behavior: "delay" | "fail" | "landThenFail",
 ): { storage: Storage; reached: Promise<void>; release: () => void } => {
   let signalReached!: () => void;
   const reached = new Promise<void>((r) => {
@@ -121,6 +129,10 @@ const gatedPutStorage = (
         await released;
         if (behavior === "fail") {
           throw new BaerlyError("NetworkError", "test: simulated dropped ack on the log create");
+        }
+        if (behavior === "landThenFail") {
+          await inner.put(key, body, opts);
+          throw new BaerlyError("NetworkError", "test: dropped ack after a durable log create");
         }
       }
       return inner.put(key, body, opts);
@@ -224,6 +236,165 @@ describe("log retirement vs. the numbered-log create", () => {
       code: "AmbiguousCommit",
       retriable: false,
     });
+  });
+
+  test("T3: a sub-floor update rejects before deleting the OLD value's index keys", async () => {
+    const inner = new MemoryStorage();
+    // Slot 0 already holds this doc's prior committed value — landed by a
+    // real Writer commit, so the OLD value's index marker is physically in
+    // the bucket — while the manifest certifies [0, 1) deleted. That is the
+    // leak state a crashed retirement DELETE loop leaves behind (the floor
+    // CAS advances before the DELETEs run; a leaked object is the
+    // deliberate fail-safe, `log-retention.ts`), and it is the one shape in
+    // which `#readPreImage` can still find a pre-image below a floor the
+    // Step-5a check fires on. Pre-fold consumers clamp the stored floor to
+    // min(1, log_seq_start = 0) = 0, so the prior commit's own Step-5a
+    // check stays silent and lands at seq 0.
+    await createCurrentJson(inner, CURRENT_KEY, logStateCurrentJson({ log_delete_floor: 1 }));
+    const bySource = { name: "by_source", on: "source" } satisfies IndexDefinition;
+    const oldMarker = indexKeyFor(PREFIX, bySource, ["old"], DOC_ID);
+    const newMarker = indexKeyFor(PREFIX, bySource, ["new"], DOC_ID);
+    const writer = (storage: Storage) =>
+      new Writer({
+        storage,
+        currentJsonKey: CURRENT_KEY,
+        options: { indexes: [bySource] },
+      });
+    await runWithContext(MAINTENANCE_OFF, () =>
+      writer(inner).commit({
+        op: "I",
+        collection: "c",
+        docId: DOC_ID,
+        body: { _id: DOC_ID, source: "old" },
+      }),
+    );
+    await expect(inner.get(logObjectKey(PREFIX, 0))).resolves.toBeTruthy();
+    await expect(inner.get(oldMarker)).resolves.toBeTruthy();
+
+    // The contended slot is 1 — slot 0 is taken by the pre-image, so the
+    // tail probe lands the update past it — and the update changes the
+    // indexed field, so Step 5b would compute a genuinely stale key from
+    // the pre-image. Without that, this test is vacuous: a mutant check
+    // that runs late deletes nothing and the marker survives anyway.
+    const gate = gatedPutStorage(inner, logObjectKey(PREFIX, 1), "delay");
+    const pausedCommit = runWithContext(MAINTENANCE_OFF, () =>
+      writer(gate.storage).commit({
+        op: "U",
+        collection: "c",
+        docId: DOC_ID,
+        body: { _id: DOC_ID, source: "new" },
+      }),
+    );
+
+    await gate.reached;
+    // During the gate: a peer doc occupies the contended slot so
+    // [0, retireEnd) is dense, the fold absorbs [0, retireEnd), and
+    // retirement — starting at the certified floor 1 — deletes ONLY the
+    // peer at slot 1 and publishes floor 2. The leaked pre-image at log/0
+    // survives below the advanced floor, which is exactly what the
+    // crash-leak state guarantees for every slot it already certified.
+    const retireEnd = LOG_RETENTION_SEQ_WINDOW + 2;
+    await seedLogEntry(inner, PREFIX, 1, {
+      doc_id: "peer-doc",
+      after: { _id: "peer-doc" },
+    });
+    await seedLogEntries(inner, PREFIX, 2, retireEnd);
+    const folded = await compact(
+      { storage: inner, currentJsonKey: CURRENT_KEY },
+      { minEntriesToCompact: 1 },
+    );
+    expect(folded).toMatchObject({ written: true, logSeqStartAfter: retireEnd });
+    for (;;) {
+      const { deleted } = await retireLogRange(inner, CURRENT_KEY);
+      if (deleted === 0) {
+        break;
+      }
+    }
+    const after = await readCurrentJson(inner, CURRENT_KEY);
+    expect(after?.json.log_delete_floor).toBe(2);
+    expect(after?.json.log_seq_start).toBe(retireEnd);
+    await expect(inner.get(logObjectKey(PREFIX, 1))).resolves.toBeNull();
+    await expect(
+      inner.get(logObjectKey(PREFIX, 0)),
+      "the leaked pre-image object survives retirement",
+    ).resolves.toBeTruthy();
+    gate.release();
+
+    await expect(pausedCommit).rejects.toMatchObject({ code: "AmbiguousCommit" });
+
+    // THE ORDERING PIN. Step 5a must throw before Step 5b runs, so the
+    // OLD value's marker survives: the update is invisible (the fold
+    // absorbed the peer, not us), the doc's live value is still the old
+    // one, and de-indexing it is exactly the failure the hybrid emission
+    // polarity exists to prevent (invariant 7). A mutant that runs the
+    // check after Step 5b lets `#readPreImage` find the leaked pre-image
+    // at log/0, compute the old marker as stale, and DELETE it before
+    // throwing.
+    await expect(
+      inner.get(oldMarker),
+      "the old value's index marker survives the reject",
+    ).resolves.toBeTruthy();
+    // The additive Step-4 markers for the NEW value are the documented
+    // benign residual of the failure path, and remain.
+    await expect(inner.get(newMarker)).resolves.toBeTruthy();
+    // A fresh reader still sees the OLD value — which is why the marker
+    // surviving is load-bearing, not cosmetic.
+    const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
+      .collection("c")
+      .get(DOC_ID);
+    expect(visible).toEqual({ _id: DOC_ID, source: "old" });
+  });
+
+  test("T4: a lost-ack adoption of the same seq across fold+retirement fails AmbiguousCommit", async () => {
+    const inner = new MemoryStorage();
+    await seedManifest(inner);
+    // `"landThenFail"`: the first create PUT of log/0 LANDS in the retired
+    // hole, then its ack is dropped — unlike T2's `"fail"`, where nothing
+    // ever lands durably and the retry re-creates fresh. The transient
+    // retry here re-PUTs the SAME seq (byte-identical entry, `commit_ts`
+    // included — the transient-retry arm does not re-mint), 412s against
+    // our own durable entry, and the session read-back ADOPTS it. The
+    // break out of the create loop is therefore the own-session-adoption
+    // break, not the fresh win T1/T2 exercise — this is the second path
+    // `#assertCommitAboveDeleteFloor`'s docstring and
+    // `docs/spec/sync-protocol.md` §5 both claim it covers.
+    const gate = gatedPutStorage(inner, logObjectKey(PREFIX, 0), "landThenFail");
+
+    const pausedCommit = runWithContext(MAINTENANCE_OFF, () =>
+      new Writer({ storage: gate.storage, currentJsonKey: CURRENT_KEY }).commit({
+        op: "I",
+        collection: "c",
+        docId: DOC_ID,
+        body: { ...DOC_BODY },
+      }),
+    );
+
+    await gate.reached;
+    await seedLogEntry(inner, PREFIX, 0, { doc_id: "peer-doc", after: { _id: "peer-doc" } });
+    await advanceFloorAndRetire(inner);
+    gate.release();
+
+    // The rejection itself pins the adopted seq: the floor is
+    // FILLER_END - LOG_RETENTION_SEQ_WINDOW = 1, so seq 0 is the only seq
+    // the check can fire on, and slot 0 is occupied by our own entry, so
+    // the only way to break out of the create loop at seq 0 is adoption —
+    // a fresh win there is impossible, and a forward re-probe would land
+    // at FILLER_END, above the floor, and resolve. (Asserted without
+    // string-matching the error message, per test conventions.)
+    await expect(pausedCommit).rejects.toMatchObject({
+      code: "AmbiguousCommit",
+      retriable: false,
+    });
+    // The fold absorbed the PEER doc, not ours — the adopted entry is a
+    // phantom beneath every reader's floor, so nothing is visible.
+    const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
+      .collection("c")
+      .get(DOC_ID);
+    expect(visible, "an adopted phantom is invisible to a fresh reader").toBeUndefined();
+    await expect(
+      inner.get(logObjectKey(PREFIX, 0)),
+      "the adopted phantom is cleaned up best-effort",
+    ).resolves.toBeNull();
   });
 
   test('a rejected commit records db.write.ambiguous_commit_total with cleanup="deleted"', async () => {
@@ -434,7 +605,11 @@ describe("log retirement vs. the numbered-log create", () => {
     // not convert a durable write into a caller-visible failure — least of all
     // into a `retriable: true` one a generic wrapper would re-run at a fresh
     // tail, duplicating the mutation.
-    const committed = await runWithContext(MAINTENANCE_OFF, () =>
+    //
+    // Own context rather than the shared MAINTENANCE_OFF: the skip counter
+    // below must count THIS test's skip, not whatever ran before it.
+    const ctx = createObservabilityContext({ maintenance: { disabled: true } });
+    const committed = await runWithContext(ctx, () =>
       new Writer({ storage, currentJsonKey: CURRENT_KEY }).commit({
         op: "I",
         collection: "c",
@@ -444,6 +619,11 @@ describe("log retirement vs. the numbered-log create", () => {
     );
     expect(faultFired, "the injected read fault must actually have fired").toBe(true);
     expect(committed.entry.seq).toBe(0);
+    // The skip is the sole operator signal that the floor check silently
+    // stopped covering writes. Exact-name assertion per the rename-protection
+    // convention (docs/contributing/conventions/observability.md) — this
+    // counter previously opted out of it.
+    expect(sumCounter(ctx, "db.write.delete_floor_check_skipped_total")).toBe(1);
 
     const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
       .collection("c")
