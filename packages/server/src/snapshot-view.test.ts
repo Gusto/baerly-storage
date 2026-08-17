@@ -11,7 +11,6 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { WORKLOAD_CEILING_STUDY } from "../../../bench/measurement/workload-ceiling-contract.ts";
 import { foldChunkedSnapshotReference } from "./chunked-snapshot-reference.ts";
 import { encodeSnapshotChunk, snapshotChunkKey, type SnapshotChunk } from "./snapshot-chunk.ts";
 import {
@@ -196,7 +195,8 @@ describe("openSnapshotView", () => {
 
     await expect(view.get("aa")).resolves.toEqual(document("aa", 2));
     expect(fixture.storage.reads.map(({ key }) => key)).toEqual([fixture.descriptors[0]!.key]);
-    expect(fixture.storage.reads).toHaveLength(WORKLOAD_CEILING_STUDY.read_fan_out_limits.point);
+    // A point read fetches exactly one chunk.
+    expect(fixture.storage.reads).toHaveLength(1);
 
     fixture.storage.reset();
     await expect(view.get("b")).resolves.toBeUndefined();
@@ -220,9 +220,6 @@ describe("openSnapshotView", () => {
     ]);
     expect(fixture.storage.reads.map(({ key }) => key)).toEqual(
       fixture.descriptors.slice(0, 2).map(({ key }) => key),
-    );
-    expect(fixture.storage.reads.length).toBeLessThanOrEqual(
-      WORKLOAD_CEILING_STUDY.read_fan_out_limits["bounded-range"],
     );
     expect(fixture.storage.reads.reduce((sum, read) => sum + read.bytes, 0)).toBe(
       fixture.descriptors.slice(0, 2).reduce((sum, descriptor) => sum + descriptor.byte_length, 0),
@@ -251,9 +248,6 @@ describe("openSnapshotView", () => {
     await expect(collect(view.scan())).resolves.toEqual(fixture.rows);
     expect(fixture.storage.reads.map(({ key }) => key)).toEqual(
       fixture.descriptors.map(({ key }) => key),
-    );
-    expect(fixture.storage.reads.length).toBeLessThanOrEqual(
-      WORKLOAD_CEILING_STUDY.read_fan_out_limits.complete,
     );
     expect(fixture.storage.reads.reduce((sum, read) => sum + read.bytes, 0)).toBe(
       [...fixture.chunkBytes.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0),

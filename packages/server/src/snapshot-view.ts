@@ -1,7 +1,11 @@
 import { BaerlyError, type DocumentData, type Storage } from "@baerly/protocol";
 import { decodeSnapshotChunk } from "./snapshot-chunk.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
-import { decodeSnapshotManifest, type SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+import {
+  decodeSnapshotManifest,
+  firstDescriptorEndingAtOrAfter,
+  type SnapshotChunkDescriptor,
+} from "./snapshot-manifest.ts";
 
 export interface SnapshotRow {
   readonly _id: string;
@@ -27,23 +31,6 @@ export interface OpenSnapshotViewInput {
 
 function missingArtifact(kind: "manifest" | "chunk", key: string): never {
   throw new BaerlyError("InvalidResponse", `snapshot view: referenced ${kind} is missing: ${key}`);
-}
-
-function firstDescriptorEndingAtOrAfter(
-  descriptors: readonly SnapshotChunkDescriptor[],
-  id: string,
-): number {
-  let low = 0;
-  let high = descriptors.length;
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    if (compareDocIds(descriptors[middle]!.last_id, id) < 0) {
-      low = middle + 1;
-    } else {
-      high = middle;
-    }
-  }
-  return low;
 }
 
 function findDocument(docs: readonly DocumentData[], id: string): DocumentData | undefined {
