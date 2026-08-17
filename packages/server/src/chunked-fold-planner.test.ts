@@ -4,7 +4,6 @@ import {
   type DocumentData,
   type DocumentValue,
   type LogEntry,
-  snapshotHash,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import {
@@ -16,9 +15,9 @@ import {
   CHUNK_BOUNDARY_POLICIES,
   type SnapshotChunkBoundaryPolicy,
 } from "./snapshot-chunk-builder.ts";
-import { encodeSnapshotChunk, snapshotChunkKey } from "./snapshot-chunk.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
 
 const collection = "tickets";
 const collectionPrefix = "app/demo/tenant/acme/manifests/tickets";
@@ -26,29 +25,11 @@ const incarnation = "00112233445566778899aabbccddeeff";
 
 const doc = (id: string, value: DocumentValue = 1): DocumentData => ({ _id: id, value });
 
-const createChunkBytes = (docs: readonly DocumentData[]): Uint8Array =>
-  encodeSnapshotChunk({
-    schema_version: 2,
-    collection,
-    incarnation,
-    first_id: docs[0]!["_id"] as string,
-    last_id: docs.at(-1)!["_id"] as string,
-    docs,
-  });
-
-const createDescriptor = async (
-  docs: readonly DocumentData[],
-): Promise<SnapshotChunkDescriptor> => {
-  const bytes = createChunkBytes(docs);
-  const digest = await snapshotHash(bytes);
-  return {
-    first_id: docs[0]!["_id"] as string,
-    last_id: docs.at(-1)!["_id"] as string,
-    key: snapshotChunkKey(collectionPrefix, incarnation, digest),
-    byte_length: bytes.byteLength,
-    row_count: docs.length,
-  };
-};
+const { createDescriptor } = makeSnapshotChunkFixtures({
+  collection,
+  collectionPrefix,
+  incarnation,
+});
 
 const makeLogEntry = (
   seq: number,
