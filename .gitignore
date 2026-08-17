@@ -85,3 +85,6 @@ docs/whisper/
 
 # Day-one gate temp scaffolds
 .baerly-day-one/
+
+# Agent worktrees
+.worktrees/
