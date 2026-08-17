@@ -31,6 +31,7 @@ import {
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   createCurrentJson,
   createGcPending,
+  logDeleteFloorOf,
   MemoryStorage,
   readCurrentJson,
   type Storage,
@@ -49,6 +50,7 @@ import {
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { compact } from "./compactor.ts";
 import { runGc } from "./gc.ts";
+import { computeRetirableRange } from "./log-retention.ts";
 import { CLOUDFLARE_FREE_TIER, crossesGcBoundary, runBoundedMaintenance } from "./maintenance.ts";
 import { snapshotKey } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
@@ -553,5 +555,76 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
       FREE_TIER_BUDGET,
     );
+  });
+
+  // Fold/retire phase separation. In `"single"` phase mode a write-tick
+  // fold returns from the runner BEFORE the Step-5 retirement call — a
+  // compact pass is ≤49 ops on its own, so retirement (up to 23 more)
+  // sharing a fold tick would blow the 50-subrequest free-tier cap (see
+  // LOG_RETENTION_MAX_DELETES_PER_TICK's JSDoc). This pin holds today by
+  // control flow alone; a refactor that hoists Step 5 above the fold
+  // return must fail HERE rather than silently regress the cap.
+  test("a single-phase fold tick issues zero retirement storage ops", async () => {
+    const inner = new MemoryStorage();
+    const prefix = "app/t/tenant/x/manifests/c";
+    // 60 live entries on an unfloored log: gate1 trips (60 ≥ the
+    // write-tick min of 50) and the fold is viable (no prior snapshot).
+    // prevSeq 59 → observedTail 60 crosses neither the GC cadence
+    // boundary nor the hard-GC guard, so the fold is this tick's one
+    // phase and nothing after it may run.
+    await createCurrentJson(inner, KEY, logStateCurrentJson({ log_seq_start: 0, tail_hint: 0 }));
+    await seedLogEntries(inner, prefix, 0, 60);
+    const { casUpdateCurrentJson, MAINTENANCE_MIN_LIVE_BYTES } = await import("@baerly/protocol");
+    // Ratio trigger: a large mean over a zero-byte snapshot. Asserted via
+    // the gate outcomes below, not assumed.
+    await casUpdateCurrentJson(inner, KEY, (c) => ({
+      ...c,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+    }));
+    const counted = countingStorage(inner);
+
+    await runBoundedMaintenance(
+      {
+        storage: counted.storage,
+        currentJsonKey: KEY,
+        prevSeq: 59,
+        observedTail: 60,
+      },
+      {
+        phasesPerTick: "single",
+        // `window: 0` is load-bearing for the pin: with the default
+        // 1024-seq window a 20-entry folded prefix has an EMPTY
+        // retirable range, so a hoisted Step 5 would no-op (1 gate GET,
+        // zero DELETEs) and this test could not distinguish it from the
+        // phase separation it is supposed to guard. With the window
+        // erased, a Step 5 that ran would immediately DELETE and publish
+        // a floor.
+        logRetention: { window: 0, maxDeletes: 20 },
+      },
+    );
+
+    // The fold ran and landed: this tick's one phase was a fold, so the
+    // assertions below are about a fold tick, not a skipped one.
+    const current = await readCurrentJson(inner, KEY);
+    expect(current).not.toBeNull();
+    expect(current!.json.log_seq_start).toBe(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
+    expect(current!.json.snapshot).not.toBeNull();
+
+    // ZERO retirement ops: no DELETEs anywhere in the tick (the fold path
+    // issues none), and no `log_delete_floor` published.
+    expect(counted.report()["delete"]).toBe(0);
+    expect(logDeleteFloorOf(current!.json)).toBe(0);
+
+    // Non-vacuity, asserted not assumed: the post-tick state HAS a
+    // non-empty retirable range under the seam window, so a Step 5 that
+    // ran on this tick would have deleted — the zero above is the phase
+    // separation, not an empty gate.
+    const retirable = computeRetirableRange(current!.json, { window: 0, maxDeletes: 20 });
+    expect(retirable.start).toBeLessThan(retirable.end);
+
+    expect(
+      counted.getOps(),
+      `ops by category: ${JSON.stringify(counted.report())}`,
+    ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 });

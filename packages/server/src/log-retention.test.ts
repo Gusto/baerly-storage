@@ -350,10 +350,13 @@ describe("retireLogRange edge paths", () => {
       storage.delete = origDelete;
     }
 
-    // The loop stopped at the DELETE that saw the abort rather than swallowing
-    // it and continuing. `MemoryStorage.delete` calls `throwIfAborted` before
-    // removing anything, so the first call both aborts and removes nothing.
-    expect(deleteCalls).toBe(1);
+    // The loop issued every DELETE concurrently (the parallel shape the
+    // GC sweep already uses — see gc.ts Step 4) and each one honored the
+    // abort: `MemoryStorage.delete` calls `throwIfAborted` before removing
+    // anything, so the first call aborts the signal, every in-flight call
+    // rejects, and the aggregate rejects rather than swallowing the abort
+    // and continuing to a success return.
+    expect(deleteCalls).toBe(20);
     let remaining = 0;
     for (let seq = 0; seq < 20; seq++) {
       if ((await storage.get(logObjectKey(PREFIX, seq))) !== null) {
@@ -393,15 +396,19 @@ describe("retireLogRange crash-leak", () => {
     }
 
     // The floor CASed to 20 before the loop ran, so it survives the crash —
-    // the deliberate fail-safe direction: leak, never corruption.
+    // the deliberate fail-safe direction: leak, never corruption. The
+    // DELETEs issue concurrently (the parallel shape the GC sweep uses),
+    // so the crashed call leaks exactly its own slot; every other slot's
+    // DELETE still lands.
     const after = await readCurrentJson(storage, CURRENT_KEY);
     expect(after!.json.log_delete_floor).toBe(20);
     for (let seq = 0; seq < 5; seq++) {
       await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.toBeNull();
     }
     // The leak: certified deleted by the floor, but still physically present.
-    for (let seq = 5; seq < 20; seq++) {
-      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.not.toBeNull();
+    await expect(storage.get(logObjectKey(PREFIX, 5))).resolves.not.toBeNull();
+    for (let seq = 6; seq < 20; seq++) {
+      await expect(storage.get(logObjectKey(PREFIX, seq))).resolves.toBeNull();
     }
   });
 });

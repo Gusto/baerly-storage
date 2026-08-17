@@ -530,9 +530,13 @@ describe("runGc", () => {
     // that is already gone — and a `GcCandidate` is a bare key with no
     // identity. `baerly admin restore --force` can later re-create that
     // exact key inside the NEW live range, at which point the surviving
-    // candidate authorises a DELETE of live data. That is the ABA the
-    // integration suite (`tests/integration/gc-restore-fencing.test.ts`)
-    // drives end to end; this test pins the state it starts from.
+    // candidate authorises a DELETE of live data. That end-to-end ABA
+    // construction required the stale-log mark phase (removed with the
+    // sequence-window retirement program) to produce the sticky ledger
+    // from a real pass; the fences that close it are pinned here and in
+    // the sweep-time revalidation suite below, and the restore-side
+    // ledger clear is pinned at the integration seam
+    // (`tests/integration/gc-restore-fencing.test.ts`).
     //
     // `runGc` must still report SUCCESS here: the DELETEs it issued are
     // durable, and re-throwing would mask the work that did complete.
@@ -608,6 +612,73 @@ describe("runGc", () => {
     // documented contract of the `Conflict` catch, not a bug to "fix".
     expect(r.pendingDepth).toBe(0);
     expect(stuck?.json.candidates).toHaveLength(1);
+  });
+
+  test("returns success when the ledger is deleted mid-pass (concurrent restore)", async () => {
+    // The deleted-ledger variant of the Conflict tolerance above. A
+    // concurrent `baerly admin restore --force` deletes `gc/pending.json`
+    // on both reseed branches; `casUpdateGcPending` reports the vanished
+    // key as `Conflict` — a failed If-Match precondition, see its JSDoc —
+    // and the same step-6 arm tolerates it as a lost race. The pass must
+    // not resurrect the ledger the restore deleted: the next pass
+    // bootstraps a fresh one against the new generation.
+    //
+    // The interceptor stands in for the restore — `runGc` is a single
+    // `await` chain from the test's point of view, so the deletion must
+    // be driven from inside it to land between the step-2 read and the
+    // step-6 CAS deterministically; hooking the sweep DELETE is that
+    // window. (Ported from tests/integration/gc-restore-fencing.test.ts,
+    // which drove no restore path — a hand-planted ledger — so the case
+    // is runGc unit behavior, not a seam.)
+    const s = new MemoryStorage();
+    await createCurrentJson(
+      s,
+      KEY,
+      logStateCurrentJson({
+        writer_fence: { epoch: 0, owner: "gc-test", claimed_at: "" },
+        log_seq_start: 1,
+        tail_hint: 1,
+      }),
+    );
+    const staleLogKey = `${PREFIX}/log/0.json`;
+    await createGcPending(s, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: staleLogKey,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
+        },
+      ],
+      last_swept_at: "",
+    });
+    const origDelete = s.delete.bind(s);
+    let ledgerCleared = false;
+    s.delete = (async (k: string, opts?: { signal?: AbortSignal }) => {
+      const result = await origDelete(k, opts);
+      if (!ledgerCleared && k === staleLogKey) {
+        ledgerCleared = true;
+        await origDelete(PENDING_KEY);
+      }
+      return result;
+    }) as typeof s.delete;
+
+    try {
+      const r = await runGc({ storage: s, currentJsonKey: KEY }, {
+        graceMillis: 0,
+        maxSweepsPerRun: 10,
+      } as InternalRunGcOptions);
+
+      // The window was actually entered — a pass that swept nothing would
+      // never have called `storage.delete` and would prove nothing.
+      expect(ledgerCleared).toBe(true);
+      expect(r.swept).toBe(1);
+    } finally {
+      s.delete = origDelete;
+    }
+
+    await expect(readGcPending(s, PENDING_KEY)).resolves.toBeNull();
   });
 });
 
@@ -878,6 +949,38 @@ describe("runGc — sweep-time revalidation", () => {
     await expect(s.get(key)).resolves.toBeNull();
     expect(r.swept).toBe(1);
     expect(r.dropped).toEqual({ stale_generation: 0, still_live: 0 });
+  });
+
+  // Arm 4's positive outcomes — the liveness conjunct of the gate, the
+  // counterpart to the generation fence above. A due, same-generation,
+  // canonical `stale-log` candidate whose seq reads LIVE against the
+  // manifest floor is rescued out of the ledger, never deleted: readers
+  // walk from `log_seq_start`, so `seq >= floor` is inside the live
+  // range no matter what the mark-time view said. Equal-to-floor counts
+  // as live. Until this port, the only coverage of `still_live > 0` lived
+  // in `tests/integration/gc-restore-fencing.test.ts` at hand-planted
+  // scope — no unit test pinned the arm.
+  test.each([
+    { what: "equal to the fresh log floor", seq: 9 },
+    { what: "strictly above the fresh log floor", seq: 12 },
+  ])("rescues a due stale-log candidate $what", async ({ seq }) => {
+    const s = new MemoryStorage();
+    const key = await seedDueStaleLog(s, {
+      floor: 9,
+      seq,
+      candidateGeneration: LOG_STATE_GENERATION,
+    });
+
+    const r = await sweep(s);
+
+    // The load-bearing assertion: the object SURVIVES.
+    await expect(s.get(key)).resolves.not.toBeNull();
+    expect(r.swept).toBe(0);
+    expect(r.dropped).toEqual({ stale_generation: 0, still_live: 1 });
+    // …and the rescue really resolved the candidate out of the ledger,
+    // rather than leaving it to be re-examined on every future pass.
+    const pending = await readGcPending(s, PENDING_KEY);
+    expect(pending?.json.candidates).toEqual([]);
   });
 
   test("drops a candidate marked before the build began stamping generations", async () => {

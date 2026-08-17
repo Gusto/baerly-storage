@@ -268,31 +268,38 @@ export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
  * Twenty fits within the most constrained request budget and drains faster than
  * the fold floor advances in steady state.
  *
- * `retireLogRange` is the pass that spends this budget; it exists but is not
- * yet wired into a write-tick call site. Whichever PR adds the call site owns
- * validating the combined per-tick subrequest total (GC sweep + fold + this)
- * against the 50-subrequest free-tier cap that `maintenance-budget.test.ts`
- * pins for GC and fold alone. That arithmetic, against the worst cases
- * `maintenance.ts`'s `CLOUDFLARE_FREE_TIER` JSDoc documents:
+ * `retireLogRange` is the pass that spends this budget. Every maintenance
+ * trigger runs it via the shared `retireLogs` helper in `maintenance.ts`:
+ * `runScheduledMaintenance` after its GC phase, and `runBoundedMaintenance`
+ * both on the hard-GC early-return path and as its final step. The combined
+ * per-tick subrequest arithmetic, against the worst cases `maintenance.ts`'s
+ * `CLOUDFLARE_FREE_TIER` JSDoc documents:
  *
  * - One retirement pass, worst case, is 23 subrequests: 1 advisory-gate GET
  *   + `casUpdateCurrentJson`'s own GET + 1 CAS PUT + up to 20 DELETEs.
- * - A GC tick is ≤26, so GC + retirement is 49 of 50 — one op of headroom.
+ * - A maximally contended write-tick GC including the retirement gate read
+ *   is 26 storage operations, pinned exactly by `maintenance-budget.test.ts`.
+ *   When the gate finds work, the pass adds its CAS read + CAS write + up to
+ *   20 DELETEs on top (48 of 50 worst case).
  * - A compaction pass is ≤49, so compact + retirement is 72. **Retirement
- *   cannot share a tick with a fold**; the call site has to phase them apart
- *   the way the Cloudflare scheduled handler already alternates compact and
- *   GC.
- * - The write-tick host request now also spends one `current.json` GET on the
- *   commit path's certified-delete-floor check, so PR 5's combined arithmetic
- *   starts one subrequest lower than the scheduled-handler figures above. The
- *   call site still owes that derivation; nothing here changes the value 20,
- *   because retirement already cannot share a tick with a fold.
+ *   cannot share a tick with a fold**: in `"single"` phase mode a write-tick
+ *   fold returns before the runner's retirement step, and
+ *   `maintenance-budget.test.ts` pins that a fold tick issues zero retirement
+ *   storage ops.
+ * - The write-tick host request also spends one `current.json` GET on the
+ *   commit path's certified-delete-floor check, outside the tick's pinned
+ *   figures above. Nothing here changes the value 20: retirement never
+ *   shares a tick with a fold, so the DELETE budget only ever stacks onto a
+ *   GC tick.
  *
- * A pass whose range is empty returns `{deleted: 0}` and spends 1 GET, so a
- * permanently-stalled retirement is silent — the call site also owes an
- * observability decision.
+ * A pass whose range is empty returns `{deleted: 0}` and spends 1 GET. Its
+ * observability is the `db.log_retention.deleted_total` counter `retireLogs`
+ * emits per pass, so a permanently-stalled retirement (a floor wedged at the
+ * live floor) is visible as a counter that stays flat while the log object
+ * count grows.
  *
  * @see packages/server/src/log-retention.ts
+ * @see packages/server/src/maintenance.ts (`retireLogs`)
  */
 export const LOG_RETENTION_MAX_DELETES_PER_TICK: number = 20;
 
