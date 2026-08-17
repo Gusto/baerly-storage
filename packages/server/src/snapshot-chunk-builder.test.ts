@@ -208,6 +208,50 @@ describe("snapshot chunk builder", () => {
     expect(result.changed_chunks.length).toBe(1);
   });
 
+  test("backs off the row boundary until the byte target admits the chunk", async () => {
+    // target_rows is high enough that the row axis provably cannot split, so
+    // every emitted boundary is the work of the byte-driven `end--` backoff.
+    const customPolicy: SnapshotChunkBoundaryPolicy = {
+      target_chunk_bytes: 300,
+      target_rows: 100,
+    };
+    // Individually well under 300 bytes; collectively over it once the chunk
+    // envelope (schema_version + collection + incarnation + first_id + last_id)
+    // is counted.
+    const mutations: ReferenceMutation[] = ["a", "b", "c", "d", "e"].map((id) => ({
+      op: "I",
+      doc_id: id,
+      after: doc(id, "x".repeat(60)),
+    }));
+
+    const result = await buildSnapshotChunks({
+      collection,
+      collectionPrefix,
+      descriptors: [],
+      loadedChunks: new Map(),
+      mutations,
+      incarnation,
+      policy: customPolicy,
+      lockedDirectOwnerIndex: null,
+      selectedNeighborIndex: null,
+    });
+
+    // Envelope size varies with each chunk's first_id/last_id, so assert on
+    // properties rather than exact counts.
+    expect(result.chunks.length).toBeGreaterThanOrEqual(2);
+    // The crux: the `end === start + 1` singleton escape can only ever emit
+    // 1-row chunks, so a multi-row chunk inside a multi-chunk result can only
+    // come from the backoff finding a boundary.
+    expect(result.chunks.some((chunk) => chunk.row_count >= 2)).toBe(true);
+    for (const chunk of result.chunks) {
+      expect(chunk.row_count).toBeLessThan(customPolicy.target_rows);
+      if (chunk.row_count >= 2) {
+        expect(chunk.byte_length).toBeLessThanOrEqual(customPolicy.target_chunk_bytes);
+      }
+    }
+    expect(result.split_increments).toBe(result.chunks.length - 1);
+  });
+
   test("rejects document exceeding 1 MiB hard maximum with InvalidResponse", async () => {
     const hugeDoc = doc("a", "x".repeat(1024 * 1024 + 50));
     await expect(
