@@ -469,14 +469,11 @@ test("reports the prefixes each safety property really checks on 42-operation cr
       level: 0,
       sequences: [2],
     },
-    ...Array.from(
-      { length: 37 },
-      (_, index): ModelOperation => ({
-        kind: "reconstruct",
-        operationId: `reconstruct-remainder-${index}`,
-        mode: index % 2 === 0 ? "cold" : "warm",
-      }),
-    ),
+    ...Array.from({ length: 37 }, (_, index): ModelOperation => ({
+      kind: "reconstruct",
+      operationId: `reconstruct-remainder-${index}`,
+      mode: index % 2 === 0 ? "cold" : "warm",
+    })),
   ];
   const scenario: ModelScenario = { assumptions: DEFAULT_MODEL_ASSUMPTIONS, operations };
 
@@ -745,14 +742,11 @@ describe("model object bound", () => {
   test("rejects a fifth direct source operation when exact N is four", () => {
     const scenario: ModelScenario = {
       assumptions: EXACT_MINIMUM_ASSUMPTIONS,
-      operations: Array.from(
-        { length: 5 },
-        (_, index): ModelOperation => ({
-          kind: "reconstruct",
-          operationId: `reconstruct-${index}`,
-          mode: "cold",
-        }),
-      ),
+      operations: Array.from({ length: 5 }, (_, index): ModelOperation => ({
+        kind: "reconstruct",
+        operationId: `reconstruct-${index}`,
+        mode: "cold",
+      })),
     };
 
     const result = totalObjectCountDefinition(EXACT_MINIMUM_ASSUMPTIONS).check(scenario);
@@ -777,14 +771,11 @@ describe("model object bound", () => {
           },
           acknowledgement: "acknowledge",
         },
-        ...Array.from(
-          { length: 3 },
-          (_, index): ModelOperation => ({
-            kind: "reconstruct",
-            operationId: `reconstruct-boundary-${index}`,
-            mode: "cold",
-          }),
-        ),
+        ...Array.from({ length: 3 }, (_, index): ModelOperation => ({
+          kind: "reconstruct",
+          operationId: `reconstruct-boundary-${index}`,
+          mode: "cold",
+        })),
       ],
     };
     const definition = totalObjectCountDefinition(EXACT_MINIMUM_ASSUMPTIONS);
@@ -826,14 +817,11 @@ describe("model object bound", () => {
           },
           acknowledgement: "acknowledge",
         },
-        ...Array.from(
-          { length: 39 },
-          (_, index): ModelOperation => ({
-            kind: "reconstruct",
-            operationId: `reconstruct-derived-${index}`,
-            mode: "cold",
-          }),
-        ),
+        ...Array.from({ length: 39 }, (_, index): ModelOperation => ({
+          kind: "reconstruct",
+          operationId: `reconstruct-derived-${index}`,
+          mode: "cold",
+        })),
       ],
     };
     const derived = enumerateModelCrashSchedules(source)[0];

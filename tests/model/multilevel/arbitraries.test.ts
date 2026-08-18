@@ -511,18 +511,15 @@ test("crash enumeration adds controls beyond an irreducible 40-operation source"
         level: 0,
         sequences: [1],
       },
-      ...Array.from(
-        { length: 38 },
-        (_, index): ModelOperation => ({
-          kind: "publish-root",
-          operationId: `publish-${index}`,
-          publicationId: `publish-${index}`,
-          expectedGeneration: index,
-          runKeys: ["runs/source"],
-          foldedThrough: 1,
-          role: index % 2 === 0 ? "tail" : "base",
-        }),
-      ),
+      ...Array.from({ length: 38 }, (_, index): ModelOperation => ({
+        kind: "publish-root",
+        operationId: `publish-${index}`,
+        publicationId: `publish-${index}`,
+        expectedGeneration: index,
+        runKeys: ["runs/source"],
+        foldedThrough: 1,
+        role: index % 2 === 0 ? "tail" : "base",
+      })),
     ],
   };
 

@@ -86,16 +86,12 @@ const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
   // Force the gate-driving bytes fields into an over-ratio state.
   // snapshot_bytes=0 ⇒ denominator is clamped to MAINTENANCE_MIN_LIVE_BYTES;
   // mean_entry_bytes=RATIO_TRIPPING_MEAN ⇒ derived ratio = 1.0 = TARGET → gate trips.
-  await casUpdateCurrentJson(
-    storage,
-    key,
-    (cur): CurrentJson => ({
-      ...cur,
-      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    }),
-  );
+  await casUpdateCurrentJson(storage, key, (cur): CurrentJson => ({
+    ...cur,
+    mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+    snapshot_bytes: 0,
+    snapshot_rows: 0,
+  }));
   return storage;
 };
 
