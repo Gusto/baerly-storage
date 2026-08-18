@@ -250,7 +250,7 @@
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^26.2.0",
-    "@types/pg": "^8.21.0",
+    "@types/pg": "^8.23.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
