@@ -8,11 +8,8 @@ import {
   type SnapshotChunkBuildResult,
 } from "./snapshot-chunk-builder.ts";
 import { makeCodecFail, type CodecCode } from "./snapshot-codec.ts";
-import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
-import {
-  firstDescriptorEndingAtOrAfter,
-  type SnapshotChunkDescriptor,
-} from "./snapshot-manifest.ts";
+import { assertSnapshotDocId } from "./snapshot-doc-id.ts";
+import { type SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 
 const utf8 = new TextEncoder();
 
@@ -101,21 +98,15 @@ function entryToMutation(entry: LogEntry): ReferenceMutation {
   return { op: entry.op, doc_id: entry.doc_id, after: entry.after };
 }
 
-function isRoutedDelete(docId: string, descriptors: readonly SnapshotChunkDescriptor[]): boolean {
-  const low = firstDescriptorEndingAtOrAfter(descriptors, docId);
-  if (low < descriptors.length) {
-    const descriptor = descriptors[low]!;
-    return compareDocIds(descriptor.first_id, docId) <= 0;
-  }
-  return false;
-}
-
 function computeMutationContribution(
   mutation: ReferenceMutation,
   descriptors: readonly SnapshotChunkDescriptor[],
 ): number {
   if (mutation.op === "D") {
-    if (isRoutedDelete(mutation.doc_id, descriptors)) {
+    // Charge bytes only for deletes the builder will actually route to a
+    // descriptor: a delete that lands in a gap is a no-op there, so it must
+    // not consume mutation budget here either.
+    if (routeMutationToDescriptor(mutation.doc_id, "D", descriptors) !== null) {
       return utf8.encode(mutation.doc_id).byteLength;
     }
     return 0;
