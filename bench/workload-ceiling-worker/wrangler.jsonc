@@ -1,0 +1,31 @@
+{
+  // Deployed evidence Worker for the workload-ceiling study (parent plan
+  // Task 8). See README.md for what this Worker does, what it deliberately
+  // does not do, and the platform documentation this config rests on.
+  //
+  // Reuses "baerly-storage" — one already-deployed Worker overwritten in
+  // place for each Step 10 smoke run, rather than a uniquely-named
+  // per-run deployment. See README.md §"Join mechanism" and §"Token scope"
+  // for why, and `WORKLOAD_CEILING_WORKER_NAME` in
+  // ../measurement/workload-ceiling-collect.ts, which this name must match.
+  // Not deployed by `pnpm verify`/`pnpm test` — only via deploy.mjs, and
+  // only with CF_API_TOKEN/CF_ACCOUNT_ID or credentials/cloudflare-deploy.json
+  // provisioned first.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "baerly-storage",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "baerly-storage-eval",
+    },
+  ],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+}
