@@ -25,7 +25,7 @@
     "@baerly/protocol": "workspace:*",
     "@baerly/server": "workspace:*",
     "@hono/node-server": "^2.1.1",
-    "@rgrove/parse-xml": "4.2.2",
+    "@rgrove/parse-xml": "4.2.3",
     "aws4fetch": "1.0.20",
     "hono": "^4.13.2",
     "picocolors": "^1.1.1"

@@ -334,8 +334,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.2)
       '@rgrove/parse-xml':
-        specifier: 4.2.2
-        version: 4.2.2
+        specifier: 4.2.3
+        version: 4.2.3
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
@@ -1624,8 +1624,8 @@ packages:
     resolution: {integrity: sha512-3uVNyGcVplhPZSLVyeIpL7+cIRn1YCSNHLG/rUIlBQMVH8YuN9++YF+5+UDIIO9RW98dujiUoTltO7RDB5bFJA==}
     engines: {node: '>=18'}
 
-  '@rgrove/parse-xml@4.2.2':
-    resolution: {integrity: sha512-KJpwSfVwrZ1Ab9KU4oRwG0VefGpveSt/w/j1m6YkJkB5KhdDbN/7BS0ojcLCzrG3/YGFhtfFHKVBkrms6w8Org==}
+  '@rgrove/parse-xml@4.2.3':
+    resolution: {integrity: sha512-Jhlb+0zYez1T1yXUQs3F1qAtFuJljBVNdy9TKmLDauAXkxsOXopKYOyQ5Wm6SvP3fycav0GviX4Y15WWhGetMw==}
     engines: {node: '>=14.0.0'}
 
   '@rolldown/binding-android-arm64@1.2.4':
@@ -5384,7 +5384,7 @@ snapshots:
     dependencies:
       tinyexec: 1.3.0
 
-  '@rgrove/parse-xml@4.2.2': {}
+  '@rgrove/parse-xml@4.2.3': {}
 
   '@rolldown/binding-android-arm64@1.2.4':
     optional: true
