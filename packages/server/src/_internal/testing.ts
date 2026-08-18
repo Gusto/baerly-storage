@@ -21,3 +21,16 @@ export {
   tryAdoptOwnSessionLogEntry,
 } from "../log-conflict-adoption.ts";
 export { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";
+export {
+  decodeSnapshotChunk,
+  encodeSnapshotChunk,
+  snapshotChunkKey,
+  type SnapshotChunk,
+} from "../snapshot-chunk.ts";
+export {
+  decodeSnapshotManifest,
+  encodeSnapshotManifest,
+  snapshotManifestKey,
+  type SnapshotChunkDescriptor,
+  type SnapshotManifest,
+} from "../snapshot-manifest.ts";
