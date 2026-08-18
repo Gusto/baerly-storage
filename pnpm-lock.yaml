@@ -56,8 +56,8 @@ importers:
         specifier: ^0.4.1
         version: 0.4.1(vitest@4.1.10)
       '@hono/node-server':
-        specifier: ^2.0.9
-        version: 2.0.10(hono@4.12.34)
+        specifier: ^2.1.1
+        version: 2.1.1(hono@4.13.2)
       '@stryker-mutator/core':
         specifier: 10.0.0
         version: 10.0.0(@types/node@26.2.0)
@@ -331,8 +331,8 @@ importers:
         specifier: workspace:*
         version: link:../server
       '@hono/node-server':
-        specifier: ^2.0.9
-        version: 2.0.10(hono@4.12.34)
+        specifier: ^2.1.1
+        version: 2.1.1(hono@4.13.2)
       '@rgrove/parse-xml':
         specifier: 4.2.2
         version: 4.2.2
@@ -340,8 +340,8 @@ importers:
         specifier: 1.0.20
         version: 1.0.20
       hono:
-        specifier: ^4.12.30
-        version: 4.12.34
+        specifier: ^4.13.2
+        version: 4.13.2
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -361,8 +361,8 @@ importers:
         specifier: workspace:*
         version: link:../server
       '@hono/node-server':
-        specifier: ^2.0.9
-        version: 2.0.10(hono@4.12.34)
+        specifier: ^2.1.1
+        version: 2.1.1(hono@4.13.2)
       citty:
         specifier: ^0.2.2
         version: 0.2.2
@@ -416,8 +416,8 @@ importers:
         specifier: workspace:*
         version: link:../server
       '@hono/node-server':
-        specifier: ^2.0.9
-        version: 2.0.10(hono@4.12.34)
+        specifier: ^2.1.1
+        version: 2.1.1(hono@4.13.2)
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -436,8 +436,8 @@ importers:
         specifier: 2.2.4
         version: 2.2.4
       hono:
-        specifier: ^4.12.30
-        version: 4.12.34
+        specifier: ^4.13.2
+        version: 4.13.2
       jose:
         specifier: ^6.2.3
         version: 6.2.3
@@ -986,8 +986,8 @@ packages:
     peerDependencies:
       vitest: ^4.1.0
 
-  '@hono/node-server@2.0.10':
-    resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
+  '@hono/node-server@2.1.1':
+    resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
@@ -2572,8 +2572,8 @@ packages:
     peerDependencies:
       cytoscape: ^3.2.0
 
-  cytoscape@3.34.0:
-    resolution: {integrity: sha512-62rNSrioXw93uliKFBwjukeQyeWwH2PqDrTac31r2P6464u3AUvTk0xS4LVvT251g7IgkFunrI48ZEZGjywSOg==}
+  cytoscape@3.34.1:
+    resolution: {integrity: sha512-Lr0RvH9H75y9ar8h9Toy6u4lxRSCcxUq+hHcQ26sVWo6BnaQp1gwEZOYqwuYTZhyW7npyKnNLP8oJ2p1/3OZ7g==}
     engines: {node: '>=0.10'}
 
   d3-array@2.12.1:
@@ -3031,8 +3031,8 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
-  hono@4.12.34:
-    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
+  hono@4.13.2:
+    resolution: {integrity: sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@7.0.2:
@@ -4478,8 +4478,8 @@ packages:
     resolution: {integrity: sha512-si7QWI6zUMq56bESFvagtmzMdGOtoxfR+Sez11Mobfc7tm+VkUckk9bW2UeffTGVUbOksxmSw0AA2gs8g71NCQ==}
     engines: {node: '>=12'}
 
-  ws@8.21.1:
-    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -4992,7 +4992,7 @@ snapshots:
       unenv: 2.0.0-rc.24
       vite: 8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0)
       wrangler: 4.110.0(@cloudflare/workers-types@5.20260715.1)
-      ws: 8.21.1
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -5141,9 +5141,9 @@ snapshots:
       fast-check: 4.9.0
       vitest: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(vite@8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(yaml@2.9.0))
 
-  '@hono/node-server@2.0.10(hono@4.12.34)':
+  '@hono/node-server@2.1.1(hono@4.13.2)':
     dependencies:
-      hono: 4.12.34
+      hono: 4.13.2
 
   '@iconify/types@2.0.0': {}
 
@@ -6429,17 +6429,17 @@ snapshots:
 
   csstype@3.2.3: {}
 
-  cytoscape-cose-bilkent@4.1.0(cytoscape@3.34.0):
+  cytoscape-cose-bilkent@4.1.0(cytoscape@3.34.1):
     dependencies:
       cose-base: 1.0.3
-      cytoscape: 3.34.0
+      cytoscape: 3.34.1
 
-  cytoscape-fcose@2.2.0(cytoscape@3.34.0):
+  cytoscape-fcose@2.2.0(cytoscape@3.34.1):
     dependencies:
       cose-base: 2.2.0
-      cytoscape: 3.34.0
+      cytoscape: 3.34.1
 
-  cytoscape@3.34.0: {}
+  cytoscape@3.34.1: {}
 
   d3-array@2.12.1:
     dependencies:
@@ -6918,7 +6918,7 @@ snapshots:
       buffer-image-size: 0.6.4
       entities: 7.0.1
       whatwg-mimetype: 3.0.0
-      ws: 8.21.1
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -6933,7 +6933,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.12.34: {}
+  hono@4.13.2: {}
 
   hosted-git-info@7.0.2:
     dependencies:
@@ -7344,9 +7344,9 @@ snapshots:
       '@mermaid-js/parser': 1.2.0
       '@types/d3': 7.4.3
       '@upsetjs/venn.js': 2.0.0
-      cytoscape: 3.34.0
-      cytoscape-cose-bilkent: 4.1.0(cytoscape@3.34.0)
-      cytoscape-fcose: 2.2.0(cytoscape@3.34.0)
+      cytoscape: 3.34.1
+      cytoscape-cose-bilkent: 4.1.0(cytoscape@3.34.1)
+      cytoscape-fcose: 2.2.0(cytoscape@3.34.1)
       d3: 7.9.0
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
@@ -7563,7 +7563,7 @@ snapshots:
       sharp: 0.34.5
       undici: 7.28.0
       workerd: 1.20260708.1
-      ws: 8.21.1
+      ws: 8.21.3
       youch: 4.1.0-beta.10
     transitivePeerDependencies:
       - bufferutil
@@ -8555,7 +8555,7 @@ snapshots:
       string-width: 5.1.2
       strip-ansi: 7.2.0
 
-  ws@8.21.1: {}
+  ws@8.21.3: {}
 
   xtend@4.0.2: {}
 

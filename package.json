@@ -248,7 +248,7 @@
     "@cloudflare/vitest-pool-workers": "0.18.4",
     "@cloudflare/workers-types": "^5.20260715.1",
     "@fast-check/vitest": "^0.4.1",
-    "@hono/node-server": "^2.0.9",
+    "@hono/node-server": "^2.1.1",
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@testing-library/react": "^16.3.2",
