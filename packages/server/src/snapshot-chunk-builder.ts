@@ -41,7 +41,7 @@ export interface BuildSnapshotChunksInput {
   readonly collectionPrefix: string;
   readonly descriptors: readonly SnapshotChunkDescriptor[];
   readonly loadedChunks: ReadonlyMap<string, readonly DocumentData[]>;
-  readonly mutations: ReadonlyMap<string, ReferenceMutation> | readonly ReferenceMutation[];
+  readonly mutations: ReadonlyMap<string, ReferenceMutation>;
   readonly incarnation: string;
   readonly policy: SnapshotChunkBoundaryPolicy;
   readonly lockedDirectOwnerIndex: number | null;
@@ -305,6 +305,53 @@ const appendChunkOutput = async (
 };
 
 /**
+ * Build chunks for a collection with no captured descriptors: every
+ * remaining insert mutation seeds a fresh chunk group. This path shares
+ * nothing with the descriptor path — no loaded state, no routing, and never
+ * a facing merge — so it lives outside the main builder body.
+ */
+const buildInitialEmptyChunks = async (
+  mutations: ReadonlyMap<string, ReferenceMutation>,
+  collection: string,
+  collectionPrefix: string,
+  incarnation: string,
+  policy: SnapshotChunkBoundaryPolicy,
+): Promise<Pick<SnapshotChunkBuildResult, "chunks" | "changed_chunks" | "split_increments">> => {
+  const docMap = new Map<string, DocumentData>();
+  for (const mutation of mutations.values()) {
+    if (mutation.op === "D") {
+      docMap.delete(mutation.doc_id);
+    } else {
+      docMap.set(mutation.doc_id, mutation.after);
+    }
+  }
+  const updatedDocs = [...docMap.values()].toSorted((a, b) =>
+    compareDocIds(a["_id"] as string, b["_id"] as string),
+  );
+
+  const finalDescriptors: SnapshotChunkDescriptor[] = [];
+  const changedChunks: EncodedChunkOutput[] = [];
+  if (updatedDocs.length > 0) {
+    const splitChunks = splitGroupDocsGreedily(updatedDocs, collection, incarnation, policy);
+    for (const chunkItem of splitChunks) {
+      await appendChunkOutput(
+        chunkItem,
+        collectionPrefix,
+        incarnation,
+        finalDescriptors,
+        changedChunks,
+      );
+    }
+    return {
+      chunks: finalDescriptors,
+      changed_chunks: changedChunks,
+      split_increments: Math.max(0, splitChunks.length - 1),
+    };
+  }
+  return { chunks: finalDescriptors, changed_chunks: changedChunks, split_increments: 0 };
+};
+
+/**
  * Pure builder/evaluator for snapshot chunks.
  */
 export const buildSnapshotChunks = async (
@@ -332,44 +379,47 @@ export const buildSnapshotChunks = async (
     invalid("InvalidConfig", "incarnation must be 32 lowercase hex characters");
   }
 
-  // Collapse mutations to last-write-wins per doc_id
-  const collapsedMutations = new Map<string, ReferenceMutation>();
-  if (Array.isArray(mutations)) {
-    for (const mutation of mutations) {
-      assertSnapshotDocId(mutation.doc_id);
-      collapsedMutations.set(mutation.doc_id, mutation);
-    }
-  } else if (mutations instanceof Map) {
-    for (const [docId, mutation] of mutations) {
-      assertSnapshotDocId(docId);
-      collapsedMutations.set(docId, mutation);
+  // The map is already keyed by doc_id, so collapse needs no work — what
+  // remains is ingress validation: keys must be scalar-orderable, and each
+  // mutation's doc_id must agree with the key it is filed under. The
+  // planner's entryToMutation derives both from the same entry.doc_id, so
+  // production paths never trip the equality check.
+  for (const [docId, mutation] of mutations) {
+    assertSnapshotDocId(docId);
+    if (docId !== mutation.doc_id) {
+      invalid("InvalidConfig", "mutation doc_id must match its map key");
     }
   }
 
-  // Group mutations by target descriptor index (or group 0 for empty collection)
-  const groupMutations = new Map<number, ReferenceMutation[]>();
-  const isInitialEmpty = descriptors.length === 0;
+  if (descriptors.length === 0) {
+    const { chunks, changed_chunks, split_increments } = await buildInitialEmptyChunks(
+      mutations,
+      collection,
+      collectionPrefix,
+      incarnation,
+      policy,
+    );
+    return {
+      chunks,
+      changed_chunks,
+      split_increments,
+      // No descriptors exist, so no neighbor can be selected or consumed.
+      used_neighbor_chunk_index: null,
+    };
+  }
 
-  for (const [docId, mutation] of collapsedMutations) {
-    if (isInitialEmpty) {
-      if (mutation.op !== "D") {
-        let groupList = groupMutations.get(0);
-        if (groupList === undefined) {
-          groupList = [];
-          groupMutations.set(0, groupList);
-        }
-        groupList.push(mutation);
+  // Group mutations by their routed target descriptor index
+  const groupMutations = new Map<number, ReferenceMutation[]>();
+
+  for (const [docId, mutation] of mutations) {
+    const targetIndex = routeMutationToDescriptor(docId, mutation.op, descriptors);
+    if (targetIndex !== null) {
+      let groupList = groupMutations.get(targetIndex);
+      if (groupList === undefined) {
+        groupList = [];
+        groupMutations.set(targetIndex, groupList);
       }
-    } else {
-      const targetIndex = routeMutationToDescriptor(docId, mutation.op, descriptors);
-      if (targetIndex !== null) {
-        let groupList = groupMutations.get(targetIndex);
-        if (groupList === undefined) {
-          groupList = [];
-          groupMutations.set(targetIndex, groupList);
-        }
-        groupList.push(mutation);
-      }
+      groupList.push(mutation);
     }
   }
 
@@ -381,65 +431,42 @@ export const buildSnapshotChunks = async (
 
   let totalSplitIncrements = 0;
 
-  if (isInitialEmpty) {
-    const emptyGroupMutations = groupMutations.get(0) ?? [];
-    if (emptyGroupMutations.length > 0) {
-      const docMap = new Map<string, DocumentData>();
-      for (const mut of emptyGroupMutations) {
-        if (mut.op === "D") {
-          docMap.delete(mut.doc_id);
-        } else {
-          docMap.set(mut.doc_id, mut.after);
-        }
-      }
-      const updatedDocs = [...docMap.values()].toSorted((a, b) =>
-        compareDocIds(a["_id"] as string, b["_id"] as string),
-      );
+  for (const groupIndex of directTouchedIndexes) {
+    const descriptor = descriptors[groupIndex]!;
+    const initialDocs = getLoadedDocs(loadedChunks, descriptor);
+    const mutationsForGroup = groupMutations.get(groupIndex)!;
 
-      if (updatedDocs.length > 0) {
-        const splitChunks = splitGroupDocsGreedily(updatedDocs, collection, incarnation, policy);
-        rewrittenGroupSplitChunks.set(0, splitChunks);
-        totalSplitIncrements += Math.max(0, splitChunks.length - 1);
+    const docMap = new Map<string, DocumentData>();
+    for (const d of initialDocs) {
+      docMap.set(d["_id"] as string, d);
+    }
+    for (const mut of mutationsForGroup) {
+      if (mut.op === "D") {
+        docMap.delete(mut.doc_id);
+      } else {
+        docMap.set(mut.doc_id, mut.after);
       }
     }
-  } else {
-    for (const groupIndex of directTouchedIndexes) {
-      const descriptor = descriptors[groupIndex]!;
-      const initialDocs = getLoadedDocs(loadedChunks, descriptor);
-      const mutationsForGroup = groupMutations.get(groupIndex)!;
 
-      const docMap = new Map<string, DocumentData>();
-      for (const d of initialDocs) {
-        docMap.set(d["_id"] as string, d);
-      }
-      for (const mut of mutationsForGroup) {
-        if (mut.op === "D") {
-          docMap.delete(mut.doc_id);
-        } else {
-          docMap.set(mut.doc_id, mut.after);
-        }
-      }
+    const updatedDocs = [...docMap.values()].toSorted((a, b) =>
+      compareDocIds(a["_id"] as string, b["_id"] as string),
+    );
 
-      const updatedDocs = [...docMap.values()].toSorted((a, b) =>
-        compareDocIds(a["_id"] as string, b["_id"] as string),
-      );
-
-      if (areDocListsEqual(initialDocs, updatedDocs)) {
-        unchangedGroupIndexes.add(groupIndex);
-      } else if (updatedDocs.length === 0) {
-        rewrittenGroupSplitChunks.set(groupIndex, []);
-        // Deleted group contributes max(0, 0 - 1) = 0 split increments
-      } else {
-        const splitChunks = splitGroupDocsGreedily(updatedDocs, collection, incarnation, policy);
-        rewrittenGroupSplitChunks.set(groupIndex, splitChunks);
-        totalSplitIncrements += Math.max(0, splitChunks.length - 1);
-      }
+    if (areDocListsEqual(initialDocs, updatedDocs)) {
+      unchangedGroupIndexes.add(groupIndex);
+    } else if (updatedDocs.length === 0) {
+      rewrittenGroupSplitChunks.set(groupIndex, []);
+      // Deleted group contributes max(0, 0 - 1) = 0 split increments
+    } else {
+      const splitChunks = splitGroupDocsGreedily(updatedDocs, collection, incarnation, policy);
+      rewrittenGroupSplitChunks.set(groupIndex, splitChunks);
+      totalSplitIncrements += Math.max(0, splitChunks.length - 1);
     }
   }
 
   // Facing-boundary merge evaluation
   const usedNeighborChunkIndex =
-    isInitialEmpty || lockedDirectOwnerIndex === null || selectedNeighborIndex === null
+    lockedDirectOwnerIndex === null || selectedNeighborIndex === null
       ? null
       : applyFacingMerge({
           descriptors,
@@ -458,8 +485,15 @@ export const buildSnapshotChunks = async (
   const finalDescriptors: SnapshotChunkDescriptor[] = [];
   const changedChunks: EncodedChunkOutput[] = [];
 
-  if (isInitialEmpty) {
-    const splitChunks = rewrittenGroupSplitChunks.get(0) ?? [];
+  for (let i = 0; i < descriptors.length; i++) {
+    if (i === usedNeighborChunkIndex) {
+      continue;
+    }
+    if (!directTouchedIndexes.has(i) || unchangedGroupIndexes.has(i)) {
+      finalDescriptors.push(descriptors[i]!);
+      continue;
+    }
+    const splitChunks = rewrittenGroupSplitChunks.get(i) ?? [];
     for (const chunkItem of splitChunks) {
       await appendChunkOutput(
         chunkItem,
@@ -468,26 +502,6 @@ export const buildSnapshotChunks = async (
         finalDescriptors,
         changedChunks,
       );
-    }
-  } else {
-    for (let i = 0; i < descriptors.length; i++) {
-      if (i === usedNeighborChunkIndex) {
-        continue;
-      }
-      if (!directTouchedIndexes.has(i) || unchangedGroupIndexes.has(i)) {
-        finalDescriptors.push(descriptors[i]!);
-        continue;
-      }
-      const splitChunks = rewrittenGroupSplitChunks.get(i) ?? [];
-      for (const chunkItem of splitChunks) {
-        await appendChunkOutput(
-          chunkItem,
-          collectionPrefix,
-          incarnation,
-          finalDescriptors,
-          changedChunks,
-        );
-      }
     }
   }
 
