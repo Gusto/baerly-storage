@@ -1,3 +1,4 @@
+import type * as Protocol from "@baerly/protocol";
 import {
   type CurrentJson,
   createCurrentJson,
@@ -8,11 +9,43 @@ import {
   MemoryStorage,
   mintGeneration,
   readCurrentJson,
+  type Storage,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 import { computeRetirableRange, retireLogRange } from "./log-retention.ts";
+
+// `vi.mock` is hoisted above every import, so the toggle its factory closes
+// over must be hoisted too. The mock is a full pass-through by default; only
+// the one test named below flips it.
+const casSeam = vi.hoisted(() => ({ skipMutator: false }));
+
+vi.mock("@baerly/protocol", async (importOriginal) => {
+  const actual = await importOriginal<typeof Protocol>();
+  return {
+    ...actual,
+    casUpdateCurrentJson: (
+      storage: Storage,
+      key: string,
+      mutator: (current: CurrentJson) => CurrentJson,
+      opts?: { signal?: AbortSignal },
+    ) =>
+      casSeam.skipMutator
+        ? actual.casUpdateCurrentJson(
+            storage,
+            key,
+            // The wiring rot the post-CAS assertion exists to catch: a CAS
+            // that completes and publishes the gate's floor without ever
+            // invoking the mutator, as a hoisted-computation refactor or a
+            // retry loop would. 20 is the advisory-gate end for the seeded
+            // state in the test below.
+            (current: CurrentJson): CurrentJson => ({ ...current, log_delete_floor: 20 }),
+            opts,
+          )
+        : actual.casUpdateCurrentJson(storage, key, mutator, opts),
+  };
+});
 
 const cur = (logSeqStart: number, logDeleteFloor?: number): CurrentJson =>
   logStateCurrentJson({
@@ -191,6 +224,39 @@ describe("retireLogRange", () => {
       code: "Internal",
       message: expect.stringContaining("certified delete floor"),
     });
+  });
+
+  test("throws Internal and issues zero DELETEs when the CAS completes without the mutator authorizing a range", async () => {
+    // Pins the post-CAS authorization assertion in retireLogRange. If the
+    // wiring rots so the floor CAS can complete without the mutator ever
+    // running (a hoisted range computation, a retry loop around the CAS),
+    // the failure must be an observable Internal throw — never a silent
+    // DELETE loop over the unvalidated advisory-gate range. The casSeam
+    // mock at the top of this file performs exactly that rot: the CAS
+    // publishes floor 20 (the gate's end for this seed) and never invokes
+    // the mutator, so `authorized` is never set.
+    const storage = new MemoryStorage();
+    await seedIdle(storage, 50);
+    const deleted: string[] = [];
+    const origDelete = storage.delete.bind(storage);
+    storage.delete = (async (key: string, opts?: { signal?: AbortSignal }) => {
+      deleted.push(key);
+      return origDelete(key, opts);
+    }) as typeof storage.delete;
+
+    casSeam.skipMutator = true;
+    try {
+      await expect(
+        retireLogRange(storage, CURRENT_KEY, { window: 5, maxDeletes: 20 }),
+      ).rejects.toMatchObject({
+        code: "Internal",
+        message: expect.stringContaining("retireLogRange"),
+      });
+    } finally {
+      casSeam.skipMutator = false;
+      storage.delete = origDelete;
+    }
+    expect(deleted).toEqual([]);
   });
 });
 

@@ -353,10 +353,15 @@ deterministic protocol, reader-seam, restore, and commit-path tests:
   or a foreign writer's landed and was folded, and no surviving object names
   the writer's session.
 
-`retireLogRange` is the first pass to write `log_delete_floor`. It is not
-yet wired into a write-tick call site, so no deletion pass runs in
-production and the randomized cascade does not schedule one; the crash
-and concurrency schedules above are covered deterministically instead.
+`retireLogRange` is the first pass to write `log_delete_floor`. Every
+maintenance trigger runs it through the shared `retireLogs` helper in
+`maintenance.ts`: `runScheduledMaintenance` after its GC phase, and
+`runBoundedMaintenance` on the hard-GC early-return path and as its final
+step. The concurrency and floor-CAS schedules are covered deterministically
+in `packages/server/src/log-retention.test.ts`; the crash schedule is
+covered by `tests/integration/maintenance-crash-fuzz.test.ts` arm 7 under
+fast-check. The randomized cascade itself does not schedule a retirement
+pass.
 
 ## Conclusion
 

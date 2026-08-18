@@ -16,6 +16,7 @@ import {
   type CurrentJson,
   LOG_RETENTION_MAX_DELETES_PER_TICK,
   LOG_RETENTION_SEQ_WINDOW,
+  logDeleteFloorOf,
   logObjectKey,
   logSeqStartOf,
   readCurrentJson,
@@ -37,7 +38,7 @@ export const computeRetirableRange = (
   const maxDeletes = opts?.maxDeletes ?? LOG_RETENTION_MAX_DELETES_PER_TICK;
   const liveFloor = logSeqStartOf(current);
   const start = certifiedDeleteFloor(current);
-  const boundary = Math.min(liveFloor - window, liveFloor);
+  const boundary = Math.min(liveFloor - window, liveFloor); // clamps a negative window seam only
   const end = Math.max(start, Math.min(boundary, start + maxDeletes));
   return { start, end };
 };
@@ -58,11 +59,17 @@ export interface RetireLogRangeResult {
    * combined GC-sweep + fold + retirement total per tick — must add those
    * manifest round-trips itself; `deleted` alone undercounts.
    *
-   * A stored `log_delete_floor` above `log_seq_start` (e.g. a raised window
-   * outrunning a paused fold) makes {@link computeRetirableRange} return an
-   * empty range, so the pass no-ops until the fold floor advances past that
-   * floor plus the window. That is a temporary stall, not a permanent wedge —
-   * the next fold that clears the window unblocks it.
+   * Two states make {@link computeRetirableRange} return an empty range, so
+   * the pass no-ops until a fold advances `log_seq_start` past the stored
+   * floor plus the window: a raised window whose boundary drops below the
+   * certified floor (the stored floor is at most `log_seq_start` here — the
+   * transition validator throws `Internal` on anything above it), and a
+   * stored floor genuinely above `log_seq_start`, reachable only via a
+   * `restore --force` reseed or a legacy/hand-edited manifest, which
+   * `certifiedDeleteFloor` clamps to `log_seq_start` per
+   * `docs/spec/sync-protocol.md` invariant 12. Both are temporary stalls,
+   * not permanent wedges — the next fold that clears the window unblocks
+   * them.
    */
   readonly deleted: number;
 }
@@ -88,9 +95,10 @@ export interface RetireLogRangeResult {
  * a caller overrides it (via {@link computeRetirableRange}, which also clamps
  * a malformed stored floor per `docs/spec/sync-protocol.md` invariant 12).
  * That bound holds only at the default window: `opts.window` is a test seam
- * that can shrink or erase the safety margin entirely (this module's own
- * `{window: 0}` tests push the floor to `log_seq_start` exactly), so it is
- * never a guarantee a caller passing a non-default `window` gets to rely on.
+ * that can shrink or erase the pre-image reach the window preserves
+ * (`PREIMAGE_SCAN_MAX_GETS`) and steepen the retirement rate it limits (this
+ * module's own `{window: 0}` tests push the floor to `log_seq_start`
+ * exactly).
  * `log_delete_floor` is monotone under the transition validator regardless of
  * `window`. So by the time a slot is physically deleted, a durable
  * certificate that it is gone already exists — which is what makes
@@ -116,8 +124,9 @@ export interface RetireLogRangeResult {
  * @param opts.window Test seam that overrides {@link LOG_RETENTION_SEQ_WINDOW}.
  *   NOT a production tuning knob — do not promote this to an env var the way
  *   `BAERLY_MAINTENANCE_*` tunes the fold/GC budgets. Shrinking it (this
- *   module's own tests use `{window: 0}`) erases the safety margin described
- *   above; production call sites should omit it and take the default.
+ *   module's own tests use `{window: 0}`) erases the pre-image reach and
+ *   steepens the retirement rate described above; production call sites
+ *   should omit it and take the default.
  * @param opts.maxDeletes Test seam that overrides
  *   {@link LOG_RETENTION_MAX_DELETES_PER_TICK}. Same caveat as `opts.window`:
  *   a scoped override for exercising the budget boundary in tests, not a
@@ -128,6 +137,11 @@ export interface RetireLogRangeResult {
  *   swallows exactly this code and re-throws everything else, matching how
  *   `Conflict` from `compact()` / `runGc()` is treated at every call site;
  *   returning it unwrapped here is what keeps that policy in one place.
+ * @throws BaerlyError{code:"Internal"} if the floor CAS completes without
+ *   having authorized the range it published — a wiring tripwire, not a
+ *   runtime state. `retireLogs` re-throws it into `runBoundedMaintenance`'s
+ *   outer catch (`db.maintenance.unexpected_error_total`), so the failure is
+ *   observable rather than silent.
  */
 export async function retireLogRange(
   storage: Storage,
@@ -146,30 +160,41 @@ export async function retireLogRange(
     return { deleted: 0 };
   }
 
-  let range = gate;
-  await casUpdateCurrentJson(
+  let authorized: RetirableRange | undefined;
+  const cas = await casUpdateCurrentJson(
     storage,
     currentJsonKey,
     (current: CurrentJson): CurrentJson => {
-      // Reassigning the enclosing `range` from inside the mutator is only
-      // sound because casUpdateCurrentJson invokes the mutator exactly once
-      // per call (see its JSDoc: multiple invocations only happen if a
-      // *caller* wraps it in a retry loop, and retireLogRange deliberately
-      // does not). So the captured range here is always the one this CAS
-      // just validated. A future caller that adds a retry loop around this
-      // function must re-read the range from the call's result instead of
-      // relying on this closure.
-      range = computeRetirableRange(current, opts);
-      if (range.start >= range.end) {
+      // The mutator runs exactly once per call (see casUpdateCurrentJson's
+      // JSDoc), so `authorized` after the await is the range this CAS just
+      // validated — the assertion below trips on any wiring that lets the
+      // CAS complete without one, rather than deleting unvalidated.
+      authorized = computeRetirableRange(current, opts);
+      if (authorized.start >= authorized.end) {
         throw new BaerlyError(
           "Conflict",
           `retireLogRange: ${currentJsonKey} authorizes no retirable range at CAS time; a concurrent writer moved log_seq_start`,
         );
       }
-      return { ...current, log_delete_floor: range.end };
+      return { ...current, log_delete_floor: authorized.end };
     },
     readOpts,
   );
+  // Tripwire, not a runtime state: when the wiring is intact this is a
+  // tautology (the mutator just returned `{...current, log_delete_floor:
+  // authorized.end}`), but if it ever rots — a hoisted range computation, a
+  // retry loop around the CAS — the DELETE loop below must not fall back to
+  // the unvalidated advisory-gate range. Fail observable (`retireLogs`
+  // re-throws this into the runner's unexpected-error counter) instead.
+  if (authorized === undefined || logDeleteFloorOf(cas.json) !== authorized.end) {
+    const published = logDeleteFloorOf(cas.json);
+    const authorizedEnd = authorized === undefined ? "none" : String(authorized.end);
+    throw new BaerlyError(
+      "Internal",
+      `retireLogRange: ${currentJsonKey}: the floor CAS published ${String(published)} against authorized end ${authorizedEnd}; refusing to DELETE a range the CAS never validated`,
+    );
+  }
+  const range = authorized;
 
   // Idempotent DELETE on every in-tree Storage impl — a 404 is a no-op —
   // so a crash-leaked slot below the already-advanced floor stays leaked
