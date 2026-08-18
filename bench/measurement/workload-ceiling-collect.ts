@@ -16,9 +16,8 @@
  * the `workersInvocationsAdaptive` dataset directly.
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadCloudflareDeployCreds } from "../../tests/fixtures/endpoint-creds.ts";
+import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import {
   decodeWorkloadCeilingRawEvent,
   encodeWorkloadCeilingRawEvent,
@@ -112,12 +111,20 @@ export const queryWorkersInvocationsAdaptive = async (
       },
     }),
   });
-  const body: unknown = await response.json();
+
   if (!response.ok) {
-    throw new Error(
-      `workers invocations query failed with HTTP ${response.status}: ${JSON.stringify(body)}`,
-    );
+    const text = await response.text();
+    throw new Error(`workers invocations query failed with HTTP ${response.status}: ${text}`);
   }
+
+  const body: unknown = await response.json();
+
+  // GraphQL errors arrive as HTTP 200 with {errors: [...], data: null}
+  const errors = (body as { errors?: unknown[] })?.errors;
+  if (errors !== undefined && errors.length > 0) {
+    throw new Error(`GraphQL query returned errors: ${JSON.stringify(errors)}`);
+  }
+
   return body;
 };
 
@@ -190,7 +197,9 @@ export function extractWorkloadCeilingRawEvent(
 ): WorkloadCeilingRawEvent {
   const rows = extractRows(input.graphqlResponse);
   const runtimePeriod = `${input.window.gte}/${input.window.lt}`;
-  if (rows.length !== 1) {
+
+  // Zero rows, more than one row, or multi-request aggregation → unresolved
+  if (rows.length !== 1 || rows[0]!.sum.requests !== 1) {
     return missingTerminalWorkloadCeilingRawEvent({
       run_id: input.run_id,
       scenario_id: input.scenario_id,
@@ -202,24 +211,8 @@ export function extractWorkloadCeilingRawEvent(
       observed_at: input.observed_at,
     });
   }
+
   const row = rows[0]!;
-  // workersInvocationsAdaptive rows are minute-bucketed aggregates. With the
-  // shared fixed scriptName, two invocations inside one minute collapse into
-  // a single row with SUMMED cpuTime — one plausible-looking, silently wrong
-  // number. A matched row must represent exactly one request or the window
-  // did not resolve this invocation.
-  if (row.sum.requests !== 1) {
-    return missingTerminalWorkloadCeilingRawEvent({
-      run_id: input.run_id,
-      scenario_id: input.scenario_id,
-      script_version: "unresolved",
-      compatibility_date: input.compatibility_date,
-      runtime_period: runtimePeriod,
-      colo: "unknown",
-      thermal_class: "unknown",
-      observed_at: input.observed_at,
-    });
-  }
   return {
     run_id: input.run_id,
     scenario_id: input.scenario_id,
@@ -371,8 +364,4 @@ async function main(): Promise<number> {
 // directly (`node --import ./bench/register-hooks.mjs …`), never when a test
 // imports it — `CF_API_TOKEN`/`CF_ACCOUNT_ID` or a credentials file being
 // present in the environment must not turn an import into a live network call.
-const isCli =
-  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]!);
-if (isCli) {
-  process.exitCode = await main();
-}
+await runAsCliEntrypoint(import.meta.url, main);

@@ -26,8 +26,7 @@
  * imputed, and is reported separately.
  */
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import {
   clopperPearsonZeroFailureUpper,
   pairedRatioBootstrap,
@@ -133,6 +132,12 @@ export function matchWorkloadCeilingEvents(
       continue;
     }
     if (control.cpu_ms === null || candidate.cpu_ms === null) {
+      incomplete.push({ scenario_id: scenarioId, reason: "unresolved-cpu" });
+      continue;
+    }
+
+    // Reject non-"ok" outcomes even if cpu_ms is present (e.g., exceededCpu)
+    if (control.outcome !== "ok" || candidate.outcome !== "ok") {
       incomplete.push({ scenario_id: scenarioId, reason: "unresolved-cpu" });
       continue;
     }
@@ -367,8 +372,4 @@ async function main(): Promise<number> {
 // CLI entrypoint guard: `main()` runs only when this module is executed
 // directly, never when a test imports it — an import must not read event
 // directories or write comparison artifacts off the environment.
-const isCli =
-  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]!);
-if (isCli) {
-  process.exitCode = await main();
-}
+await runAsCliEntrypoint(import.meta.url, main);

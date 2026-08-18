@@ -34,3 +34,15 @@ export {
   type SnapshotChunkDescriptor,
   type SnapshotManifest,
 } from "../snapshot-manifest.ts";
+export {
+  foldChunkedSnapshotReference,
+  type ReferenceFold,
+  type ReferenceMutation,
+  type ReferenceRow,
+} from "../chunked-snapshot-reference.ts";
+export {
+  openSnapshotView,
+  type OpenSnapshotViewInput,
+  type SnapshotRow,
+  type SnapshotView,
+} from "../snapshot-view.ts";

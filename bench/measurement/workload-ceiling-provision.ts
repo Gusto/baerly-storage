@@ -23,8 +23,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import { AwsClient } from "aws4fetch";
 import { encodeJsonBytes, snapshotHash, type DocumentData, type Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
@@ -363,8 +362,4 @@ async function main(): Promise<number> {
 // CLI entrypoint guard: `main()` runs only when this module is executed
 // directly, never when a test imports it — with a credentials file present
 // in the working tree, an import must never provision a real R2 fixture.
-const isCli =
-  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]!);
-if (isCli) {
-  process.exitCode = await main();
-}
+await runAsCliEntrypoint(import.meta.url, main);

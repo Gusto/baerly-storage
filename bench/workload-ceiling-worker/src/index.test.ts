@@ -1,5 +1,14 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import type { Storage } from "@baerly/protocol";
 import worker, { type WorkloadCeilingWorkerEnv } from "./index.ts";
+
+vi.mock("@baerly/adapter-cloudflare", () => ({
+  // eslint-disable-next-line vitest/require-mock-type-parameters
+  r2BindingStorage: vi.fn(),
+}));
+
+const { r2BindingStorage } = await import("@baerly/adapter-cloudflare");
+const mockR2BindingStorage = vi.mocked(r2BindingStorage);
 
 // The env cast is safe on every path under test: the 401 guard returns
 // before `env.BUCKET` is ever read, and the 400 path (decode failure)
@@ -24,6 +33,50 @@ const postRun = (authorization: string, body = "not-json"): Request =>
     },
     text: () => Promise.resolve(body),
   }) as unknown as Request;
+
+// Simple mock storage implementation
+function createMockStorage(files: Record<string, string>): Storage {
+  const get = async (
+    key: string,
+    _options?: { signal?: AbortSignal },
+  ): Promise<{ body: Uint8Array; metadata?: Record<string, string> } | null> => {
+    const content = files[key];
+    if (content === undefined) {
+      return null;
+    }
+    return {
+      body: new TextEncoder().encode(content),
+      metadata: undefined,
+    };
+  };
+
+  return {
+    get,
+    // vitest-ignore: mock storage implementation, type parameters not required
+    // eslint-disable-next-line vitest/require-mock-type-parameters
+    delete: vi.fn(),
+    // eslint-disable-next-line vitest/require-mock-type-parameters
+    deleteMany: vi.fn(),
+    // eslint-disable-next-line vitest/require-mock-type-parameters
+    put: vi.fn(),
+    // eslint-disable-next-line vitest/require-mock-type-parameters
+    list: vi.fn(),
+    // eslint-disable-next-line vitest/require-mock-type-parameters
+    close: vi.fn(),
+  } as unknown as Storage;
+}
+
+const fixturePrefix = "test-fixture";
+const validRequest = {
+  contract_id: "baerly.workload-ceiling/chunked-snapshot/v1" as const,
+  run_id: "test-run-id",
+  scenario_id: "test-scenario",
+  implementation: "monolithic-control" as const,
+  fixture_prefix: fixturePrefix,
+};
+
+// Import encoding functions for proper canonical JSON
+import { encodeWorkloadCeilingRunRequest } from "../../measurement/workload-ceiling-harness.ts";
 
 describe("POST /run authentication fails closed", () => {
   test("a missing secret rejects an empty bearer token", async () => {
@@ -53,5 +106,78 @@ describe("POST /run authentication fails closed", () => {
       env("real-secret"),
     );
     expect(response.status).toBe(400);
+  });
+});
+
+describe("Wrong method/path returns 404", () => {
+  test("returns 404 for GET request", async () => {
+    const request = {
+      method: "GET",
+      url: "https://example.com/run",
+      headers: {
+        get: (name: string): string | null => (name === "authorization" ? "Bearer token" : null),
+      },
+    } as unknown as Request;
+    const response = await worker.fetch(request, env("secret"));
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "not found: POST /run only",
+    });
+  });
+
+  test("returns 404 for wrong path", async () => {
+    const request = {
+      method: "POST",
+      url: "https://example.com/other",
+      headers: {
+        get: (name: string): string | null => (name === "authorization" ? "Bearer token" : null),
+      },
+    } as unknown as Request;
+    const response = await worker.fetch(request, env("secret"));
+    expect(response.status).toBe(404);
+  });
+});
+
+describe("Success path with mocked storage", () => {
+  test("succeeds on monolithic-control implementation", async () => {
+    const mockStorage = createMockStorage({
+      [`${fixturePrefix}/fixture.json`]: JSON.stringify({
+        contract_id: "baerly.workload-ceiling/chunked-snapshot/v1",
+        collection: "test-collection",
+        monolithic_key: `${fixturePrefix}/monolithic.json`,
+        manifest_key: `${fixturePrefix}/manifest.json`,
+        log_seq_start: 0,
+      }),
+      [`${fixturePrefix}/monolithic.json`]: JSON.stringify({
+        rows: [{ _id: "doc1" as const, body: { _id: "doc1" as const, data: "value" } }],
+      }),
+    });
+
+    mockR2BindingStorage.mockReturnValue(mockStorage);
+
+    const body = encodeWorkloadCeilingRunRequest(validRequest);
+    const request = {
+      method: "POST",
+      url: "https://example.com/run",
+      headers: {
+        get: (name: string): string | null => (name === "authorization" ? "Bearer secret" : null),
+      },
+      text: () => Promise.resolve(body),
+    } as unknown as Request;
+
+    const response = await worker.fetch(request, env("secret"));
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as {
+      row_count: number;
+      contract_id: string;
+      run_id: string;
+      scenario_id: string;
+      implementation: string;
+    };
+    expect(result.row_count).toBe(1);
+    expect(result.contract_id).toBe("baerly.workload-ceiling/chunked-snapshot/v1");
+    expect(result.run_id).toBe("test-run-id");
+    expect(result.scenario_id).toBe("test-scenario");
+    expect(result.implementation).toBe("monolithic-control");
   });
 });
