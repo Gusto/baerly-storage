@@ -291,15 +291,19 @@ export const planChunkedFold = async (
 
   let lastAdmittedPlan: ChunkedFoldPlan | null = null;
 
-  // Candidates are pushed in entry order during prefetch, so their indexes
-  // advance monotonically — walk a pointer instead of re-scanning entries.
-  let endpointSearchFrom = 0;
-  for (const endpointSeq of prefetch.candidate_log_seq_ends) {
-    let endpointIndex = endpointSearchFrom;
-    while (entries[endpointIndex]!.seq !== endpointSeq) {
-      endpointIndex++;
-    }
-    endpointSearchFrom = endpointIndex;
+  // The prefetch walk pushes one candidate per accepted entry, in entry
+  // order, and breaks before pushing the first over-budget entry — so the
+  // candidates are always a contiguous prefix of `entries` and
+  // candidate_log_seq_ends[i] === entries[i].seq. Iterate by index instead
+  // of re-deriving the entry position from the seq; a scan indexed off a
+  // mismatched seq would also run past the end of `entries` with a raw
+  // TypeError rather than a BaerlyError.
+  for (
+    let endpointIndex = 0;
+    endpointIndex < prefetch.candidate_log_seq_ends.length;
+    endpointIndex++
+  ) {
+    const endpointSeq = prefetch.candidate_log_seq_ends[endpointIndex]!;
     const prefixEntries = entries.slice(0, endpointIndex + 1);
 
     const mutationMap = new Map<string, ReferenceMutation>();
