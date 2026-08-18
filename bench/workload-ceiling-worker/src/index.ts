@@ -42,9 +42,9 @@ import type { DocumentData, Storage } from "@baerly/protocol";
 import { r2BindingStorage } from "@baerly/adapter-cloudflare";
 import {
   foldChunkedSnapshotReference,
+  openSnapshotView,
   type ReferenceRow,
-} from "../../../packages/server/src/chunked-snapshot-reference.ts";
-import { openSnapshotView } from "../../../packages/server/src/snapshot-view.ts";
+} from "@baerly/server/_internal/testing";
 import {
   decodeWorkloadCeilingRunRequest,
   WORKLOAD_CEILING_CONTRACT_ID,

@@ -15,7 +15,7 @@
   "name": "baerly-storage",
   "main": "./src/index.ts",
   "compatibility_date": "2026-08-15",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [],
 
   "r2_buckets": [
     {
