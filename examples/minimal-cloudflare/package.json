@@ -15,14 +15,14 @@
     "@gusto/baerly-storage": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.52.0",
-    "@cloudflare/workers-types": "^5.20260715.1",
+    "@cloudflare/vite-plugin": "^1.52.1",
+    "@cloudflare/workers-types": "^5.20260817.1",
     "@types/node": "^26.2.0",
     "happy-dom": "^20.11.2",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10",
-    "wrangler": "^4.122.0"
+    "wrangler": "^4.123.0"
   },
   "packageManager": "pnpm@11.1.2"
 }
