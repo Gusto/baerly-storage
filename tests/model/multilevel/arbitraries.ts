@@ -85,14 +85,12 @@ function modelMutationWorkloadArbitrary(
       { minLength: 1, maxLength: mutationCount },
     )
     .map((entries) =>
-      entries.map(
-        ({ documentIndex, change }, index): ModelMutation => ({
-          mutationId: `mutation-${index + 1}`,
-          sequence: index + 1,
-          documentId: `doc-${documentIndex}`,
-          change,
-        }),
-      ),
+      entries.map(({ documentIndex, change }, index): ModelMutation => ({
+        mutationId: `mutation-${index + 1}`,
+        sequence: index + 1,
+        documentId: `doc-${documentIndex}`,
+        change,
+      })),
     );
 }
 

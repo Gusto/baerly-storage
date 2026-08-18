@@ -579,15 +579,13 @@ export const modelPropertyDefinitions = (
     return result;
   };
 
-  return MODEL_PROPERTY_NAMES.map(
-    (name): ModelPropertyDefinition => ({
-      name,
-      arbitrary: isModelSafetyProperty(name)
-        ? modelScenarioWithDroppedAppendArbitrary(assumptions)
-        : modelScenarioArbitrary(assumptions),
-      check: (scenario) => check(name, scenario),
-    }),
-  );
+  return MODEL_PROPERTY_NAMES.map((name): ModelPropertyDefinition => ({
+    name,
+    arbitrary: isModelSafetyProperty(name)
+      ? modelScenarioWithDroppedAppendArbitrary(assumptions)
+      : modelScenarioArbitrary(assumptions),
+    check: (scenario) => check(name, scenario),
+  }));
 };
 
 export const MODEL_PROPERTIES: readonly ModelPropertyDefinition[] = modelPropertyDefinitions();
