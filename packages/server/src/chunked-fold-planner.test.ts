@@ -310,6 +310,35 @@ describe("chunked fold planner", () => {
     ).rejects.toMatchObject({ code: "InvalidResponse" });
   });
 
+  test("stored insert/update entry missing its after post-image fails with InvalidResponse", async () => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+
+    // An I/U entry without a post-image is a stored-data failure
+    // (ADR-007: InvalidResponse), raised by entryToMutation.
+    const entries: LogEntry[] = [makeLogEntry(1, "U", "a")]; // no after
+
+    try {
+      prefetchChunkedFold({ entries, descriptors: [d0Desc], budget: defaultBudget });
+      expect.unreachable("prefetchChunkedFold must throw on a missing post-image");
+    } catch (error) {
+      expect((error as BaerlyError).code).toBe("InvalidResponse");
+    }
+
+    await expect(
+      planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries,
+        descriptors: [d0Desc],
+        loadedChunks: new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]),
+        budget: defaultBudget,
+        incarnation,
+        policy: CHUNK_BOUNDARY_POLICIES["c128-r512"],
+      }),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
   test("exact selection stops before exceeding split increments budget", async () => {
     const customPolicy: SnapshotChunkBoundaryPolicy = {
       target_chunk_bytes: 1024 * 1024,
