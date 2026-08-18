@@ -339,7 +339,7 @@ describe("chunked fold planner", () => {
 
     expect(plan).not.toBeNull();
     expect(plan!.log_seq_end).toBe(2);
-    expect(plan!.split_increments).toBe(1);
+    expect(plan!.build.split_increments).toBe(1);
   });
 
   test("exact selection stops before exceeding the neighbor budget", async () => {
@@ -376,12 +376,12 @@ describe("chunked fold planner", () => {
 
     const admitted = await planChunkedFold(input(defaultBudget));
     expect(admitted!.log_seq_end).toBe(2);
-    expect(admitted!.used_neighbor_chunk_index).toBe(1);
-    expect(admitted!.split_increments).toBe(0);
+    expect(admitted!.build.used_neighbor_chunk_index).toBe(1);
+    expect(admitted!.build.split_increments).toBe(0);
 
     const stopped = await planChunkedFold(input({ ...defaultBudget, max_neighbor_chunks: 0 }));
     expect(stopped!.log_seq_end).toBe(1);
-    expect(stopped!.used_neighbor_chunk_index).toBeNull();
+    expect(stopped!.build.used_neighbor_chunk_index).toBeNull();
   });
 
   test("empty entries plan is a no-op that echoes descriptors and honors baseLogSeq", async () => {
@@ -409,8 +409,8 @@ describe("chunked fold planner", () => {
     expect(withBase!.touched_chunk_indexes).toEqual([]);
     expect(withBase!.touched_ranges).toEqual([]);
     expect(withBase!.mutation_bytes).toBe(0);
-    expect(withBase!.split_increments).toBe(0);
-    expect(withBase!.used_neighbor_chunk_index).toBeNull();
+    expect(withBase!.build.split_increments).toBe(0);
+    expect(withBase!.build.used_neighbor_chunk_index).toBeNull();
     expect(withBase!.mutations.size).toBe(0);
     expect(withBase!.build.chunks).toEqual([d0Desc]);
     expect(withBase!.build.changed_chunks).toEqual([]);
@@ -490,7 +490,7 @@ describe("chunked fold planner", () => {
     expect(planBase!.touched_chunk_indexes).toEqual(planExtended!.touched_chunk_indexes);
     expect(planBase!.touched_ranges).toEqual(planExtended!.touched_ranges);
     expect(planBase!.mutation_bytes).toBe(planExtended!.mutation_bytes);
-    expect(planBase!.split_increments).toBe(planExtended!.split_increments);
+    expect(planBase!.build.split_increments).toBe(planExtended!.build.split_increments);
     expect(planBase!.build.chunks).toEqual(planExtended!.build.chunks);
   });
 

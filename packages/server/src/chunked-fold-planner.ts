@@ -40,8 +40,6 @@ export interface ChunkedFoldPlan {
     readonly last_id: string;
   }[];
   readonly mutation_bytes: number;
-  readonly split_increments: number;
-  readonly used_neighbor_chunk_index: number | null;
   readonly mutations: ReadonlyMap<string, ReferenceMutation>;
   readonly build: SnapshotChunkBuildResult;
 }
@@ -284,8 +282,6 @@ export const planChunkedFold = async (
         touched_chunk_indexes: [],
         touched_ranges: [],
         mutation_bytes: 0,
-        split_increments: 0,
-        used_neighbor_chunk_index: null,
         mutations: new Map(),
         build: emptyBuildResult,
       };
@@ -360,8 +356,6 @@ export const planChunkedFold = async (
       touched_chunk_indexes,
       touched_ranges,
       mutation_bytes: mutationBytes,
-      split_increments: buildResult.split_increments,
-      used_neighbor_chunk_index: buildResult.used_neighbor_chunk_index,
       mutations: mutationMap,
       build: buildResult,
     };
