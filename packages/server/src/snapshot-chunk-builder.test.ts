@@ -64,6 +64,62 @@ describe("snapshot chunk builder", () => {
     expect(result.chunks[0]!.row_count).toBe(2);
   });
 
+  test("rejects invalid collection, collectionPrefix, and incarnation with InvalidConfig", async () => {
+    const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+
+    const valid = {
+      collection,
+      collectionPrefix,
+      descriptors: [d0Desc] as const,
+      loadedChunks: new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]),
+      mutations: mutationMap([{ op: "U", doc_id: "a", after: doc("a", 10) }]),
+      incarnation,
+      policy,
+      lockedDirectOwnerIndex: 0,
+      selectedNeighborIndex: null,
+    };
+
+    // Each row trips exactly one ingress guard; the error message names it.
+    const cases: readonly Partial<typeof valid>[] = [
+      { collection: "" }, // collection must be non-empty
+      { collectionPrefix: "" }, // collectionPrefix must be non-empty
+      { collectionPrefix: `${collectionPrefix}/` }, // no trailing slash
+      { incarnation: "00112233445566778899AABBCCDDEEFF" }, // uppercase hex
+      { incarnation: "tooshort" }, // not 32 hex characters
+    ];
+
+    for (const override of cases) {
+      await expect(buildSnapshotChunks({ ...valid, ...override })).rejects.toMatchObject({
+        code: "InvalidConfig",
+      });
+    }
+  });
+
+  test("directly touched descriptor missing from loadedChunks fails with InvalidResponse", async () => {
+    const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+
+    // The update routes to d0, but no loaded chunk backs it. The builder
+    // never reads outside its loadedChunks input ("no reads outside
+    // prefetch"), so an absent chunk is a stored-data failure.
+    await expect(
+      buildSnapshotChunks({
+        collection,
+        collectionPrefix,
+        descriptors: [d0Desc],
+        loadedChunks: new Map(),
+        mutations: mutationMap([{ op: "U", doc_id: "a", after: doc("a", 10) }]),
+        incarnation,
+        policy,
+        lockedDirectOwnerIndex: 0,
+        selectedNeighborIndex: null,
+      }),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
   test("rewrites a directly touched chunk and reuses untouched descriptors", async () => {
     const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
     const d0Docs = [doc("a", 1), doc("b", 2)];
