@@ -17,6 +17,14 @@
   "compatibility_date": "2026-08-15",
   "compatibility_flags": [],
 
+  // `bucket_name` MUST match `WORKLOAD_CEILING_BUCKET_NAME` in
+  // ../measurement/workload-ceiling-harness.ts, which is also the bucket
+  // `credentials/cloudflare.json` must name — provisioning writes fixtures
+  // there, and this binding is the only place the Worker looks for them.
+  // JSONC cannot import the constant, so the name is repeated here;
+  // `pnpm bench:workload-ceiling:provision` preflights the credentials file
+  // against it and refuses to write on a mismatch, which would otherwise
+  // surface only as a 502 "fixture descriptor is missing" per run.
   "r2_buckets": [
     {
       "binding": "BUCKET",

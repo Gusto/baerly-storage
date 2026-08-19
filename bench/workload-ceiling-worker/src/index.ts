@@ -46,8 +46,11 @@ import {
   type ReferenceRow,
 } from "@baerly/server/_internal/testing";
 import {
+  decodeWorkloadCeilingFixtureDescriptor,
   decodeWorkloadCeilingRunRequest,
   WORKLOAD_CEILING_CONTRACT_ID,
+  workloadCeilingFixtureDescriptorKey,
+  type WorkloadCeilingFixtureDescriptor,
   type WorkloadCeilingRunRequest,
 } from "../../measurement/workload-ceiling-harness.ts";
 import { constantTimeEqual } from "./constant-time-equal.ts";
@@ -64,22 +67,6 @@ export interface WorkloadCeilingWorkerEnv {
   readonly WORKLOAD_CEILING_SHARED_SECRET: string | undefined;
 }
 
-interface WorkloadCeilingFixtureDescriptor {
-  readonly contract_id: typeof WORKLOAD_CEILING_CONTRACT_ID;
-  readonly collection: string;
-  readonly monolithic_key: string;
-  readonly manifest_key: string;
-  readonly log_seq_start: number;
-}
-
-const FIXTURE_DESCRIPTOR_FIELDS = [
-  "contract_id",
-  "collection",
-  "monolithic_key",
-  "manifest_key",
-  "log_seq_start",
-] as const;
-
 class WorkloadCeilingWorkerError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -89,66 +76,21 @@ class WorkloadCeilingWorkerError extends Error {
   }
 }
 
+/**
+ * Runs the descriptor through the SHARED harness codec, then restates any
+ * rejection as a 502. The status matters: a malformed descriptor is a broken
+ * upstream fixture, not a bad request from the caller (whose own body already
+ * decoded cleanly), so it must never be reported as the caller's 400.
+ */
 function parseFixtureDescriptor(bytes: Uint8Array): WorkloadCeilingFixtureDescriptor {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(bytes));
+    return decodeWorkloadCeilingFixtureDescriptor(new TextDecoder().decode(bytes));
   } catch (error) {
     throw new WorkloadCeilingWorkerError(
       502,
-      `fixture descriptor is not valid JSON: ${String(error)}`,
+      `fixture descriptor is unusable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new WorkloadCeilingWorkerError(502, "fixture descriptor must be an object");
-  }
-  const keys = Object.keys(parsed);
-  const expected = new Set<string>(FIXTURE_DESCRIPTOR_FIELDS);
-  if (keys.length !== FIXTURE_DESCRIPTOR_FIELDS.length || !keys.every((key) => expected.has(key))) {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      "fixture descriptor must contain exactly the expected fields",
-    );
-  }
-  const value = parsed as Record<string, unknown>;
-  if (value["contract_id"] !== WORKLOAD_CEILING_CONTRACT_ID) {
-    throw new WorkloadCeilingWorkerError(502, "fixture descriptor contract_id mismatch");
-  }
-  if (typeof value["collection"] !== "string" || value["collection"].trim() === "") {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      "fixture descriptor collection must be a nonempty string",
-    );
-  }
-  if (typeof value["monolithic_key"] !== "string" || value["monolithic_key"].trim() === "") {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      "fixture descriptor monolithic_key must be a nonempty string",
-    );
-  }
-  if (typeof value["manifest_key"] !== "string" || value["manifest_key"].trim() === "") {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      "fixture descriptor manifest_key must be a nonempty string",
-    );
-  }
-  if (!Number.isSafeInteger(value["log_seq_start"]) || (value["log_seq_start"] as number) < 0) {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      "fixture descriptor log_seq_start must be a non-negative safe integer",
-    );
-  }
-  return {
-    contract_id: WORKLOAD_CEILING_CONTRACT_ID,
-    collection: value["collection"],
-    monolithic_key: value["monolithic_key"],
-    manifest_key: value["manifest_key"],
-    log_seq_start: value["log_seq_start"] as number,
-  };
-}
-
-function fixtureDescriptorKey(fixturePrefix: string): string {
-  return `${fixturePrefix}/fixture.json`;
 }
 
 async function loadMonolithicRows(
@@ -189,15 +131,30 @@ async function loadChunkedRows(
   descriptor: WorkloadCeilingFixtureDescriptor,
   signal: AbortSignal,
 ): Promise<readonly ReferenceRow[]> {
-  const view = await openSnapshotView({
-    storage,
-    manifestKey: descriptor.manifest_key,
-    collection: descriptor.collection,
-    expectedLogSeqStart: descriptor.log_seq_start,
-    signal,
-  });
-  const materialized: Map<string, DocumentData> = await view.materialize(signal);
-  return [...materialized].map(([_id, body]) => ({ _id, body }));
+  // A manifest or chunk the descriptor references but the bucket does not hold
+  // is a broken upstream fixture — the same 502 the monolithic branch reports
+  // for its missing body, so an operator reads one status class for "your
+  // fixture is incomplete" regardless of which representation was requested.
+  // Kernel errors are restated, never swallowed: `materialize` must not be
+  // allowed to return a short row set, which would understate the candidate's
+  // cost as a cheaper implementation.
+  try {
+    const view = await openSnapshotView({
+      storage,
+      manifestKey: descriptor.manifest_key,
+      collection: descriptor.collection,
+      expectedLogSeqStart: descriptor.log_seq_start,
+      signal,
+    });
+    const materialized: Map<string, DocumentData> = await view.materialize(signal);
+    return [...materialized].map(([_id, body]) => ({ _id, body }));
+  } catch (error) {
+    signal.throwIfAborted();
+    throw new WorkloadCeilingWorkerError(
+      502,
+      `chunked fixture is unreadable: ${describeError(error)}`,
+    );
+  }
 }
 
 async function runControlledFold(
@@ -205,14 +162,10 @@ async function runControlledFold(
   request: WorkloadCeilingRunRequest,
   signal: AbortSignal,
 ): Promise<{ readonly row_count: number }> {
-  const descriptorStored = await storage.get(fixtureDescriptorKey(request.fixture_prefix), {
-    signal,
-  });
+  const descriptorKey = workloadCeilingFixtureDescriptorKey(request.fixture_prefix);
+  const descriptorStored = await storage.get(descriptorKey, { signal });
   if (descriptorStored === null) {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      `fixture descriptor is missing: ${fixtureDescriptorKey(request.fixture_prefix)}`,
-    );
+    throw new WorkloadCeilingWorkerError(502, `fixture descriptor is missing: ${descriptorKey}`);
   }
   const descriptor = parseFixtureDescriptor(descriptorStored.body);
   let rows: readonly ReferenceRow[];

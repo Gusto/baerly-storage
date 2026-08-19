@@ -149,6 +149,15 @@ the collector's request-count assertion treats such a row as unresolved, so
 space the two invocations at least one minute apart and give each its own
 explicit collection window:
 
+0. Confirm `credentials/cloudflare.json` names the bucket
+   `baerly-storage-eval`. Provisioning writes fixtures to whatever bucket that
+   file names, while `wrangler.jsonc` binds the Worker's `env.BUCKET` to
+   `baerly-storage-eval` as a literal — the two are configured independently,
+   and a mismatch means every `POST /run` returns a 502
+   `fixture descriptor is missing` that reads as a provisioning bug.
+   `pnpm bench:workload-ceiling:provision` preflights this and refuses to
+   write on a mismatch; the constant both sides answer to is
+   `WORKLOAD_CEILING_BUCKET_NAME` in `../measurement/workload-ceiling-harness.ts`.
 1. `deploy.mjs deploy --name baerly-storage` (once), then set the shared
    secret.
 2. Provision the fixture (`pnpm bench:workload-ceiling:provision`).
