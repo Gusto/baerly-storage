@@ -233,6 +233,17 @@ always carries `_id` (the server mints a UUIDv7 for inserts that omit
 it), so the schema must assert it — author `_id: z.string()`, not
 `.optional()`.
 
+For any field that may be **absent**, reach for `.optional()`, not
+`.nullable()`. `DocumentValue` has no `null` member — RFC 7396
+merge-patch (which `merge()` in `packages/protocol/src/json.ts`
+implements) treats `null` in an update patch as a deletion sentinel, not
+a stored value. A schema declaring `assignee: z.string().nullable()`
+type-checks but diverges from runtime: the type says `string | null`,
+but a `find()` call returns the field as `undefined` (absent), never
+`null`. If you need to teach the merge-patch semantics, frame it as
+"passing `tags: null` in an update deletes the field," not "the field
+can hold null."
+
 A multi-row `update()` is **not** transactional across rows. Validation
 runs per row on the merged post-image, and each row commits
 independently: if row N fails, rows 0..N-1 are already committed and stay
@@ -646,6 +657,26 @@ Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
 end-to-end orchestrators rather than helpers; their entry points are
 documented in [architecture.md](../architecture.md) under "Where
 invariants live."
+
+### Keeping an `Internal*` type off the published `.d.ts`
+
+An `Internal*` widening stays unpublished only if no published entry
+point reaches it — including *structurally*, through another exported
+type's field types, even when the internal type is never name-exported
+itself. Exporting it from a module that happens to be a published entry
+is enough to land it in that entry's `.d.ts`, and TypeScript won't stop
+the caller: the excess-property check only fires on fresh object
+literals, so a named variable of the internal type passes clean.
+
+Declare the type in the module that owns it and re-export it from
+`packages/server/src/_internal/testing.ts`, which is deliberately absent
+from `publishConfig.exports` — `export type { InternalRunGcOptions } from
+"../gc.ts"`. Fixtures and the CLI reach it through
+`@baerly/server/_internal/testing`; published entries never do.
+
+`tests/integration/internal-types-unpublished.test.ts` is the gate. Its
+name scan keys off the `Internal` prefix, so a widening named otherwise
+slips past layer 2 — follow the convention.
 
 ---
 

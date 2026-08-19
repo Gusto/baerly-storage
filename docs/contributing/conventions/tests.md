@@ -79,6 +79,18 @@ a file mixes both kinds of test. Prefer the object-form
 - Don't string-match on `error.message` — the wording isn't stable.
 - Rationale: JSDoc on `BaerlyError` in [`packages/protocol/src/errors.ts`](../../../packages/protocol/src/errors.ts).
 
+## Runtime-boundary refactors
+
+A commit claiming "public signatures unchanged" or "byte-identical" is
+making a runtime claim, not a type claim — typecheck and lint can't
+verify it. When a refactor crosses a runtime boundary between two
+ecosystems (Web Streams ↔ Node Streams, sync ↔ async, fire-and-forget ↔
+awaited), demand a test that exercises the failure mode the old code
+tolerated — usually disconnect, abort, partial-read, or a rejected
+promise the old idiom silently swallowed. If the new idiom is stricter
+(often why it was chosen), that strictness is the behavior change, and
+only a runtime test surfaces it.
+
 ## Network-dependent tests
 - Tests that hit the network live in `tests/integration/` and expect
   Minio at `http://127.0.0.1:9102`. Bring it up with `pnpm dev:storage`

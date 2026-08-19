@@ -1,3 +1,10 @@
+# Under pnpm 11 (pinned via `packageManager`) every resolution setting —
+# `overrides`, `packageExtensions`, `allowBuilds`, `linkWorkspacePackages` —
+# belongs in this file, not in a `"pnpm"` field in `package.json`. That
+# field is silently inert there: no error, no effect. The tell is `pnpm
+# install` printing `Lockfile is up to date, resolution step is skipped`
+# when you expected a re-resolve.
+
 packages:
   - .
   - packages/*

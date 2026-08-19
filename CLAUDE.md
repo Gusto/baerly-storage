@@ -59,6 +59,18 @@ variants for environments where the env var isn't propagated.
 
 > **Agents: don't pipe `verify:agent` / `test:agent` through `| tail -N` or `| head -N`.** Both scripts are already compact — one finding per line, with full detail preserved on failures. Piping to `tail`/`head` removes the lines you need; if the first run prints nothing useful, the _output is empty because the gate passed_, not because the tail was wrong. Same applies to `pnpm bundle-sizes`.
 
+> **Two `test:agent` invocation traps.** `pnpm test:agent -- <path>` silently
+> runs the whole default-project suite — the `--` becomes a positional that
+> neutralizes vitest's path filter; write `pnpm test:agent <path>` instead.
+> `pnpm test:agent --project=<name>` also fails silently: the script already
+> hard-codes `--project=default`, so a second `--project=` supplies two
+> conflicting filters rather than overriding the first. There's no way to
+> retarget `test:agent` at another vitest project — use the project's own
+> script (e.g. `pnpm test:adapter-cloudflare <paths>`). And `FC_NUM_RUNS` in
+> front of `pnpm test:fuzz-maintenance` is a no-op — the script hardcodes
+> `FC_NUM_RUNS=10000` — so read the effective value off the `$ ...` command
+> vitest echoes rather than assuming your override took.
+
 | Command | What it catches | Runtime | Clean on `main`? |
 | --- | --- | --- | --- |
 | `pnpm verify` | typecheck (`tsgo --noEmit`, run twice — the Node-only root program, then the Workers program via `-p tsconfig.cloudflare.json`) + `verify:examples` + lint (`oxlint`) + `format:check` (`oxfmt --check .`, whole-repo) + `lint-format-coverage` (ownership guard) + `verify:docs` (markdown validation) + `check-spec-drift` + `check-version-matrix` | ~seconds | ✅ — non-zero exit _is_ your regression |
@@ -212,7 +224,10 @@ field loads unconditionally at launch instead — silently.
   Don't add jest, mocha, or `bun:test`.
 - **Public API docs live as JSDoc on `packages/server/src/db.ts` and
   `packages/server/src/table.ts`.** IDE hover and tsgo consume them
-  directly — no rendered markdown ref to maintain.
+  directly — no rendered markdown ref to maintain. Navigation pointers
+  ("this file does X, dispatched from Z") go in the package's
+  `AGENTS.md` instead; a source header holds only why-non-obvious
+  context.
 - **Per-collection linearizability is a hard invariant.** The
   `log/<seq>` `If-None-Match: "*"` create linearizes each collection;
   cross-collection writes are unordered and non-atomic.
@@ -303,7 +318,10 @@ field loads unconditionally at launch instead — silently.
 ## Scope guidance
 
 - **Bugfix?** Reproduce with a failing test first. Pick the right test file
-  by topic (`json.test.ts`, `time.test.ts`, etc.).
+  by topic (`json.test.ts`, `time.test.ts`, etc.). Before shipping, re-inject
+  the original implementation and confirm the new test goes red — a test
+  that only passes against the fix is unproven; the fixture (not the
+  assertion) is what has to discriminate the two implementations.
 - **New public API method on `Db` / `Collection`?** See [docs/contributing/extending.md](docs/contributing/extending.md).
   Add JSDoc with `@example` — IDEs and tsgo consume it directly.
 - **Touching the sync protocol?** Read `docs/spec/sync-protocol.md` and
@@ -319,17 +337,23 @@ field loads unconditionally at launch instead — silently.
   exist. ~10 minutes of verification up front beats hours of work
   stuck on phantom references.
 
-## Pull request bodies
+## Pull request bodies, code comments, and planning docs
 
-Follow [`.github/pull_request_template.md`](.github/pull_request_template.md).
-It applies whether or not the template was rendered into your editor —
-`gh pr create --body` bypasses it, so read the file.
+Follow [`.github/pull_request_template.md`](.github/pull_request_template.md)
+for PRs. It applies whether or not the template was rendered into your
+editor — `gh pr create --body` bypasses it, so read the file.
 
-The body is a maintainer's reference, not a record of how the branch was
-built. Default to short and lead with the conclusion. State what the code
-does now; don't narrate how you arrived at it. A tried-and-abandoned
-approach or a changed plan gets **one line under "Key points"** and
-appears nowhere else. Deferred work is an issue link, not an inventory.
+All three are references for whoever reads them next, not a record of
+how you got there. Default to short and lead with the conclusion. State
+what the code or decision does/is *now*; don't narrate how you arrived
+at it — no session dates, no PR-number-as-evidence, no "the reviewer
+said" attribution inside prose that's just describing current behavior.
+A tried-and-abandoned approach or a changed plan gets **one line**
+(under a PR's "Key points", or as a decision sentence in the doc/comment
+it constrains) and appears nowhere else — never a "Revision history"
+section. Deferred work is an issue link, not an inventory. The full
+version of this rule, with concrete before/after examples, lives in
+[change-discipline.md](docs/contributing/conventions/change-discipline.md#comments-pr-bodies-and-planning-docs-describe-now-not-how-you-got-there).
 
 Most of what wants to sprawl into a PR body belongs somewhere durable
 instead — a changeset for user-facing behavior, `docs/spec` or `docs/adr`

@@ -90,6 +90,19 @@ export interface CollectionDefinition {
  * The full `baerly.config.ts` runtime shape. Re-exported from
  * `baerly-storage` and consumed by the day-1 `npm create baerly`
  * scaffold + the `baerly admin rebuild-index` CLI.
+ *
+ * The two-tier shape — collections namespaced under `collections`,
+ * reserved keys at the top level — is deliberate. Flattening collection
+ * names to the top level was evaluated and rejected: it needs a
+ * discriminator separating a user-chosen collection name from a reserved
+ * key, and both candidates fail. A reserved-key allowlist
+ * (`Exclude<keyof C, ReservedKeys>`) breaks every time a config key is
+ * added — that set has already grown twice — turning each future
+ * addition into a breaking change or a forced rename for whoever named a
+ * collection after it. A structural sentinel keyed on `schema:` presence
+ * fails because {@link CollectionDefinition.schema} is optional, and
+ * `{ notes: {} }` is the hello-world shape the `examples/minimal-*`
+ * scaffolds ship. The namespace is what keeps config growth additive.
  */
 export interface BaerlyConfig {
   /**

@@ -33,6 +33,13 @@ module's transitive imports are evaluated lazily.
 Exit-code contract (per `src/deploy.ts:10-16` and friends): 0 success,
 1 user error, 2 storage/external error, 3 protocol invariant.
 
+Two citty (`^0.2.2`) quirks this package works around — the camelCase
+alias it auto-injects for kebab-case flags, and `runCommand` not
+intercepting `--help`/`--version` the way `runMain` does — are
+documented next to their fixes in `src/subcommand.ts` and
+`src/bin-runner.ts` respectively; read those before touching flag
+parsing or the bin entry.
+
 ## Shared with create-baerly-storage
 
 `@baerly/cli` surfaces exactly one subpath export:

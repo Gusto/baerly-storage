@@ -56,6 +56,18 @@
  * CAS-lost on `gc/pending.json` is non-fatal: the DELETEs already
  * issued are durable, so we return a successful result and the next
  * pass will pick up any work this pass lost.
+ *
+ * **Not fault-isolated, by design.** Every storage call in Steps 1-5 —
+ * the `current.json`/`gc/pending.json` reads, the mark-phase `LIST`s,
+ * the sweep DELETEs — is uncaught within `runGc` itself; a throw from
+ * any of them aborts the whole pass. That's a deliberate fail-safe, not
+ * a gap to close with a `try`/`catch` around one call: Steps 3-4 re-LIST
+ * from scratch every pass rather than trusting partial progress, sweep
+ * DELETEs are idempotent, and the pending-ledger CAS in Step 5 hasn't
+ * happened yet when an earlier step throws — so an abort mid-pass loses
+ * no durable state and deletes nothing it shouldn't. This is fuzz-tested
+ * directly: `maintenance-crash-fuzz.test.ts` aborts the K-th storage op
+ * inside `runGc` and asserts the reader still returns every live row.
  */
 
 import {

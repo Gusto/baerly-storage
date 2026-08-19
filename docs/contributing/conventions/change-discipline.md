@@ -98,6 +98,15 @@ narrowing" to "demonstrated harm in keeping it."
 - **Redundant config knobs.** `metrics` / `schemas` / `indexes` overrides
   on `Db.create` duplicated `config.collections[*]`; the final shape is
   `Db.create({ storage, app, tenant, config? })` — no parallel knobs.
+- **Flattened `baerly.config.ts`.** Collection names stay namespaced under
+  `collections`; they never move to the top level alongside `auth` /
+  `target` / `observability`. Flattening needs a discriminator telling a
+  user-chosen name apart from a reserved key, and the namespace is what
+  makes a new top-level config key additive rather than a collision. The
+  rejected discriminators are recorded in the `BaerlyConfig` JSDoc
+  (`packages/protocol/src/app-config.ts`). Reopening this needs a
+  user-facing bug attributable to the nesting — "one less indent level" is
+  not enough.
 - **Cross-collection atomic write path.** Prohibited — it breaks the
   no-2PC invariant. There is no atomic write path spanning collections;
   every write appends to exactly one collection log (see
@@ -183,7 +192,9 @@ route it by its commitment level; commitment is signaled by an affirmative act
   Keep the decision; drop the speculative *mechanism* — record that an axis is
   deferred, not the shape it might one day take.
 - **Concrete, would-probably-accept-a-PR** → a GitHub Issue, `backlog` label, no
-  milestone. An open issue means "intent," not "scheduled."
+  milestone. An open issue means "intent," not "scheduled." The label _is_ that
+  signal — don't restate it as a disclaimer in the issue body; the affirmative
+  act of labeling already carries the meaning.
 - **Fuzzy / strategic / "wouldn't it be nice"** → GitHub Discussions, off the
   tree. Keep it out of the repo so a written note is never mistaken for a
   commitment the project has made.
@@ -272,3 +283,56 @@ authoring goal by keeping deployment friction out of the builder path. A
 mechanism that adds an operator chore breaks the deployment path builders
 depend on, so it harms the authoring audience too. That is what these
 three checks protect.
+
+## Comments, PR bodies, and planning docs describe now, not how you got there
+
+A source comment, PR body, commit message, or planning doc is a
+reference for whoever reads it next, not a transcript of the session
+that produced it. State what the code or decision *is*; don't narrate
+how an agent, reviewer, or subagent arrived at it. This generalizes
+[CLAUDE.md → Pull request bodies, code comments, and planning
+docs](../../../CLAUDE.md#pull-request-bodies-code-comments-and-planning-docs)
+to every place prose ships into the tree.
+
+**Why this needs saying explicitly:** this repo is worked by many
+coding-agent sessions, each carrying its own working memory of the
+debate that produced a decision — who proposed what, which claim turned
+out wrong, which PR number a fact traces to, what date something was
+"surfaced." That narrative is legitimate and belongs in the agent's own
+cross-session memory. It never belongs in a file this repo ships — if a
+fact is memory-shaped, it does not also belong in a comment, docstring,
+commit body, or planning doc.
+
+Signatures that the narrative leaked into the tree — check for these
+before landing a comment or doc edit:
+
+- A date, session ID, or PR-number citation inside prose describing
+  *current* behavior ("Surfaced 2026-05-24…", "as of PR #107…", "the
+  T03 subagent reported this as pre-existing"). If the fact is still
+  true, state it in present tense with no date and no attribution. A
+  version boundary that genuinely matters belongs in `CHANGELOG.md` or
+  a versioned migration note, not a source comment.
+- A planning doc with an appended "Revision history" or "Update
+  2026-…" section instead of an edited, current plan. Replace the
+  outdated section; don't narrate the disagreement that produced the
+  replacement.
+- JSDoc or a module header that reads like an incident report — several
+  paragraphs of "why the naive fix doesn't work" investigation — rather
+  than the conclusion. Keep the one non-obvious invariant or
+  counter-intuitive tradeoff; cut the investigation trail that led
+  there.
+
+What's fine to keep is a rejected approach *stated as a decision*, with
+no date, no attribution, no blow-by-blow — e.g. "flattening was
+evaluated and rejected: every discriminator considered fails" next to
+the code it constrains. That is worth defending against a future
+re-proposal. The test is whether the passage reads like a decision or
+like a transcript:
+
+- ❌ "Surfaced during review: a reviewer claimed the uncaught
+  `storage.get` here is a defect... it was deferred, not fixed... the PR
+  merged with it open."
+- ✅ "Every storage call in `runGc` is uncaught; a throw aborts the
+  whole pass. That's a deliberate fail-safe — sweep DELETEs are
+  idempotent and nothing has been CAS-written yet when an earlier step
+  throws — fuzz-tested by `maintenance-crash-fuzz.test.ts`."

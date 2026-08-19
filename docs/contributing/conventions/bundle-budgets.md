@@ -107,6 +107,27 @@ A new subpath in `publishConfig.exports` must be added to
 `bundle-sizes.json` with a `tier` and a `note`. A test enforces this, so a new
 export cannot silently escape gating.
 
+## Regenerating a baseline
+
+Never copy `bundle-sizes.json` from another branch or carry an earlier
+rebaseline forward through a history rewrite — a committed baseline can
+carry the writing machine's toolchain/lockfile drift on entries your
+branch never touched, which quietly raises the ceiling on those entries
+so a genuine regression there lands green. Run `pnpm bundle-sizes
+--write` fresh on each branch tip, then read the diff and confirm every
+moved entry is one whose closure you actually changed. An entry moving
+that you can't explain by your own diff means stale `dist/` or a
+lockfile difference — fix that first.
+
+The other direction: `main`'s own committed baseline can itself be
+stale, not just a branch's. If the gate fails by far more than your diff
+explains, `git stash` (or WIP-commit) your work, `git reset --hard
+origin/main`, and run `pnpm bundle-sizes --report` on pure `main` — if
+main doesn't measure zero against its own committed baseline, that drift
+predates your branch. Land the refresh as its own `chore` commit with
+the measured table, then your feature commit on top, so the feature's
+numbers are attributable to it alone.
+
 ## The common regression
 
 A helper co-located with heavy runtime drags that whole module into every
