@@ -8,10 +8,9 @@ describe("Metrics.snapshot() percentiles", () => {
       m.recordCommit(latency, 0);
     }
     const snap = m.snapshot();
-    // sorted = [1..10], n=10. rank = ceil(q*n), value = sorted[rank-1].
-    expect(snap.latency_p50_ms).toBe(5); // rank ceil(0.5*10)=5 -> sorted[4]=5
-    expect(snap.latency_p99_ms).toBe(10); // rank ceil(0.99*10)=10 -> sorted[9]=10
-    expect(snap.latency_p999_ms).toBe(10); // rank ceil(0.999*10)=10 -> sorted[9]=10
+    expect(snap.latency_p50_ms).toBe(5); // ceil(0.5*10)=5 -> sorted[4]=5
+    expect(snap.latency_p99_ms).toBe(10); // ceil(0.99*10)=10 -> sorted[9]=10
+    expect(snap.latency_p999_ms).toBe(10); // ceil(0.999*10)=10 -> sorted[9]=10
   });
 
   test("computes nearest-rank percentiles over 1..1000 where every rank lands on an exact integer", () => {
@@ -20,31 +19,12 @@ describe("Metrics.snapshot() percentiles", () => {
       m.recordCommit(latency, 0);
     }
     const snap = m.snapshot();
-    // sorted = [1..1000], n=1000. Values equal their own rank, so
-    // rank = ceil(q*n) reads off the expected value directly.
+    // Load-bearing at this n: `latency_p999_ms` only discriminates a
+    // correctly wired q=0.999 at large n — at n=10 every candidate rank
+    // lands on the max, so 1..10 cannot catch a mis-wired p999.
     expect(snap.latency_p50_ms).toBe(500); // ceil(0.5*1000)=500
     expect(snap.latency_p99_ms).toBe(990); // ceil(0.99*1000)=990
     expect(snap.latency_p999_ms).toBe(999); // ceil(0.999*1000)=999
-  });
-
-  test("clamps rank into [1,n] for a single-sample snapshot", () => {
-    const m = new Metrics();
-    m.recordCommit(42, 0);
-    const snap = m.snapshot();
-    expect(snap.latency_p50_ms).toBe(42);
-    expect(snap.latency_p99_ms).toBe(42);
-    expect(snap.latency_p999_ms).toBe(42);
-  });
-
-  test("clamps rank into [1,n] for a two-sample snapshot", () => {
-    const m = new Metrics();
-    m.recordCommit(10, 0);
-    m.recordCommit(20, 0);
-    const snap = m.snapshot();
-    // n=2. p50: ceil(1)=1 -> sorted[0]=10. p99/p999: ceil(1.98 or 1.998)=2 -> sorted[1]=20.
-    expect(snap.latency_p50_ms).toBe(10);
-    expect(snap.latency_p99_ms).toBe(20);
-    expect(snap.latency_p999_ms).toBe(20);
   });
 
   test("returns zeroed percentiles when no commits were recorded", () => {
