@@ -28,7 +28,9 @@
     "tests/integration/public-surface.test.ts",
     "tests/integration/s3-worker-e2e.test.ts",
     "tests/setup/http-conformance-worker.ts",
-    "tests/setup/r2-binding.ts"
+    "tests/setup/r2-binding.ts",
+    "bench/workload-ceiling-worker/src/index.ts",
+    "bench/workload-ceiling-worker/src/index.test.ts"
   ],
   // `extends` would otherwise inherit the root program's exclusions, which are
   // exactly this program's includes.
