@@ -59,6 +59,20 @@ describe("CountingStorage per-op counters", () => {
     expect(snap.latency_ms.by_op.head).toBeUndefined();
   });
 
+  test("snapshot maps p50/p95/p99 onto q=0.5/0.95/0.99 of the retained samples", () => {
+    const c = new CountingStorage(new MemoryStorage());
+    // Descending 100..1 — nearest-rank sorts, and at n=100 all three ranks
+    // discriminate the one-indexed `ceil(q*n)` from a zero-indexed
+    // `floor(n*q)`: 50 vs 51, 95 vs 96, 99 vs 100. Pushed directly because
+    // real `performance.now()` deltas can't pin an expected value.
+    for (let ms = 100; ms >= 1; ms--) {
+      c.latenciesByOp.put.push(ms);
+    }
+    const snap = c.snapshot();
+    expect(snap.latency_ms.by_op.put).toEqual({ p50: 50, p95: 95, p99: 99 });
+    expect(snap.latency_ms.by_op.get).toBeUndefined();
+  });
+
   test("reset() clears every counter in lock-step", async () => {
     const c = new CountingStorage(new MemoryStorage());
     await c.put("a/b/c", new Uint8Array([1, 2, 3]));
