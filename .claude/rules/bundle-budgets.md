@@ -1,7 +1,14 @@
 ---
 description: Bundle-size policy for bundle-affecting edits (delta gate, do-not-golf-comments rule)
 paths:
-  ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx", "rolldown.config.ts", "bundle-sizes.json"]
+  [
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.tsx",
+    "rolldown.config.ts",
+    "bundle-sizes.json",
+    "!packages/**/*.test.ts",
+    "!packages/**/*.test.tsx",
+  ]
 title: "Auto-load: bundle budget policy"
 audience: agent
 summary: Triggers on bundle-affecting source — packages/*/src, rolldown.config.ts, and the bundle-sizes.json snapshot itself — and routes the agent to docs/contributing/conventions/bundle-budgets.md before it writes.
