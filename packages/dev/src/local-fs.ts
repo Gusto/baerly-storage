@@ -109,6 +109,22 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * Node-only — imports `node:fs`, `node:path`, `node:crypto`. Lives in
  * `@baerly/dev` because the protocol kernel is pure-modules / no I/O
  * and must remain Worker-bundleable.
+ *
+ * ⚠️ **Hard termination and temp files.**
+ *
+ * Writes stage a sibling `.baerly-tmp-*` file before atomic rename/link.
+ * Normal failures clean up the temp in `finally`, but hard termination
+ * (`SIGKILL`, OOM, power loss) can strand a temp inside the root directory.
+ *
+ * These files are hidden from `list`, `gc`, `fsck`, and usage reporting
+ * by design—the temp filter applies at every depth.
+ *
+ * **Manual cleanup procedure:**
+ * 1. Stop all writers using the root
+ * 2. Run: `find <root> -name '.baerly-tmp-*' -delete`
+ *
+ * Do not clean while writes are in progress—races with in-flight PUTs
+ * can delete a file that a concurrent operation is about to rename.
  */
 export class LocalFsStorage implements Storage {
   readonly #root: string;
