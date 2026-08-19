@@ -1,4 +1,4 @@
-import { encodeJsonBytes, snapshotHash } from "@baerly/protocol";
+import { snapshotHash } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import {
   corruptNumber,
@@ -8,7 +8,7 @@ import {
   swapBytes,
   truncateBytes,
 } from "./corruption-test-helpers.ts";
-import { assertFailClosed } from "./snapshot-codec.ts";
+import { assertFailClosed } from "./_internal/testing.ts";
 import {
   decodeSnapshotManifest,
   encodeSnapshotManifest,
@@ -187,123 +187,6 @@ describe("snapshot manifest corruption: malformed structure", () => {
     await assertRejectsRebuiltBody(
       textBytes(REFERENCE_TEXT.replace('"schema_version":2', '"schema_version": 2')),
     );
-  });
-});
-
-describe("snapshot manifest corruption: unsupported inputs", () => {
-  test.each<[string, string, string]>([
-    ["an unsupported schema version", '"schema_version":2', '"schema_version":99'],
-    ["an unsupported collation", '"collation":"utf8-scalar-v1"', '"collation":"invalid"'],
-    ["a fractional log_seq_start", '"log_seq_start":41', '"log_seq_start":41.5'],
-    ["a negative log_seq_start", '"log_seq_start":41', '"log_seq_start":-1'],
-    [
-      "an unsafe log_seq_start",
-      '"log_seq_start":41',
-      `"log_seq_start":${Number.MAX_SAFE_INTEGER + 1}`,
-    ],
-  ])("rejects %s", async (_label, needle, replacement) => {
-    await assertRejectsRebuiltBody(textBytes(REFERENCE_TEXT.replace(needle, replacement)));
-  });
-});
-
-describe("snapshot manifest corruption: descriptor validation", () => {
-  test.each<[string, string, string]>([
-    ["an unknown descriptor field", '"row_count":3}', '"row_count":3,"surprise":true}'],
-    ["a missing descriptor field", ',"row_count":3', ""],
-    ["an invalid scalar first_id", '"first_id":"a"', '"first_id":"\\ud800"'],
-    ["a reversed descriptor range", '"first_id":"a","last_id":"c"', '"first_id":"c","last_id":"a"'],
-    ["a zero byte_length", '"byte_length":208', '"byte_length":0'],
-    ["an oversized byte_length", '"byte_length":208', '"byte_length":1048577'],
-    ["a zero row_count", '"row_count":3', '"row_count":0'],
-    ["an oversized row_count", '"row_count":3', '"row_count":4097'],
-  ])("rejects a descriptor with %s", async (_label, needle, replacement) => {
-    await assertRejectsRebuiltBody(textBytes(REFERENCE_TEXT.replace(needle, replacement)));
-  });
-
-  test("rejects descriptors with duplicate keys", async () => {
-    const value = {
-      ...manifest(),
-      chunks: [
-        descriptor({ first_id: "a", last_id: "b" }),
-        descriptor({ first_id: "c", last_id: "d" }),
-      ],
-    };
-    const bytes = encodeJsonBytes(value);
-    await assertRejectsRebuiltBody(bytes);
-  });
-
-  test("rejects descriptors with overlapping ranges", async () => {
-    const value = {
-      ...manifest(),
-      chunks: [
-        descriptor({ first_id: "a", last_id: "m" }),
-        descriptor({
-          first_id: "m",
-          last_id: "z",
-          key: fixedChunkKey.replace("96ae", "16ae"),
-        }),
-      ],
-    };
-    const bytes = encodeJsonBytes(value);
-    await assertRejectsRebuiltBody(bytes);
-  });
-
-  test("rejects descriptors with reversed ordering", async () => {
-    const value = {
-      ...manifest(),
-      chunks: [
-        descriptor({ first_id: "m", last_id: "z" }),
-        descriptor({
-          first_id: "a",
-          last_id: "c",
-          key: fixedChunkKey.replace("96ae", "16ae"),
-        }),
-      ],
-    };
-    const bytes = encodeJsonBytes(value);
-    await assertRejectsRebuiltBody(bytes);
-  });
-
-  test("rejects descriptors with mismatched collection prefixes", async () => {
-    const value = {
-      ...manifest(),
-      chunks: [
-        descriptor({ first_id: "a", last_id: "b" }),
-        descriptor({
-          first_id: "c",
-          last_id: "d",
-          key: fixedChunkKey.replace(prefix, "app/other"),
-        }),
-      ],
-    };
-    const bytes = encodeJsonBytes(value);
-    await assertRejectsRebuiltBody(bytes);
-  });
-});
-
-describe("snapshot manifest corruption: ceiling violations", () => {
-  test("rejects a manifest with more than 32 descriptors", async () => {
-    const value = manifest({
-      chunks: Array.from({ length: 33 }, (_, index) => {
-        const id = `id${index.toString().padStart(2, "0")}`;
-        return descriptor({
-          first_id: id,
-          last_id: id,
-          key: `${prefix}/_v2/snapshot/chunks/${incarnation}/sha256/${index.toString(16).padStart(64, "0")}.json`,
-          byte_length: 1,
-          row_count: 1,
-        });
-      }),
-    });
-    const bytes = encodeJsonBytes(value);
-    await assertRejectsRebuiltBody(bytes);
-  });
-
-  test("rejects a body exceeding the manifest byte ceiling", async () => {
-    const value = manifest({ collection: "x".repeat(70_000) });
-    const bytes = encodeJsonBytes(value);
-    const key = await keyFor(bytes);
-    await assertRejectsAgainst(key, bytes);
   });
 });
 

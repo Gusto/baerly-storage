@@ -47,7 +47,7 @@ export function swapBytes(bytes: Uint8Array, atA: number, atB: number): Uint8Arr
 
 /**
  * Corrupts the first multi-byte UTF-8 sequence at or after `at` by flipping
- * bit 6 of its lead byte (`0b1xxxxxxx` → `0b1x0xxxxx`), turning a valid
+ * bit 6 of its lead byte (`0b1xxxxxxx` → `0b10xxxxxx`), turning a valid
  * continuation/lead byte into an invalid one so UTF-8 decoding fails.
  * Returns `bytes` unchanged if no byte with the high bit set is found.
  */

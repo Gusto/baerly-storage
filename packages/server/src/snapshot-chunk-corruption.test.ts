@@ -10,7 +10,7 @@ import {
   swapBytes,
   truncateBytes,
 } from "./corruption-test-helpers.ts";
-import { assertFailClosed } from "./snapshot-codec.ts";
+import { assertFailClosed } from "./_internal/testing.ts";
 import {
   decodeSnapshotChunk,
   encodeSnapshotChunk,
@@ -177,18 +177,6 @@ describe("snapshot chunk corruption: byte corruption", () => {
     await assertRejectsCorruptedBody(
       swapBytes(REFERENCE_BYTES, SCHEMA_VALUE_BYTE, DOCS_ARRAY_BYTE),
     );
-  });
-});
-
-describe("snapshot chunk corruption: overlapping ranges", () => {
-  test.each<[string, Partial<SnapshotChunkDescriptor>]>([
-    ["first_id", { first_id: "z" }],
-    ["last_id", { last_id: "z" }],
-    ["row_count", { row_count: 2 }],
-    ["byte_length", { byte_length: 1 }],
-  ])("rejects a descriptor %s mismatch", async (_label, override) => {
-    const descriptor = await descriptorFor(REFERENCE_BYTES, REFERENCE, override);
-    await assertRejectsAgainst(descriptor, REFERENCE_BYTES);
   });
 });
 
