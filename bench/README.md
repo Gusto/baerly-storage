@@ -84,7 +84,7 @@ storage layout or manifest cache policy.
 ### Result JSON
 
 One file per run; the canonical shape is `type RunResult` in
-`bench/load-harness/cli.ts`. Every field is non-optional except
+`bench/load-harness/assemble-result.ts`. Every field is non-optional except
 `run.backend_details`. File names follow the pattern:
 
 ```
