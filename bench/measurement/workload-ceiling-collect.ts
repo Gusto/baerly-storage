@@ -237,10 +237,11 @@ export function extractWorkloadCeilingRawEvent(
 }
 
 /**
- * CLI entrypoint (`pnpm bench:workload-ceiling:collect`). Reads a
- * provisioning report written by `workload-ceiling-provision.ts`, queries
- * the platform, stores the unmodified response, then the derived strict
- * event.
+ * CLI entrypoint (`pnpm bench:workload-ceiling:collect`). Takes the run's join
+ * identifiers from the environment (it reads no provisioning report — the
+ * `run_id` an operator passes here is the one
+ * `workload-ceiling-provision.ts` printed), queries the platform, stores the
+ * unmodified response, then the derived strict event.
  *
  * Required auth: `CF_API_TOKEN` + `CF_ACCOUNT_ID` env vars (the same source
  * variables `tests/integration/day-one-handshake.test.ts` reads — never
@@ -251,7 +252,9 @@ export function extractWorkloadCeilingRawEvent(
  * Required env: `WORKLOAD_CEILING_RUN_ID`, `WORKLOAD_CEILING_SCENARIO_ID`,
  * `WORKLOAD_CEILING_COMPATIBILITY_DATE`.
  * Optional: `WORKLOAD_CEILING_WINDOW_START` / `WORKLOAD_CEILING_WINDOW_END`
- * (RFC 3339; default to a 10-minute window ending now), and
+ * (RFC 3339; default to a 10-minute window ending now — see
+ * {@link resolveCollectWindow}, which rejects an unparseable or inverted
+ * window by name), and
  * `WORKLOAD_CEILING_OUT_DIR` (where `raw-*` / `event-*` are written; see
  * {@link resolveCollectOutDir} — set it per implementation so compare
  * receives two clean directories).
@@ -282,6 +285,52 @@ export function resolveCollectOutDir(env: Record<string, string | undefined>): s
 // (or the usage error) — never pass validation as real credentials.
 const present = (value: string | undefined): value is string =>
   value !== undefined && value.trim() !== "";
+
+/** Parses one operator-supplied window bound, naming the offending env var on rejection. */
+const parseWindowBound = (name: string, value: string): string => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new WorkloadCeilingHarnessError(
+      name,
+      `must be an RFC 3339 timestamp; got ${JSON.stringify(value)}`,
+    );
+  }
+  return parsed.toISOString();
+};
+
+/**
+ * Pure. Resolves the collection window, rejecting an unparseable operator-set
+ * bound by name.
+ *
+ * Every other operator-supplied input to this CLI fails with an explicit,
+ * named usage error, and these two must too. Unvalidated, a malformed
+ * `WORKLOAD_CEILING_WINDOW_END` either reaches `new Date(NaN).toISOString()`
+ * and throws a bare `RangeError: Invalid time value` naming nothing, or — with
+ * `WINDOW_START` also set — passes a garbage timestamp straight into the
+ * GraphQL query, where it comes back as a window that resolved no rows and
+ * reads as a missed invocation rather than a typo. The runbook's whole
+ * correctness argument rests on these two bounds, so they fail loud.
+ */
+export function resolveCollectWindow(
+  env: Record<string, string | undefined>,
+  now: Date,
+): WorkloadCeilingCollectWindow {
+  const rawEnd = env["WORKLOAD_CEILING_WINDOW_END"];
+  const end = present(rawEnd)
+    ? parseWindowBound("WORKLOAD_CEILING_WINDOW_END", rawEnd)
+    : now.toISOString();
+  const rawStart = env["WORKLOAD_CEILING_WINDOW_START"];
+  const start = present(rawStart)
+    ? parseWindowBound("WORKLOAD_CEILING_WINDOW_START", rawStart)
+    : new Date(new Date(end).getTime() - 10 * 60_000).toISOString();
+  if (new Date(start).getTime() >= new Date(end).getTime()) {
+    throw new WorkloadCeilingHarnessError(
+      "WORKLOAD_CEILING_WINDOW_START",
+      `must be strictly before WORKLOAD_CEILING_WINDOW_END; got ${start} >= ${end}`,
+    );
+  }
+  return { gte: start, lt: end };
+}
 
 async function main(): Promise<number> {
   const deployCreds =
@@ -314,11 +363,15 @@ async function main(): Promise<number> {
   }
 
   const now = new Date();
-  const windowEnd = process.env["WORKLOAD_CEILING_WINDOW_END"] ?? now.toISOString();
-  const windowStart =
-    process.env["WORKLOAD_CEILING_WINDOW_START"] ??
-    new Date(new Date(windowEnd).getTime() - 10 * 60_000).toISOString();
-  const window: WorkloadCeilingCollectWindow = { gte: windowStart, lt: windowEnd };
+  let window: WorkloadCeilingCollectWindow;
+  try {
+    window = resolveCollectWindow(process.env, now);
+  } catch (error) {
+    console.error(
+      `workload-ceiling-collect: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
 
   const graphqlResponse = await queryWorkersInvocationsAdaptive({
     accountTag,

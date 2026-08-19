@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
+import { WorkloadCeilingHarnessError } from "./workload-ceiling-harness.ts";
 import {
   extractWorkloadCeilingRawEvent,
   queryWorkersInvocationsAdaptive,
   resolveCollectOutDir,
+  resolveCollectWindow,
   WORKLOAD_CEILING_WORKER_NAME,
 } from "./workload-ceiling-collect.ts";
 
@@ -134,5 +136,96 @@ describe("queryWorkersInvocationsAdaptive", () => {
         fetchImpl: fetchStub,
       }),
     ).rejects.toThrow("HTTP 403");
+  });
+
+  test("a 200 carrying GraphQL errors throws instead of returning a null-data envelope", async () => {
+    // Cloudflare's Analytics API reports query-level failures — an unknown
+    // field, an out-of-scope token — as HTTP 200 with {errors, data: null}.
+    // Returning that body would let `extractRows` read it as zero rows and
+    // record a legitimate-looking `missing-terminal-event`, silently
+    // converting an auth or schema mistake into study evidence.
+    const fetchStub = (async () =>
+      new Response(
+        JSON.stringify({
+          data: null,
+          errors: [{ message: "authentication error", path: ["viewer", "accounts"] }],
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    await expect(
+      queryWorkersInvocationsAdaptive({
+        accountTag: "acct",
+        apiToken: "tok",
+        window,
+        fetchImpl: fetchStub,
+      }),
+    ).rejects.toThrow(/GraphQL query returned errors[\s\S]*authentication error/);
+  });
+
+  test("a 200 with an empty errors array is not treated as a failure", async () => {
+    const fetchStub = (async () =>
+      new Response(JSON.stringify({ ...envelope([]), errors: [] }), {
+        status: 200,
+      })) as typeof fetch;
+    await expect(
+      queryWorkersInvocationsAdaptive({
+        accountTag: "acct",
+        apiToken: "tok",
+        window,
+        fetchImpl: fetchStub,
+      }),
+    ).resolves.toMatchObject({ errors: [] });
+  });
+});
+
+describe("resolveCollectWindow", () => {
+  const now = new Date("2026-08-18T00:30:00.000Z");
+
+  test("unset defaults to the ten minutes ending now", () => {
+    expect(resolveCollectWindow({}, now)).toEqual({
+      gte: "2026-08-18T00:20:00.000Z",
+      lt: "2026-08-18T00:30:00.000Z",
+    });
+  });
+
+  test("an explicit end still defaults the start ten minutes before it", () => {
+    expect(
+      resolveCollectWindow({ WORKLOAD_CEILING_WINDOW_END: "2026-08-18T00:05:00Z" }, now),
+    ).toEqual({ gte: "2026-08-17T23:55:00.000Z", lt: "2026-08-18T00:05:00.000Z" });
+  });
+
+  test.each([
+    ["WORKLOAD_CEILING_WINDOW_END", { WORKLOAD_CEILING_WINDOW_END: "not-a-timestamp" }],
+    ["WORKLOAD_CEILING_WINDOW_START", { WORKLOAD_CEILING_WINDOW_START: "yesterday-ish" }],
+  ] as const)("a malformed %s fails by name, not as a bare RangeError", (field, env) => {
+    try {
+      resolveCollectWindow(env, now);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkloadCeilingHarnessError);
+      expect((error as WorkloadCeilingHarnessError).field).toBe(field);
+    }
+  });
+
+  test("an inverted window is rejected — it would resolve no rows and read as a missed run", () => {
+    try {
+      resolveCollectWindow(
+        {
+          WORKLOAD_CEILING_WINDOW_START: "2026-08-18T00:10:00Z",
+          WORKLOAD_CEILING_WINDOW_END: "2026-08-18T00:05:00Z",
+        },
+        now,
+      );
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkloadCeilingHarnessError);
+      expect((error as WorkloadCeilingHarnessError).field).toBe("WORKLOAD_CEILING_WINDOW_START");
+    }
+  });
+
+  test("a blank value falls back to the default like unset", () => {
+    expect(resolveCollectWindow({ WORKLOAD_CEILING_WINDOW_END: "   " }, now).lt).toBe(
+      "2026-08-18T00:30:00.000Z",
+    );
   });
 });
