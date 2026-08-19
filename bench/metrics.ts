@@ -5,6 +5,7 @@
  * S1 c=32 × 60s × ~50 ops/sec ≈ 96 000.
  */
 
+import { quantileNearestRank } from "./measurement/statistics.ts";
 import type { MetricsSnapshot } from "./types.ts";
 
 export class Metrics {
@@ -31,14 +32,11 @@ export class Metrics {
   }
 
   snapshot(): MetricsSnapshot {
-    const sorted = [...this.latencies].toSorted((a, b) => a - b);
     const pick = (q: number): number => {
-      if (sorted.length === 0) {
+      if (this.latencies.length === 0) {
         return 0;
       }
-      // Nearest-rank: one-indexed ceil(q*n) over the ascending sort, clamped to [0,n-1]
-      const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
-      return sorted[idx]!;
+      return quantileNearestRank(this.latencies, q);
     };
     return {
       commit_count: this.commits,
