@@ -7,6 +7,7 @@
  * test. Everything here is I/O-free and clock-free.
  */
 
+import { quantileNearestRank } from "../measurement/statistics.ts";
 import type { StorageSnapshot } from "../types.ts";
 import type { ManifestCacheMode } from "./stores/manifest-cache.ts";
 import type { Preset } from "./presets.ts";
@@ -81,13 +82,18 @@ export interface AssembleOpts {
   readonly tenants: number;
 }
 
+/**
+ * `quantile-nearest-rank-v1` over `arr`, or 0 for an empty sample.
+ *
+ * The zero is the load-bearing part: an op that recorded no latency still
+ * gets a percentile block in the run JSON, and `quantileNearestRank` throws
+ * on an empty sample rather than inventing a number for one.
+ */
 function pct(arr: number[], q: number): number {
   if (arr.length === 0) {
     return 0;
   }
-  const sorted = [...arr].toSorted((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * q));
-  return sorted[idx]!;
+  return quantileNearestRank(arr, q);
 }
 
 export function assembleResult(o: AssembleOpts): RunResult {
