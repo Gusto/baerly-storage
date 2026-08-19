@@ -22,6 +22,7 @@ import {
   BaerlyError,
 } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
+import { quantileNearestRank } from "./measurement/statistics.ts";
 import type { StorageSnapshot, OpLatencyTail } from "./types.ts";
 
 export interface BenchStorageOpts {
@@ -86,13 +87,11 @@ function tailOrUndefined(samples: number[]): OpLatencyTail | undefined {
   if (samples.length === 0) {
     return undefined;
   }
-  const sorted = [...samples].toSorted((a, b) => a - b);
-  const pick = (q: number): number => {
-    // Nearest-rank: one-indexed ceil(q*n) over the ascending sort, clamped to [0,n-1]
-    const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
-    return sorted[idx]!;
+  return {
+    p50: quantileNearestRank(samples, 0.5),
+    p95: quantileNearestRank(samples, 0.95),
+    p99: quantileNearestRank(samples, 0.99),
   };
-  return { p50: pick(0.5), p95: pick(0.95), p99: pick(0.99) };
 }
 
 /**
