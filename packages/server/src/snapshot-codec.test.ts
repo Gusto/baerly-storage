@@ -1,6 +1,6 @@
 import { BaerlyError, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { assertFailClosed } from "./snapshot-codec.ts";
+import { assertFailClosed } from "./_internal/testing.ts";
 import {
   decodeSnapshotChunk,
   encodeSnapshotChunk,
