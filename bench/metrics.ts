@@ -36,7 +36,8 @@ export class Metrics {
       if (sorted.length === 0) {
         return 0;
       }
-      const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * q));
+      // Nearest-rank: one-indexed ceil(q*n) over the ascending sort, clamped to [0,n-1]
+      const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
       return sorted[idx]!;
     };
     return {
