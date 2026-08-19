@@ -2,12 +2,19 @@
  * Strict wire codecs for the deployed workload-ceiling evidence harness
  * (parent plan Task 8).
  *
- * Two shapes cross the trust boundary between the local measurement tooling
+ * Three shapes cross the trust boundary between the local measurement tooling
  * and the deployed study Worker:
  *
  *  - `WorkloadCeilingRunRequest` — what `workload-ceiling-provision.ts` /
  *    a future orchestrator sends to invoke one authenticated run against one
  *    exact fixture.
+ *  - `WorkloadCeilingFixtureDescriptor` — the `fixture.json`
+ *    `workload-ceiling-provision.ts` writes into the bucket and the Worker
+ *    reads back to locate both representations of one fixture. It crosses the
+ *    boundary through R2 rather than over HTTP, which makes a single codec
+ *    here MORE load-bearing, not less: the two ends deploy independently, so
+ *    a field renamed on the provisioning side would otherwise pass its own
+ *    build and only surface as a runtime 502 from the deployed Worker.
  *  - `WorkloadCeilingRawEvent` — the strict normalized shape
  *    `workload-ceiling-collect.ts` derives from the official platform
  *    telemetry source. The Worker never emits this itself and never
@@ -25,6 +32,22 @@
 import { canonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
 
 export const WORKLOAD_CEILING_CONTRACT_ID = "baerly.workload-ceiling/chunked-snapshot/v1" as const;
+
+/**
+ * The ONE R2 bucket both ends of the study must agree on.
+ *
+ * `bench/workload-ceiling-worker/wrangler.jsonc` binds `env.BUCKET` to this
+ * name, and `workload-ceiling-provision.ts` writes fixtures to whatever
+ * `credentials/cloudflare.json` names. Those are configured independently, and
+ * a mismatch is silent at provisioning time and unrecognizable at run time —
+ * every `POST /run` returns a 502 `fixture descriptor is missing`, which reads
+ * as a provisioning bug rather than a bucket-name mismatch. This constant is
+ * what `workload-ceiling-provision.ts` preflights the credentials file
+ * against, so the mismatch fails loudly before anything is written. Wrangler
+ * config is JSONC and cannot import it — the name is repeated there under a
+ * comment pointing back here.
+ */
+export const WORKLOAD_CEILING_BUCKET_NAME = "baerly-storage-eval" as const;
 
 export const WORKLOAD_CEILING_IMPLEMENTATIONS = [
   "monolithic-control",
@@ -217,6 +240,83 @@ export const decodeWorkloadCeilingRunRequest = (raw: string): WorkloadCeilingRun
   }
   return canonical;
 };
+
+/**
+ * The `fixture.json` descriptor `workload-ceiling-provision.ts` writes at
+ * `<fixture_prefix>/fixture.json`, and the only thing the deployed Worker
+ * reads to find the two representations of one provisioned fixture.
+ */
+export interface WorkloadCeilingFixtureDescriptor {
+  readonly contract_id: typeof WORKLOAD_CEILING_CONTRACT_ID;
+  readonly collection: string;
+  /** Key of the single-blob control representation. */
+  readonly monolithic_key: string;
+  /** Key of the manifest heading the candidate chunk layout. */
+  readonly manifest_key: string;
+  readonly log_seq_start: number;
+}
+
+const FIXTURE_DESCRIPTOR_FIELDS = [
+  "contract_id",
+  "collection",
+  "monolithic_key",
+  "manifest_key",
+  "log_seq_start",
+] as const;
+
+function canonicalizeFixtureDescriptor(value: unknown): WorkloadCeilingFixtureDescriptor {
+  assertExactFields(value, FIXTURE_DESCRIPTOR_FIELDS, "fixture descriptor");
+  if (value["contract_id"] !== WORKLOAD_CEILING_CONTRACT_ID) {
+    invalid("contract_id", `must be ${WORKLOAD_CEILING_CONTRACT_ID}`);
+  }
+  assertNonEmptyString(value["collection"], "collection");
+  assertNonEmptyString(value["monolithic_key"], "monolithic_key");
+  assertNonEmptyString(value["manifest_key"], "manifest_key");
+  const logSeqStart = value["log_seq_start"];
+  if (typeof logSeqStart !== "number" || !Number.isSafeInteger(logSeqStart) || logSeqStart < 0) {
+    invalid("log_seq_start", "must be a non-negative safe integer");
+  }
+  return {
+    contract_id: WORKLOAD_CEILING_CONTRACT_ID,
+    collection: value["collection"],
+    monolithic_key: value["monolithic_key"],
+    manifest_key: value["manifest_key"],
+    log_seq_start: logSeqStart,
+  };
+}
+
+/** Canonical-JSON-serializes a validated fixture descriptor. Rejects a field outside the exact set. */
+export const encodeWorkloadCeilingFixtureDescriptor = (
+  descriptor: WorkloadCeilingFixtureDescriptor,
+): string => {
+  const canonical = canonicalizeFixtureDescriptor(descriptor);
+  return toCanonicalJson(canonical as unknown as CanonicalJsonValue, "fixture descriptor");
+};
+
+/**
+ * Decodes and validates a `WorkloadCeilingFixtureDescriptor` read back out of
+ * the bucket. Enforces canonical bytes, which is what makes the
+ * `descriptor_canonical_hash` the provisioning report persists meaningful
+ * end-to-end: the Worker will only accept the exact bytes that hash covers.
+ */
+export const decodeWorkloadCeilingFixtureDescriptor = (
+  raw: string,
+): WorkloadCeilingFixtureDescriptor => {
+  const parsed = parseJson(raw, "fixture descriptor body");
+  const canonical = canonicalizeFixtureDescriptor(parsed);
+  const canonicalRaw = toCanonicalJson(
+    canonical as unknown as CanonicalJsonValue,
+    "fixture descriptor",
+  );
+  if (canonicalRaw !== raw) {
+    invalid("fixture descriptor body", "is not canonical JSON");
+  }
+  return canonical;
+};
+
+/** The key `workload-ceiling-provision.ts` writes the descriptor to and the Worker reads it from. */
+export const workloadCeilingFixtureDescriptorKey = (fixturePrefix: string): string =>
+  `${fixturePrefix}/fixture.json`;
 
 const RAW_EVENT_FIELDS = [
   "run_id",

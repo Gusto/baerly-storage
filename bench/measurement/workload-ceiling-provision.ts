@@ -39,7 +39,13 @@ import {
 import { canonicalJson, hashCanonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
 import { createExactKeyCleanup, type ExactKeyCleanup } from "./storage-factory.ts";
 import { loadEndpointCreds } from "../../tests/fixtures/endpoint-creds.ts";
-import { WORKLOAD_CEILING_CONTRACT_ID } from "./workload-ceiling-harness.ts";
+import {
+  encodeWorkloadCeilingFixtureDescriptor,
+  WORKLOAD_CEILING_BUCKET_NAME,
+  WORKLOAD_CEILING_CONTRACT_ID,
+  workloadCeilingFixtureDescriptorKey,
+  type WorkloadCeilingFixtureDescriptor,
+} from "./workload-ceiling-harness.ts";
 import { WORKLOAD_CEILING_STUDY } from "./workload-ceiling-contract.ts";
 
 const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
@@ -209,15 +215,18 @@ export const buildWorkloadCeilingFixture = async (
   const manifestKey = snapshotManifestKey(fixturePrefix, incarnation, manifestDigest);
   writes.push({ key: manifestKey, body: manifestEncoded });
 
-  const descriptorValue = {
+  // One codec, shared with the deployed Worker that reads these bytes back
+  // (`workload-ceiling-harness.ts`) — the field set has a single source of
+  // truth, so a rename here fails this build rather than the Worker's runtime.
+  const descriptorValue: WorkloadCeilingFixtureDescriptor = {
     contract_id: WORKLOAD_CEILING_CONTRACT_ID,
     collection: spec.collection,
     monolithic_key: monolithicKey,
     manifest_key: manifestKey,
     log_seq_start: 0,
   };
-  const descriptorCanonical = canonicalJson(descriptorValue as unknown as CanonicalJsonValue);
-  const descriptorKey = `${fixturePrefix}/fixture.json`;
+  const descriptorCanonical = encodeWorkloadCeilingFixtureDescriptor(descriptorValue);
+  const descriptorKey = workloadCeilingFixtureDescriptorKey(fixturePrefix);
   writes.push({ key: descriptorKey, body: new TextEncoder().encode(descriptorCanonical) });
 
   return {
@@ -293,6 +302,21 @@ async function main(): Promise<number> {
         "(tests/fixtures/endpoint-creds.ts). This script provisions fixtures " +
         "against a real R2 bucket for the deployed workload-ceiling study; " +
         "there is nothing to do without credentials.",
+    );
+    return 1;
+  }
+
+  // Preflight the one coupling nothing else enforces: the deployed Worker's
+  // `env.BUCKET` binding is a literal in wrangler.jsonc, so fixtures written
+  // to any other bucket are invisible to it. Refuse before writing anything.
+  if (creds.bucket !== WORKLOAD_CEILING_BUCKET_NAME) {
+    console.error(
+      `workload-ceiling-provision: credentials/cloudflare.json names bucket ` +
+        `"${creds.bucket}", but the study Worker's wrangler.jsonc binds ` +
+        `env.BUCKET to "${WORKLOAD_CEILING_BUCKET_NAME}". Provisioning into a ` +
+        `different bucket would make every POST /run fail with a 502 ` +
+        `"fixture descriptor is missing". Point the credentials file at ` +
+        `"${WORKLOAD_CEILING_BUCKET_NAME}", or change both together.`,
     );
     return 1;
   }
