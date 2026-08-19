@@ -275,6 +275,9 @@ export const createMemoryStorageFactory = (): StorageFactory => {
             storage: instance,
             authority: { kind: "memory-instance", lease_id: leaseId },
             runCleanup: async () => {
+              // Supported teardown contract: the factory owns the instance and
+              // must clear it. MemoryStorage._clear() is @internal but is the
+              // intended cleanup path for measurement infrastructure.
               instance._clear();
               return { attempted: [leaseId], cleaned: [leaseId], failures: [] };
             },
