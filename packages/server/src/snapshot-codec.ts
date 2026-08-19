@@ -151,7 +151,7 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 /** Patterns matching a validated field *value* leaking into a codec error message, as opposed to just the field name or a constraint description. */
-const LEAK_PATTERNS: readonly RegExp[] = [
+export const LEAK_PATTERNS: readonly RegExp[] = [
   /incarnation:\s*["']?[0-9a-f]{32}["']?/i,
   /digest:\s*["']?[0-9a-f]{64}["']?/i,
   /first_id:\s*["'][^"']{1,256}["']/,

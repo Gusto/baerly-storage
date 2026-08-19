@@ -1,6 +1,7 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { BaerlyError, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import { LEAK_PATTERNS } from "./_internal/testing.ts";
 import {
   decodeSnapshotManifest,
   encodeSnapshotManifest,
@@ -40,6 +41,13 @@ const keyFor = async (bytes: Uint8Array, bodyIncarnation = incarnation): Promise
 const expectInvalidResponse = async (operation: Promise<unknown>): Promise<void> => {
   await expect(operation).rejects.toBeInstanceOf(BaerlyError);
   await expect(operation).rejects.toMatchObject({ code: "InvalidResponse" });
+  // Ensure no validated field value leaks into the error message
+  const caught = await operation.catch((error) => error);
+  if (caught instanceof BaerlyError) {
+    for (const pattern of LEAK_PATTERNS) {
+      expect(pattern.test(caught.message)).toBe(false);
+    }
+  }
 };
 
 describe("snapshot manifest codec", () => {
@@ -220,6 +228,10 @@ describe("snapshot manifest codec", () => {
     ["wrong version", (key: string) => key.replace("/_v2/", "/_v3/")],
     ["wrong artifact kind", (key: string) => key.replace("/manifests/", "/chunks/")],
     ["wrong algorithm", (key: string) => key.replace("/sha256/", "/sha1/")],
+    [
+      "wrong incarnation",
+      (key: string) => key.replace(incarnation, incarnation.replace("00", "ff")),
+    ],
     ["uppercase digest", (key: string) => key.replace(/[a-f](?=[0-9a-f]{0,63}\.json$)/, "A")],
     ["short digest", (key: string) => key.replace(/[0-9a-f]\.json$/, ".json")],
     ["wrong suffix", (key: string) => key.replace(".json", ".bin")],

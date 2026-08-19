@@ -9,6 +9,18 @@
  * This subpath is intentionally NOT in `publishConfig.exports`, so the
  * published `@baerly/server` package does not surface it.
  */
+
+/**
+ * Patterns matching a validated field *value* leaking into a codec error message,
+ * as opposed to just the field name or a constraint description.
+ *
+ * This is used by test helpers to ensure codec rejections don't expose
+ * authoritative data (e.g. full incarnation hashes, document IDs) in error
+ * messages. Only field names should leak, not their values.
+ *
+ * @see ../snapshot-codec.ts for the canonical definition.
+ */
+export { LEAK_PATTERNS } from "../snapshot-codec.ts";
 export type { InternalCompactOptions } from "../compactor.ts";
 export type { InternalRunGcOptions } from "../gc.ts";
 export type { InternalMaintenanceOptions } from "../maintenance-options.ts";
