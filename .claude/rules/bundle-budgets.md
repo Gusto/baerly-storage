@@ -8,6 +8,7 @@ paths:
     "bundle-sizes.json",
     "!packages/**/*.test.ts",
     "!packages/**/*.test.tsx",
+    "!packages/**/*.test-d.ts",
   ]
 title: "Auto-load: bundle budget policy"
 audience: agent
