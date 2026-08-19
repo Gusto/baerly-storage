@@ -86,6 +86,18 @@ describe("matchWorkloadCeilingEvents", () => {
     );
     expect(matched.incomplete).toEqual([{ scenario_id: "s1", reason: "unresolved-cpu" }]);
   });
+
+  test("a non-ok outcome carrying a partial cpu_ms still rejects the pair", () => {
+    // The platform reports a partial CPU number alongside `exceededCpu`, and
+    // the harness codec preserves that shape — so cpu_ms being non-null is
+    // not evidence the invocation resolved.
+    const matched = matchWorkloadCeilingEvents(
+      [event({ scenario_id: "s1", cpu_ms: 10 })],
+      [event({ scenario_id: "s1", cpu_ms: 50, outcome: "exceededCpu" })],
+    );
+    expect(matched.pairs).toEqual([]);
+    expect(matched.incomplete).toEqual([{ scenario_id: "s1", reason: "unresolved-cpu" }]);
+  });
 });
 
 describe("buildWorkloadCeilingComparisonReport", () => {
@@ -133,6 +145,25 @@ describe("buildWorkloadCeilingComparisonReport", () => {
     expect(report.zero_failure_upper_bound.control).toEqual(
       clopperPearsonZeroFailureUpper(3, 0.95),
     );
+  });
+
+  test("a non-ok event carrying a partial cpu_ms counts as a failure, not a success", () => {
+    // The anti-conservative reading the invalid marker exists to prevent: an
+    // `exceededCpu` invocation the platform reported a partial CPU number for
+    // is a real observed failure. Counting it toward the success denominator
+    // would hand this side a valid-looking zero-failure bound.
+    const controlAll = [
+      ...control,
+      event({ scenario_id: "s3", cpu_ms: 50, outcome: "exceededCpu" }),
+    ];
+    const matched = matchWorkloadCeilingEvents(controlAll, candidate);
+    const report = buildWorkloadCeilingComparisonReport(
+      reportInput(matched, controlAll, candidate),
+    );
+    expect(report.zero_failure_upper_bound.control).toEqual({
+      invalid: "failures-present",
+      failure_count: 1,
+    });
   });
 
   test("an empty event list clamps the Clopper-Pearson denominator to one", () => {

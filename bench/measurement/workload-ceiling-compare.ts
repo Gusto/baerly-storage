@@ -21,9 +21,9 @@
  * `{ invalid: "failures-present", failure_count }` instead, because the
  * zero-failure formula has no honest extension to F > 0 (see
  * {@link WorkloadCeilingZeroFailureBoundInvalid}). An incomplete pair (missing a side,
- * mismatched deployment metadata, or either side lacking a resolved
- * `cpu_ms`) is rejected from the paired statistics rather than silently
- * imputed, and is reported separately.
+ * mismatched deployment metadata, or either side failing to resolve to a
+ * usable `ok` measurement) is rejected from the paired statistics rather than
+ * silently imputed, and is reported separately.
  */
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
@@ -46,14 +46,21 @@ function deploymentKey(event: WorkloadCeilingRawEvent): string {
   return `${event.compatibility_date}|${event.script_version}`;
 }
 
-// Narrows a raw event to the resolved type. Callers must have already
-// checked `cpu_ms !== null` — that check is what makes the single `!`
-// here justified; `matchWorkloadCeilingEvents` does so immediately
-// before every call.
-const resolved = (e: WorkloadCeilingRawEvent): ResolvedWorkloadCeilingRawEvent => ({
-  ...e,
-  cpu_ms: e.cpu_ms!,
-});
+/**
+ * The single definition of "this invocation resolved to a usable
+ * measurement": the collection window produced a CPU number AND the platform
+ * classified the invocation as `ok`.
+ *
+ * The `cpu_ms !== null` half alone is NOT sufficient. A non-`ok` outcome can
+ * still carry a partial CPU number — the platform reports one for
+ * `exceededCpu`, and `workload-ceiling-harness.ts` preserves that shape
+ * deliberately. Both the pairing logic and the per-side failure-budget count
+ * MUST read this one predicate: a side that observed a real failed
+ * invocation must never receive a valid-looking zero-failure bound, which is
+ * exactly what counting such an event as a success would produce.
+ */
+const isResolvedOk = (event: WorkloadCeilingRawEvent): event is ResolvedWorkloadCeilingRawEvent =>
+  event.cpu_ms !== null && event.outcome === "ok";
 
 /** A WorkloadCeilingRawEvent whose collection window resolved to exactly one single-request invocation. */
 export type ResolvedWorkloadCeilingRawEvent = Omit<WorkloadCeilingRawEvent, "cpu_ms"> & {
@@ -103,7 +110,7 @@ function indexByScenario(
 
 /**
  * Pure. Joins by `scenario_id`, then by deployment metadata, then requires
- * both sides to carry a resolved `cpu_ms`. Every rejection is reported by
+ * both sides to satisfy {@link isResolvedOk}. Every rejection is reported by
  * name — this function never drops a scenario silently.
  */
 export function matchWorkloadCeilingEvents(
@@ -131,21 +138,11 @@ export function matchWorkloadCeilingEvents(
       incomplete.push({ scenario_id: scenarioId, reason: "deployment-metadata-mismatch" });
       continue;
     }
-    if (control.cpu_ms === null || candidate.cpu_ms === null) {
+    if (!isResolvedOk(control) || !isResolvedOk(candidate)) {
       incomplete.push({ scenario_id: scenarioId, reason: "unresolved-cpu" });
       continue;
     }
-
-    // Reject non-"ok" outcomes even if cpu_ms is present (e.g., exceededCpu)
-    if (control.outcome !== "ok" || candidate.outcome !== "ok") {
-      incomplete.push({ scenario_id: scenarioId, reason: "unresolved-cpu" });
-      continue;
-    }
-    pairs.push({
-      scenario_id: scenarioId,
-      control: resolved(control),
-      candidate: resolved(candidate),
-    });
+    pairs.push({ scenario_id: scenarioId, control, candidate });
   }
   return {
     pairs,
@@ -155,7 +152,9 @@ export function matchWorkloadCeilingEvents(
 
 /**
  * A side of the comparison whose collected events include at least one
- * unresolved (`cpu_ms: null`) invocation. The zero-failure Clopper-Pearson
+ * invocation that did not resolve to a usable measurement — either
+ * `cpu_ms: null`, or a non-`ok` outcome that still carried a partial CPU
+ * number (see {@link isResolvedOk}). The zero-failure Clopper-Pearson
  * formula (`1 − c^(1/n)`) is valid only at zero observed failures: `n`
  * counts successes, so plugging any success-count-derived denominator in
  * at F > 0 is anti-conservative (more failures would TIGHTEN the bound —
@@ -192,8 +191,8 @@ export interface WorkloadCeilingComparisonReport {
   readonly paired_candidate_over_control_ratio: BootstrapResult<"paired-ratio-bootstrap-v1">;
   /**
    * Over ALL collected events on each side, including incomplete/unresolved
-   * ones — the study's failure budget. Valid ONLY for a side with zero
-   * unresolved events: a side with ≥ 1 failure carries
+   * ones — the study's failure budget. Valid ONLY for a side on which every
+   * event satisfies {@link isResolvedOk}: a side with ≥ 1 failure carries
    * `{ invalid: "failures-present", failure_count }` instead of a bound
    * (see {@link WorkloadCeilingZeroFailureBoundInvalid} for why the
    * zero-failure formula has no honest F > 0 reading).
@@ -220,7 +219,7 @@ const zeroFailureUpperBound = (
   events: readonly WorkloadCeilingRawEvent[],
   confidence: number,
 ): WorkloadCeilingZeroFailureBound => {
-  const failures = events.filter((event) => event.cpu_ms === null).length;
+  const failures = events.filter((event) => !isResolvedOk(event)).length;
   if (failures > 0) {
     return { invalid: "failures-present", failure_count: failures };
   }
