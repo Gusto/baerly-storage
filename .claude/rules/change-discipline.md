@@ -14,3 +14,14 @@ related: ["../../docs/contributing/conventions/change-discipline.md"]
 Canonical content lives at [`docs/contributing/conventions/change-discipline.md`](../../docs/contributing/conventions/change-discipline.md).
 Read that file before making non-trivial code changes — especially
 before introducing compatibility shims or removing existing behavior.
+
+## Cutting a field from a public function-arg type
+
+Typecheck will not find every caller. The excess-property check fires
+on object *literals* but not on spreads, so
+`...(cond && { droppedKey: x })` compiles clean and carries the removed
+key into the runtime call, where the narrowed API silently ignores it.
+
+After any field cut, grep for both the direct form and
+`\.\.\.[^)]*<droppedKey>:`. The spread variant is the one a green
+`verify:agent` doesn't rule out.

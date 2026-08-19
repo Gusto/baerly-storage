@@ -34,6 +34,16 @@ automatically; `pnpm release` refuses to publish a stale one.
    the `fixed` group). Write the body for an LLM reader; breaking changes
    MUST include an old→new migration block (see `.changeset/README.md`).
 
+   Two gotchas invisible until a dry run: `changeset version` bumps and
+   writes a `CHANGELOG.md` for **every** non-ignored workspace package
+   that depends on the bumped one, including `private: true` ones — the
+   `examples/*` apps depend on `baerly-storage: workspace:*`, so a leaf
+   dependent needs to sit in the Changesets `ignore` list or it gets a
+   spurious changelog. And `changeset version` prepends new versions
+   immediately under the `CHANGELOG.md` H1, displacing any preamble
+   between the H1 and the first `## <version>` — put meta-notes as a
+   footer at EOF instead, since prepends never touch the bottom.
+
 2. **At release time** — consume the changesets:
 
    ```sh
@@ -94,6 +104,14 @@ automatically; `pnpm release` refuses to publish a stale one.
 
 Workspace `@baerly/*` packages are marked `"private": true` and are
 never published — they bundle into the published `@gusto/baerly-storage`.
+
+The published subpaths (`./cloudflare`, `./auth`, `./http`, `./node`,
+`./config`, `./client`, `./client/react`, `./dev`, `./dev/vite`,
+`./maintenance`, `./observability`, …) are defined in the **root**
+`package.json`'s `exports`, not in any `packages/*/package.json`. The
+workspace packages have their own internal `exports` (e.g.
+`./_internal/testing`) that are not part of the published surface —
+grepping `packages/*/package.json` for a subpath is a false negative.
 
 ## One-time setup
 

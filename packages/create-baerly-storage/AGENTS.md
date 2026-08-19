@@ -107,6 +107,13 @@ readable list), `snippet` (the worker-entry snippet text), `snippetTarget`
 
 ## When editing templates
 
+- **`examples/*/tsconfig*.json` must inline every `compilerOption` — no
+  `"extends"`, to a monorepo-root path or to a sibling within the same
+  template.** These are scaffold templates copied verbatim into a user's
+  repo; the user has no monorepo root, so a parent-relative `extends`
+  breaks after scaffolding. The duplication across the 4 templates × 2
+  leaf tsconfigs is intentional — don't dedup it with a shared base, even
+  a sibling one that would mechanically resolve today.
 - Use sentinels (e.g. `appName`, not the literal value) so the
   substituter doesn't double-rewrite. See
   `packages/create-baerly-storage/src/scaffold.test.ts` for examples.

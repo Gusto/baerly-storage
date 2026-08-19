@@ -230,6 +230,46 @@ whole-repo) is part of `pnpm verify`, and the lefthook pre-commit hook
 also runs `oxfmt` on staged code/markup. Markdown is outside oxfmt;
 `verify:docs` validates Markdown instead of reformatting it.
 
+### Lefthook's typecheck fails on an import you didn't touch
+
+`tsgo --noEmit` resolves `baerly-storage/<subpath>` specifiers via the
+root `package.json` `exports` map, which points at `./dist/*.d.ts` — not
+at `packages/*/src/`. `pnpm install` rebuilds `dist/` via `prepare`, but
+`dist/` can drift from source between installs during ordinary edits. If
+the failure is `Module "baerly-storage/<sub>" has no exported member
+"X"` and `X` is present in the matching package's `src/index.ts`, run
+`pnpm build` before assuming the source is wrong. A fresh `git worktree`
+starts with no `dist/` at all — run `pnpm worktree:bootstrap` once after
+`git worktree add`, and again after rebasing onto a `main` that touched
+the kernel, so dist-consuming tests and byte-budget assertions measure
+the current tree.
+
+### `tsgo --noEmit` reports a `Cannot find module` that disappears on retry
+
+In a fresh `git worktree` especially, `tsgo --noEmit` (the typecheck gate
+in `verify`/`verify:agent`/the lefthook hook) is occasionally
+non-deterministic: successive runs on the same unchanged tree report 0
+errors, then several, then a different set, then 0 again. The spurious
+errors are always `TS2307 Cannot find module` against workspace packages
+or special specifiers (`@baerly/server`, `cloudflare:test`, …). If you
+see that shape, re-run once before editing the flagged files. A
+reproducing error is real — fix it. A green retry does not clear a red
+run: treat the red one as authoritative and find the cause.
+
+### `pnpm build` breaks after editing a tsconfig's `include`/`exclude`
+
+Adding or removing a `packages/*/src` path from the root `tsconfig.json`
+breaks declaration emit: `rolldown-plugin-dts` (`rolldown.config.ts`)
+runs `tsgo` against the tsconfig it's told to use, so an excluded package
+has no program to emit from and `pnpm build` dies with `tsgo did not
+generate dts file for .../src/index.ts`. No fast gate catches this —
+`verify:agent` never builds, and `test:agent`'s `pretest` skips the build
+whenever `dist/` already exists — so run `pnpm build` explicitly after
+touching a tsconfig's `include`/`exclude` or `rolldown.config.ts`; don't
+infer build health from a green `verify:agent`/`test:agent`. The repo has
+three tsconfigs by design: root (Node-only), `tsconfig.cloudflare.json`
+(Workers surface), and `tsconfig.build.json` (both, dts emit only).
+
 ### The pre-commit hook didn't fire
 
 `pnpm install` installs the lefthook pre-commit hook in the primary

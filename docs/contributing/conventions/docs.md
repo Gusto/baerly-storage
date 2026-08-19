@@ -104,6 +104,18 @@ copies are not identical today (e.g. some are bold and standalone,
 others are embedded in a longer sentence or soft-wrapped). Keep the
 phrasing aligned; don't claim they're byte-identical.
 
+## Link and anchor checking
+
+`pnpm verify:docs` **does** fail on a broken cross-file anchor
+(`other.md#some-heading`) — don't plan a doc restructure on the
+assumption anchors are unchecked. Two tools run in that script and only
+one checks anchors: `scripts/verify-docs.mjs` validates only that the
+target *file* exists (anchor-blind); `remark --frail` runs
+`remark-validate-links`, which resolves the fragment against the target
+file's actual headings and turns a `missing-heading-in-file` warning
+into a hard failure. What's genuinely unchecked is **figure drift** — a
+quoted number going stale against the doc that owns it.
+
 ## Don't
 
 - ❌ Duplicate content between `CLAUDE.md` and `docs/*.md`. CLAUDE.md
