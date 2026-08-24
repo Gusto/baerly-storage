@@ -47,7 +47,7 @@ export function swapBytes(bytes: Uint8Array, atA: number, atB: number): Uint8Arr
 
 /**
  * Corrupts the first multi-byte UTF-8 sequence at or after `at` by flipping
- * bit 6 of its lead byte (`0b1xxxxxxx` → `0b10xxxxxx`), turning a valid
+ * bit 6 of its lead byte (`0b1xxxxxxx` → `0b1x0xxxxx`), turning a valid
  * continuation/lead byte into an invalid one so UTF-8 decoding fails.
  * Returns `bytes` unchanged if no byte with the high bit set is found.
  */
@@ -56,22 +56,6 @@ export function corruptUtf8(bytes: Uint8Array, at: number): Uint8Array {
   for (let i = at; i < copy.length; i++) {
     if ((copy[i]! & 0x80) !== 0) {
       copy[i] = copy[i]! ^ 0x40;
-      return copy;
-    }
-  }
-  return copy;
-}
-
-/**
- * Corrupts the first JSON escape sequence at or after `at` by replacing its
- * backslash (`0x5c`) with a forward slash (`0x2f`), breaking the escape.
- * Returns `bytes` unchanged if no backslash is found.
- */
-export function corruptJsonEscape(bytes: Uint8Array, at: number): Uint8Array {
-  const copy = new Uint8Array(bytes);
-  for (let i = at; i < copy.length; i++) {
-    if (copy[i] === 0x5c) {
-      copy[i] = 0x2f;
       return copy;
     }
   }

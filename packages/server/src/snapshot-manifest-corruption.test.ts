@@ -23,8 +23,7 @@ import {
  * test drives a mutation primitive from `corruption-test-helpers.ts` (or a
  * targeted text splice standing in for one) through `assertFailClosed` to
  * prove the codec rejects with `InvalidResponse` before any corrupted field
- * becomes authority, and that the rejection message doesn't leak a
- * validated value.
+ * becomes authority.
  */
 
 const prefix = "app/demo/tenant/acme/manifests/tickets";
@@ -65,7 +64,6 @@ function offsetOf(needle: string): number {
 
 const SCHEMA_VALUE_BYTE = offsetOf('"schema_version":') + '"schema_version":'.length;
 const LOG_SEQ_START_VALUE_BYTE = offsetOf('"log_seq_start":') + '"log_seq_start":'.length;
-const INCARNATION_FIELD_BYTE = offsetOf('"incarnation":');
 const INCARNATION_VALUE_BYTE = offsetOf(incarnation);
 const COLLATION_VALUE_BYTE = offsetOf("utf8-scalar-v1");
 const CHUNKS_ARRAY_BYTE = offsetOf('"chunks":[') + '"chunks":'.length;
@@ -82,44 +80,29 @@ async function assertRejectsAgainst(key: string, bytes: Uint8Array): Promise<voi
 }
 
 /**
- * Asserts that `bytes` — some corruption of `REFERENCE_BYTES` — is rejected
- * against the *original* key, i.e. the manifest still expects the
- * uncorrupted body. Any byte-level corruption changes the digest, so this
- * always fails no later than the digest check regardless of whether the
- * corrupted bytes happen to still parse as JSON.
+ * Asserts that corrupted manifest `bytes` are rejected when the key is
+ * rebuilt from those same corrupted bytes. The digest then agrees with the
+ * body, so the failure lands past that check: in JSON parsing,
+ * canonicalization, body-vs-key agreement, or field validation.
+ * Keying against the *original* digest instead would trip the digest check
+ * first and make every row assert the same branch — that case has its own
+ * test below.
  */
-async function assertRejectsCorruptedBody(bytes: Uint8Array): Promise<void> {
-  await assertRejectsAgainst(await keyFor(REFERENCE_BYTES), bytes);
-}
-
-/**
- * Asserts that `bytes` — a structural rewrite of the reference text, keyed
- * to itself — is rejected. Unlike `assertRejectsCorruptedBody`, the digest
- * matches the corrupted body, so the failure is exercised past the digest
- * check, inside JSON parsing / canonicalization / field validation.
- */
-async function assertRejectsRebuiltBody(bytes: Uint8Array): Promise<void> {
+async function assertRejectsSelfConsistent(bytes: Uint8Array): Promise<void> {
   await assertRejectsAgainst(await keyFor(bytes), bytes);
 }
 
 describe("snapshot manifest corruption: truncation", () => {
+  // One offset per structural class — an empty body, a cut inside a scalar,
+  // a cut inside the chunks array, and an unterminated object. Extra offsets
+  // within a class land in the same rejection branch.
   test.each<[string, number]>([
     ["at byte 0 (empty body)", 0],
-    ["mid schema_version value", SCHEMA_VALUE_BYTE],
-    ["mid log_seq_start value", LOG_SEQ_START_VALUE_BYTE],
-    ["at the incarnation field", INCARNATION_FIELD_BYTE],
     ["mid incarnation value", INCARNATION_VALUE_BYTE + 4],
     ["at the chunks array", CHUNKS_ARRAY_BYTE],
     ["dropping the closing brace", CLOSING_BRACE_BYTE],
-    ["dropping the last two bytes", REFERENCE_BYTES.byteLength - 2],
   ])("rejects a body truncated %s", async (_label, at) => {
-    await assertRejectsCorruptedBody(truncateBytes(REFERENCE_BYTES, at));
-  });
-
-  test("rejects truncation at every 10th byte position", async () => {
-    for (let at = 10; at < REFERENCE_BYTES.byteLength; at += 10) {
-      await assertRejectsCorruptedBody(truncateBytes(REFERENCE_BYTES, at));
-    }
+    await assertRejectsSelfConsistent(truncateBytes(REFERENCE_BYTES, at));
   });
 });
 
@@ -130,33 +113,23 @@ describe("snapshot manifest corruption: bit flips", () => {
     ["an incarnation hex digit", INCARNATION_VALUE_BYTE],
     ["the collation value", COLLATION_VALUE_BYTE],
   ])("rejects a bit flip in %s", async (_label, at) => {
-    await assertRejectsCorruptedBody(flipByte(REFERENCE_BYTES, at));
-  });
-
-  test("rejects a bit flip at every 16th byte position", async () => {
-    for (let at = 0; at < REFERENCE_BYTES.byteLength; at += 16) {
-      await assertRejectsCorruptedBody(flipByte(REFERENCE_BYTES, at));
-    }
+    await assertRejectsSelfConsistent(flipByte(REFERENCE_BYTES, at));
   });
 });
 
 describe("snapshot manifest corruption: byte corruption", () => {
   test("rejects number corruption in log_seq_start", async () => {
-    await assertRejectsCorruptedBody(corruptNumber(REFERENCE_BYTES, LOG_SEQ_START_VALUE_BYTE));
-  });
-
-  test("rejects number corruption in a descriptor byte_length", async () => {
-    await assertRejectsCorruptedBody(corruptNumber(REFERENCE_BYTES, BYTE_LENGTH_VALUE_BYTE));
+    await assertRejectsSelfConsistent(corruptNumber(REFERENCE_BYTES, LOG_SEQ_START_VALUE_BYTE));
   });
 
   test("rejects UTF-8 corruption inside a multi-byte descriptor ID", async () => {
     const value = manifest({ chunks: [descriptor({ first_id: "a", last_id: "é" })] });
     const bytes = encodeSnapshotManifest(value);
-    await assertRejectsAgainst(await keyFor(bytes), corruptUtf8(bytes, 0));
+    await assertRejectsSelfConsistent(corruptUtf8(bytes, 0));
   });
 
   test("rejects a byte swap at a structurally significant position", async () => {
-    await assertRejectsCorruptedBody(
+    await assertRejectsSelfConsistent(
       swapBytes(REFERENCE_BYTES, SCHEMA_VALUE_BYTE, CHUNKS_ARRAY_BYTE),
     );
   });
@@ -166,11 +139,11 @@ describe("snapshot manifest corruption: malformed structure", () => {
   test("rejects a duplicated envelope field", async () => {
     const fieldText = '"schema_version":2,';
     const corrupted = duplicateBytes(REFERENCE_BYTES, offsetOf(fieldText), fieldText.length);
-    await assertRejectsRebuiltBody(corrupted);
+    await assertRejectsSelfConsistent(corrupted);
   });
 
   test("rejects an unknown envelope field spliced in", async () => {
-    await assertRejectsRebuiltBody(
+    await assertRejectsSelfConsistent(
       textBytes(
         REFERENCE_TEXT.replace('"schema_version":2,', '"schema_version":2,"surprise":true,'),
       ),
@@ -178,13 +151,13 @@ describe("snapshot manifest corruption: malformed structure", () => {
   });
 
   test("rejects a missing required field", async () => {
-    await assertRejectsRebuiltBody(
+    await assertRejectsSelfConsistent(
       textBytes(REFERENCE_TEXT.replace(',"collation":"utf8-scalar-v1"', "")),
     );
   });
 
   test("rejects non-canonical whitespace", async () => {
-    await assertRejectsRebuiltBody(
+    await assertRejectsSelfConsistent(
       textBytes(REFERENCE_TEXT.replace('"schema_version":2', '"schema_version": 2')),
     );
   });

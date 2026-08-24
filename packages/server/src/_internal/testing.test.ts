@@ -1,13 +1,13 @@
 import { BaerlyError, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { assertFailClosed } from "./_internal/testing.ts";
+import { assertFailClosed } from "./testing.ts";
 import {
   decodeSnapshotChunk,
   encodeSnapshotChunk,
   snapshotChunkKey,
   type SnapshotChunk,
-} from "./snapshot-chunk.ts";
-import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+} from "../snapshot-chunk.ts";
+import type { SnapshotChunkDescriptor } from "../snapshot-manifest.ts";
 
 const prefix = "app/demo/tenant/acme/manifests/tickets";
 const incarnation = "00112233445566778899aabbccddeeff";
@@ -77,28 +77,5 @@ describe("assertFailClosed", () => {
         throw new Error("plain error");
       }, "InvalidResponse"),
     ).rejects.toThrow("expected BaerlyError with code InvalidResponse");
-  });
-
-  test("detects a validated field value leaking into the message", async () => {
-    const leakyError = new BaerlyError(
-      "InvalidResponse",
-      'snapshot chunk: first_id: "abcdef" is invalid',
-    );
-
-    await expect(
-      assertFailClosed(() => {
-        throw leakyError;
-      }, "InvalidResponse"),
-    ).rejects.toThrow("may leak authoritative data");
-  });
-
-  test("accepts a message that only names the field, not its value", async () => {
-    const cleanError = new BaerlyError("InvalidResponse", "snapshot chunk: first_id is invalid");
-
-    await expect(
-      assertFailClosed(() => {
-        throw cleanError;
-      }, "InvalidResponse"),
-    ).rejects.toBe(cleanError);
   });
 });

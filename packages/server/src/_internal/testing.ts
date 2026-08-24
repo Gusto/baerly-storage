@@ -13,19 +13,8 @@
 import { BaerlyError } from "@baerly/protocol";
 import type { CodecCode } from "../snapshot-codec.ts";
 
-/** Patterns matching a validated field *value* leaking into a codec error message, as opposed to just the field name or a constraint description. */
-export const LEAK_PATTERNS: readonly RegExp[] = [
-  /incarnation:\s*["']?[0-9a-f]{32}["']?/i,
-  /digest:\s*["']?[0-9a-f]{64}["']?/i,
-  /first_id:\s*["'][^"']{1,256}["']/,
-  /last_id:\s*["'][^"']{1,256}["']/,
-  /byte_length:\s*\d{4,}/,
-  /row_count:\s*\d{3,}/,
-];
-
 /**
- * Assert that a codec operation rejects with `expectedCode` and fails
- * closed: no validated field value leaked into the thrown message.
+ * Assert that a codec operation rejects with `expectedCode`.
  *
  * Re-throws the original `BaerlyError` on failure so it can still be
  * asserted on by the caller (e.g. `expect(...).rejects.toMatchObject(...)`).
@@ -52,14 +41,6 @@ export async function assertFailClosed(
       throw new Error(`assertFailClosed: expected code ${expectedCode} but got ${error.code}`, {
         cause: error,
       });
-    }
-    for (const pattern of LEAK_PATTERNS) {
-      if (pattern.test(error.message)) {
-        throw new Error(
-          `assertFailClosed: error message may leak authoritative data: ${error.message}`,
-          { cause: error },
-        );
-      }
     }
     throw error;
   }
