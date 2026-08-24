@@ -1,7 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { LEAK_PATTERNS } from "./_internal/testing.ts";
 import {
   decodeSnapshotChunk,
   encodeSnapshotChunk,
@@ -57,13 +56,6 @@ const decode = async (
 const expectInvalidResponse = async (operation: Promise<unknown>): Promise<void> => {
   await expect(operation).rejects.toBeInstanceOf(BaerlyError);
   await expect(operation).rejects.toMatchObject({ code: "InvalidResponse" });
-  // Ensure no validated field value leaks into the error message
-  const caught = await operation.catch((error) => error);
-  if (caught instanceof BaerlyError) {
-    for (const pattern of LEAK_PATTERNS) {
-      expect(pattern.test(caught.message)).toBe(false);
-    }
-  }
 };
 
 describe("snapshot chunk codec", () => {

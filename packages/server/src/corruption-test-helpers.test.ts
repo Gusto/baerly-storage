@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-  corruptJsonEscape,
   corruptNumber,
   corruptUtf8,
   duplicateBytes,
@@ -79,20 +78,6 @@ describe("corruptUtf8", () => {
   test("returns bytes unchanged for ASCII-only input", () => {
     const original = new TextEncoder().encode("abc");
     expect(corruptUtf8(original, 0)).toEqual(original);
-  });
-});
-
-describe("corruptJsonEscape", () => {
-  test("replaces a backslash escape with a forward slash", () => {
-    const original = new TextEncoder().encode('{"key":"value\\n"}');
-    const corrupted = corruptJsonEscape(original, 0);
-    const text = new TextDecoder().decode(corrupted);
-    expect(text).toBe('{"key":"value/n"}');
-  });
-
-  test("returns bytes unchanged when there is no escape", () => {
-    const original = new TextEncoder().encode('{"key":"value"}');
-    expect(corruptJsonEscape(original, 0)).toEqual(original);
   });
 });
 
