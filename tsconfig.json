@@ -75,6 +75,12 @@
     "tests/integration/conformance.test.ts",
     "tests/fixtures/check-acceptance",
 
+    // Gitignored scratch space for bench artifacts and disposable measurement
+    // drivers. Nothing in here ships or is imported by tracked code, and a
+    // driver written against another branch's `bench/measurement` surface must
+    // not be able to turn `pnpm verify` red on a base that never had it.
+    "bench/results",
+
     "packages/adapter-cloudflare/src",
     "tests/fixtures/mock-execution-context.ts",
     "tests/integration/public-surface.test.ts",
