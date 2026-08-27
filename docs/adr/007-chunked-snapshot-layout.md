@@ -3,7 +3,7 @@ title: Incarnation-scoped chunked snapshot layout
 audience: adr
 doc_type: adr
 summary: ADR 007 — the next snapshot layout is one strict manifest over immutable, incarnation-scoped, content-authenticated chunks, activated through one pre-1.0 atomic format cut.
-last-reviewed: 2026-08-17
+last-reviewed: 2026-08-26
 tags: [decision, adr, snapshot, storage-layout, versioning]
 related:
   [
@@ -28,9 +28,12 @@ The current snapshot is one content-addressed JSON object containing every
 document. A fold must load, sort, and encode the complete collection even when
 its selected log prefix changes one narrow ID range. That whole-collection work
 sets the present maintenance ceiling on request-bounded runtimes. Splitting the
-body can make work local, but only if ordering, publication, reuse, integrity,
-and garbage collection compose without a coordinator, a second reader, or an
-orphan key that can later become live again.
+body can make work local, but only if two conditions hold. First, the workload's
+document IDs must be ordered enough that a bounded log prefix touches a bounded
+run of chunks — measurement puts this condition in the Consequences below.
+Second, ordering, publication, reuse, integrity, and garbage collection must
+compose without a coordinator, a second reader, or an orphan key that can later
+become live again.
 
 The change is also a real bucket-layout break under
 [ADR-003](003-layout-versioning-cordon.md), not an additive field on the old
@@ -459,6 +462,19 @@ the complete collection, while the numbered-log commit point and request-
 bounded coordination model remain unchanged. Point and bounded-range reads can
 avoid unrelated chunk bodies; complete reads pay one manifest plus a statically
 bounded chunk fan-out.
+
+**The fold-work consequence is conditional on document-ID locality.** Measured
+in encode bytes per mutation folded, append-ordered IDs — the product's UUIDv7
+auto-ID — range from break-even (0.94x) to a 40x win, monotone in descriptor
+count. Uniformly distributed
+caller-supplied IDs cost 1.8x–25x *more* than the monolithic rebuild at every
+collection size and every boundary policy, and never reach parity: a bounded
+log prefix over uniform IDs touches chunks all across the manifest, so the
+selected prefix truncates and the fold rewrites more bytes per mutation than
+one whole-collection rebuild would. A collection durably in that regime is a
+graduation signal, not a supported cell, and this ADR does not admit a format
+selector, a second layout, or an ID-rewriting mode to rescue it. The read-side
+consequences above are unconditional; only the fold-work one is not.
 
 The cost is a breaking stored layout and three removed public construction
 exports. Activation requires coordinated snapshot/current schema changes, a
