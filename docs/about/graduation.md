@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: Operator runbook for a collection at or past a limit — map the symptom, pick the graduation path, and set the env var or move hosts.
-last-reviewed: 2026-08-09
+last-reviewed: 2026-08-26
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md", "../adr/002-ephemeral-coordination.md"]
 ---
@@ -216,7 +216,7 @@ trips first —
 CPU vs. free's ~10 ms), then set `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
 That alone moves `C` to 8 MiB and `E` to 32,768 and compaction resumes;
 there is no env override to set for the common case. On paid, CPU stops
-being the practical wall and Worker memory (~128 MB) becomes the limit —
+being the binding cost and Worker memory (~128 MB) becomes the limit —
 which is why the paid ceiling is 8 MiB rather than "tens of MB"
 ([why that number](../spec/scale-ceilings.md#per-tier-bounds)). If you
 override `C` past the profile value, size it to memory, not CPU; see
@@ -246,11 +246,11 @@ new snapshot, and log tail resident at once. CPU is still fine.
 
 **What to do:** move the collection to a long-lived Node host, which
 selects the node profile automatically (`C = 32 MiB`, `E = 65,536`),
-then raise the env cap as above if the host has the heap for it, or wait
-for chunked snapshots. The current
-snapshot format is single-level (one L9 snapshot replaces the prior) and
-is forward-compatible with a future multi-level L0..L9 scheme that folds
-incrementally without a wire change.
+then raise the env cap as above if the host has the heap for it. The
+current snapshot format is single-level: one L9 snapshot replaces the
+prior. A chunked replacement is in development, but plan around the Node
+host rather than around it — it lands as a pre-1.0 format cut rather than
+a compatible extension, so it arrives as a migration, not an upgrade.
 
 ### Tail churn is not a graduation signal
 
@@ -313,18 +313,24 @@ larger profile is the supported way to raise `E`.
 **Cloudflare caveat: size the cap to the isolate.** Raising
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above what a CF isolate can rebuild
 can create a killed-rebuild loop: the gate passes, the rebuild runs in
-`ctx.waitUntil`, the isolate is killed by CPU or memory, no in-band
-backoff fires, and the next write tries again.
+`ctx.waitUntil`, the isolate dies, no in-band backoff fires, and the next
+write tries again. The demonstrated cause is **memory** — an isolate over
+~128 MB is terminated. A CPU-driven kill has not been observed: a
+deployed Worker with a configured 10 ms limit ran 4 MiB folds at
+41.7–67.8 ms of measured CPU and reported success every time
+([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)).
+Cloudflare terminates a Worker that overruns *consistently*, so treat a
+CPU-driven loop as possible but unmeasured, and a memory-driven one as
+real.
 
 On the free profile, the CF adapter `console.warn`s once at handler init
 when `BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES`
-(1 MiB), the largest snapshot a free isolate can one-shot rebuild under
-the ~10 ms budget. It stays silent on `cf-paid`, whose own ceiling is
-already 8x that bound and whose wall is memory rather than CPU. There is
-still no runtime metric for the kill itself.
-Watch the snapshot key and object count from `baerly inspect`; a
-snapshot key that never advances while `live_log_tail` grows is a
-rebuild that keeps not landing.
+(1 MiB) — the point past which one fold stops fitting the free tier's CPU
+budget. It stays silent on `cf-paid`, whose own ceiling is already 8x
+that bound and whose binding cost is memory rather than CPU. Either way
+there is no runtime metric: watch the snapshot key and object count from
+`baerly inspect`; a snapshot key that never advances while
+`live_log_tail` grows is a rebuild that keeps not landing.
 
 Safe remedies, in order:
 
@@ -334,8 +340,11 @@ Safe remedies, in order:
 - **Serverful Node:** no per-request CPU/subrequest cap; bounded by host
   RAM, and the node profile is selected automatically. Raise the env cap
   above 32 MiB only with heap to spare.
-- **Chunked snapshots:** future multi-level L0..L9 rebuilds would avoid
-  holding the whole snapshot resident. Not shipped.
+- **Chunked snapshots:** a chunked replacement for the single-level
+  snapshot would avoid holding the whole snapshot resident. Not shipped;
+  it lands as a pre-1.0 format cut rather than an in-place upgrade, and
+  its fold-side benefit depends on document IDs being append-ordered, as
+  the auto-generated ones are.
 
 ## How to raise a limit
 
@@ -343,7 +352,7 @@ Safe remedies, in order:
 | --- | --- | --- |
 | Static fold-byte ceiling `C` (512 KB cf-free / 8 MiB cf-paid / 32 MiB node) | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var | Set out-of-band in the deploy environment; takes effect on the next write tick. Size to what the host can rebuild — `C ≈ heap / 10`. |
 | Static fold-row ceiling `E` (2,048 cf-free / 32,768 cf-paid / 65,536 node) | Move to a larger host profile: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Cloudflare, or a Node host (automatic) | No env var sets `E` directly. Node's 65,536 is the largest shipped value; past it, split or graduate the collection. |
-| Cloudflare free CPU / subrequest wall (~10 ms CPU, 50 subrequests) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past 8 MiB. A finer-grained per-platform `cpuLimit` declaration was evaluated and measured unnecessary: the in-band write tick keeps up to ~3x the rate envelope under stress on free, so it is not built. |
+| Cloudflare free CPU budget and subrequest wall (~10 ms CPU, economic; 50 subrequests, hard) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past 8 MiB. A finer-grained per-platform `cpuLimit` declaration was evaluated and measured unnecessary: the in-band write tick keeps up to ~3x the rate envelope under stress on free, so it is not built. |
 | Per-collection commit scope (one ordered log per collection; no cross-collection atomicity) | Cannot be increased; protocol invariant | The write hotspot is the next numbered `log/<seq>` create for one collection. Cross-collection atomicity is not offered. |
 | Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were never runtime-verified; the objects are now inert and nothing reads or reclaims them, so the truncation carries no remaining safety obligation. |
 
