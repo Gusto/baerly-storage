@@ -1,12 +1,12 @@
 import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
+import { type CodecCode, INCARNATION_PATTERN, makeCodecFail } from "./snapshot-codec.ts";
 import {
-  type CodecCode,
-  INCARNATION_PATTERN,
-  makeCodecFail,
-  MAX_CHUNK_BYTES,
-} from "./snapshot-codec.ts";
-import { encodeSnapshotChunk, snapshotChunkKey, type SnapshotChunk } from "./snapshot-chunk.ts";
+  encodeSnapshotChunk,
+  isChunkOversizeError,
+  snapshotChunkKey,
+  type SnapshotChunk,
+} from "./snapshot-chunk.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
 import {
   firstDescriptorEndingAtOrAfter,
@@ -57,8 +57,11 @@ function encodeBuilderChunk(chunk: SnapshotChunk): Uint8Array {
   try {
     return encodeSnapshotChunk(chunk);
   } catch (error) {
-    if (error instanceof BaerlyError) {
+    if (isChunkOversizeError(error)) {
       invalid("InvalidResponse", error.message, error.cause);
+    }
+    if (error instanceof BaerlyError) {
+      throw error;
     }
     invalid("InvalidResponse", "failed to encode snapshot chunk", error);
   }
@@ -534,12 +537,27 @@ function splitGroupDocsGreedily(
         last_id: candidateDocs.at(-1)!["_id"] as string,
         docs: candidateDocs,
       };
-      const candidateBytes = encodeBuilderChunk(candidateChunk);
+      const isSingleton = end === start + 1;
 
-      if (candidateBytes.byteLength <= policy.target_chunk_bytes || end === start + 1) {
-        if (candidateBytes.byteLength > MAX_CHUNK_BYTES) {
-          invalid("InvalidResponse", "document exceeds hard chunk byte maximum");
+      let candidateBytes: Uint8Array;
+      try {
+        candidateBytes = encodeBuilderChunk(candidateChunk);
+      } catch (error) {
+        // A candidate that exceeds MAX_CHUNK_BYTES throws instead of
+        // returning a size, so a too-big multi-document candidate is
+        // indistinguishable here from an over-target one: shrink and retry.
+        // Any other failure (bad doc-id ordering, excessive JSON depth, …)
+        // is a real bug that shrinking can't fix, so it must surface
+        // immediately even for a non-singleton candidate. A singleton can't
+        // shrink further either way, so its failure is always terminal.
+        if (!isChunkOversizeError(error) || isSingleton) {
+          throw error;
         }
+        end--;
+        continue;
+      }
+
+      if (candidateBytes.byteLength <= policy.target_chunk_bytes || isSingleton) {
         result.push({ docs: candidateDocs, bytes: candidateBytes });
         start = end;
         break;
