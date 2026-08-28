@@ -234,7 +234,8 @@
     "bench:workload-ceiling:capture": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-capture.ts",
     "bench:workload-ceiling:collect-batch": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-collect-batch.ts",
     "bench:workload-ceiling:collect": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-collect.ts",
-    "bench:workload-ceiling:compare": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-compare.ts"
+    "bench:workload-ceiling:compare": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-compare.ts",
+    "bench:workload-ceiling:aggregate": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-aggregate.ts"
   },
   "dependencies": {
     "@logtape/logtape": "2.3.1"
