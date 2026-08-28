@@ -1,15 +1,21 @@
 import { describe, expect, test } from "vitest";
 import {
+  decodeWorkloadCeilingInvocationRecord,
   decodeWorkloadCeilingRawEvent,
   decodeWorkloadCeilingRunRequest,
+  decodeWorkloadCeilingSweepReport,
+  encodeWorkloadCeilingInvocationRecord,
   encodeWorkloadCeilingRawEvent,
   encodeWorkloadCeilingRunRequest,
+  encodeWorkloadCeilingSweepReport,
   unresolvedWorkloadCeilingRawEvent,
   WORKLOAD_CEILING_CONTRACT_ID,
   WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
   WORKLOAD_CEILING_OUTCOME_CANONICALIZATIONS,
+  type WorkloadCeilingInvocationRecord,
   type WorkloadCeilingRawEvent,
   type WorkloadCeilingRunRequest,
+  type WorkloadCeilingSweepReport,
 } from "./workload-ceiling-harness.ts";
 
 const VALID_REQUEST: WorkloadCeilingRunRequest = {
@@ -346,6 +352,178 @@ describe("WorkloadCeilingRawEvent codec", () => {
   test("rejects a malformed observed_at timestamp", () => {
     const bad = JSON.stringify({ ...VALID_OK_EVENT, observed_at: "not-a-timestamp" });
     expect(() => decodeWorkloadCeilingRawEvent(bad)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+});
+
+describe("WorkloadCeilingSweepReport codec", () => {
+  const VALID_REPORT: WorkloadCeilingSweepReport = {
+    contract_id: WORKLOAD_CEILING_CONTRACT_ID,
+    sweep_id: "sweep-001",
+    collection: "items",
+    cells: [
+      {
+        scenario_id: "byte-axis/512KiB",
+        axis: "byte",
+        target_bytes: 524288,
+        achieved_bytes: 524256,
+        row_count: 245,
+        document_bytes: 2048,
+        manifest_descriptors: 8,
+        fixture_prefix: "tenants/workload-ceiling-study/collections/sweep-001/512KiB",
+        incarnation: "ab".repeat(16),
+        monolithic_key:
+          "tenants/workload-ceiling-study/collections/sweep-001/512KiB/monolithic.json",
+        manifest_key:
+          "tenants/workload-ceiling-study/collections/sweep-001/512KiB/snapshot-manifest-abcdef1234567890.json",
+        descriptor_canonical_hash: "a".repeat(64),
+      },
+    ],
+    cleanup: [
+      {
+        scenario_id: "byte-axis/512KiB",
+        fixture_prefix: "tenants/workload-ceiling-study/collections/sweep-001/512KiB",
+        written_keys: [
+          "tenants/workload-ceiling-study/collections/sweep-001/512KiB/monolithic.json",
+          "tenants/workload-ceiling-study/collections/sweep-001/512KiB/snapshot-manifest-abcdef1234567890.json",
+        ],
+        cleanup_authority: { type: "exact-key", keys: [] },
+      },
+    ],
+  };
+
+  test("round-trips a valid report through canonical serialization", () => {
+    const encoded = encodeWorkloadCeilingSweepReport(VALID_REPORT);
+    const decoded = decodeWorkloadCeilingSweepReport(encoded);
+    expect(decoded).toEqual(VALID_REPORT);
+  });
+
+  test("rejects a body with an unknown field", () => {
+    const withExtra = JSON.stringify({ ...VALID_REPORT, extra_field: "nope" });
+    expect(() => decodeWorkloadCeilingSweepReport(withExtra)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
+  test("rejects a body missing a required field", () => {
+    const { cells: _drop, ...rest } = VALID_REPORT;
+    const missing = JSON.stringify(rest);
+    expect(() => decodeWorkloadCeilingSweepReport(missing)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
+  test("rejects an invalid axis value", () => {
+    const badCell = JSON.stringify({
+      ...VALID_REPORT,
+      cells: [{ ...VALID_REPORT.cells[0]!, axis: "hybrid" as const }],
+    });
+    expect(() => decodeWorkloadCeilingSweepReport(badCell)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
+  test("rejects non-canonical JSON bytes (whitespace) even when the parsed value is valid", () => {
+    const encoded = encodeWorkloadCeilingSweepReport(VALID_REPORT);
+    const withWhitespace = `${encoded} `;
+    expect(() => decodeWorkloadCeilingSweepReport(withWhitespace)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+});
+
+const INVOCATION_RECORD_REQUIRED_FIELDS = [
+  "contract_id",
+  "sweep_id",
+  "run_id",
+  "scenario_id",
+  "implementation",
+  "fixture_prefix",
+  "warmup",
+  "invoked_at",
+  "window_gte",
+  "window_lt",
+  "http_status",
+  "row_count",
+  "thermal_class",
+] as const;
+
+describe("WorkloadCeilingInvocationRecord codec", () => {
+  const VALID_RECORD: WorkloadCeilingInvocationRecord = {
+    contract_id: WORKLOAD_CEILING_CONTRACT_ID,
+    sweep_id: "sweep-001",
+    run_id: "0a5c6f8e-6f2a-4a1e-9f0a-2c3d4e5f6a7b",
+    scenario_id: "byte-axis/512KiB",
+    implementation: "monolithic-control",
+    fixture_prefix: "tenants/workload-ceiling-study/collections/sweep-001/512KiB",
+    warmup: false,
+    invoked_at: "2026-08-20T00:00:07.412Z",
+    window_gte: "2026-08-20T00:00:00Z",
+    window_lt: "2026-08-20T00:01:00Z",
+    http_status: 200,
+    row_count: 253,
+    thermal_class: "warm",
+  };
+
+  const rejects = (mutation: Record<string, unknown>): void => {
+    expect(() =>
+      decodeWorkloadCeilingInvocationRecord(JSON.stringify({ ...VALID_RECORD, ...mutation })),
+    ).toThrowError(expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }));
+  };
+
+  test("round-trips a valid record through canonical serialization", () => {
+    const encoded = encodeWorkloadCeilingInvocationRecord(VALID_RECORD);
+    expect(decodeWorkloadCeilingInvocationRecord(encoded)).toEqual(VALID_RECORD);
+  });
+
+  test("the encoded record is one line, since the journal is JSONL", () => {
+    expect(encodeWorkloadCeilingInvocationRecord(VALID_RECORD)).not.toContain("\n");
+  });
+
+  test.each([
+    ["an unknown field", { extra_field: "nope" }],
+    ["a foreign contract_id", { contract_id: "baerly.workload-ceiling/other/v1" }],
+    ["an unknown implementation", { implementation: "chunked-control" }],
+    ["an unknown thermal_class", { thermal_class: "tepid" }],
+    ["a non-boolean warmup", { warmup: "false" }],
+    ["a blank sweep_id", { sweep_id: "" }],
+    ["a blank run_id", { run_id: "" }],
+    ["a local-time invoked_at", { invoked_at: "2026-08-20T00:00:07" }],
+    ["a non-RFC-3339 window_gte", { window_gte: "2026-08-20 00:00:00Z" }],
+    ["an out-of-range http_status", { http_status: 99 }],
+    ["a non-integer http_status", { http_status: 200.5 }],
+    ["a negative row_count", { row_count: -1 }],
+    ["a fractional row_count", { row_count: 1.5 }],
+  ])("rejects %s", (_label, mutation) => {
+    rejects(mutation);
+  });
+
+  test.each(INVOCATION_RECORD_REQUIRED_FIELDS)("rejects a record missing %s", (field) => {
+    const { [field]: _omitted, ...rest } = VALID_RECORD;
+    expect(() => decodeWorkloadCeilingInvocationRecord(JSON.stringify(rest))).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
+  test("rejects non-canonical JSON bytes even when the parsed value is valid", () => {
+    // The journal is compared line-for-line across tools; a record that parses
+    // but does not round-trip byte-for-byte would let two writers disagree
+    // about the same invocation.
+    const encoded = encodeWorkloadCeilingInvocationRecord(VALID_RECORD);
+    expect(() => decodeWorkloadCeilingInvocationRecord(`${encoded} `)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+    const reordered = JSON.stringify(Object.fromEntries(Object.entries(VALID_RECORD).toReversed()));
+    expect(reordered).not.toBe(encoded);
+    expect(() => decodeWorkloadCeilingInvocationRecord(reordered)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
+  test("encode rejects a record carrying a field outside the exact set", () => {
+    const withExtra = { ...VALID_RECORD, colo: "SJC" } as WorkloadCeilingInvocationRecord;
+    expect(() => encodeWorkloadCeilingInvocationRecord(withExtra)).toThrowError(
       expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
     );
   });
