@@ -4,8 +4,10 @@ import {
   decodeWorkloadCeilingRunRequest,
   encodeWorkloadCeilingRawEvent,
   encodeWorkloadCeilingRunRequest,
-  missingTerminalWorkloadCeilingRawEvent,
+  unresolvedWorkloadCeilingRawEvent,
   WORKLOAD_CEILING_CONTRACT_ID,
+  WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
+  WORKLOAD_CEILING_OUTCOME_CANONICALIZATIONS,
   type WorkloadCeilingRawEvent,
   type WorkloadCeilingRunRequest,
 } from "./workload-ceiling-harness.ts";
@@ -19,6 +21,7 @@ const VALID_REQUEST: WorkloadCeilingRunRequest = {
 };
 
 const VALID_OK_EVENT: WorkloadCeilingRawEvent = {
+  evidence_contract_id: WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
   run_id: "run-0001",
   scenario_id: "byte-axis/collection-1mib/doc-2048/hot-key",
   script_version: "abc123",
@@ -26,9 +29,19 @@ const VALID_OK_EVENT: WorkloadCeilingRawEvent = {
   runtime_period: "2026-08-15T00:00:00.000Z/2026-08-15T00:05:00.000Z",
   colo: "SJC",
   thermal_class: "warm",
-  outcome: "ok",
+  outcome: "success",
   cpu_ms: 12.5,
   observed_at: "2026-08-15T00:01:00.000Z",
+  evidence: {
+    status: "resolved",
+    detail: null,
+    authority: "workers-observability",
+    authoritative_outcome: "ok",
+    authoritative_cpu_ms: 12,
+    authoritative_response_status: 200,
+    cpu_source: "workers-invocations-adaptive",
+    cpu_outcome_verbatim: "success",
+  },
 };
 
 describe("WorkloadCeilingRunRequest codec", () => {
@@ -106,11 +119,115 @@ describe("WorkloadCeilingRawEvent codec", () => {
     expect(decodeWorkloadCeilingRawEvent(encoded)).toEqual(VALID_OK_EVENT);
   });
 
+  test("rejects evidence-contract v1 bytes — old and new artifacts cannot mix", () => {
+    // A rehearsal-era event file: the exact v1 field set, no evidence block,
+    // outcome "missing-terminal-event" acting as a collection status.
+    const v1 = JSON.stringify({
+      run_id: "run-0001",
+      scenario_id: "byte-axis/collection-1mib/doc-2048/hot-key",
+      script_version: "unresolved",
+      compatibility_date: "2026-08-01",
+      runtime_period: "2026-08-15T00:00:00.000Z/2026-08-15T00:05:00.000Z",
+      colo: "unknown",
+      thermal_class: "warm",
+      outcome: "missing-terminal-event",
+      cpu_ms: null,
+      observed_at: "2026-08-15T00:01:00.000Z",
+    });
+    expect(() => decodeWorkloadCeilingRawEvent(v1)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "raw event" }),
+    );
+  });
+
+  test("rejects an unknown evidence_contract_id value", () => {
+    const wrongRevision = JSON.stringify({
+      ...VALID_OK_EVENT,
+      evidence_contract_id: "baerly.workload-ceiling/evidence/v1",
+    });
+    expect(() => decodeWorkloadCeilingRawEvent(wrongRevision)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
+  test("outcome is null exactly when the authoritative evidence did not resolve", () => {
+    // Both fabrication directions are refused: a resolved status with a null
+    // outcome claims knowledge the authority never supplied, and a non-null
+    // outcome on unresolved evidence invents an execution result.
+    const resolvedWithoutOutcome = JSON.stringify({
+      ...VALID_OK_EVENT,
+      outcome: null,
+    });
+    expect(() => decodeWorkloadCeilingRawEvent(resolvedWithoutOutcome)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "outcome" }),
+    );
+    const unresolvedWithOutcome = unresolvedWorkloadCeilingRawEvent({
+      status: "missing",
+      detail: "no workers-observability join line for run_id in window",
+      run_id: VALID_OK_EVENT.run_id,
+      scenario_id: VALID_OK_EVENT.scenario_id,
+      compatibility_date: VALID_OK_EVENT.compatibility_date,
+      runtime_period: VALID_OK_EVENT.runtime_period,
+      thermal_class: "warm",
+      observed_at: VALID_OK_EVENT.observed_at,
+    });
+    const fabricated = JSON.stringify({ ...unresolvedWithOutcome, outcome: "success" });
+    expect(() => decodeWorkloadCeilingRawEvent(fabricated)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "outcome" }),
+    );
+  });
+
+  test("a successful outcome without a CPU number is legal — CPU missingness is not fabrication", () => {
+    // Evidence-contract v2: `workersInvocationsAdaptive` demonstrably drops
+    // rows for invocations that succeeded. A success with cpu_ms null is the
+    // honest record of that state (CPU completeness is a separate gate), not
+    // a malformed event.
+    const cpuMissing: WorkloadCeilingRawEvent = {
+      ...VALID_OK_EVENT,
+      cpu_ms: null,
+      evidence: {
+        ...VALID_OK_EVENT.evidence,
+        cpu_source: "none",
+        cpu_outcome_verbatim: null,
+      },
+    };
+    const decoded = decodeWorkloadCeilingRawEvent(encodeWorkloadCeilingRawEvent(cpuMissing));
+    expect(decoded.outcome).toBe("success");
+    expect(decoded.cpu_ms).toBeNull();
+  });
+
+  test("refuses a cpu_ms that its own provenance says was never measured", () => {
+    // cpu_source "none" with a number present is exactly the fabricated
+    // evidence this codec exists to refuse.
+    const fabricatedCpu = JSON.stringify({
+      ...VALID_OK_EVENT,
+      evidence: { ...VALID_OK_EVENT.evidence, cpu_source: "none" },
+    });
+    expect(() => decodeWorkloadCeilingRawEvent(fabricatedCpu)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "cpu_ms" }),
+    );
+  });
+
+  test("a cpu_ms from the adaptive dataset records the row's verbatim status", () => {
+    const withoutVerbatim = JSON.stringify({
+      ...VALID_OK_EVENT,
+      evidence: { ...VALID_OK_EVENT.evidence, cpu_outcome_verbatim: null },
+    });
+    expect(() => decodeWorkloadCeilingRawEvent(withoutVerbatim)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    );
+  });
+
   test("preserves exceededCpu as an explicit outcome with a null cpu_ms", () => {
     const exceeded: WorkloadCeilingRawEvent = {
       ...VALID_OK_EVENT,
       outcome: "exceededCpu",
       cpu_ms: null,
+      evidence: {
+        ...VALID_OK_EVENT.evidence,
+        authoritative_outcome: "exceededCpu",
+        cpu_source: "none",
+        cpu_outcome_verbatim: null,
+      },
     };
     const encoded = encodeWorkloadCeilingRawEvent(exceeded);
     const decoded = decodeWorkloadCeilingRawEvent(encoded);
@@ -129,39 +246,72 @@ describe("WorkloadCeilingRawEvent codec", () => {
     expect(decoded.cpu_ms).toBe(50);
   });
 
-  test("represents a missing terminal event explicitly rather than dropping the invocation", () => {
-    const missing = missingTerminalWorkloadCeilingRawEvent({
+  test("represents unresolved evidence explicitly rather than dropping the invocation", () => {
+    const missing = unresolvedWorkloadCeilingRawEvent({
+      status: "missing",
+      detail: "no workers-observability join line for run_id in window",
       run_id: VALID_OK_EVENT.run_id,
       scenario_id: VALID_OK_EVENT.scenario_id,
-      script_version: VALID_OK_EVENT.script_version,
       compatibility_date: VALID_OK_EVENT.compatibility_date,
       runtime_period: VALID_OK_EVENT.runtime_period,
-      colo: VALID_OK_EVENT.colo,
       thermal_class: "unknown",
       observed_at: VALID_OK_EVENT.observed_at,
     });
-    expect(missing.outcome).toBe("missing-terminal-event");
+    // Evidence status and execution outcome are separate concepts: the
+    // unresolved record carries a null outcome (never a pseudo-outcome like
+    // the retired `missing-terminal-event`), the sentinel script_version,
+    // and no CPU.
+    expect(missing.evidence.status).toBe("missing");
+    expect(missing.outcome).toBeNull();
+    expect(missing.script_version).toBe("unresolved");
+    expect(missing.colo).toBe("unknown");
     expect(missing.cpu_ms).toBeNull();
+    expect(missing.evidence.cpu_source).toBe("none");
     const roundTripped = decodeWorkloadCeilingRawEvent(encodeWorkloadCeilingRawEvent(missing));
     expect(roundTripped).toEqual(missing);
-  });
 
-  test("refuses to synthesize a cpu_ms for a missing-terminal-event outcome", () => {
-    const withFabricatedCpu = JSON.stringify({
-      ...VALID_OK_EVENT,
-      outcome: "missing-terminal-event",
-      cpu_ms: 9.9,
+    const ambiguous = unresolvedWorkloadCeilingRawEvent({
+      status: "ambiguous",
+      detail: "2 workers-observability join lines for one run_id",
+      run_id: VALID_OK_EVENT.run_id,
+      scenario_id: VALID_OK_EVENT.scenario_id,
+      compatibility_date: VALID_OK_EVENT.compatibility_date,
+      runtime_period: VALID_OK_EVENT.runtime_period,
+      thermal_class: "warm",
+      observed_at: VALID_OK_EVENT.observed_at,
     });
-    expect(() => decodeWorkloadCeilingRawEvent(withFabricatedCpu)).toThrowError(
-      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+    expect(ambiguous.evidence.status).toBe("ambiguous");
+    expect(decodeWorkloadCeilingRawEvent(encodeWorkloadCeilingRawEvent(ambiguous))).toEqual(
+      ambiguous,
     );
   });
 
-  test("refuses a null cpu_ms on an ok outcome", () => {
-    const withoutCpu = JSON.stringify({ ...VALID_OK_EVENT, cpu_ms: null });
-    expect(() => decodeWorkloadCeilingRawEvent(withoutCpu)).toThrowError(
-      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid" }),
+  test("a resolved event may not keep the sentinel script_version or an unknown colo", () => {
+    const sentinelVersion = JSON.stringify({ ...VALID_OK_EVENT, script_version: "unresolved" });
+    expect(() => decodeWorkloadCeilingRawEvent(sentinelVersion)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "script_version" }),
     );
+    const unknownColo = JSON.stringify({ ...VALID_OK_EVENT, colo: "unknown" });
+    expect(() => decodeWorkloadCeilingRawEvent(unknownColo)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "colo" }),
+    );
+  });
+
+  test("detail is required exactly when the evidence did not resolve", () => {
+    const resolvedWithDetail = JSON.stringify({
+      ...VALID_OK_EVENT,
+      evidence: { ...VALID_OK_EVENT.evidence, detail: "never mind" },
+    });
+    expect(() => decodeWorkloadCeilingRawEvent(resolvedWithDetail)).toThrowError(
+      expect.objectContaining({ code: "WorkloadCeilingHarnessInvalid", field: "evidence.detail" }),
+    );
+  });
+
+  test("maps each platform vocabulary's success literal to the canonical outcome", () => {
+    // Workers Observability reports `ok`; the GraphQL Analytics dataset
+    // reports `success`. The canonical event vocabulary is `success`, and
+    // verbatim literals survive in the evidence block instead.
+    expect(WORKLOAD_CEILING_OUTCOME_CANONICALIZATIONS).toEqual({ ok: "success" });
   });
 
   test("rejects a body with an unknown field", () => {
