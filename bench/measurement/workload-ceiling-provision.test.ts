@@ -3,9 +3,16 @@ import { snapshotHash } from "@baerly/protocol";
 import { decodeSnapshotChunk, decodeSnapshotManifest } from "@baerly/server/_internal/testing";
 import {
   buildWorkloadCeilingFixture,
+  calibrateRowCount,
+  monolithicEncodedBytes,
   WorkloadCeilingProvisionError,
   type WorkloadCeilingFixtureSpec,
 } from "./workload-ceiling-provision.ts";
+import {
+  byteAxisCells,
+  BYTE_AXIS_MANIFEST_DESCRIPTORS,
+  CELL_BYTE_TOLERANCE,
+} from "./workload-ceiling-cells.ts";
 
 const incarnation = "ab".repeat(16);
 const spec: WorkloadCeilingFixtureSpec = {
@@ -52,9 +59,9 @@ describe("buildWorkloadCeilingFixture", () => {
     const fixture = await buildWorkloadCeilingFixture(spec, "fixtures/x", incarnation);
     const monolithic = fixture.writes.find((w) => w.key === fixture.monolithic_key)!.body;
     const parsed = JSON.parse(new TextDecoder().decode(monolithic)) as {
-      rows: { _id: string; body: { payload: string } }[];
+      docs: { _id: string; body: { payload: string } }[];
     };
-    expect(parsed.rows.map((r) => r._id)).toEqual([
+    expect(parsed.docs.map((d) => d._id)).toEqual([
       "row-0",
       "row-1",
       "row-2",
@@ -63,8 +70,8 @@ describe("buildWorkloadCeilingFixture", () => {
       "row-5",
       "row-6",
     ]);
-    for (const row of parsed.rows) {
-      expect(row.body.payload.length).toBeGreaterThan(0);
+    for (const doc of parsed.docs) {
+      expect(doc.body.payload.length).toBeGreaterThan(0);
     }
   });
 
@@ -102,5 +109,59 @@ describe("spec and argument validation", () => {
     ).rejects.toSatisfy(
       (e: unknown) => e instanceof WorkloadCeilingProvisionError && e.field === "incarnation",
     );
+  });
+});
+
+describe("calibrateRowCount", () => {
+  test.each(byteAxisCells())(
+    "calibrates $scenario_id to within tolerance of its encoded target",
+    (cell) => {
+      const result = calibrateRowCount({
+        targetBytes: cell.target,
+        documentBytes: cell.document_bytes,
+        collection: "items",
+        tolerance: CELL_BYTE_TOLERANCE,
+      });
+      expect(Math.abs(result.relative_error)).toBeLessThanOrEqual(CELL_BYTE_TOLERANCE);
+      expect(result.achieved_bytes).toBe(
+        monolithicEncodedBytes(result.row_count, cell.document_bytes, "items"),
+      );
+      // Every cell must have room for the fixed descriptor count.
+      expect(result.row_count).toBeGreaterThan(BYTE_AXIS_MANIFEST_DESCRIPTORS);
+    },
+  );
+
+  test("calibration is deterministic", () => {
+    const args = {
+      targetBytes: 1024 * 1024,
+      documentBytes: 2048,
+      collection: "items",
+      tolerance: 0.005,
+    };
+    expect(calibrateRowCount(args)).toEqual(calibrateRowCount(args));
+  });
+
+  test("the naive divide overshoots, which is why calibration exists", () => {
+    // Guards the reason for this code: if these ever agree, the envelope
+    // accounting changed and the calibrator's rationale needs rereading.
+    const naive = Math.round((1024 * 1024) / 2048);
+    const calibrated = calibrateRowCount({
+      targetBytes: 1024 * 1024,
+      documentBytes: 2048,
+      collection: "items",
+      tolerance: 0.005,
+    }).row_count;
+    expect(calibrated).toBeLessThan(naive);
+  });
+
+  test("an unreachable tolerance fails loudly rather than publishing a mislabeled cell", () => {
+    const shouldThrow = () =>
+      calibrateRowCount({
+        targetBytes: 100,
+        documentBytes: 2048,
+        collection: "items",
+        tolerance: 1e-9,
+      });
+    expect(shouldThrow).toThrow(WorkloadCeilingProvisionError);
   });
 });
