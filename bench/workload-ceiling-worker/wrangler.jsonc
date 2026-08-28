@@ -32,6 +32,29 @@
     },
   ],
 
+  // NO `limits` block, deliberately — this is the COST-CURVE config, the one
+  // Lanes B/C/D capture against. Under a 10 ms `cpu_ms` cap the upper cells
+  // would terminate as `exceededCpu`, whose `cpu_ms` is censored and excluded
+  // from the resolved quantiles by `../measurement/workload-ceiling-aggregate.ts` —
+  // silently deleting the top half of each axis, which is the half
+  // `docs/spec/scale-ceilings.md` is least certain about.
+  //
+  // The CPU-WALL PROBE (`plans/tickets/lane-b-ticket-6a-cpu-wall-probe.md`) is
+  // the other half of the study and needs the opposite config. It is deployed
+  // by uncommenting exactly this block, deploying, running the probe, then
+  // re-commenting it and redeploying before Lanes B/C/D start:
+  //
+  //   "limits": { "cpu_ms": 10 },   // WORKLOAD_CEILING_STUDY.cpu_envelope.cf_free_cpu_ms
+  //
+  // Two deploys, two `script_version`s, and that is correct — they are two
+  // measurements, not one. Nothing needs to police the hand-edit: each capture
+  // records its serving version and the aggregator refuses a sweep whose events
+  // disagree on `script_version`. `limits` requires the Standard Usage Model
+  // (Workers Paid); on Free the versions upload is rejected with error 100328,
+  // "CPU limits are not supported for the Free plan" (observed 2026-08-24 on
+  // a Free-plan account, wrangler 4.83.0 — the ticket's predicted 10205 is
+  // not the code the API actually returns). The rejection mints no version, so a
+  // failed attempt leaves the serving script untouched.
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,

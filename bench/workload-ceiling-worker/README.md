@@ -40,28 +40,31 @@ isolate — the limit is enforced by the runtime around the isolate, and an
 in-process timer measures wall time, not the runtime's own CPU accounting.
 Reporting a self-timed number here would be exactly the kind of synthesized
 evidence `workload-ceiling-harness.ts`'s codec exists to refuse. The study
-instead retrieves the platform's own number through the GraphQL Analytics
-API's `workersInvocationsAdaptive` dataset, which reports per-invocation
-`status` (the outcome, e.g. success, or an exceeded-resources / exception /
-disconnect classification) and CPU time.
+instead retrieves the platform's own numbers from two telemetry sources
+(evidence contract v2): Workers Observability is the authority for
+per-invocation existence and execution outcome (`$workers.outcome` on the
+fetch-summary line, whose success literal is `ok`), and the GraphQL Analytics
+API's `workersInvocationsAdaptive` dataset supplies the CPU measurement
+(`sum.cpuTimeUs`, microsecond resolution) — that dataset demonstrably drops
+rows permanently, which the study records as CPU-measurement missingness
+rather than execution failure.
 
 ## Join mechanism
 
 Workers Analytics does not carry a caller-supplied correlation ID per row.
-The plan's Step 10 language ("deploy a uniquely named study Worker") assumes
-a fresh per-run deployment, whose `scriptName` alone would disambiguate
-invocations. This harness instead reuses one already-deployed, fixed-name
-Worker (`baerly-storage`, overwritten in place by `deploy.mjs` for each
-smoke run — see §"Token scope" for why), so disambiguation for Task 8's one
-authorized smoke run rests on `workload-ceiling-collect.ts` querying
-`workersInvocationsAdaptive` filtered by that fixed `scriptName` plus a
-narrow `datetime` window bounding the single invocation, rather than on the
-name itself. The Workers Logs line emitted in step 4 above (`run_id` /
-`scenario_id` / `implementation`) is the independent check that the
-telemetry row collected in that window is in fact this run. A later,
-bulk multi-run study (out of this plan's scope) would need per-run
-uniqueness back, since a shared name plus overlapping windows could no
-longer disambiguate concurrent invocations.
+This harness reuses one already-deployed, fixed-name Worker
+(`baerly-storage`, overwritten in place by `deploy.mjs` — see §"Token scope"
+for why). Disambiguation therefore rests on the Worker emitting its join
+identifiers (`run_id` / `scenario_id` / `implementation` /
+`isolate_cold`, step 4 above) exactly once per invocation as a structured
+Workers Logs line: under evidence contract v2 the collector joins that line
+to the platform fetch-summary line by their shared `requestId`, giving one
+authoritative per-invocation record (existence + outcome) however many
+invocations share the script name. The CPU measurement still comes from
+`workersInvocationsAdaptive` bounded by a narrow `datetime` window, so
+overlapping windows still cannot attribute a CPU row — the capture
+protocol's global 70 s spacing exists to keep one invocation per minute
+bucket.
 
 ## Platform documentation this rests on
 
@@ -78,8 +81,10 @@ directly here per that step's requirement.
 - R2 bucket binding (`r2_buckets`, `env.BUCKET`):
   <https://developers.cloudflare.com/r2/api/workers/workers-api-reference/>
 - GraphQL Analytics API — query shape, `*Adaptive` raw-row datasets,
-  `workersInvocationsAdaptive` dimensions/metrics (`cpuTime`, `status`,
-  `scriptName`, `coloCode`, `scriptVersion`):
+  `workersInvocationsAdaptive` dimensions/metrics (`cpuTimeUs`, `status`,
+  `scriptName`, `coloCode`, `scriptVersion`) — note the docs below use the
+  field name `cpuTime`, but the live `AccountWorkersInvocationsAdaptiveSum`
+  schema (confirmed by introspection) names it `cpuTimeUs`:
   <https://developers.cloudflare.com/analytics/graphql-api/>,
   <https://developers.cloudflare.com/analytics/graphql-api/tutorials/querying-workers-metrics/>
 - Workers observability / metrics and invocation status classification:
@@ -95,19 +100,40 @@ directly here per that step's requirement.
 
 Step 10 of Task 8 — one authorized deployed smoke run — is deliberately
 **not** performed by this repository's automated gates (`pnpm verify`,
-`pnpm test`), and requires `CF_API_TOKEN` / `CF_ACCOUNT_ID` or
-`credentials/cloudflare-deploy.json` to be provisioned first (see below).
+`pnpm test`), and requires `CF_API_TOKEN` / `CF_ACCOUNT_ID` or a credentials
+file to be provisioned first (see below).
+
+Set `WORKLOAD_CEILING_TIER=free` to use `credentials/cloudflare-deploy-free.json`
+instead of `credentials/cloudflare-deploy.json`. Note that the `-free`
+suffix names a credential set, never a verified Workers plan tier — and a
+verified plan tier still never implies an enforced CPU ceiling. `cf-free`
+evidence comes from the `limits.cpu_ms` block in `wrangler.jsonc`, which
+needs a Paid plan; see `lane-b-preflight.md` § Q4 and
+`WORKLOAD_CEILING_STUDY.cpu_envelope` before treating any output as `cf-free`.
+
+The workers.dev URL is `https://<name>.<subdomain>.workers.dev/run`, where
+`<subdomain>` is per-account. The `-free` account's subdomain happens to be
+literally `baerly-storage` (derived from the account name), so the live URL
+is the doubled `https://baerly-storage.baerly-storage.workers.dev/run`.
+Discover yours with:
+
+```sh
+GET /accounts/<account_id>/workers/subdomain   # { "result": { "subdomain": … } }
+```
+
+(as done 2026-08-20; works with the deploy token's Account:Read scope)
 
 `deploy.mjs` wraps `wrangler` so auth never has to live in shell env or a
 global dotfile — never `wrangler login`. It resolves `CLOUDFLARE_API_TOKEN` /
 `CLOUDFLARE_ACCOUNT_ID` the same way `../measurement/workload-ceiling-collect.ts`
 does: `CF_API_TOKEN` + `CF_ACCOUNT_ID` env vars if both are set, otherwise a
-repo-scoped `credentials/cloudflare-deploy.json` (gitignored —
-`{ "api_token": "...", "account_id": "..." }`, read by
-`loadCloudflareDeployCreds` in `tests/fixtures/endpoint-creds.ts`). Either
-way the resolved credentials are injected only into the spawned `wrangler`
-child's environment, never printed or written elsewhere. Once one of those
-two sources is available:
+repo-scoped `credentials/cloudflare-deploy.json` (or
+`credentials/cloudflare-deploy-free.json` when `WORKLOAD_CEILING_TIER=free`,
+gitignored — `{ "api_token": "...", "account_id": "..." }`, read by
+`loadCloudflareDeployCredsForTier` in `tests/fixtures/endpoint-creds.ts`).
+Either way the resolved credentials are injected only into the spawned
+`wrangler` child's environment, never printed or written elsewhere. Once one
+of those two sources is available:
 
 ```sh
 node bench/workload-ceiling-worker/deploy.mjs deploy --name baerly-storage
@@ -173,10 +199,15 @@ explicit collection window:
    pnpm bench:workload-ceiling:compare`.
 
 The per-implementation directories in steps 4–5 are mandatory, not
-housekeeping: `workload-ceiling-compare.ts` joins two event directories,
-one per side, and both implementations reuse the same `scenario_id`s —
-collected into one shared directory, every scenario arrives twice there
-and is evicted as a duplicate, leaving zero pairs and an exit 1.
+housekeeping: the directory IS the side. `workload-ceiling-compare.ts`
+reads one directory per implementation and both implementations reuse the
+same `scenario_id`s, so a shared directory hands the control side every
+candidate event as well. Compare pools each side's events per scenario, so
+it would not reject them — it would report a control p50 computed over
+both arms and a ratio of that against itself.
 
 Never rely on the default 10-minute window — it will span both invocations
-and both sides will record `missing-terminal-event`.
+and both sides will record CPU-measurement missingness (a collapsed
+`workersInvocationsAdaptive` row supplies no attributable CPU; under evidence
+contract v2 the invocation's existence and outcome still resolve from Workers
+Observability, but the sample carries no number).
