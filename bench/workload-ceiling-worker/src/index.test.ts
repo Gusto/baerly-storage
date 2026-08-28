@@ -1,5 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
 import type { Storage } from "@baerly/protocol";
+// oxlint-disable-next-line no-duplicate-imports
+import { snapshotHash } from "@baerly/protocol";
+import { encodeSnapshotBody } from "@baerly/server";
 import worker, { type WorkloadCeilingWorkerEnv } from "./index.ts";
 
 vi.mock("@baerly/adapter-cloudflare", () => ({
@@ -165,17 +168,23 @@ interface RunResult {
 
 describe("Success path with mocked storage", () => {
   test("succeeds on monolithic-control implementation", async () => {
+    const snapshotBody = encodeSnapshotBody({
+      schema_version: 1,
+      min_seq: 0,
+      max_seq: 0,
+      collection: "test-collection",
+      docs: [{ _id: "doc1" as const, body: { _id: "doc1" as const, data: "value" } }],
+    });
+    const monolithicKey = `${fixturePrefix}/snapshot/L9/000000000000-000000000000-${await snapshotHash(snapshotBody)}.json`;
     const mockStorage = createMockStorage({
       [`${fixturePrefix}/fixture.json`]: encodeWorkloadCeilingFixtureDescriptor({
         contract_id: "baerly.workload-ceiling/chunked-snapshot/v1",
         collection: "test-collection",
-        monolithic_key: `${fixturePrefix}/monolithic.json`,
+        monolithic_key: monolithicKey,
         manifest_key: `${fixturePrefix}/manifest.json`,
         log_seq_start: 0,
       }),
-      [`${fixturePrefix}/monolithic.json`]: JSON.stringify({
-        rows: [{ _id: "doc1" as const, body: { _id: "doc1" as const, data: "value" } }],
-      }),
+      [monolithicKey]: snapshotBody,
     });
 
     mockR2BindingStorage.mockReturnValue(mockStorage);
@@ -191,6 +200,101 @@ describe("Success path with mocked storage", () => {
     expect(result.run_id).toBe("test-run-id");
     expect(result.scenario_id).toBe("test-scenario");
     expect(result.implementation).toBe("monolithic-control");
+  });
+
+  test("the two monolithic arms read the identical key and return the identical row count", async () => {
+    const snapshotBody = encodeSnapshotBody({
+      schema_version: 1,
+      min_seq: 0,
+      max_seq: 0,
+      collection: "test-collection",
+      docs: [
+        { _id: "doc1" as const, body: { _id: "doc1" as const, data: "value" } },
+        { _id: "doc2" as const, body: { _id: "doc2" as const, data: "value2" } },
+      ],
+    });
+    const monolithicKey = `${fixturePrefix}/snapshot/L9/000000000000-000000000000-${await snapshotHash(snapshotBody)}.json`;
+    const mockStorage = createMockStorage({
+      [`${fixturePrefix}/fixture.json`]: encodeWorkloadCeilingFixtureDescriptor({
+        contract_id: "baerly.workload-ceiling/chunked-snapshot/v1",
+        collection: "test-collection",
+        monolithic_key: monolithicKey,
+        manifest_key: `${fixturePrefix}/manifest.json`,
+        log_seq_start: 0,
+      }),
+      [monolithicKey]: snapshotBody,
+    });
+
+    mockR2BindingStorage.mockReturnValue(mockStorage);
+
+    const hashed = await worker.fetch(
+      authedPostRun(
+        encodeWorkloadCeilingRunRequest({ ...validRequest, implementation: "monolithic-control" }),
+      ),
+      env("secret"),
+    );
+    const unhashed = await worker.fetch(
+      authedPostRun(
+        encodeWorkloadCeilingRunRequest({
+          ...validRequest,
+          implementation: "monolithic-control-unhashed",
+        }),
+      ),
+      env("secret"),
+    );
+    expect(hashed.status).toBe(200);
+    expect(unhashed.status).toBe(200);
+    expect(((await unhashed.json()) as RunResult).row_count).toBe(
+      ((await hashed.json()) as RunResult).row_count,
+    );
+  });
+
+  test("the control arm rejects a body whose digest does not match its key", async () => {
+    const snapshotBody = encodeSnapshotBody({
+      schema_version: 1,
+      min_seq: 0,
+      max_seq: 0,
+      collection: "test-collection",
+      docs: [{ _id: "doc1" as const, body: { _id: "doc1" as const, data: "value" } }],
+    });
+    // Use a key with a different hash than the body's actual hash.
+    // The control arm will reject the hash mismatch; the unhashed probe
+    // will accept the body since it doesn't verify the hash.
+    const wrongHash = "a".repeat(64);
+    const monolithicKey = `${fixturePrefix}/snapshot/L9/000000000000-000000000000-${wrongHash}.json`;
+    const mockStorage = createMockStorage({
+      [`${fixturePrefix}/fixture.json`]: encodeWorkloadCeilingFixtureDescriptor({
+        contract_id: "baerly.workload-ceiling/chunked-snapshot/v1",
+        collection: "test-collection",
+        monolithic_key: monolithicKey,
+        manifest_key: `${fixturePrefix}/manifest.json`,
+        log_seq_start: 0,
+      }),
+      // Store a valid snapshot body, but the key has the wrong hash.
+      [monolithicKey]: snapshotBody,
+    });
+
+    mockR2BindingStorage.mockReturnValue(mockStorage);
+
+    // Same key, different hash — the control must 502 and the unhashed probe
+    // must NOT, which is the whole difference between the two arms.
+    const hashed = await worker.fetch(
+      authedPostRun(
+        encodeWorkloadCeilingRunRequest({ ...validRequest, implementation: "monolithic-control" }),
+      ),
+      env("secret"),
+    );
+    const unhashed = await worker.fetch(
+      authedPostRun(
+        encodeWorkloadCeilingRunRequest({
+          ...validRequest,
+          implementation: "monolithic-control-unhashed",
+        }),
+      ),
+      env("secret"),
+    );
+    expect(hashed.status).toBe(502);
+    expect(unhashed.status).toBe(200);
   });
 
   // The candidate representation is the study's whole subject, and it is the
@@ -327,5 +431,93 @@ describe("Fixture descriptor rejection", () => {
       env("secret"),
     );
     expect(response.status).toBe(502);
+  });
+});
+
+/**
+ * The fixture the thermal tests fold: one document, read through the
+ * monolithic arm. Its content is irrelevant to warm/cold — it exists only so
+ * the handler reaches a 200 and reports `isolate_cold`.
+ */
+async function thermalFixtureFiles(): Promise<Record<string, string | Uint8Array>> {
+  const snapshotBody = encodeSnapshotBody({
+    schema_version: 1,
+    min_seq: 0,
+    max_seq: 0,
+    collection: "test-collection",
+    docs: [{ _id: "doc1" as const, body: { _id: "doc1" as const, data: "value" } }],
+  });
+  const monolithicKey = `${fixturePrefix}/snapshot/L9/000000000000-000000000000-${await snapshotHash(snapshotBody)}.json`;
+  return {
+    [`${fixturePrefix}/fixture.json`]: encodeWorkloadCeilingFixtureDescriptor({
+      contract_id: "baerly.workload-ceiling/chunked-snapshot/v1",
+      collection: "test-collection",
+      monolithic_key: monolithicKey,
+      manifest_key: `${fixturePrefix}/manifest.json`,
+      log_seq_start: 0,
+    }),
+    [monolithicKey]: snapshotBody,
+  };
+}
+
+/**
+ * A handler bound to a FRESH module instance, i.e. an isolate that has served
+ * nothing yet.
+ *
+ * `index.ts`'s request counter is module-scope by design — it has to survive
+ * across requests for `isolate_cold` to mean anything — so a test that wants
+ * to observe an isolate's FIRST request has to evaluate the module again
+ * rather than reset a variable. Doing it this way is what keeps these tests
+ * independent of where they sit in the file: the alternative, asserting
+ * against the shared top-level import, passes or fails on whether some
+ * earlier test happened to warm it.
+ *
+ * `vi.resetModules()` re-runs the `@baerly/adapter-cloudflare` mock factory
+ * too, so the storage mock is re-bound on the new instance the fresh handler
+ * closes over — not on the stale one the top-level import captured.
+ */
+async function freshIsolate(files: Record<string, string | Uint8Array>) {
+  vi.resetModules();
+  const { r2BindingStorage: freshBinding } = await import("@baerly/adapter-cloudflare");
+  vi.mocked(freshBinding).mockReturnValue(createMockStorage(files));
+  const { default: freshWorker } = await import("./index.ts");
+  return freshWorker;
+}
+
+describe("Thermal classification (warm/cold detection)", () => {
+  test("the first request an isolate serves is cold, and the next is not", async () => {
+    const freshWorker = await freshIsolate(await thermalFixtureFiles());
+
+    const first = await freshWorker.fetch(
+      authedPostRun(encodeWorkloadCeilingRunRequest(validRequest)),
+      env("secret"),
+    );
+    const second = await freshWorker.fetch(
+      authedPostRun(encodeWorkloadCeilingRunRequest(validRequest)),
+      env("secret"),
+    );
+
+    await expect(first.json()).resolves.toMatchObject({ isolate_cold: true });
+    await expect(second.json()).resolves.toMatchObject({ isolate_cold: false });
+  });
+
+  test("an unauthorized request still warms the isolate", async () => {
+    // A rejected probe pays isolate start-up like any other request, so the
+    // counter has to advance BEFORE the auth check. Otherwise the next real
+    // invocation reports cold against an isolate that is already warm, and
+    // the study's thermal axis silently mislabels it.
+    const freshWorker = await freshIsolate(await thermalFixtureFiles());
+
+    const unauthorized = await freshWorker.fetch(
+      authedPostRun(encodeWorkloadCeilingRunRequest(validRequest)),
+      env("wrong"),
+    );
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await freshWorker.fetch(
+      authedPostRun(encodeWorkloadCeilingRunRequest(validRequest)),
+      env("secret"),
+    );
+    await expect(authorized.json()).resolves.toMatchObject({ isolate_cold: false });
   });
 });
