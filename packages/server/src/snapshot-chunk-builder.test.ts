@@ -30,7 +30,7 @@ const mutationMap = (
 ): ReadonlyMap<string, ReferenceMutation> =>
   new Map(mutations.map((mutation) => [mutation.doc_id, mutation]));
 
-const { createDescriptor } = makeSnapshotChunkFixtures({
+const { createChunkBytes, createDescriptor } = makeSnapshotChunkFixtures({
   collection,
   collectionPrefix,
   incarnation,
@@ -339,6 +339,59 @@ describe("snapshot chunk builder", () => {
       expect(chunk.byte_length).toBeLessThanOrEqual(MAX_CHUNK_BYTES);
       if (chunk.row_count >= 2) {
         expect(chunk.byte_length).toBeLessThanOrEqual(customPolicy.target_chunk_bytes);
+      }
+    }
+  });
+
+  test("rewrites an at-target c1024-r4096 chunk after one insert instead of throwing", async () => {
+    // c1024-r4096's target_chunk_bytes equals MAX_CHUNK_BYTES, so a chunk
+    // packed up to that target sits exactly at the hard ceiling: rewriting it
+    // with one more row is the scenario the greedy backoff must shrink out
+    // of, not merely a synthetic customPolicy.
+    const policy = CHUNK_BOUNDARY_POLICIES["c1024-r4096"];
+    const docs: DocumentData[] = [];
+    for (let i = 0; docs.length < policy.target_rows; i++) {
+      const id = `row-${String(i).padStart(4, "0")}`;
+      const candidate = [...docs, doc(id, "x".repeat(2000))];
+      let candidateBytes: number;
+      try {
+        candidateBytes = createChunkBytes(candidate).byteLength;
+      } catch {
+        break;
+      }
+      if (candidateBytes > policy.target_chunk_bytes) {
+        break;
+      }
+      docs.push(candidate.at(-1)!);
+    }
+    expect(docs.length).toBeGreaterThan(1);
+
+    const descriptor = await createDescriptor(docs);
+    expect(descriptor.byte_length).toBeLessThanOrEqual(policy.target_chunk_bytes);
+
+    const extraId = `row-${String(docs.length).padStart(4, "0")}`;
+    const mutations: ReferenceMutation[] = [
+      { op: "I", doc_id: extraId, after: doc(extraId, "x".repeat(2000)) },
+    ];
+
+    const result = await buildSnapshotChunks({
+      collection,
+      collectionPrefix,
+      descriptors: [descriptor],
+      loadedChunks: new Map([[descriptor.key, docs]]),
+      mutations: mutationMap(mutations),
+      incarnation,
+      policy,
+      lockedDirectOwnerIndex: 0,
+      selectedNeighborIndex: null,
+    });
+
+    expect(result.chunks.reduce((sum, chunk) => sum + chunk.row_count, 0)).toBe(docs.length + 1);
+    expect(result.split_increments).toBe(1);
+    for (const chunk of result.chunks) {
+      expect(chunk.byte_length).toBeLessThanOrEqual(MAX_CHUNK_BYTES);
+      if (chunk.row_count >= 2) {
+        expect(chunk.byte_length).toBeLessThanOrEqual(policy.target_chunk_bytes);
       }
     }
   });
