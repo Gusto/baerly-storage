@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { clopperPearsonZeroFailureUpper } from "./statistics.ts";
 import {
+  WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
   WorkloadCeilingHarnessError,
   type WorkloadCeilingRawEvent,
 } from "./workload-ceiling-harness.ts";
@@ -11,6 +12,7 @@ import {
 } from "./workload-ceiling-compare.ts";
 
 const event = (over: Partial<WorkloadCeilingRawEvent>): WorkloadCeilingRawEvent => ({
+  evidence_contract_id: WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
   run_id: "r1",
   scenario_id: "s0",
   script_version: "v1",
@@ -18,9 +20,19 @@ const event = (over: Partial<WorkloadCeilingRawEvent>): WorkloadCeilingRawEvent 
   runtime_period: "a/b",
   colo: "SJC",
   thermal_class: "unknown",
-  outcome: "ok",
+  outcome: "success",
   cpu_ms: 10,
   observed_at: "2026-08-18T00:00:00Z",
+  evidence: {
+    status: "resolved",
+    detail: "one authoritative record",
+    authority: "workers-observability",
+    authoritative_outcome: "success",
+    authoritative_cpu_ms: 10,
+    authoritative_response_status: 200,
+    cpu_source: "workers-invocations-adaptive",
+    cpu_outcome_verbatim: "success",
+  },
   ...over,
 });
 

@@ -4,6 +4,7 @@ import {
   type WorkloadCeilingStudyEvidence,
   WORKLOAD_CEILING_STUDY,
 } from "./workload-ceiling-contract.ts";
+import { WILSON_Z_BY_CONFIDENCE } from "./statistics.ts";
 
 describe("workload-ceiling study contract", () => {
   test("contains finite workload and admission axes", () => {
@@ -128,7 +129,11 @@ describe("workload-ceiling study contract", () => {
     const deployedEvidence: WorkloadCeilingStudyEvidence = {
       source: "deployed-workers",
       profile: "cf-free",
+      plan: "workers-paid",
+      configured_cpu_ms: 10,
       has_zero_failures_upper_bound: true,
+      has_complete_evidence: true,
+      meets_cpu_sample_floor: true,
       statistics: ["p50", "p95", "p99"],
       has_repeated_tail_drain: true,
     };
@@ -160,5 +165,136 @@ describe("workload-ceiling study contract", () => {
         has_repeated_tail_drain: false,
       }),
     ).toBe(false);
+    // The evidence-contract v2 gates, added after the 2026-08-24 rehearsal:
+    // incomplete evidence and a short CPU sample each block admission on
+    // their own, independently of the zero-failure bound.
+    expect(
+      satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, has_complete_evidence: false }),
+    ).toBe(false);
+    expect(
+      satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, meets_cpu_sample_floor: false }),
+    ).toBe(false);
+  });
+
+  test("requires the cf-free CPU envelope to be configured, not inherited from a plan", () => {
+    const configured: WorkloadCeilingStudyEvidence = {
+      source: "deployed-workers",
+      profile: "cf-free",
+      plan: "workers-paid",
+      configured_cpu_ms: 10,
+      has_zero_failures_upper_bound: true,
+      has_complete_evidence: true,
+      meets_cpu_sample_floor: true,
+      statistics: ["p50", "p95", "p99"],
+      has_repeated_tail_drain: true,
+    };
+
+    expect(satisfiesWorkloadCeilingAdmission(configured)).toBe(true);
+
+    // The 2026-08-21 plancheck environment: a CONFIRMED Workers Free account
+    // with no `limits` block, which measured 23-66 ms folds and zero
+    // `exceededCpu`. It looks like cf-free and is not.
+    expect(
+      satisfiesWorkloadCeilingAdmission({
+        ...configured,
+        plan: "workers-free",
+        configured_cpu_ms: null,
+      }),
+    ).toBe(false);
+
+    // A paid account at the platform default is likewise not the envelope.
+    expect(satisfiesWorkloadCeilingAdmission({ ...configured, configured_cpu_ms: null })).toBe(
+      false,
+    );
+
+    // Nor is any other configured ceiling, however close.
+    expect(satisfiesWorkloadCeilingAdmission({ ...configured, configured_cpu_ms: 30_000 })).toBe(
+      false,
+    );
+
+    // A free-plan account that DOES enforce would qualify — the rule reads
+    // the ceiling, never the biller.
+    expect(satisfiesWorkloadCeilingAdmission({ ...configured, plan: "workers-free" })).toBe(true);
+  });
+
+  test("preregisters how the cf-free CPU envelope is obtained", () => {
+    expect(WORKLOAD_CEILING_STUDY.cpu_envelope).toEqual({
+      cf_free_cpu_ms: 10,
+      enforcement: "elastic-duty-cycle-dependent",
+      obtained_by: "configured-limit",
+    });
+  });
+
+  describe("capture protocol", () => {
+    test("preregisters planned invocations above the CPU sample floor, warmup count, and global spacing", () => {
+      expect(WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell).toBe(40);
+      expect(WORKLOAD_CEILING_STUDY.capture.cpu_sample_floor_per_cell).toBe(30);
+      expect(WORKLOAD_CEILING_STUDY.capture.warmup_invocations_per_cell).toBe(2);
+      expect(WORKLOAD_CEILING_STUDY.capture.invocation_spacing_seconds).toBe(70);
+    });
+
+    test("the planned count carries a fixed telemetry-drop margin over the CPU floor", () => {
+      // The 2026-08-24 rehearsal measured `workersInvocationsAdaptive`
+      // permanently dropping ~4/24 rows while Workers Observability held
+      // 24/24. At a 15 % drop rate, 40 planned invocations keep ≥ 30 CPU
+      // samples with ≈ 98 % probability per cell-arm — the preregistered
+      // replacement for the contradictory post-hoc top-up. The margin is
+      // fixed here, before capture, never after observing missingness.
+      const planned = WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell;
+      const floor = WORKLOAD_CEILING_STUDY.capture.cpu_sample_floor_per_cell;
+      expect(planned).toBeGreaterThan(floor);
+      // Expected surviving CPU samples at the observed worst-case 15 % rate:
+      expect(planned * 0.85).toBeGreaterThanOrEqual(floor);
+    });
+
+    test("spacing exceeds the telemetry bucket width, so two invocations never collapse", () => {
+      // A minute-resolution grouping collapses only instants < 60 s apart.
+      expect(WORKLOAD_CEILING_STUDY.capture.invocation_spacing_seconds).toBeGreaterThan(60);
+    });
+
+    test("the settle delay is longer than the spacing, so the last invocation is never queried early", () => {
+      expect(WORKLOAD_CEILING_STUDY.capture.telemetry_settle_seconds).toBeGreaterThan(
+        WORKLOAD_CEILING_STUDY.capture.invocation_spacing_seconds,
+      );
+    });
+
+    test("the only exclusion is assigned before a run", () => {
+      expect(WORKLOAD_CEILING_STUDY.capture.exclusion_policy).toBe("warmup-tagged-before-run-only");
+    });
+
+    test("the confidence level has a pinned Wilson z, so a failures-present cell can still be bounded", () => {
+      expect(Object.keys(WILSON_Z_BY_CONFIDENCE).map(Number)).toContain(
+        WORKLOAD_CEILING_STUDY.capture.confidence,
+      );
+    });
+  });
+
+  describe("telemetry policy", () => {
+    test("splits existence/outcome authority from CPU measurement", () => {
+      expect(WORKLOAD_CEILING_STUDY.capture.telemetry).toEqual({
+        authority: "workers-observability",
+        authority_success_outcome: "ok",
+        cpu_measurement: "workers-invocations-adaptive",
+        cpu_success_status: "success",
+        collection_retries: 1,
+        collection_retry_delay_seconds: 600,
+      });
+    });
+
+    test("permits exactly one collection-only retry after a fixed delay, never a re-invocation", () => {
+      const { telemetry } = WORKLOAD_CEILING_STUDY.capture;
+      expect(telemetry.collection_retries).toBe(1);
+      // The delay is fixed here — chosen before production capture, never
+      // after observing missingness.
+      expect(telemetry.collection_retry_delay_seconds).toBeGreaterThan(0);
+    });
+
+    test("records each source's verbatim success literal", () => {
+      // Workers Observability reports `ok`; the GraphQL Analytics dataset
+      // reports `success`. Both are pinned so a vocabulary drift on either
+      // side fails this test instead of silently misclassifying successes.
+      expect(WORKLOAD_CEILING_STUDY.capture.telemetry.authority_success_outcome).toBe("ok");
+      expect(WORKLOAD_CEILING_STUDY.capture.telemetry.cpu_success_status).toBe("success");
+    });
   });
 });
