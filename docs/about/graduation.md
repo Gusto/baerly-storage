@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: Operator runbook for a collection at or past a limit — map the symptom, pick the graduation path, and set the env var or move hosts.
-last-reviewed: 2026-08-26
+last-reviewed: 2026-08-27
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md", "../adr/002-ephemeral-coordination.md"]
 ---
@@ -352,7 +352,7 @@ Safe remedies, in order:
 | --- | --- | --- |
 | Static fold-byte ceiling `C` (512 KB cf-free / 8 MiB cf-paid / 32 MiB node) | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var | Set out-of-band in the deploy environment; takes effect on the next write tick. Size to what the host can rebuild — `C ≈ heap / 10`. |
 | Static fold-row ceiling `E` (2,048 cf-free / 32,768 cf-paid / 65,536 node) | Move to a larger host profile: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Cloudflare, or a Node host (automatic) | No env var sets `E` directly. Node's 65,536 is the largest shipped value; past it, split or graduate the collection. |
-| Cloudflare free CPU budget and subrequest wall (~10 ms CPU, economic; 50 subrequests, hard) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past 8 MiB. A finer-grained per-platform `cpuLimit` declaration was evaluated and measured unnecessary: the in-band write tick keeps up to ~3x the rate envelope under stress on free, so it is not built. |
+| Cloudflare free CPU budget and subrequest wall (~10 ms CPU, economic; 50 subrequests, hard) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past 8 MiB. A finer-grained per-platform `cpuLimit` declaration was evaluated and judged unnecessary — as a design assertion, not a measurement: `C` and `E` already sit well inside the free CPU budget, so a separate knob would add operator surface without changing which folds pass the gate. |
 | Per-collection commit scope (one ordered log per collection; no cross-collection atomicity) | Cannot be increased; protocol invariant | The write hotspot is the next numbered `log/<seq>` create for one collection. Cross-collection atomicity is not offered. |
 | Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were never runtime-verified; the objects are now inert and nothing reads or reclaims them, so the truncation carries no remaining safety obligation. |
 

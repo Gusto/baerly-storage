@@ -3,7 +3,7 @@ title: Scale ceilings
 audience: spec
 doc_type: verification
 summary: Where every published scale limit comes from — the fold cost model, the measured per-host snapshot ceilings C and E, and the storage-side throughput walls.
-last-reviewed: 2026-08-26
+last-reviewed: 2026-08-27
 tags: [capacity, verification, fold, ceilings]
 related: ["../about/graduation.md", "../about/workload-fit.md", "../about/cost-model.md"]
 ---
@@ -109,6 +109,14 @@ interrupted before the body is complete, readers reject the hash
 mismatch. If the snapshot body lands but the `current.json` CAS does
 not, the snapshot is a correct but unreferenced orphan for GC. The
 pointer does not advance, but data is not corrupted.
+
+What an interrupted fold costs is liveness, not integrity. Because
+`current.json` never advances, `log_seq_start` stays where it was: the
+tail keeps growing and the next write tick retries the same rebuild. One
+interruption is a retried tick. A rebuild the host can never finish is a
+loop, and the cost of the loop is the unbounded tail — which is why the
+ceiling has to be sized to what the host can actually rebuild
+([Cloudflare caveat](../about/graduation.md#operations-plane-env-vars)).
 
 ## Fold cost model
 
