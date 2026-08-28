@@ -1,11 +1,6 @@
 import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
-import {
-  type CodecCode,
-  INCARNATION_PATTERN,
-  makeCodecFail,
-  MAX_CHUNK_BYTES,
-} from "./snapshot-codec.ts";
+import { type CodecCode, INCARNATION_PATTERN, makeCodecFail } from "./snapshot-codec.ts";
 import { encodeSnapshotChunk, snapshotChunkKey, type SnapshotChunk } from "./snapshot-chunk.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
 import {
@@ -534,12 +529,24 @@ function splitGroupDocsGreedily(
         last_id: candidateDocs.at(-1)!["_id"] as string,
         docs: candidateDocs,
       };
-      const candidateBytes = encodeBuilderChunk(candidateChunk);
+      const isSingleton = end === start + 1;
 
-      if (candidateBytes.byteLength <= policy.target_chunk_bytes || end === start + 1) {
-        if (candidateBytes.byteLength > MAX_CHUNK_BYTES) {
-          invalid("InvalidResponse", "document exceeds hard chunk byte maximum");
+      let candidateBytes: Uint8Array;
+      try {
+        candidateBytes = encodeBuilderChunk(candidateChunk);
+      } catch (error) {
+        // A candidate that exceeds MAX_CHUNK_BYTES throws instead of
+        // returning a size, so a too-big multi-document candidate is
+        // indistinguishable here from an over-target one: shrink and retry.
+        // A singleton can't shrink further, so its failure is terminal.
+        if (isSingleton) {
+          throw error;
         }
+        end--;
+        continue;
+      }
+
+      if (candidateBytes.byteLength <= policy.target_chunk_bytes || isSingleton) {
         result.push({ docs: candidateDocs, bytes: candidateBytes });
         start = end;
         break;
