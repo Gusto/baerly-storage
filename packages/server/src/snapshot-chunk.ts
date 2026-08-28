@@ -1,4 +1,5 @@
 import {
+  BaerlyError,
   decodeJsonBytes,
   type DocumentData,
   type DocumentValue,
@@ -218,6 +219,8 @@ function canonicalizeChunk(
   };
 }
 
+const CHUNK_OVERSIZE_MESSAGE = `canonical body exceeds ${MAX_CHUNK_BYTES} bytes`;
+
 export const encodeSnapshotChunk = (chunk: SnapshotChunk): Uint8Array => {
   return normalizeCodecFailure(
     invalid,
@@ -227,12 +230,22 @@ export const encodeSnapshotChunk = (chunk: SnapshotChunk): Uint8Array => {
       const canonical = canonicalizeChunk(chunk, "InvalidConfig");
       const bytes = encodeJsonBytes(canonical);
       if (bytes.byteLength > MAX_CHUNK_BYTES) {
-        invalid("InvalidConfig", `canonical body exceeds ${MAX_CHUNK_BYTES} bytes`);
+        invalid("InvalidConfig", CHUNK_OVERSIZE_MESSAGE);
       }
       return bytes;
     },
   );
 };
+
+/**
+ * True when `error` is the specific failure `encodeSnapshotChunk` throws for
+ * a canonical body over `MAX_CHUNK_BYTES` — as opposed to any other encoding
+ * or validation failure (bad doc-id ordering, excessive JSON depth, etc.),
+ * which callers must not treat as a shrink-and-retry signal.
+ */
+export function isChunkOversizeError(error: unknown): error is BaerlyError {
+  return error instanceof BaerlyError && error.message.endsWith(CHUNK_OVERSIZE_MESSAGE);
+}
 
 export const snapshotChunkKey = (
   collectionPrefix: string,
