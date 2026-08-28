@@ -343,6 +343,37 @@ describe("snapshot chunk builder", () => {
     }
   });
 
+  test("propagates a non-size encoding failure as InvalidConfig instead of shrinking", async () => {
+    // A pathologically nested document fails encoding for a reason that has
+    // nothing to do with candidate size, so shrinking the candidate can never
+    // fix it. It must surface immediately as the codec's own InvalidConfig,
+    // not get treated as an oversize condition and reduced to a singleton
+    // (which would also relabel it InvalidResponse along the way).
+    let nested: unknown = true;
+    for (let level = 0; level < 15_000; level++) {
+      nested = [nested];
+    }
+    const mutations: ReferenceMutation[] = [
+      { op: "I", doc_id: "a", after: doc("a", 1) },
+      { op: "I", doc_id: "b", after: { _id: "b", value: nested } as unknown as DocumentData },
+      { op: "I", doc_id: "c", after: doc("c", 3) },
+    ];
+
+    await expect(
+      buildSnapshotChunks({
+        collection,
+        collectionPrefix,
+        descriptors: [],
+        loadedChunks: new Map(),
+        mutations: mutationMap(mutations),
+        incarnation,
+        policy: CHUNK_BOUNDARY_POLICIES["c128-r512"],
+        lockedDirectOwnerIndex: null,
+        selectedNeighborIndex: null,
+      }),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
+
   test("rewrites an at-target c1024-r4096 chunk after one insert instead of throwing", async () => {
     // c1024-r4096's target_chunk_bytes equals MAX_CHUNK_BYTES, so a chunk
     // packed up to that target sits exactly at the hard ceiling: rewriting it
