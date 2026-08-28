@@ -115,8 +115,26 @@ export interface WorkloadCeilingEvidenceBlock {
  */
 export const WORKLOAD_CEILING_BUCKET_NAME = "baerly-storage-eval" as const;
 
+/**
+ * The arms one deployed script serves, selected per request.
+ *
+ * `monolithic-control` and `chunked-candidate` are the two SUBJECTS the study
+ * compares. `monolithic-control-unhashed` is neither: it is a measurement-only
+ * probe that reads the identical bytes at the identical key as
+ * `monolithic-control` and differs by exactly one operation — the SHA-256
+ * digest verification `loadSnapshotAsMap` performs before parsing. Its only
+ * purpose is to make the control's hash cost a difference of two
+ * platform-reported CPU numbers, because a Worker may not time itself
+ * (`bench/workload-ceiling-worker/README.md` §"Why CPU is never
+ * self-reported").
+ *
+ * It must never be handed to `workload-ceiling-compare.ts` as a side. It is
+ * not a candidate, it is not a control, and pairing it against either would
+ * report a format comparison that was really a hash measurement.
+ */
 export const WORKLOAD_CEILING_IMPLEMENTATIONS = [
   "monolithic-control",
+  "monolithic-control-unhashed",
   "chunked-candidate",
 ] as const;
 export type WorkloadCeilingImplementation = (typeof WORKLOAD_CEILING_IMPLEMENTATIONS)[number];

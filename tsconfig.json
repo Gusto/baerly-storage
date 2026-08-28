@@ -76,12 +76,11 @@
     "tests/fixtures/check-acceptance",
 
     "packages/adapter-cloudflare/src",
+    "bench/workload-ceiling-worker/src",
     "tests/fixtures/mock-execution-context.ts",
     "tests/integration/public-surface.test.ts",
     "tests/integration/s3-worker-e2e.test.ts",
     "tests/setup/http-conformance-worker.ts",
-    "tests/setup/r2-binding.ts",
-    "bench/workload-ceiling-worker/src/index.ts",
-    "bench/workload-ceiling-worker/src/index.test.ts"
+    "tests/setup/r2-binding.ts"
   ]
 }
