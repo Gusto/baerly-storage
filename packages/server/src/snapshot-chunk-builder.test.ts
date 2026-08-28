@@ -7,6 +7,7 @@ import {
   type ReferenceRow,
 } from "./chunked-snapshot-reference.ts";
 import { decodeSnapshotChunk } from "./snapshot-chunk.ts";
+import { MAX_CHUNK_BYTES } from "./snapshot-codec.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
 import {
   buildSnapshotChunks,
@@ -307,6 +308,39 @@ describe("snapshot chunk builder", () => {
         selectedNeighborIndex: null,
       }),
     ).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
+  test("shrinks a first candidate that starts above the 1 MiB hard ceiling instead of throwing", async () => {
+    // 20 docs x ~60,000 bytes = ~1.2 MiB: the initial greedy candidate (all 20
+    // rows, before any backoff) already exceeds MAX_CHUNK_BYTES on its own.
+    const customPolicy: SnapshotChunkBoundaryPolicy = {
+      target_chunk_bytes: 128 * 1024,
+      target_rows: 20,
+    };
+    const mutations: ReferenceMutation[] = Array.from({ length: 20 }, (_, index) => {
+      const id = String(index).padStart(2, "0");
+      return { op: "I", doc_id: id, after: doc(id, "x".repeat(60_000)) };
+    });
+
+    const result = await buildSnapshotChunks({
+      collection,
+      collectionPrefix,
+      descriptors: [],
+      loadedChunks: new Map(),
+      mutations: mutationMap(mutations),
+      incarnation,
+      policy: customPolicy,
+      lockedDirectOwnerIndex: null,
+      selectedNeighborIndex: null,
+    });
+
+    expect(result.chunks.reduce((sum, chunk) => sum + chunk.row_count, 0)).toBe(20);
+    for (const chunk of result.chunks) {
+      expect(chunk.byte_length).toBeLessThanOrEqual(MAX_CHUNK_BYTES);
+      if (chunk.row_count >= 2) {
+        expect(chunk.byte_length).toBeLessThanOrEqual(customPolicy.target_chunk_bytes);
+      }
+    }
   });
 
   test("merges underfull facing output with immediate right neighbor", async () => {
