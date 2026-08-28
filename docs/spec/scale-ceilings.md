@@ -3,7 +3,7 @@ title: Scale ceilings
 audience: spec
 doc_type: verification
 summary: Where every published scale limit comes from — the fold cost model, the measured per-host snapshot ceilings C and E, and the storage-side throughput walls.
-last-reviewed: 2026-08-09
+last-reviewed: 2026-08-27
 tags: [capacity, verification, fold, ceilings]
 related: ["../about/graduation.md", "../about/workload-fit.md", "../about/cost-model.md"]
 ---
@@ -61,12 +61,12 @@ at 8 MiB — 8 MiB peaks at ~19.5 MB and 19.5 × 4 = 78 MB fits under the
 149 MB) does not. Where a per-tier cell below cites "the 4x margin",
 this is the rule it means.
 
-cf-free is the exception, because its wall is CPU rather than memory:
-2048 rows measures ~1.5 ms and the row axis does not reach ~10 ms until
-~16,384 rows, but that margin was measured off workerd and so does not
-transfer. The value stays deliberately far inside it, because a
-free-isolate overrun is CPU-killed mid-rebuild and strands the
-`current.json` CAS.
+cf-free is the exception, because its binding cost is CPU rather than
+memory: 2048 rows measures ~1.5 ms and the row axis does not reach ~10 ms
+until ~16,384 rows, but that margin was measured off workerd and so does
+not transfer. The value stays deliberately far inside it;
+[Is the free CPU limit a wall?](#is-the-free-cpu-limit-a-wall) records
+what that conservatism rests on.
 
 **Still estimated:** the CPU column below and anything derived from it.
 CPU was measured on Node v24 / darwin-arm64, which is not workerd, and
@@ -109,6 +109,14 @@ interrupted before the body is complete, readers reject the hash
 mismatch. If the snapshot body lands but the `current.json` CAS does
 not, the snapshot is a correct but unreferenced orphan for GC. The
 pointer does not advance, but data is not corrupted.
+
+What an interrupted fold costs is liveness, not integrity. Because
+`current.json` never advances, `log_seq_start` stays where it was: the
+tail keeps growing and the next write tick retries the same rebuild. One
+interruption is a retried tick. A rebuild the host can never finish is a
+loop, and the cost of the loop is the unbounded tail — which is why the
+ceiling has to be sized to what the host can actually rebuild
+([Cloudflare caveat](../about/graduation.md#operations-plane-env-vars)).
 
 ## Fold cost model
 
@@ -205,10 +213,10 @@ The row ceiling catches tiny-doc snapshots that bytes can miss, and like
 `C` it is now per host: `E = 2048` on cf-free
 (`MAINTENANCE_MAX_FOLD_ROWS`), `32,768` on cf-paid, `65,536` on node.
 cf-free stays at 2048 even though the row axis does not reach the ~10 ms
-free budget until ~16,384 rows, because a free-isolate overrun is
-CPU-killed mid-rebuild and strands the `current.json` CAS; the larger
-hosts fail by running slow, not by stranding, so they are sized to
-memory.
+free budget until ~16,384 rows, because that margin was measured off
+workerd and the free CPU line is a cost budget rather than a guarded wall
+([details](#is-the-free-cpu-limit-a-wall)); the larger hosts are sized to
+memory, which on those hosts is a real limit.
 
 ### When a fold fires, and when it defers
 
@@ -233,9 +241,12 @@ pure and never trigger maintenance. For folding, three gates matter:
   `snapshot_rows + maxFoldEntriesPerPass > E`. `E` is likewise per host
   profile: 2048 on cf-free, 32,768 on cf-paid, 65,536 on node.
 
-`C` is conservative *on cf-free* because there is no adaptive backoff for
-a killed rebuild. Cloudflare free's ~10 ms CPU budget can rebuild roughly
-a 1 MB snapshot; `C = 512 KB` leaves margin. On CF free, setting
+`C` is conservative *on cf-free* because a fold that overruns cannot back
+off in-band — there is no adaptive retry, and the fold runs on a user's
+write. Cloudflare free's ~10 ms CPU budget can rebuild roughly a 1 MB
+snapshot; `C = 512 KB` leaves margin. That budget is economic rather than
+enforced at any measured duty cycle
+([details](#is-the-free-cpu-limit-a-wall)). On CF free, setting
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above
 `CF_FREE_MAX_SAFE_FOLD_BYTES = 1 MiB` emits an init-time
 `console.warn`.
@@ -310,25 +321,60 @@ measured wall rather than inherited from cf-free, so the shipped ceiling
 is already near the hardware wall on every tier; raising `C` further is
 an override, not the normal path.
 
-Cloudflare free has two binding walls:
+Cloudflare free has one hard per-invocation wall and one economic
+ceiling. Isolate memory (~128 MB) is a third hard limit, but at
+`C = 512 KB` it is nowhere near binding; it is what binds cf-paid and
+Node.
 
-- **CPU:** ~10 ms/request, defended by `C` and `E`.
-- **Subrequests:** 50/request, defended by the
+- **Subrequests: 50/request — hard.** Defended by the
   `maxFoldEntriesPerPass ≈ 20` tail slice. A fold pass is about
   `slice + 3` subrequests. GC's mark cap bounds LIST classification and
   ledger growth, while its sweep cap bounds DELETEs; one phase per tick
   stays under 50. Exact GC accounting is maintained in the
   `CLOUDFLARE_FREE_TIER` JSDoc and
   `packages/server/src/maintenance-budget.test.ts`.
+- **CPU: ~10 ms/request — economic.** `C` and `E` are sized against it as
+  a cost and latency budget line, not as a guard against termination.
+
+#### Is the free CPU limit a wall?
+
+Not at any duty cycle that has been measured. On a deployed Worker with a
+*configured* `limits.cpu_ms: 10`, 4 MiB folds consumed 41.7–67.8 ms of
+platform-measured CPU and every invocation reported `outcome: success` —
+the budget exceeded up to ~6.8x with enforcement never engaging, at ~3 s
+and 70 s spacing alike. An earlier probe on a confirmed Workers Free
+account, with no `limits` block at all, ran ten consecutive 4 MiB folds
+at 23–66 ms with zero `exceededCpu`.
+
+Cloudflare documents the limit as elastic: an isolate has "built-in
+flexibility" for infrequent overruns, and a Worker that "starts hitting
+the limit consistently" is terminated according to the configured limit.
+A kill is therefore not excluded. What is unmeasured is the region where
+it would appear: sustained rates *faster* than one fold every ~3 s, and
+runs longer than the ten consecutive invocations tested. No numeric
+threshold, window, or duty cycle is published.
+
+Two consequences:
+
+- **The cost model is unaffected.** The measured ~10–16 ms/MB at 4 MiB
+  corroborates the [fold cost model](#fold-cost-model) above. What the
+  measurement removes is the kill, not the number.
+- **On cf-free, `C` and `E` are budget lines rather than guards.** They
+  bound real costs — the free daily allowance, billed CPU-ms on the
+  Standard usage model, and user-visible write latency, since the fold
+  runs on the write path — but not a termination risk that has been
+  observed. This applies to the free tier only: on cf-paid and Node, `C`
+  guards the ~128 MB memory wall, which does terminate an isolate, and
+  those values stay sized to it at a 4x margin.
 
 | Tier | Hardware walls | Binds on | What can actually fold |
 | --- | --- | --- | --- |
-| **Cloudflare free** | ~10 ms CPU/request and 50 subrequests/request | CPU + subrequests | profile `C = 512 KB` ⇒ ~512 KB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) hits the CPU wall and `console.warn`s |
+| **Cloudflare free** | ~10 ms CPU/request (economic) and 50 subrequests/request (hard) | CPU cost + subrequests | profile `C = 512 KB` ⇒ ~512 KB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
 | **Cloudflare paid** | 30 s CPU default (up to 5 min); ~128 MB Worker memory; 10,000 subrequests/request default, raisable to 10M, changed 2026-02-11; free wall stays 50 | memory | `C = 8 MiB` (`CF_PAID_MAINTENANCE_MAX_FOLD_BYTES`), `E = 32,768` rows (`CF_PAID_MAINTENANCE_MAX_FOLD_ROWS`), selected by `BAERLY_MAINTENANCE_PROFILE=cf-paid` — no `C` override needed to get there. CPU is not the wall; memory is: 8 MiB peaks at ~19.5 MB, which fits the 4x margin under ~128 MB; the next grid cell (16 MiB ⇒ 37.3 MB) does not. That margin is why the ceiling is not "tens of MB" |
 | **Serverful Node** | no per-request cap; process RAM; a fold blocks the event loop | host memory | `C = 32 MiB` (`NODE_MAINTENANCE_MAX_FOLD_BYTES`), `E = 65,536` rows (`NODE_MAINTENANCE_MAX_FOLD_ROWS`), selected automatically by the Node adapter. 32 MiB is the top of the measured grid, **not** the measured wall — the probe reports `grid-exhausted` for this profile at every margin and every heap from 704 MB up. Past the grid, scale by `C ≈ heap / 10`. Per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted) |
 
 Implications: on Cloudflare free, a ~1 MB snapshot is near the ~10 ms
-CPU wall, and the 50-subrequest wall makes a large tail drain over many
+CPU budget, and the 50-subrequest wall makes a large tail drain over many
 write ticks. On Cloudflare paid, CPU could rebuild a multi-GB snapshot,
 but Worker memory (~128 MB) is the wall because a fold holds the old
 snapshot, new snapshot, and log tail at once — measured at ~2.4x the
