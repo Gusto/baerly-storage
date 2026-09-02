@@ -5,8 +5,12 @@
 // `../measurement/workload-ceiling-collect.ts` does: `CF_API_TOKEN` +
 // `CF_ACCOUNT_ID` env vars if both are set, otherwise a repo-scoped
 // `credentials/cloudflare-deploy.json` (gitignored — see
-// `tests/fixtures/endpoint-creds.ts`'s `loadCloudflareDeployCreds`). Either
-// way, the resolved token/account id are injected only into the spawned
+// `tests/fixtures/endpoint-creds.ts`'s `loadCloudflareDeployCreds`).
+//
+// Set `WORKLOAD_CEILING_TIER=free` to use `credentials/cloudflare-deploy-free.json`
+// instead of `credentials/cloudflare-deploy.json`.
+//
+// Either way, the resolved token/account id are injected only into the spawned
 // `wrangler` child's environment — never printed, never written to disk,
 // never exported into the calling shell.
 //
@@ -14,6 +18,14 @@
 //   node bench/workload-ceiling-worker/deploy.mjs deploy --name baerly-storage
 //   node bench/workload-ceiling-worker/deploy.mjs secret put WORKLOAD_CEILING_SHARED_SECRET --name baerly-storage
 //   node bench/workload-ceiling-worker/deploy.mjs delete --name baerly-storage
+//
+// NOTE: `secret put` mints a NEW Worker version (a fresh script_version in
+// analytics — observed 2026-08-20: re-putting the secret changed the serving
+// version from 9a1122b4… to bf21bd73… with no code deploy). The capture
+// protocol requires a single script_version across all cells of a sweep, so
+// put secrets BEFORE a capture starts and never during one; and remember any
+// "deployed version" you recorded earlier is now stale — re-check with
+// `deployments list`.
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -23,9 +35,20 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..");
 const WRANGLER_CONFIG = join(HERE, "wrangler.jsonc");
 
+function resolveTier() {
+  const tier = process.env["WORKLOAD_CEILING_TIER"]?.toLowerCase().trim();
+  return tier === "free" ? "free" : "paid";
+}
+
+function deployCredsFilename(tier) {
+  return tier === "free" ? "cloudflare-deploy-free.json" : "cloudflare-deploy.json";
+}
+
 async function loadDeployCreds() {
+  const tier = resolveTier();
+  const filename = deployCredsFilename(tier);
   try {
-    const raw = await readFile(join(REPO_ROOT, "credentials", "cloudflare-deploy.json"), "utf8");
+    const raw = await readFile(join(REPO_ROOT, "credentials", filename), "utf8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -38,6 +61,7 @@ async function loadDeployCreds() {
 const present = (v) => v !== undefined && v.trim() !== "";
 
 async function resolveAuth() {
+  const tier = resolveTier();
   const envToken = process.env["CF_API_TOKEN"];
   const envAccount = process.env["CF_ACCOUNT_ID"];
   if (present(envToken) && present(envAccount)) {
@@ -47,12 +71,18 @@ async function resolveAuth() {
   const apiToken = present(envToken) ? envToken : fileCreds?.api_token;
   const accountId = present(envAccount) ? envAccount : fileCreds?.account_id;
   if (!present(apiToken) || !present(accountId)) {
+    const filename = deployCredsFilename(tier);
     console.error(
-      "workload-ceiling-worker/deploy.mjs: requires CF_API_TOKEN + CF_ACCOUNT_ID " +
-        "(env vars) or credentials/cloudflare-deploy.json ({ api_token, account_id }).",
+      `workload-ceiling-worker/deploy.mjs: requires CF_API_TOKEN + CF_ACCOUNT_ID ` +
+        `(env vars) or credentials/${filename} ({ api_token, account_id }).\n` +
+        `Set WORKLOAD_CEILING_TIER=free to use credentials/cloudflare-deploy-free.json ` +
+        `instead of credentials/cloudflare-deploy.json.`,
     );
     return null;
   }
+  console.log(
+    `workload-ceiling-worker/deploy.mjs: using ${tier} tier (credentials/${deployCredsFilename(tier)})`,
+  );
   return { apiToken, accountId };
 }
 
