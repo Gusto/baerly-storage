@@ -8,6 +8,7 @@ import {
 import {
   assessWorkloadCeilingExecution,
   buildWorkloadCeilingComparisonReport,
+  isResolvedOk,
   matchWorkloadCeilingEvents,
   readEventsFromDirectory,
 } from "./workload-ceiling-compare.ts";
@@ -64,6 +65,31 @@ const evidenceMissing = (over: Partial<WorkloadCeilingRawEvent>): WorkloadCeilin
     evidence: {
       status: "missing",
       detail: "no workers-observability join line for run_id in window",
+      authority: "workers-observability",
+      authoritative_outcome: null,
+      authoritative_cpu_ms: null,
+      authoritative_response_status: null,
+      cpu_source: "none",
+      cpu_outcome_verbatim: null,
+    },
+    ...over,
+  });
+
+/**
+ * An invocation whose authoritative record arrived but did not resolve to
+ * exactly one correlatable event — produced in practice by
+ * `workload-ceiling-collect.ts` (duplicate join lines, a summary line
+ * missing required fields, or two sources disagreeing about the outcome).
+ */
+const evidenceAmbiguous = (over: Partial<WorkloadCeilingRawEvent>): WorkloadCeilingRawEvent =>
+  event({
+    script_version: "unresolved",
+    colo: "unknown",
+    outcome: null,
+    cpu_ms: null,
+    evidence: {
+      status: "ambiguous",
+      detail: "2 join lines carry this run_id in one window",
       authority: "workers-observability",
       authoritative_outcome: null,
       authoritative_cpu_ms: null,
@@ -206,6 +232,57 @@ describe("assessWorkloadCeilingExecution", () => {
     expect(assessment.evidence_ambiguous_count).toBe(0);
     expect(assessment.finite_cpu_sample_count).toBe(1);
     expect(assessment.outcome_histogram).toEqual({ success: 2, exceededCpu: 1 });
+  });
+
+  test("an ambiguous record is neither authoritative nor an execution failure", () => {
+    // `evidence_ambiguous_count` was asserted only as `0` before, so the
+    // branch that increments it never ran. An ambiguous invocation is an
+    // evidence fact: it must not enter the zero-failure denominator, and it
+    // must not be counted as a failure either.
+    const assessment = assessWorkloadCeilingExecution([
+      event({ run_id: "r1", scenario_id: "s1" }),
+      evidenceAmbiguous({ run_id: "r2", scenario_id: "s2" }),
+      evidenceAmbiguous({ run_id: "r3", scenario_id: "s3" }),
+    ]);
+    expect(assessment.evidence_ambiguous_count).toBe(2);
+    expect(assessment.evidence_missing_count).toBe(0);
+    expect(assessment.authoritative_event_count).toBe(1);
+    expect(assessment.execution_failure_count).toBe(0);
+    expect(assessment.finite_cpu_sample_count).toBe(1);
+    expect(assessment.outcome_histogram).toEqual({ success: 1 });
+  });
+
+  test("finite_cpu_sample_count agrees with isResolvedOk over the same events", () => {
+    // The drift the shared predicate exists to prevent: the assessment used
+    // to re-implement the success-plus-finite-CPU test inline.
+    const events = [
+      event({ run_id: "r1", scenario_id: "s1" }),
+      cpuMissingSuccess({ run_id: "r2", scenario_id: "s2" }),
+      event({ run_id: "r3", scenario_id: "s3", outcome: "exceededCpu", cpu_ms: 50 }),
+      evidenceMissing({ run_id: "r4", scenario_id: "s4" }),
+      evidenceAmbiguous({ run_id: "r5", scenario_id: "s5" }),
+      event({ run_id: "r6", scenario_id: "s6", cpu_ms: 12.5 }),
+    ];
+    expect(assessWorkloadCeilingExecution(events).finite_cpu_sample_count).toBe(
+      events.filter(isResolvedOk).length,
+    );
+  });
+
+  test("an unclassified evidence status is refused, not counted as authoritative", () => {
+    // Guards the fall-through: a fourth status would otherwise be treated as
+    // a resolved Bernoulli trial and inflate the zero-failure denominator.
+    const rogue = {
+      ...event({ run_id: "r1", scenario_id: "s1" }),
+      outcome: null,
+      evidence: { ...event({}).evidence, status: "provisional" },
+    } as unknown as WorkloadCeilingRawEvent;
+    try {
+      assessWorkloadCeilingExecution([rogue]);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkloadCeilingHarnessError);
+      expect((error as WorkloadCeilingHarnessError).field).toBe("evidence.status");
+    }
   });
 
   test("a missing adaptive row with successful observability is not an execution failure", () => {
