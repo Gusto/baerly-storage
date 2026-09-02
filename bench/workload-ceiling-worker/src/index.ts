@@ -26,16 +26,24 @@
  * `../../measurement/workload-ceiling-collect.ts`. See README.md for the
  * platform documentation this rests on.
  *
- * The two `implementation` values read the SAME logical row set through two
- * different storage shapes that `workload-ceiling-provision.ts` writes side
- * by side under one `fixture_prefix`:
+ * The three `implementation` values read the SAME logical row set through
+ * different storage shapes and read paths, all written side by side under one
+ * `fixture_prefix` by `workload-ceiling-provision.ts`:
  *
- *  - `monolithic-control` — a single JSON blob (`fixture.json`'s
- *    `monolithic_key`), the shape of today's shipped single-snapshot format.
+ *  - `monolithic-control` — today's shipped single-snapshot format at
+ *    `fixture.json`'s `monolithic_key`, read through the shipped
+ *    `loadSnapshotAsMap`, SHA-256 verification included, so what the study
+ *    measures is what a caller would run.
+ *  - `monolithic-control-unhashed` — the identical bytes at the identical
+ *    key, differing by exactly one operation: the digest verification.
+ *    A Worker may not time itself, so the cost of that verification has to
+ *    be a difference of two platform-reported CPU numbers. It is a
+ *    measurement-only probe, not a subject — see
+ *    `WORKLOAD_CEILING_IMPLEMENTATIONS` where the arm is declared.
  *  - `chunked-candidate` — the proposed manifest + chunk layout, read
  *    through `openSnapshotView` (`packages/server/src/snapshot-view.ts`).
  *
- * Both feed the identical fold subject, so the comparison isolates the
+ * All three feed the identical fold subject, so a comparison isolates the
  * storage-shape cost, not a difference in what gets computed.
  */
 import type { DocumentData, Storage } from "@baerly/protocol";
