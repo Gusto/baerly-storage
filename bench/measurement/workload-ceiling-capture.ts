@@ -25,6 +25,7 @@ import {
   encodeWorkloadCeilingInvocationRecord,
   encodeWorkloadCeilingRunRequest,
   nextInvocationStart,
+  WORKLOAD_CEILING_IMPLEMENTATIONS,
   type WorkloadCeilingImplementation,
   type WorkloadCeilingInvocationRecord,
   type WorkloadCeilingSweepCell,
@@ -153,18 +154,55 @@ const assertEnv = (name: string): string => {
   return value;
 };
 
-const parseArms = (value: string | undefined): WorkloadCeilingImplementation[] => {
+/**
+ * Validates against `WORKLOAD_CEILING_IMPLEMENTATIONS` rather than a
+ * hand-written literal list, and narrows only after validating. A repeated
+ * list drifts silently: adding a fourth arm to the const would leave this
+ * guard rejecting it with no compiler signal, and the cast-then-check order
+ * meant TypeScript saw a `WorkloadCeilingImplementation[]` that the runtime
+ * had not yet confirmed.
+ */
+export const parseArms = (value: string | undefined): WorkloadCeilingImplementation[] => {
   if (value === undefined) {
     return [...DEFAULT_ARMS];
   }
-  const arms = value.split(",").map((s) => s.trim()) as WorkloadCeilingImplementation[];
-  for (const arm of arms) {
-    if (!["monolithic-control", "monolithic-control-unhashed", "chunked-candidate"].includes(arm)) {
-      console.error(`Invalid arm: ${arm}`);
+  const arms: WorkloadCeilingImplementation[] = [];
+  for (const candidate of value.split(",").map((s) => s.trim())) {
+    if (!(WORKLOAD_CEILING_IMPLEMENTATIONS as readonly string[]).includes(candidate)) {
+      console.error(
+        `Invalid arm: ${JSON.stringify(candidate)} — must be one of ` +
+          `${WORKLOAD_CEILING_IMPLEMENTATIONS.join(", ")}`,
+      );
       process.exit(1);
     }
+    arms.push(candidate as WorkloadCeilingImplementation);
   }
   return arms;
+};
+
+/**
+ * The per-cell measured-invocation count, overridable for a shortened
+ * rehearsal.
+ *
+ * Unguarded `parseInt` made a non-numeric value the worst possible outcome
+ * for a measurement runner: `totalPasses` became NaN, `pass < NaN` was false
+ * on the first test, and the runner printed "Capture complete" and exited 0
+ * having invoked nothing. A capture that silently measures zero invocations
+ * and reports success is indistinguishable from one that ran, until the
+ * aggregate refuses hours later.
+ */
+export const parseMeasuredOverride = (value: string | undefined): number => {
+  if (value === undefined || value.trim() === "") {
+    return WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell;
+  }
+  const measured = Number(value);
+  if (!Number.isInteger(measured) || measured < 1) {
+    console.error(
+      `WORKLOAD_CEILING_MEASURED_OVERRIDE must be a positive integer; got ${JSON.stringify(value)}`,
+    );
+    process.exit(1);
+  }
+  return measured;
 };
 
 const parseResultsDir = (value: string | undefined): string => {
@@ -376,10 +414,7 @@ const main = async (): Promise<number> => {
   const arms = parseArms(process.env["WORKLOAD_CEILING_ARMS"]);
   const resultsDir = parseResultsDir(process.env["WORKLOAD_CEILING_RESULTS_DIR"]);
 
-  const measuredOverride = process.env["WORKLOAD_CEILING_MEASURED_OVERRIDE"];
-  const measured = measuredOverride
-    ? parseInt(measuredOverride, 10)
-    : WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell;
+  const measured = parseMeasuredOverride(process.env["WORKLOAD_CEILING_MEASURED_OVERRIDE"]);
   const warmup = WORKLOAD_CEILING_STUDY.capture.warmup_invocations_per_cell;
 
   validateWorkerUrl(workerUrl);
