@@ -46,8 +46,14 @@ export async function loadEndpointCreds(file: string): Promise<EndpointCreds | n
  * `docs/superpowers/programs/increase-workload-ceiling/runbooks/
  * lane-b-preflight.md` § Q4 before treating `WORKLOAD_CEILING_TIER=free`
  * output as `cf-free` evidence.
+ *
+ * Which tier a given run uses is decided by the study's own
+ * `bench/measurement/workload-ceiling-tier.ts`, not here: this fixture is
+ * shared with the credential-gated conformance and randomized suites, and a
+ * study-owned env var read inside it would apply to all of them.
  */
-export type CloudflareTier = "paid" | "free";
+export const CLOUDFLARE_TIERS = ["paid", "free"] as const;
+export type CloudflareTier = (typeof CLOUDFLARE_TIERS)[number];
 
 /**
  * Shape of `credentials/cloudflare-deploy.json` (gitignored) — a Cloudflare
@@ -61,16 +67,6 @@ export type CloudflareTier = "paid" | "free";
 export interface CloudflareDeployCreds {
   api_token: string;
   account_id: string;
-}
-
-/**
- * Resolve the Cloudflare tier from the environment. Returns "free" if
- * `WORKLOAD_CEILING_TIER` is set to "free" (case-insensitive), otherwise
- * returns "paid" as the default.
- */
-export function resolveCloudflareTier(): CloudflareTier {
-  const tier = process.env["WORKLOAD_CEILING_TIER"]?.toLowerCase().trim();
-  return tier === "free" ? "free" : "paid";
 }
 
 /**
@@ -100,12 +96,7 @@ export function cloudflareDeployCredsFilename(tier: CloudflareTier): string {
  *   compatibility with existing callers that don't need tier selection.
  */
 export async function loadCloudflareDeployCreds(): Promise<CloudflareDeployCreds | null> {
-  try {
-    const raw = await readFile(join("credentials", "cloudflare-deploy.json"), "utf8");
-    return JSON.parse(raw) as CloudflareDeployCreds;
-  } catch {
-    return null;
-  }
+  return loadCloudflareDeployCredsForTier("paid");
 }
 
 /**
@@ -126,15 +117,6 @@ export async function loadCloudflareDeployCredsForTier(
 }
 
 /**
- * Load Cloudflare Workers API credentials, using the tier from
- * `WORKLOAD_CEILING_TIER` environment variable (defaulting to "paid").
- * This is the preferred method for workload-ceiling tools.
- */
-export async function loadCloudflareDeployCredsWithEnvTier(): Promise<CloudflareDeployCreds | null> {
-  return loadCloudflareDeployCredsForTier(resolveCloudflareTier());
-}
-
-/**
  * Load R2 credentials for the specified tier. Uses `cloudflare.json` for
  * "paid" tier, `cloudflare-free.json` for "free" tier. Returns `null`
  * when the file is absent/unreadable.
@@ -143,13 +125,4 @@ export async function loadCloudflareR2CredsForTier(
   tier: CloudflareTier,
 ): Promise<EndpointCreds | null> {
   return loadEndpointCreds(cloudflareR2CredsFilename(tier));
-}
-
-/**
- * Load R2 credentials, using the tier from `WORKLOAD_CEILING_TIER`
- * environment variable (defaulting to "paid"). This is the preferred method
- * for workload-ceiling tools.
- */
-export async function loadCloudflareR2CredsWithEnvTier(): Promise<EndpointCreds | null> {
-  return loadCloudflareR2CredsForTier(resolveCloudflareTier());
 }

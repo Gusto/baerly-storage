@@ -31,8 +31,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import {
   cloudflareDeployCredsFilename,
-  loadCloudflareDeployCredsWithEnvTier,
-  resolveCloudflareTier,
+  type CloudflareTier,
+  loadCloudflareDeployCredsForTier,
 } from "../../tests/fixtures/endpoint-creds.ts";
 import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import {
@@ -47,6 +47,7 @@ import {
   type WorkloadCeilingRawEvent,
   type WorkloadCeilingThermalClass,
 } from "./workload-ceiling-harness.ts";
+import { resolveWorkloadCeilingTier } from "./workload-ceiling-tier.ts";
 
 const GRAPHQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
 
@@ -477,9 +478,15 @@ export function extractWorkloadCeilingRawEvent(
  * Required auth: `CF_API_TOKEN` + `CF_ACCOUNT_ID` env vars (the same source
  * variables `tests/integration/day-one-handshake.test.ts` reads — never
  * `wrangler login`), or, when either is unset, a repo-scoped
- * `credentials/cloudflare-deploy.json` (gitignored — see
- * {@link loadCloudflareDeployCreds}). The env vars win when both are
- * present, so a CI override never silently loses to a stale local file.
+ * `credentials/cloudflare-deploy*.json` (gitignored — see
+ * {@link loadCloudflareDeployCredsForTier}). The env vars win per field, so
+ * a CI override never silently loses to a stale local file, and the startup
+ * line reports which source each value came from.
+ * Optional: `WORKLOAD_CEILING_TIER` (`paid` — the default — or `free`)
+ * chooses which account both this collector and
+ * `bench/workload-ceiling-worker/deploy.mjs` talk to; an unrecognized value
+ * is a usage error rather than a silent fallback (see
+ * {@link resolveWorkloadCeilingTier}).
  * Required env: `WORKLOAD_CEILING_RUN_ID`, `WORKLOAD_CEILING_SCENARIO_ID`,
  * `WORKLOAD_CEILING_COMPATIBILITY_DATE`.
  * Optional: `WORKLOAD_CEILING_WINDOW_START` / `WORKLOAD_CEILING_WINDOW_END`
@@ -565,11 +572,19 @@ export function resolveCollectWindow(
 }
 
 async function main(): Promise<number> {
-  const tier = resolveCloudflareTier();
+  let tier: CloudflareTier;
+  try {
+    tier = resolveWorkloadCeilingTier(process.env);
+  } catch (error) {
+    console.error(
+      `workload-ceiling-collect: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
   const deployCredsFilename = cloudflareDeployCredsFilename(tier);
   const deployCreds =
     !present(process.env["CF_API_TOKEN"]) || !present(process.env["CF_ACCOUNT_ID"])
-      ? await loadCloudflareDeployCredsWithEnvTier()
+      ? await loadCloudflareDeployCredsForTier(tier)
       : null;
   const apiToken = present(process.env["CF_API_TOKEN"])
     ? process.env["CF_API_TOKEN"]
@@ -597,7 +612,17 @@ async function main(): Promise<number> {
     );
     return 1;
   }
-  console.log(`workload-ceiling-collect: using ${tier} tier (credentials/${deployCredsFilename})`);
+  // Per-field provenance, because the env vars win per field: a run can
+  // legitimately take the token from `CF_API_TOKEN` and the account id from
+  // the credentials file. The line this replaced named the file
+  // unconditionally, so a fully env-authenticated run reported a provenance
+  // nothing had read.
+  const sourceOf = (envVar: string): string =>
+    present(process.env[envVar]) ? envVar : `credentials/${deployCredsFilename}`;
+  console.log(
+    `workload-ceiling-collect: using ${tier} tier ` +
+      `(token from ${sourceOf("CF_API_TOKEN")}, account from ${sourceOf("CF_ACCOUNT_ID")})`,
+  );
 
   const now = new Date();
   let window: WorkloadCeilingCollectWindow;
