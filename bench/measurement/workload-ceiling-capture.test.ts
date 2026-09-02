@@ -7,6 +7,7 @@
 import { describe, test, expect, vi } from "vitest";
 import {
   MINUTE_TAIL_GUARD_SECONDS,
+  WORKLOAD_CEILING_IMPLEMENTATIONS,
   nextInvocationStart,
   collectionWindowFor,
   decodeWorkloadCeilingRunRequest,
@@ -17,6 +18,8 @@ import {
 } from "./workload-ceiling-harness.ts";
 import {
   invokeWorker,
+  parseArms,
+  parseMeasuredOverride,
   planCaptureInvocations,
   remainingCaptureInvocations,
 } from "./workload-ceiling-capture.ts";
@@ -471,5 +474,60 @@ describe("remainingCaptureInvocations", () => {
     expect(remaining.filter((p) => !p.warmup)).toHaveLength(
       planned.filter((p) => !p.warmup).length,
     );
+  });
+});
+
+/** Spies `process.exit` so a CLI guard's refusal is observable instead of terminating the worker. */
+const withExitSpy = (body: () => void): number | undefined => {
+  let code: number | undefined;
+  const exitSpy = vi.spyOn(process, "exit").mockImplementation(((exitCode?: number) => {
+    code = exitCode;
+    throw new Error(`__exit:${exitCode}`);
+  }) as never);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(body).toThrow(/__exit:/);
+  } finally {
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  }
+  return code;
+};
+
+describe("parseMeasuredOverride", () => {
+  test("unset or blank takes the preregistered per-cell count", () => {
+    const planned = WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell;
+    expect(parseMeasuredOverride(undefined)).toBe(planned);
+    expect(parseMeasuredOverride("  ")).toBe(planned);
+  });
+
+  test("a positive integer overrides it", () => {
+    expect(parseMeasuredOverride("3")).toBe(3);
+  });
+
+  // Unguarded `parseInt` made this the quietest possible failure: NaN passes
+  // through, `pass < NaN` is false immediately, and the runner prints
+  // "Capture complete" and exits 0 having invoked nothing.
+  test.each(["abc", "0", "-1", "2.5", "NaN"])("%j is refused, not read as NaN", (raw) => {
+    expect(withExitSpy(() => parseMeasuredOverride(raw))).toBe(1);
+  });
+});
+
+describe("parseArms", () => {
+  test("every declared implementation is accepted", () => {
+    expect(parseArms(WORKLOAD_CEILING_IMPLEMENTATIONS.join(","))).toEqual([
+      ...WORKLOAD_CEILING_IMPLEMENTATIONS,
+    ]);
+  });
+
+  test("surrounding whitespace is forgiven", () => {
+    expect(parseArms(" chunked-candidate , monolithic-control ")).toEqual([
+      "chunked-candidate",
+      "monolithic-control",
+    ]);
+  });
+
+  test("an unknown arm is refused before it can reach the Worker", () => {
+    expect(withExitSpy(() => parseArms("monolithic-control,chunked"))).toBe(1);
   });
 });
