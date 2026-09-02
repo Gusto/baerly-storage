@@ -35,9 +35,26 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..");
 const WRANGLER_CONFIG = join(HERE, "wrangler.jsonc");
 
+// Mirrors `resolveWorkloadCeilingTier` in
+// `../measurement/workload-ceiling-tier.ts` — duplicated because this is a
+// plain `.mjs` script that cannot import the TypeScript module. Both must
+// reject an unrecognized value: coercing a typo to `paid` would deploy the
+// study Worker into an account the operator never named, while the collector
+// queried the one they did.
 function resolveTier() {
-  const tier = process.env["WORKLOAD_CEILING_TIER"]?.toLowerCase().trim();
-  return tier === "free" ? "free" : "paid";
+  const raw = process.env["WORKLOAD_CEILING_TIER"];
+  if (raw === undefined || raw.trim() === "") {
+    return "paid";
+  }
+  const tier = raw.toLowerCase().trim();
+  if (tier !== "paid" && tier !== "free") {
+    console.error(
+      `workload-ceiling-worker/deploy.mjs: WORKLOAD_CEILING_TIER must be one of ` +
+        `paid, free; got ${JSON.stringify(raw)}`,
+    );
+    process.exit(1);
+  }
+  return tier;
 }
 
 function deployCredsFilename(tier) {
