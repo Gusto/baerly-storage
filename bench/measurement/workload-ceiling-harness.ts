@@ -113,20 +113,6 @@ export interface WorkloadCeilingEvidenceBlock {
  * config is JSONC and cannot import it — the name is repeated there under a
  * comment pointing back here.
  */
-/**
- * The ONE R2 bucket both ends of the study must agree on.
- *
- * `bench/workload-ceiling-worker/wrangler.jsonc` binds `env.BUCKET` to this
- * name, and `workload-ceiling-provision.ts` writes fixtures to whatever
- * `credentials/cloudflare.json` names. Those are configured independently, and
- * a mismatch is silent at provisioning time and unrecognizable at run time —
- * every `POST /run` returns a 502 `fixture descriptor is missing`, which reads
- * as a provisioning bug rather than a bucket-name mismatch. This constant is
- * what `workload-ceiling-provision.ts` preflights the credentials file
- * against, so the mismatch fails loudly before anything is written. Wrangler
- * config is JSONC and cannot import it — the name is repeated there under a
- * comment pointing back here.
- */
 export const WORKLOAD_CEILING_BUCKET_NAME = "baerly-storage-eval" as const;
 
 export const WORKLOAD_CEILING_IMPLEMENTATIONS = [
