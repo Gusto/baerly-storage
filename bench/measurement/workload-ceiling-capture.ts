@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import {
   collectionWindowFor,
   decodeWorkloadCeilingInvocationRecord,
+  decodeWorkloadCeilingSweepReport,
   encodeWorkloadCeilingInvocationRecord,
   encodeWorkloadCeilingRunRequest,
   nextInvocationStart,
@@ -230,6 +231,14 @@ const validateWorkerUrl = (url: string): void => {
   }
 };
 
+/**
+ * Reads the sweep report through the same codec its writer enforces on the
+ * same file. `JSON.parse ... as WorkloadCeilingSweepReport` type-asserted a
+ * shape nothing had checked, so a parseable-but-malformed report fed
+ * unvalidated `achieved_bytes` / `target_bytes` / `row_count` straight into
+ * the admission gates downstream — the numbers the study's conclusions rest
+ * on.
+ */
 const loadSweepReport = async (
   resultsDir: string,
   sweepId: string,
@@ -237,7 +246,7 @@ const loadSweepReport = async (
   const sweepPath = resolve(resultsDir, `sweep-${sweepId}.json`);
   try {
     const raw = await readFile(sweepPath, "utf-8");
-    return JSON.parse(raw) as WorkloadCeilingSweepReport;
+    return decodeWorkloadCeilingSweepReport(raw);
   } catch (error) {
     console.error(`Failed to read sweep report from ${sweepPath}`);
     console.error(error);
