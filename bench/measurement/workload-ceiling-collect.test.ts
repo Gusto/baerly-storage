@@ -434,6 +434,39 @@ describe("queryWorkersObservability", () => {
       }),
     ).rejects.toThrow(/observability query failed[\s\S]*bad scope/);
   });
+
+  test("a full page throws instead of reading as a run the platform never recorded", async () => {
+    // No pagination, and the only filter is the service name. A window busy
+    // enough to fill the page silently loses records, and a lost join line
+    // reads downstream as evidence `missing` — a telemetry drop the study
+    // would then treat as real.
+    const fetchStub = (async () =>
+      new Response(JSON.stringify(obsEnvelope(Array.from({ length: 200 }, () => joinLine("x")))), {
+        status: 200,
+      })) as typeof fetch;
+    await expect(
+      queryWorkersObservability({
+        accountTag: "acct",
+        apiToken: "tok",
+        window,
+        fetchImpl: fetchStub,
+      }),
+    ).rejects.toThrow(/200 events, at or over the 200-event page limit/);
+  });
+
+  test("a partial page is returned unmodified", async () => {
+    const events = Array.from({ length: 199 }, () => joinLine("x"));
+    const fetchStub = (async () =>
+      new Response(JSON.stringify(obsEnvelope(events)), { status: 200 })) as typeof fetch;
+    await expect(
+      queryWorkersObservability({
+        accountTag: "acct",
+        apiToken: "tok",
+        window,
+        fetchImpl: fetchStub,
+      }),
+    ).resolves.toEqual(obsEnvelope(events));
+  });
 });
 
 describe("resolveCollectOutDir", () => {

@@ -58,6 +58,25 @@ const GRAPHQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
 const OBSERVABILITY_QUERY_PATH = "https://api.cloudflare.com/client/v4/accounts" as const;
 
 /**
+ * How many Observability events one collection window may return.
+ *
+ * The query has no pagination and filters only by `$metadata.service`, so a
+ * window busy enough to hit this limit comes back TRUNCATED — and a
+ * truncated window that dropped this run's join line is indistinguishable
+ * downstream from a window the platform never recorded it in. That reads as
+ * evidence `missing`, i.e. as a telemetry drop, which is exactly the
+ * conclusion the study must not reach by accident. Hitting the limit is
+ * therefore a hard error (see {@link queryWorkersObservability}), not a
+ * silent ceiling.
+ *
+ * Two events per invocation (join line + fetch summary) means this holds
+ * ~100 invocations. A compliant capture collects one narrow window per
+ * invocation, so reaching it means the window is far wider than the
+ * protocol intends.
+ */
+const OBSERVABILITY_EVENT_LIMIT = 200;
+
+/**
  * The single already-deployed Worker this Step 10 smoke run targets (see
  * `bench/workload-ceiling-worker/README.md` §"Join mechanism" and §"Token
  * scope"). A per-run uniquely-named deployment would disambiguate concurrent
@@ -214,7 +233,7 @@ export const queryWorkersObservability = async (
           ],
         },
         view: "events",
-        limit: 200,
+        limit: OBSERVABILITY_EVENT_LIMIT,
       }),
     },
   );
@@ -230,6 +249,19 @@ export const queryWorkersObservability = async (
   // which would mark every invocation in the window as evidence-missing.
   if (body?.success !== true) {
     throw new Error(`observability query failed: ${JSON.stringify(body?.errors ?? body)}`);
+  }
+
+  // A full page is an unpaginated truncation, and the same argument as the
+  // guard above applies: it must not read downstream as "this run was never
+  // recorded". Narrowing the window is the fix, so the error says so.
+  const returned = extractObservabilityEvents(body).length;
+  if (returned >= OBSERVABILITY_EVENT_LIMIT) {
+    throw new Error(
+      `observability query returned ${returned} events, at or over the ` +
+        `${OBSERVABILITY_EVENT_LIMIT}-event page limit: the window ` +
+        `${input.window.gte}/${input.window.lt} is truncated and may have dropped ` +
+        `this run's records. Narrow WORKLOAD_CEILING_WINDOW_START/END.`,
+    );
   }
 
   return body;
