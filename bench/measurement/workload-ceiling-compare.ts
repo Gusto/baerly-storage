@@ -149,21 +149,54 @@ export function assessWorkloadCeilingExecution(
   let ambiguous = 0;
   let finiteCpu = 0;
   for (const event of events) {
-    if (event.evidence.status === "missing") {
-      missing += 1;
-      continue;
+    switch (event.evidence.status) {
+      case "missing": {
+        missing += 1;
+        continue;
+      }
+      case "ambiguous": {
+        ambiguous += 1;
+        continue;
+      }
+      case "resolved": {
+        break;
+      }
+      default: {
+        // A fourth evidence status must be classified here deliberately.
+        // Reaching the authoritative path by fall-through would count an
+        // unclassified record as a Bernoulli trial and assert a histogram
+        // entry over a genuine `null` outcome — inflating the denominator of
+        // the zero-failure bound with an invocation whose result nobody
+        // established.
+        const unclassified: never = event.evidence.status;
+        throw new WorkloadCeilingHarnessError(
+          "evidence.status",
+          `unclassified evidence status ${JSON.stringify(unclassified)}`,
+        );
+      }
     }
-    if (event.evidence.status === "ambiguous") {
-      ambiguous += 1;
-      continue;
+    // `resolved` implies a non-null outcome in the codec
+    // (`workload-ceiling-harness.ts`), but the flat event type does not say
+    // so, and this function also runs over hand-built events. Assert the
+    // invariant rather than silencing it with `!`.
+    const outcome = event.outcome;
+    if (outcome === null) {
+      throw new WorkloadCeilingHarnessError(
+        "outcome",
+        'must be a platform outcome when evidence.status is "resolved"',
+      );
     }
     authoritative += 1;
-    histogram[event.outcome!] = (histogram[event.outcome!] ?? 0) + 1;
-    if (event.outcome !== WORKLOAD_CEILING_SUCCESS_OUTCOME) {
+    histogram[outcome] = (histogram[outcome] ?? 0) + 1;
+    if (outcome !== WORKLOAD_CEILING_SUCCESS_OUTCOME) {
       failures += 1;
       continue;
     }
-    if (event.cpu_ms !== null && Number.isFinite(event.cpu_ms)) {
+    // The one definition of "usable measurement", not a second copy of it:
+    // `finite_cpu_sample_count` has to stay equal to
+    // `events.filter(isResolvedOk).length`, which is what this module's
+    // docstring promises the pairing path and this assessment share.
+    if (isResolvedOk(event)) {
       finiteCpu += 1;
     }
   }
