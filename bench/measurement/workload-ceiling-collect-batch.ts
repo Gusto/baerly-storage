@@ -279,7 +279,6 @@ export const collectWithRetry = async (
       event: WorkloadCeilingRawEvent | undefined;
       attempts: number;
       newlyResolved: boolean;
-      previouslySeen: boolean;
     }
   >();
 
@@ -315,7 +314,6 @@ export const collectWithRetry = async (
         event: existing,
         attempts: 0,
         newlyResolved: false,
-        previouslySeen: true,
       });
       continue;
     }
@@ -331,7 +329,6 @@ export const collectWithRetry = async (
         event: existing,
         attempts: 0,
         newlyResolved: false,
-        previouslySeen: true,
       });
     }
     pending.push(record);
@@ -359,7 +356,6 @@ export const collectWithRetry = async (
           existing.event.evidence.status !== "resolved" &&
           collected !== undefined &&
           collected.evidence.status === "resolved",
-        previouslySeen: false,
       };
       results.set(record.run_id, entry);
       if (!isFinishedCollection(collected)) {
