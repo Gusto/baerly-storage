@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
   type WorkloadCeilingRawEvent,
@@ -51,6 +51,28 @@ const realPlatformEvent: WorkloadCeilingRawEvent = {
 };
 
 describe("validateWorkloadCeilingRawEvent", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // The failing side of this gate had no test: `WORKLOAD_CEILING_REQUIRE_THERMAL`
+  // was never set by any test, so the one branch that can reject an
+  // unclassified capture never ran. A validator whose refusal path is
+  // untested accepts everything.
+  test("an unclassified thermal_class fails only when the capture requires classification", () => {
+    const unclassified = { ...okEvent, thermal_class: "unknown" as const };
+    const fieldOf = (event: WorkloadCeilingRawEvent) =>
+      validateWorkloadCeilingRawEvent(event).find((r) => r.field === "thermal_class/classified");
+
+    expect(fieldOf(unclassified)?.passed).toBe(true);
+
+    vi.stubEnv("WORKLOAD_CEILING_REQUIRE_THERMAL", "1");
+    expect(fieldOf(unclassified)?.passed).toBe(false);
+    expect(fieldOf(unclassified)?.message).toMatch(/isolate_cold/);
+    expect(fieldOf({ ...okEvent, thermal_class: "warm" })?.passed).toBe(true);
+    expect(fieldOf({ ...okEvent, thermal_class: "cold" })?.passed).toBe(true);
+  });
+
   test("passes every field for a well-formed ok event", () => {
     const results = validateWorkloadCeilingRawEvent(okEvent);
     expect(results.every((r) => r.passed)).toBe(true);
