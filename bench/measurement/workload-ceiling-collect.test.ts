@@ -19,13 +19,24 @@ const envelope = (rows: readonly unknown[]) => ({
   data: { viewer: { accounts: [{ workersInvocationsAdaptive: rows }] } },
 });
 
-const row = (sum: { cpuTimeUs: number; requests: number }, status = "success") => ({
+// `scriptVersion` and `coloCode` carry the SAME values as the observability
+// summary line below, because in a real capture they do: across the 28
+// captured rehearsal pairs under `bench/results/workload-ceiling/`, every
+// single-request row agreed with its authoritative record on both. The
+// collector requires that agreement before it attributes CPU, so a fixture
+// that disagreed would be describing a foreign invocation.
+const row = (
+  sum: { cpuTimeUs: number; requests: number },
+  status = "success",
+  dimensions: Record<string, unknown> = {},
+) => ({
   dimensions: {
     datetime: "2026-08-18T00:00:10.000Z",
     scriptName: "baerly-storage",
-    scriptVersion: "v1.2.3",
+    scriptVersion: "027034f3-170b-466d-b1ad-914fad42024c",
     status,
-    coloCode: "SJC",
+    coloCode: "EWR",
+    ...dimensions,
   },
   sum,
 });
@@ -133,6 +144,45 @@ describe("extractWorkloadCeilingRawEvent", () => {
     expect(event.evidence.cpu_source).toBe("none");
     expect(event.evidence.cpu_outcome_verbatim).toBeNull();
     expect(decodeWorkloadCeilingRawEvent(encodeWorkloadCeilingRawEvent(event))).toEqual(event);
+  });
+
+  test.each([
+    ["a different deployment", { scriptVersion: "9a1122b4-0000-4000-8000-000000000000" }],
+    ["a different colo", { coloCode: "SEA" }],
+  ])("a single-request row from %s supplies no CPU for this invocation", (_case, dimensions) => {
+    // The attribution failure this guards: the study Worker has ONE fixed
+    // name, so "exactly one single-request row in the window" does not mean
+    // "this run's row". With this run's row dropped and a foreign
+    // invocation's landing in the same window, cardinality passes and that
+    // invocation's CPU would be stamped on this run_id — invisibly, because
+    // both outcomes are `success`.
+    const event = extractWorkloadCeilingRawEvent(
+      resolvedInput({
+        adaptiveRows: [row({ cpuTimeUs: 40_000, requests: 1 }, "success", dimensions)],
+      }),
+    );
+    // The outcome is still authoritative — it comes from the observability
+    // pair joined by run_id, which the foreign row cannot touch.
+    expect(event.evidence.status).toBe("resolved");
+    expect(event.outcome).toBe("success");
+    expect(event.cpu_ms).toBeNull();
+    expect(event.evidence.cpu_source).toBe("none");
+    expect(event.evidence.cpu_outcome_verbatim).toBeNull();
+  });
+
+  test("a foreign row's diverging outcome does not make this invocation ambiguous", () => {
+    // Excluded from the divergence check as well: a row that is not this
+    // invocation's says nothing about whether the two sources disagree
+    // about this invocation, and reading it as disagreement would discard a
+    // perfectly good authoritative record.
+    const event = extractWorkloadCeilingRawEvent(
+      resolvedInput({
+        adaptiveRows: [row({ cpuTimeUs: 40_000, requests: 1 }, "exceededCpu", { coloCode: "SEA" })],
+      }),
+    );
+    expect(event.evidence.status).toBe("resolved");
+    expect(event.outcome).toBe("success");
+    expect(event.evidence.cpu_source).toBe("none");
   });
 
   test("a missing authoritative observability event blocks evidence completeness", () => {
