@@ -45,7 +45,9 @@ import {
   type WorkloadCeilingImplementation,
   type WorkloadCeilingInvocationRecord,
   type WorkloadCeilingRawEvent,
+  decodeWorkloadCeilingSweepReport,
   type WorkloadCeilingSweepCell,
+  type WorkloadCeilingSweepReport,
   type WorkloadCeilingThermalClass,
 } from "./workload-ceiling-harness.ts";
 import {
@@ -703,20 +705,27 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  // Load sweep report
+  // Load the sweep report through the codec its writer enforces on the same
+  // file. `JSON.parse ... as` asserted a shape nothing had checked, so a
+  // parseable-but-malformed report fed unvalidated `achieved_bytes` /
+  // `target_bytes` / `row_count` straight into the admission gates below —
+  // and, sitting outside the try, a truncated file threw an uncaught
+  // SyntaxError instead of this clean `return 1`. The errno is reported for
+  // the same reason `loadJournal` reports it: EACCES on a real report must
+  // not read as "no report".
   const sweepPath = `${resultsDir}/sweep-${sweepId}.json`;
-  let sweepRaw: string;
+  let sweep: WorkloadCeilingSweepReport;
   try {
-    sweepRaw = await readFile(sweepPath, "utf8");
-  } catch {
-    console.error(`workload-ceiling-aggregate: cannot read sweep report ${sweepPath}`);
+    sweep = decodeWorkloadCeilingSweepReport(await readFile(sweepPath, "utf8"));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    console.error(
+      `workload-ceiling-aggregate: cannot read sweep report ${sweepPath}` +
+        `${code === undefined ? "" : ` (${code})`}: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
     return 1;
   }
-
-  const sweep = JSON.parse(sweepRaw) as {
-    readonly sweep_id: string;
-    readonly cells: readonly WorkloadCeilingSweepCell[];
-  };
 
   if (sweep.sweep_id !== sweepId) {
     console.error(
