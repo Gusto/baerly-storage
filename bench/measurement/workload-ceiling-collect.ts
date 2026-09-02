@@ -20,7 +20,11 @@
  *  - **`workersInvocationsAdaptive`** (the CPU measurement): the GraphQL
  *    Analytics API, bounded by the same window. A missing, multi-row, or
  *    multi-request-aggregate row is CPU-measurement missingness
- *    (`cpu_source: "none"`), never an execution failure.
+ *    (`cpu_source: "none"`), never an execution failure. So is a
+ *    single-request row that disagrees with the authoritative record about
+ *    `scriptVersion` or `coloCode`: the dataset carries no run id, so that
+ *    agreement is what makes the row THIS invocation's rather than some
+ *    other invocation of the fixed-name study Worker.
  *
  * Both UNMODIFIED responses are stored before deriving the strict
  * `WorkloadCeilingRawEvent`. Live validation of both response shapes is
@@ -57,12 +61,16 @@ const OBSERVABILITY_QUERY_PATH = "https://api.cloudflare.com/client/v4/accounts"
  * The single already-deployed Worker this Step 10 smoke run targets (see
  * `bench/workload-ceiling-worker/README.md` §"Join mechanism" and §"Token
  * scope"). A per-run uniquely-named deployment would disambiguate concurrent
- * or repeated invocations by `scriptName` alone; reusing one fixed name
- * means disambiguation for this one-off run rests entirely on the narrow
- * `WorkloadCeilingCollectWindow` bounding the single invocation. That's an
- * accepted narrowing for Task 8's single authorized smoke run — a later,
- * bulk multi-run study (out of this plan's scope) would need to restore
- * per-run uniqueness or another explicit correlation mechanism.
+ * or repeated invocations by `scriptName` alone. Reusing one fixed name
+ * instead means correlation is carried by three narrower mechanisms: the
+ * `workload_ceiling_run_id` join line the Worker emits (which makes the
+ * AUTHORITATIVE record exact), the narrow `WorkloadCeilingCollectWindow`,
+ * and — for the run-id-less adaptive CPU row —
+ * `scriptVersion` + `coloCode` agreement with that authoritative record.
+ * What none of them separate is two invocations of the same deployment in
+ * the same colo and window; the contract's global
+ * `invocation_spacing_seconds` is what keeps those out of a compliant
+ * capture, and per-run unique script names would be the structural fix.
  */
 export const WORKLOAD_CEILING_WORKER_NAME = "baerly-storage";
 
@@ -333,9 +341,11 @@ const isKnownOutcome = (outcome: string): boolean =>
  * line was "the" invocation, and never an invented outcome.
  *
  * The CPU number comes from the adaptive dataset only: a window holding
- * exactly one single-request row yields `cpu_ms` (µs → ms); anything else is
- * CPU-measurement missingness (`cpu_source: "none"`), which is NOT an
- * execution failure. When both sources report a KNOWN canonical outcome and
+ * exactly one single-request row whose `scriptVersion` and `coloCode` match
+ * the authoritative record yields `cpu_ms` (µs → ms); anything else —
+ * missing, multiple, multi-request, or attributable to a different
+ * deployment or colo — is CPU-measurement missingness
+ * (`cpu_source: "none"`), which is NOT an execution failure. When both sources report a KNOWN canonical outcome and
  * the literals disagree, the evidence is `ambiguous` — the disagreement
  * means at least one source is wrong about the invocation. An unrecognized
  * outcome literal is not a divergence: it passes through uncanonicalized and
@@ -429,9 +439,39 @@ export function extractWorkloadCeilingRawEvent(
   const canonicalOutcome = canonicalizeWorkloadCeilingOutcome(authoritativeOutcome);
 
   // --- CPU measurement: workersInvocationsAdaptive --------------------------
+  //
+  // The adaptive dataset carries no run id, so a row can only be attributed
+  // to this invocation circumstantially. Cardinality alone is not enough:
+  // the study Worker has one fixed name, so a window holding exactly one
+  // single-request row is not necessarily a window holding OURS. If this
+  // invocation's row dropped while a foreign invocation of the same script
+  // landed in the window, cardinality passes and that invocation's CPU gets
+  // stamped on this run_id — and it survives the outcome-divergence check
+  // below whenever both report `success`.
+  //
+  // The two dimensions the authoritative record also carries close that:
+  // a row is this invocation's only if it agrees on `scriptVersion` and
+  // `coloCode`. A row that disagrees is somebody else's, so this run has no
+  // CPU measurement — `cpu_source: "none"`, the same classification as a
+  // missing or minute-collapsed row, and never an execution failure. It is
+  // also excluded from the divergence check, so a foreign row can no longer
+  // turn a resolved invocation ambiguous. Both raw responses are persisted
+  // verbatim, so a study reader can always re-derive which case applied.
+  //
+  // What this does NOT close: two invocations of the same deployment in the
+  // same colo and window are still indistinguishable here. The contract's
+  // global 70 s spacing (`workload-ceiling-contract.ts`
+  // `invocation_spacing_seconds`) is what keeps that out of a compliant
+  // capture; a per-run unique script name would be the structural fix.
   const adaptiveRows = extractRows(input.adaptiveResponse);
-  const usableAdaptiveRow =
+  const singleRequestRow =
     adaptiveRows.length === 1 && adaptiveRows[0]!.sum.requests === 1 ? adaptiveRows[0]! : undefined;
+  const usableAdaptiveRow =
+    singleRequestRow !== undefined &&
+    singleRequestRow.dimensions.scriptVersion === scriptVersion &&
+    singleRequestRow.dimensions.coloCode === colo
+      ? singleRequestRow
+      : undefined;
   if (usableAdaptiveRow !== undefined) {
     const adaptiveOutcome = canonicalizeWorkloadCeilingOutcome(usableAdaptiveRow.dimensions.status);
     if (
