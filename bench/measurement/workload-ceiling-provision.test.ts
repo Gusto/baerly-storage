@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { snapshotHash } from "@baerly/protocol";
 import { decodeSnapshotChunk, decodeSnapshotManifest } from "@baerly/server/_internal/testing";
 import {
+  assertStudyBucket,
   buildWorkloadCeilingFixture,
   calibrateRowCount,
   monolithicEncodedBytes,
@@ -13,6 +14,7 @@ import {
   BYTE_AXIS_MANIFEST_DESCRIPTORS,
   CELL_BYTE_TOLERANCE,
 } from "./workload-ceiling-cells.ts";
+import { WORKLOAD_CEILING_BUCKET_NAME } from "./workload-ceiling-harness.ts";
 
 const incarnation = "ab".repeat(16);
 const spec: WorkloadCeilingFixtureSpec = {
@@ -163,5 +165,31 @@ describe("calibrateRowCount", () => {
         tolerance: 1e-9,
       });
     expect(shouldThrow).toThrow(WorkloadCeilingProvisionError);
+  });
+});
+
+describe("assertStudyBucket", () => {
+  // The sole preflight standing between a typo'd credentials file and
+  // fixtures written where the deployed Worker cannot see them: `env.BUCKET`
+  // is a literal in wrangler.jsonc, so a mismatch surfaces only as every
+  // `POST /run` returning a 502 `fixture descriptor is missing`, which reads
+  // as a provisioning bug. It had no test.
+  test("accepts credentials naming the bucket the Worker binds", () => {
+    expect(() => {
+      assertStudyBucket({ bucket: WORKLOAD_CEILING_BUCKET_NAME });
+    }).not.toThrow();
+  });
+
+  test("refuses any other bucket, naming both sides", () => {
+    try {
+      assertStudyBucket({ bucket: "baerly-storage-eval-2" });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkloadCeilingProvisionError);
+      expect((error as WorkloadCeilingProvisionError).message).toContain("baerly-storage-eval-2");
+      expect((error as WorkloadCeilingProvisionError).message).toContain(
+        WORKLOAD_CEILING_BUCKET_NAME,
+      );
+    }
   });
 });
