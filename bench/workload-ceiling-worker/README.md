@@ -170,10 +170,13 @@ Never delete the bucket or an unresolved prefix.
 ## Runbook — one smoke run
 
 `workersInvocationsAdaptive` rows are minute-bucketed aggregates. Two
-invocations inside the same minute collapse into one row with summed CPU —
-the collector's request-count assertion treats such a row as unresolved, so
-space the two invocations at least one minute apart and give each its own
-explicit collection window:
+invocations inside the same minute collapse into one row with summed CPU.
+The collector reads such a row as CPU-measurement missingness
+(`cpu_source: "none"`) rather than as an unresolved invocation — the event
+still resolves from Workers Observability, it just carries no `cpu_ms`. A
+row attributable to a different `scriptVersion` or `coloCode` is read the
+same way. Either loses the measurement, so space invocations at least one
+minute apart and give each its own explicit collection window:
 
 0. Confirm `credentials/cloudflare.json` names the bucket
    `baerly-storage-eval`. Provisioning writes fixtures to whatever bucket that
