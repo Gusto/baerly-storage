@@ -34,6 +34,72 @@ import { canonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
 export const WORKLOAD_CEILING_CONTRACT_ID = "baerly.workload-ceiling/chunked-snapshot/v1" as const;
 
 /**
+ * The revision of the per-invocation EVIDENCE artifacts — the strict raw
+ * event codec, the derived events, and the axis reports built from them.
+ *
+ * Distinct from {@link WORKLOAD_CEILING_CONTRACT_ID}, which versions the
+ * wire shapes the deployed Worker itself validates (run request, fixture
+ * descriptor); those did not change. This one changed for the evidence
+ * contract v2 amendment, which separates three previously conflated
+ * concepts — Worker execution outcome, evidence completeness, and
+ * CPU-sample completeness — after the 2026-08-24 rehearsal showed
+ * `workersInvocationsAdaptive` permanently dropping rows for invocations
+ * that Workers Observability recorded in full.
+ *
+ * Every raw event carries this identifier on the wire, so a v1-era event
+ * file (which has no such field) fails the strict decode and can never be
+ * silently aggregated with v2 artifacts.
+ */
+export const WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID = "baerly.workload-ceiling/evidence/v2" as const;
+
+/** Whether the AUTHORITATIVE per-invocation record resolved. Collection status, never an execution outcome. */
+export type WorkloadCeilingEvidenceStatus = "resolved" | "missing" | "ambiguous";
+
+/**
+ * Field-level telemetry provenance for one collected invocation, plus the
+ * evidence status of its authoritative record.
+ *
+ * Evidence contract v2 splits telemetry authority:
+ *
+ *  - **Workers Observability** is the authority for invocation EXISTENCE and
+ *    EXECUTION OUTCOME. One correlatable record per invocation is assembled
+ *    from two Observability events sharing a platform `requestId` — the
+ *    Worker's own join line (carrying `workload_ceiling_run_id`) and the
+ *    platform fetch-summary line (carrying `outcome`, `cpuTimeMs`,
+ *    `scriptVersion`, `colo`, `responseStatus`). Live validation over the
+ *    2026-08-24 rehearsal window joined 24/24 invocations this way,
+ *    including the two invocations whose `workersInvocationsAdaptive` rows
+ *    never landed.
+ *  - **`workersInvocationsAdaptive`** owns the CPU MEASUREMENT
+ *    (`sum.cpuTimeUs`, microsecond resolution). That dataset demonstrably
+ *    drops rows permanently (~15 % on the study account), which is
+ *    CPU-measurement missingness — never an execution failure — and is
+ *    gated separately by the preregistered CPU sample floor.
+ */
+export interface WorkloadCeilingEvidenceBlock {
+  /** Status of the authoritative (Workers Observability) record for this invocation. */
+  readonly status: WorkloadCeilingEvidenceStatus;
+  /** Why the record did not resolve; `null` exactly when `status === "resolved"`. */
+  readonly detail: string | null;
+  /** The platform API that supplied the authoritative record. */
+  readonly authority: "workers-observability";
+  /** Verbatim authoritative outcome literal (`"ok"`, `"exceededCpu"`, …); `null` when unresolved. */
+  readonly authoritative_outcome: string | null;
+  /**
+   * Observability's own `cpuTimeMs` — integer milliseconds, i.e. coarser than
+   * the adaptive dataset's `cpuTimeUs`. Retained as cross-check provenance
+   * only; it never enters a quantile.
+   */
+  readonly authoritative_cpu_ms: number | null;
+  /** HTTP response status the authority observed (cross-check against the journal's `http_status`). */
+  readonly authoritative_response_status: number | null;
+  /** Which dataset supplied the event's `cpu_ms`. */
+  readonly cpu_source: "workers-invocations-adaptive" | "none";
+  /** Verbatim Analytics status literal of the row `cpu_ms` came from; `null` when no row. */
+  readonly cpu_outcome_verbatim: string | null;
+}
+
+/**
  * The ONE R2 bucket both ends of the study must agree on.
  *
  * `bench/workload-ceiling-worker/wrangler.jsonc` binds `env.BUCKET` to this
@@ -67,43 +133,87 @@ export const WORKLOAD_CEILING_THERMAL_CLASSES = ["warm", "cold", "unknown"] as c
 export type WorkloadCeilingThermalClass = (typeof WORKLOAD_CEILING_THERMAL_CLASSES)[number];
 
 /**
- * Known outcome strings this harness gives special handling to. `outcome`
- * on the wire (see {@link WorkloadCeilingRawEvent}) is a plain `string`, not
- * a union of this list — the platform's own invocation-outcome vocabulary
- * (linked from the harness Worker README) is not this repo's to close over,
- * and a future outcome string must still decode. Two entries are load-bearing
- * here regardless:
+ * Known CANONICAL outcome strings this harness gives special handling to.
+ * `outcome` on the wire (see {@link WorkloadCeilingRawEvent}) is a plain
+ * `string` in this canonical vocabulary — or `null`, when the authoritative
+ * evidence did not resolve — because the platform's own invocation-outcome
+ * vocabulary is not this repo's to close over, and a future outcome string
+ * must still decode.
  *
- *  - `"exceededCpu"` — reproduced verbatim from the platform's own
- *    vocabulary so a study reader can grep the platform docs for the exact
- *    string; this module never remaps or drops it.
- *  - `"missing-terminal-event"` — not a platform outcome. It is what
- *    `workload-ceiling-collect.ts` records when the bounded collection
- *    window closes without a matching terminal telemetry row, so an
- *    unresolved invocation is an explicit study outcome instead of a
- *    silently dropped run.
+ * The two telemetry sources spell their outcomes differently: Workers
+ * Observability reports `ok` where the GraphQL Analytics dataset reports
+ * `success` (verified live against both, 2026-08-24; provenance in
+ * `runbooks/lane-b-preflight.md` Q5). The collector canonicalizes via
+ * {@link WORKLOAD_CEILING_OUTCOME_CANONICALIZATIONS} and retains the
+ * verbatim literal in the evidence block. Two entries are load-bearing
+ * regardless:
+ *
+ *  - `"success"` — the canonical literal for an invocation that completed
+ *    normally, matching the verified Analytics `status` literal.
+ *  - `"exceededCpu"` — identical in both vocabularies, reproduced verbatim
+ *    so a study reader can grep the platform docs for the exact string;
+ *    this module never remaps or drops it.
  */
 export const WORKLOAD_CEILING_KNOWN_OUTCOMES = [
-  "ok",
+  "success",
   "exceededCpu",
   "exceededMemory",
   "scriptThrewException",
   "responseStreamDisconnected",
-  "missing-terminal-event",
 ] as const;
 export type WorkloadCeilingKnownOutcome = (typeof WORKLOAD_CEILING_KNOWN_OUTCOMES)[number];
 
+/** The one canonical literal for an invocation that completed normally. */
+export const WORKLOAD_CEILING_SUCCESS_OUTCOME = "success" as const;
+
+/**
+ * Per-source success literals mapped onto the canonical vocabulary.
+ * Everything else (including `exceededCpu`) is identical across the two
+ * platform vocabularies and passes through unchanged; an unrecognized
+ * literal also passes through unchanged and is classified as a non-success
+ * (the conservative direction: it blocks a zero-failure claim rather than
+ * granting one).
+ */
+export const WORKLOAD_CEILING_OUTCOME_CANONICALIZATIONS = {
+  ok: WORKLOAD_CEILING_SUCCESS_OUTCOME,
+} as const;
+
+/** Maps a verbatim platform outcome literal onto the canonical vocabulary. Pure, total. */
+export const canonicalizeWorkloadCeilingOutcome = (verbatim: string): string =>
+  WORKLOAD_CEILING_OUTCOME_CANONICALIZATIONS[verbatim as "ok"] ?? verbatim;
+
 export interface WorkloadCeilingRawEvent {
+  readonly evidence_contract_id: typeof WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID;
   readonly run_id: string;
   readonly scenario_id: string;
+  /**
+   * The script version the AUTHORITY reported served the invocation; the
+   * {@link WORKLOAD_CEILING_UNRESOLVED_SCRIPT_VERSION} sentinel exactly when
+   * the evidence did not resolve.
+   */
   readonly script_version: string;
   readonly compatibility_date: string;
   readonly runtime_period: string;
+  /** The colo the authority reported; `"unknown"` exactly when the evidence did not resolve. */
   readonly colo: string;
   readonly thermal_class: WorkloadCeilingThermalClass;
-  readonly outcome: string;
+  /**
+   * The CANONICAL Worker execution outcome, or `null` exactly when the
+   * authoritative evidence did not resolve. `null` is not an outcome and is
+   * never counted as an execution failure — it blocks evidence completeness
+   * instead. (The v1 pseudo-outcome `missing-terminal-event` is retired.)
+   */
+  readonly outcome: string | null;
+  /**
+   * The CPU measurement, from `workersInvocationsAdaptive` ONLY (see
+   * {@link WorkloadCeilingEvidenceBlock}). `null` when that dataset dropped
+   * the row — CPU-measurement missingness, gated by the CPU sample floor,
+   * never an execution failure. A non-success outcome may carry a censored
+   * partial value, preserved deliberately.
+   */
   readonly cpu_ms: number | null;
   readonly observed_at: string;
+  readonly evidence: WorkloadCeilingEvidenceBlock;
 }
 
 /**
@@ -319,6 +429,7 @@ export const workloadCeilingFixtureDescriptorKey = (fixturePrefix: string): stri
   `${fixturePrefix}/fixture.json`;
 
 const RAW_EVENT_FIELDS = [
+  "evidence_contract_id",
   "run_id",
   "scenario_id",
   "script_version",
@@ -329,12 +440,107 @@ const RAW_EVENT_FIELDS = [
   "outcome",
   "cpu_ms",
   "observed_at",
+  "evidence",
+] as const;
+
+const EVIDENCE_BLOCK_FIELDS = [
+  "status",
+  "detail",
+  "authority",
+  "authoritative_outcome",
+  "authoritative_cpu_ms",
+  "authoritative_response_status",
+  "cpu_source",
+  "cpu_outcome_verbatim",
 ] as const;
 
 const OBSERVED_AT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 
+function canonicalizeEvidenceBlock(value: unknown, where: string): WorkloadCeilingEvidenceBlock {
+  assertExactFields(value, EVIDENCE_BLOCK_FIELDS, where);
+  const status = value["status"];
+  if (status !== "resolved" && status !== "missing" && status !== "ambiguous") {
+    invalid(`${where}.status`, `must be "resolved", "missing", or "ambiguous"`);
+  }
+  const detail = value["detail"];
+  if (detail !== null && typeof detail !== "string") {
+    invalid(`${where}.detail`, "must be a string or null");
+  }
+  if (status === "resolved" && detail !== null) {
+    invalid(`${where}.detail`, 'must be null when status is "resolved"');
+  }
+  if (status !== "resolved" && (detail === null || detail.trim() === "")) {
+    invalid(`${where}.detail`, "must be a nonempty string when status is not resolved");
+  }
+  if (value["authority"] !== "workers-observability") {
+    invalid(`${where}.authority`, 'must be "workers-observability"');
+  }
+  const authoritativeOutcome = value["authoritative_outcome"];
+  if (
+    authoritativeOutcome !== null &&
+    (typeof authoritativeOutcome !== "string" || authoritativeOutcome.trim() === "")
+  ) {
+    invalid(`${where}.authoritative_outcome`, "must be a nonempty string or null");
+  }
+  if (status === "resolved" && authoritativeOutcome === null) {
+    invalid(`${where}.authoritative_outcome`, 'must be a string when status is "resolved"');
+  }
+  const authoritativeCpuMs = value["authoritative_cpu_ms"];
+  if (
+    authoritativeCpuMs !== null &&
+    (typeof authoritativeCpuMs !== "number" ||
+      !Number.isFinite(authoritativeCpuMs) ||
+      authoritativeCpuMs < 0)
+  ) {
+    invalid(`${where}.authoritative_cpu_ms`, "must be null or a finite non-negative number");
+  }
+  const authoritativeResponseStatus = value["authoritative_response_status"];
+  if (
+    authoritativeResponseStatus !== null &&
+    (typeof authoritativeResponseStatus !== "number" ||
+      !Number.isInteger(authoritativeResponseStatus) ||
+      authoritativeResponseStatus < 100 ||
+      authoritativeResponseStatus > 599)
+  ) {
+    invalid(`${where}.authoritative_response_status`, "must be null or an HTTP status code");
+  }
+  const cpuSource = value["cpu_source"];
+  if (cpuSource !== "workers-invocations-adaptive" && cpuSource !== "none") {
+    invalid(`${where}.cpu_source`, 'must be "workers-invocations-adaptive" or "none"');
+  }
+  const cpuOutcomeVerbatim = value["cpu_outcome_verbatim"];
+  if (
+    cpuOutcomeVerbatim !== null &&
+    (typeof cpuOutcomeVerbatim !== "string" || cpuOutcomeVerbatim.trim() === "")
+  ) {
+    invalid(`${where}.cpu_outcome_verbatim`, "must be a nonempty string or null");
+  }
+  if (cpuSource === "workers-invocations-adaptive" && cpuOutcomeVerbatim === null) {
+    invalid(
+      `${where}.cpu_outcome_verbatim`,
+      'must record the row\'s verbatim status when cpu_source is "workers-invocations-adaptive"',
+    );
+  }
+  return {
+    status,
+    detail,
+    authority: "workers-observability",
+    authoritative_outcome: authoritativeOutcome,
+    authoritative_cpu_ms: authoritativeCpuMs,
+    authoritative_response_status: authoritativeResponseStatus,
+    cpu_source: cpuSource,
+    cpu_outcome_verbatim: cpuOutcomeVerbatim,
+  };
+}
+
 function canonicalizeRawEvent(value: unknown): WorkloadCeilingRawEvent {
   assertExactFields(value, RAW_EVENT_FIELDS, "raw event");
+  if (value["evidence_contract_id"] !== WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID) {
+    invalid(
+      "evidence_contract_id",
+      `must be ${WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID} — v1-era event files cannot mix with v2 artifacts`,
+    );
+  }
   assertNonEmptyString(value["run_id"], "run_id");
   assertNonEmptyString(value["scenario_id"], "scenario_id");
   assertNonEmptyString(value["script_version"], "script_version");
@@ -348,22 +554,57 @@ function canonicalizeRawEvent(value: unknown): WorkloadCeilingRawEvent {
       `must be one of ${WORKLOAD_CEILING_THERMAL_CLASSES.join(", ")}; got ${String(thermalClass)}`,
     );
   }
-  assertNonEmptyString(value["outcome"], "outcome");
+  const evidence = canonicalizeEvidenceBlock(value["evidence"], "evidence");
   const outcome = value["outcome"];
+  if (outcome !== null && (typeof outcome !== "string" || outcome.trim() === "")) {
+    invalid("outcome", "must be a nonempty canonical platform outcome or null");
+  }
+  // outcome is null exactly when the authoritative evidence did not resolve.
+  // A null outcome is NOT an execution failure (that is the v1 conflation
+  // this contract revision removes) — it blocks evidence completeness.
+  if (evidence.status === "resolved" && outcome === null) {
+    invalid("outcome", 'must be a platform outcome when evidence.status is "resolved"');
+  }
+  if (evidence.status !== "resolved" && outcome !== null) {
+    invalid("outcome", "must be null when the authoritative evidence did not resolve");
+  }
   const cpuMs = value["cpu_ms"];
   if (cpuMs !== null && (typeof cpuMs !== "number" || !Number.isFinite(cpuMs) || cpuMs < 0)) {
     invalid("cpu_ms", "must be null or a finite non-negative number");
   }
-  // No synthesized CPU: an "ok" invocation always carries the platform's own
-  // telemetry number, never a null this module would otherwise have to fill
-  // in; a "missing-terminal-event" record can never carry a number, because
-  // nothing genuine produced one — a non-null value there would be exactly
-  // the fabricated evidence this codec exists to refuse.
-  if (outcome === "ok" && cpuMs === null) {
-    invalid("cpu_ms", 'must be a finite number when outcome is "ok"');
+  // No synthesized CPU: cpu_ms is non-null exactly when its provenance says
+  // the adaptive dataset supplied it. A number without that provenance (or a
+  // claimed source with no number) is fabricated evidence.
+  const hasAdaptiveCpu = evidence.cpu_source === "workers-invocations-adaptive";
+  if (hasAdaptiveCpu !== (cpuMs !== null)) {
+    invalid(
+      "cpu_ms",
+      hasAdaptiveCpu
+        ? 'must be a number when cpu_source is "workers-invocations-adaptive"'
+        : 'must be null when cpu_source is "none"',
+    );
   }
-  if (outcome === "missing-terminal-event" && cpuMs !== null) {
-    invalid("cpu_ms", 'must be null when outcome is "missing-terminal-event"');
+  // A successful invocation without a CPU number is LEGAL under evidence
+  // contract v2: the adaptive dataset dropping a row is CPU-measurement
+  // missingness, gated by the CPU sample floor — never a reason to reject
+  // the event or to invent a number.
+  if (
+    value["script_version"] === WORKLOAD_CEILING_UNRESOLVED_SCRIPT_VERSION &&
+    evidence.status === "resolved"
+  ) {
+    invalid("script_version", "must not be the sentinel when the evidence resolved");
+  }
+  if (
+    value["script_version"] !== WORKLOAD_CEILING_UNRESOLVED_SCRIPT_VERSION &&
+    evidence.status !== "resolved"
+  ) {
+    invalid("script_version", "must be the unresolved sentinel when the evidence did not resolve");
+  }
+  if (evidence.status === "resolved" && value["colo"] === "unknown") {
+    invalid("colo", 'must not be "unknown" when the evidence resolved');
+  }
+  if (evidence.status !== "resolved" && value["colo"] !== "unknown") {
+    invalid("colo", 'must be "unknown" when the evidence did not resolve');
   }
   assertNonEmptyString(value["observed_at"], "observed_at");
   const observedAt = value["observed_at"];
@@ -371,6 +612,7 @@ function canonicalizeRawEvent(value: unknown): WorkloadCeilingRawEvent {
     invalid("observed_at", "must be an RFC 3339 UTC timestamp (YYYY-MM-DDTHH:mm:ss[.sss]Z)");
   }
   return {
+    evidence_contract_id: WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
     run_id: value["run_id"],
     scenario_id: value["scenario_id"],
     script_version: value["script_version"],
@@ -381,6 +623,7 @@ function canonicalizeRawEvent(value: unknown): WorkloadCeilingRawEvent {
     outcome,
     cpu_ms: cpuMs,
     observed_at: observedAt,
+    evidence,
   };
 }
 
@@ -391,12 +634,13 @@ export const encodeWorkloadCeilingRawEvent = (event: WorkloadCeilingRawEvent): s
 };
 
 /**
- * Decodes and validates a `WorkloadCeilingRawEvent` from an unmodified
- * platform response that `workload-ceiling-collect.ts` has already reduced
- * to one candidate JSON record. Preserves `exceededCpu` and
- * `missing-terminal-event` as explicit outcomes rather than collapsing them,
- * and never derives `cpu_ms` — it is required on the wire and passed
- * through unchanged.
+ * Decodes and validates a `WorkloadCeilingRawEvent`. Rejects any field
+ * outside the exact set, any event whose `evidence_contract_id` is not the
+ * current evidence-contract revision (so v1-era files can never mix with
+ * v2 artifacts), and every provenance/evidence-status combination the
+ * canonicalizer above refuses. Preserves `exceededCpu` and a `null`
+ * (unresolved) outcome as explicit states rather than collapsing them, and
+ * never derives `cpu_ms` — it is passed through with its recorded source.
  */
 export const decodeWorkloadCeilingRawEvent = (raw: string): WorkloadCeilingRawEvent => {
   const parsed = parseJson(raw, "raw event body");
@@ -408,19 +652,55 @@ export const decodeWorkloadCeilingRawEvent = (raw: string): WorkloadCeilingRawEv
   return canonical;
 };
 
-/** Builds the strict raw-event record for an invocation the collection window never resolved. */
-export const missingTerminalWorkloadCeilingRawEvent = (input: {
+/**
+ * The `script_version` an unresolved-evidence event carries: the authority
+ * never reported a version, so the field holds an explicit sentinel.
+ *
+ * Readers comparing deployment metadata across a cell must treat this as
+ * "absent", never as a version — see `hasResolvedDeployment` in
+ * `workload-ceiling-compare.ts`. The codec enforces that the sentinel
+ * appears exactly when `evidence.status !== "resolved"`.
+ */
+export const WORKLOAD_CEILING_UNRESOLVED_SCRIPT_VERSION = "unresolved";
+
+/**
+ * Builds the strict raw-event record for an invocation whose AUTHORITATIVE
+ * evidence did not resolve. The outcome is `null` — an unresolved
+ * collection window is an evidence-completeness fact, never an execution
+ * outcome (the v1 `missing-terminal-event` pseudo-outcome is retired) — and
+ * no CPU is recorded, because the CPU source's row is only trusted when the
+ * invocation it belongs to is established.
+ */
+export const unresolvedWorkloadCeilingRawEvent = (input: {
+  readonly status: "missing" | "ambiguous";
+  readonly detail: string;
   readonly run_id: string;
   readonly scenario_id: string;
-  readonly script_version: string;
   readonly compatibility_date: string;
   readonly runtime_period: string;
-  readonly colo: string;
   readonly thermal_class: WorkloadCeilingThermalClass;
   readonly observed_at: string;
 }): WorkloadCeilingRawEvent =>
   canonicalizeRawEvent({
-    ...input,
-    outcome: "missing-terminal-event",
+    evidence_contract_id: WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
+    run_id: input.run_id,
+    scenario_id: input.scenario_id,
+    script_version: WORKLOAD_CEILING_UNRESOLVED_SCRIPT_VERSION,
+    compatibility_date: input.compatibility_date,
+    runtime_period: input.runtime_period,
+    colo: "unknown",
+    thermal_class: input.thermal_class,
+    outcome: null,
     cpu_ms: null,
+    observed_at: input.observed_at,
+    evidence: {
+      status: input.status,
+      detail: input.detail,
+      authority: "workers-observability",
+      authoritative_outcome: null,
+      authoritative_cpu_ms: null,
+      authoritative_response_status: null,
+      cpu_source: "none",
+      cpu_outcome_verbatim: null,
+    },
   });

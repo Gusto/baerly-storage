@@ -38,6 +38,7 @@ import {
 } from "./statistics.ts";
 import {
   decodeWorkloadCeilingRawEvent,
+  WORKLOAD_CEILING_SUCCESS_OUTCOME,
   WorkloadCeilingHarnessError,
   type WorkloadCeilingRawEvent,
 } from "./workload-ceiling-harness.ts";
@@ -49,9 +50,9 @@ function deploymentKey(event: WorkloadCeilingRawEvent): string {
 /**
  * The single definition of "this invocation resolved to a usable
  * measurement": the collection window produced a CPU number AND the platform
- * classified the invocation as `ok`.
+ * classified the invocation as a success.
  *
- * The `cpu_ms !== null` half alone is NOT sufficient. A non-`ok` outcome can
+ * The `cpu_ms !== null` half alone is NOT sufficient. A non-success outcome can
  * still carry a partial CPU number — the platform reports one for
  * `exceededCpu`, and `workload-ceiling-harness.ts` preserves that shape
  * deliberately. Both the pairing logic and the per-side failure-budget count
@@ -60,7 +61,7 @@ function deploymentKey(event: WorkloadCeilingRawEvent): string {
  * exactly what counting such an event as a success would produce.
  */
 const isResolvedOk = (event: WorkloadCeilingRawEvent): event is ResolvedWorkloadCeilingRawEvent =>
-  event.cpu_ms !== null && event.outcome === "ok";
+  event.cpu_ms !== null && event.outcome === WORKLOAD_CEILING_SUCCESS_OUTCOME;
 
 /** A WorkloadCeilingRawEvent whose collection window resolved to exactly one single-request invocation. */
 export type ResolvedWorkloadCeilingRawEvent = Omit<WorkloadCeilingRawEvent, "cpu_ms"> & {
@@ -153,7 +154,7 @@ export function matchWorkloadCeilingEvents(
 /**
  * A side of the comparison whose collected events include at least one
  * invocation that did not resolve to a usable measurement — either
- * `cpu_ms: null`, or a non-`ok` outcome that still carried a partial CPU
+ * `cpu_ms: null`, or a non-success outcome that still carried a partial CPU
  * number (see {@link isResolvedOk}). The zero-failure Clopper-Pearson
  * formula (`1 − c^(1/n)`) is valid only at zero observed failures: `n`
  * counts successes, so plugging any success-count-derived denominator in
