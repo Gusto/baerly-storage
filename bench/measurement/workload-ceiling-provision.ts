@@ -9,8 +9,10 @@
  * into BOTH storage shapes the study compares side by side under a single
  * `fixture_prefix`:
  *
- *  - a monolithic JSON blob (`monolithic.json`), the shape of today's
- *    shipped single-snapshot format;
+ *  - a monolithic `SnapshotBody` at its hash-verified `snapshotKey`, the shape
+ *    of today's shipped single-snapshot format — read back through
+ *    `loadSnapshotAsMap`, so the control arm pays the digest check the
+ *    shipped path pays;
  *  - the proposed manifest + chunk layout (`snapshot-manifest.ts` /
  *    `snapshot-chunk.ts`), so `monolithic-control` and `chunked-candidate`
  *    runs measure the identical data through two different storage shapes.
@@ -25,8 +27,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import { AwsClient } from "aws4fetch";
-import { encodeJsonBytes, snapshotHash, type DocumentData, type Storage } from "@baerly/protocol";
+import {
+  encodeJsonBytes,
+  snapshotHash,
+  SNAPSHOT_SCHEMA_VERSION,
+  type DocumentData,
+  type Storage,
+} from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
+import { encodeSnapshotBody, snapshotKey, type SnapshotBody } from "@baerly/server";
 import {
   encodeSnapshotChunk,
   snapshotChunkKey,
@@ -36,9 +45,8 @@ import {
   snapshotManifestKey,
   type SnapshotManifest,
 } from "@baerly/server/_internal/testing";
-import { canonicalJson, hashCanonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
+import { hashCanonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
 import { createExactKeyCleanup, type ExactKeyCleanup } from "./storage-factory.ts";
-import { loadEndpointCreds } from "../../tests/fixtures/endpoint-creds.ts";
 import {
   encodeWorkloadCeilingFixtureDescriptor,
   WORKLOAD_CEILING_BUCKET_NAME,
@@ -47,6 +55,12 @@ import {
   type WorkloadCeilingFixtureDescriptor,
 } from "./workload-ceiling-harness.ts";
 import { WORKLOAD_CEILING_STUDY } from "./workload-ceiling-contract.ts";
+import {
+  cloudflareR2CredsFilename,
+  type CloudflareTier,
+  loadCloudflareR2CredsForTier,
+} from "../../tests/fixtures/endpoint-creds.ts";
+import { resolveWorkloadCeilingTier } from "./workload-ceiling-tier.ts";
 
 const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
 
@@ -100,12 +114,17 @@ interface FixtureRow {
 /** Deterministic scalar-ordered rows: `row-000`, `row-001`, ... — same input, same bytes, every run. */
 function buildRows(spec: WorkloadCeilingFixtureSpec): readonly FixtureRow[] {
   const width = String(spec.row_count - 1).length;
+  // Every id is padded to the same width, so the empty-payload envelope encodes
+  // to one length for the whole fixture. Computing it per row would put a JSON
+  // encode inside the loop, and `calibrateRowCount` calls this once per
+  // binary-search probe.
+  const bare = encodeJsonBytes({ _id: "row-".padEnd(4 + width, "0"), payload: "" }).byteLength;
+  const padLength = Math.max(0, spec.document_bytes - bare);
+  const payload = "x".repeat(padLength);
   const rows: FixtureRow[] = [];
   for (let index = 0; index < spec.row_count; index++) {
     const id = `row-${String(index).padStart(width, "0")}`;
-    const bare = encodeJsonBytes({ _id: id, payload: "" }).byteLength;
-    const padLength = Math.max(0, spec.document_bytes - bare);
-    rows.push({ _id: id, body: { _id: id, payload: "x".repeat(padLength) } });
+    rows.push({ _id: id, body: { _id: id, payload } });
   }
   return rows;
 }
@@ -168,15 +187,23 @@ export const buildWorkloadCeilingFixture = async (
   const rows = buildRows(spec);
   const writes: WorkloadCeilingFixtureWrite[] = [];
 
-  const monolithicKey = `${fixturePrefix}/monolithic.json`;
-  const monolithicValue = {
+  // The monolithic representation is a REAL snapshot: the exact SnapshotBody
+  // the shipped compactor emits, encoded by the shipped encoder, at the key
+  // grammar the shipped reader parses a digest out of. The control arm then
+  // measures `loadSnapshotAsMap` — hash verification included — rather than a
+  // bare JSON.parse that understates the format it stands in for.
+  const monolithicBody: SnapshotBody = {
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
+    min_seq: 0,
+    max_seq: 0,
     collection: spec.collection,
-    rows: rows.map((row) => ({ _id: row._id, body: row.body as CanonicalJsonValue })),
+    // Already ascending by construction: `buildRows` pads every id to one
+    // constant width, so `row-000 < row-001 < …` lexicographically.
+    docs: rows.map((row) => ({ _id: row._id, body: row.body })),
   };
-  writes.push({
-    key: monolithicKey,
-    body: new TextEncoder().encode(canonicalJson(monolithicValue as unknown as CanonicalJsonValue)),
-  });
+  const monolithicBytes = encodeSnapshotBody(monolithicBody);
+  const monolithicKey = snapshotKey(fixturePrefix, 0, 0, await snapshotHash(monolithicBytes));
+  writes.push({ key: monolithicKey, body: monolithicBytes });
 
   const groups = groupRows(rows, spec.manifest_descriptors);
   const chunkDescriptors: SnapshotChunkDescriptor[] = [];
@@ -280,11 +307,138 @@ export const provisionWorkloadCeilingFixture = async (input: {
 /** A fresh 32-lowercase-hex incarnation, matching `packages/server/src/snapshot-manifest.ts`'s grammar. */
 export const randomIncarnation = (): string => randomUUID().replaceAll("-", "");
 
+/** Preflight that credentials target the correct bucket. Exported so the sweep CLI reuses it verbatim. */
+export const assertStudyBucket = (creds: { readonly bucket: string }): void => {
+  if (creds.bucket !== WORKLOAD_CEILING_BUCKET_NAME) {
+    throw new WorkloadCeilingProvisionError(
+      "bucket",
+      `credentials name bucket "${creds.bucket}", but the study Worker's wrangler.jsonc binds env.BUCKET to "${WORKLOAD_CEILING_BUCKET_NAME}". Point the credentials file at "${WORKLOAD_CEILING_BUCKET_NAME}", or change both together.`,
+    );
+  }
+};
+
+/**
+ * Encoded byte length of the monolithic representation for a given row count.
+ * The single source of "how big is this cell really", used by both the
+ * calibrator and the sweep report — so the number the report publishes is the
+ * number the calibrator optimized, not a re-derivation that could disagree.
+ */
+export const monolithicEncodedBytes = (
+  rowCount: number,
+  documentBytes: number,
+  collection: string,
+): number => {
+  const spec: WorkloadCeilingFixtureSpec = {
+    scenario_id: "calibration",
+    collection,
+    row_count: rowCount,
+    document_bytes: documentBytes,
+    manifest_descriptors: 1,
+  };
+  const rows = buildRows(spec);
+  return encodeJsonBytes({
+    schema_version: SNAPSHOT_SCHEMA_VERSION,
+    min_seq: 0,
+    max_seq: 0,
+    collection,
+    docs: rows.map((row) => ({ _id: row._id, body: row.body })),
+  }).byteLength;
+};
+
+export interface CalibrationResult {
+  readonly row_count: number;
+  readonly achieved_bytes: number;
+  readonly target_bytes: number;
+  /** `(achieved - target) / target`. Signed, so an undershoot is visible as such. */
+  readonly relative_error: number;
+}
+
+/**
+ * Pure. Solves for the row count whose ENCODED monolithic snapshot is closest to
+ * `targetBytes`.
+ *
+ * Binary search, not a division: `document_bytes` is the size of one encoded
+ * document, while a row inside a `SnapshotBody` additionally carries
+ * `{"_id":…,"body":…}` envelope, and the whole body carries a fixed header. The
+ * naive `round(target / document_bytes)` the single-fixture CLI used
+ * (`workload-ceiling-provision.ts:350`) therefore overshoots by a few percent,
+ * which makes the axis label nominal rather than measured — and
+ * `WORKLOAD_CEILING_STUDY.axis_sweeps.byte_axis.collection_bytes_measure` says
+ * "encoded-snapshot-bytes".
+ *
+ * Encoded length is monotone non-decreasing in `rowCount`, so the search
+ * converges. It is not strictly monotone in a useful sense across a power-of-ten
+ * boundary — the id pad width widens there and every id grows a byte at once —
+ * which is why the result carries its achieved size and relative error rather
+ * than promising an exact hit.
+ *
+ * @throws WorkloadCeilingProvisionError when no row count lands within
+ *   `tolerance`; a silent miss would publish a mislabeled axis point.
+ */
+export const calibrateRowCount = (input: {
+  readonly targetBytes: number;
+  readonly documentBytes: number;
+  readonly collection: string;
+  readonly tolerance: number;
+}): CalibrationResult => {
+  // Upper bound: every row's encoded contribution is at least
+  // `document_bytes` — padding only ever brings the bare row UP to that size,
+  // and the snapshot envelope only adds — so `ceil(target / document_bytes)`
+  // rows already exceed the target. Bounding on the floor of 32 that
+  // `assertSpec` enforces would also be correct but is 64x looser at the
+  // study's 2048-byte documents, and each extra probe builds and JSON-encodes
+  // every row just to read the result's byteLength.
+  let hi = Math.max(1, Math.ceil(input.targetBytes / input.documentBytes));
+  let lo = 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const encoded = monolithicEncodedBytes(mid, input.documentBytes, input.collection);
+    if (encoded < input.targetBytes) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  // The search finds the first row count at or above target. Evaluate both
+  // lo and lo - 1 (if lo > 1) and keep whichever has smaller absolute error.
+  const loBytes = monolithicEncodedBytes(lo, input.documentBytes, input.collection);
+  const loError = Math.abs((loBytes - input.targetBytes) / input.targetBytes);
+  let bestRow = lo;
+  let bestBytes = loBytes;
+  let bestError = loError;
+
+  if (lo > 1) {
+    const prevRow = lo - 1;
+    const prevBytes = monolithicEncodedBytes(prevRow, input.documentBytes, input.collection);
+    const prevError = Math.abs((prevBytes - input.targetBytes) / input.targetBytes);
+    if (prevError < bestError || (prevError === bestError && prevRow < bestRow)) {
+      bestRow = prevRow;
+      bestBytes = prevBytes;
+      bestError = prevError;
+    }
+  }
+
+  if (bestError > input.tolerance) {
+    throw new WorkloadCeilingProvisionError(
+      "tolerance",
+      `no row count within ${input.tolerance * 100}% of ${input.targetBytes} bytes (best: ${bestRow} rows, ${bestBytes} bytes, ${(bestError * 100).toFixed(3)}% error)`,
+    );
+  }
+
+  return {
+    row_count: bestRow,
+    achieved_bytes: bestBytes,
+    target_bytes: input.targetBytes,
+    relative_error: (bestBytes - input.targetBytes) / input.targetBytes,
+  };
+};
+
 /**
  * CLI entrypoint (`pnpm bench:workload-ceiling:provision`). Real R2
- * provisioning, so it requires `credentials/cloudflare.json` (the
- * `loadEndpointCreds` convention, `tests/fixtures/endpoint-creds.ts`) — the
- * same file shape and skip-honestly posture the credential-gated test
+ * provisioning, so it requires `credentials/cloudflare.json` (or
+ * `credentials/cloudflare-free.json` when `WORKLOAD_CEILING_TIER=free`) —
+ * the same file shape and skip-honestly posture the credential-gated test
  * suites use, except here absence is a script failure rather than a skip:
  * there is nothing useful this script can do without a real bucket.
  *
@@ -295,31 +449,36 @@ export const randomIncarnation = (): string => randomUUID().replaceAll("-", "");
  * so a later cleanup step can reconstruct exactly which keys to remove.
  */
 async function main(): Promise<number> {
-  const creds = await loadEndpointCreds("cloudflare.json");
-  if (creds === null) {
+  let tier: CloudflareTier;
+  try {
+    tier = resolveWorkloadCeilingTier(process.env);
+  } catch (error) {
     console.error(
-      "workload-ceiling-provision: no credentials/cloudflare.json found " +
-        "(tests/fixtures/endpoint-creds.ts). This script provisions fixtures " +
-        "against a real R2 bucket for the deployed workload-ceiling study; " +
-        "there is nothing to do without credentials.",
+      `workload-ceiling-provision: ${error instanceof Error ? error.message : String(error)}`,
     );
     return 1;
   }
+  const creds = await loadCloudflareR2CredsForTier(tier);
+  if (creds === null) {
+    const credsFile = cloudflareR2CredsFilename(tier);
+    console.error(
+      `workload-ceiling-provision: no credentials/${credsFile} found ` +
+        `(tests/fixtures/endpoint-creds.ts). This script provisions fixtures ` +
+        "against a real R2 bucket for the deployed workload-ceiling study; " +
+        "there is nothing to do without credentials.\n" +
+        `Set WORKLOAD_CEILING_TIER=free to use credentials/cloudflare-free.json ` +
+        `instead of credentials/cloudflare.json.`,
+    );
+    return 1;
+  }
+  console.log(
+    `workload-ceiling-provision: using ${tier} tier (credentials/${cloudflareR2CredsFilename(tier)})`,
+  );
 
   // Preflight the one coupling nothing else enforces: the deployed Worker's
   // `env.BUCKET` binding is a literal in wrangler.jsonc, so fixtures written
   // to any other bucket are invisible to it. Refuse before writing anything.
-  if (creds.bucket !== WORKLOAD_CEILING_BUCKET_NAME) {
-    console.error(
-      `workload-ceiling-provision: credentials/cloudflare.json names bucket ` +
-        `"${creds.bucket}", but the study Worker's wrangler.jsonc binds ` +
-        `env.BUCKET to "${WORKLOAD_CEILING_BUCKET_NAME}". Provisioning into a ` +
-        `different bucket would make every POST /run fail with a 502 ` +
-        `"fixture descriptor is missing". Point the credentials file at ` +
-        `"${WORKLOAD_CEILING_BUCKET_NAME}", or change both together.`,
-    );
-    return 1;
-  }
+  assertStudyBucket(creds);
 
   const signer = new AwsClient({
     accessKeyId: creds.credentials.accessKeyId,

@@ -1,9 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { clopperPearsonZeroFailureUpper } from "./statistics.ts";
+import { planCaptureInvocations } from "./workload-ceiling-capture.ts";
+import { byteAxisCells } from "./workload-ceiling-cells.ts";
+import { WORKLOAD_CEILING_STUDY } from "./workload-ceiling-contract.ts";
 import {
   WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
   WorkloadCeilingHarnessError,
   type WorkloadCeilingRawEvent,
+  type WorkloadCeilingSweepCell,
 } from "./workload-ceiling-harness.ts";
 import {
   assessWorkloadCeilingExecution,
@@ -152,6 +156,60 @@ describe("matchWorkloadCeilingEvents", () => {
     expect(matched.pairs).toHaveLength(1);
     expect(matched.pairs[0]!.control.sample_count).toBe(3);
     expect(matched.pairs[0]!.control.p50.value).toBe(2);
+  });
+
+  test("the planned capture matrix pairs every cell", () => {
+    // Drives the REAL planner rather than a hand-built event list, so the
+    // pairing logic and the capture runner cannot drift apart on cardinality
+    // again. Every planned measured invocation becomes one collected event.
+    const cells: WorkloadCeilingSweepCell[] = byteAxisCells().map((cell) => ({
+      scenario_id: cell.scenario_id,
+      axis: cell.axis,
+      target_bytes: cell.target,
+      achieved_bytes: cell.target,
+      row_count: 1,
+      document_bytes: cell.document_bytes,
+      manifest_descriptors: cell.manifest_descriptors,
+      fixture_prefix: `fixtures/${cell.scenario_id}`,
+      incarnation: "incarnation",
+      monolithic_key: "monolithic",
+      manifest_key: "manifest",
+      descriptor_canonical_hash: "hash",
+    }));
+    const planned = planCaptureInvocations({
+      cells,
+      arms: ["monolithic-control", "chunked-candidate"],
+      warmup: WORKLOAD_CEILING_STUDY.capture.warmup_invocations_per_cell,
+      measured: WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell,
+    }).filter((invocation) => !invocation.warmup);
+    // Pins the fixture itself: a planner that returned nothing would make
+    // every assertion below vacuously true.
+    expect(planned).toHaveLength(
+      cells.length * 2 * WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell,
+    );
+
+    const asEvents = (arm: string): WorkloadCeilingRawEvent[] =>
+      planned
+        .filter((invocation) => invocation.implementation === arm)
+        .map((invocation, index) =>
+          event({
+            run_id: `${arm}-${String(index)}`,
+            scenario_id: invocation.scenario_id,
+            cpu_ms: 10 + index,
+          }),
+        );
+
+    const matched = matchWorkloadCeilingEvents(
+      asEvents("monolithic-control"),
+      asEvents("chunked-candidate"),
+    );
+    expect(matched.incomplete).toEqual([]);
+    expect(matched.pairs).toHaveLength(cells.length);
+    for (const pair of matched.pairs) {
+      expect(pair.control.sample_count).toBe(
+        WORKLOAD_CEILING_STUDY.capture.planned_measured_invocations_per_cell,
+      );
+    }
   });
 
   test("a side whose own events name two deployments is reported as a mid-capture redeploy", () => {

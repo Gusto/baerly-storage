@@ -26,20 +26,29 @@
  * `../../measurement/workload-ceiling-collect.ts`. See README.md for the
  * platform documentation this rests on.
  *
- * The two `implementation` values read the SAME logical row set through two
- * different storage shapes that `workload-ceiling-provision.ts` writes side
- * by side under one `fixture_prefix`:
+ * The three `implementation` values read the SAME logical row set through
+ * different storage shapes and read paths, all written side by side under one
+ * `fixture_prefix` by `workload-ceiling-provision.ts`:
  *
- *  - `monolithic-control` — a single JSON blob (`fixture.json`'s
- *    `monolithic_key`), the shape of today's shipped single-snapshot format.
+ *  - `monolithic-control` — today's shipped single-snapshot format at
+ *    `fixture.json`'s `monolithic_key`, read through the shipped
+ *    `loadSnapshotAsMap`, SHA-256 verification included, so what the study
+ *    measures is what a caller would run.
+ *  - `monolithic-control-unhashed` — the identical bytes at the identical
+ *    key, differing by exactly one operation: the digest verification.
+ *    A Worker may not time itself, so the cost of that verification has to
+ *    be a difference of two platform-reported CPU numbers. It is a
+ *    measurement-only probe, not a subject — see
+ *    `WORKLOAD_CEILING_IMPLEMENTATIONS` where the arm is declared.
  *  - `chunked-candidate` — the proposed manifest + chunk layout, read
  *    through `openSnapshotView` (`packages/server/src/snapshot-view.ts`).
  *
- * Both feed the identical fold subject, so the comparison isolates the
+ * All three feed the identical fold subject, so a comparison isolates the
  * storage-shape cost, not a difference in what gets computed.
  */
 import type { DocumentData, Storage } from "@baerly/protocol";
 import { r2BindingStorage } from "@baerly/adapter-cloudflare";
+import { loadSnapshotAsMap } from "@baerly/server";
 import {
   foldChunkedSnapshotReference,
   openSnapshotView,
@@ -54,6 +63,20 @@ import {
   type WorkloadCeilingRunRequest,
 } from "../../measurement/workload-ceiling-harness.ts";
 import { constantTimeEqual } from "./constant-time-equal.ts";
+
+/**
+ * Requests this ISOLATE has served, module scope so it is per-isolate and
+ * survives across requests. Read once per request, before the first `await`,
+ * so two concurrent requests in one isolate cannot both observe zero.
+ *
+ * This is not a self-reported measurement and does not contradict README.md
+ * §"Why CPU is never self-reported". No clock is read: the value is a boolean
+ * about this isolate's own history, which the platform exposes nowhere and
+ * which nothing outside the isolate can observe. CPU is different in kind —
+ * an in-isolate CPU number is wall time misreported as the runtime's own
+ * accounting, and the platform DOES publish the real one.
+ */
+let isolateRequestsServed = 0;
 
 export interface WorkloadCeilingWorkerEnv {
   readonly BUCKET: R2Bucket;
@@ -93,15 +116,51 @@ function parseFixtureDescriptor(bytes: Uint8Array): WorkloadCeilingFixtureDescri
   }
 }
 
+/** The one Map → rows conversion, shared by every arm so its cost cancels in the comparison. */
+const toReferenceRows = (materialized: Map<string, DocumentData>): readonly ReferenceRow[] =>
+  [...materialized].map(([_id, body]) => ({ _id, body }));
+
+/**
+ * The control arm: the SHIPPED monolithic read path, verbatim. `loadSnapshotAsMap`
+ * verifies the body's SHA-256 against the digest embedded in the key before any
+ * field is parsed, which is precisely the hash cost this arm exists to include.
+ */
 async function loadMonolithicRows(
   storage: Storage,
   key: string,
+  collection: string,
+  signal: AbortSignal,
+): Promise<readonly ReferenceRow[]> {
+  try {
+    return toReferenceRows(await loadSnapshotAsMap(storage, key, collection, signal));
+  } catch (error) {
+    signal.throwIfAborted();
+    throw new WorkloadCeilingWorkerError(
+      502,
+      `monolithic fixture is unreadable: ${describeError(error)}`,
+    );
+  }
+}
+
+/**
+ * The unhashed probe: identical bytes, identical key, identical decode — minus
+ * the digest comparison. Deliberately a duplicate of `loadSnapshotAsMap`'s tail
+ * rather than a flag threaded through the production reader: the production
+ * reader must not grow a "skip verification" mode for a bench arm's benefit.
+ */
+async function loadMonolithicRowsUnhashed(
+  storage: Storage,
+  key: string,
+  collection: string,
   signal: AbortSignal,
 ): Promise<readonly ReferenceRow[]> {
   const stored = await storage.get(key, { signal });
   if (stored === null) {
     throw new WorkloadCeilingWorkerError(502, `monolithic fixture body is missing: ${key}`);
   }
+  // Everything loadSnapshotAsMap does EXCEPT `await snapshotHash(got.body)` and
+  // the comparison against the key digest. Keep the rest byte-for-byte
+  // equivalent — a divergence here shows up as hash cost that is not hash cost.
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(stored.body));
@@ -114,16 +173,26 @@ async function loadMonolithicRows(
   if (
     parsed === null ||
     typeof parsed !== "object" ||
-    Array.isArray(parsed) ||
-    !("rows" in parsed) ||
-    !Array.isArray((parsed as { rows: unknown }).rows)
+    !("schema_version" in parsed) ||
+    !("collection" in parsed) ||
+    !("docs" in parsed) ||
+    !Array.isArray((parsed as { docs?: unknown }).docs)
   ) {
-    throw new WorkloadCeilingWorkerError(
-      502,
-      "monolithic fixture body must be an object with a rows array",
-    );
+    throw new WorkloadCeilingWorkerError(502, "monolithic fixture body is not a snapshot");
   }
-  return (parsed as { rows: readonly ReferenceRow[] }).rows;
+  const body = parsed as {
+    schema_version: number;
+    collection: string;
+    docs: readonly { _id: string; body: DocumentData }[];
+  };
+  if (body.collection !== collection) {
+    throw new WorkloadCeilingWorkerError(502, "monolithic fixture body collection does not match");
+  }
+  const out = new Map<string, DocumentData>();
+  for (const row of body.docs) {
+    out.set(row._id, row.body);
+  }
+  return toReferenceRows(out);
 }
 
 async function loadChunkedRows(
@@ -131,6 +200,7 @@ async function loadChunkedRows(
   descriptor: WorkloadCeilingFixtureDescriptor,
   signal: AbortSignal,
 ): Promise<readonly ReferenceRow[]> {
+  const { collection } = descriptor;
   // A manifest or chunk the descriptor references but the bucket does not hold
   // is a broken upstream fixture — the same 502 the monolithic branch reports
   // for its missing body, so an operator reads one status class for "your
@@ -142,7 +212,7 @@ async function loadChunkedRows(
     const view = await openSnapshotView({
       storage,
       manifestKey: descriptor.manifest_key,
-      collection: descriptor.collection,
+      collection,
       expectedLogSeqStart: descriptor.log_seq_start,
       signal,
     });
@@ -171,7 +241,21 @@ async function runControlledFold(
   let rows: readonly ReferenceRow[];
   switch (request.implementation) {
     case "monolithic-control": {
-      rows = await loadMonolithicRows(storage, descriptor.monolithic_key, signal);
+      rows = await loadMonolithicRows(
+        storage,
+        descriptor.monolithic_key,
+        descriptor.collection,
+        signal,
+      );
+      break;
+    }
+    case "monolithic-control-unhashed": {
+      rows = await loadMonolithicRowsUnhashed(
+        storage,
+        descriptor.monolithic_key,
+        descriptor.collection,
+        signal,
+      );
       break;
     }
     case "chunked-candidate": {
@@ -213,6 +297,9 @@ export default {
       return jsonResponse(404, { error: "not found: POST /run only" });
     }
 
+    const isolateCold = isolateRequestsServed === 0;
+    isolateRequestsServed++;
+
     // Fail CLOSED, at the handler — auth policy lives here, not in the
     // comparator (`constant-time-equal.ts` deliberately pins empty-vs-empty
     // → true as comparator semantics). Without the secret-side checks an
@@ -247,6 +334,7 @@ export default {
         workload_ceiling_run_id: runRequest.run_id,
         workload_ceiling_scenario_id: runRequest.scenario_id,
         workload_ceiling_implementation: runRequest.implementation,
+        workload_ceiling_isolate_cold: isolateCold,
       }),
     );
 
@@ -262,6 +350,7 @@ export default {
         scenario_id: runRequest.scenario_id,
         implementation: runRequest.implementation,
         row_count: result.row_count,
+        isolate_cold: isolateCold,
       });
     } catch (error) {
       const status = error instanceof WorkloadCeilingWorkerError ? error.status : 500;

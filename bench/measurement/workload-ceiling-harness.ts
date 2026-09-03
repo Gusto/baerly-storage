@@ -30,6 +30,7 @@
  * behavior and it is not reachable from `packages/server/src/index.ts`.
  */
 import { canonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
+import { WORKLOAD_CEILING_STUDY } from "./workload-ceiling-contract.ts";
 
 export const WORKLOAD_CEILING_CONTRACT_ID = "baerly.workload-ceiling/chunked-snapshot/v1" as const;
 
@@ -115,8 +116,26 @@ export interface WorkloadCeilingEvidenceBlock {
  */
 export const WORKLOAD_CEILING_BUCKET_NAME = "baerly-storage-eval" as const;
 
+/**
+ * The arms one deployed script serves, selected per request.
+ *
+ * `monolithic-control` and `chunked-candidate` are the two SUBJECTS the study
+ * compares. `monolithic-control-unhashed` is neither: it is a measurement-only
+ * probe that reads the identical bytes at the identical key as
+ * `monolithic-control` and differs by exactly one operation — the SHA-256
+ * digest verification `loadSnapshotAsMap` performs before parsing. Its only
+ * purpose is to make the control's hash cost a difference of two
+ * platform-reported CPU numbers, because a Worker may not time itself
+ * (`bench/workload-ceiling-worker/README.md` §"Why CPU is never
+ * self-reported").
+ *
+ * It must never be handed to `workload-ceiling-compare.ts` as a side. It is
+ * not a candidate, it is not a control, and pairing it against either would
+ * report a format comparison that was really a hash measurement.
+ */
 export const WORKLOAD_CEILING_IMPLEMENTATIONS = [
   "monolithic-control",
+  "monolithic-control-unhashed",
   "chunked-candidate",
 ] as const;
 export type WorkloadCeilingImplementation = (typeof WORKLOAD_CEILING_IMPLEMENTATIONS)[number];
@@ -704,3 +723,383 @@ export const unresolvedWorkloadCeilingRawEvent = (input: {
       cpu_outcome_verbatim: null,
     },
   });
+
+/** Sweep report codec for ticket 2: byte-axis cell catalog and calibrated sweep provisioning. */
+
+export interface WorkloadCeilingSweepCell {
+  readonly scenario_id: string;
+  readonly axis: "byte" | "row";
+  readonly target_bytes: number;
+  readonly achieved_bytes: number;
+  readonly row_count: number;
+  readonly document_bytes: number;
+  readonly manifest_descriptors: number;
+  readonly fixture_prefix: string;
+  readonly incarnation: string;
+  readonly monolithic_key: string;
+  readonly manifest_key: string;
+  readonly descriptor_canonical_hash: string;
+}
+
+export interface WorkloadCeilingSweepCleanup {
+  readonly scenario_id: string;
+  readonly fixture_prefix: string;
+  readonly written_keys: readonly string[];
+  readonly cleanup_authority: unknown;
+}
+
+export interface WorkloadCeilingSweepReport {
+  readonly contract_id: typeof WORKLOAD_CEILING_CONTRACT_ID;
+  readonly sweep_id: string;
+  readonly collection: string;
+  readonly cells: readonly WorkloadCeilingSweepCell[];
+  readonly cleanup: readonly WorkloadCeilingSweepCleanup[];
+}
+
+const SWEEP_CELL_FIELDS = [
+  "scenario_id",
+  "axis",
+  "target_bytes",
+  "achieved_bytes",
+  "row_count",
+  "document_bytes",
+  "manifest_descriptors",
+  "fixture_prefix",
+  "incarnation",
+  "monolithic_key",
+  "manifest_key",
+  "descriptor_canonical_hash",
+] as const;
+
+const SWEEP_CLEANUP_FIELDS = [
+  "scenario_id",
+  "fixture_prefix",
+  "written_keys",
+  "cleanup_authority",
+] as const;
+
+const SWEEP_REPORT_FIELDS = ["contract_id", "sweep_id", "collection", "cells", "cleanup"] as const;
+
+function canonicalizeSweepCell(value: unknown): WorkloadCeilingSweepCell {
+  assertExactFields(value, SWEEP_CELL_FIELDS, "sweep cell");
+  assertNonEmptyString(value["scenario_id"], "scenario_id");
+  const axis = value["axis"];
+  if (axis !== "byte" && axis !== "row") {
+    invalid("axis", `must be "byte" or "row"; got ${String(axis)}`);
+  }
+  const targetBytes = value["target_bytes"];
+  if (typeof targetBytes !== "number" || !Number.isSafeInteger(targetBytes) || targetBytes < 1) {
+    invalid("target_bytes", "must be a positive safe integer");
+  }
+  const achievedBytes = value["achieved_bytes"];
+  if (
+    typeof achievedBytes !== "number" ||
+    !Number.isSafeInteger(achievedBytes) ||
+    achievedBytes < 1
+  ) {
+    invalid("achieved_bytes", "must be a positive safe integer");
+  }
+  const rowCount = value["row_count"];
+  if (typeof rowCount !== "number" || !Number.isSafeInteger(rowCount) || rowCount < 1) {
+    invalid("row_count", "must be a positive safe integer");
+  }
+  const documentBytes = value["document_bytes"];
+  if (
+    typeof documentBytes !== "number" ||
+    !Number.isSafeInteger(documentBytes) ||
+    documentBytes < 32
+  ) {
+    invalid("document_bytes", "must be a safe integer >= 32");
+  }
+  const manifestDescriptors = value["manifest_descriptors"];
+  if (
+    typeof manifestDescriptors !== "number" ||
+    !Number.isSafeInteger(manifestDescriptors) ||
+    manifestDescriptors < 1
+  ) {
+    invalid("manifest_descriptors", "must be a positive safe integer");
+  }
+  assertNonEmptyString(value["fixture_prefix"], "fixture_prefix");
+  assertNonEmptyString(value["incarnation"], "incarnation");
+  assertNonEmptyString(value["monolithic_key"], "monolithic_key");
+  assertNonEmptyString(value["manifest_key"], "manifest_key");
+  assertNonEmptyString(value["descriptor_canonical_hash"], "descriptor_canonical_hash");
+  return {
+    scenario_id: value["scenario_id"],
+    axis,
+    target_bytes: targetBytes,
+    achieved_bytes: achievedBytes,
+    row_count: rowCount,
+    document_bytes: documentBytes,
+    manifest_descriptors: manifestDescriptors,
+    fixture_prefix: value["fixture_prefix"],
+    incarnation: value["incarnation"],
+    monolithic_key: value["monolithic_key"],
+    manifest_key: value["manifest_key"],
+    descriptor_canonical_hash: value["descriptor_canonical_hash"],
+  };
+}
+
+function canonicalizeSweepCleanup(value: unknown): WorkloadCeilingSweepCleanup {
+  assertExactFields(value, SWEEP_CLEANUP_FIELDS, "sweep cleanup");
+  assertNonEmptyString(value["scenario_id"], "scenario_id");
+  assertNonEmptyString(value["fixture_prefix"], "fixture_prefix");
+  const writtenKeys = value["written_keys"];
+  if (!Array.isArray(writtenKeys)) {
+    invalid("written_keys", "must be an array");
+  }
+  for (const key of writtenKeys) {
+    assertNonEmptyString(key, "written_keys entry");
+  }
+  return {
+    scenario_id: value["scenario_id"],
+    fixture_prefix: value["fixture_prefix"],
+    written_keys: writtenKeys as readonly string[],
+    cleanup_authority: value["cleanup_authority"],
+  };
+}
+
+function canonicalizeSweepReport(value: unknown): WorkloadCeilingSweepReport {
+  assertExactFields(value, SWEEP_REPORT_FIELDS, "sweep report");
+  if (value["contract_id"] !== WORKLOAD_CEILING_CONTRACT_ID) {
+    invalid("contract_id", `must be ${WORKLOAD_CEILING_CONTRACT_ID}`);
+  }
+  assertNonEmptyString(value["sweep_id"], "sweep_id");
+  assertNonEmptyString(value["collection"], "collection");
+  const cells = value["cells"];
+  if (!Array.isArray(cells)) {
+    invalid("cells", "must be an array");
+  }
+  const canonicalCells = cells.map(canonicalizeSweepCell);
+  const cleanup = value["cleanup"];
+  if (!Array.isArray(cleanup)) {
+    invalid("cleanup", "must be an array");
+  }
+  const canonicalCleanup = cleanup.map(canonicalizeSweepCleanup);
+  return {
+    contract_id: WORKLOAD_CEILING_CONTRACT_ID,
+    sweep_id: value["sweep_id"],
+    collection: value["collection"],
+    cells: canonicalCells,
+    cleanup: canonicalCleanup,
+  };
+}
+
+/** Canonical-JSON-serializes a validated sweep report. Rejects a field outside the exact set. */
+export const encodeWorkloadCeilingSweepReport = (report: WorkloadCeilingSweepReport): string => {
+  const canonical = canonicalizeSweepReport(report);
+  return toCanonicalJson(canonical as unknown as CanonicalJsonValue, "sweep report");
+};
+
+/** Decodes and validates a `WorkloadCeilingSweepReport`. Enforces canonical bytes. */
+export const decodeWorkloadCeilingSweepReport = (raw: string): WorkloadCeilingSweepReport => {
+  const parsed = parseJson(raw, "sweep report body");
+  const canonical = canonicalizeSweepReport(parsed);
+  const canonicalRaw = toCanonicalJson(canonical as unknown as CanonicalJsonValue, "sweep report");
+  if (canonicalRaw !== raw) {
+    invalid("sweep report body", "is not canonical JSON");
+  }
+  return canonical;
+};
+
+/**
+ * Journal codec for ticket 4: unattended capture runner and batch collector.
+ */
+
+/**
+ * One invocation the capture runner performed. Written to a JSONL journal
+ * BEFORE the next invocation starts, so a crashed or killed run leaves an
+ * exact, replayable record of everything it did.
+ *
+ * This is the join between the invoke phase and the collect phase: the collect
+ * phase performs no invocation and derives its collection window from
+ * `window_gte` / `window_lt` here, never from a clock of its own. That is what
+ * makes collection re-runnable — a second collect pass over the same journal
+ * asks the platform the identical question.
+ *
+ * `warmup: true` records an invocation excluded BEFORE it ran, per
+ * `WORKLOAD_CEILING_STUDY.capture.exclusion_policy`. It stays in the journal;
+ * exclusion is a tag, not a deletion.
+ *
+ * There is deliberately no field for the shared secret, and none for anything
+ * derived from it.
+ */
+export interface WorkloadCeilingInvocationRecord {
+  readonly contract_id: typeof WORKLOAD_CEILING_CONTRACT_ID;
+  readonly sweep_id: string;
+  readonly run_id: string;
+  readonly scenario_id: string;
+  readonly implementation: WorkloadCeilingImplementation;
+  readonly fixture_prefix: string;
+  readonly warmup: boolean;
+  readonly invoked_at: string;
+  readonly window_gte: string;
+  readonly window_lt: string;
+  readonly http_status: number;
+  /** The Worker's own reported row count — a cheap check that the fold ran over the expected fixture. */
+  readonly row_count: number;
+  readonly thermal_class: WorkloadCeilingThermalClass;
+}
+
+const INVOCATION_RECORD_FIELDS = [
+  "contract_id",
+  "sweep_id",
+  "run_id",
+  "scenario_id",
+  "implementation",
+  "fixture_prefix",
+  "warmup",
+  "invoked_at",
+  "window_gte",
+  "window_lt",
+  "http_status",
+  "row_count",
+  "thermal_class",
+] as const;
+
+function assertIsoTimestamp(value: unknown, field: string): asserts value is string {
+  assertNonEmptyString(value, field);
+  if (!OBSERVED_AT_PATTERN.test(value)) {
+    invalid(field, "must be an RFC 3339 UTC timestamp (YYYY-MM-DDTHH:mm:ss[.sss]Z)");
+  }
+}
+
+function canonicalizeInvocationRecord(value: unknown): WorkloadCeilingInvocationRecord {
+  assertExactFields(value, INVOCATION_RECORD_FIELDS, "invocation record");
+  if (value["contract_id"] !== WORKLOAD_CEILING_CONTRACT_ID) {
+    invalid("contract_id", `must be ${WORKLOAD_CEILING_CONTRACT_ID}`);
+  }
+  assertNonEmptyString(value["sweep_id"], "sweep_id");
+  assertNonEmptyString(value["run_id"], "run_id");
+  assertNonEmptyString(value["scenario_id"], "scenario_id");
+  const implementation = value["implementation"];
+  if (!(WORKLOAD_CEILING_IMPLEMENTATIONS as readonly unknown[]).includes(implementation)) {
+    invalid(
+      "implementation",
+      `must be one of ${WORKLOAD_CEILING_IMPLEMENTATIONS.join(", ")}; got ${String(implementation)}`,
+    );
+  }
+  assertNonEmptyString(value["fixture_prefix"], "fixture_prefix");
+  const warmup = value["warmup"];
+  if (typeof warmup !== "boolean") {
+    invalid("warmup", "must be a boolean");
+  }
+  assertIsoTimestamp(value["invoked_at"], "invoked_at");
+  assertIsoTimestamp(value["window_gte"], "window_gte");
+  assertIsoTimestamp(value["window_lt"], "window_lt");
+  const httpStatus = value["http_status"];
+  if (
+    typeof httpStatus !== "number" ||
+    !Number.isInteger(httpStatus) ||
+    httpStatus < 100 ||
+    httpStatus > 599
+  ) {
+    invalid("http_status", "must be an integer HTTP status code (100-599)");
+  }
+  const rowCount = value["row_count"];
+  if (typeof rowCount !== "number" || !Number.isSafeInteger(rowCount) || rowCount < 0) {
+    invalid("row_count", "must be a non-negative safe integer");
+  }
+  const thermalClass = value["thermal_class"];
+  if (!(WORKLOAD_CEILING_THERMAL_CLASSES as readonly unknown[]).includes(thermalClass)) {
+    invalid(
+      "thermal_class",
+      `must be one of ${WORKLOAD_CEILING_THERMAL_CLASSES.join(", ")}; got ${String(thermalClass)}`,
+    );
+  }
+  return {
+    contract_id: WORKLOAD_CEILING_CONTRACT_ID,
+    sweep_id: value["sweep_id"],
+    run_id: value["run_id"],
+    scenario_id: value["scenario_id"],
+    implementation: implementation as WorkloadCeilingImplementation,
+    fixture_prefix: value["fixture_prefix"],
+    warmup,
+    invoked_at: value["invoked_at"],
+    window_gte: value["window_gte"],
+    window_lt: value["window_lt"],
+    http_status: httpStatus,
+    row_count: rowCount,
+    thermal_class: thermalClass as WorkloadCeilingThermalClass,
+  };
+}
+
+/** Canonical-JSON-serializes a validated invocation record. Rejects a field outside the exact set. */
+export const encodeWorkloadCeilingInvocationRecord = (
+  record: WorkloadCeilingInvocationRecord,
+): string => {
+  const canonical = canonicalizeInvocationRecord(record);
+  return toCanonicalJson(canonical as unknown as CanonicalJsonValue, "invocation record");
+};
+
+/**
+ * Decodes and validates a `WorkloadCeilingInvocationRecord` from a journal line.
+ * Enforces canonical bytes.
+ */
+export const decodeWorkloadCeilingInvocationRecord = (
+  raw: string,
+): WorkloadCeilingInvocationRecord => {
+  const parsed = parseJson(raw, "invocation record body");
+  const canonical = canonicalizeInvocationRecord(parsed);
+  const canonicalRaw = toCanonicalJson(
+    canonical as unknown as CanonicalJsonValue,
+    "invocation record",
+  );
+  if (canonicalRaw !== raw) {
+    invalid("invocation record body", "is not canonical JSON");
+  }
+  return canonical;
+};
+
+/**
+ * Pure. The earliest instant an invocation may start, given when the previous
+ * one started.
+ *
+ * Two constraints, both from `WORKLOAD_CEILING_STUDY.capture`:
+ *
+ *  - at least `invocation_spacing_seconds` after the previous start, so no two
+ *    invocations share a telemetry minute bucket (any two instants ≥ 60 s apart
+ *    are necessarily in different buckets; 70 is skew headroom);
+ *  - not within the last `MINUTE_TAIL_GUARD_SECONDS` of a minute, so the
+ *    invocation cannot straddle a boundary and land its telemetry row in the
+ *    NEXT bucket — which would put it outside the window the runner derives
+ *    from its own start instant.
+ */
+export const MINUTE_TAIL_GUARD_SECONDS = 10 as const;
+
+export const nextInvocationStart = (previousStart: Date | null, now: Date): Date => {
+  const spacingMs = WORKLOAD_CEILING_STUDY.capture.invocation_spacing_seconds * 1000;
+  let candidate: Date;
+  if (previousStart === null) {
+    candidate = new Date(now.getTime());
+  } else {
+    candidate = new Date(previousStart.getTime() + spacingMs);
+  }
+  if (candidate < now) {
+    candidate = new Date(now.getTime());
+  }
+  const seconds = candidate.getUTCSeconds();
+  if (seconds >= 60 - MINUTE_TAIL_GUARD_SECONDS) {
+    // Move to the start of the next minute
+    candidate.setUTCSeconds(0, 0);
+    candidate.setTime(candidate.getTime() + 60_000);
+  }
+  return candidate;
+};
+
+/**
+ * Pure. The collection window for an invocation that started at `start`:
+ * the whole minute containing it.
+ *
+ * Correct whether the platform's `datetime` dimension is the raw invocation
+ * instant or the minute-bucket start — see ticket 4's pre-research. A window
+ * bounded by the actual invocation instants is correct ONLY under the raw
+ * reading, and silently loses every row under the other.
+ */
+export const collectionWindowFor = (start: Date): { readonly gte: string; readonly lt: string } => {
+  const floor = new Date(Math.floor(start.getTime() / 60_000) * 60_000);
+  return {
+    gte: floor.toISOString(),
+    lt: new Date(floor.getTime() + 60_000).toISOString(),
+  };
+};
