@@ -34,6 +34,7 @@ import {
   MAINTENANCE_WARN_INTERVAL_WRITES,
   noopMetricsRecorder,
   readCurrentJson,
+  SCHEDULED_MIN_ENTRIES_TO_COMPACT,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
 import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
@@ -123,6 +124,20 @@ const retireLogs = async (
  * 50-subrequest limit. Alternate direct `compact()` and `runGc()` calls for
  * that profile.
  *
+ * Defaults: `minEntriesToCompact` defaults to
+ * {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT} (1) on THIS entry point only — a
+ * scheduler that fires has already decided it is time to work, so the
+ * scheduled path drains the live tail to zero rather than parking it in a
+ * dead zone between a count floor and the per-entry GET cost every read
+ * pays. This is deliberately NOT `compact()`'s own default (100) or the
+ * write-tick floor ({@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT}, 50), both
+ * of which exist to keep an in-band write from thrashing snapshot
+ * rewrites. Every fold rewrites the whole snapshot, so a caller whose
+ * fold cost outweighs its tail-read cost can raise the floor explicitly
+ * via `options.compact.minEntriesToCompact`. Passing a
+ * `CLOUDFLARE_*_TIER`/profile-derived options object carries its own
+ * explicit threshold, so the scheduled default never applies to it.
+ *
  * Errors propagate — the caller's cron handler is responsible for
  * logging them. The Cloudflare runtime ships uncaught Worker errors
  * to the dashboard; Node operators wrap their `node-cron` callbacks
@@ -143,6 +158,14 @@ const retireLogs = async (
  * );
  * console.log("compacted:", res.compact.entriesFolded, "swept:", res.gc.swept);
  *
+ * // Write-amplification-sensitive: fold only once a tail has accumulated.
+ * // Each fold rewrites the whole snapshot; the floor trades tail GETs on
+ * // reads against snapshot PUTs on the schedule.
+ * const res = await runScheduledMaintenance(
+ *   { storage, currentJsonKey },
+ *   { compact: { minEntriesToCompact: 10 } },
+ * );
+ *
  * // Cloudflare Free: alternate the individually bounded direct phases.
  * if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
  *   await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
@@ -155,8 +178,21 @@ export const runScheduledMaintenance = async (
   args: MaintenanceArgs,
   options: MaintenanceOptions = {},
 ): Promise<MaintenanceResult> => {
+  // The scheduled path owns its own fold floor. `compact()`'s own default
+  // (100) and the write-tick floor (WRITE_TICK_MIN_ENTRIES_TO_COMPACT, 50)
+  // exist for the IN-BAND tick, where a write is not a scheduling decision;
+  // inheriting either here parks a low-write collection's tail permanently
+  // in the dead zone between the floor and the per-entry GET cost every
+  // read pays. A scheduler that fires has already decided it is time to
+  // work — fold whatever tail exists. Callers that prefer to batch folds
+  // pass `options.compact.minEntriesToCompact` explicitly, which suppresses
+  // this default. Profile-derived option objects (`CLOUDFLARE_*_TIER`)
+  // always carry an explicit threshold and are likewise unaffected.
   const compactRes = await compact(args, {
     ...options.compact,
+    ...(options.compact?.minEntriesToCompact === undefined && {
+      minEntriesToCompact: SCHEDULED_MIN_ENTRIES_TO_COMPACT,
+    }),
     ...(options.signal !== undefined && { signal: options.signal }),
   });
   const gcRes = await runGc(args, {

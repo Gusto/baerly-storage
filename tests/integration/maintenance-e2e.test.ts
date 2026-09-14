@@ -250,8 +250,9 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
 
           // Seed enough writes to make compaction interesting; the
-          // engine's default minEntriesToCompact is 100, so seed
-          // exactly that.
+          // scheduled default floor is 1 (anything folds), so the exact
+          // count is a cost-model choice, not a gate — keep 100 reads to
+          // exercise a non-trivial tail.
           for (let i = 0; i < 100; i++) {
             const id = `t-${i.toString().padStart(3, "0")}`;
             await writer.commit({

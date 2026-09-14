@@ -525,6 +525,27 @@ export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
 export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
 
 /**
+ * `runScheduledMaintenance`'s own `minEntriesToCompact` floor, applied when the
+ * caller passes no `options.compact.minEntriesToCompact`. Deliberately NOT
+ * `DEFAULT_MIN_TO_COMPACT` (compact()'s own 100) or
+ * {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT} (50): both of those floors exist
+ * for the IN-BAND write tick, where a write is not a scheduling decision and
+ * folding on every one would thrash snapshot rewrites. A scheduler that
+ * fires has already decided it is time to do work, so the only live tail
+ * worth leaving unfolded is none — a count floor on the scheduled path
+ * parks a low-write collection's tail permanently between the floor and
+ * the reads' per-entry GET cost (measured: a 36-entry tail costing 36 S3
+ * GETs, ~1.2s, on every read because a 100-floor cron tick skipped it for
+ * months; a consumer independently converged on 1). Each fold rewrites
+ * the whole snapshot, so write-amplification-sensitive callers can still
+ * raise it via `options.compact.minEntriesToCompact`; see
+ * docs/spec/sync-protocol.md § Maintenance runtime model.
+ *
+ * @see packages/server/src/maintenance.ts
+ */
+export const SCHEDULED_MIN_ENTRIES_TO_COMPACT: number = 1;
+
+/**
  * Node-tier write-tick maintenance caps — a MODERATE multiple of the CF-free `WRITE_TICK_*`
  * defaults, threaded into the per-request observability context by `baerlyNode` /
  * `createFetchHandler` (§8.4). Node v1 runs maintenance INLINE on the commit path (no
