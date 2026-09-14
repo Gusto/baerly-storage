@@ -350,6 +350,13 @@ export const compact = async (
         entriesFolded: 0,
       };
     }
+    // Observable by contract, not just by return value: a caller that
+    // discards the result (a cron loop, an admin route) must still be able
+    // to tell "folded nothing because nothing was foldable" apart from
+    // "folded nothing for months because the floor sat above the tail".
+    // The skip was historically invisible — a loop could tick green while
+    // every collection sat in the dead zone below its threshold.
+    ctxMetrics().counter("db.compaction.below_min_total", 1, { collection: collectionName });
     return {
       written: false,
       skippedReason: "below-min-threshold",

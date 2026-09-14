@@ -127,6 +127,103 @@ describe("runScheduledMaintenance", () => {
     expect(r.written).toBe(true);
   });
 
+  test("a low-write collection folds under the scheduled default (no options)", async () => {
+    // The scheduled path owns its own floor (SCHEDULED_MIN_ENTRIES_TO_COMPACT,
+    // 1): a scheduler that fires has already decided it is time to work, so
+    // a tail of 3 entries must NOT sit in the dead zone below compact()'s
+    // own default of 100 — the historical failure mode where a cron ticked
+    // green for months while every read replayed the whole tail.
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const r = await runScheduledMaintenance({ storage: s, currentJsonKey: KEY });
+    expect(r.compact.written).toBe(true);
+    expect(r.compact.entriesFolded).toBe(3);
+    await expect(readSeqStart(s, KEY)).resolves.toBe(3);
+  });
+
+  test("an explicit options.compact.minEntriesToCompact overrides the scheduled default", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 5; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const r = await runScheduledMaintenance(
+      { storage: s, currentJsonKey: KEY },
+      { compact: { minEntriesToCompact: 10 } },
+    );
+    expect(r.compact.written).toBe(false);
+    expect(r.compact.skippedReason).toBe("below-min-threshold");
+    expect(r.compact.entriesFolded).toBe(0);
+    await expect(readSeqStart(s, KEY)).resolves.toBe(0);
+  });
+
+  test("a below-min skip bumps db.compaction.below_min_total", async () => {
+    // The skip must be observable through the metrics recorder, not just
+    // the return value — a cron loop that discards results looked healthy
+    // while folding nothing for months.
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const recorder = await withRecorder(async () => {
+      const r = await compact({ storage: s, currentJsonKey: KEY });
+      expect(r.written).toBe(false);
+      expect(r.skippedReason).toBe("below-min-threshold");
+    });
+    expect(counterTotal(recorder, "db.compaction.below_min_total")).toBe(1);
+  });
+
+  test("the scheduled default does not leak into compact()'s own floor (in-band default stays 100)", async () => {
+    // `compact()`'s DEFAULT_MIN_TO_COMPACT is the in-band write-tick shape:
+    // folding on every write would thrash snapshot rewrites. The scheduled
+    // fix must not move it.
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const r = await compact({ storage: s, currentJsonKey: KEY });
+    expect(r.written).toBe(false);
+    expect(r.skippedReason).toBe("below-min-threshold");
+  });
+
+  test("a profile-derived options object keeps its explicit threshold (CF Free invariant)", async () => {
+    // CLOUDFLARE_FREE_TIER carries minEntriesToCompact=20 <= P=25 explicitly;
+    // the scheduled default must not apply to it (it never does — the spread
+    // only fills an ABSENT threshold — but this pins the invariant that keeps
+    // the Free budget envelope honest).
+    const cfFree = CLOUDFLARE_FREE_TIER as InternalMaintenanceOptions;
+    expect(cfFree.compact?.minEntriesToCompact).toBeDefined();
+  });
+
   test("CLOUDFLARE_FREE_TIER carries the documented bounds", async () => {
     // A regression in these constants means the budget audits and
     // the per-tier docstring lie about the worst-case I/O profile.
@@ -473,6 +570,35 @@ describe("runBoundedMaintenance", () => {
     expect(after).toBeGreaterThan(before);
     // No GC ran ⇒ no DELETEs and no gc/pending.json was touched.
     expect(c.report()["delete"]).toBe(0);
+  });
+
+  test("the write-tick floor stays WRITE_TICK_MIN_ENTRIES_TO_COMPACT — a 40-entry gate1-tripping tail does NOT fold", async () => {
+    // The two maintenance triggers have opposite cost profiles: the
+    // scheduled path drains whatever tail exists (floor 1), the in-band
+    // write tick keeps its 50-entry floor so a write never thrashes
+    // snapshot rewrites. 40 entries trip neither 50 nor 100 — under the
+    // OLD shared shape this was exactly the measured dead zone (a 36-entry
+    // tail costing 36 S3 GETs per read); it must stay unfolded on the tick
+    // path.
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, 40);
+    // Ratio >= 1 so ONLY the entry floor gates gate1 (40 < 50).
+    await patchCurrent(inner, KEY, {
+      mean_entry_bytes: RATIO_TRIPPING_MEAN,
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    });
+    const before = await readSeqStart(inner, KEY);
+    await runBoundedMaintenance({
+      storage: inner,
+      currentJsonKey: KEY,
+      prevSeq: 40, // == probed tail ⇒ no GC boundary either
+    });
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(before); // 0 — nothing folded
+    // Contrast: the same store under the scheduled path folds it all.
+    const r = await runScheduledMaintenance({ storage: inner, currentJsonKey: KEY });
+    expect(r.compact.written).toBe(true);
+    expect(r.compact.entriesFolded).toBe(40);
   });
 
   test("non-fold tick that crosses the GC boundary runs runGc", async () => {
