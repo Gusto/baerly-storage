@@ -460,6 +460,35 @@ There is no daemon, lease service, scheduler, or background thread.
 Node teams that want an explicit maintenance window; it is not required for
 correctness.
 
+### Scheduled vs in-band fold floors
+
+The two maintenance triggers carry different `minEntriesToCompact`
+defaults, deliberately:
+
+| Trigger | Floor | Why |
+| --- | --- | --- |
+| In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
+| Scheduled (`runScheduledMaintenance`, no `options.compact`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
+| Direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; direct callers should pass a threshold sized to their trigger. |
+
+The scheduled floor drains the tail to zero so reads stay O(snapshot),
+not O(history). Every fold rewrites the entire snapshot, so at a
+5-minute cadence a threshold of 1 bounds snapshot rewrites to one per
+tick that actually received writes (an idle tick costs only the
+`current.json` GET + tail probe, no PUT). A write-amplification-sensitive
+caller whose fold cost outweighs its per-entry read cost raises the floor
+explicitly via `options.compact.minEntriesToCompact`; the trade is a tail
+of up to `floor − 1` unfolded entries that every read replays at one GET
+apiece. The floor is a count, not a timestamp — the cron cadence already
+carries the timing signal, and behaviour stays identical on every backend.
+
+A below-floor skip is observable as the
+`db.compaction.below_min_total` counter (with the `collection` label),
+in addition to `compact()`'s `{written: false, skippedReason:
+"below-min-threshold"}` return value — a maintenance loop that discards
+results must still be able to distinguish "nothing was foldable" from
+"nothing has folded for months."
+
 The doctrine and trade-offs live in
 [ADR-002](../adr/002-ephemeral-coordination.md). Capacity thresholds
 and operator actions live in
