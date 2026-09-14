@@ -500,6 +500,21 @@ if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
 Do not loop tenants or collections in one Free invocation; shard the schedule or persist
 a collection cursor across invocations. Reserve `runScheduledMaintenance()` (both
 phases) for Cloudflare Paid or Node, within that host's invocation budget.
+
+On Cloudflare Paid or Node, the canonical scheduled pass folds whatever live tail
+exists — `runScheduledMaintenance`'s own `minEntriesToCompact` default is 1 (a
+scheduler that fires has already decided it is time to work), so a low-write
+collection drains to zero instead of parking its tail below the old count floor:
+
+```ts
+import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
+
+// Folds the entire live tail by default. Each fold rewrites the whole
+// snapshot; if that write amplification costs more than the per-entry read
+// GETs, pass an explicit floor and accept a tail of up to floor-1 entries:
+//   await runScheduledMaintenance(args, { compact: { minEntriesToCompact: 10 } });
+const res = await runScheduledMaintenance({ storage, currentJsonKey });
+```
 <!-- pattern-d:end -->
 
 ## When to graduate
