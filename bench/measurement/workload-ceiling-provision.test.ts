@@ -13,6 +13,7 @@ import {
   byteAxisCells,
   BYTE_AXIS_MANIFEST_DESCRIPTORS,
   CELL_BYTE_TOLERANCE,
+  cellSpec,
 } from "./workload-ceiling-cells.ts";
 import { WORKLOAD_CEILING_BUCKET_NAME } from "./workload-ceiling-harness.ts";
 
@@ -132,6 +133,27 @@ describe("calibrateRowCount", () => {
       expect(result.row_count).toBeGreaterThan(BYTE_AXIS_MANIFEST_DESCRIPTORS);
     },
   );
+
+  test("achieved_bytes is the size of the object provisioning actually writes", async () => {
+    // The calibrator re-derives the encoded size rather than reading it off
+    // the write, so the two agree only as long as both go through the same
+    // encoder. Pin them to one number on a real cell: a `SnapshotBody` field
+    // added on one side and not the other would relabel the byte axis.
+    const cell = byteAxisCells()[0]!;
+    const calibration = calibrateRowCount({
+      targetBytes: cell.target,
+      documentBytes: cell.document_bytes,
+      collection: "items",
+      tolerance: CELL_BYTE_TOLERANCE,
+    });
+    const fixture = await buildWorkloadCeilingFixture(
+      cellSpec(cell, calibration.row_count, "items"),
+      "fixtures/calibrated",
+      incarnation,
+    );
+    const monolithic = fixture.writes.find((write) => write.key === fixture.monolithic_key);
+    expect(monolithic?.body.byteLength).toBe(calibration.achieved_bytes);
+  });
 
   test("calibration is deterministic", () => {
     const args = {

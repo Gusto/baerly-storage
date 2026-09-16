@@ -129,6 +129,22 @@ function buildRows(spec: WorkloadCeilingFixtureSpec): readonly FixtureRow[] {
   return rows;
 }
 
+/**
+ * The monolithic `SnapshotBody` for a set of fixture rows. Both the write path
+ * and the calibrator go through this one construction, so `achieved_bytes` is
+ * the size of the object that actually gets stored rather than a
+ * re-derivation a later `SnapshotBody` field could silently desync.
+ */
+const monolithicSnapshotBody = (collection: string, rows: readonly FixtureRow[]): SnapshotBody => ({
+  schema_version: SNAPSHOT_SCHEMA_VERSION,
+  min_seq: 0,
+  max_seq: 0,
+  collection,
+  // Already ascending by construction: `buildRows` pads every id to one
+  // constant width, so `row-000 < row-001 < …` lexicographically.
+  docs: rows.map((row) => ({ _id: row._id, body: row.body })),
+});
+
 /** Contiguous, near-even groups over the already-sorted rows — `manifest_descriptors` chunks, never zero rows each. */
 function groupRows(
   rows: readonly FixtureRow[],
@@ -192,16 +208,7 @@ export const buildWorkloadCeilingFixture = async (
   // grammar the shipped reader parses a digest out of. The control arm then
   // measures `loadSnapshotAsMap` — hash verification included — rather than a
   // bare JSON.parse that understates the format it stands in for.
-  const monolithicBody: SnapshotBody = {
-    schema_version: SNAPSHOT_SCHEMA_VERSION,
-    min_seq: 0,
-    max_seq: 0,
-    collection: spec.collection,
-    // Already ascending by construction: `buildRows` pads every id to one
-    // constant width, so `row-000 < row-001 < …` lexicographically.
-    docs: rows.map((row) => ({ _id: row._id, body: row.body })),
-  };
-  const monolithicBytes = encodeSnapshotBody(monolithicBody);
+  const monolithicBytes = encodeSnapshotBody(monolithicSnapshotBody(spec.collection, rows));
   const monolithicKey = snapshotKey(fixturePrefix, 0, 0, await snapshotHash(monolithicBytes));
   writes.push({ key: monolithicKey, body: monolithicBytes });
 
@@ -322,6 +329,10 @@ export const assertStudyBucket = (creds: { readonly bucket: string }): void => {
  * The single source of "how big is this cell really", used by both the
  * calibrator and the sweep report — so the number the report publishes is the
  * number the calibrator optimized, not a re-derivation that could disagree.
+ *
+ * Goes through `monolithicSnapshotBody` + `encodeSnapshotBody`, the same two
+ * calls `buildWorkloadCeilingFixture` writes with, so the count cannot drift
+ * from the stored object's size when `SnapshotBody` grows a field.
  */
 export const monolithicEncodedBytes = (
   rowCount: number,
@@ -336,13 +347,7 @@ export const monolithicEncodedBytes = (
     manifest_descriptors: 1,
   };
   const rows = buildRows(spec);
-  return encodeJsonBytes({
-    schema_version: SNAPSHOT_SCHEMA_VERSION,
-    min_seq: 0,
-    max_seq: 0,
-    collection,
-    docs: rows.map((row) => ({ _id: row._id, body: row.body })),
-  }).byteLength;
+  return encodeSnapshotBody(monolithicSnapshotBody(collection, rows)).byteLength;
 };
 
 export interface CalibrationResult {
