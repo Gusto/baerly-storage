@@ -89,11 +89,16 @@ export interface WorkloadCeilingStudyContract {
    * available, so a spaced capture is the case least likely to trip it.
    *
    * The envelope is therefore obtained by CONFIGURATION, never by plan
-   * selection: `limits.cpu_ms` in `bench/workload-ceiling-worker/wrangler.jsonc`,
-   * set to `cf_free_cpu_ms`. That setting requires the Standard Usage Model,
-   * i.e. Workers Paid — so `cf-free` evidence is captured on a PAID plan with
-   * the free ceiling configured, which is a stricter and more reproducible
-   * environment than a free account that does not enforce.
+   * selection: a `limits.cpu_ms` of `cf_free_cpu_ms` on the deployed script.
+   * `bench/workload-ceiling-worker/wrangler.jsonc` deliberately carries no
+   * `limits` block — it is the COST-CURVE config, and under a 10 ms cap the
+   * upper cells of each axis would terminate as `exceededCpu`, whose CPU is
+   * censored. The enforcement-wall probe is the deploy that adds the block,
+   * and it is removed again before the cost-curve lanes capture. That
+   * setting requires the Standard Usage Model, i.e. Workers Paid — so
+   * `cf-free` evidence is captured on a PAID plan with the free ceiling
+   * configured, which is a stricter and more reproducible environment than a
+   * free account that does not enforce.
    *
    * `satisfiesWorkloadCeilingAdmission` enforces this: `cf-free` evidence
    * must carry `configured_cpu_ms === cf_free_cpu_ms`, whatever the plan. A
