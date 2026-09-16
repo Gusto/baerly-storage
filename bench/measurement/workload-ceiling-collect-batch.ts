@@ -240,6 +240,21 @@ export const isFinishedCollection = (event: WorkloadCeilingRawEvent | undefined)
   !(event.outcome === "success" && event.cpu_ms === null);
 
 /**
+ * What one collection attempt produced. `event` is the collected raw event
+ * when the collector ran and wrote a readable one; `error` carries the
+ * collector's own detail — exit code plus captured stderr — when it did not.
+ *
+ * The detail is part of the return value rather than console output because
+ * `summary-<sweepId>.json` is the artifact that outlives the run: a generic
+ * "collector failed" recorded there sends whoever diagnoses the run hours
+ * later back to a terminal scrollback that is gone.
+ */
+export interface CollectionAttempt {
+  readonly event?: WorkloadCeilingRawEvent;
+  readonly error?: string;
+}
+
+/**
  * Pure driver for the preregistered collection-retry policy. All effects are
  * injected (`readExisting`, `collect`, `sleep`), so the policy itself is
  * unit-testable without spawning or waiting.
@@ -264,9 +279,7 @@ export const collectWithRetry = async (
     readonly readExisting: (
       record: WorkloadCeilingInvocationRecord,
     ) => Promise<WorkloadCeilingRawEvent | undefined>;
-    readonly collect: (
-      record: WorkloadCeilingInvocationRecord,
-    ) => Promise<WorkloadCeilingRawEvent | undefined>;
+    readonly collect: (record: WorkloadCeilingInvocationRecord) => Promise<CollectionAttempt>;
     readonly sleep: (ms: number) => Promise<void>;
   },
 ): Promise<readonly CollectionOutcome[]> => {
@@ -342,12 +355,13 @@ export const collectWithRetry = async (
     const stillPending: WorkloadCeilingInvocationRecord[] = [];
     for (const record of pending) {
       const existing = results.get(record.run_id);
-      const collected = await options.collect(record);
+      const attempt = await options.collect(record);
+      const collected = attempt.event;
       const success = collected !== undefined;
       const entry = {
         record,
         success,
-        error: success ? undefined : "collector failed",
+        error: success ? undefined : (attempt.error ?? "collector failed"),
         event: collected,
         attempts: (existing?.attempts ?? 0) + 1,
         newlyResolved:
@@ -411,13 +425,16 @@ async function collectArm(
       }
       const result = await spawnCollector(record, compatibilityDate, armDir);
       if (!result.success) {
-        console.log(`    Failed: ${result.error ?? "unknown error"}`);
-        return undefined;
+        const detail = result.error ?? "unknown error";
+        console.log(`    Failed: ${detail}`);
+        return { error: `collector failed: ${detail}` };
       }
       const collected = await readCollectedEvent(armDir, record.run_id);
       if (collected === undefined) {
         console.log(`    Collected: UNREADABLE event`);
-      } else if (collected.evidence.status === "resolved") {
+        return { error: "collector exited 0 but wrote no readable event file" };
+      }
+      if (collected.evidence.status === "resolved") {
         console.log(
           existing === undefined
             ? `    Collected: resolved (outcome=${String(collected.outcome)})`
@@ -428,7 +445,7 @@ async function collectArm(
           `    Collected: ${collected.evidence.status.toUpperCase()} — ${collected.evidence.detail}`,
         );
       }
-      return collected;
+      return { event: collected };
     },
     sleep: async (ms) => {
       console.log(
