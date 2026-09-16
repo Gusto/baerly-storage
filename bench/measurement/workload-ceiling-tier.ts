@@ -1,12 +1,13 @@
 /**
  * Which Cloudflare account every Node-side tool in the capture talks to.
  *
- * `WORKLOAD_CEILING_TIER` is one operator decision with four consumers that
- * must agree: `workload-ceiling-provision.ts` writes fixtures into that
- * account's bucket, `workload-ceiling-provision-sweep.ts` calibrates against
- * it, `bench/workload-ceiling-worker/deploy.mjs` deploys the study Worker
- * into it, and `workload-ceiling-collect.ts` queries its telemetry. A value
- * none of them recognizes has to stop the run rather than resolve to one:
+ * `WORKLOAD_CEILING_TIER` is one operator decision every consumer must
+ * agree on: `workload-ceiling-provision.ts` writes fixtures into that
+ * account's bucket, `bench/workload-ceiling-worker/deploy.mjs` deploys the
+ * study Worker into it, and `workload-ceiling-collect.ts` queries its
+ * telemetry. The sweep provisioner that lands with the capture tooling
+ * calibrates against the same account. A value none of them recognizes has
+ * to stop the run rather than resolve to one:
  * coercing `WORKLOAD_CEILING_TIER=fre` to `paid` provisions, deploys, and
  * collects against an account the operator never named, and the evidence it
  * writes carries no trace of the substitution. Its sibling knob
