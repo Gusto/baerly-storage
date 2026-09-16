@@ -104,10 +104,10 @@ global dotfile — never `wrangler login`. It resolves `CLOUDFLARE_API_TOKEN` /
 does: `CF_API_TOKEN` + `CF_ACCOUNT_ID` env vars if both are set, otherwise a
 repo-scoped `credentials/cloudflare-deploy.json` (gitignored —
 `{ "api_token": "...", "account_id": "..." }`, read by
-`loadCloudflareDeployCreds` in `tests/fixtures/endpoint-creds.ts`). Either
-way the resolved credentials are injected only into the spawned `wrangler`
-child's environment, never printed or written elsewhere. Once one of those
-two sources is available:
+`loadCloudflareDeployCredsForTier` in `tests/fixtures/endpoint-creds.ts`).
+Either way the resolved credentials are injected only into the spawned
+`wrangler` child's environment, never printed or written elsewhere. Once one
+of those two sources is available:
 
 ```sh
 node bench/workload-ceiling-worker/deploy.mjs deploy --name baerly-storage
