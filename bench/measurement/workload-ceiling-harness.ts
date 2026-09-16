@@ -676,10 +676,10 @@ export const decodeWorkloadCeilingRawEvent = (raw: string): WorkloadCeilingRawEv
  * never reported a version, so the field holds an explicit sentinel.
  *
  * Readers comparing deployment metadata across a cell must treat this as
- * "absent", never as a version — see `deploymentKey` in
- * `workload-ceiling-compare.ts`, which the cardinality fix lifts into a
- * shared predicate. The codec enforces that the sentinel appears exactly
- * when `evidence.status !== "resolved"`.
+ * "absent", never as a version — see `hasResolvedDeployment` in
+ * `workload-ceiling-compare.ts`, the shared predicate that filters these
+ * events out before `deploymentKey` is compared. The codec enforces that
+ * the sentinel appears exactly when `evidence.status !== "resolved"`.
  */
 export const WORKLOAD_CEILING_UNRESOLVED_SCRIPT_VERSION = "unresolved";
 
