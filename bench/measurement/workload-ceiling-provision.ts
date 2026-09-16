@@ -38,7 +38,6 @@ import {
 } from "@baerly/server/_internal/testing";
 import { canonicalJson, hashCanonicalJson, type CanonicalJsonValue } from "./canonical-json.ts";
 import { createExactKeyCleanup, type ExactKeyCleanup } from "./storage-factory.ts";
-import { loadEndpointCreds } from "../../tests/fixtures/endpoint-creds.ts";
 import {
   encodeWorkloadCeilingFixtureDescriptor,
   WORKLOAD_CEILING_BUCKET_NAME,
@@ -47,6 +46,12 @@ import {
   type WorkloadCeilingFixtureDescriptor,
 } from "./workload-ceiling-harness.ts";
 import { WORKLOAD_CEILING_STUDY } from "./workload-ceiling-contract.ts";
+import {
+  cloudflareR2CredsFilename,
+  type CloudflareTier,
+  loadCloudflareR2CredsForTier,
+} from "../../tests/fixtures/endpoint-creds.ts";
+import { resolveWorkloadCeilingTier } from "./workload-ceiling-tier.ts";
 
 const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
 
@@ -282,9 +287,9 @@ export const randomIncarnation = (): string => randomUUID().replaceAll("-", "");
 
 /**
  * CLI entrypoint (`pnpm bench:workload-ceiling:provision`). Real R2
- * provisioning, so it requires `credentials/cloudflare.json` (the
- * `loadEndpointCreds` convention, `tests/fixtures/endpoint-creds.ts`) — the
- * same file shape and skip-honestly posture the credential-gated test
+ * provisioning, so it requires `credentials/cloudflare.json` (or
+ * `credentials/cloudflare-free.json` when `WORKLOAD_CEILING_TIER=free`) —
+ * the same file shape and skip-honestly posture the credential-gated test
  * suites use, except here absence is a script failure rather than a skip:
  * there is nothing useful this script can do without a real bucket.
  *
@@ -295,23 +300,38 @@ export const randomIncarnation = (): string => randomUUID().replaceAll("-", "");
  * so a later cleanup step can reconstruct exactly which keys to remove.
  */
 async function main(): Promise<number> {
-  const creds = await loadEndpointCreds("cloudflare.json");
-  if (creds === null) {
+  let tier: CloudflareTier;
+  try {
+    tier = resolveWorkloadCeilingTier(process.env);
+  } catch (error) {
     console.error(
-      "workload-ceiling-provision: no credentials/cloudflare.json found " +
-        "(tests/fixtures/endpoint-creds.ts). This script provisions fixtures " +
-        "against a real R2 bucket for the deployed workload-ceiling study; " +
-        "there is nothing to do without credentials.",
+      `workload-ceiling-provision: ${error instanceof Error ? error.message : String(error)}`,
     );
     return 1;
   }
+  const creds = await loadCloudflareR2CredsForTier(tier);
+  if (creds === null) {
+    const credsFile = cloudflareR2CredsFilename(tier);
+    console.error(
+      `workload-ceiling-provision: no credentials/${credsFile} found ` +
+        `(tests/fixtures/endpoint-creds.ts). This script provisions fixtures ` +
+        "against a real R2 bucket for the deployed workload-ceiling study; " +
+        "there is nothing to do without credentials.\n" +
+        `Set WORKLOAD_CEILING_TIER=free to use credentials/cloudflare-free.json ` +
+        `instead of credentials/cloudflare.json.`,
+    );
+    return 1;
+  }
+  console.log(
+    `workload-ceiling-provision: using ${tier} tier (credentials/${cloudflareR2CredsFilename(tier)})`,
+  );
 
   // Preflight the one coupling nothing else enforces: the deployed Worker's
   // `env.BUCKET` binding is a literal in wrangler.jsonc, so fixtures written
   // to any other bucket are invisible to it. Refuse before writing anything.
   if (creds.bucket !== WORKLOAD_CEILING_BUCKET_NAME) {
     console.error(
-      `workload-ceiling-provision: credentials/cloudflare.json names bucket ` +
+      `workload-ceiling-provision: credentials/${cloudflareR2CredsFilename(tier)} names bucket ` +
         `"${creds.bucket}", but the study Worker's wrangler.jsonc binds ` +
         `env.BUCKET to "${WORKLOAD_CEILING_BUCKET_NAME}". Provisioning into a ` +
         `different bucket would make every POST /run fail with a 502 ` +
