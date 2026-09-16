@@ -127,10 +127,10 @@ describe("collectWithRetry", () => {
           callsForTarget += 1;
           // First pass: evidence missing (lag). Retry pass: resolved.
           return callsForTarget === 1
-            ? event({ status: "missing", outcome: null, cpu_ms: null })
-            : event({ status: "resolved", outcome: "success", cpu_ms: 7 });
+            ? { event: event({ status: "missing", outcome: null, cpu_ms: null }) }
+            : { event: event({ status: "resolved", outcome: "success", cpu_ms: 7 }) };
         }
-        return event({ status: "resolved", outcome: "success", cpu_ms: 8 });
+        return { event: event({ status: "resolved", outcome: "success", cpu_ms: 8 }) };
       },
       sleep: async () => {},
     });
@@ -161,7 +161,9 @@ describe("collectWithRetry", () => {
       retries: 1,
       retryDelayMs: delayMs,
       readExisting: async () => event({ status: "missing", outcome: null, cpu_ms: null }),
-      collect: async () => event({ status: "resolved", outcome: "success", cpu_ms: 7 }),
+      collect: async () => ({
+        event: event({ status: "resolved", outcome: "success", cpu_ms: 7 }),
+      }),
       sleep: async () => {},
     });
     const lagging = outcomes.find((o) => o.run_id === "run-lagging");
@@ -175,7 +177,9 @@ describe("collectWithRetry", () => {
       retries: 1,
       retryDelayMs: delayMs,
       readExisting: async () => undefined,
-      collect: async () => event({ status: "resolved", outcome: "success", cpu_ms: 8 }),
+      collect: async () => ({
+        event: event({ status: "resolved", outcome: "success", cpu_ms: 8 }),
+      }),
       sleep: async (ms) => {
         sleeps.push(ms);
       },
@@ -189,7 +193,7 @@ describe("collectWithRetry", () => {
       readExisting: async () => undefined,
       collect: async () => {
         calls += 1;
-        return event({ status: "missing", outcome: null, cpu_ms: null });
+        return { event: event({ status: "missing", outcome: null, cpu_ms: null }) };
       },
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -207,7 +211,7 @@ describe("collectWithRetry", () => {
       readExisting: async () => undefined,
       collect: async () => {
         calls += 1;
-        return event({ status: "missing", outcome: null, cpu_ms: null });
+        return { event: event({ status: "missing", outcome: null, cpu_ms: null }) };
       },
       sleep: async () => {},
     });
@@ -224,7 +228,7 @@ describe("collectWithRetry", () => {
       readExisting: async () => onDisk,
       collect: async () => {
         collectCalls += 1;
-        return event({ status: "resolved", outcome: "success", cpu_ms: 99 });
+        return { event: event({ status: "resolved", outcome: "success", cpu_ms: 99 }) };
       },
       sleep: async () => {},
     });
@@ -241,7 +245,7 @@ describe("collectWithRetry", () => {
       readExisting: async () => undefined,
       collect: async () => {
         calls += 1;
-        return event({ status: "resolved", outcome: "success", cpu_ms: null });
+        return { event: event({ status: "resolved", outcome: "success", cpu_ms: null }) };
       },
       sleep: async () => {},
     });
@@ -252,6 +256,33 @@ describe("collectWithRetry", () => {
     expect(outcome.cpu_resolved).toBe(false);
   });
 
+  test("the collector's own failure detail reaches the persisted outcome", async () => {
+    // `summary-<sweepId>.json` is the artifact that outlives the run. Stamping
+    // a generic "collector failed" there drops the exit code and stderr that
+    // explain the failure, leaving only console output that is long gone by
+    // the time anyone reads the summary.
+    const detailed = await collectWithRetry([record("run-broken")], {
+      retries: 1,
+      retryDelayMs: delayMs,
+      readExisting: async () => undefined,
+      collect: async () => ({ error: "collector failed: exit code 1: CF_API_TOKEN missing" }),
+      sleep: async () => {},
+    });
+    expect(detailed[0]!.success).toBe(false);
+    expect(detailed[0]!.error).toBe("collector failed: exit code 1: CF_API_TOKEN missing");
+
+    // An attempt that carries no detail still records a failure rather than
+    // an absent one.
+    const bare = await collectWithRetry([record("run-broken")], {
+      retries: 1,
+      retryDelayMs: delayMs,
+      readExisting: async () => undefined,
+      collect: async () => ({}),
+      sleep: async () => {},
+    });
+    expect(bare[0]!.error).toBe("collector failed");
+  });
+
   test("reports evidence-status counts the summary prints", async () => {
     const outcomes = await collectWithRetry([record("r1"), record("r2"), record("r3")], {
       retries: 1,
@@ -259,12 +290,12 @@ describe("collectWithRetry", () => {
       readExisting: async () => undefined,
       collect: async (r) => {
         if (r.run_id === "r1") {
-          return event({ status: "resolved", outcome: "success", cpu_ms: 1 });
+          return { event: event({ status: "resolved", outcome: "success", cpu_ms: 1 }) };
         }
         if (r.run_id === "r2") {
-          return event({ status: "missing", outcome: null, cpu_ms: null });
+          return { event: event({ status: "missing", outcome: null, cpu_ms: null }) };
         }
-        return event({ status: "ambiguous", outcome: null, cpu_ms: null });
+        return { event: event({ status: "ambiguous", outcome: null, cpu_ms: null }) };
       },
       sleep: async () => {},
     });
