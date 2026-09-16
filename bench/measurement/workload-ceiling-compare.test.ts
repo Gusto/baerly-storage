@@ -285,6 +285,21 @@ describe("assessWorkloadCeilingExecution", () => {
     }
   });
 
+  test('a resolved record with a null outcome is refused, not histogrammed as "null"', () => {
+    // The codec cannot mint this pair, but the flat event type permits it and
+    // this function also runs over hand-built events. Without the assertion
+    // the invocation would enter the zero-failure denominator and land in the
+    // histogram under the key "null".
+    const rogue = event({ run_id: "r1", scenario_id: "s1", outcome: null });
+    try {
+      assessWorkloadCeilingExecution([rogue]);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkloadCeilingHarnessError);
+      expect((error as WorkloadCeilingHarnessError).field).toBe("outcome");
+    }
+  });
+
   test("a missing adaptive row with successful observability is not an execution failure", () => {
     const assessment = assessWorkloadCeilingExecution([
       cpuMissingSuccess({ run_id: "r1", scenario_id: "s1" }),
