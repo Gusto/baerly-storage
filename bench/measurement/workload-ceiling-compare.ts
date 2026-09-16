@@ -27,12 +27,13 @@
  * Every number this module reports comes from a tagged algorithm in
  * `statistics.ts` — p50/p95/p99 via `quantileEstimate`, per-cell dispersion
  * via `madEstimate`, the paired candidate/control ratio via
- * `pairedRatioBootstrap`, and the zero-failure
- * upper bound on unresolved/failed invocations via
- * `clopperPearsonZeroFailureUpper` — computed per side ONLY over sides that
- * observed zero unresolved invocations; a side with any failure is marked
- * `{ invalid: "failures-present", failure_count }` instead, because the
- * zero-failure formula has no honest extension to F > 0 (see
+ * `pairedRatioBootstrap`, and the zero-failure upper bound on execution
+ * failures via `clopperPearsonZeroFailureUpper` — computed per side over
+ * that side's AUTHORITATIVE event count, and invalidated only by real
+ * execution failures: an evidence-missing invocation narrows the trial count
+ * rather than disqualifying the side. A side with any execution failure is
+ * marked `{ invalid: "failures-present", failure_count }` instead, because
+ * the zero-failure formula has no honest extension to F > 0 (see
  * {@link WorkloadCeilingZeroFailureBoundInvalid}). An incomplete pair (missing a side,
  * mismatched deployment metadata, or either side yielding no usable `ok`
  * measurement) is rejected from the paired statistics rather than
