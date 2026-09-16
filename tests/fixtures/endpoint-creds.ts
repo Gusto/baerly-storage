@@ -86,20 +86,6 @@ export function cloudflareDeployCredsFilename(tier: CloudflareTier): string {
 }
 
 /**
- * Read `credentials/cloudflare-deploy.json` and parse it as
- * {@link CloudflareDeployCreds}, or return `null` when the file is
- * absent/unreadable — the same credential-gated skip signal as
- * {@link loadEndpointCreds}.
- *
- * @deprecated Use {@link loadCloudflareDeployCredsForTier} instead for
- *   tier-aware credential loading. This function is retained for backward
- *   compatibility with existing callers that don't need tier selection.
- */
-export async function loadCloudflareDeployCreds(): Promise<CloudflareDeployCreds | null> {
-  return loadCloudflareDeployCredsForTier("paid");
-}
-
-/**
  * Read Cloudflare Workers API credentials for the specified tier.
  * Uses `cloudflare-deploy.json` for "paid" tier, `cloudflare-deploy-free.json`
  * for "free" tier. Returns `null` when the file is absent/unreadable.

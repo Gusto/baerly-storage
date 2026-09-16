@@ -5,7 +5,7 @@
 // `../measurement/workload-ceiling-collect.ts` does: `CF_API_TOKEN` +
 // `CF_ACCOUNT_ID` env vars if both are set, otherwise a repo-scoped
 // `credentials/cloudflare-deploy.json` (gitignored — see
-// `tests/fixtures/endpoint-creds.ts`'s `loadCloudflareDeployCreds`).
+// `tests/fixtures/endpoint-creds.ts`'s `loadCloudflareDeployCredsForTier`).
 //
 // Set `WORKLOAD_CEILING_TIER=free` to use `credentials/cloudflare-deploy-free.json`
 // instead of `credentials/cloudflare-deploy.json`.
