@@ -14,6 +14,7 @@ export const check = (grounding: Grounding, kb: Knowledge): boolean => {
   }
   const expr = toJS(grounding, kb);
   try {
+    // eslint-disable-next-line no-eval -- expr is built from Grounding/Knowledge values this module constructs itself, not untrusted input
     return eval?.(expr);
   } catch (error) {
     console.error(expr);
