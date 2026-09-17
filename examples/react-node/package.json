@@ -14,19 +14,19 @@
   "dependencies": {
     "@gusto/baerly-storage": "workspace:*",
     "aws4fetch": "1.0.20",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "zod": "^4.4.3"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.0.5",
-    "happy-dom": "^20.11.2",
+    "@types/node": "^26.6.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "happy-dom": "^20.14.5",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1",
-    "vitest": "^4.1.10"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
   },
   "packageManager": "pnpm@11.1.2"
 }
