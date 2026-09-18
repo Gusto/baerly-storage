@@ -12,6 +12,7 @@ import {
   prefetchChunkedFold,
 } from "./chunked-fold-planner.ts";
 import {
+  buildSnapshotChunks,
   CHUNK_BOUNDARY_POLICIES,
   type SnapshotChunkBoundaryPolicy,
 } from "./snapshot-chunk-builder.ts";
@@ -369,6 +370,48 @@ describe("chunked fold planner", () => {
     expect(plan).not.toBeNull();
     expect(plan!.log_seq_end).toBe(2);
     expect(plan!.build.split_increments).toBe(1);
+  });
+
+  test("returned build equals one builder run at the admitted prefix", async () => {
+    const customPolicy: SnapshotChunkBoundaryPolicy = {
+      target_chunk_bytes: 1024 * 1024,
+      target_rows: 2,
+    };
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const loadedChunks = new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]);
+    const entries: LogEntry[] = [
+      makeLogEntry(1, "I", "c", doc("c", 3)),
+      makeLogEntry(2, "I", "d", doc("d", 4)),
+      makeLogEntry(3, "I", "e", doc("e", 5)),
+    ];
+    const input = {
+      collection,
+      collectionPrefix,
+      entries,
+      descriptors: [d0Desc],
+      loadedChunks,
+      budget: { ...defaultBudget, max_split_increments: 1 },
+      incarnation,
+      policy: customPolicy,
+    };
+
+    const plan = await planChunkedFold(input);
+    expect(plan).not.toBeNull();
+    expect(plan!.log_seq_end).toBe(2);
+
+    const rebuilt = await buildSnapshotChunks({
+      collection,
+      collectionPrefix,
+      descriptors: [d0Desc],
+      loadedChunks,
+      mutations: plan!.mutations,
+      incarnation,
+      policy: customPolicy,
+      lockedDirectOwnerIndex: plan!.prefetch.leftmost_direct_owner_index,
+      selectedNeighborIndex: plan!.prefetch.selected_neighbor_index,
+    });
+    expect(plan!.build).toEqual(rebuilt);
   });
 
   test("exact selection stops before exceeding the neighbor budget", async () => {

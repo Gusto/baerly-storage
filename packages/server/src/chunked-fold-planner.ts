@@ -1,11 +1,12 @@
 import { type DocumentData, encodeJsonBytes, type LogEntry } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
 import {
-  buildSnapshotChunks,
+  evaluateSnapshotChunks,
   deriveOwnerAndNeighbor,
   routeMutationToDescriptor,
   type SnapshotChunkBoundaryPolicy,
   type SnapshotChunkBuildResult,
+  type SnapshotChunkEvaluation,
 } from "./snapshot-chunk-builder.ts";
 import { makeCodecFail, type CodecCode } from "./snapshot-codec.ts";
 import { assertSnapshotDocId } from "./snapshot-doc-id.ts";
@@ -243,13 +244,13 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
  * Phase 2: Exact prefix selection through the builder.
  * Dry-runs candidate endpoints in sequence and selects the longest sequentially admitted prefix.
  *
- * Cost: one full builder run per candidate endpoint, hashing included, with all
- * but the last discarded. Sequential evaluation is required by ADR-007 item 4 —
- * `split_increments` is non-monotone, so a binary search over the boundary would
- * not agree with this scan. The bounded fix is a hash-free dry-run mode; see
- * "Chunked fold selection rebuilds and re-hashes once per candidate endpoint" in
- * `docs/superpowers/trackers/deferred-defects.md`, which gates that work on this
- * function acquiring a production caller.
+ * Sequential evaluation is required by ADR-007 item 4 — `split_increments` is
+ * non-monotone, so a binary search over the boundary would not agree with this
+ * scan. Each candidate is an encode-only {@link evaluateSnapshotChunks} run;
+ * `snapshotHash` runs once, on the admitted prefix. Remaining deferred
+ * fold-path costs (splitter byte-backoff re-encode, O(K²) direct-target
+ * re-derivation) are tracked in
+ * `docs/superpowers/trackers/deferred-defects.md`.
  */
 export const planChunkedFold = async (
   input: PlanChunkedFoldInput,
@@ -289,7 +290,14 @@ export const planChunkedFold = async (
     return null;
   }
 
-  let lastAdmittedPlan: ChunkedFoldPlan | null = null;
+  let lastAdmitted: {
+    readonly log_seq_end: number;
+    readonly touched_chunk_indexes: readonly number[];
+    readonly touched_ranges: readonly { readonly first_id: string; readonly last_id: string }[];
+    readonly mutation_bytes: number;
+    readonly mutations: ReadonlyMap<string, ReferenceMutation>;
+    readonly evaluation: SnapshotChunkEvaluation;
+  } | null = null;
 
   // The prefetch walk pushes one candidate per accepted entry, in entry
   // order, and breaks before pushing the first over-budget entry — so the
@@ -333,7 +341,7 @@ export const planChunkedFold = async (
     // touch no descriptor, and the builder gates the merge on the owner being
     // directly touched, so passing the locked pair for them is inert. Preserve
     // this contract if the builder ever consults the pair outside that guard.
-    const buildResult = await buildSnapshotChunks({
+    const evaluation = await evaluateSnapshotChunks({
       collection,
       collectionPrefix,
       descriptors,
@@ -345,25 +353,36 @@ export const planChunkedFold = async (
       selectedNeighborIndex: prefetch.selected_neighbor_index,
     });
 
-    const neighborUsedCount = buildResult.used_neighbor_chunk_index === null ? 0 : 1;
+    const neighborUsedCount = evaluation.used_neighbor_chunk_index === null ? 0 : 1;
 
     if (
-      buildResult.split_increments > budget.max_split_increments ||
+      evaluation.split_increments > budget.max_split_increments ||
       neighborUsedCount > budget.max_neighbor_chunks
     ) {
       break;
     }
 
-    lastAdmittedPlan = {
+    lastAdmitted = {
       log_seq_end: endpointSeq,
-      prefetch,
       touched_chunk_indexes,
       touched_ranges,
       mutation_bytes: mutationBytes,
       mutations: mutationMap,
-      build: buildResult,
+      evaluation,
     };
   }
 
-  return lastAdmittedPlan;
+  if (lastAdmitted === null) {
+    return null;
+  }
+
+  return {
+    log_seq_end: lastAdmitted.log_seq_end,
+    prefetch,
+    touched_chunk_indexes: lastAdmitted.touched_chunk_indexes,
+    touched_ranges: lastAdmitted.touched_ranges,
+    mutation_bytes: lastAdmitted.mutation_bytes,
+    mutations: lastAdmitted.mutations,
+    build: await lastAdmitted.evaluation.mint(),
+  };
 };
