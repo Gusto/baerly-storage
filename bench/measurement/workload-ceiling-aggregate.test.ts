@@ -175,6 +175,28 @@ test("the report carries the evidence-contract revision, so old and new reports 
   expect(report.evidence_contract_id).toBe("baerly.workload-ceiling/evidence/v2");
 });
 
+test("reports the canonical admission evidence and fails loudly on producerless clauses", () => {
+  const report = oneCellReport(
+    withEvents(30),
+    plannedRecords(30, "byte-axis/1MiB", "chunked-candidate"),
+    "chunked-candidate",
+  );
+
+  expect(report.admission.evidence).toMatchObject({
+    source: "deployed-workers",
+    profile: "cf-free",
+    configured_cpu_ms: null,
+    mutation_locality: null,
+    p99_cpu_ms: 10,
+    has_zero_failures_upper_bound: true,
+    has_complete_evidence: true,
+    meets_cpu_sample_floor: true,
+    statistics: ["p50", "p95", "p99"],
+    has_repeated_tail_drain: false,
+  });
+  expect(report.admission.satisfied).toBe(false);
+});
+
 test("every emitted statistic carries its algorithm tag", () => {
   const cell = oneCellReport(withEvents(30), plannedRecords(30)).cells[0]!;
   expect(cell.cpu_ms!.p50.algorithm).toBe("quantile-r7-v1");
