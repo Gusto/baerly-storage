@@ -18,7 +18,8 @@ import { compareDocIds } from "./snapshot-doc-id.ts";
 
 const SNAPSHOT_MANIFEST_SCHEMA_VERSION = 2;
 const MAX_MANIFEST_BYTES = 64 * 1024;
-const MAX_MANIFEST_CHUNKS = 32;
+/** A manifest carries at most 32 chunk descriptors (ADR-007). */
+export const MAX_MANIFEST_CHUNKS = 32;
 
 export interface SnapshotChunkDescriptor {
   readonly first_id: string;
