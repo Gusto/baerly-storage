@@ -50,6 +50,19 @@ export interface SnapshotChunkBuildResult {
   readonly used_neighbor_chunk_index: number | null;
 }
 
+/**
+ * Encode-only evaluation of a candidate prefix. Same split and merge
+ * decisions as {@link buildSnapshotChunks}; `mint` is the one `snapshotHash`
+ * pass that turns encoded bodies into descriptors. `planChunkedFold` walks
+ * endpoints on the selection fields and mints only the admitted prefix
+ * (ADR-007 item 4: sequential dry-run is required, hashing is not).
+ */
+export interface SnapshotChunkEvaluation {
+  readonly split_increments: number;
+  readonly used_neighbor_chunk_index: number | null;
+  readonly mint: () => Promise<SnapshotChunkBuildResult>;
+}
+
 export interface BuildSnapshotChunksInput {
   readonly collection: string;
   readonly collectionPrefix: string;
@@ -327,13 +340,13 @@ const appendChunkOutput = async (
  * nothing with the descriptor path — no loaded state, no routing, and never
  * a facing merge — so it lives outside the main builder body.
  */
-const buildInitialEmptyChunks = async (
+const evaluateInitialEmptyChunks = (
   mutations: ReadonlyMap<string, ReferenceMutation>,
   collection: string,
   collectionPrefix: string,
   incarnation: string,
   policy: SnapshotChunkBoundaryPolicy,
-): Promise<Pick<SnapshotChunkBuildResult, "chunks" | "changed_chunks" | "split_increments">> => {
+): SnapshotChunkEvaluation => {
   const docMap = new Map<string, DocumentData>();
   for (const mutation of mutations.values()) {
     if (mutation.op === "D") {
@@ -346,34 +359,53 @@ const buildInitialEmptyChunks = async (
     compareDocIds(a["_id"] as string, b["_id"] as string),
   );
 
-  const finalDescriptors: SnapshotChunkDescriptor[] = [];
-  const changedChunks: EncodedChunkOutput[] = [];
-  if (updatedDocs.length > 0) {
-    const splitChunks = splitGroupDocsGreedily(updatedDocs, collection, incarnation, policy);
-    for (const chunkItem of splitChunks) {
-      await appendChunkOutput(
-        chunkItem,
-        collectionPrefix,
-        incarnation,
-        finalDescriptors,
-        changedChunks,
-      );
-    }
+  if (updatedDocs.length === 0) {
     return {
-      chunks: finalDescriptors,
-      changed_chunks: changedChunks,
-      split_increments: Math.max(0, splitChunks.length - 1),
+      split_increments: 0,
+      used_neighbor_chunk_index: null,
+      mint: async () => ({
+        chunks: [],
+        changed_chunks: [],
+        split_increments: 0,
+        used_neighbor_chunk_index: null,
+      }),
     };
   }
-  return { chunks: finalDescriptors, changed_chunks: changedChunks, split_increments: 0 };
+
+  const splitChunks = splitGroupDocsGreedily(updatedDocs, collection, incarnation, policy);
+  const split_increments = Math.max(0, splitChunks.length - 1);
+  return {
+    split_increments,
+    used_neighbor_chunk_index: null,
+    mint: async () => {
+      const finalDescriptors: SnapshotChunkDescriptor[] = [];
+      const changedChunks: EncodedChunkOutput[] = [];
+      for (const chunkItem of splitChunks) {
+        await appendChunkOutput(
+          chunkItem,
+          collectionPrefix,
+          incarnation,
+          finalDescriptors,
+          changedChunks,
+        );
+      }
+      return {
+        chunks: finalDescriptors,
+        changed_chunks: changedChunks,
+        split_increments,
+        used_neighbor_chunk_index: null,
+      };
+    },
+  };
 };
 
 /**
- * Pure builder/evaluator for snapshot chunks.
+ * Encode-only evaluation of a candidate prefix. Hashes nothing; call
+ * {@link SnapshotChunkEvaluation.mint} for descriptors and changed chunks.
  */
-export const buildSnapshotChunks = async (
+export const evaluateSnapshotChunks = async (
   input: BuildSnapshotChunksInput,
-): Promise<SnapshotChunkBuildResult> => {
+): Promise<SnapshotChunkEvaluation> => {
   const {
     collection,
     collectionPrefix,
@@ -409,20 +441,8 @@ export const buildSnapshotChunks = async (
   }
 
   if (descriptors.length === 0) {
-    const { chunks, changed_chunks, split_increments } = await buildInitialEmptyChunks(
-      mutations,
-      collection,
-      collectionPrefix,
-      incarnation,
-      policy,
-    );
-    return {
-      chunks,
-      changed_chunks,
-      split_increments,
-      // No descriptors exist, so no neighbor can be selected or consumed.
-      used_neighbor_chunk_index: null,
-    };
+    // No descriptors exist, so no neighbor can be selected or consumed.
+    return evaluateInitialEmptyChunks(mutations, collection, collectionPrefix, incarnation, policy);
   }
 
   // Group mutations by their routed target descriptor index
@@ -498,36 +518,51 @@ export const buildSnapshotChunks = async (
           ownerSplitChunks: rewrittenGroupSplitChunks.get(lockedDirectOwnerIndex),
         });
 
-  // Assemble final descriptor array and changed chunks
-  const finalDescriptors: SnapshotChunkDescriptor[] = [];
-  const changedChunks: EncodedChunkOutput[] = [];
-
-  for (let i = 0; i < descriptors.length; i++) {
-    if (i === usedNeighborChunkIndex) {
-      continue;
-    }
-    if (!directTouchedIndexes.has(i) || unchangedGroupIndexes.has(i)) {
-      finalDescriptors.push(descriptors[i]!);
-      continue;
-    }
-    const splitChunks = rewrittenGroupSplitChunks.get(i) ?? [];
-    for (const chunkItem of splitChunks) {
-      await appendChunkOutput(
-        chunkItem,
-        collectionPrefix,
-        incarnation,
-        finalDescriptors,
-        changedChunks,
-      );
-    }
-  }
-
   return {
-    chunks: finalDescriptors,
-    changed_chunks: changedChunks,
     split_increments: totalSplitIncrements,
     used_neighbor_chunk_index: usedNeighborChunkIndex,
+    mint: async () => {
+      const finalDescriptors: SnapshotChunkDescriptor[] = [];
+      const changedChunks: EncodedChunkOutput[] = [];
+
+      for (let i = 0; i < descriptors.length; i++) {
+        if (i === usedNeighborChunkIndex) {
+          continue;
+        }
+        if (!directTouchedIndexes.has(i) || unchangedGroupIndexes.has(i)) {
+          finalDescriptors.push(descriptors[i]!);
+          continue;
+        }
+        const splitChunks = rewrittenGroupSplitChunks.get(i) ?? [];
+        for (const chunkItem of splitChunks) {
+          await appendChunkOutput(
+            chunkItem,
+            collectionPrefix,
+            incarnation,
+            finalDescriptors,
+            changedChunks,
+          );
+        }
+      }
+
+      return {
+        chunks: finalDescriptors,
+        changed_chunks: changedChunks,
+        split_increments: totalSplitIncrements,
+        used_neighbor_chunk_index: usedNeighborChunkIndex,
+      };
+    },
   };
+};
+
+/**
+ * Pure builder/evaluator for snapshot chunks.
+ */
+export const buildSnapshotChunks = async (
+  input: BuildSnapshotChunksInput,
+): Promise<SnapshotChunkBuildResult> => {
+  const evaluation = await evaluateSnapshotChunks(input);
+  return evaluation.mint();
 };
 
 function splitGroupDocsGreedily(

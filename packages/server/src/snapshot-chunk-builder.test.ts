@@ -13,6 +13,7 @@ import {
   buildSnapshotChunks,
   CHUNK_BOUNDARY_POLICIES,
   deriveOwnerAndNeighbor,
+  evaluateSnapshotChunks,
   routeMutationToDescriptor,
   type SnapshotChunkBoundaryPolicy,
 } from "./snapshot-chunk-builder.ts";
@@ -63,6 +64,32 @@ describe("snapshot chunk builder", () => {
     expect(result.chunks[0]!.first_id).toBe("a");
     expect(result.chunks[0]!.last_id).toBe("b");
     expect(result.chunks[0]!.row_count).toBe(2);
+  });
+
+  test("evaluateSnapshotChunks.mint matches buildSnapshotChunks without hashing during selection", async () => {
+    const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const input = {
+      collection,
+      collectionPrefix,
+      descriptors: [d0Desc],
+      loadedChunks: new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]),
+      mutations: mutationMap([{ op: "I", doc_id: "c", after: doc("c", 3) }]),
+      incarnation,
+      policy,
+      lockedDirectOwnerIndex: 0 as number | null,
+      selectedNeighborIndex: null as number | null,
+    };
+
+    const evaluation = await evaluateSnapshotChunks(input);
+    expect(evaluation.split_increments).toBe(0);
+    expect(evaluation.used_neighbor_chunk_index).toBeNull();
+
+    const minted = await evaluation.mint();
+    const built = await buildSnapshotChunks(input);
+    expect(minted).toEqual(built);
+    expect(minted.changed_chunks.length).toBeGreaterThan(0);
   });
 
   test("rejects invalid collection, collectionPrefix, and incarnation with InvalidConfig", async () => {
