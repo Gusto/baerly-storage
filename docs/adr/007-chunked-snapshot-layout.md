@@ -3,7 +3,7 @@ title: Incarnation-scoped chunked snapshot layout
 audience: adr
 doc_type: adr
 summary: ADR 007 — the next snapshot layout is one strict manifest over immutable, incarnation-scoped, content-authenticated chunks, activated through one pre-1.0 atomic format cut.
-last-reviewed: 2026-08-26
+last-reviewed: 2026-09-18
 tags: [decision, adr, snapshot, storage-layout, versioning]
 related:
   [
@@ -464,17 +464,22 @@ avoid unrelated chunk bodies; complete reads pay one manifest plus a statically
 bounded chunk fan-out.
 
 **The fold-work consequence is conditional on document-ID locality.** Measured
-in encode bytes per mutation folded, append-ordered IDs — the product's UUIDv7
-auto-ID — range from break-even (0.94x) to a 40x win, monotone in descriptor
-count. Uniformly distributed
-caller-supplied IDs cost 1.8x–25x *more* than the monolithic rebuild at every
-collection size and every boundary policy, and never reach parity: a bounded
-log prefix over uniform IDs touches chunks all across the manifest, so the
-selected prefix truncates and the fold rewrites more bytes per mutation than
-one whole-collection rebuild would. A collection durably in that regime is a
-graduation signal, not a supported cell, and this ADR does not admit a format
-selector, a second layout, or an ID-rewriting mode to rescue it. The read-side
-consequences above are unconditional; only the fold-work one is not.
+in encode bytes per mutation folded against the shipped `planChunkedFold`
+(sequential encode-only evaluation per item 4 below, one `snapshotHash` on the
+admitted prefix; `pnpm bench:workload-ceiling:win-model`), append-ordered IDs
+— the product's UUIDv7 auto-ID — range from 0.02x to a 1.90x win. The only
+cell that beats a monolithic rebuild is 4 MiB / `c128-r512` / append at 1.90x.
+Uniformly distributed caller-supplied IDs cost 2.2x–25x *more* than the
+monolithic rebuild (0.04x–0.45x) at every measured cell and never reach
+parity: a bounded log prefix over uniform IDs touches chunks all across the
+manifest, so the selected prefix truncates and the fold rewrites more bytes
+per mutation than one whole-collection rebuild would. A one-build-at-the-prefix
+counterfactual reaches 39.46x at that same append cell; sequential evaluation
+of non-monotone `split_increments` forbids shipping it. A collection durably
+in the uniform regime is a graduation signal, not a supported cell, and this
+ADR does not admit a format selector, a second layout, or an ID-rewriting mode
+to rescue it. The read-side consequences above are unconditional; only the
+fold-work one is not.
 
 The cost is a breaking stored layout and three removed public construction
 exports. Activation requires coordinated snapshot/current schema changes, a
