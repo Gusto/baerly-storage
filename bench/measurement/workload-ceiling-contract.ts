@@ -17,6 +17,11 @@ export type WorkloadCeilingWorkersPlan = "workers-free" | "workers-paid";
 
 export type WorkloadCeilingStatistic = "p50" | "p95" | "p99";
 
+export type WorkloadCeilingMutationLocality = "append-ordered" | "hot-key" | "uniform";
+
+/** A program decision that must be fixed before evidence can pass admission. */
+export type WorkloadCeilingAdmissionMargin = number | "pending-program-decision";
+
 /**
  * Fixed input space for the unreleased chunked-snapshot study. This contract is
  * measurement-only: it does not change a shipped ceiling or production export.
@@ -27,7 +32,7 @@ export interface WorkloadCeilingStudyContract {
   readonly collection_rows: readonly number[];
   readonly document_bytes: readonly number[];
   readonly changed_byte_fractions: readonly number[];
-  readonly mutation_localities: readonly ["hot-key", "uniform"];
+  readonly mutation_localities: readonly ["append-ordered", "hot-key", "uniform"];
   readonly mutation_mixes: readonly {
     readonly id: string;
     readonly insert: number;
@@ -68,10 +73,19 @@ export interface WorkloadCeilingStudyContract {
     readonly requires_cpu_sample_floor: true;
     readonly required_statistics: readonly ["p50", "p95", "p99"];
     readonly requires_repeated_tail_drain: true;
+    /**
+     * CPU safety margins for the two measured locality regimes. Hot-key uses
+     * the append-ordered margin because it is the planner's degenerate append
+     * case. Values remain pending until the program makes the explicit call.
+     */
+    readonly cpu_margin_by_regime: {
+      readonly append_ordered: WorkloadCeilingAdmissionMargin;
+      readonly uniform: WorkloadCeilingAdmissionMargin;
+    };
     readonly accepted_evidence_sources: readonly ["deployed-workers"];
   };
   /**
-   * How the `cf-free` CPU envelope is obtained, fixed before any sample.
+   * The `cf-free` CPU budget line and its post-hoc preregistration amendment.
    *
    * The study originally assumed the envelope came with the account: deploy
    * to a Workers Free account and the platform enforces 10 ms. The
@@ -88,31 +102,31 @@ export interface WorkloadCeilingStudyContract {
    * own `invocation_spacing_seconds: 70` is the most lenient duty cycle
    * available, so a spaced capture is the case least likely to trip it.
    *
-   * The envelope is therefore obtained by CONFIGURATION, never by plan
-   * selection: a `limits.cpu_ms` of `cf_free_cpu_ms` on the deployed script.
-   * `bench/workload-ceiling-worker/wrangler.jsonc` carries that block
-   * commented out rather than applied — it is the COST-CURVE config, and
-   * under a 10 ms cap the upper cells of each axis would terminate as
-   * `exceededCpu`, whose CPU is censored. The enforcement-wall probe is
-   * deployed by uncommenting exactly that block, and it is re-commented
-   * before the cost-curve lanes capture. That setting requires the Standard
-   * Usage Model, i.e. Workers Paid — so
-   * `cf-free` evidence is captured on a PAID plan with the free ceiling
-   * configured, which is a stricter and more reproducible environment than a
-   * free account that does not enforce.
+   * **Preregistration amendment.** The study then configured `limits.cpu_ms:
+   * 10` and observed successful 4 MiB folds consuming 41.7–67.8 ms of
+   * platform-measured CPU at both ~3 s and 70 s spacing. The configured limit
+   * is therefore not an admission control the study can turn on. Applying it
+   * to the cost-curve capture instead censors the upper cells' CPU values and
+   * makes the evidence incomplete.
    *
-   * `satisfiesWorkloadCeilingAdmission` enforces this: `cf-free` evidence
-   * must carry `configured_cpu_ms === cf_free_cpu_ms`, whatever the plan. A
-   * capture on an unconfigured account — free or paid — is not `cf-free`
-   * evidence, which is exactly the mistake this field exists to prevent.
+   * Admission now treats `cf_free_cpu_ms` as an economic budget line: p99
+   * workerd CPU must clear that line at the preregistered margin for its
+   * locality regime. `configured_cpu_ms` remains evidence provenance only.
+   * The append-ordered/uniform margin pair is deliberately marked pending in
+   * `admission.cpu_margin_by_regime`: the shipped planner's best measured
+   * append-ordered win is 1.90x, while the former ~40x figure described a
+   * counterfactual planner forbidden by ADR-007's sequential endpoint rule.
+   * Choosing the threshold is consequently a program decision, not a value
+   * this amendment can infer from the old figure. Until that decision is
+   * recorded, the admission predicate fails closed.
    */
   readonly cpu_envelope: {
     /** Workers Free's documented per-invocation CPU limit, in milliseconds. */
     readonly cf_free_cpu_ms: 10;
     /** Platform enforcement semantics, as documented. Not per-invocation. */
     readonly enforcement: "elastic-duty-cycle-dependent";
-    /** The envelope comes from `limits.cpu_ms`, not from the billing plan. */
-    readonly obtained_by: "configured-limit";
+    /** Admission compares measured p99 CPU to the stated economic line. */
+    readonly obtained_by: "measured-p99-budget-line";
   };
   /**
    * The capture protocol, fixed BEFORE any sample is taken.
@@ -270,13 +284,14 @@ export interface WorkloadCeilingStudyEvidence {
   /**
    * `limits.cpu_ms` in force on the deployed script, or `null` when the
    * script carried no `limits` block and ran under the platform default.
-   *
-   * `null` is the honest value for an unconfigured deployment on EITHER
-   * plan, and it makes such a capture inadmissible as `cf-free` — a
-   * credentials filename, a dashboard plan row, and an enforced ceiling are
-   * three different things, and only the third one is measurable here.
+   * Provenance only: platform enforcement is elastic and did not create the
+   * per-invocation ceiling the original rule assumed.
    */
   readonly configured_cpu_ms: number | null;
+  /** Null until the locality producer is wired into the capture. */
+  readonly mutation_locality: WorkloadCeilingMutationLocality | null;
+  /** Highest relevant per-cell p99 workerd CPU value, in milliseconds. */
+  readonly p99_cpu_ms: number | null;
   readonly has_zero_failures_upper_bound: boolean;
   /**
    * Every planned measured invocation resolved to exactly one authoritative
@@ -296,7 +311,7 @@ export const WORKLOAD_CEILING_STUDY = {
   collection_rows: [2048, 4096, 8192, 16_384],
   document_bytes: [256, 1024, 2048, 5 * 1024],
   changed_byte_fractions: [0.01, 0.1, 1],
-  mutation_localities: ["hot-key", "uniform"],
+  mutation_localities: ["append-ordered", "hot-key", "uniform"],
   mutation_mixes: [
     { id: "insert-heavy", insert: 0.8, update: 0.15, delete: 0.05 },
     { id: "update-heavy", insert: 0.05, update: 0.9, delete: 0.05 },
@@ -338,13 +353,17 @@ export const WORKLOAD_CEILING_STUDY = {
     requires_cpu_sample_floor: true,
     required_statistics: ["p50", "p95", "p99"],
     requires_repeated_tail_drain: true,
+    cpu_margin_by_regime: {
+      append_ordered: "pending-program-decision",
+      uniform: "pending-program-decision",
+    },
     accepted_evidence_sources: ["deployed-workers"],
   },
 
   cpu_envelope: {
     cf_free_cpu_ms: 10,
     enforcement: "elastic-duty-cycle-dependent",
-    obtained_by: "configured-limit",
+    obtained_by: "measured-p99-budget-line",
   },
 
   /**
@@ -414,15 +433,29 @@ export const satisfiesWorkloadCeilingAdmission = (
   const admission = WORKLOAD_CEILING_STUDY.admission;
   const acceptedSources: readonly WorkloadCeilingEvidenceSource[] =
     admission.accepted_evidence_sources;
+  const margins: Readonly<Record<"append_ordered" | "uniform", WorkloadCeilingAdmissionMargin>> =
+    admission.cpu_margin_by_regime;
+  let margin: WorkloadCeilingAdmissionMargin = "pending-program-decision";
+  if (evidence.mutation_locality === "uniform") {
+    margin = margins.uniform;
+  } else if (evidence.mutation_locality !== null) {
+    margin = margins.append_ordered;
+  }
+  const clearsCpuBudgetLine =
+    typeof margin === "number" &&
+    Number.isFinite(margin) &&
+    margin > 0 &&
+    evidence.p99_cpu_ms !== null &&
+    Number.isFinite(evidence.p99_cpu_ms) &&
+    evidence.p99_cpu_ms * margin <= WORKLOAD_CEILING_STUDY.cpu_envelope.cf_free_cpu_ms;
 
   return (
     acceptedSources.includes(evidence.source) &&
     evidence.profile === admission.primary_profile &&
-    // The `cf-free` envelope must be CONFIGURED, not inherited from a plan.
-    // A Workers Free account does not enforce its own 10 ms limit reliably
-    // (WORKLOAD_CEILING_STUDY.cpu_envelope), so `plan` is provenance only
-    // and this is the check that decides.
-    evidence.configured_cpu_ms === WORKLOAD_CEILING_STUDY.cpu_envelope.cf_free_cpu_ms &&
+    // `configured_cpu_ms` and `plan` are provenance. The gate is measured p99
+    // against the economic budget line at the preregistered locality margin.
+    // A pending margin or missing locality/CPU producer fails closed.
+    clearsCpuBudgetLine &&
     evidence.has_zero_failures_upper_bound &&
     // Evidence-contract v2: admission independently requires complete
     // evidence and the CPU sample floor. A missing or ambiguous
