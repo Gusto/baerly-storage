@@ -134,9 +134,12 @@ const retireLogs = async (
  * of which exist to keep an in-band write from thrashing snapshot
  * rewrites. Every fold rewrites the whole snapshot, so a caller whose
  * fold cost outweighs its tail-read cost can raise the floor explicitly
- * via `options.compact.minEntriesToCompact`. Passing a
- * `CLOUDFLARE_*_TIER`/profile-derived options object carries its own
- * explicit threshold, so the scheduled default never applies to it.
+ * via `options.compact.minEntriesToCompact`. {@link CLOUDFLARE_PAID_TIER}
+ * carries this same floor of 1 plus per-pass caps — pass it for those
+ * caps, not for an in-band count floor. {@link CLOUDFLARE_FREE_TIER}
+ * still carries an explicit 20 so the 50-subrequest envelope stays
+ * honest; do not pass it to this helper (alternate direct `compact()` /
+ * `runGc()` instead).
  *
  * Errors propagate — the caller's cron handler is responsible for
  * logging them. The Cloudflare runtime ships uncaught Worker errors
@@ -186,8 +189,10 @@ export const runScheduledMaintenance = async (
   // read pays. A scheduler that fires has already decided it is time to
   // work — fold whatever tail exists. Callers that prefer to batch folds
   // pass `options.compact.minEntriesToCompact` explicitly, which suppresses
-  // this default. Profile-derived option objects (`CLOUDFLARE_*_TIER`)
-  // always carry an explicit threshold and are likewise unaffected.
+  // this default. `CLOUDFLARE_PAID_TIER` is built by
+  // `profileToScheduledOptions`, whose default floor is also
+  // SCHEDULED_MIN_ENTRIES_TO_COMPACT — callers pass it for per-pass caps.
+  // `CLOUDFLARE_FREE_TIER` still carries an explicit 20.
   const compactRes = await compact(args, {
     ...options.compact,
     ...(options.compact?.minEntriesToCompact === undefined && {
@@ -229,10 +234,13 @@ export {
 } from "@baerly/protocol";
 
 // Snapshot ceilings aren't part of the scheduled cap surface; omitted.
+// Default fold floor is the scheduled drain (1), not the write-tick 50:
+// a library-provided scheduled profile exists for per-pass caps, and
+// inheriting the in-band floor parks a 1–49 entry tail forever.
 const profileToScheduledOptions = (
   profile: MaintenanceProfile,
   compactMaxTailProbeGets?: number,
-  minEntriesToCompact: number = WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+  minEntriesToCompact: number = SCHEDULED_MIN_ENTRIES_TO_COMPACT,
 ): InternalMaintenanceOptions => ({
   compact: {
     maxEntriesPerRun: profile.maxFoldEntriesPerPass,
@@ -260,10 +268,11 @@ const profileToScheduledOptions = (
  *     fresh-current GET before a due snapshot sweep + S DELETEs + all three
  *     final pending CAS attempts (3 GETs + 3 PUTs) = 13 + S.
  *
- * `minEntriesToCompact` drops to `maxFoldEntriesPerPass` (20) here, from the
- * write-tick default of 50, because a bounded probe changes what "available"
- * can even mean. `compact()` measures `available = discoveredTail −
- * log_seq_start`, and a P-capped probe certifies at most `probeFloor + P`, so
+ * `minEntriesToCompact` is `maxFoldEntriesPerPass` (20) here, passed
+ * explicitly (not the scheduled helper default of 1), because a bounded
+ * probe changes what "available" can even mean. `compact()` measures
+ * `available = discoveredTail − log_seq_start`, and a P-capped probe
+ * certifies at most `probeFloor + P`, so
  * a threshold above P is only reachable after several passes have each spent
  * P GETs to ratchet `tail_hint` forward — every one of them returning
  * `probe-budget-checkpointed` without folding. Holding 50 against P=25 also
@@ -295,6 +304,11 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
  * Keeps the single-phase CPU-killable shape but affords Node-tier per-pass
  * fold, GC classification, and sweep budgets — comfortably within the 10k
  * cap. Exact per-phase op counts live in {@link CLOUDFLARE_FREE_TIER}.
+ *
+ * Fold floor is {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT} (1): this object
+ * exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not for
+ * an in-band count floor. Pass it to {@link runScheduledMaintenance} and
+ * a live tail of any length folds, sliced by those caps.
  *
  * To honour `BAERLY_MAINTENANCE_PROFILE=cf-paid` on the cron path, pass this
  * constant to `runScheduledMaintenance` inside your
