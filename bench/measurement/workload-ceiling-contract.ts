@@ -22,6 +22,11 @@ export type WorkloadCeilingMutationLocality = "append-ordered" | "hot-key" | "un
 /** A program decision that must be fixed before evidence can pass admission. */
 export type WorkloadCeilingAdmissionMargin = number | "pending-program-decision";
 
+export interface WorkloadCeilingAdmissionMargins {
+  readonly append_ordered: WorkloadCeilingAdmissionMargin;
+  readonly uniform: WorkloadCeilingAdmissionMargin;
+}
+
 /**
  * Fixed input space for the unreleased chunked-snapshot study. This contract is
  * measurement-only: it does not change a shipped ceiling or production export.
@@ -78,10 +83,7 @@ export interface WorkloadCeilingStudyContract {
      * the append-ordered margin because it is the planner's degenerate append
      * case. Values remain pending until the program makes the explicit call.
      */
-    readonly cpu_margin_by_regime: {
-      readonly append_ordered: WorkloadCeilingAdmissionMargin;
-      readonly uniform: WorkloadCeilingAdmissionMargin;
-    };
+    readonly cpu_margin_by_regime: WorkloadCeilingAdmissionMargins;
     readonly accepted_evidence_sources: readonly ["deployed-workers"];
   };
   /**
@@ -113,12 +115,10 @@ export interface WorkloadCeilingStudyContract {
    * workerd CPU must clear that line at the preregistered margin for its
    * locality regime. `configured_cpu_ms` remains evidence provenance only.
    * The append-ordered/uniform margin pair is deliberately marked pending in
-   * `admission.cpu_margin_by_regime`: the shipped planner's best measured
-   * append-ordered win is 1.90x, while the former ~40x figure described a
-   * counterfactual planner forbidden by ADR-007's sequential endpoint rule.
-   * Choosing the threshold is consequently a program decision, not a value
-   * this amendment can infer from the old figure. Until that decision is
-   * recorded, the admission predicate fails closed.
+   * `admission.cpu_margin_by_regime`. The program must choose how much
+   * headroom measured p99 workerd CPU needs below the 10 ms economic line;
+   * encode-byte win ratios do not answer that CPU-budget question. Until the
+   * headroom decision is recorded, the admission predicate fails closed.
    */
   readonly cpu_envelope: {
     /** Workers Free's documented per-invocation CPU limit, in milliseconds. */
@@ -273,14 +273,17 @@ export interface WorkloadCeilingStudyContract {
 
 /** Minimal evidence record shared by this preregistration and later bench work. */
 export interface WorkloadCeilingStudyEvidence {
-  readonly source: WorkloadCeilingEvidenceSource;
-  readonly profile: WorkloadCeilingEvidenceProfile;
+  /** Null when the capture carries no authoritative deployment provenance. */
+  readonly source: WorkloadCeilingEvidenceSource | null;
+  /** Null until the sweep journal records which evidence profile it targeted. */
+  readonly profile: WorkloadCeilingEvidenceProfile | null;
   /**
-   * The Workers plan billed for the capture. Recorded for provenance; the
-   * admission rule deliberately does NOT read it, because the plan does not
-   * determine the CPU envelope (see `cpu_envelope`).
+   * The Workers plan billed for the capture, or null when telemetry cannot
+   * establish it. Recorded for provenance; the admission rule deliberately
+   * does NOT read it, because the plan does not determine the CPU envelope
+   * (see `cpu_envelope`).
    */
-  readonly plan: WorkloadCeilingWorkersPlan;
+  readonly plan: WorkloadCeilingWorkersPlan | null;
   /**
    * `limits.cpu_ms` in force on the deployed script, or `null` when the
    * script carried no `limits` block and ran under the platform default.
@@ -290,7 +293,7 @@ export interface WorkloadCeilingStudyEvidence {
   readonly configured_cpu_ms: number | null;
   /** Null until the locality producer is wired into the capture. */
   readonly mutation_locality: WorkloadCeilingMutationLocality | null;
-  /** Highest relevant per-cell p99 workerd CPU value, in milliseconds. */
+  /** The selected cell/regime's p99 workerd CPU, or null until one is defined. */
   readonly p99_cpu_ms: number | null;
   readonly has_zero_failures_upper_bound: boolean;
   /**
@@ -419,51 +422,83 @@ export const WORKLOAD_CEILING_STUDY = {
   },
 } as const satisfies WorkloadCeilingStudyContract;
 
-/**
- * The study's deliberately small admission predicate. It evaluates only
- * preregistered evidence fields; provision, collection, and telemetry details
- * remain the concern of the later measurement harness. The `admission`
- * `requires_*` flags are the declarative record of these requirements — each
- * is pinned to `true` by the contract type, so the predicate asserts the
- * requirements directly rather than guarding on flags that can never flip.
- */
-export const satisfiesWorkloadCeilingAdmission = (
+const unreachableLocality = (locality: never): never => {
+  throw new Error(`Unhandled workload-ceiling mutation locality: ${String(locality)}`);
+};
+
+const marginForLocality = (
+  locality: WorkloadCeilingMutationLocality | null,
+  margins: WorkloadCeilingAdmissionMargins,
+): WorkloadCeilingAdmissionMargin => {
+  if (locality === null) {
+    return "pending-program-decision";
+  }
+  switch (locality) {
+    case "append-ordered": {
+      return margins.append_ordered;
+    }
+    case "hot-key": {
+      return margins.append_ordered;
+    }
+    case "uniform": {
+      return margins.uniform;
+    }
+    default: {
+      return unreachableLocality(locality);
+    }
+  }
+};
+
+/** True when measured p99 CPU clears the 10 ms economic line at a safety factor. */
+export const clearsCpuBudgetLine = (
+  margin: WorkloadCeilingAdmissionMargin,
+  p99CpuMs: number | null,
+): boolean =>
+  typeof margin === "number" &&
+  Number.isFinite(margin) &&
+  margin >= 1 &&
+  p99CpuMs !== null &&
+  Number.isFinite(p99CpuMs) &&
+  p99CpuMs >= 0 &&
+  p99CpuMs * margin <= WORKLOAD_CEILING_STUDY.cpu_envelope.cf_free_cpu_ms;
+
+/** Evaluates only the measured CPU-budget part of scientific admission. */
+export const satisfiesWorkloadCeilingCpuBudget = (
+  evidence: WorkloadCeilingStudyEvidence,
+  margins: WorkloadCeilingAdmissionMargins = WORKLOAD_CEILING_STUDY.admission.cpu_margin_by_regime,
+): boolean =>
+  clearsCpuBudgetLine(marginForLocality(evidence.mutation_locality, margins), evidence.p99_cpu_ms);
+
+/** The methodological evidence gate, excluding the measured CPU-budget verdict. */
+export const satisfiesWorkloadCeilingEvidenceRequirements = (
   evidence: WorkloadCeilingStudyEvidence,
 ): boolean => {
   const admission = WORKLOAD_CEILING_STUDY.admission;
   const acceptedSources: readonly WorkloadCeilingEvidenceSource[] =
     admission.accepted_evidence_sources;
-  const margins: Readonly<Record<"append_ordered" | "uniform", WorkloadCeilingAdmissionMargin>> =
-    admission.cpu_margin_by_regime;
-  let margin: WorkloadCeilingAdmissionMargin = "pending-program-decision";
-  if (evidence.mutation_locality === "uniform") {
-    margin = margins.uniform;
-  } else if (evidence.mutation_locality !== null) {
-    margin = margins.append_ordered;
-  }
-  const clearsCpuBudgetLine =
-    typeof margin === "number" &&
-    Number.isFinite(margin) &&
-    margin > 0 &&
-    evidence.p99_cpu_ms !== null &&
-    Number.isFinite(evidence.p99_cpu_ms) &&
-    evidence.p99_cpu_ms * margin <= WORKLOAD_CEILING_STUDY.cpu_envelope.cf_free_cpu_ms;
-
   return (
+    evidence.source !== null &&
     acceptedSources.includes(evidence.source) &&
     evidence.profile === admission.primary_profile &&
-    // `configured_cpu_ms` and `plan` are provenance. The gate is measured p99
-    // against the economic budget line at the preregistered locality margin.
-    // A pending margin or missing locality/CPU producer fails closed.
-    clearsCpuBudgetLine &&
     evidence.has_zero_failures_upper_bound &&
-    // Evidence-contract v2: admission independently requires complete
-    // evidence and the CPU sample floor. A missing or ambiguous
-    // authoritative record blocks admission without being an execution
-    // failure; a short CPU sample blocks admission without being one either.
+    // Kept defensively for hand-built promoted evidence records. The current
+    // aggregate rejects incomplete cells earlier with cell-specific reasons.
     evidence.has_complete_evidence &&
     evidence.meets_cpu_sample_floor &&
     admission.required_statistics.every((statistic) => evidence.statistics.includes(statistic)) &&
     evidence.has_repeated_tail_drain
   );
 };
+
+/**
+ * The complete scientific admission predicate: valid evidence plus the
+ * measured CPU-budget verdict. The optional margins make every clause
+ * independently testable while the shipped contract remains fail-closed on
+ * its pending program decision.
+ */
+export const satisfiesWorkloadCeilingAdmission = (
+  evidence: WorkloadCeilingStudyEvidence,
+  margins: WorkloadCeilingAdmissionMargins = WORKLOAD_CEILING_STUDY.admission.cpu_margin_by_regime,
+): boolean =>
+  satisfiesWorkloadCeilingEvidenceRequirements(evidence) &&
+  satisfiesWorkloadCeilingCpuBudget(evidence, margins);

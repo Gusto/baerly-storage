@@ -184,17 +184,35 @@ test("reports the canonical admission evidence and fails loudly on producerless 
 
   expect(report.admission.evidence).toMatchObject({
     source: "deployed-workers",
-    profile: "cf-free",
+    profile: null,
+    plan: null,
     configured_cpu_ms: null,
     mutation_locality: null,
-    p99_cpu_ms: 10,
+    p99_cpu_ms: null,
     has_zero_failures_upper_bound: true,
     has_complete_evidence: true,
     meets_cpu_sample_floor: true,
     statistics: ["p50", "p95", "p99"],
     has_repeated_tail_drain: false,
   });
-  expect(report.admission.satisfied).toBe(false);
+  expect(report.admission).toMatchObject({
+    evidence_valid: false,
+    clears_cpu_budget_line: false,
+    satisfied: false,
+  });
+});
+
+test("does not fabricate deployed-Workers provenance without deployment metadata", () => {
+  const report = oneCellReport(
+    withEvents(30, { script_version: "unresolved" }),
+    plannedRecords(30),
+  );
+  expect(report.admission.evidence.source).toBeNull();
+});
+
+test("a complete control-only sweep still reports its emitted statistics", () => {
+  const report = oneCellReport(withEvents(30), plannedRecords(30));
+  expect(report.admission.evidence.statistics).toEqual(["p50", "p95", "p99"]);
 });
 
 test("every emitted statistic carries its algorithm tag", () => {

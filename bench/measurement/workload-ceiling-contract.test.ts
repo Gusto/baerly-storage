@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  clearsCpuBudgetLine,
   satisfiesWorkloadCeilingAdmission,
+  satisfiesWorkloadCeilingCpuBudget,
+  satisfiesWorkloadCeilingEvidenceRequirements,
+  type WorkloadCeilingAdmissionMargins,
   type WorkloadCeilingStudyEvidence,
   WORKLOAD_CEILING_STUDY,
 } from "./workload-ceiling-contract.ts";
@@ -129,105 +133,91 @@ describe("workload-ceiling study contract", () => {
     });
   });
 
-  test("fails closed until the per-regime admission margins are decided", () => {
-    const deployedEvidence: WorkloadCeilingStudyEvidence = {
-      source: "deployed-workers",
-      profile: "cf-free",
-      plan: "workers-paid",
-      configured_cpu_ms: 10,
-      mutation_locality: "append-ordered",
-      p99_cpu_ms: 4,
-      has_zero_failures_upper_bound: true,
-      has_complete_evidence: true,
-      meets_cpu_sample_floor: true,
-      statistics: ["p50", "p95", "p99"],
-      has_repeated_tail_drain: true,
-    };
+  const validEvidence: WorkloadCeilingStudyEvidence = {
+    source: "deployed-workers",
+    profile: "cf-free",
+    plan: "workers-paid",
+    configured_cpu_ms: 10,
+    mutation_locality: "append-ordered",
+    p99_cpu_ms: 4,
+    has_zero_failures_upper_bound: true,
+    has_complete_evidence: true,
+    meets_cpu_sample_floor: true,
+    statistics: ["p50", "p95", "p99"],
+    has_repeated_tail_drain: true,
+  };
+  const decidedMargins: WorkloadCeilingAdmissionMargins = {
+    append_ordered: 2,
+    uniform: 2,
+  };
 
+  test("fails closed on pending margins but admits valid evidence with a decided margin", () => {
     expect(WORKLOAD_CEILING_STUDY.admission.cpu_margin_by_regime).toEqual({
       append_ordered: "pending-program-decision",
       uniform: "pending-program-decision",
     });
-    expect(satisfiesWorkloadCeilingAdmission(deployedEvidence)).toBe(false);
-    expect(satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, source: "node" })).toBe(false);
-    expect(satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, source: "miniflare" })).toBe(
-      false,
-    );
-    expect(
-      satisfiesWorkloadCeilingAdmission({
-        ...deployedEvidence,
-        statistics: ["p50", "p95"],
-      }),
-    ).toBe(false);
-    expect(satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, profile: "cf-paid" })).toBe(
-      false,
-    );
-    expect(satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, profile: "node" })).toBe(false);
-    expect(
-      satisfiesWorkloadCeilingAdmission({
-        ...deployedEvidence,
-        has_zero_failures_upper_bound: false,
-      }),
-    ).toBe(false);
-    expect(
-      satisfiesWorkloadCeilingAdmission({
-        ...deployedEvidence,
-        has_repeated_tail_drain: false,
-      }),
-    ).toBe(false);
-    // The evidence-contract v2 gates, added after the 2026-08-24 rehearsal:
-    // incomplete evidence and a short CPU sample each block admission on
-    // their own, independently of the zero-failure bound.
-    expect(
-      satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, has_complete_evidence: false }),
-    ).toBe(false);
-    expect(
-      satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, meets_cpu_sample_floor: false }),
-    ).toBe(false);
+    expect(satisfiesWorkloadCeilingAdmission(validEvidence)).toBe(false);
+    expect(satisfiesWorkloadCeilingAdmission(validEvidence, decidedMargins)).toBe(true);
   });
 
-  test("records configured CPU as provenance rather than using it as the gate", () => {
-    const configured: WorkloadCeilingStudyEvidence = {
-      source: "deployed-workers",
-      profile: "cf-free",
-      plan: "workers-paid",
-      configured_cpu_ms: 10,
-      mutation_locality: "append-ordered",
-      p99_cpu_ms: 4,
-      has_zero_failures_upper_bound: true,
-      has_complete_evidence: true,
-      meets_cpu_sample_floor: true,
-      statistics: ["p50", "p95", "p99"],
-      has_repeated_tail_drain: true,
-    };
+  test("independently rejects every invalid methodological evidence clause", () => {
+    expect(satisfiesWorkloadCeilingEvidenceRequirements(validEvidence)).toBe(true);
+    for (const invalidEvidence of [
+      { ...validEvidence, source: null },
+      { ...validEvidence, source: "node" as const },
+      { ...validEvidence, source: "miniflare" as const },
+      { ...validEvidence, profile: null },
+      { ...validEvidence, profile: "cf-paid" as const },
+      { ...validEvidence, profile: "node" as const },
+      { ...validEvidence, statistics: ["p50", "p95"] as const },
+      { ...validEvidence, has_zero_failures_upper_bound: false },
+      { ...validEvidence, has_repeated_tail_drain: false },
+      { ...validEvidence, has_complete_evidence: false },
+      { ...validEvidence, meets_cpu_sample_floor: false },
+    ]) {
+      expect(satisfiesWorkloadCeilingEvidenceRequirements(invalidEvidence)).toBe(false);
+      expect(satisfiesWorkloadCeilingAdmission(invalidEvidence, decidedMargins)).toBe(false);
+    }
+  });
 
-    // The pending margin fails closed regardless of deployment limits. Once
-    // fixed, measured p99 against the budget line decides this predicate.
-    expect(satisfiesWorkloadCeilingAdmission(configured)).toBe(false);
+  test("treats configured CPU and billing plan as nullable provenance", () => {
+    for (const evidence of [
+      { ...validEvidence, configured_cpu_ms: null },
+      { ...validEvidence, configured_cpu_ms: 30_000 },
+      { ...validEvidence, plan: null },
+      { ...validEvidence, plan: "workers-free" as const },
+    ]) {
+      expect(satisfiesWorkloadCeilingEvidenceRequirements(evidence)).toBe(true);
+      expect(satisfiesWorkloadCeilingAdmission(evidence, decidedMargins)).toBe(true);
+    }
+  });
 
-    // The 2026-08-21 plancheck environment: a confirmed Workers Free account
-    // with no `limits` block, which measured 23-66 ms folds and zero
-    // `exceededCpu`. The missing block is now preserved only as provenance.
+  test("uses a tightening safety factor and the declared locality mapping", () => {
+    expect(clearsCpuBudgetLine(1, 10)).toBe(true);
+    expect(clearsCpuBudgetLine(0.5, 10)).toBe(false);
+    expect(clearsCpuBudgetLine(2, 5)).toBe(true);
+    expect(clearsCpuBudgetLine(2, 5.01)).toBe(false);
+    expect(clearsCpuBudgetLine("pending-program-decision", 1)).toBe(false);
+    expect(clearsCpuBudgetLine(1, null)).toBe(false);
+
     expect(
-      satisfiesWorkloadCeilingAdmission({
-        ...configured,
-        plan: "workers-free",
-        configured_cpu_ms: null,
-      }),
+      satisfiesWorkloadCeilingCpuBudget(
+        { ...validEvidence, mutation_locality: "hot-key", p99_cpu_ms: 5 },
+        decidedMargins,
+      ),
+    ).toBe(true);
+    expect(
+      satisfiesWorkloadCeilingCpuBudget(
+        { ...validEvidence, mutation_locality: "uniform", p99_cpu_ms: 5.01 },
+        decidedMargins,
+      ),
     ).toBe(false);
-
-    // A paid account at the platform default has the same pending verdict.
-    expect(satisfiesWorkloadCeilingAdmission({ ...configured, configured_cpu_ms: null })).toBe(
-      false,
-    );
-
-    // Nor does another configured ceiling alter that verdict.
-    expect(satisfiesWorkloadCeilingAdmission({ ...configured, configured_cpu_ms: 30_000 })).toBe(
-      false,
-    );
-
-    // The biller is provenance too.
-    expect(satisfiesWorkloadCeilingAdmission({ ...configured, plan: "workers-free" })).toBe(false);
+    expect(
+      satisfiesWorkloadCeilingCpuBudget(
+        { ...validEvidence, mutation_locality: null },
+        decidedMargins,
+      ),
+    ).toBe(false);
   });
 
   test("preregisters the cf-free CPU figure as a measured-p99 budget line", () => {
