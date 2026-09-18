@@ -17,12 +17,20 @@ decision and folding on every write would thrash snapshot rewrites; the
 scheduled path — where the scheduler firing *is* the decision to work —
 shares neither cost profile and no longer shares the default.
 
-No migration is required, and callers passing an explicit
-`options.compact.minEntriesToCompact` (including the
-`CLOUDFLARE_*_TIER` profiles, which carry their own explicit thresholds)
-are unaffected. If you relied on the bare call **not** folding small
-tails — e.g. to batch snapshot rewrites on a write-amplification-
-sensitive host — pass the floor you want:
+The same inheritance sat one layer up: `profileToScheduledOptions`
+defaulted `minEntriesToCompact` to the write-tick floor of 50, so
+`CLOUDFLARE_PAID_TIER` — the documented Paid cron recipe — skipped any
+tail of 1–49. That helper now defaults to
+`SCHEDULED_MIN_ENTRIES_TO_COMPACT` (1). Existing
+`runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` callers start
+folding tails of 1–49 (more snapshot rewrites on a hot Paid cron; an
+idle tick still costs only the `current.json` GET + tail probe).
+`CLOUDFLARE_FREE_TIER` still carries an explicit 20 and must not be
+passed to `runScheduledMaintenance`. Callers already passing
+`{ compact: { minEntriesToCompact: N } }` to batch folds are unchanged.
+If you relied on the bare call **not** folding small tails — e.g. to
+batch snapshot rewrites on a write-amplification-sensitive host — pass
+the floor you want:
 
 ```ts
 await runScheduledMaintenance(
@@ -37,8 +45,10 @@ writes (an idle tick costs only the `current.json` GET + tail probe).
 The trade-off and the per-trigger floor table are documented in
 `docs/spec/sync-protocol.md` § "Scheduled vs in-band fold floors".
 
-Also in this change: a below-floor skip is now observable. `compact()`
-emits `db.compaction.below_min_total` (with the `collection` label) when
-it returns `skippedReason: "below-min-threshold"`, so a maintenance loop
-that discards results can no longer look healthy while doing nothing —
-see `docs/guide/observability.md` for the response playbook.
+Also in this change: a below-floor skip on a non-empty tail is now
+observable. `compact()` emits `db.compaction.below_min_total` (with the
+`collection` label) when it returns `skippedReason:
+"below-min-threshold"` with `available > 0`, so a maintenance loop that
+discards results can no longer look healthy while a live tail sits under
+the floor. An idle skip (`available === 0`) does not increment the
+counter — see `docs/guide/observability.md` for the response playbook.

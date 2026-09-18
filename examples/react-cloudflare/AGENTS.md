@@ -557,10 +557,12 @@ Do not loop tenants or collections in one Free invocation; shard the schedule or
 a collection cursor across invocations. Reserve `runScheduledMaintenance()` (both
 phases) for Cloudflare Paid or Node, within that host's invocation budget.
 
-On Cloudflare Paid or Node, the canonical scheduled pass folds whatever live tail
+On Node, the canonical scheduled pass folds whatever live tail
 exists — `runScheduledMaintenance`'s own `minEntriesToCompact` default is 1 (a
 scheduler that fires has already decided it is time to work), so a low-write
-collection drains to zero instead of parking its tail below the old count floor:
+collection drains to zero instead of parking its tail below the old count floor.
+Cloudflare Paid callers who need per-pass caps pass `CLOUDFLARE_PAID_TIER` and still
+get floor 1.
 
 ```ts
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";

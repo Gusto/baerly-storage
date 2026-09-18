@@ -354,9 +354,13 @@ export const compact = async (
     // discards the result (a cron loop, an admin route) must still be able
     // to tell "folded nothing because nothing was foldable" apart from
     // "folded nothing for months because the floor sat above the tail".
-    // The skip was historically invisible — a loop could tick green while
-    // every collection sat in the dead zone below its threshold.
-    ctxMetrics().counter("db.compaction.below_min_total", 1, { collection: collectionName });
+    // Idle (`available === 0`) is not a dead zone — after floor 1 the
+    // default scheduled path only skips when idle, so counting that would
+    // make the playbook counter mean "the cron fired". Emit only when a
+    // live tail was left under the floor.
+    if (available > 0) {
+      ctxMetrics().counter("db.compaction.below_min_total", 1, { collection: collectionName });
+    }
     return {
       written: false,
       skippedReason: "below-min-threshold",

@@ -610,7 +610,8 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       if (options.scheduled !== undefined) {
         // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, reserve
         // `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` for
-        // "cf-paid". On the Free default, alternate direct
+        // "cf-paid" — it folds whatever live tail exists, bounded by
+        // the Paid slice. On the Free default, alternate direct
         // `compact(args, CLOUDFLARE_FREE_TIER.compact)` and
         // `runGc(args, CLOUDFLARE_FREE_TIER.gc)` calls, with exactly one
         // collection/phase per invocation; shard or persist a collection

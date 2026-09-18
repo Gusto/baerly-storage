@@ -30,6 +30,7 @@ import {
   type StorageListEntry,
   type StoragePutOptions,
   type StoragePutResult,
+  SCHEDULED_MIN_ENTRIES_TO_COMPACT,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_INTERVAL,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
@@ -195,6 +196,21 @@ describe("runScheduledMaintenance", () => {
     expect(counterTotal(recorder, "db.compaction.below_min_total")).toBe(1);
   });
 
+  test("an idle below-min skip does not bump db.compaction.below_min_total", async () => {
+    // available === 0 is not a dead zone: there is no live tail left
+    // unfolded. After the scheduled floor of 1, the default scheduled
+    // path only skips when idle; counting that would make the playbook
+    // counter mean "the cron fired", not "a tail sat under the floor".
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const recorder = await withRecorder(async () => {
+      const r = await compact({ storage: s, currentJsonKey: KEY });
+      expect(r.written).toBe(false);
+      expect(r.skippedReason).toBe("below-min-threshold");
+    });
+    expect(counterTotal(recorder, "db.compaction.below_min_total")).toBe(0);
+  });
+
   test("the scheduled default does not leak into compact()'s own floor (in-band default stays 100)", async () => {
     // `compact()`'s DEFAULT_MIN_TO_COMPACT is the in-band write-tick shape:
     // folding on every write would thrash snapshot rewrites. The scheduled
@@ -215,13 +231,31 @@ describe("runScheduledMaintenance", () => {
     expect(r.skippedReason).toBe("below-min-threshold");
   });
 
-  test("a profile-derived options object keeps its explicit threshold (CF Free invariant)", async () => {
-    // CLOUDFLARE_FREE_TIER carries minEntriesToCompact=20 <= P=25 explicitly;
-    // the scheduled default must not apply to it (it never does — the spread
-    // only fills an ABSENT threshold — but this pins the invariant that keeps
-    // the Free budget envelope honest).
-    const cfFree = CLOUDFLARE_FREE_TIER as InternalMaintenanceOptions;
-    expect(cfFree.compact?.minEntriesToCompact).toBeDefined();
+  test("runScheduledMaintenance with CLOUDFLARE_PAID_TIER folds a sub-50 tail", async () => {
+    // Paid scheduled profile exists for per-pass caps (maxEntriesPerRun: 200,
+    // GC bounds), not an in-band count floor. The helper default is
+    // SCHEDULED_MIN_ENTRIES_TO_COMPACT (1), so a 36-entry tail — the
+    // measured incident — must fold rather than sit in the old 50-entry
+    // write-tick dead zone.
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    const n = 36;
+    for (let i = 0; i < n; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const r = await runScheduledMaintenance(
+      { storage: s, currentJsonKey: KEY },
+      CLOUDFLARE_PAID_TIER,
+    );
+    expect(r.compact.written).toBe(true);
+    expect(r.compact.entriesFolded).toBe(n);
+    await expect(readSeqStart(s, KEY)).resolves.toBe(n);
   });
 
   test("CLOUDFLARE_FREE_TIER carries the documented bounds", async () => {
@@ -265,7 +299,7 @@ describe("runScheduledMaintenance", () => {
     const cfPaid = CLOUDFLARE_PAID_TIER as InternalMaintenanceOptions;
 
     expect(cfPaid.compact?.maxEntriesPerRun).toBe(200);
-    expect(cfPaid.compact?.minEntriesToCompact).toBe(50);
+    expect(cfPaid.compact?.minEntriesToCompact).toBe(SCHEDULED_MIN_ENTRIES_TO_COMPACT);
     expect(cfPaid.compact?.maxTailProbeGets).toBeUndefined();
     expect(cfPaid.gc?.maxMarksPerRun).toBe(200);
     expect(cfPaid.gc?.maxSweepsPerRun).toBe(100);
