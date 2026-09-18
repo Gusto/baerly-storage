@@ -87,10 +87,14 @@ describe("win-model helpers", () => {
     expect(total).toBe(32);
   });
 
-  test("median and rangeLabel refuse to invent a value for an empty set", () => {
+  test("median is quantile-r7-v1 and refuses to invent a value for an empty set", () => {
     expect(Number.isNaN(median([]))).toBe(true);
     expect(rangeLabel([])).toBe("-");
     expect(median([1, 3, 2])).toBe(2);
+    expect(median([1, 3, 5, 7])).toBe(4);
+    // Eight seeds: R-7 interpolates the two central values. The previous
+    // floor(n/2) pick was the upper-middle rank (5), not the median.
+    expect(median([1, 2, 3, 4, 5, 6, 7, 8])).toBe(4.5);
     expect(rangeLabel([1.234, 5])).toBe("1.23-5.00");
   });
 
@@ -144,6 +148,7 @@ describe("win-model report", () => {
       subject_commit: "abc",
     });
     expect(rec.version).toBe("baerly.workload-ceiling-win-model/v1");
+    expect(rec.median_algorithm).toBe("quantile-r7-v1");
     expect(rec.subject_commit).toBe("abc");
     expect(rec.rows).toHaveLength(1);
     expect(rec.skips).toEqual([skip]);

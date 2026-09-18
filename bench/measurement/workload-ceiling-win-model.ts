@@ -57,6 +57,7 @@ import {
   CHUNK_BOUNDARY_POLICIES,
   type SnapshotChunkBoundaryPolicy,
 } from "../../packages/server/src/snapshot-chunk-builder.ts";
+import { quantileR7 } from "./statistics.ts";
 
 export const WIN_MODEL_VERSION = "baerly.workload-ceiling-win-model/v1" as const;
 
@@ -140,12 +141,17 @@ export const snapshotEncodeCounters = (): EncodeCounters => {
 export const winRatio = (monoBytesPerMutation: number, foldBytesPerMutation: number): number =>
   foldBytesPerMutation === 0 ? Number.NaN : monoBytesPerMutation / foldBytesPerMutation;
 
+/**
+ * Ordinary median: {@link quantileR7} at `q = 0.5` (`quantile-r7-v1`).
+ * Empty input is `NaN` rather than `StatisticsInputError` so a row with no
+ * finite trials still renders. Eight-seed cells interpolate the two central
+ * observations; they do not take the upper-middle rank.
+ */
 export const median = (values: readonly number[]): number => {
   if (values.length === 0) {
     return Number.NaN;
   }
-  const sorted = [...values].toSorted((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)]!;
+  return quantileR7(values, 0.5);
 };
 
 export const rangeLabel = (values: readonly number[]): string => {
@@ -358,6 +364,8 @@ export interface WinModelSkip {
 export interface WinModelRecord {
   readonly version: typeof WIN_MODEL_VERSION;
   readonly subject_commit: string;
+  /** Every `*Median` field on {@link WinModelRow} is this algorithm. */
+  readonly median_algorithm: "quantile-r7-v1";
   readonly rows: readonly WinModelRow[];
   readonly skips: readonly WinModelSkip[];
   readonly findings: readonly string[];
@@ -569,6 +577,7 @@ export const buildWinModelRecord = (input: {
 }): WinModelRecord => ({
   version: WIN_MODEL_VERSION,
   subject_commit: input.subject_commit,
+  median_algorithm: "quantile-r7-v1",
   rows: input.rows,
   skips: input.skips,
   findings: deriveFindings(input.rows, input.skips),
