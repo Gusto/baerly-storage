@@ -12,7 +12,11 @@ describe("workload-ceiling study contract", () => {
     expect(WORKLOAD_CEILING_STUDY.collection_bytes.length).toBeGreaterThan(1);
     expect(WORKLOAD_CEILING_STUDY.collection_rows.length).toBeGreaterThan(1);
     expect(WORKLOAD_CEILING_STUDY.document_bytes.length).toBeGreaterThan(1);
-    expect(WORKLOAD_CEILING_STUDY.mutation_localities).toEqual(["hot-key", "uniform"]);
+    expect(WORKLOAD_CEILING_STUDY.mutation_localities).toEqual([
+      "append-ordered",
+      "hot-key",
+      "uniform",
+    ]);
     expect(WORKLOAD_CEILING_STUDY.read_shapes).toEqual([
       "point",
       "bounded-range",
@@ -125,12 +129,14 @@ describe("workload-ceiling study contract", () => {
     });
   });
 
-  test("admits only complete deployed Workers evidence", () => {
+  test("fails closed until the per-regime admission margins are decided", () => {
     const deployedEvidence: WorkloadCeilingStudyEvidence = {
       source: "deployed-workers",
       profile: "cf-free",
       plan: "workers-paid",
       configured_cpu_ms: 10,
+      mutation_locality: "append-ordered",
+      p99_cpu_ms: 4,
       has_zero_failures_upper_bound: true,
       has_complete_evidence: true,
       meets_cpu_sample_floor: true,
@@ -138,7 +144,11 @@ describe("workload-ceiling study contract", () => {
       has_repeated_tail_drain: true,
     };
 
-    expect(satisfiesWorkloadCeilingAdmission(deployedEvidence)).toBe(true);
+    expect(WORKLOAD_CEILING_STUDY.admission.cpu_margin_by_regime).toEqual({
+      append_ordered: "pending-program-decision",
+      uniform: "pending-program-decision",
+    });
+    expect(satisfiesWorkloadCeilingAdmission(deployedEvidence)).toBe(false);
     expect(satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, source: "node" })).toBe(false);
     expect(satisfiesWorkloadCeilingAdmission({ ...deployedEvidence, source: "miniflare" })).toBe(
       false,
@@ -176,12 +186,14 @@ describe("workload-ceiling study contract", () => {
     ).toBe(false);
   });
 
-  test("requires the cf-free CPU envelope to be configured, not inherited from a plan", () => {
+  test("records configured CPU as provenance rather than using it as the gate", () => {
     const configured: WorkloadCeilingStudyEvidence = {
       source: "deployed-workers",
       profile: "cf-free",
       plan: "workers-paid",
       configured_cpu_ms: 10,
+      mutation_locality: "append-ordered",
+      p99_cpu_ms: 4,
       has_zero_failures_upper_bound: true,
       has_complete_evidence: true,
       meets_cpu_sample_floor: true,
@@ -189,11 +201,13 @@ describe("workload-ceiling study contract", () => {
       has_repeated_tail_drain: true,
     };
 
-    expect(satisfiesWorkloadCeilingAdmission(configured)).toBe(true);
+    // The pending margin fails closed regardless of deployment limits. Once
+    // fixed, measured p99 against the budget line decides this predicate.
+    expect(satisfiesWorkloadCeilingAdmission(configured)).toBe(false);
 
-    // The 2026-08-21 plancheck environment: a CONFIRMED Workers Free account
+    // The 2026-08-21 plancheck environment: a confirmed Workers Free account
     // with no `limits` block, which measured 23-66 ms folds and zero
-    // `exceededCpu`. It looks like cf-free and is not.
+    // `exceededCpu`. The missing block is now preserved only as provenance.
     expect(
       satisfiesWorkloadCeilingAdmission({
         ...configured,
@@ -202,26 +216,25 @@ describe("workload-ceiling study contract", () => {
       }),
     ).toBe(false);
 
-    // A paid account at the platform default is likewise not the envelope.
+    // A paid account at the platform default has the same pending verdict.
     expect(satisfiesWorkloadCeilingAdmission({ ...configured, configured_cpu_ms: null })).toBe(
       false,
     );
 
-    // Nor is any other configured ceiling, however close.
+    // Nor does another configured ceiling alter that verdict.
     expect(satisfiesWorkloadCeilingAdmission({ ...configured, configured_cpu_ms: 30_000 })).toBe(
       false,
     );
 
-    // A free-plan account that DOES enforce would qualify — the rule reads
-    // the ceiling, never the biller.
-    expect(satisfiesWorkloadCeilingAdmission({ ...configured, plan: "workers-free" })).toBe(true);
+    // The biller is provenance too.
+    expect(satisfiesWorkloadCeilingAdmission({ ...configured, plan: "workers-free" })).toBe(false);
   });
 
-  test("preregisters how the cf-free CPU envelope is obtained", () => {
+  test("preregisters the cf-free CPU figure as a measured-p99 budget line", () => {
     expect(WORKLOAD_CEILING_STUDY.cpu_envelope).toEqual({
       cf_free_cpu_ms: 10,
       enforcement: "elastic-duty-cycle-dependent",
-      obtained_by: "configured-limit",
+      obtained_by: "measured-p99-budget-line",
     });
   });
 
