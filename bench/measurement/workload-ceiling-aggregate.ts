@@ -34,7 +34,11 @@ import {
   type StratifiedPair,
   type WilsonOneSidedUpperResult,
 } from "./statistics.ts";
-import { WORKLOAD_CEILING_STUDY } from "./workload-ceiling-contract.ts";
+import {
+  satisfiesWorkloadCeilingAdmission,
+  type WorkloadCeilingStudyEvidence,
+  WORKLOAD_CEILING_STUDY,
+} from "./workload-ceiling-contract.ts";
 import {
   decodeWorkloadCeilingInvocationRecord,
   WORKLOAD_CEILING_CONTRACT_ID,
@@ -146,6 +150,11 @@ export interface WorkloadCeilingAxisReport {
   readonly sweep_id: string;
   readonly axis: "byte" | "row";
   readonly capture: typeof WORKLOAD_CEILING_STUDY.capture;
+  /** The canonical study predicate's input and verdict. */
+  readonly admission: {
+    readonly evidence: WorkloadCeilingStudyEvidence;
+    readonly satisfied: boolean;
+  };
   readonly cells: readonly WorkloadCeilingCellSummary[];
   /**
    * One entry per cell that has finite-CPU successful samples in BOTH monolithic arms.
@@ -577,6 +586,37 @@ function computeCpuPerMib(input: {
   }
 }
 
+/** Constructs the one evidence record consumed by the canonical admission predicate. */
+function buildStudyEvidence(
+  cells: readonly WorkloadCeilingCellSummary[],
+): WorkloadCeilingStudyEvidence {
+  const candidateCells = cells.filter((cell) => cell.implementation === "chunked-candidate");
+  const candidateP99s = candidateCells.flatMap((cell) =>
+    cell.cpu_ms === null ? [] : [cell.cpu_ms.p99.value],
+  );
+  const hasCells = cells.length > 0;
+  const hasCandidateStatistics =
+    candidateCells.length > 0 && candidateCells.every((cell) => cell.cpu_ms !== null);
+
+  return {
+    source: "deployed-workers",
+    profile: WORKLOAD_CEILING_STUDY.admission.primary_profile,
+    plan: "workers-paid",
+    // Deployment-limit provenance and repeated-tail evidence are issue #168
+    // steps 2 and 3; locality is row 8. All remain deliberately producerless,
+    // so their honest sentinel values make the predicate fail closed.
+    configured_cpu_ms: null,
+    mutation_locality: null,
+    p99_cpu_ms: candidateP99s.length === 0 ? null : Math.max(...candidateP99s),
+    has_zero_failures_upper_bound:
+      hasCells && cells.every((cell) => !("invalid" in cell.zero_failure_upper_bound)),
+    has_complete_evidence: hasCells && cells.every((cell) => cell.evidence.complete),
+    meets_cpu_sample_floor: hasCells && cells.every((cell) => cell.evidence.cpu_complete),
+    statistics: hasCandidateStatistics ? WORKLOAD_CEILING_STUDY.admission.required_statistics : [],
+    has_repeated_tail_drain: false,
+  };
+}
+
 /**
  * Pure. Reduces every collected event for one axis into per-cell summaries.
  *
@@ -655,6 +695,7 @@ export function buildWorkloadCeilingAxisReport(input: {
   // Compute hash cost and slope (hash cost needs raw events for pairing)
   const hash_cost = computeHashCost({ cells, eventsByArm });
   const cpu_per_mib = computeCpuPerMib({ cells: allSummaries });
+  const admissionEvidence = buildStudyEvidence(allSummaries);
 
   return {
     contract_id: WORKLOAD_CEILING_CONTRACT_ID,
@@ -662,6 +703,10 @@ export function buildWorkloadCeilingAxisReport(input: {
     sweep_id: sweepId,
     axis,
     capture: WORKLOAD_CEILING_STUDY.capture,
+    admission: {
+      evidence: admissionEvidence,
+      satisfied: satisfiesWorkloadCeilingAdmission(admissionEvidence),
+    },
     cells: allSummaries,
     hash_cost,
     cpu_per_mib,
@@ -836,19 +881,13 @@ async function main(): Promise<number> {
   console.log(``);
   console.log(`wrote ${outPath}`);
 
-  const cpuIncomplete = report.cells.filter((c) => !c.evidence.cpu_complete);
-  if (cpuIncomplete.length > 0) {
+  if (!report.admission.satisfied) {
     console.error("");
     console.error(
-      `workload-ceiling-aggregate: refused (cpu_sample_floor) — ` +
-        `${cpuIncomplete.length} cell(s) fell short of finite successful CPU samples: ` +
-        cpuIncomplete.map((c) => `${c.scenario_id}[${c.implementation}]`).join(", "),
+      `workload-ceiling-aggregate: refused (study_admission) — the report is written for ` +
+        `diagnosis, but its evidence does not satisfy the canonical admission predicate`,
     );
-    console.error(
-      `The report is written for diagnosis, but admission is blocked. There is no ` +
-        `top-up: additional attempts are planned before capture, never added after ` +
-        `observing missingness.`,
-    );
+    console.error(JSON.stringify(report.admission.evidence, null, 2));
     return 1;
   }
   return 0;
