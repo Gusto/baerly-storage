@@ -36,6 +36,8 @@ import {
 } from "./statistics.ts";
 import {
   satisfiesWorkloadCeilingAdmission,
+  satisfiesWorkloadCeilingCpuBudget,
+  satisfiesWorkloadCeilingEvidenceRequirements,
   type WorkloadCeilingStudyEvidence,
   WORKLOAD_CEILING_STUDY,
 } from "./workload-ceiling-contract.ts";
@@ -153,6 +155,10 @@ export interface WorkloadCeilingAxisReport {
   /** The canonical study predicate's input and verdict. */
   readonly admission: {
     readonly evidence: WorkloadCeilingStudyEvidence;
+    /** Methodological validity; this alone controls the aggregate's exit code. */
+    readonly evidence_valid: boolean;
+    /** Scientific result, reported without turning a valid capture into a CLI failure. */
+    readonly clears_cpu_budget_line: boolean;
     readonly satisfied: boolean;
   };
   readonly cells: readonly WorkloadCeilingCellSummary[];
@@ -589,30 +595,31 @@ function computeCpuPerMib(input: {
 /** Constructs the one evidence record consumed by the canonical admission predicate. */
 function buildStudyEvidence(
   cells: readonly WorkloadCeilingCellSummary[],
+  eventsByArm: ReadonlyMap<WorkloadCeilingImplementation, readonly WorkloadCeilingRawEvent[]>,
 ): WorkloadCeilingStudyEvidence {
-  const candidateCells = cells.filter((cell) => cell.implementation === "chunked-candidate");
-  const candidateP99s = candidateCells.flatMap((cell) =>
-    cell.cpu_ms === null ? [] : [cell.cpu_ms.p99.value],
-  );
+  const events = [...eventsByArm.values()].flat();
   const hasCells = cells.length > 0;
-  const hasCandidateStatistics =
-    candidateCells.length > 0 && candidateCells.every((cell) => cell.cpu_ms !== null);
+  const hasStatistics = hasCells && cells.every((cell) => cell.cpu_ms !== null);
 
   return {
-    source: "deployed-workers",
-    profile: WORKLOAD_CEILING_STUDY.admission.primary_profile,
-    plan: "workers-paid",
+    source: events.length > 0 && events.every(hasResolvedDeployment) ? "deployed-workers" : null,
+    // The current sweep format does not record its target profile or billing
+    // plan. Do not manufacture provenance from the contract being checked.
+    profile: null,
+    plan: null,
     // Deployment-limit provenance and repeated-tail evidence are issue #168
     // steps 2 and 3; locality is row 8. All remain deliberately producerless,
     // so their honest sentinel values make the predicate fail closed.
     configured_cpu_ms: null,
     mutation_locality: null,
-    p99_cpu_ms: candidateP99s.length === 0 ? null : Math.max(...candidateP99s),
+    // A sweep-wide maximum across deliberately different size cells is not a
+    // study-defined CPU quantity. Per-cell budget verdicts belong to row 8.
+    p99_cpu_ms: null,
     has_zero_failures_upper_bound:
       hasCells && cells.every((cell) => !("invalid" in cell.zero_failure_upper_bound)),
     has_complete_evidence: hasCells && cells.every((cell) => cell.evidence.complete),
     meets_cpu_sample_floor: hasCells && cells.every((cell) => cell.evidence.cpu_complete),
-    statistics: hasCandidateStatistics ? WORKLOAD_CEILING_STUDY.admission.required_statistics : [],
+    statistics: hasStatistics ? WORKLOAD_CEILING_STUDY.admission.required_statistics : [],
     has_repeated_tail_drain: false,
   };
 }
@@ -695,7 +702,7 @@ export function buildWorkloadCeilingAxisReport(input: {
   // Compute hash cost and slope (hash cost needs raw events for pairing)
   const hash_cost = computeHashCost({ cells, eventsByArm });
   const cpu_per_mib = computeCpuPerMib({ cells: allSummaries });
-  const admissionEvidence = buildStudyEvidence(allSummaries);
+  const admissionEvidence = buildStudyEvidence(allSummaries, eventsByArm);
 
   return {
     contract_id: WORKLOAD_CEILING_CONTRACT_ID,
@@ -705,6 +712,8 @@ export function buildWorkloadCeilingAxisReport(input: {
     capture: WORKLOAD_CEILING_STUDY.capture,
     admission: {
       evidence: admissionEvidence,
+      evidence_valid: satisfiesWorkloadCeilingEvidenceRequirements(admissionEvidence),
+      clears_cpu_budget_line: satisfiesWorkloadCeilingCpuBudget(admissionEvidence),
       satisfied: satisfiesWorkloadCeilingAdmission(admissionEvidence),
     },
     cells: allSummaries,
@@ -881,13 +890,25 @@ async function main(): Promise<number> {
   console.log(``);
   console.log(`wrote ${outPath}`);
 
-  if (!report.admission.satisfied) {
+  if (!report.admission.evidence_valid) {
     console.error("");
     console.error(
-      `workload-ceiling-aggregate: refused (study_admission) — the report is written for ` +
-        `diagnosis, but its evidence does not satisfy the canonical admission predicate`,
+      `workload-ceiling-aggregate: refused (evidence_validity) — the report is written for ` +
+        `diagnosis, but its evidence does not satisfy the methodological requirements`,
     );
     console.error(JSON.stringify(report.admission.evidence, null, 2));
+
+    const cpuIncomplete = report.cells.filter((cell) => !cell.evidence.cpu_complete);
+    if (cpuIncomplete.length > 0) {
+      console.error(
+        `${cpuIncomplete.length} cell(s) fell short of finite successful CPU samples: ` +
+          cpuIncomplete.map((cell) => `${cell.scenario_id}[${cell.implementation}]`).join(", "),
+      );
+      console.error(
+        `There is no top-up: additional attempts are planned before capture, never added after ` +
+          `observing missingness.`,
+      );
+    }
     return 1;
   }
   return 0;
