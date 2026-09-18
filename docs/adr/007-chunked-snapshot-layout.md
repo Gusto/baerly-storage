@@ -175,7 +175,7 @@ The finite benchmark-only candidates are:
 
 | Candidate | Target bytes | Target rows |
 | --- | ---: | ---: |
-| `c128-r512` | 128 KiB | 512 |
+| `c128-r512` | 132 KiB | 512 |
 | `c512-r2048` | 512 KiB | 2,048 |
 | `c1024-r4096` | 1 MiB | 4,096 |
 

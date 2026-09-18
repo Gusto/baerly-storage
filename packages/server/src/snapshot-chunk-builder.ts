@@ -1,6 +1,11 @@
 import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
-import { type CodecCode, INCARNATION_PATTERN, makeCodecFail } from "./snapshot-codec.ts";
+import {
+  type CodecCode,
+  INCARNATION_PATTERN,
+  MAX_CHUNK_BYTES,
+  makeCodecFail,
+} from "./snapshot-codec.ts";
 import {
   encodeSnapshotChunk,
   isChunkOversizeError,
@@ -19,7 +24,16 @@ export interface SnapshotChunkBoundaryPolicy {
 }
 
 export const CHUNK_BOUNDARY_POLICIES = {
-  "c128-r512": { target_chunk_bytes: 128 * 1024, target_rows: 512 },
+  // 4 MiB / 32 descriptors is MAX_CHUNK_BYTES / 8 of document payload
+  // (128 KiB). The chunk envelope (schema_version, collection,
+  // incarnation, first_id, last_id, docs) makes 512 packed 256-byte
+  // study documents encode to 131,730 B, so the target is that payload
+  // share plus 4 KiB of envelope budget. Both 4 MiB study cells then
+  // realise exactly 32 descriptors.
+  "c128-r512": {
+    target_chunk_bytes: MAX_CHUNK_BYTES / 8 + 4 * 1024,
+    target_rows: 512,
+  },
   "c512-r2048": { target_chunk_bytes: 512 * 1024, target_rows: 2048 },
   "c1024-r4096": { target_chunk_bytes: 1024 * 1024, target_rows: 4096 },
 } as const satisfies Record<string, SnapshotChunkBoundaryPolicy>;
