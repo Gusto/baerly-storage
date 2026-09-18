@@ -237,7 +237,8 @@
     "bench:workload-ceiling:compare": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-compare.ts",
     "bench:workload-ceiling:aggregate": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-aggregate.ts",
     "bench:workload-ceiling:validate-smoke": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-validate-smoke.ts",
-    "bench:workload-ceiling:win-model": "node --import ./bench/measurement/workload-ceiling-win-model-hooks.mjs bench/measurement/workload-ceiling-win-model-run.ts"
+    "bench:workload-ceiling:win-model": "node --import ./bench/measurement/workload-ceiling-win-model-hooks.mjs bench/measurement/workload-ceiling-win-model-run.ts",
+    "bench:workload-ceiling:arm-symmetry": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-arm-symmetry-run.ts"
   },
   "dependencies": {
     "@logtape/logtape": "^2.3.5"
