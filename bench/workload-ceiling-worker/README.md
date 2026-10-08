@@ -24,6 +24,15 @@ One authenticated `POST /run` per invocation:
      single-snapshot format.
    - `chunked-candidate` — the proposed manifest + chunk layout, read through
      `openSnapshotView` (`packages/server/src/snapshot-view.ts`).
+
+   Every arm performs the complete materialising read — the `query-read`
+   shape in `../measurement/workload-ceiling-arm-symmetry.ts`. For the
+   chunked arm that is every chunk, which a complete query pays but a chunked
+   fold does not: a fold reads only the bounded prefetch set
+   `prefetchChunkedFold` admits for its mutation batch (at most nine chunks).
+   Fixtures and requests carry no mutations, so this Worker cannot measure
+   that `fold-read` shape; don't read its chunked-candidate CPU as fold cost.
+
 4. Emits the run's join identifiers exactly once as a single structured
    Workers Logs line, and returns the kernel result (row count).
 
