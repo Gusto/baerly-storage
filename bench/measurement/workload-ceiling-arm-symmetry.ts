@@ -398,6 +398,14 @@ const measureCandidateTrial = async (
   };
 };
 
+/**
+ * Whether the control runs first at `iteration`. Plain `iteration % 2` would
+ * alias with the even-length seed cycle and pin every seed to one arm order;
+ * flipping parity each seed cycle gives every seed both orders.
+ */
+export const controlFirstAt = (iteration: number): boolean =>
+  (iteration + Math.floor(iteration / WIN_MODEL_SEEDS.length)) % 2 === 0;
+
 const summary = (values: readonly number[]): TimingSummary => ({
   median_ms: median(values),
   range_ms: rangeLabel(values),
@@ -503,7 +511,7 @@ export const runArmSymmetryCell = async (input: {
       seed,
       input.documentBytes,
     );
-    const measureControlFirst = iteration % 2 === 0;
+    const measureControlFirst = controlFirstAt(iteration);
     const first = measureControlFirst ? measureControlTrial : measureCandidateTrial;
     const second = measureControlFirst ? measureCandidateTrial : measureControlTrial;
     const firstResult = await first(fixture, entries, iteration, seed);
@@ -556,6 +564,7 @@ export const runArmSymmetryGrid = async (
 export const deriveArmSymmetryFindings = (): readonly string[] => [
   `Frequency: fold CPU is per write tick, with a ${WRITE_TICK_FOLD_ENTRIES_PER_PASS}-mutation pass as the amortisation unit; the planner can admit fewer, so each row reports actual K. Read validation is per read. The costs are 1:1 only in the deployed study Worker, which performs one complete read plus one fold per invocation.`,
   "Fan-out: read validation depends on shape — point reads touch 1 chunk, bounded ranges up to 8, and complete reads up to 32. Every measured row here is the deployed Worker arm's complete materialising read; `chunk_fanout` records the cell's actual count.",
+  `Seeds: trials cycle through ${WIN_MODEL_SEEDS.length} seeded mutation batches, so N above ${WIN_MODEL_SEEDS.length} repeats batches rather than sampling new ones; arm order alternates independently of the seed. Batches can admit very different K and fan-out, so a cell median can sit between per-seed modes and move between runs; each trial records its seed for stratifying.`,
   "Breakdown: hash, decode, and canonical re-encode time the production primitives independently; `read_total` times the production read path and additionally includes copies, structural checks, object fetches, and materialisation. Component medians are explanatory, not additive.",
   "Integrity: the chunked reader's canonical re-encode and byte comparison remain enabled. The probe measures their cost; it does not propose removing them.",
   "Conversion: workerd net values apply inherited 6.89x / 8.55x / 9.57x / 8.91x factors whose driver is deleted. They are inherited, unverified conversions—not workerd measurements.",

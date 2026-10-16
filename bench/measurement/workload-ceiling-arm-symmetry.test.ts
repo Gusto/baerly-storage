@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { WIN_MODEL_SEEDS } from "./workload-ceiling-win-model.ts";
 import {
   ARM_SYMMETRY_MEASURE_ITERATIONS,
   ARM_SYMMETRY_POLICY,
@@ -6,6 +7,7 @@ import {
   WORKERD_CONVERSION_PROVENANCE,
   buildArmSymmetryRecord,
   buildRowsFromTrials,
+  controlFirstAt,
   deriveArmSymmetryFindings,
   renderArmSymmetryTables,
   runArmSymmetryCell,
@@ -112,6 +114,17 @@ describe("arm-symmetry report", () => {
     expect(candidate.canonical_reencode_artifacts).toBe(2);
     expect(control.invocation.median_ms).toBeGreaterThanOrEqual(0);
     expect(candidate.invocation.median_ms).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("arm order schedule", () => {
+  test("gives every seed slot both arm orders and stays balanced", () => {
+    const cycle = WIN_MODEL_SEEDS.length;
+    for (let slot = 0; slot < cycle; slot++) {
+      expect(controlFirstAt(slot)).not.toBe(controlFirstAt(slot + cycle));
+    }
+    const orders = Array.from({ length: 2 * cycle }, (_, iteration) => controlFirstAt(iteration));
+    expect(orders.filter(Boolean)).toHaveLength(cycle);
   });
 });
 
