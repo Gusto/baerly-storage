@@ -92,6 +92,10 @@ describe("arm-symmetry report", () => {
     expect(candidate.fold_delta_vs_control.median_ms).toBe(-5);
     // The query-read's +40 ms must not leak into the net.
     expect(candidate.net_vs_control_node.median_ms).toBe(-2);
+    // Iteration 0 runs the control first, iteration 1 runs it second.
+    expect(candidate.net_by_order?.control_first?.median_ms).toBe(-4);
+    expect(candidate.net_by_order?.control_second?.median_ms).toBe(0);
+    expect(control.net_by_order).toBeNull();
     expect(candidate.net_vs_control_workerd_converted.median_ms).toBeCloseTo(-17.82);
     expect(candidate.workerd_conversion_factor).toBe(8.91);
   });
@@ -118,6 +122,9 @@ describe("arm-symmetry report", () => {
       "locality: append — query-read, complete materialise, EXCLUDED from net",
     );
     expect(table).toContain("2 [2-2] chunks (3 objects) of 4");
+    // One trial fills only the control-first stratum.
+    expect(table).toContain("net Node control-first / control-second");
+    expect(table).toMatch(/\| -?\d+\.\d{2} \[[^\]]+\] \/ - \|/);
     expect(table).toContain("canonical re-encode");
     expect(table).toContain("CONVERTED, inherited/unverified");
     expect(table).toContain("negative is candidate CPU saved");
@@ -150,6 +157,7 @@ describe("arm-symmetry report", () => {
     expect(findings.join("\n")).toContain("not additive");
     expect(findings.join("\n")).toContain("excluded from the net");
     expect(findings.join("\n")).toContain("separate paired");
+    expect(findings.join("\n")).toContain("net_by_order");
   });
 
   test("candidate fold-read fetches only the admitted prefetch set", async () => {

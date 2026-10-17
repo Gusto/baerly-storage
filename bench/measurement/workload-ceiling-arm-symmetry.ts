@@ -163,6 +163,16 @@ export interface ArmSymmetryRow {
   readonly fold_delta_vs_control: TimingSummary;
   /** Paired `invocation` delta: fold-read + metadata phase + fold. Query-read is excluded. */
   readonly net_vs_control_node: TimingSummary;
+  /**
+   * `net_vs_control_node` split by which arm ran first in the pair. Whichever
+   * arm runs second inherits the first arm's heap state, so strata that
+   * disagree mean the pooled median measures arm order, not arm cost. `null`
+   * for the control, or when a stratum has no trials.
+   */
+  readonly net_by_order: {
+    readonly control_first: TimingSummary | null;
+    readonly control_second: TimingSummary | null;
+  } | null;
   readonly net_vs_control_workerd_converted: TimingSummary;
   readonly workerd_conversion_factor: number;
   readonly trials: readonly ArmSymmetryTrial[];
@@ -657,6 +667,12 @@ export const buildRowsFromTrials = (input: {
     const netDeltas = input.candidate.map(
       (trial, index) => trial.invocation_ms - input.control[index]!.invocation_ms,
     );
+    const netWhere = (controlFirst: boolean): TimingSummary | null => {
+      const deltas = netDeltas.filter(
+        (_, index) => controlFirstAt(input.control[index]!.iteration) === controlFirst,
+      );
+      return deltas.length === 0 ? null : summary(deltas);
+    };
     return {
       cell: input.cell,
       locality: input.locality,
@@ -672,6 +688,9 @@ export const buildRowsFromTrials = (input: {
       fold_entries_median: median(trials.map((trial) => trial.fold_entries)),
       fold_delta_vs_control: isCandidate ? pairedDelta((trial) => trial.fold_ms) : zeroSummary(),
       net_vs_control_node: isCandidate ? summary(netDeltas) : zeroSummary(),
+      net_by_order: isCandidate
+        ? { control_first: netWhere(true), control_second: netWhere(false) }
+        : null,
       net_vs_control_workerd_converted: isCandidate
         ? summary(netDeltas.map((value) => value * input.workerdFactor))
         : zeroSummary(),
@@ -789,10 +808,11 @@ export const runArmSymmetryGrid = async (
 export const deriveArmSymmetryFindings = (): readonly string[] => [
   `Frequency: fold CPU is per write tick, with a ${WRITE_TICK_FOLD_ENTRIES_PER_PASS}-mutation pass as the amortisation unit; the planner can admit fewer, so each row reports actual K. Fold-read is paid once per fold; query-read is paid per complete query and is not a fold cost.`,
   `Read shapes: \`fold-read\` is what each arm's fold must read — the control's one whole-snapshot object, or the candidate's manifest plus the bounded prefetch set \`prefetchChunkedFold\` admits (at most ${ARM_SYMMETRY_FOLD_READ_MAX_CHUNKS} chunks: ${WIN_MODEL_BUDGET.max_touched_chunks} direct plus ${WIN_MODEL_BUDGET.max_neighbor_chunks} neighbor). The set actually loaded and handed to the planner is asserted equal to \`plan.prefetch.chunk_indexes\` and within the bound, so an over-fetch fails the run. \`query-read\` is the candidate's complete materialising read.`,
-  "Fan-out: fold-read fan-out depends on the seeded mutation batch, so each row reports its median and range. Where a cell has no more chunks than the prefetch bound, fold-read can legitimately fetch every chunk. Query-read fan-out depends on query shape — point reads touch 1 chunk, bounded ranges up to 8, index-routed up to 32, complete up to 32; the measured query-read is the complete shape.",
+  "Fan-out: fold-read fan-out depends on the seeded mutation batch, so each row reports its median and range. Where a cell has no more chunks than the prefetch bound, fold-read can legitimately fetch every chunk. Query-read fan-out depends on query shape — point reads touch 1 chunk, bounded ranges up to 8, index-routed up to 32, complete reads every chunk; the measured query-read is the complete shape.",
   "Net: `net` is the paired candidate-minus-control delta of fold-read + metadata phase + fold. Query-read is reported for scale and excluded from the net. The control has one read shape, so its fold-read and query-read are the same whole-snapshot read, sampled once in each pass.",
   "Metadata phase: the candidate's `prefetch` column times the explicit `prefetchChunkedFold` call that bounds its read. `planChunkedFold` re-derives the same prefetch internally, so under today's planner API the metadata phase is paid twice and both are counted.",
-  "Passes: fold trials and query-read trials run as separate paired, order-alternating passes over the same fixture, so the complete read's allocation stays out of net-CPU trials. Each arm's own fold-pass allocation can still trigger GC inside either arm's window.",
+  "Passes: fold trials and query-read trials run as separate paired, order-alternating passes over the same fixture, so the complete read's allocation stays out of net-CPU trials. Within the fold pass, the second arm still pays GC for the first arm's garbage, so `net_by_order` splits the net by which arm ran first. Where its strata disagree, the pooled median measures arm order, not arm cost.",
+  "Heap regime: forcing a GC before each arm removes the order effect but re-warms the heap and raises both arms' cost, so neither regime is neutral. This probe reports the default heap regime; where the net is small next to the per-trial range, it may reflect heap state rather than fold cost.",
   `Seeds: trials cycle through ${WIN_MODEL_SEEDS.length} seeded mutation batches, so N above ${WIN_MODEL_SEEDS.length} repeats batches rather than sampling new ones; arm order alternates independently of the seed. Batches can admit very different K and fan-out, so a cell median can sit between per-seed modes and move between runs; each trial records its seed for stratifying.`,
   "Breakdown: hash, decode, and canonical re-encode time the production primitives independently over exactly the artifacts each read shape fetches; `read_total` times the read path and additionally includes copies, structural checks, object fetches, and (query-read) materialisation. Component medians are explanatory, not additive.",
   "Integrity: the chunked reader's canonical re-encode and byte comparison remain enabled in both read shapes. The probe measures their cost; it does not propose removing them.",
@@ -826,8 +846,8 @@ export const buildArmSymmetryRecord = (input: {
   findings: deriveArmSymmetryFindings(),
 });
 
-const timingLabel = (value: TimingSummary): string =>
-  `${value.median_ms.toFixed(2)} [${value.range_ms}]`;
+const timingLabel = (value: TimingSummary | null): string =>
+  value === null ? "-" : `${value.median_ms.toFixed(2)} [${value.range_ms}]`;
 
 const fanoutLabel = (read: ArmSymmetryReadSummary): string =>
   `${read.chunk_fanout.median} [${read.chunk_fanout.range}] chunks (${read.objects_read.median} objects)`;
@@ -842,7 +862,7 @@ export const renderArmSymmetryTables = (rows: readonly ArmSymmetryRow[]): string
     lines.push(
       "",
       `locality: ${locality} — fold-read, the net comparison (N=${iterations}, CPU ms)`,
-      "cell | arm | fold-read fanout med [range] | hash med [range] | decode med [range] | canonical re-encode med [range] | read total med [range] | prefetch med [range] | fold med [range] | invocation med [range] | read delta | fold delta | net Node | net workerd (CONVERTED, inherited/unverified)",
+      "cell | arm | fold-read fanout med [range] | hash med [range] | decode med [range] | canonical re-encode med [range] | read total med [range] | prefetch med [range] | fold med [range] | invocation med [range] | read delta | fold delta | net Node | net Node control-first / control-second | net workerd (CONVERTED, inherited/unverified)",
     );
     for (const row of localityRows) {
       lines.push(
@@ -860,6 +880,9 @@ export const renderArmSymmetryTables = (rows: readonly ArmSymmetryRow[]): string
           timingLabel(row.fold_read.read_delta_vs_control),
           timingLabel(row.fold_delta_vs_control),
           timingLabel(row.net_vs_control_node),
+          row.net_by_order === null
+            ? "-"
+            : `${timingLabel(row.net_by_order.control_first)} / ${timingLabel(row.net_by_order.control_second)}`,
           `${timingLabel(row.net_vs_control_workerd_converted)} @ ${row.workerd_conversion_factor.toFixed(2)}x`,
         ].join(" | "),
       );
