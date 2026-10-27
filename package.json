@@ -270,7 +270,7 @@
     "esbuild": "^0.28.2",
     "execa": "^10.0.1",
     "fast-check": "^4.10.1",
-    "happy-dom": "^20.14.5",
+    "happy-dom": "^21.0.4",
     "lefthook": "^2.1.14",
     "mermaid": "^12.0.0",
     "oxfmt": "^0.68.0",
