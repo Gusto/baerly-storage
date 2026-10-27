@@ -18,7 +18,7 @@
     "@cloudflare/vite-plugin": "^1.54.10",
     "@cloudflare/workers-types": "^5.20260916.1",
     "@types/node": "^26.6.1",
-    "happy-dom": "^20.14.5",
+    "happy-dom": "^21.0.4",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^4.1.11",
