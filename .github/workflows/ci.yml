@@ -111,7 +111,7 @@ jobs:
           BAERLY_SKIP_BUILD: "1"
         run: pnpm test
 
-      # Cloudflare adapter tests under @cloudflare/vitest-pool-workers
+      # Cloudflare adapter tests under @cloudflare/vitest-plugin
       # (miniflare / workerd). No credentials, no external network. The workerd
       # binary ships inside the `@cloudflare/workerd-<platform>` npm package — a
       # normal pnpm dependency — so it's already in the pnpm store and restored

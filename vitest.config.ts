@@ -1,7 +1,7 @@
 // Vitest 4 `projects:` split. The default project runs the in-tree and
 // Node-only suites under `pool: "forks"` (same as before). The
 // `cloudflare-pool` project runs `r2BindingStorage` conformance under
-// `@cloudflare/vitest-pool-workers` so the test executes against a
+// `@cloudflare/vitest-plugin` so the test executes against a
 // real Workerd R2 binding. Both projects share
 // `tests/setup/fast-check.ts` so `FC_NUM_RUNS` continues to apply to
 // fast-check arbitraries in either runtime.
@@ -14,13 +14,12 @@
 // invocation is `vitest run --project=cloudflare-pool` via the
 // `test:adapter-cloudflare` script.
 //
-// vitest-pool-workers ≥ 0.16 (the version pinned in `package.json`)
-// drops the `pool: "@cloudflare/vitest-pool-workers"` +
-// `poolOptions.workers` shape that earlier docs describe. The current
-// API is `plugins: [cloudflareTest({ miniflare: {…} })]` per project —
-// the plugin wires `poolRunner = cloudflarePool(...)` for us.
+// `@cloudflare/vitest-plugin` has no `pool` + `poolOptions.workers`
+// shape. The API is `plugins: [cloudflareTest({ miniflare: {…} })]`
+// per project — the plugin wires `poolRunner = cloudflarePool(...)`
+// for us.
 
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { configDefaults, defineConfig } from "vitest/config";
 import { IS_CI } from "./tests/setup/ci.ts";
 
@@ -117,7 +116,7 @@ const randomizeExclude = isRandomizeCommand
 // `packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`
 // and reads `globalThis.__BAERLY_R2_BINDING__`. Only the
 // `cloudflare-pool` project — backed by
-// `@cloudflare/vitest-pool-workers` — supplies that global (via
+// `@cloudflare/vitest-plugin` — supplies that global (via
 // `tests/setup/r2-binding.ts`). Excluded from the default project's
 // glob below so we don't try to run it under plain Node forks.
 const r2BindingConformanceGlob =

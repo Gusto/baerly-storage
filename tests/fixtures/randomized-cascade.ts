@@ -55,7 +55,7 @@ import {
  * Causal-consistency check without `eval()`. Workerd disallows code
  * generation from strings, so the fixture's `check()` (which builds
  * a JS expression and `eval`s it) cannot run under
- * `@cloudflare/vitest-pool-workers`. We re-implement the check
+ * `@cloudflare/vitest-plugin`. We re-implement the check
  * structurally here: every clause in {@link Knowledge} has the form
  * `<comment> <varA> < <varB>` joined by ` &&\n`, and every variable
  * appears in {@link Grounding}. Parse `varA` / `varB` directly,

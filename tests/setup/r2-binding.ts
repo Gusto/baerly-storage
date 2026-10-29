@@ -1,4 +1,4 @@
-/// <reference types="@cloudflare/vitest-pool-workers/types" />
+/// <reference types="@cloudflare/vitest-plugin/types" />
 
 /* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is
    the ticket-06 contract: the miniflare vitest pool sets the global,
@@ -6,7 +6,7 @@
    reads it. Underscores delimit the protocol-internal name. */
 
 // Setup file for the `cloudflare-pool` vitest project. Runs inside
-// Workerd via `@cloudflare/vitest-pool-workers`, so `cloudflare:test`
+// Workerd via `@cloudflare/vitest-plugin`, so `cloudflare:test`
 // resolves and `env.BUCKET` is the miniflare-provisioned R2 binding
 // declared in `vitest.config.ts`. We re-publish the binding on
 // `globalThis` under the agreed-upon name so the in-tree conformance
@@ -34,7 +34,7 @@ import { env } from "cloudflare:test";
 const bucket: R2Bucket = env.BUCKET;
 (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__ = bucket;
 
-// `@cloudflare/vitest-pool-workers` does NOT auto-reset R2 buckets
+// `@cloudflare/vitest-plugin` does NOT auto-reset R2 buckets
 // between tests — only Durable Objects can be wiped via `reset()`.
 // The conformance suite expects fresh storage per test (its
 // `beforeEach` calls the factory, which for the R2 adapter just hands
