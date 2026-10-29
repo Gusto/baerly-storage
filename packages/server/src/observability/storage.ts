@@ -46,6 +46,23 @@ const CLASS_A_OPS: ReadonlySet<Op> = new Set<Op>(["put", "delete", "list"]);
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
+const recordCall = (op: Op): void => {
+  const recorder = ctxMetrics();
+  recorder.counter(`db.storage.${op}.calls_total`, 1);
+  recorder.counter(
+    CLASS_A_OPS.has(op) ? "db.storage.class_a_ops_total" : "db.storage.class_b_ops_total",
+    1,
+  );
+};
+
+const recordError = (op: Op): void => {
+  ctxMetrics().counter(`db.storage.${op}.errors_total`, 1);
+};
+
+const recordDuration = (op: Op, durationMs: number): void => {
+  ctxMetrics().histogram(`db.storage.${op}.duration_ms`, durationMs);
+};
+
 /**
  * Wrap `inner` with metric emission. The returned object is itself
  * a `Storage` impl and passes the `Storage` conformance suite
@@ -73,23 +90,6 @@ export const observableStorage = (inner: Storage): Storage => {
       props["bytes"] = bytes;
     }
     logger.debug("storage", props);
-  };
-
-  const recordCall = (op: Op): void => {
-    const recorder = ctxMetrics();
-    recorder.counter(`db.storage.${op}.calls_total`, 1);
-    recorder.counter(
-      CLASS_A_OPS.has(op) ? "db.storage.class_a_ops_total" : "db.storage.class_b_ops_total",
-      1,
-    );
-  };
-
-  const recordError = (op: Op): void => {
-    ctxMetrics().counter(`db.storage.${op}.errors_total`, 1);
-  };
-
-  const recordDuration = (op: Op, durationMs: number): void => {
-    ctxMetrics().histogram(`db.storage.${op}.duration_ms`, durationMs);
   };
 
   return {

@@ -34,6 +34,8 @@ const SEQ_DIGITS = 12 as const;
 
 const MAX_SEQ = 10 ** SEQ_DIGITS - 1;
 
+const pad = (n: number): string => n.toString().padStart(SEQ_DIGITS, "0");
+
 /**
  * Build the on-bucket key for a snapshot file. `sha256` must be the
  * lowercase hex digest of the canonical body
@@ -66,7 +68,6 @@ export const snapshotKey = (
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
     throw new BaerlyError("InvalidConfig", "snapshotKey: sha256 must be 64 hex chars");
   }
-  const pad = (n: number): string => n.toString().padStart(SEQ_DIGITS, "0");
   return `${collectionPrefix}/snapshot/L${SNAPSHOT_LEVEL}/${pad(minSeq)}-${pad(maxSeq)}-${sha256}.json`;
 };
 
