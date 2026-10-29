@@ -338,6 +338,16 @@ interface CapturableOptions {
   signal?: AbortSignal;
 }
 
+const threwResult = (error: unknown): StorageOperationResult => {
+  const described = describeThrown(error);
+  return {
+    status: "threw",
+    classification: classifyStorageError(error),
+    name: described.name,
+    ...(described.code !== undefined && { code: described.code }),
+  };
+};
+
 export const wrapJournaledStorage = (input: {
   readonly attemptId: AttemptId;
   readonly storage: Storage;
@@ -403,16 +413,6 @@ export const wrapJournaledStorage = (input: {
     nextIndex += 1;
     rows.push(row);
     return row;
-  };
-
-  const threwResult = (error: unknown): StorageOperationResult => {
-    const described = describeThrown(error);
-    return {
-      status: "threw",
-      classification: classifyStorageError(error),
-      name: described.name,
-      ...(described.code !== undefined && { code: described.code }),
-    };
   };
 
   /**

@@ -705,6 +705,9 @@ export const buildRowsFromTrials = (input: {
   ];
 };
 
+const merge = (fold: readonly FoldTrial[], query: readonly ArmSymmetryReadTrial[]) =>
+  fold.map((trial, index): ArmSymmetryTrial => ({ ...trial, query_read: query[index]! }));
+
 export const runArmSymmetryCell = async (input: {
   readonly cell: string;
   readonly rows: number;
@@ -766,8 +769,6 @@ export const runArmSymmetryCell = async (input: {
       ? measureControlQueryRead(fixture)
       : measureCandidateQueryRead(fixture),
   );
-  const merge = (fold: readonly FoldTrial[], query: readonly ArmSymmetryReadTrial[]) =>
-    fold.map((trial, index): ArmSymmetryTrial => ({ ...trial, query_read: query[index]! }));
   const control = merge(folds.control, queries.control);
   const candidate = merge(folds.candidate, queries.candidate);
 
