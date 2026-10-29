@@ -19,7 +19,7 @@ deps. Tests requiring Minio or credentials are gated by env:
   from the default test glob. Run with `pnpm test:export-smoke`.
 - **`packages/adapter-cloudflare/src/r2-binding-storage.conformance.test.ts`**
   runs inside Workerd via the `cloudflare-pool` vitest project
-  (`@cloudflare/vitest-pool-workers`, miniflare-backed). The R2
+  (`@cloudflare/vitest-plugin`, miniflare-backed). The R2
   binding `BUCKET` is wired in `vitest.config.ts` and re-published
   on `globalThis.__BAERLY_R2_BINDING__` by `tests/setup/r2-binding.ts`
   so the conformance factory can consume it. Excluded from the

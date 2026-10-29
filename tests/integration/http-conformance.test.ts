@@ -124,7 +124,7 @@ const variants = allVariants.filter((v) => !v.requiresMinio || minioEnabled);
  * Carries the inbound `AbortSignal` through to the underlying
  * `ClientRequest.destroy(...)` so the cascade's pre-aborted block
  * surfaces a rejection. Multi-value response headers are passed
- * through verbatim — vitest-pool-workers' `set-cookie`-style array
+ * through verbatim — vitest-plugin's `set-cookie`-style array
  * shape isn't a Node-side concern but the use of `.append` keeps the
  * shim consistent across runtimes.
  */
