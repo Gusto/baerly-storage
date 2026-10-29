@@ -19,6 +19,7 @@ import {
 } from "./snapshot-chunk-builder.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
+import { makeValidDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 
 const collection = "tickets";
 const collectionPrefix = "app/demo/tenant/acme/manifests/tickets";
@@ -693,10 +694,7 @@ describe("snapshot chunk builder", () => {
   });
 });
 
-const idArb = fc.oneof(
-  fc.stringMatching(/^[a-z][a-z0-9]{0,4}$/),
-  fc.constantFrom("é", "e\u0301", "\u{10000}", "\u{1f4a9}"),
-);
+const idArb = makeValidDocIdArb({ maxCodePoints: 5, longBand: false });
 
 fcTest.prop({
   allIds: fc.uniqueArray(idArb, { minLength: 2, maxLength: 20 }),

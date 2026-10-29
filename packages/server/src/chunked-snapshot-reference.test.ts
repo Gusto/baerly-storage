@@ -7,6 +7,7 @@ import {
   type ReferenceRow,
 } from "./chunked-snapshot-reference.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
+import { makeValidDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 
 const row = (id: string, version: number): ReferenceRow => ({
   _id: id,
@@ -195,10 +196,7 @@ describe("chunked snapshot reference fold", () => {
   });
 });
 
-const idArb = fc.oneof(
-  fc.stringMatching(/^[a-z][a-z0-9]{0,5}$/),
-  fc.constantFrom("é", "e\u0301", "\u{10000}", "\u{1f4a9}"),
-);
+const idArb = makeValidDocIdArb({ maxCodePoints: 6, longBand: false });
 
 fcTest.prop({
   ids: fc.uniqueArray(idArb, { minLength: 2, maxLength: 12 }),
