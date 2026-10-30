@@ -151,6 +151,47 @@ const foldGateVerdict = (
   };
 };
 
+/** Stderr warning for a maintenance env value the adapters would reject. */
+const warnRejectedEnv = (error: unknown): void => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(
+    `baerly inspect: warning: ${message} — the adapters reject this value with InvalidConfig on every request that reads it.\n`,
+  );
+};
+
+/**
+ * The maintenance env as `inspect` reports it, read from the CLI's own
+ * environment. Each variable goes through {@link parseMaintenanceEnv} on its
+ * own, so a value the adapters would reject (`BAERLY_MAINTENANCE_DISABLE=off`,
+ * a non-positive `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`) becomes a stderr warning
+ * rather than failing a read-only report, and never masks the other variable.
+ * A rejected `MAX_FOLD_BYTES` falls back to each profile's default `C`.
+ */
+const readInspectMaintenanceEnv = (
+  readEnv: (key: string) => string | undefined,
+): { maxFoldBytes: number | undefined; maintenance: InspectResult["maintenance"] } => {
+  const only =
+    (key: string) =>
+    (k: string): string | undefined =>
+      k === key ? readEnv(k) : undefined;
+  let maxFoldBytes: number | undefined;
+  try {
+    maxFoldBytes = parseMaintenanceEnv(only("BAERLY_MAINTENANCE_MAX_FOLD_BYTES")).maxFoldBytes;
+  } catch (error) {
+    warnRejectedEnv(error);
+  }
+  let maintenance: InspectResult["maintenance"];
+  try {
+    maintenance = parseMaintenanceEnv(only("BAERLY_MAINTENANCE_DISABLE")).disabled
+      ? "disabled"
+      : "enabled";
+  } catch (error) {
+    warnRejectedEnv(error);
+    maintenance = "invalid-config";
+  }
+  return { maxFoldBytes, maintenance };
+};
+
 const countListEntries = async (
   storage: Storage,
   prefix: string,
@@ -177,6 +218,12 @@ interface InspectResult {
   snapshot_bytes: number;
   snapshot_rows: number;
   fold_gate: Partial<Record<HostProfileName, FoldGateVerdict>>;
+  /**
+   * In-band fold/GC per `BAERLY_MAINTENANCE_DISABLE` in the CLI's environment.
+   * `invalid-config`: a value outside the closed vocabulary, which the
+   * adapters reject.
+   */
+  maintenance: "enabled" | "disabled" | "invalid-config";
   writer_fence: CurrentJson["writer_fence"];
   materialised_rows: number;
   indexes: { name: string; count: number }[];
@@ -201,6 +248,7 @@ const renderText = (r: InspectResult, collection: string): string => {
     const stalled = g.retention_stalled ? " retention_stalled" : "";
     lines.push(`  ${label}${g.verdict} (C=${g.ceiling_bytes} E=${g.ceiling_rows})${stalled}`);
   }
+  lines.push(`  maintenance:         ${r.maintenance}`);
   lines.push(
     `  writer_fence:        epoch=${r.writer_fence.epoch} owner=${JSON.stringify(r.writer_fence.owner)} claimed_at=${JSON.stringify(r.writer_fence.claimed_at)}`,
   );
@@ -296,7 +344,7 @@ const bundle = defineBaerlySubcommand({
     }
 
     const liveLogTail = discoveredTail - log_seq_start;
-    const { maxFoldBytes } = parseMaintenanceEnv((k) => process.env[k]);
+    const { maxFoldBytes, maintenance } = readInspectMaintenanceEnv((k) => process.env[k]);
     const profileNames: readonly HostProfileName[] =
       args.profile === undefined
         ? (Object.keys(HOST_PROFILES) as HostProfileName[])
@@ -317,6 +365,7 @@ const bundle = defineBaerlySubcommand({
       snapshot_bytes: cur.snapshot_bytes,
       snapshot_rows: cur.snapshot_rows,
       fold_gate: foldGate,
+      maintenance,
       writer_fence: cur.writer_fence,
       materialised_rows: materialisedRows,
       indexes,

@@ -35,7 +35,10 @@ rows had tripped, where it does nothing.
   `cf-paid`, `node`): `open`, `closed:bytes`, or `closed:rows`, with the
   profile's `C` and `E` and a `retention_stalled` flag. `--profile=<name>`
   narrows it to one host, and `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from the CLI's
-  environment overrides `C`. Exit code stays 0.
+  environment overrides `C`. It also reports `maintenance` (`enabled`,
+  `disabled`, or `invalid-config`) from `BAERLY_MAINTENANCE_DISABLE`. A
+  maintenance env value the adapters would reject is a stderr warning rather
+  than a failure, so the exit code stays 0.
 
 `MaintenanceDispatch` gains an optional `warn` sink, which both shipped adapters
 set. A custom adapter that builds its own `MaintenanceDispatch` gets only the
