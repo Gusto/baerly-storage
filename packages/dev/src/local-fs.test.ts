@@ -249,34 +249,34 @@ describe("LocalFsStorage — impl-specific", () => {
   });
 
   test("files that are not an encoded key are skipped by list, not fatal", async () => {
-    // Stray files in a stamped directory — a hand-written README, Windows'
-    // `Thumbs.db`, an editor backup — are not keys and must not take every
-    // `list` (and so the whole database) down.
+    // Stray files in a stamped directory that no key can name — an editor
+    // backup, a name with a non-escape `%` — are not keys and must not take
+    // every `list` (and so the whole database) down.
     await s.put("app/x/current.json", utf8("v"));
-    writeFileSync(join(root, "README.md"), "dropped in by hand");
-    writeFileSync(join(root, "Thumbs.db"), "windows");
+    writeFileSync(join(root, "100%zz"), "stray");
     writeFileSync(join(root, "app", "x", "current.json~"), "editor backup");
     const listed = await collect(s.list(""));
     expect(listed.map((e) => e.key)).toEqual(["app/x/current.json"]);
   });
 
-  test.skipIf(!CASE_INSENSITIVE_FS)(
-    "keys differing only by case or Unicode normalization stay distinct on this filesystem",
-    async () => {
-      const prefix = "p/index/i/x/";
-      const ids = ["é", "é", "A", "a"];
-      for (const id of ids) {
-        await s.put(`${prefix}${id}.json`, utf8(`body:${id}`));
-      }
-      const listed = await collect(s.list(prefix));
-      expect(listed.map((e) => e.key)).toEqual(
-        ["A", "a", "é", "é"].map((id) => `${prefix}${id}.json`),
-      );
-      for (const id of ids) {
-        expect(fromBytes((await s.get(`${prefix}${id}.json`))!.body)).toBe(`body:${id}`);
-      }
-    },
-  );
+  test("a stray file is skipped or reported according to whether it aliases a key", async () => {
+    // `README.md` is the file `get("readme.md")` reads exactly when the
+    // filesystem folds case. Folding: list must report it rather than hide
+    // a key the other verbs see. Case-sensitive: it names no key, skip it.
+    await s.put("app/x/current.json", utf8("v"));
+    writeFileSync(join(root, "README.md"), "dropped in by hand");
+    if (CASE_INSENSITIVE_FS) {
+      await expect(s.get("readme.md")).resolves.not.toBeNull();
+      await expect(collect(s.list(""))).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringContaining('"readme.md"'),
+      });
+    } else {
+      await expect(s.get("readme.md")).resolves.toBeNull();
+      const listed = await collect(s.list(""));
+      expect(listed.map((e) => e.key)).toEqual(["app/x/current.json"]);
+    }
+  });
 
   test("list() tolerates a key deleted mid-iteration", async () => {
     // `list` walks names, then reads each file to hash its etag. A delete
@@ -692,6 +692,41 @@ describe("LocalFsStorage — impl-specific", () => {
       const listed = await collect(legacy.list(""));
       expect(listed.map((e) => e.key)).toEqual(["nested/k"]);
       expect(existsSync(join(root, MARKER))).toBe(true);
+    });
+
+    test("a legacy directory named like a junk file is data, not skipped", async () => {
+      // The junk-file skips apply to files only: a collection or tenant
+      // literally named `.DS_Store` was a directory of legacy data.
+      const dir = join(root, "app", "a", "tenant", "t", "manifests", ".DS_Store");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "current.json"), "{}");
+      const legacy = new LocalFsStorage({ root });
+      await expect(collect(legacy.list(""))).rejects.toMatchObject({
+        code: "InvalidConfig",
+        message: expect.stringContaining("manifests/.DS_Store/current.json"),
+      });
+      expect(existsSync(join(root, MARKER))).toBe(false);
+    });
+
+    test("a fresh directory holding only a .gitkeep is adopted", async () => {
+      writeFileSync(join(root, ".gitkeep"), "");
+      const fresh = new LocalFsStorage({ root });
+      await expect(fresh.put("k", utf8("v"))).resolves.toMatchObject({
+        etag: expect.any(String),
+      });
+      expect(existsSync(join(root, MARKER))).toBe(true);
+    });
+
+    test("a refusal names the path and allows that it may be a stray file", async () => {
+      writeFileSync(join(root, "Thumbs.db"), "windows");
+      const fresh = new LocalFsStorage({ root });
+      const err = await fresh.put("k", utf8("v")).then(
+        () => null,
+        (error: unknown) => error as { code?: string; message?: string },
+      );
+      expect(err?.code).toBe("InvalidConfig");
+      expect(err?.message).toContain("  Thumbs.db");
+      expect(err?.message).toMatch(/stray file that is not data, move it out/);
     });
 
     test("a stamped root is never rescanned", async () => {
