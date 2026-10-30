@@ -268,7 +268,7 @@ describe("LocalFsStorage — impl-specific", () => {
     if (CASE_INSENSITIVE_FS) {
       await expect(s.get("readme.md")).resolves.not.toBeNull();
       await expect(collect(s.list(""))).rejects.toMatchObject({
-        code: "InvalidResponse",
+        code: "InvalidConfig",
         message: expect.stringContaining('"readme.md"'),
       });
     } else {
@@ -312,7 +312,7 @@ describe("LocalFsStorage — impl-specific", () => {
         writeFileSync(join(dir, stray), "dropped in by hand");
         await expect(storage.get(key)).resolves.not.toBeNull(); // the alias is real
         await expect(collect(storage.list(""))).rejects.toMatchObject({
-          code: "InvalidResponse",
+          code: "InvalidConfig",
           message: expect.stringContaining(JSON.stringify(key)),
         });
       }

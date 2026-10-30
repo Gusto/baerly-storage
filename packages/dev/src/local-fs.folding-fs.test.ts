@@ -164,7 +164,7 @@ test("a stray file that aliases a real key is reported, not hidden", async () =>
       }
     })(),
   ).rejects.toMatchObject({
-    code: "InvalidResponse",
+    code: "InvalidConfig",
     message: expect.stringContaining("c/J"),
   });
 });
@@ -189,7 +189,7 @@ test("a stray that full-case-folds onto a key is reported, not hidden", async ()
         }
       })(),
     ).rejects.toMatchObject({
-      code: "InvalidResponse",
+      code: "InvalidConfig",
       message: expect.stringContaining(JSON.stringify(key)),
     });
   }

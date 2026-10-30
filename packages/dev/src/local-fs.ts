@@ -447,11 +447,12 @@ export class LocalFsStorage implements Storage {
       // reads, and a `put` renames over it keeping the stray spelling.
       // Skipping it would hide a key that the other verbs see, so when the
       // case/NFC fold of the name decodes and resolves to this very file,
-      // fail loudly instead.
+      // fail loudly instead. `InvalidConfig`, as the legacy-tree refusal is:
+      // both mean the data directory holds files the operator must move.
       const alias = await this.#aliasedKey(components);
       if (alias !== null) {
         throw new BaerlyError(
-          "InvalidResponse",
+          "InvalidConfig",
           `LocalFsStorage.list: ${join(this.#root, ...components)} was not written by this ` +
             `adapter but the filesystem resolves key ${JSON.stringify(alias)} to it; move the ` +
             `file out of the data directory`,
