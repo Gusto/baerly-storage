@@ -248,10 +248,16 @@ describe("LocalFsStorage — impl-specific", () => {
     await expect(s.get("a\uDFFF")).rejects.toMatchObject({ code: "InvalidConfig" });
   });
 
-  test("a foreign file in the data directory fails list loudly", async () => {
-    await s.put("k", utf8("v"));
-    writeFileSync(join(root, "README.TXT"), "dropped in by hand");
-    await expect(collect(s.list(""))).rejects.toMatchObject({ code: "InvalidResponse" });
+  test("files that are not an encoded key are skipped by list, not fatal", async () => {
+    // Stray files in a stamped directory — a hand-written README, Windows'
+    // `Thumbs.db`, an editor backup — are not keys and must not take every
+    // `list` (and so the whole database) down.
+    await s.put("app/x/current.json", utf8("v"));
+    writeFileSync(join(root, "README.md"), "dropped in by hand");
+    writeFileSync(join(root, "Thumbs.db"), "windows");
+    writeFileSync(join(root, "app", "x", "current.json~"), "editor backup");
+    const listed = await collect(s.list(""));
+    expect(listed.map((e) => e.key)).toEqual(["app/x/current.json"]);
   });
 
   test.skipIf(!CASE_INSENSITIVE_FS)(
@@ -641,6 +647,51 @@ describe("LocalFsStorage — impl-specific", () => {
       // Refusal moves and stamps nothing.
       expect(existsSync(join(root, MARKER))).toBe(false);
       expect(existsSync(join(root, "p", "index", "b.json"))).toBe(false);
+    });
+
+    test("a legacy dot-prefixed index marker is refused, not silently dropped", async () => {
+      // `assertPathSegment` accepts a leading `.` in an `_id`, so the old
+      // layout stored `index/i/.hidden.json` verbatim. The encoding reads
+      // that name as adapter-private, so adopting the tree would lose it.
+      mkdirSync(join(root, "app", "x", "index", "i"), { recursive: true });
+      mkdirSync(join(root, "app", "x", "log"), { recursive: true });
+      writeFileSync(join(root, "app", "x", "log", "0001"), "{}");
+      writeFileSync(join(root, "app", "x", "index", "i", ".hidden.json"), "{}");
+      const legacy = new LocalFsStorage({ root });
+      const err = await collect(legacy.list("")).then(
+        () => null,
+        (error: unknown) => error as { code?: string; message?: string },
+      );
+      expect(err?.code).toBe("InvalidConfig");
+      expect(err?.message).toContain("app/x/index/i/.hidden.json");
+      expect(existsSync(join(root, MARKER))).toBe(false);
+    });
+
+    test("a legacy dot-prefixed collection directory is refused, not orphaned", async () => {
+      // A collection named `.foo` lived at `manifests/.foo/`; the encoding
+      // addresses it as `manifests/%2efoo/`, so adopting the tree would
+      // make the collection read as empty.
+      const dir = join(root, "app", "a", "tenant", "t", "manifests", ".foo");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "current.json"), "{}");
+      const legacy = new LocalFsStorage({ root });
+      await expect(legacy.get("app/a/tenant/t/manifests/.foo/current.json")).rejects.toMatchObject({
+        code: "InvalidConfig",
+        message: expect.stringContaining("app/a/tenant/t/manifests/.foo/current.json"),
+      });
+      expect(existsSync(join(root, MARKER))).toBe(false);
+    });
+
+    test("the legacy scan ignores staging temps and .DS_Store", async () => {
+      mkdirSync(join(root, "nested"), { recursive: true });
+      writeFileSync(join(root, "nested", "k"), "v");
+      writeFileSync(join(root, ".DS_Store"), "finder");
+      writeFileSync(join(root, "nested", ".DS_Store"), "finder");
+      writeFileSync(join(root, "nested", ".baerly-tmp-1-2-abc"), "leftover");
+      const legacy = new LocalFsStorage({ root });
+      const listed = await collect(legacy.list(""));
+      expect(listed.map((e) => e.key)).toEqual(["nested/k"]);
+      expect(existsSync(join(root, MARKER))).toBe(true);
     });
 
     test("a stamped root is never rescanned", async () => {
