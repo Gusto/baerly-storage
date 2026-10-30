@@ -152,6 +152,7 @@ const whenSettled = (plugin: ReturnType<typeof baerlyDev>): Promise<void> =>
 
 let tmp: string;
 let middlewares: CapturedMw[];
+let sharedPlugin: ReturnType<typeof baerlyDev>;
 
 beforeAll(async () => {
   tmp = await mkdtemp(join(tmpdir(), "baerly-vite-plugin-"));
@@ -176,6 +177,7 @@ beforeAll(async () => {
     dataDir: tmp,
     banner: false,
   });
+  sharedPlugin = plugin;
 
   expect(plugin.name).toBe("baerly-dev");
   expect(plugin.apply).toBe("serve");
@@ -188,6 +190,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await whenSettled(sharedPlugin);
   await rm(tmp, { recursive: true, force: true });
 });
 
