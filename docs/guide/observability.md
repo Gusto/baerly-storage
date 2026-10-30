@@ -117,26 +117,30 @@ post-response `ctx.waitUntil` maintenance has already missed that line;
 use `wrangler tail` to search for the `fold_deferred` record or the
 maintenance `console.error` when the question is compaction or GC.
 
-Copyable local filters for JSON logs:
+Copyable local filters for JSON logs. `wrangler tail --format=json`
+emits one event per invocation, with each log line as a JSON string
+under `logs[].message[]`, so each filter first unwraps and parses those
+strings:
 
 ```sh
 # User-visible failures.
-wrangler tail --format=json | jq 'select(.outcome == "error" or (.status >= 500))'
+wrangler tail --format=json | jq -c '.logs[]?.message[]? | fromjson? | select(.outcome == "error" or (.status >= 500))'
 
 # Deferred folds: snapshot exceeded byte or row ceiling. On Workers the
 # fold runs after the canonical line is written, so match the
 # rate-limited structured record rather than the counter.
-wrangler tail --format=json | jq 'select(.message == "fold_deferred")'
+wrangler tail --format=json | jq -c '.logs[]?.message[]? | fromjson? | select(.message == "fold_deferred")'
 
 # Duplicate fold compute under contention.
-wrangler tail --format=json | jq 'select(."db.compaction.cas_lost_total" > 0)'
+wrangler tail --format=json | jq -c '.logs[]?.message[]? | fromjson? | select(."db.compaction.cas_lost_total" > 0)'
 
 # Requests that consumed Class A storage ops.
-wrangler tail --format=json | jq 'select(."db.storage.class_a_ops_total" > 0)'
+wrangler tail --format=json | jq -c '.logs[]?.message[]? | fromjson? | select(."db.storage.class_a_ops_total" > 0)'
 ```
 
-For Node stdout, replace `wrangler tail --format=json` with your log
-file or process stream.
+Node stdout is already one JSON object per line, so pipe your log file
+or process stream into `jq -c 'select(...)'` with the same predicate and
+no `.logs[]` unwrap.
 
 ## Sinks
 
