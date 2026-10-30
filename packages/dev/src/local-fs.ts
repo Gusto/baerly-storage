@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { link, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import {
   BaerlyError,
@@ -422,15 +432,30 @@ export class LocalFsStorage implements Storage {
     await this.#ensureFormat(false);
     const keys: string[] = [];
     for (const components of (await walk(this.#root)) ?? []) {
-      // A name that is not the canonical encoding of any key (`README.md`,
-      // `Thumbs.db`, an editor's `current.json~`) was not written by this
-      // adapter, and no `get`/`put`/`delete` can address it, so it is not
-      // part of the keyspace: skip it rather than fail every `list` over a
-      // stray file. Legacy data is not at risk — a directory still holding
-      // pre-encoding names is refused before it is stamped (`#ensureFormat`).
       const key = decodeComponents(components);
       if (key !== null) {
         keys.push(key);
+        continue;
+      }
+      // Not the canonical encoding of any key: a file this adapter did not
+      // write (`notes~`, `100%zz`). Usually no `get`/`put`/`delete` can
+      // address it either, so it is outside the keyspace and skipped rather
+      // than failing every `list` over one stray file.
+      //
+      // Except on a folding filesystem, where a stray such as `c/%4A` or
+      // `README.md` IS the file that `get("c/J")` / `get("readme.md")`
+      // reads, and a `put` renames over it keeping the stray spelling.
+      // Skipping it would hide a key that the other verbs see, so when the
+      // case/NFC fold of the name decodes and resolves to this very file,
+      // fail loudly instead.
+      const alias = await this.#aliasedKey(components);
+      if (alias !== null) {
+        throw new BaerlyError(
+          "InvalidResponse",
+          `LocalFsStorage.list: ${join(this.#root, ...components)} was not written by this ` +
+            `adapter but the filesystem resolves key ${JSON.stringify(alias)} to it; move the ` +
+            `file out of the data directory`,
+        );
       }
     }
     keys.sort(compareKeysUtf8);
@@ -467,6 +492,37 @@ export class LocalFsStorage implements Storage {
       }
       yield { key, etag: etagOf(buf) };
       yielded += 1;
+    }
+  }
+
+  /**
+   * The key whose on-disk path the filesystem resolves to the stray file at
+   * `components`, or `null` if none does. Only a case- or
+   * normalization-folding filesystem produces one: the candidate is the
+   * NFC + lowercase fold of the name, which is a key only if it decodes, and
+   * an alias only if both paths name the same inode.
+   */
+  async #aliasedKey(components: readonly string[]): Promise<string | null> {
+    const folded = components.map((c) => c.normalize("NFC").toLowerCase());
+    const key = decodeComponents(folded);
+    if (key === null) {
+      return null;
+    }
+    try {
+      const [a, b] = await Promise.all([
+        stat(join(this.#root, ...components)),
+        stat(join(this.#root, ...folded)),
+      ]);
+      return a.dev === b.dev && a.ino === b.ino ? key : null;
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        return null; // either side vanished, or the fold names no file
+      }
+      throw new BaerlyError(
+        "InvalidResponse",
+        `LocalFsStorage.list: ${(error as Error).message}`,
+        error,
+      );
     }
   }
 
@@ -514,12 +570,14 @@ export class LocalFsStorage implements Storage {
       }
       throw new BaerlyError(
         "InvalidConfig",
-        `LocalFsStorage: ${this.#root} was written by an older release that stored keys ` +
-          `verbatim, and these paths are not valid under the current key encoding:\n` +
+        `LocalFsStorage: ${this.#root} has no ${FORMAT_MARKER} marker and holds paths that ` +
+          `are not valid under the current key encoding:\n` +
           `${shown.join("\n")}\n` +
-          `Dump it with the older release (\`baerly admin dump\`) and restore into a fresh ` +
-          `directory (\`baerly admin restore\`). Keys that differed only by case or Unicode ` +
-          `normalization may already have been merged by the filesystem.`,
+          `If a path is a stray file that is not data, move it out of the directory. ` +
+          `Otherwise the directory was written by an older release that stored keys ` +
+          `verbatim: dump it with that release (\`baerly admin dump\`) and restore into a ` +
+          `fresh directory (\`baerly admin restore\`). Keys that differed only by case or ` +
+          `Unicode normalization may already have been merged by the filesystem.`,
       );
     }
     await stampFormatMarker(marker);
@@ -657,12 +715,20 @@ const findLegacyPaths = async (root: string): Promise<string[] | null> => {
 };
 
 /**
- * Names the legacy scan may skip: staging temps (both layouts wrote them),
- * the format marker, and Finder's `.DS_Store`. Nothing else is assumed
- * not to be data.
+ * Entries the legacy scan may skip: staging temps (both layouts wrote them,
+ * and the old one rejected keys with that prefix), and the files Finder
+ * and git leave behind. Junk names are skipped as FILES only — a directory
+ * called `.DS_Store` would be a legacy collection or tenant, i.e. data.
+ * Nothing else is assumed not to be data.
+ *
+ * The format marker is deliberately not here. The scan runs only when the
+ * marker was absent; if a concurrent opener stamps it mid-scan, the scan
+ * flags it like any other name and `#ensureFormat`'s re-read of the marker
+ * is what accepts the directory. A nested file with the marker's name is
+ * legacy data (a key segment that old layout stored verbatim).
  */
-const isLegacyScanNoise = (name: string): boolean =>
-  name.startsWith(TEMP_PREFIX) || name === FORMAT_MARKER || name === ".DS_Store";
+const isLegacyScanNoise = (name: string, isDirectory: boolean): boolean =>
+  name.startsWith(TEMP_PREFIX) || (!isDirectory && (name === ".DS_Store" || name === ".gitkeep"));
 
 /**
  * In the current layout every dot-prefixed name is not a key: no encoded
@@ -670,7 +736,7 @@ const isLegacyScanNoise = (name: string): boolean =>
  * temps, the format marker) or foreign (`.DS_Store`). Skipping temps is
  * what keeps a concurrent `list` from surfacing a half-published key.
  */
-const isDotName = (name: string): boolean => name.startsWith(".");
+const isDotName = (name: string, _isDirectory: boolean): boolean => name.startsWith(".");
 
 /**
  * Recursive directory walk. Returns each file's path components relative
@@ -679,7 +745,7 @@ const isDotName = (name: string): boolean => name.startsWith(".");
  */
 const walk = async (
   root: string,
-  skip: (name: string) => boolean = isDotName,
+  skip: (name: string, isDirectory: boolean) => boolean = isDotName,
 ): Promise<string[][] | null> => {
   const out: string[][] = [];
   const stack: Array<{ dir: string; components: string[] }> = [{ dir: root, components: [] }];
@@ -698,7 +764,7 @@ const walk = async (
       throw error;
     }
     for (const entry of entries) {
-      if (skip(entry.name)) {
+      if (skip(entry.name, entry.isDirectory())) {
         continue;
       }
       const next = [...components, entry.name];
