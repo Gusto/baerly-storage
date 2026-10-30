@@ -425,8 +425,8 @@ type FoldGate = "pre-fold" | "rebuild";
 
 /**
  * Structured fields of one fold-wall deferral — the `fold_deferred`
- * LogTape record carries exactly these, and {@link foldDeferredWarning}
- * renders them for humans. `snapshot_*` are the stored figures on a
+ * LogTape record carries these plus `detail`, the
+ * {@link foldDeferredWarning} rendering of them for humans. `snapshot_*` are the stored figures on a
  * `pre-fold` defer and the rebuilt (unwritten) figures on a `rebuild` one.
  */
 // A `type` (not `interface`) so it is assignable to the `warn` sink's
@@ -672,8 +672,9 @@ export const runBoundedMaintenance = async (
      *   names, because the canonical line keys counters by name alone and
      *   drops labels.
      * - A `fold_deferred` structured warning through the adapter's
-     *   {@link MaintenanceDispatch.warn} sink plus a human `console.warn`,
-     *   rate-limited by the SHARED `current.json.last_warned_seq` (not a
+     *   {@link MaintenanceDispatch.warn} sink, carrying the human text as
+     *   `detail` — or, with no sink or one that throws, that text as a
+     *   `console.warn` line. Rate-limited by the SHARED `current.json.last_warned_seq` (not a
      *   per-isolate Set — a fresh isolate must honour it). A collection
      *   that has never warned warns on its first deferral. On Cloudflare
      *   the tick runs in `ctx.waitUntil` after the canonical line flushed,
@@ -720,11 +721,26 @@ export const runBoundedMaintenance = async (
           live_log_tail: nextSeq - logSeqStart,
           log_seq_start: logSeqStart,
         };
-        getCurrentContext()?.maintenance?.warn?.("fold_deferred", fields);
-        // Always emitted, alongside the structured record: a bare
-        // `Db.create()` with no adapter (or `observability: false`) has no
-        // `warn` sink, and this line is then the only one.
-        console.warn(foldDeferredWarning(fields));
+        const detail = foldDeferredWarning(fields);
+        const sink = getCurrentContext()?.maintenance?.warn;
+        let delivered = false;
+        if (sink !== undefined) {
+          // A throwing custom sink must not skip the stamp + hint refresh
+          // below (or GC after it), so its failure is contained here.
+          try {
+            sink("fold_deferred", { ...fields, detail });
+            delivered = true;
+          } catch {
+            // Fall through to the console line.
+          }
+        }
+        // The human line goes to the console only when no sink took the
+        // record — a bare `Db.create()` (no adapter, or `observability:
+        // false`) or a sink that threw — so an adapter logs one line per
+        // deferral, not two.
+        if (!delivered) {
+          console.warn(detail);
+        }
       }
       await refreshTailHintIfNeeded(warnDue);
     };
@@ -888,11 +904,13 @@ export interface MaintenanceDispatch {
    * Structured warning sink for maintenance events — today only
    * `fold_deferred`, whose properties are the `collection` / `dimension`
    * / `gate` / `snapshot_*` / `ceiling_*` / `live_log_tail` /
-   * `log_seq_start` fields an operator alerts on. Adapters bind it to
-   * LogTape's `["baerly", "maintenance"]` category; the kernel never
-   * imports LogTape, which keeps the observability subgraph out of the
-   * `index.js` / `maintenance.js` bundles. Absent ⇒ the runner's human
-   * `console.warn` line is the only log output.
+   * `log_seq_start` fields an operator alerts on, plus the human-readable
+   * `detail` line naming the remedy. Adapters bind it to LogTape's
+   * `["baerly", "maintenance"]` category; the kernel never imports
+   * LogTape, which keeps the observability subgraph out of the
+   * `index.js` / `maintenance.js` bundles. Absent, or throwing ⇒ the
+   * runner writes `detail` as a `console.warn` line instead; a throw is
+   * contained and never skips the rest of the tick.
    */
   readonly warn?: (event: string, properties: Readonly<Record<string, unknown>>) => void;
 }

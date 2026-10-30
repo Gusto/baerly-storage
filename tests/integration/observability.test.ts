@@ -361,7 +361,9 @@ describe("observability integration — canonical line vs physical reality", () 
         gate: "pre-fold",
         ceiling_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
       });
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+      // The record carries the human text; the console stays silent.
+      expect(String(deferLogs[0]!.properties["detail"])).toContain("has stopped compacting");
+      expect(warnSpy).not.toHaveBeenCalled();
       records.length = 0;
 
       const ctx = createObservabilityContext();
