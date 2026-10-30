@@ -117,6 +117,16 @@ test("the shim is byte-exact: a file and a directory differing by case coexist",
   expect(names.toSorted()).toEqual(["Notes", "notes"]);
 });
 
+test("a stray beside the key it folds to is a separate file and is skipped", async () => {
+  // `README.md` folds to the key `readme.md`, whose file exists, but the
+  // two are different inodes, so it is not an alias.
+  const fs = await import("node:fs/promises");
+  const s = new LocalFsStorage({ root });
+  await s.put("readme.md", utf8("key"));
+  await fs.writeFile(join(root, "README.md"), "dropped in by hand");
+  await expect(listKeys(s)).resolves.toEqual(["readme.md"]);
+});
+
 test("a stray whose fold runs through a key file is skipped by list", async () => {
   // `Notes/todo` folds to `notes/todo`, which decodes to a key, but `notes`
   // is a key's file, so stat-ing the folded path fails with ENOTDIR. No key
