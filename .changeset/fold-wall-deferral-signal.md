@@ -17,10 +17,14 @@ rows had tripped, where it does nothing.
   `rebuild`), `snapshot_bytes`, `snapshot_rows`, `ceiling_bytes`,
   `ceiling_rows`, `max_fold_entries_per_pass`, `live_log_tail`, and
   `log_seq_start`. On Cloudflare this record is the signal, since the fold runs
-  in `ctx.waitUntil` after the canonical line is written. The human
-  `console.warn` stays and now names both ceilings, the tripped arm, that
-  retention is paused, and the remedy for that arm. Both fire on a
-  collection's first deferral and then at most once per 1,000 writes.
+  in `ctx.waitUntil` after the canonical line is written. The record's
+  `detail` field carries the human line, which now names both ceilings, the
+  tripped arm, that retention is paused, and the remedy for that arm. With no
+  `warn` sink bound (a bare `Db.create()`), or one that throws, that line is
+  written as a `console.warn` instead, so an adapter logs one line per
+  deferral, not two, and a throwing sink never skips the rest of the tick. It
+  fires on a collection's first deferral and then at most once per 1,000
+  writes.
 - **Metrics.** `db.compaction.deferred_total` gains a `gate` label, and the new
   `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total`
   carry the dimension onto the canonical line, which drops labels. A deferral

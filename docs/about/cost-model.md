@@ -616,7 +616,7 @@ signal.
   maintenance profile is a CAS-retry
   storm, governed by the per-collection throughput ceiling. Maintenance
   falling behind is signalled by `db.compaction.deferred_total` and the
-  defer `console.warn` (see [graduation.md](graduation.md)).
+  `fold_deferred` warning (see [graduation.md](graduation.md)).
 
 The remaining graduation signals are capacity rather than cost, and
 [graduation.md § Graduation triggers](graduation.md#graduation-triggers)

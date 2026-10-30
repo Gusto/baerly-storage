@@ -1336,8 +1336,10 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
         live_log_tail: WARN_SEQ,
         log_seq_start: 0,
       });
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      // With a sink, the human text rides the record and console.warn stays
+      // silent — one line per deferral, not two.
+      expect(warnSpy).not.toHaveBeenCalled();
+      const msg = String(recs[0]!.properties["detail"] ?? "");
       expect(msg).toContain(String(C_FREE));
       expect(msg).toContain(String(E_FREE));
       expect(msg).toMatch(/log retention/i);
@@ -1366,7 +1368,8 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
         gate: "pre-fold",
         snapshot_bytes: C_FREE + 1,
       });
-      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      expect(warnSpy).not.toHaveBeenCalled();
+      const msg = String(recs[0]!.properties["detail"] ?? "");
       expect(msg).toMatch(/raise `?BAERLY_MAINTENANCE_MAX_FOLD_BYTES/i);
       const summary = recorder.summarize();
       expect(summary["db.compaction.deferred_total"]).toBe(1);
@@ -1434,7 +1437,7 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
         log_seq_start: 0,
       });
       expect(recs[0]!.properties["snapshot_bytes"]).toBeGreaterThan(TINY_C);
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
@@ -1471,6 +1474,42 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
     expect(deferRecords()).toHaveLength(1);
     await expect(readTailHint(inner, KEY)).resolves.toBe(WARN_SEQ);
     await expect(inner.get(`${COLLECTION_PREFIX}/gc/pending.json`)).resolves.not.toBeNull();
+  });
+
+  test("a throwing warn sink still stamps the warn and tail_hint, and falls back to console.warn", async () => {
+    const inner = new MemoryStorage();
+    await seedPreFoldWall(inner, { snapshot_bytes: C_FREE + 1, snapshot_rows: 0 });
+    // Leave the stored hint behind the tick's tail, so the refresh must write.
+    await casUpdateCurrentJson(inner, KEY, (cur) => ({ ...cur, tail_hint: 0 }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const recorder = new RequestScopedMetricsRecorder();
+    try {
+      const ctx = createObservabilityContext({
+        recorder,
+        maintenance: {
+          warn: () => {
+            throw new Error("sink exploded");
+          },
+        },
+      });
+      await runWithContext(ctx, () =>
+        runBoundedMaintenance(
+          { storage: inner, currentJsonKey: KEY, prevSeq: WARN_SEQ - 1, observedTail: WARN_SEQ },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
+        ),
+      );
+      // The deferral is still visible to a human.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0]?.[0] ?? "")).toContain("has stopped compacting");
+    } finally {
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+    // The sink's throw did not escape into the runner's unexpected-error path.
+    expect(recorder.summarize()["db.maintenance.unexpected_error_total"]).toBeUndefined();
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(WARN_SEQ);
+    await expect(readTailHint(inner, KEY)).resolves.toBe(WARN_SEQ);
   });
 
   test("a fold that lands emits no deferral record", async () => {

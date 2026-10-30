@@ -41,7 +41,9 @@ boundary. The in-band write-tick runner (`runBoundedMaintenance`) never
 throws: it swallows expected `Conflict` CAS losses silently, and on an
 unexpected error it increments `db.maintenance.unexpected_error_total`
 and logs the stack via `console.error`. A separate, rate-limited
-`console.warn` fires when compaction defers. The opt-in
+`fold_deferred` warning fires when compaction defers — a record on the
+`baerly.maintenance` category, or a plain `console.warn` line where no
+adapter sink is bound. The opt-in
 `runScheduledMaintenance` cron runner simply awaits `compact()` and
 `runGc()` and propagates any error to the caller's cron handler.
 
@@ -49,7 +51,7 @@ Watch the surface your host actually emits. Node's inline write-tick can
 attach maintenance counters to the request line. Cloudflare write-tick
 maintenance runs in `ctx.waitUntil` after the request line has flushed,
 so first response uses `wrangler tail` for the rate-limited
-`console.warn` / `console.error` records. The Cloudflare adapter is
+`fold_deferred` records and `console.error` stacks. The Cloudflare adapter is
 JSON-only; the Node adapter switches to a single-line human-readable
 shape under TTY. Set `LOG_LEVEL` or `observability.level` to tune
 verbosity.
@@ -112,7 +114,7 @@ maintenance runs before the canonical line flushes.
 
 The filters below are for JSON canonical lines. On Cloudflare,
 post-response `ctx.waitUntil` maintenance has already missed that line;
-use `wrangler tail` to search for the deferral `console.warn` or
+use `wrangler tail` to search for the `fold_deferred` record or the
 maintenance `console.error` when the question is compaction or GC.
 
 Copyable local filters for JSON logs:
