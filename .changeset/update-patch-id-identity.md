@@ -24,9 +24,25 @@ await db.collection("tickets").update(id, { _id: null, status: "closed" });
 await db.collection("tickets").update(id, { status: "closed" });
 ```
 
-Two further changes on the same path:
+Every insert or update commit now also requires the post-image to be a plain object whose own `_id` is the string the row is stored under. The public `insert` and `replace` already force `_id`, so this only rejects post-images an update patch made inconsistent (for example a patch that is an array or a scalar, which replaces the whole document).
 
-- `update` or `delete` that matches a stored row with no string `_id` (left behind by the bug above) now throws `BaerlyError{code:"InvalidResponse"}` instead of committing to `doc_id: "undefined"`, which left the row in place while reporting success.
-- Every insert or update commit now requires the post-image to be a plain object whose own `_id` is the string the row is stored under. The public `insert` and `replace` already force `_id`, so this only rejects post-images an update patch made inconsistent (for example a patch that is an array or a scalar, which replaces the whole document).
+**Rows the old bug already corrupted.** A stored row whose `_id` is missing, not a string, or a different id from the one it is stored under now makes `update` and `delete` throw `BaerlyError{code:"InvalidResponse"}` (HTTP 502) instead of committing. Before, `update("a", …)` on a row re-keyed to `_id: "b"` wrote a second `_id: "b"` row, and `delete("a")` reported `{ deleted: 1 }` while the row survived. A predicate `update`/`delete` that matches such a row throws when it reaches it; rows earlier in the batch are already applied.
 
-Rows that were already re-keyed into duplicates are not detected by this release. De-duplicate them before upgrading: find rows whose `_id` appears more than once in `where({}).all()` and keep the intended one.
+`replace(id, doc)` repairs the row, because it forces `_id` to `id`. After that, `update` and `delete` work on it again:
+
+```ts
+try {
+  await db.collection("tickets").update(id, patch);
+} catch (err) {
+  if (err instanceof BaerlyError && err.code === "InvalidResponse") {
+    // The row stored at `id` carries a corrupt `_id`: rewrite it under `id`.
+    const { _id, ...fields } = (await db.collection("tickets").get(id))!;
+    await db.collection("tickets").replace(id, { ...fields, _id: id });
+    await db.collection("tickets").update(id, patch);
+  } else {
+    throw err;
+  }
+}
+```
+
+To remove a corrupt row instead, `replace` it first and then `delete(id)`.
