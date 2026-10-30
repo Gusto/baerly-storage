@@ -422,15 +422,16 @@ export class LocalFsStorage implements Storage {
     await this.#ensureFormat(false);
     const keys: string[] = [];
     for (const components of (await walk(this.#root)) ?? []) {
+      // A name that is not the canonical encoding of any key (`README.md`,
+      // `Thumbs.db`, an editor's `current.json~`) was not written by this
+      // adapter, and no `get`/`put`/`delete` can address it, so it is not
+      // part of the keyspace: skip it rather than fail every `list` over a
+      // stray file. Legacy data is not at risk — a directory still holding
+      // pre-encoding names is refused before it is stamped (`#ensureFormat`).
       const key = decodeComponents(components);
-      if (key === null) {
-        throw new BaerlyError(
-          "InvalidResponse",
-          `LocalFsStorage.list: ${join(this.#root, ...components)} is not a stored key ` +
-            `(a file this adapter did not write); move it out of the data directory`,
-        );
+      if (key !== null) {
+        keys.push(key);
       }
-      keys.push(key);
     }
     keys.sort(compareKeysUtf8);
     let yielded = 0;
@@ -638,9 +639,14 @@ const stampFormatMarker = async (marker: string): Promise<void> => {
  * encoding would read differently (uppercase, non-ASCII, `%`, `~`, a
  * leading `.` …). Empty when the tree can be adopted as-is; `null` when
  * the root does not exist.
+ *
+ * Walks dot-prefixed names too: the old layout stored a key segment such
+ * as an `_id` or collection named `.foo` verbatim, and the encoding treats
+ * that name as adapter-private, so skipping it here would adopt the tree
+ * and silently drop or orphan that data.
  */
 const findLegacyPaths = async (root: string): Promise<string[] | null> => {
-  const files = await walk(root);
+  const files = await walk(root, isLegacyScanNoise);
   if (files === null) {
     return null;
   }
@@ -651,14 +657,30 @@ const findLegacyPaths = async (root: string): Promise<string[] | null> => {
 };
 
 /**
- * Recursive directory walk. Returns each file's path components relative
- * to `root`, or `null` when `root` does not exist. Dot-prefixed names are
- * skipped at every depth, directories included: no encoded key component
- * starts with `.`, so those are adapter-private (staging temps, the format
- * marker) or foreign (`.DS_Store`). Skipping temps is what keeps a
- * concurrent `list` from surfacing a half-published key.
+ * Names the legacy scan may skip: staging temps (both layouts wrote them),
+ * the format marker, and Finder's `.DS_Store`. Nothing else is assumed
+ * not to be data.
  */
-const walk = async (root: string): Promise<string[][] | null> => {
+const isLegacyScanNoise = (name: string): boolean =>
+  name.startsWith(TEMP_PREFIX) || name === FORMAT_MARKER || name === ".DS_Store";
+
+/**
+ * In the current layout every dot-prefixed name is not a key: no encoded
+ * key component starts with `.`, so those are adapter-private (staging
+ * temps, the format marker) or foreign (`.DS_Store`). Skipping temps is
+ * what keeps a concurrent `list` from surfacing a half-published key.
+ */
+const isDotName = (name: string): boolean => name.startsWith(".");
+
+/**
+ * Recursive directory walk. Returns each file's path components relative
+ * to `root`, or `null` when `root` does not exist. Entries for which
+ * `skip` holds are ignored at every depth, directories included.
+ */
+const walk = async (
+  root: string,
+  skip: (name: string) => boolean = isDotName,
+): Promise<string[][] | null> => {
   const out: string[][] = [];
   const stack: Array<{ dir: string; components: string[] }> = [{ dir: root, components: [] }];
   while (stack.length > 0) {
@@ -676,7 +698,7 @@ const walk = async (root: string): Promise<string[][] | null> => {
       throw error;
     }
     for (const entry of entries) {
-      if (entry.name.startsWith(".")) {
+      if (skip(entry.name)) {
         continue;
       }
       const next = [...components, entry.name];

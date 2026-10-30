@@ -20,13 +20,16 @@ disk into a case- and normalization-invariant alphabet (`A` is stored as
 `current.json` are stored verbatim. Segments too long for one filename are
 split into `~`-suffixed directories. Keys containing lone surrogates are now
 rejected with `InvalidConfig`, and dot-prefixed keys such as `.baerly-tmp-*`
-are ordinary keys instead of reserved.
+are ordinary keys instead of reserved. A stray file that is not an encoded
+key (a `README.md`, `Thumbs.db`, an editor backup) is skipped by `list`.
 
 The data directory now carries a `.baerly-localfs.json` marker. An existing
-directory is adopted as-is when every name in it already reads the same
-under the new encoding, which is true of trees whose ids and collection
-names are lowercase ASCII. Otherwise every operation refuses with
-`InvalidConfig`, listing the affected paths. To recover, dump the directory
-with the previous release (`baerly admin dump`) and restore into a fresh
-directory (`baerly admin restore`). There is no in-place migration: keys a
-folding filesystem has already merged cannot be recovered.
+directory is adopted as-is only when every name in it, dot-prefixed names
+included, already reads the same under the new encoding: true of trees whose
+ids, collection, app, and tenant names are lowercase ASCII and do not start
+with `.`. Leftover `.baerly-tmp-*` staging files and `.DS_Store` are
+ignored. Otherwise every operation refuses with `InvalidConfig`, listing the
+affected paths. To recover, dump the directory with the previous release
+(`baerly admin dump`) and restore into a fresh directory (`baerly admin
+restore`). There is no in-place migration: keys a folding filesystem has
+already merged cannot be recovered.
