@@ -19,7 +19,10 @@ import {
 } from "./snapshot-chunk-builder.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
-import { postImageIdentityViolations } from "../../../tests/fixtures/post-image-identity-violations.ts";
+import {
+  postImageIdentityAdmissible,
+  postImageIdentityViolations,
+} from "../../../tests/fixtures/post-image-identity-violations.ts";
 import { makeValidDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 
 const collection = "tickets";
@@ -697,6 +700,26 @@ describe("snapshot chunk builder", () => {
 
 describe("snapshot chunk builder: post-image identity is caller input", () => {
   const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+
+  test.each(postImageIdentityAdmissible)("accepts $name", async ({ docId, after }) => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const mutation = { op: "U", doc_id: docId, after: after() } as ReferenceMutation;
+    for (const descriptors of [[], [d0Desc]]) {
+      const result = await buildSnapshotChunks({
+        collection,
+        collectionPrefix,
+        descriptors,
+        loadedChunks: new Map<string, readonly DocumentData[]>([[d0Desc.key, d0Docs]]),
+        mutations: mutationMap([mutation]),
+        incarnation,
+        policy,
+        lockedDirectOwnerIndex: descriptors.length === 0 ? null : 0,
+        selectedNeighborIndex: null,
+      });
+      expect(result.changed_chunks).toHaveLength(1);
+    }
+  });
 
   test.each(postImageIdentityViolations)(
     "rejects $name with InvalidConfig",

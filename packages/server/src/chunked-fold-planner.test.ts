@@ -26,7 +26,10 @@ import {
 import { compareDocIds } from "./snapshot-doc-id.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
-import { postImageIdentityViolations } from "../../../tests/fixtures/post-image-identity-violations.ts";
+import {
+  postImageIdentityAdmissible,
+  postImageIdentityViolations,
+} from "../../../tests/fixtures/post-image-identity-violations.ts";
 import {
   makeValidDocIdArb,
   validDocIdArb,
@@ -698,6 +701,29 @@ describe("chunked fold planner: stored post-image identity", () => {
       ]);
     });
   });
+
+  test.each(postImageIdentityAdmissible)(
+    "accepts $name in both phases",
+    async ({ docId, after }) => {
+      const { descriptors, loadedChunks } = await setup();
+      const entries = [makeLogEntry(1, "U", "b", doc("b", 20)), offending(2, docId, after())];
+      expect(
+        prefetchChunkedFold({ entries, descriptors, budget: defaultBudget }).candidate_log_seq_ends,
+      ).toEqual([1, 2]);
+      const plan = await planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries,
+        descriptors,
+        loadedChunks,
+        budget: defaultBudget,
+        incarnation,
+        policy,
+      });
+      expect(plan?.log_seq_end).toBe(2);
+      expect(plan?.mutations.get(docId)).toMatchObject({ op: "U", after: { _id: docId } });
+    },
+  );
 
   test("an offending entry that also busts the mutation-byte cap fails the call", async () => {
     // The walk converts each entry before testing the byte cap, so the
