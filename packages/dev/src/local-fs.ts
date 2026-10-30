@@ -498,12 +498,12 @@ export class LocalFsStorage implements Storage {
   /**
    * The key whose on-disk path the filesystem resolves to the stray file at
    * `components`, or `null` if none does. Only a case- or
-   * normalization-folding filesystem produces one: the candidate is the
-   * NFC + lowercase fold of the name, which is a key only if it decodes, and
-   * an alias only if both paths name the same inode.
+   * normalization-folding filesystem produces one: the candidate is
+   * {@link foldToEncodedAlphabet} of the name, which is a key only if it
+   * decodes, and an alias only if both paths name the same inode.
    */
   async #aliasedKey(components: readonly string[]): Promise<string | null> {
-    const folded = components.map((c) => c.normalize("NFC").toLowerCase());
+    const folded = components.map(foldToEncodedAlphabet);
     const key = decodeComponents(folded);
     if (key === null) {
       return null;
@@ -691,6 +691,38 @@ const stampFormatMarker = async (marker: string): Promise<void> => {
     await rm(tmp, { force: true }).catch(() => {});
   }
 };
+
+/**
+ * Non-ASCII characters that APFS's full case folding maps to ASCII but
+ * `toLowerCase` leaves alone (Unicode CaseFolding.txt status `F`, plus the
+ * `C` mapping of long `ſ`). Each was checked on an APFS volume: a file
+ * named with the left side is reached by the right side.
+ */
+const APFS_ASCII_FOLDS: Readonly<Record<string, string>> = {
+  ß: "ss", // ß
+  ẞ: "ss", // ẞ
+  ſ: "s", // ſ
+  ﬀ: "ff",
+  ﬁ: "fi",
+  ﬂ: "fl",
+  ﬃ: "ffi",
+  ﬄ: "ffl",
+  ﬅ: "st",
+  ﬆ: "st",
+};
+const APFS_ASCII_FOLDABLE = /[ßẞſﬀ-ﬆ]/g;
+
+/**
+ * Fold an on-disk name the way a folding filesystem matches it, as far as
+ * the result can land in the encoded alphabet (`a-z0-9-_.%`). A name
+ * containing anything else after the fold cannot decode, so only folds to
+ * ASCII matter: lowercase (which also maps Kelvin `K` to `k`) plus
+ * {@link APFS_ASCII_FOLDS}. Normalization adds none: the only canonical
+ * decompositions to ASCII are Kelvin `K`, U+037E (`;`) and U+1FEF (`` ` ``),
+ * and the last two are escaped by the encoding.
+ */
+const foldToEncodedAlphabet = (name: string): string =>
+  name.replace(APFS_ASCII_FOLDABLE, (c) => APFS_ASCII_FOLDS[c]!).toLowerCase();
 
 /**
  * Paths under `root` that the pre-encoding layout wrote and the current

@@ -31,7 +31,12 @@ const shim = vi.hoisted(() => ({
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal<typeof FsPromises>();
   const { readdirSync } = await import("node:fs");
-  const fold = (name: string): string => name.normalize("NFD").toLowerCase();
+  // NFD plus full case folding, as APFS does: the lower→upper→lower round
+  // trip takes `ß`/`ẞ` to `ss`, `ſ` to `s`, and `ﬁ` to `fi`, which a single
+  // `toLowerCase` does not. It over-folds dotless `ı` to `i` (APFS keeps
+  // them apart); no test here uses `ı`.
+  const fold = (name: string): string =>
+    name.normalize("NFD").toLowerCase().toUpperCase().toLowerCase();
   shim.resolve = (p: unknown): unknown => {
     if (typeof p !== "string") {
       return p;
@@ -162,6 +167,32 @@ test("a stray file that aliases a real key is reported, not hidden", async () =>
     code: "InvalidResponse",
     message: expect.stringContaining("c/J"),
   });
+});
+
+test("a stray that full-case-folds onto a key is reported, not hidden", async () => {
+  // `Straße` and `ﬁle` are the files `get("strasse")` / `get("file")` read
+  // under full case folding, though no `toLowerCase` of them is a key.
+  const fs = await import("node:fs/promises");
+  for (const [stray, key] of [
+    ["Straße", "strasse"],
+    ["ﬁle", "file"],
+  ] as const) {
+    const dir = join(root, key);
+    const s = new LocalFsStorage({ root: dir });
+    await s.put("app/x/current.json", utf8("v"));
+    await fs.writeFile(join(dir, stray), "stray");
+    await expect(s.get(key)).resolves.not.toBeNull(); // the alias is real
+    await expect(
+      (async () => {
+        for await (const _ of s.list("")) {
+          // drain
+        }
+      })(),
+    ).rejects.toMatchObject({
+      code: "InvalidResponse",
+      message: expect.stringContaining(JSON.stringify(key)),
+    });
+  }
 });
 
 test("a stray file that aliases no key is skipped by list", async () => {
