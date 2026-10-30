@@ -518,6 +518,108 @@ describe("billing class", () => {
 });
 
 describe("namespace journal", () => {
+  test("rejects a namespace snapshot while operations are pending", async () => {
+    const stub = new StubStorage();
+    const { storage, journal } = wrapJournaledStorage({
+      attemptId: asAttemptId("pending-namespace"),
+      storage: stub,
+    });
+    const put = storage.put("key", enc("value"));
+    try {
+      expect(() => journal.snapshotNamespace()).toThrow(JournalNotQuiescentError);
+    } finally {
+      await put;
+    }
+  });
+
+  test("overlapping PUT and DELETE stay uncertain after a delayed digest", async () => {
+    const stub = new StubStorage();
+    const { storage, journal } = wrapJournaledStorage({
+      attemptId: asAttemptId("overlapping-namespace"),
+      storage: stub,
+    });
+    let releaseDigest!: (value: ArrayBuffer) => void;
+    const digest = vi.spyOn(crypto.subtle, "digest").mockImplementationOnce(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          releaseDigest = resolve;
+        }),
+    );
+    const put = storage.put("key", enc("value"));
+    try {
+      await storage.delete("key");
+      expect(stub.objects.has("key")).toBe(false);
+    } finally {
+      releaseDigest(new ArrayBuffer(32));
+      await put;
+      digest.mockRestore();
+    }
+    expect(journal.snapshotNamespace()).toMatchObject({
+      exact: false,
+      entries: [],
+      uncertain_keys: ["key"],
+    });
+    // A later isolated mutation establishes known state again.
+    await storage.put("key", enc("new"));
+    expect(journal.snapshotNamespace()).toMatchObject({
+      exact: true,
+      entries: [{ key: "key", byte_length: 3 }],
+      uncertain_keys: [],
+    });
+  });
+
+  test("PUT acknowledgement order cannot certify overlapping namespace state", async () => {
+    const stub = new StubStorage();
+    let releasePut!: () => void;
+    const originalPut = stub.put.bind(stub);
+    vi.spyOn(stub, "put").mockImplementationOnce(async (...args) => {
+      const result = await originalPut(...args);
+      await new Promise<void>((resolve) => {
+        releasePut = resolve;
+      });
+      return result;
+    });
+    const { storage, journal } = wrapJournaledStorage({
+      attemptId: asAttemptId("reverse-ack-namespace"),
+      storage: stub,
+    });
+    const first = storage.put("key", enc("first"));
+    try {
+      await storage.put("key", enc("second"));
+    } finally {
+      releasePut();
+      await first;
+    }
+    expect(stub.objects.get("key")?.body).toEqual(enc("second"));
+    expect(journal.snapshotNamespace()).toMatchObject({
+      exact: false,
+      entries: [],
+      uncertain_keys: ["key"],
+    });
+    await storage.delete("key");
+    expect(journal.snapshotNamespace()).toMatchObject({
+      exact: true,
+      entries: [],
+      uncertain_keys: [],
+    });
+  });
+
+  test("concurrent mutations of different keys remain exact", async () => {
+    const { storage, journal } = wrapJournaledStorage({
+      attemptId: asAttemptId("independent-namespace"),
+      storage: new StubStorage(),
+    });
+    await Promise.all([storage.put("a", enc("a")), storage.put("b", enc("bb"))]);
+    expect(journal.snapshotNamespace()).toMatchObject({
+      exact: true,
+      entries: [
+        { key: "a", byte_length: 1 },
+        { key: "b", byte_length: 2 },
+      ],
+      uncertain_keys: [],
+    });
+  });
+
   test("tracks provisioning, PUT, and DELETE without any LIST", async () => {
     const stub = new StubStorage();
     const { storage, journal } = wrapJournaledStorage({
