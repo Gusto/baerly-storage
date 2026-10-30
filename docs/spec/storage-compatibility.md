@@ -54,6 +54,18 @@ baerly-storage addresses objects by string key over `PUT` / `GET` /
 - at most **1024 bytes** of UTF-8 (`MAX_KEY_BYTES` — the S3/R2 hard limit); and
 - `/`-delimited, with **no path segment equal to `.` or `..`**.
 
+Keys are **byte-exact**: distinct UTF-8 byte sequences are distinct
+objects, including keys that differ only by case (`A` / `a`) or by
+Unicode normalization (NFC `é` / NFD `e` + U+0301). A backend MUST NOT
+fold either. This is load-bearing, not cosmetic: index marker keys embed
+the caller's raw `_id`, and collection, app, and tenant names are
+interpolated raw into key prefixes, so a folding store silently merges
+rows and collections. S3, Minio, and R2 are byte-exact natively.
+`LocalFsStorage` escapes each key segment into a fold-invariant alphabet
+on disk so it stays byte-exact on case- and normalization-folding
+filesystems such as default macOS APFS. (Conformance: _"keys differing
+only by case or Unicode normalization are distinct objects"_.)
+
 The dot-segment rule is a **portability invariant, not a vendor quirk.**
 RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant
 URL parser, so a key whose segment is `.` or `..` is rewritten _before the

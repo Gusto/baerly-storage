@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { link, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, posix, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import {
   BaerlyError,
   assertValidStorageKey,
@@ -12,20 +12,36 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { withKeyLock } from "./key-lock.ts";
+import { decodeComponents, encodeKey } from "./local-fs-key-codec.ts";
 
 /**
- * Reserved prefix for the in-directory staging temps (see `put`).
- * `walk`/`list` skip it; it is internal/transient and never a real key.
+ * Prefix for the in-directory staging temps (see `put`). Dot-prefixed, so
+ * it can never collide with an encoded key (see `local-fs-key-codec.ts`)
+ * and `walk` skips it with every other adapter-private name.
  */
 const TEMP_PREFIX = ".baerly-tmp-";
+
+/**
+ * Root marker recording the on-disk key encoding. Dot-prefixed, so it is
+ * never a key. A directory without it is scanned once for names written
+ * by the pre-encoding layout (see `#ensureFormat`).
+ */
+const FORMAT_MARKER = ".baerly-localfs.json";
+
+/** Version of the key encoding in `local-fs-key-codec.ts`. */
+const KEY_ENCODING = 1;
+
+/** Legacy paths named in the refusal message before it truncates. */
+const LEGACY_PATHS_SHOWN = 10;
 
 /**
  * Staging path for a two-phase (write → publish) `put`. Always a sibling
  * of the destination: `rename(2)`/`link(2)` refuse to cross filesystems
  * (`EXDEV`), and the bucket root is routinely on a different volume from
- * `os.tmpdir()`. `TEMP_PREFIX` is what makes staging in-bucket safe —
- * `walk` filters it at every depth, so a crash before the publish leaves
- * a file invisible to `list` rather than a bogus key.
+ * `os.tmpdir()`. The leading `.` of `TEMP_PREFIX` is what makes staging
+ * in-bucket safe — `walk` skips dot-prefixed names at every depth, and no
+ * encoded key starts with one, so a crash before the publish leaves a file
+ * invisible to `list` rather than a bogus key.
  *
  * The trade-off that invisibility buys: a temp stranded by a hard crash
  * now sits inside the bucket, and because every enumerator goes through
@@ -71,6 +87,23 @@ const compareKeysUtf8 = (a: string, b: string): number => {
 /**
  * `Storage` backed by a directory tree. Keys may contain `/` and map
  * to nested directories on disk so `ls`/`cat` work as expected.
+ *
+ * Keys are byte-exact, as on S3 and R2: keys that differ only by case or
+ * Unicode normalization are distinct objects even on a filesystem that
+ * folds both (default macOS APFS). Each segment is escaped into a
+ * fold-invariant alphabet on disk — `A` is stored as `%41`, NFC `é` as
+ * `%c3%a9` — while kernel-written segments (lowercase ids, base-32 index
+ * values, `current.json`) are stored verbatim. See
+ * `local-fs-key-codec.ts`.
+ *
+ * The root carries a `.baerly-localfs.json` marker naming that encoding.
+ * A directory written by an older release, before keys were escaped, is
+ * adopted as-is when every name in it already reads the same under the
+ * encoding; otherwise every operation refuses with `InvalidConfig`.
+ * Recover such a directory by dumping it with the older release
+ * (`baerly admin dump`) and restoring into a fresh one (`baerly admin
+ * restore`). Data a folding filesystem has already merged is not
+ * recoverable.
  *
  * ETags are content-addressed: `"<sha-256-hex>"` (the surrounding
  * double-quotes match S3's wire format for non-multipart objects).
@@ -130,6 +163,8 @@ export class LocalFsStorage implements Storage {
   readonly #root: string;
   /** Memoized `realpath` of {@link #root} — see {@link #canonicalRoot}. */
   #realRoot: string | undefined;
+  /** Set once the root's key encoding is known to be current. */
+  #formatChecked = false;
 
   constructor(opts: LocalFsStorageOptions) {
     this.#root = resolve(opts.root);
@@ -138,6 +173,7 @@ export class LocalFsStorage implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
     const path = this.#pathFor(key);
+    await this.#ensureFormat(false);
     let body: Buffer;
     try {
       body = await readFile(path);
@@ -162,6 +198,7 @@ export class LocalFsStorage implements Storage {
   async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
     opts?.signal?.throwIfAborted();
     const path = this.#pathFor(key);
+    await this.#ensureFormat(true);
     // Create the parent before taking the lock, so the `realpath` behind
     // `#lockKey` has a directory to canonicalize.
     await mkdir(dirname(path), { recursive: true });
@@ -253,7 +290,7 @@ export class LocalFsStorage implements Storage {
       // Best-effort cleanup, mirroring the create-if-absent branch. On
       // success the rename already consumed the temp and this is a no-op;
       // on failure it keeps a half-written body from lingering under the
-      // bucket root, where only the `TEMP_PREFIX` filter hides it. A
+      // bucket root, where only `walk`'s dot-name skip hides it. A
       // cleanup failure must not mask the error thrown above.
       await rm(tmp, { force: true }).catch(() => {});
     }
@@ -263,6 +300,7 @@ export class LocalFsStorage implements Storage {
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
     opts?.signal?.throwIfAborted();
     const path = this.#pathFor(key);
+    await this.#ensureFormat(false);
     // Same lock as `put`: a delete slipping between an `ifMatch` compare
     // and its publish would resurrect the key from a version the caller
     // was told no longer existed.
@@ -291,32 +329,29 @@ export class LocalFsStorage implements Storage {
    * `this`. Not on `this` because separate instances over one directory
    * are the common case (`localFsStorage()` mints a fresh one per call),
    * so an instance-scoped lock would serialize nothing where it matters.
-   * Not on the key because several distinct spellings can name one file,
-   * and handing an alias its own lock lets the race straight back in —
-   * each of the three below was measured at 2 winners before it was
-   * closed:
+   * Not on the root spelling the caller passed, because several spellings
+   * of a root can name one directory, and handing an alias its own lock
+   * lets the race straight back in:
    *
-   * - Case. The default macOS filesystem folds it, so `k` and `K` are one
-   *   object.
-   * - Unicode. macOS normalizes filenames, so NFC and NFD spellings of
-   *   one string are one object.
    * - Symlinks. `resolve()` collapses `.`/`..` but not links, so
    *   `/tmp/data` and `/private/tmp/data` — the same directory on every
-   *   Mac — look like two. Hence `realpath`, memoized per instance and
-   *   only cached once it succeeds, so a root that does not exist yet
-   *   cannot poison the entry.
+   *   Mac — look like two (measured at 2 winners before it was closed).
+   *   Hence `realpath`, memoized per instance and only cached once it
+   *   succeeds, so a root that does not exist yet cannot poison the entry.
+   * - Case and Unicode in the root path. A caller can spell a root on a
+   *   folding filesystem as `/Users/me/Data` or `/users/me/data`, or in
+   *   NFC or NFD, and reach one directory.
    *
-   * Case-folding and NFC-normalizing deliberately over-approximate: on a
-   * case-sensitive filesystem `a` and `A` are genuinely different objects
-   * and will share a lock. That costs a little concurrency between keys
-   * differing only in case, and never costs correctness — whereas
-   * under-approximating does, which is exactly how the symlink class got
-   * missed the first time. This adapter is not the throughput path.
-   *
-   * Strong approximation, not exact: `toLowerCase()` is not Unicode case
-   * folding (JS has no `toCaseFold()`), so APFS folds `Σ`/`σ`/`ς` onto one
-   * file where this yields two lock keys. Unreached — protocol keys are
-   * ASCII — and not worth a folding table here.
+   * The key-derived tail of `path` cannot alias: it is the fold-invariant
+   * encoding from `local-fs-key-codec.ts`, so distinct keys are distinct
+   * files on every filesystem and the case/NFC fold below changes nothing
+   * there. The fold is kept for the root-spelling case only. It
+   * over-approximates on a case-sensitive filesystem, where two roots
+   * differing only in case are really different directories and share a
+   * lock; that costs a little concurrency, never correctness. And it is
+   * not exact Unicode case folding (JS has no `toCaseFold()`), so a root
+   * spelled with `Σ` and one with `σ` get separate locks — acceptable for
+   * a root path, which the operator chooses once.
    */
   async #lockKey(path: string): Promise<string> {
     const root = await this.#canonicalRoot();
@@ -384,8 +419,19 @@ export class LocalFsStorage implements Storage {
     opts?.signal?.throwIfAborted();
     const startAfter = opts?.startAfter ?? "";
     const maxKeys = opts?.maxKeys ?? Infinity;
+    await this.#ensureFormat(false);
     const keys: string[] = [];
-    await walk(this.#root, keys);
+    for (const components of (await walk(this.#root)) ?? []) {
+      const key = decodeComponents(components);
+      if (key === null) {
+        throw new BaerlyError(
+          "InvalidResponse",
+          `LocalFsStorage.list: ${join(this.#root, ...components)} is not a stored key ` +
+            `(a file this adapter did not write); move it out of the data directory`,
+        );
+      }
+      keys.push(key);
+    }
     keys.sort(compareKeysUtf8);
     let yielded = 0;
     for (const key of keys) {
@@ -424,9 +470,66 @@ export class LocalFsStorage implements Storage {
   }
 
   /**
+   * Make sure the root uses the current key encoding before any operation
+   * touches it. With the marker present this is one small read per
+   * instance. Without it the root is scanned once:
+   *
+   * - absent root: nothing to read, so reads return without stamping, and
+   *   the first `put` (`create`) makes the root and stamps it;
+   * - every on-disk name already reads the same under the encoding (true
+   *   of kernel-written trees with lowercase ids): stamp, nothing moves;
+   * - otherwise refuse with `InvalidConfig`. There is no in-place
+   *   migration — renaming cannot undo merges a folding filesystem has
+   *   already made — so the remedy is dump with the older release and
+   *   restore into a fresh directory.
+   *
+   * Only success is cached, so a refusal repeats on every call.
+   */
+  async #ensureFormat(create: boolean): Promise<void> {
+    if (this.#formatChecked) {
+      return;
+    }
+    // Canonicalize first so a broken root (ELOOP, EACCES) reports as such —
+    // see `#canonicalRoot` — rather than as a failed marker read.
+    await this.#canonicalRoot();
+    const marker = join(this.#root, FORMAT_MARKER);
+    if (await readFormatMarker(marker)) {
+      this.#formatChecked = true;
+      return;
+    }
+    if (create) {
+      await mkdir(this.#root, { recursive: true });
+    }
+    const legacy = await findLegacyPaths(this.#root);
+    if (legacy === null) {
+      return; // root absent and nothing to create
+    }
+    // Re-read before refusing: a concurrent opener may have stamped the
+    // marker and written encoded names since this scan began.
+    if (legacy.length > 0 && !(await readFormatMarker(marker))) {
+      const shown = legacy.slice(0, LEGACY_PATHS_SHOWN).map((p) => `  ${p}`);
+      if (legacy.length > LEGACY_PATHS_SHOWN) {
+        shown.push(`  … and ${legacy.length - LEGACY_PATHS_SHOWN} more`);
+      }
+      throw new BaerlyError(
+        "InvalidConfig",
+        `LocalFsStorage: ${this.#root} was written by an older release that stored keys ` +
+          `verbatim, and these paths are not valid under the current key encoding:\n` +
+          `${shown.join("\n")}\n` +
+          `Dump it with the older release (\`baerly admin dump\`) and restore into a fresh ` +
+          `directory (\`baerly admin restore\`). Keys that differed only by case or Unicode ` +
+          `normalization may already have been merged by the filesystem.`,
+      );
+    }
+    await stampFormatMarker(marker);
+    this.#formatChecked = true;
+  }
+
+  /**
    * Map an S3-style key to a filesystem path under `#root`, rejecting
    * anything that could escape the root (path traversal, absolute
-   * paths, empty segments, backslashes). All rejections throw
+   * paths, empty segments, backslashes) or that the encoding cannot
+   * represent injectively (lone surrogates). All rejections throw
    * `BaerlyError("InvalidConfig", …)`.
    */
   #pathFor(key: string): string {
@@ -443,18 +546,7 @@ export class LocalFsStorage implements Storage {
     if (segments.some((s) => s === "" || s === "." || s === "..")) {
       throw new BaerlyError("InvalidConfig", `LocalFsStorage: illegal segment in key: ${key}`);
     }
-    if (segments.some((s) => s.startsWith(TEMP_PREFIX))) {
-      // `walk` skips this prefix so in-flight staging temps never surface
-      // as keys, which means a *real* key here would be writable and
-      // readable but invisible to `list` — a silent violation of the
-      // put-then-list contract. Reserve the namespace rather than leave
-      // the hole open; `tempPathFor` is the only legitimate producer.
-      throw new BaerlyError(
-        "InvalidConfig",
-        `LocalFsStorage: key uses the reserved "${TEMP_PREFIX}" prefix: ${key}`,
-      );
-    }
-    const path = join(this.#root, ...segments);
+    const path = join(this.#root, ...encodeKey(key));
     if (path !== this.#root && !path.startsWith(this.#root + sep)) {
       throw new BaerlyError("InvalidConfig", `LocalFsStorage: resolved path escapes root: ${key}`);
     }
@@ -485,40 +577,115 @@ const readExisting = async (path: string): Promise<Buffer | null> => {
 };
 
 /**
- * Recursive directory walk. Yields filesystem-relative paths in
- * forward-slash form so callers can use them as S3-style keys
- * regardless of the host's path separator.
+ * `true` when the root's format marker exists and names the current
+ * encoding, `false` when it is absent. A marker naming another encoding
+ * means a newer release wrote this directory, so it is refused.
  */
-const walk = async (root: string, out: string[]): Promise<void> => {
-  const stack: string[] = [root];
+const readFormatMarker = async (marker: string): Promise<boolean> => {
+  const body = await readExisting(marker).catch((error: unknown) => {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `LocalFsStorage: cannot read ${marker}: ${(error as Error).message}`,
+      error,
+    );
+  });
+  if (body === null) {
+    return false;
+  }
+  let encoding: unknown;
+  try {
+    encoding = (JSON.parse(new TextDecoder().decode(body)) as { key_encoding?: unknown })
+      .key_encoding;
+  } catch (error) {
+    throw new BaerlyError("InvalidResponse", `LocalFsStorage: ${marker} is not valid JSON`, error);
+  }
+  if (encoding !== KEY_ENCODING) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `LocalFsStorage: ${marker} names key_encoding ${JSON.stringify(encoding)}; this release ` +
+        `reads only key_encoding ${KEY_ENCODING}`,
+    );
+  }
+  return true;
+};
+
+/**
+ * Write the format marker with the same temp + `link(2)` exclusive create
+ * as `ifNoneMatch:"*"`. Losing that race to a concurrent opener is fine as
+ * long as what it wrote is the current encoding.
+ */
+const stampFormatMarker = async (marker: string): Promise<void> => {
+  const tmp = tempPathFor(marker);
+  try {
+    await writeFile(tmp, `${JSON.stringify({ key_encoding: KEY_ENCODING })}\n`);
+    await link(tmp, marker);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "EEXIST" && (await readFormatMarker(marker))) {
+      return;
+    }
+    throw new BaerlyError(
+      "InvalidResponse",
+      `LocalFsStorage: cannot write ${marker}: ${(error as Error).message}`,
+      error,
+    );
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
+  }
+};
+
+/**
+ * Paths under `root` that the pre-encoding layout wrote and the current
+ * encoding would read differently (uppercase, non-ASCII, `%`, `~`, a
+ * leading `.` …). Empty when the tree can be adopted as-is; `null` when
+ * the root does not exist.
+ */
+const findLegacyPaths = async (root: string): Promise<string[] | null> => {
+  const files = await walk(root);
+  if (files === null) {
+    return null;
+  }
+  return files
+    .filter((components) => decodeComponents(components) !== components.join("/"))
+    .map((components) => components.join("/"))
+    .toSorted();
+};
+
+/**
+ * Recursive directory walk. Returns each file's path components relative
+ * to `root`, or `null` when `root` does not exist. Dot-prefixed names are
+ * skipped at every depth, directories included: no encoded key component
+ * starts with `.`, so those are adapter-private (staging temps, the format
+ * marker) or foreign (`.DS_Store`). Skipping temps is what keeps a
+ * concurrent `list` from surfacing a half-published key.
+ */
+const walk = async (root: string): Promise<string[][] | null> => {
+  const out: string[][] = [];
+  const stack: Array<{ dir: string; components: string[] }> = [{ dir: root, components: [] }];
   while (stack.length > 0) {
-    const dir = stack.pop()!;
+    const { dir, components } = stack.pop()!;
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch (error) {
       if (isErrnoException(error) && error.code === "ENOENT") {
+        if (dir === root) {
+          return null;
+        }
         continue;
       }
       throw error;
     }
     for (const entry of entries) {
-      const full = join(dir, entry.name);
-      // Skip the reserved staging namespace (see TEMP_PREFIX) so a
-      // concurrent list during a write never surfaces a half-published
-      // key. Applied to directories as well as files: `#pathFor` rejects
-      // the prefix in ANY segment, so yielding `.baerly-tmp-d/child` here
-      // would produce a key that `list` then throws on when it maps that
-      // key back to a path. Nothing in this adapter creates such a
-      // directory, but a stray one must not break iteration.
-      if (entry.name.startsWith(TEMP_PREFIX)) {
+      if (entry.name.startsWith(".")) {
         continue;
       }
+      const next = [...components, entry.name];
       if (entry.isDirectory()) {
-        stack.push(full);
+        stack.push({ dir: join(dir, entry.name), components: next });
       } else if (entry.isFile()) {
-        out.push(relative(root, full).split(sep).join(posix.sep));
+        out.push(next);
       }
     }
   }
+  return out;
 };
