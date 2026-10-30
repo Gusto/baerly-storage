@@ -1284,6 +1284,15 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
     return recorder;
   };
 
+  /** Labels of every `db.compaction.deferred_total` observation, in order. */
+  const deferredCounterLabels = (
+    recorder: RequestScopedMetricsRecorder,
+  ): Readonly<Record<string, string>>[] =>
+    recorder
+      .snapshot()
+      .counters.filter((row) => row.name === "db.compaction.deferred_total")
+      .map((row) => row.labels);
+
   const C_FREE = MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes;
   const E_FREE = MAINTENANCE_PROFILE_CF_FREE.maxFoldRows;
   const WARN_SEQ = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
@@ -1363,6 +1372,10 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
       expect(summary["db.compaction.deferred_total"]).toBe(1);
       expect(summary["db.compaction.deferred_bytes_total"]).toBe(1);
       expect(summary["db.compaction.deferred_rows_total"]).toBeUndefined();
+      // The canonical line drops labels; the long-term recorder keys on them.
+      expect(deferredCounterLabels(recorder)).toEqual([
+        { collection: COLL, dimension: "bytes", gate: "pre-fold" },
+      ]);
     } finally {
       warnSpy.mockRestore();
     }
@@ -1429,6 +1442,9 @@ describe("runBoundedMaintenance — fold-wall deferral signal", () => {
     const summary = recorder.summarize();
     expect(summary["db.compaction.deferred_total"]).toBe(1);
     expect(summary["db.compaction.deferred_bytes_total"]).toBe(1);
+    expect(deferredCounterLabels(recorder)).toEqual([
+      { collection: COLL, dimension: "bytes", gate: "rebuild" },
+    ]);
     // Nothing folded; one PUT published both the warn stamp and the hint.
     await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
     await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(WARN_SEQ);
