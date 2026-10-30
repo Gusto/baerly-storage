@@ -134,7 +134,8 @@ Run it:
   there for any local-fs implementation. `local-fs.folding-fs.test.ts` shims
   `node:fs/promises` with a case + NFD fold to reproduce default macOS APFS on Linux;
   the `CASE_INSENSITIVE_FS`-gated cases in `local-fs.test.ts` run on a real folding
-  volume and only on macOS.
+  volume and only on macOS. `local-fs.byte-exact-fs.test.ts` is the reverse shim: it
+  stores each path component as hex, so a folding macOS host behaves like ext4.
 - **HTTP-wire CAS parity is a known hole** (`tests/fixtures/http-conformance-cascade.ts`
   defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does
   not cover the HTTP `If-Match` round-trip.
