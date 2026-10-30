@@ -278,6 +278,34 @@ describe("LocalFsStorage — impl-specific", () => {
     }
   });
 
+  test.skipIf(!CASE_INSENSITIVE_FS)(
+    "a stray that APFS full-case-folds onto a key is reported, not hidden",
+    async () => {
+      // APFS folds `ß`/`ẞ` to `ss`, `ſ` to `s`, and the Latin ligatures
+      // U+FB00–FB06 to their letters, none of which `toLowerCase` does.
+      // Each stray below is the file `get(key)` reads on such a volume.
+      const strays: Array<[string, string]> = [
+        ["Straße", "strasse"],
+        ["STRAẞE", "strasse"],
+        ["ſeq", "seq"],
+        ["ﬁle", "file"],
+        ["ﬃx", "ffix"],
+        ["ﬆop", "stop"],
+      ];
+      for (const [i, [stray, key]] of strays.entries()) {
+        const dir = join(root, String(i));
+        const storage = new LocalFsStorage({ root: dir });
+        await storage.put("app/x/current.json", utf8("v"));
+        writeFileSync(join(dir, stray), "dropped in by hand");
+        await expect(storage.get(key)).resolves.not.toBeNull(); // the alias is real
+        await expect(collect(storage.list(""))).rejects.toMatchObject({
+          code: "InvalidResponse",
+          message: expect.stringContaining(JSON.stringify(key)),
+        });
+      }
+    },
+  );
+
   test("list() tolerates a key deleted mid-iteration", async () => {
     // `list` walks names, then reads each file to hash its etag. A delete
     // landing in that window used to escape as a raw Node ENOENT rather

@@ -23,7 +23,8 @@ rejected with `InvalidConfig`, and dot-prefixed keys such as `.baerly-tmp-*`
 are ordinary keys instead of reserved. A stray file that no key can name (an
 editor backup such as `current.json~`) is skipped by `list`; on a
 case-folding filesystem, a stray that the filesystem resolves a key to
-(`README.md` is what `get("readme.md")` reads) makes `list` fail with
+(`README.md` is what `get("readme.md")` reads, and under APFS's full case
+folding `Straße` is what `get("strasse")` reads) makes `list` fail with
 `InvalidResponse` naming the file, rather than hide a key the other
 operations see.
 
