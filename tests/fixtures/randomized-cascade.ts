@@ -544,7 +544,7 @@ export const runCausalConsistencyCascade = (opts: {
                   op: "U",
                   collection: COLLECTION,
                   docId: COLLECTION,
-                  body: message,
+                  body: { ...message, _id: COLLECTION },
                 });
                 ackedSeqs.add(result.entry.seq);
                 // Read-your-writes (SG-2): a self-read right after a
@@ -776,7 +776,7 @@ export const runMultiDocCascade = async (opts: {
           op: "U",
           collection: COLLECTION,
           docId,
-          body: { ...message, token },
+          body: { ...message, token, _id: docId },
         });
       } catch (error) {
         // Transient Conflict under contention is expected — the value is
