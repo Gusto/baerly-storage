@@ -415,6 +415,28 @@ export const runHttpConformanceCascade = (opts: {
         expect(rest).toEqual({ title: "new", tag: "a", count: 1 });
       });
 
+      test("PATCH that changes or nulls _id returns 400 InvalidConfig and leaves the row intact", async () => {
+        const table = await mintTable("patch-id");
+        const ins = await postDoc(table, { title: "keep" });
+        expect(ins.status).toBe(201);
+        const id = ins.id!;
+        for (const patch of [{ _id: "someone-else" }, { _id: null }]) {
+          const res = await doFetch(authedRequest("PATCH", `/v1/c/${table}/${id}`, { patch }));
+          expect(res.status).toBe(400);
+          const env = (await res.json()) as ErrorEnvelope;
+          expect(env.error?.code).toBe("InvalidConfig");
+        }
+        const getRes = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
+        expect(getRes.status).toBe(200);
+        const { data } = (await getRes.json()) as { readonly data: Record<string, unknown> };
+        expect(data).toEqual({ _id: id, title: "keep" });
+        // An equal `_id` is a no-op on identity and is accepted.
+        const same = await doFetch(
+          authedRequest("PATCH", `/v1/c/${table}/${id}`, { patch: { _id: id, title: "new" } }),
+        );
+        expect(same.status).toBe(200);
+      });
+
       test("POST > 1 MiB body returns 413 PayloadTooLarge", async () => {
         const table = await mintTable("rt-big");
         // 1 MiB + 1 bytes — exactly one byte over the cap so we

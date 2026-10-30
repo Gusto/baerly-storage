@@ -61,6 +61,7 @@ import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { Writer } from "./writer.ts";
 
 const DUPLICATE_ID_RESOLUTION = "Use different `_id` or omit it.";
+const PATCH_ID_RESOLUTION = "Omit `_id` from the patch, or pass the row's own `_id`.";
 
 /**
  * What a `Query<T>` needs to issue a read against the bucket. The
@@ -441,6 +442,56 @@ export const runInsert = async <T extends DocumentData>(
 };
 
 /**
+ * The `_id` of a materialised row, which `update` / `delete` commit under.
+ * Every stored `I` / `U` post-image carries its own string `_id`; a row
+ * without one is stored corruption, so it fails loud rather than committing
+ * to a coerced `doc_id` such as `"undefined"`.
+ *
+ * @throws BaerlyError code="InvalidResponse" — the row's `_id` is not a string.
+ */
+const storedRowId = (doc: DocumentData, verb: "update" | "delete"): string => {
+  const id = doc["_id"];
+  if (typeof id !== "string") {
+    throw new BaerlyError(
+      "InvalidResponse",
+      `Query.${verb}: stored row has no string _id (got ${typeof id})`,
+    );
+  }
+  return id;
+};
+
+/**
+ * Reject a merge patch that would change a row's `_id`. A patch whose
+ * top-level `_id` is present (not `undefined`, which `merge` treats as
+ * absent) must equal the row's id: an equal `_id` keeps a full-document
+ * round-trip patch working, while any other value — including `null`,
+ * which would strip `_id` — is a caller bug. Unlike `replace`, which takes
+ * the id as a separate argument and forces it onto the document, a patch
+ * has no separate id to fall back on, so forcing it would hide the bug.
+ *
+ * @throws BaerlyError code="InvalidConfig" — the patch names a different `_id`.
+ */
+const assertPatchKeepsId = (patch: unknown, docId: string): void => {
+  if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
+    return;
+  }
+  if (!Object.hasOwn(patch, "_id")) {
+    return;
+  }
+  const patchId = (patch as DocumentData)["_id"];
+  if (patchId !== undefined && patchId !== docId) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `Query.update: a patch cannot change _id (row ${JSON.stringify(docId)}); omit _id from the patch`,
+      undefined,
+      undefined,
+      undefined,
+      PATCH_ID_RESOLUTION,
+    );
+  }
+};
+
+/**
  * `Query.update` implementation. Materialises the predicate/order/
  * limit-filtered match set, applies RFC 7386 `merge(prev, patch)`
  * per row, and emits one `op:"U"` `LogEntry` per affected `doc_id`
@@ -468,6 +519,11 @@ export const runInsert = async <T extends DocumentData>(
  * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
  *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
  *   root in the type system).
+ * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
+ *   other than the row's (see {@link assertPatchKeepsId}). Checked per
+ *   row, before that row's schema validation and commit.
+ * @throws BaerlyError code="InvalidResponse" — a matched stored row has
+ *   no string `_id`.
  */
 const runUpdate = async <T extends DocumentData>(
   ctx: CollectionReadContext,
@@ -477,6 +533,8 @@ const runUpdate = async <T extends DocumentData>(
   const { rows } = await runRead<T>(ctx, state);
   let modified = 0;
   for (const doc of rows) {
+    const docId = storedRowId(doc, "update");
+    assertPatchKeepsId(patch, docId);
     const merged = merge(doc as DocumentData, patch as Partial<DocumentData>);
     if (merged === undefined) {
       // `merge(target, patch)` returns undefined only when patch is
@@ -502,7 +560,7 @@ const runUpdate = async <T extends DocumentData>(
     await writerFor(ctx).commit({
       op: "U",
       collection: ctx.collectionName,
-      docId: String(doc["_id"]),
+      docId,
       body: merged,
     });
     modified++;
@@ -584,6 +642,8 @@ export const runReplaceById = async <T extends DocumentData>(
  *   landed below the collection's certified delete floor. Rows before it in
  *   the batch are already tombstoned and that row's own fate is unknown; the
  *   partial-progress `deleted` count is NOT returned. See `Writer.commit`.
+ * @throws BaerlyError code="InvalidResponse" — a matched stored row has
+ *   no string `_id`.
  */
 const runDelete = async <T extends DocumentData>(
   ctx: CollectionReadContext,
@@ -595,7 +655,7 @@ const runDelete = async <T extends DocumentData>(
     await writerFor(ctx).commit({
       op: "D",
       collection: ctx.collectionName,
-      docId: String(doc["_id"]),
+      docId: storedRowId(doc, "delete"),
     });
     deleted++;
   }
