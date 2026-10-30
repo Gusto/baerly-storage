@@ -1,7 +1,7 @@
 /**
- * Runnable entrypoint for the fold-ceiling headroom probe.
+ * Runnable entrypoint for the Node-host fold measurement probe.
  *
- * Thin by design: the grid, the verdict functions, and the record shape all
+ * Thin by design: the grid, the descriptive findings, and the record shape all
  * live in `./fold-ceiling-probe.ts`, which the test imports and which has no
  * module-scope side effects. This file is the only place that executes the
  * sweep, prints, and writes to disk — the same runner/library split
@@ -25,7 +25,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   type FrozenBaselineCell,
   type ProbeCell,
-  buildRecommendation,
+  buildRecord,
   cellsOf,
   compareToFrozen,
   referenceLine,
@@ -90,7 +90,7 @@ const main = async (): Promise<number> => {
     //
     // The check is array-shaped only. It separates "wrong file" from "our
     // file"; it does NOT catch a bad cell inside our file — an element missing
-    // `cpu_ms_median` still propagates NaN through the margin math into the
+    // `cpu_ms_median` still propagates NaN through the comparisons into the
     // record. That is deliberate: a per-field schema here would be validating
     // this probe's own serializer against itself, and the operator staring at
     // the NaN is the one who produced the file a minute earlier.
@@ -101,7 +101,7 @@ const main = async (): Promise<number> => {
 
   // snake_case on purpose — it matches the serialized record shape.
   const subject_commit = process.env["BAERLY_SUBJECT_COMMIT"] ?? "unknown";
-  const rec = buildRecommendation({
+  const rec = buildRecord({
     cells,
     subject_commit,
     extraFindings: await overlapFindings(cells),

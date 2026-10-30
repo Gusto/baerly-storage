@@ -38,21 +38,25 @@ vars, and the defer/warn signals. These are defined in code and
 dispatched on the write path by
 [`runBoundedMaintenance`](../../packages/server/src/maintenance.ts).
 
-**Measured:** the per-host ceilings are no longer chosen. They come from
+**Sizing evidence:** the per-host ceilings are policy choices informed by
 `pnpm bench:fold-ceiling`
 ([`bench/measurement/fold-ceiling-probe.ts`](../../bench/measurement/fold-ceiling-probe.ts)),
 run unconstrained and at `--max-old-space-size` 512/1024/2048 (actual
 `heap_size_limit` 704/1216/2240 MB). Two results hold across that whole
-range and are what fix `C` and `E`:
+range and inform the sizing of `C` and `E`:
 
 - peak heap is **~2.4x the snapshot** on the byte axis, and
 - peak heap costs **~600 B per row** on the row axis.
 
-Both are invariant to heap size (verified 704 MB - 4.3 GB), so the
-memory-bound verdicts behind cf-paid's 8 MiB / 32,768 and node's
-32 MiB / 65,536 are portable.
+These Node observations were stable over the tested heap sizes
+(704 MB - 4.3 GB). They do not establish portable memory bounds: sampled
+incremental heap excludes baseline allocations, buffers outside the heap,
+and concurrent request activity. Separate byte and row measurements also
+do not validate every combination admitted by a `C`/`E` pair. The fold
+probe records host measurements only and emits no production-limit verdicts.
+Any Cloudflare ceiling increase requires matched deployed invocation evidence.
 
-Those two constants and one rule fix every memory-bound ceiling: **a
+The memory-side sizing policy is **a
 fold is sized to occupy at most a quarter of the memory budget**, so
 `peak heap × 4 ≤ budget`. At ~2.4x that works out to `C ≈ budget / 10`,
 which is where node's `C ≈ heap / 10` comes from, and why cf-paid stops
@@ -71,8 +75,8 @@ what that conservatism rests on.
 **Still estimated:** the CPU column below and anything derived from it.
 CPU was measured on Node v24 / darwin-arm64, which is not workerd, and
 the bench host ran 1.05-1.30x slower than the host behind the frozen
-June baseline — the probe itself reports CPU-bound verdicts as
-non-portable. Also estimated: the `≈ 11 ms/MB` upper-bound model, the
+June baseline. Neither Node CPU nor sampled heap deltas prove a Worker
+budget. Also estimated: the `≈ 11 ms/MB` upper-bound model, the
 graduation snapshot sizes in documents (they assume 1-5 KB/doc), and
 node's 32 MiB, which is the top of the measured grid rather than a
 measured wall.
@@ -168,9 +172,9 @@ clean runs (unconstrained 4288 MB heap, and 2240 MB).
 
 > **The CPU column is not portable.** It was taken on Node v24 /
 > darwin-arm64, not workerd, and that host ran 1.05-1.30x slower than
-> the one behind the frozen June baseline. The probe reports
-> memory-bound verdicts as portable and CPU-bound ones as not. Use the
-> peak-heap column to reason about a host's wall; use CPU only for shape.
+> the one behind the frozen June baseline. The peak-heap column is a sampled
+> Node heap delta, not total Worker isolate memory. Both columns describe
+> this host and fixture; neither proves a production ceiling.
 
 | Snapshot size | CPU per rebuild (bench host) | Peak heap | Peak / snapshot |
 | --- | --- | --- | --- |

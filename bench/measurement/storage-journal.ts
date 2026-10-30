@@ -225,7 +225,9 @@ export interface NamespaceSnapshot {
   readonly schema: typeof NAMESPACE_JOURNAL_VERSION;
   readonly exact: boolean;
   readonly entries: readonly NamespaceEntry[];
+  /** Includes ambiguous failures and overlapping mutations of the same key. */
   readonly uncertain_keys: readonly string[];
+  /** Failure evidence only; successful overlaps are recorded in the operation journal. */
   readonly uncertainty: readonly NamespaceUncertainty[];
 }
 
@@ -262,6 +264,7 @@ export interface StorageJournal {
   pendingOperations(): readonly PendingOperation[];
   /** Count of rows dispatched but not yet settled. Zero means quiescent. */
   pendingOperationCount(): number;
+  /** Throws JournalNotQuiescentError while any operation remains pending. */
   snapshotNamespace(): NamespaceSnapshot;
   recordProvisioned(entries: readonly { key: string; byte_length: number }[]): void;
   /** Derived from settled rows only. */
@@ -305,6 +308,7 @@ interface MutableRow {
   readonly options: JournalRequestOptions;
   put?: { readonly byte_length: number; readonly sha256?: string };
   result?: StorageOperationResult;
+  namespaceOverlapped?: boolean;
 }
 
 interface MutableUncertainty {
@@ -360,6 +364,8 @@ export const wrapJournaledStorage = (input: {
     { byte_length: number; last_operation_index: number | null; source: "provisioned" | "put" }
   >();
   const uncertain = new Map<string, MutableUncertainty>();
+  const activeMutations = new Map<string, Set<MutableRow>>();
+  const overlapUnknown = new Set<string>();
   const anonymousNames = new WeakMap<AbortSignal, string>();
   let anonymousCount = 0;
   let nextIndex = 0;
@@ -413,6 +419,34 @@ export const wrapJournaledStorage = (input: {
     nextIndex += 1;
     rows.push(row);
     return row;
+  };
+
+  // Promise completion order does not establish backend mutation order.
+  // Keep overlapping keys unknown until a later isolated mutation succeeds.
+  const beginMutation = (row: MutableRow): void => {
+    const active = activeMutations.get(row.key) ?? new Set<MutableRow>();
+    if (active.size > 0) {
+      row.namespaceOverlapped = true;
+      for (const other of active) {
+        other.namespaceOverlapped = true;
+      }
+    }
+    active.add(row);
+    activeMutations.set(row.key, active);
+  };
+
+  const finishMutation = (row: MutableRow): boolean => {
+    const active = activeMutations.get(row.key)!;
+    active.delete(row);
+    if (active.size === 0) {
+      activeMutations.delete(row.key);
+    }
+    if (row.namespaceOverlapped) {
+      entries.delete(row.key);
+      overlapUnknown.add(row.key);
+      return false;
+    }
+    return true;
   };
 
   /**
@@ -472,10 +506,13 @@ export const wrapJournaledStorage = (input: {
         (sha256) => ({ ok: true, sha256 }) as const,
         () => ({ ok: false }) as const,
       );
-      const settled = await inner.put(key, body, opts).then(
-        (value: StoragePutResult) => ({ ok: true, value }) as const,
-        (error: unknown) => ({ ok: false, error }) as const,
-      );
+      beginMutation(row);
+      let settled: { ok: true; value: StoragePutResult } | { ok: false; error: unknown };
+      try {
+        settled = { ok: true, value: await inner.put(key, body, opts) };
+      } catch (error: unknown) {
+        settled = { ok: false, error };
+      }
       const digested = await digest;
       // `byte_length` is unconditional — gating it behind the digest would let
       // a crypto failure silently zero the byte accounting.
@@ -483,6 +520,7 @@ export const wrapJournaledStorage = (input: {
         byte_length: copy.byteLength,
         ...(digested.ok && { sha256: digested.sha256 }),
       });
+      const isolated = finishMutation(row);
       if (!settled.ok) {
         row.result = threwResult(settled.error);
         markUncertain(row, "put", settled.error);
@@ -494,23 +532,31 @@ export const wrapJournaledStorage = (input: {
         etag: settled.value.etag,
         ...(settled.value.versionId !== undefined && { version_id: settled.value.versionId }),
       };
-      uncertain.delete(key);
-      entries.set(key, {
-        byte_length: copy.byteLength,
-        last_operation_index: row.index,
-        source: "put",
-      });
+      if (isolated) {
+        uncertain.delete(key);
+        overlapUnknown.delete(key);
+        entries.set(key, {
+          byte_length: copy.byteLength,
+          last_operation_index: row.index,
+          source: "put",
+        });
+      }
       return settled.value;
     },
 
     delete: async (key, opts) => {
       const row = openRow("delete", key, capture(opts));
+      beginMutation(row);
       try {
         await inner.delete(key, opts);
         row.result = { status: "returned", classification: "delete_ok" };
-        entries.delete(key);
-        uncertain.delete(key);
+        if (finishMutation(row)) {
+          entries.delete(key);
+          uncertain.delete(key);
+          overlapUnknown.delete(key);
+        }
       } catch (error: unknown) {
+        finishMutation(row);
         row.result = threwResult(error);
         markUncertain(row, "delete", error);
         throw error;
@@ -592,10 +638,14 @@ export const wrapJournaledStorage = (input: {
     pendingOperationCount: (): number =>
       rows.reduce((count, row) => (row.result === undefined ? count + 1 : count), 0),
 
-    snapshotNamespace: (): NamespaceSnapshot =>
-      Object.freeze<NamespaceSnapshot>({
+    snapshotNamespace: (): NamespaceSnapshot => {
+      const unsettled = pending();
+      if (unsettled.length > 0) {
+        throw new JournalNotQuiescentError(unsettled);
+      }
+      return Object.freeze<NamespaceSnapshot>({
         schema: NAMESPACE_JOURNAL_VERSION,
-        exact: uncertain.size === 0,
+        exact: uncertain.size === 0 && overlapUnknown.size === 0,
         entries: [...entries]
           .map(([key, value]) => ({
             key,
@@ -604,13 +654,19 @@ export const wrapJournaledStorage = (input: {
             source: value.source,
           }))
           .toSorted(byKeyAsc),
-        uncertain_keys: [...uncertain.keys()].toSorted(),
+        uncertain_keys: [...new Set([...uncertain.keys(), ...overlapUnknown])].toSorted(),
         uncertainty: [...uncertain.values()].toSorted(byKeyAsc),
-      }),
+      });
+    },
 
     recordProvisioned: (provisioned): void => {
+      const unsettled = pending();
+      if (unsettled.length > 0) {
+        throw new JournalNotQuiescentError(unsettled);
+      }
       for (const entry of provisioned) {
         uncertain.delete(entry.key);
+        overlapUnknown.delete(entry.key);
         entries.set(entry.key, {
           byte_length: entry.byte_length,
           last_operation_index: null,
