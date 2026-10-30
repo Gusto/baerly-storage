@@ -41,7 +41,9 @@ export const CONTINUATION = "~";
 const MAX_PART_BYTES = NAME_MAX_BYTES - CONTINUATION.length;
 
 const utf8Encoder = new TextEncoder();
-const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+// `ignoreBOM: true` keeps a leading U+FEFF: by default `TextDecoder` strips
+// it as a byte-order mark, which would decode `\uFEFFA` to `A`.
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Bytes that stay literal: `-` `.` `0-9` `_` `a-z`. `.` is special-cased. */
 const isLiteralByte = (b: number): boolean =>

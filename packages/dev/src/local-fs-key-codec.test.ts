@@ -140,6 +140,14 @@ describe("local-fs key codec — fixed vectors", () => {
     expect(decodeComponents(components)).toBe(key);
   });
 
+  test("a leading U+FEFF round-trips instead of being stripped as a BOM", () => {
+    // `TextDecoder` drops a leading byte-order mark unless told not to,
+    // which would decode `%ef%bb%bf%41` to "A" and lose the key.
+    for (const key of ["﻿A", "x/﻿", "﻿﻿b"]) {
+      expect(decodeComponents(encodeKey(key))).toBe(key);
+    }
+  });
+
   test("lone surrogates are rejected", () => {
     expect(() => encodeKey("a\uD800")).toThrow(expect.objectContaining({ code: "InvalidConfig" }));
   });
