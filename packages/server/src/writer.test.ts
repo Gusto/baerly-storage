@@ -1557,6 +1557,85 @@ describe("Writer — write-tick maintenance dispatch", () => {
   });
 });
 
+/** Counts every storage call so a rejection can be proven I/O-free. */
+class OpCountingStorage extends MemoryStorage {
+  ops = 0;
+
+  override async get(...args: Parameters<MemoryStorage["get"]>): ReturnType<MemoryStorage["get"]> {
+    this.ops++;
+    return super.get(...args);
+  }
+
+  override async put(...args: Parameters<MemoryStorage["put"]>): ReturnType<MemoryStorage["put"]> {
+    this.ops++;
+    return super.put(...args);
+  }
+
+  override async delete(
+    ...args: Parameters<MemoryStorage["delete"]>
+  ): ReturnType<MemoryStorage["delete"]> {
+    this.ops++;
+    return super.delete(...args);
+  }
+
+  override list(...args: Parameters<MemoryStorage["list"]>): ReturnType<MemoryStorage["list"]> {
+    this.ops++;
+    return super.list(...args);
+  }
+}
+
+describe("Writer — post-image identity", () => {
+  const mismatches: ReadonlyArray<readonly [string, unknown]> = [
+    ["a different string _id", { _id: "doc-2", v: 1 }],
+    ["a missing _id", { v: 1 }],
+    ["a null _id", { _id: null, v: 1 }],
+    ["a numeric _id", { _id: 42, v: 1 }],
+    ["an array body", ["doc-1"]],
+    ["a string body", "doc-1"],
+  ];
+
+  for (const op of ["I", "U"] as const) {
+    for (const [label, body] of mismatches) {
+      test(`${op} with ${label} throws InvalidConfig before any storage operation`, async () => {
+        const storage = new OpCountingStorage();
+        await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+        storage.ops = 0;
+        const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+        await expect(
+          writer.commit({ op, collection: COLL, docId: "doc-1", body: body as DocumentData }),
+        ).rejects.toMatchObject({ code: "InvalidConfig" });
+        expect(storage.ops).toBe(0);
+        await expect(durableLogSeqs(storage)).resolves.toEqual([]);
+      });
+    }
+  }
+
+  test("an I/U whose body._id equals docId commits", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    await writer.commit({ op: "I", collection: COLL, docId: "doc-1", body: { _id: "doc-1" } });
+    await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1", v: 2 },
+    });
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
+  });
+
+  test("a D carries no post-image and is not identity-checked", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    await writer.commit({ op: "D", collection: COLL, docId: "doc-1" });
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+  });
+});
+
 describe("Writer — pre-image scan depth", () => {
   /**
    * `#readPreImage` walks the log backwards from the committing seq to
