@@ -151,8 +151,11 @@ table fixes it. Only one dimension moves with the host.
 Node adapter selects its profile automatically.
 
 ² At 1–5 KB per document. Each host caps how large a snapshot one fold
-may rebuild — in bytes, and in rows as a backstop for snapshots of many
-tiny documents. Bytes bind at documents this size. On Node the cap
+may rebuild — in bytes (`C`) and in rows (`E`). Bytes bind at documents
+this size. Rows bind first for small documents: under ~256 B on
+Cloudflare, where the fold stops at ~2,028 documents (free) or ~32,568
+(paid), and under ~512 B on Node, where it stops at ~65,336. Neither row
+ceiling has an env override. On Node the cap
 scales with available heap, and the column gives the measured floor on a
 512 MB container. Per-host caps and their derivation:
 [scale-ceilings.md § The auto-maintained snapshot ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling).
@@ -170,8 +173,11 @@ grades each collection against.
 or not you are paying.** Every host runs the same protocol; a bigger host
 buys a bigger snapshot per fold, nothing else.
 
-Past the ceiling the log stops collapsing into the snapshot: reads keep
-working and get slower — erosion, not a cliff.
+Past the ceiling the log stops collapsing into the snapshot. Reads and
+writes keep working, but the live tail, read cost, and bucket grow
+without bound and log retention stops: a stall that needs action, not a
+slow erosion. See
+[graduation.md § The symptom](graduation.md#the-symptom-a-silent-stall-not-data-loss).
 
 **Stored bytes are not on this table because they are not a fit limit.**
 Nothing in baerly-storage measures or enforces per-tenant storage; a

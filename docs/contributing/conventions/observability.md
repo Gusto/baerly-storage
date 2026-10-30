@@ -31,7 +31,13 @@ operator's view of kernel emissions.
 maintenance is dispatched via `ctx.waitUntil(...)` _after_ the canonical
 line is flushed (in the request `finally`), so post-response maintenance
 metrics never appear on that request's line; failures surface only via
-`console.error` in `packages/server/src/maintenance.ts`. This is inherent
+`console.error` in `packages/server/src/maintenance.ts`, and a fold-wall
+deferral surfaces only as its `fold_deferred` log record. That record is
+routed through `MaintenanceDispatch.warn`, which each adapter binds to
+`logMaintenanceWarning` (category `CATEGORY.maintenance`); kernel modules
+reach it through `getCurrentContext()?.maintenance?.warn` and never
+import LogTape, which keeps the observability subgraph out of the kernel
+bundles. This is inherent
 to the `waitUntil` model — you can't append to an already-sent response's
 log line. Changing it would require a separate maintenance log
 context/flush; not currently planned.
@@ -176,6 +182,15 @@ The load-bearing kernel metrics today (canonical list in
 - `db.manifest.lag_window_depth` — compactor gauge (alert at >100).
 - `db.compact.entries_folded` — compactor histogram (entries folded
   per run).
+- `db.compaction.deferred_total` — write-tick runner counter, labelled by
+  `collection`, `dimension` (`bytes` / `rows`) and `gate` (`pre-fold` /
+  `rebuild`). The fold hit the snapshot ceiling and did not run, so
+  `log_seq_start` and log retention are frozen. Counted once per
+  deferral by the runner; `compact()` itself never emits it.
+- `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total`
+  — the same event under a per-dimension name (labels `collection`,
+  `gate`), because the canonical line keys counters by name and drops
+  labels.
 - `db.gc.entries_swept_per_second` — GC gauge (livelock indicator
   when below writes/s).
 - `db.gc.swept_total` — GC counter, labelled by reason.
