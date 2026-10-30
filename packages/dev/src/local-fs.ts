@@ -699,16 +699,16 @@ const stampFormatMarker = async (marker: string): Promise<void> => {
  * named with the left side is reached by the right side.
  */
 const APFS_ASCII_FOLDS: Readonly<Record<string, string>> = {
-  ß: "ss", // ß
-  ẞ: "ss", // ẞ
-  ſ: "s", // ſ
-  ﬀ: "ff",
-  ﬁ: "fi",
-  ﬂ: "fl",
-  ﬃ: "ffi",
-  ﬄ: "ffl",
-  ﬅ: "st",
-  ﬆ: "st",
+  ß: "ss", // U+00DF
+  ẞ: "ss", // U+1E9E
+  ſ: "s", // U+017F
+  ﬀ: "ff", // U+FB00
+  ﬁ: "fi", // U+FB01
+  ﬂ: "fl", // U+FB02
+  ﬃ: "ffi", // U+FB03
+  ﬄ: "ffl", // U+FB04
+  ﬅ: "st", // U+FB05
+  ﬆ: "st", // U+FB06
 };
 const APFS_ASCII_FOLDABLE = /[ßẞſﬀ-ﬆ]/g;
 
