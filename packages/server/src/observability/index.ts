@@ -38,6 +38,7 @@ export {
   CATEGORY,
   configureObservability,
   getLogger,
+  logMaintenanceWarning,
 } from "./logger.ts";
 export {
   type FlushCanonicalLineOptions,

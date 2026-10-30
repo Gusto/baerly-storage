@@ -39,6 +39,15 @@
  *   - `db.gc.entries_swept_per_second` — gauge (livelock indicator when <writes/s)
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
  *   - `db.compact.entries_folded` — histogram (entries folded per run)
+ *   - `db.compaction.deferred_total` — counter, labelled by `collection`,
+ *     `dimension` (`bytes` / `rows`) and `gate` (`pre-fold` / `rebuild`).
+ *     The write-tick fold hit the snapshot ceiling (`C` / `E`) and did not
+ *     run: `log_seq_start` and log retention are frozen until it folds again.
+ *     Emitted once per deferral by the write-tick runner, never by compact().
+ *   - `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total`
+ *     — the same event under a per-dimension name, labelled by `collection`
+ *     and `gate`, because the canonical line keys counters by name and drops
+ *     labels
  *   - `db.gc.swept_total` — counter (labelled by reason)
  *   - `db.gc.dropped_total` — counter (labelled by cause: `stale-generation`
  *     / `still-live`). Candidates resolved out of the ledger WITHOUT a

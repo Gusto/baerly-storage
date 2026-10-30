@@ -165,6 +165,17 @@ export interface CompactResult {
     | "probe-budget-checkpointed";
   /** `true` on the over-ceiling rebuild-defer path (`skippedReason === "deferred"`). */
   readonly deferred?: boolean;
+  /**
+   * Present iff `skippedReason === "deferred"`: which ceiling the rebuilt
+   * snapshot tripped and its measured size. Nothing was written.
+   */
+  readonly deferral?: {
+    readonly dimension: "bytes" | "rows";
+    /** Encoded byte length of the rebuilt (unwritten) snapshot body. */
+    readonly snapshotBytes: number;
+    /** Row count of the rebuilt (unwritten) snapshot. */
+    readonly snapshotRows: number;
+  };
   /** Prior snapshot key (`null` if no prior snapshot existed). */
   readonly previousSnapshotKey: string | null;
   /** New snapshot key (`undefined` if `written === false` and no PUT happened). */
@@ -467,15 +478,20 @@ export const compact = async (
   // CF guard is the runner's pre-fold projection (see maintenance.ts
   // `runBoundedMaintenance`). When over ceiling we DEFER: no PUT, no
   // CAS, no current.json mutation.
+  //
+  // No metric here: the caller that threaded the ceilings (the write-tick
+  // runner) owns the one deferral signal for both gates, so a deferral
+  // counts once. `deferral` carries the rebuilt figures it reports.
   if (bodyBytes.byteLength > ceilingBytes || base.size > ceilingEntries) {
-    ctxMetrics().counter("db.compaction.deferred_total", 1, {
-      collection: collectionName,
-      dimension: bodyBytes.byteLength > ceilingBytes ? "bytes" : "rows",
-    });
     return {
       written: false,
       skippedReason: "deferred",
       deferred: true,
+      deferral: {
+        dimension: bodyBytes.byteLength > ceilingBytes ? "bytes" : "rows",
+        snapshotBytes: bodyBytes.byteLength,
+        snapshotRows: base.size,
+      },
       previousSnapshotKey: current.snapshot,
       logSeqStartBefore,
       logSeqStartAfter: logSeqStartBefore,

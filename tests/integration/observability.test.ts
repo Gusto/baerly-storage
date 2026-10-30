@@ -31,12 +31,15 @@
  * deployment's cost shape; treat as P0.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import {
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
+  MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
+  WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
   createCurrentJson,
   type DocumentData,
   type Storage,
@@ -51,6 +54,7 @@ import {
   configureObservability,
   createObservabilityContext,
   flushCanonicalLine,
+  logMaintenanceWarning,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
@@ -316,5 +320,62 @@ describe("observability integration — canonical line vs physical reality", () 
     // path took a LIST and the cost-model story needs updating.
     expect(proxy.counts.put).toBe(0);
     expect(proxy.counts.delete).toBe(0);
+  });
+
+  test("an inline fold-wall defer lands a dimension-named counter on the request's canonical line and a structured log record", async () => {
+    // A collection past the cf-free rows wall: every write tick DEFERS the
+    // fold. On Node the tick runs inline inside the write's request scope,
+    // so the deferral must be readable off that one canonical line — which
+    // keys counters by name and drops labels, hence the distinct
+    // `deferred_rows_total` name.
+    const memory = new MemoryStorage();
+    await createCurrentJson(memory, CURRENT_JSON_KEY, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      tail_hint: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "phase9-observability", claimed_at: "" },
+      snapshot_bytes: 0,
+      snapshot_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows, // rows arm closed
+      // Ratio trigger trips on any tail, so only the 50-entry floor gates the fold.
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+    });
+    const db = Db.create({ storage: memory, app: APP, tenant: TENANT });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // Reach the write-tick fold floor, with the LogTape-backed `warn`
+      // sink an adapter wires. The first tick past the floor defers and —
+      // the collection having never warned — emits the structured record;
+      // later ticks are rate-limited off `current.json.last_warned_seq`.
+      const seedCtx = createObservabilityContext({ maintenance: { warn: logMaintenanceWarning } });
+      await runWithContext(seedCtx, async () => {
+        for (let i = 0; i < WRITE_TICK_MIN_ENTRIES_TO_COMPACT + 1; i++) {
+          await db.collection(COLLECTION).insert({ _id: `seed-${i}`, status: "open", priority: i });
+        }
+      });
+      const deferLogs = records.filter((r) => r.category.join(".") === "baerly.maintenance");
+      expect(deferLogs).toHaveLength(1);
+      expect(deferLogs[0]!.properties).toMatchObject({
+        collection: COLLECTION,
+        dimension: "rows",
+        gate: "pre-fold",
+        ceiling_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      records.length = 0;
+
+      const ctx = createObservabilityContext();
+      await runWithContext(ctx, async () => {
+        await db.collection(COLLECTION).insert({ _id: "t-wall", status: "open", priority: 1 });
+      });
+      flushCanonicalLine(ctx, ctx.recorder, { unit: "http", outcome: "ok", status: 200 });
+
+      const canonical = records.filter((r) => r.category.join(".") === "baerly.http");
+      expect(canonical).toHaveLength(1);
+      expect(canonical[0]!.properties["db.compaction.deferred_rows_total"]).toBe(1);
+      expect(canonical[0]!.properties["db.compaction.deferred_bytes_total"]).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

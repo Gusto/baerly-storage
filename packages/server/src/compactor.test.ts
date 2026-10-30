@@ -652,7 +652,7 @@ describe("compact", () => {
     expect(afterRaw!.body).toEqual(beforeRaw!.body);
   });
 
-  test("emits db.compaction.deferred_total with the tripped dimension on a rebuild defer", async () => {
+  test("a rebuild defer reports the tripped dimension and rebuilt size, and leaves the metric to the caller", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new Writer({ storage: s, currentJsonKey: KEY });
@@ -660,22 +660,20 @@ describe("compact", () => {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
     const ctx = createObservabilityContext();
-    await runWithContext(ctx, async () => {
-      await compact({ storage: s, currentJsonKey: KEY }, {
+    const res = await runWithContext(ctx, () =>
+      compact({ storage: s, currentJsonKey: KEY }, {
         minEntriesToCompact: 5,
         maxEntriesPerRun: 20,
         ceilingBytes: 1,
-      } as InternalCompactOptions);
-    });
+      } as InternalCompactOptions),
+    );
+    expect(res.skippedReason).toBe("deferred");
+    expect(res.deferral).toMatchObject({ dimension: "bytes", snapshotRows: 20 });
+    expect(res.deferral!.snapshotBytes).toBeGreaterThan(1);
+    // The write-tick runner owns the one deferral signal for both gates
+    // (maintenance.test.ts), so compact() itself counts nothing.
     const snap = ctx.recorder.snapshot();
-    const deferred = snap.counters.filter((c) => c.name === "db.compaction.deferred_total");
-    expect(deferred).toEqual([
-      {
-        name: "db.compaction.deferred_total",
-        value: 1,
-        labels: { collection: COLL, dimension: "bytes" },
-      },
-    ]);
+    expect(snap.counters.filter((c) => c.name.startsWith("db.compaction.deferred"))).toEqual([]);
   });
 
   test("both ceilings undefined rebuild an arbitrarily large snapshot (unbounded reconcile)", async () => {
