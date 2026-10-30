@@ -515,8 +515,15 @@ export class LocalFsStorage implements Storage {
       ]);
       return a.dev === b.dev && a.ino === b.ino ? key : null;
     } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") {
-        return null; // either side vanished, or the fold names no file
+      // Either side vanished, or the fold names no file: ENOENT, or ENOTDIR
+      // when the folded path runs through a key's file (`Notes/todo` beside
+      // the key `notes` on a case-sensitive filesystem), or ENAMETOOLONG
+      // should a fold ever lengthen a name. None is an alias.
+      if (
+        isErrnoException(error) &&
+        (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "ENAMETOOLONG")
+      ) {
+        return null;
       }
       throw new BaerlyError(
         "InvalidResponse",
