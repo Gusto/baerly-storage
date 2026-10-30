@@ -30,12 +30,26 @@ type PatchId =
   | { readonly kind: "absent" }
   | { readonly kind: "undefined" }
   | { readonly kind: "same" }
+  | { readonly kind: "normalized"; readonly form: "NFC" | "NFD" | "NFKC" | "NFKD" }
   | { readonly kind: "value"; readonly value: unknown };
+
+/**
+ * Row ids, biased toward ids with a canonically- or compatibility-
+ * equivalent spelling so the `normalized` patch kind often produces an
+ * `_id` that looks equal but is not `===`.
+ */
+const rowIdArb: fc.Arbitrary<string> = fc.oneof(
+  validDocIdArb,
+  fc.constantFrom("caf\u00e9", "cafe\u0301", "\u212b", "\u00c5", "\ufb01le"),
+);
 
 const patchIdArb: fc.Arbitrary<PatchId> = fc.oneof(
   fc.constant({ kind: "absent" } as const),
   fc.constant({ kind: "undefined" } as const),
   fc.constant({ kind: "same" } as const),
+  fc
+    .constantFrom("NFC", "NFD", "NFKC", "NFKD")
+    .map((form) => ({ kind: "normalized", form }) as const),
   validDocIdArb.map((value) => ({ kind: "value", value }) as const),
   fc
     .oneof(
@@ -52,17 +66,38 @@ const patchIdArb: fc.Arbitrary<PatchId> = fc.oneof(
 );
 
 /** Frozen reference: the identity rule as the owner ruling states it. */
-const referenceAccepts = (rowId: string, patchId: PatchId): boolean =>
-  patchId.kind !== "value" || patchId.value === rowId;
+const referenceAccepts = (rowId: string, patchId: PatchId): boolean => {
+  if (patchId.kind === "value") {
+    return patchId.value === rowId;
+  }
+  if (patchId.kind === "normalized") {
+    return rowId.normalize(patchId.form) === rowId;
+  }
+  return true;
+};
 
-const buildPatch = (rowId: string, patchId: PatchId): DocumentData => {
+/**
+ * A nested `_id` is an ordinary field, never the row's identity, so any
+ * value under `sub._id` is accepted and stored as given.
+ */
+const nestedIdArb: fc.Arbitrary<unknown> = fc.option(
+  fc.oneof(validDocIdArb, fc.constant(null), fc.integer()),
+  { nil: undefined },
+);
+
+const buildPatch = (rowId: string, patchId: PatchId, nestedId: unknown): DocumentData => {
   const patch: Record<string, unknown> = { touched: true };
   if (patchId.kind === "undefined") {
     patch["_id"] = undefined;
   } else if (patchId.kind === "same") {
     patch["_id"] = rowId;
+  } else if (patchId.kind === "normalized") {
+    patch["_id"] = rowId.normalize(patchId.form);
   } else if (patchId.kind === "value") {
     patch["_id"] = patchId.value;
+  }
+  if (nestedId !== undefined) {
+    patch["sub"] = { _id: nestedId };
   }
   return patch as DocumentData;
 };
@@ -76,9 +111,14 @@ const countLogEntries = async (storage: MemoryStorage): Promise<number> => {
 };
 
 describe("Query.update — _id identity property", () => {
-  fcTest.prop({ rowId: validDocIdArb, patchId: patchIdArb, byPredicate: fc.boolean() })(
+  fcTest.prop({
+    rowId: rowIdArb,
+    patchId: patchIdArb,
+    nestedId: nestedIdArb,
+    byPredicate: fc.boolean(),
+  })(
     "accepts a patch iff its _id is absent, undefined, or the row's own; the row never re-keys",
-    async ({ rowId, patchId, byPredicate }) => {
+    async ({ rowId, patchId, nestedId, byPredicate }) => {
       const storage = new MemoryStorage();
       await createCurrentJson(
         storage,
@@ -97,12 +137,19 @@ describe("Query.update — _id identity property", () => {
       const t = db.collection(COLL) as Collection<DocumentData>;
       await t.insert({ _id: rowId, k: 1 });
 
-      const patch = buildPatch(rowId, patchId);
+      const patch = buildPatch(rowId, patchId, nestedId);
       const run = byPredicate ? t.where({ k: 1 }).update(patch) : t.update(rowId, patch);
       if (referenceAccepts(rowId, patchId)) {
         await expect(run).resolves.toEqual({ modified: 1 });
         await expect(countLogEntries(storage)).resolves.toBe(2);
-        await expect(t.where({}).all()).resolves.toEqual([{ _id: rowId, k: 1, touched: true }]);
+        await expect(t.where({}).all()).resolves.toEqual([
+          {
+            _id: rowId,
+            k: 1,
+            touched: true,
+            ...(nestedId === undefined ? {} : { sub: { _id: nestedId } }),
+          },
+        ]);
       } else {
         await expect(run).rejects.toMatchObject({ code: "InvalidConfig" });
         await expect(countLogEntries(storage)).resolves.toBe(1);
