@@ -81,8 +81,12 @@ baerly admin usage \
 write-tick fold floor). The CLI cannot know which host serves the
 collection, so read the line for yours, or pass `--profile=<name>`. It
 honours `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from its own environment, so
-run it with the value your host uses. Exit code is 0 whatever the
-verdict.
+run it with the value your host uses, and reports `maintenance` as
+`enabled`, `disabled`, or `invalid-config` from
+`BAERLY_MAINTENANCE_DISABLE`. A maintenance env value the adapters would
+reject is a stderr warning, not a failure, and a rejected
+`MAX_FOLD_BYTES` falls back to the profile default. Exit code is 0
+whatever the verdict.
 `baerly admin usage` reports writes/min against the M-size ceiling: the
 ~30 writes/min/collection workload line.
 

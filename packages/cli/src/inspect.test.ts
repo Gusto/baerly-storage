@@ -384,6 +384,93 @@ describe("baerly inspect", () => {
       }
     });
 
+    /** Run `inspect --json` and return exit code, parsed result, and stderr. */
+    const inspectJson = async (): Promise<{
+      exitCode: number;
+      result: { fold_gate: FoldGate; maintenance: string };
+      stderr: string;
+    }> => {
+      const stdout = captureStream(process.stdout);
+      const stderr = captureStream(process.stderr);
+      let exitCode: number;
+      try {
+        exitCode = await runInspect([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--json",
+        ]);
+      } finally {
+        stdout.restore();
+        stderr.restore();
+      }
+      const out = stdout.captured.join("").trim();
+      return {
+        exitCode,
+        result: out === "" ? ({} as never) : JSON.parse(out).result,
+        stderr: stderr.captured.join(""),
+      };
+    };
+
+    // `inspect` is a read-only report: a maintenance env var the adapters
+    // would reject is something to tell the operator, not a reason to fail.
+    test.each([
+      { name: "BAERLY_MAINTENANCE_DISABLE", value: "off" },
+      { name: "BAERLY_MAINTENANCE_MAX_FOLD_BYTES", value: "0" },
+    ])("an invalid $name=$value warns on stderr and still reports (exit 0)", async (env) => {
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
+      vi.stubEnv(env.name, env.value);
+      const { exitCode, result, stderr } = await inspectJson();
+      expect(exitCode).toBe(0);
+      // Falls back to the profile default `C`.
+      expect(result.fold_gate["cf-free"]).toMatchObject({
+        verdict: "open",
+        ceiling_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes,
+      });
+      expect(stderr).toContain(env.name);
+    });
+
+    test("an invalid BAERLY_MAINTENANCE_DISABLE reports maintenance as invalid-config", async () => {
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
+      vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "off");
+      const { result } = await inspectJson();
+      expect(result.maintenance).toBe("invalid-config");
+    });
+
+    test("an invalid MAX_FOLD_BYTES does not mask a valid DISABLE", async () => {
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
+      vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", "-5");
+      vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "1");
+      const { exitCode, result } = await inspectJson();
+      expect(exitCode).toBe(0);
+      expect(result.maintenance).toBe("disabled");
+    });
+
+    test("BAERLY_MAINTENANCE_DISABLE=1 reports maintenance as disabled in JSON and text", async () => {
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
+      const enabled = await inspectJson();
+      expect(enabled.result.maintenance).toBe("enabled");
+      expect(enabled.stderr).toBe("");
+
+      vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "1");
+      const disabled = await inspectJson();
+      expect(disabled.result.maintenance).toBe("disabled");
+
+      const stdout = captureStream(process.stdout);
+      try {
+        await runInspect([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+        ]);
+      } finally {
+        stdout.restore();
+      }
+      expect(stdout.captured.join("")).toMatch(/maintenance: +disabled/);
+    });
+
     test("retention_stalled: a closed gate with a foldable-length live tail", async () => {
       await provisionAt(
         { snapshot_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes + 1, snapshot_rows: 0 },
