@@ -17,6 +17,8 @@ import type { AddressInfo } from "node:net";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
+  MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_PROFILE_NODE,
   MemoryStorage,
   NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS,
   NODE_MAINTENANCE_GC_INTERVAL,
@@ -32,6 +34,7 @@ import {
 import { configureObservability } from "@baerly/server/observability";
 import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { createApp, type CreateAppOptions } from "./app.ts";
 import { createFetchHandler, nodeMaintenanceDispatch, resolveDefaultSink } from "./server.ts";
 
@@ -563,6 +566,58 @@ describe("createFetchHandler", () => {
       }),
     );
     expect(res.status).toBe(201);
+  });
+
+  test("a deferring write tick emits the fold_deferred log record through LogTape", async () => {
+    // Node runs maintenance inline, so the tick finishes before the response
+    // resolves. The structured record is what an operator alerts on; pin that
+    // the adapter binds the kernel's `warn` sink to LogTape.
+    const records: LogRecord[] = [];
+    const sink: Sink = (r) => records.push(r);
+    await configureObservability({ level: "info", sink });
+    const storage = new MemoryStorage();
+    const key = "app/t/tenant/acme/manifests/c/current.json";
+    // Close the node rows arm on the stored snapshot, with a foldable-length
+    // tail and a mean that trips the ratio gate.
+    await createCurrentJson(
+      storage,
+      key,
+      logStateCurrentJson({
+        snapshot_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows,
+        mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+      }),
+    );
+    await seedLogEntries(storage, "app/t/tenant/acme/manifests/c", 0, 60);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const handler = createFetchHandler({
+        app: "t",
+        storage,
+        verifier: okVerifier,
+        observability: { level: "info", sink },
+      });
+      const res = await handler(
+        new Request("http://x/v1/c/c", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { _id: "trigger", n: 1 } }),
+        }),
+      );
+      expect(res.status).toBe(201);
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const deferLogs = records.filter((r) => r.category.join(".") === "baerly.maintenance");
+    expect(deferLogs).toHaveLength(1);
+    expect(deferLogs[0]!.properties).toMatchObject({
+      collection: "c",
+      dimension: "rows",
+      gate: "pre-fold",
+      ceiling_bytes: MAINTENANCE_PROFILE_NODE.maxFoldBytes,
+      ceiling_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows,
+      log_seq_start: 0,
+    });
   });
 
   test("non-/v1/* paths fall through to the kernel 404 envelope", async () => {
