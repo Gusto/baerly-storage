@@ -425,6 +425,11 @@ export const runHttpConformanceCascade = (opts: {
           expect(res.status).toBe(400);
           const env = (await res.json()) as ErrorEnvelope;
           expect(env.error?.code).toBe("InvalidConfig");
+          // The rejection is caller input, so its message and fix hint
+          // reach the caller instead of the scrubbed storage-config text.
+          expect(env.error?.message).toContain("_id");
+          expect(env.error?.message).not.toBe("invalid server configuration");
+          expect(env.error?.resolution).toContain("`_id`");
         }
         const getRes = await doFetch(authedRequest("GET", `/v1/c/${table}/${id}`));
         expect(getRes.status).toBe(200);

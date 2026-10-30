@@ -52,6 +52,7 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
+import { markCallerFacing } from "./caller-facing-error.ts";
 import { assertDocId } from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
@@ -490,13 +491,15 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
   }
   const patchId = (patch as DocumentData)["_id"];
   if (patchId !== undefined && patchId !== docId) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `Query.update: a patch cannot change _id (row ${JSON.stringify(docId)}); omit _id from the patch`,
-      undefined,
-      undefined,
-      undefined,
-      PATCH_ID_RESOLUTION,
+    throw markCallerFacing(
+      new BaerlyError(
+        "InvalidConfig",
+        `Query.update: a patch cannot change _id (row ${JSON.stringify(docId)}); omit _id from the patch`,
+        undefined,
+        undefined,
+        undefined,
+        PATCH_ID_RESOLUTION,
+      ),
     );
   }
 };
