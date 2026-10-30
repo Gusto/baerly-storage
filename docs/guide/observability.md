@@ -61,7 +61,7 @@ verbosity.
 | `status >= 500` or `outcome:"error"`          | User-visible API failure                                     | Inspect `error.code`, storage status, and the request path.                                                                                                                                                                                                                                                               |
 | `outcome:"conflict"` rate rising              | HTTP 409; the only reachable 409 is a duplicate-`_id` insert | App-level id collision (clients reusing `_id`s or double-submitting POSTs), not storage contention — prefer letting the server mint `_id` (omit it on insert). Write contention is absorbed by the forward-probe and surfaces on `db.r2.put.412_total`, not here.                                                         |
 | `db.r2.put.412_total` sustained               | Conditional-write (412) losses on log creates                | Check writes/min for the hot collection; retry at app edge if bursty, graduate if sustained. This is the storage-level conditional-write contention meter.                                                                                                                                                                |
-| `db.compaction.deferred_total` or deferral `console.warn` | Snapshot exceeded byte or row fold ceiling                   | The counter carries a `dimension` label at the source, but the canonical JSON line flattens it. The rate-limited `console.warn` (not emitted on every defer, and the primary Cloudflare first-response signal) names bytes-vs-rows. Then read [graduation.md](../about/graduation.md). Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. |
+| `db.compaction.deferred_bytes_total` / `deferred_rows_total`, or a `fold_deferred` log record | Snapshot exceeded the byte or row fold ceiling; compaction and log retention have stopped | The counter name carries the dimension (the canonical line drops labels). On Cloudflare the fold runs after the canonical line is written, so the `fold_deferred` record (category `baerly.maintenance`, rate-limited) is the signal there; it names the arm, `C`, `E`, and `log_seq_start`. Run `baerly inspect` for `fold_gate`. Bytes: switch to `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Workers Paid, or raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. Rows: no env var applies; switch profile on Cloudflare, split or graduate on Node. Then read [graduation.md](../about/graduation.md). |
 | `db.compaction.below_min_total` sustained on a scheduled loop | `compact()` skipped: a non-empty live tail sat under `minEntriesToCompact` (and no fold budget checkpoint). Idle (`available === 0`) does not increment this counter. | Sustained rate means every read replays those unfolded entries at one GET apiece. Raise the cron cadence, lower the threshold, or fold more per pass. |
 | `db.compaction.cas_lost_total` sustained      | Duplicate fold compute under contention                      | Watch object count and GC drain; sustained growth is a graduation signal.                                                                                                                                                                                                                                                 |
 | Class A ops above projection                  | Cost regression or hot write path                            | Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` and compare to [cost-model.md](../about/cost-model.md).                                                                                                                                                                                                 |
@@ -121,10 +121,10 @@ Copyable local filters for JSON logs:
 # User-visible failures.
 wrangler tail --format=json | jq 'select(.outcome == "error" or (.status >= 500))'
 
-# Deferred folds: snapshot exceeded byte or row ceiling. The canonical
-# line flattens the counter and drops its dimension label; the
-# rate-limited console.warn (not on every defer) names bytes-vs-rows.
-wrangler tail --format=json | jq 'select(."db.compaction.deferred_total" > 0)'
+# Deferred folds: snapshot exceeded byte or row ceiling. On Workers the
+# fold runs after the canonical line is written, so match the
+# rate-limited structured record rather than the counter.
+wrangler tail --format=json | jq 'select(.message == "fold_deferred")'
 
 # Duplicate fold compute under contention.
 wrangler tail --format=json | jq 'select(."db.compaction.cas_lost_total" > 0)'

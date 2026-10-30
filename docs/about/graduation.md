@@ -23,10 +23,13 @@ in one pass. Graduation starts when that rebuild no longer fits the
 host's CPU, subrequest, or memory budget.
 
 Watch `snapshot_bytes` and `snapshot_rows`. `baerly inspect` reports
-them, and they also live on `current.json`. When write-tick maintenance
-defers because either ceiling trips, it bumps
-`db.compaction.deferred_total` and may emit a rate-limited
-`console.warn` naming the dimension.
+them, and they also live on `current.json`; its `fold_gate` field
+compares them against each host profile's ceilings for you. When
+write-tick maintenance defers because either ceiling trips, it bumps
+`db.compaction.deferred_total` plus `db.compaction.deferred_bytes_total`
+or `db.compaction.deferred_rows_total`, and emits a rate-limited
+`fold_deferred` warning naming the dimension, both ceilings, and the
+remedy.
 
 Two of the triggers below are cost lines rather than capacity ones: an
 advisory at sustained ~100 writes/min account-wide, surfaced by
@@ -61,8 +64,8 @@ baerly admin usage \
 
 | Symptom | Check | Threshold | Action |
 | --- | --- | --- | --- |
-| `db.compaction.deferred_total` or defer `console.warn` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `snapshot_bytes` / `snapshot_rows` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` (cf-free: `C = 512 KB`, `E = 2048`) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to 32,768. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
-| Same defer on Node | Warning text plus `snapshot_bytes` / `snapshot_rows` from `baerly inspect` | Node ships `C = 32 MiB`, `E = 65,536`; check the host has RAM for old snapshot + new snapshot + tail | If bytes tripped, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above 32 MiB, sized by `C ≈ heap / 10`; expect one inline write-latency spike. If rows tripped, Node already has the largest shipped `E` and there is no env override — split or graduate the collection. |
+| `fold_deferred` warning or `db.compaction.deferred_total` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `fold_gate (cf-free): closed:bytes` or `closed:rows` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` (cf-free: `C = 512 KB`, `E = 2048`) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to 32,768. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
+| Same defer on Node | Warning text plus `fold_gate (node)` from `baerly inspect` | Node ships `C = 32 MiB`, `E = 65,536`; check the host has RAM for old snapshot + new snapshot + tail | If bytes tripped, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above 32 MiB, sized by `C ≈ heap / 10`; expect one inline write-latency spike. If rows tripped, Node already has the largest shipped `E` and there is no env override — split or graduate the collection. |
 | GC-managed object count grows while writes are steady | Prefix inventory + logs + `admin fsck` | Stale-log/orphan-snapshot sweep throughput no longer keeps up with their production | Reduce contention, split the hot collection, or graduate the workload. Growth under `content/` is diagnosed separately: stop legacy writers, then dispose of the inert prefix manually. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
 | Tenant data keeps growing | `admin usage` / bucket inventory | >10 GB/tenant (R2 free-tier storage line; see [cost-model.md](cost-model.md)) or ~100 collections/tenant (soft fan-out guideline; see [workload-fit.md](workload-fit.md#scale-at-a-glance)) | Review graduation cost; neither line is enforced by the protocol. |
@@ -71,7 +74,15 @@ baerly admin usage \
 ### How to read the output
 
 `baerly inspect` reports the current snapshot key, `live_log_tail`,
-`materialised_rows`, `snapshot_bytes`, and `snapshot_rows`.
+`materialised_rows`, `snapshot_bytes`, and `snapshot_rows`, plus one
+`fold_gate` verdict per host profile (`cf-free`, `cf-paid`, `node`):
+`open`, `closed:bytes`, or `closed:rows`, with that profile's `C` and
+`E` and a `retention_stalled` flag (gate closed and the live tail at the
+write-tick fold floor). The CLI cannot know which host serves the
+collection, so read the line for yours, or pass `--profile=<name>`. It
+honours `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from its own environment, so
+run it with the value your host uses. Exit code is 0 whatever the
+verdict.
 `baerly admin usage` reports writes/min against the M-size ceiling: the
 ~30 writes/min/collection workload line.
 
@@ -79,7 +90,7 @@ For compaction, compare the **snapshot**, not the tail:
 
 - `snapshot_bytes` against `C`;
 - `snapshot_rows + maxFoldEntriesPerPass` against `E`; and
-- `db.compaction.deferred_total` plus the rate-limited `console.warn`
+- the `fold_deferred` warning and `db.compaction.deferred_*` counters
   for the portable operator signal.
 
 `C` and `E` are not one shared pair of numbers: each host profile ships
@@ -88,9 +99,13 @@ host you are on in
 [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds) before
 comparing.
 
-Some metric sinks preserve the byte-vs-row label on
-`db.compaction.deferred_total`; the warning text always names it. A
-large tail alone is not a graduation signal because it drains in slices.
+The canonical line drops metric labels, so the dimension rides on the
+metric name (`deferred_bytes_total` / `deferred_rows_total`); the
+warning always names it. `fold_gate` reads only the stored snapshot, so
+a collection whose stored snapshot is just under `C` but whose next
+rebuild lands over it still reads `open`; the `fold_deferred` warning
+with `gate: "rebuild"` is that case's signal. A large tail alone is not
+a graduation signal because it drains in slices.
 Compare the snapshot against
 [the auto-maintained ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling)
 and [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds).
@@ -100,10 +115,15 @@ and [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds).
 A persistently deferring fold means different things on different hosts.
 Disambiguate before you act.
 
-### The symptom: erosion, not a cliff
+### The symptom: a silent stall, not data loss
 
-When a collection persistently defers its fold, data is not lost. The
-symptoms are:
+When a collection persistently defers its fold, no data is lost and
+writes keep succeeding, but compaction has stopped. Snapshot bytes and
+rows never shrink across folds, so once a ceiling trips the fold does not
+run again on that host profile. `log_seq_start` freezes, log retention
+freezes with it (it only deletes below `log_seq_start` minus a window),
+and the live tail and the bucket grow without bound. Nothing recovers on
+its own; the remedies below do. The symptoms are:
 
 - **Reads get gradually slower.** Each read replays an ever-growing log
   tail on top of the stale snapshot: N extra GETs, with N climbing by
@@ -111,10 +131,24 @@ symptoms are:
 - **The bucket grows.** Unfolded log entries accumulate as objects and
   bytes because the fold that would collapse them never completes.
 - **A warning appears.** `wrangler tail`, Vercel logs, or Node logs show
-  a `console.warn` naming the collection and the byte-vs-row dimension.
-  It is rate-limited by `current.json.last_warned_seq`, roughly once per
-  `MAINTENANCE_WARN_INTERVAL_WRITES = 1000` writes. The defer path also
-  bumps `db.compaction.deferred_total`.
+  a structured `fold_deferred` record (category `baerly.maintenance`)
+  and a human `console.warn`. Both name the collection, which arm
+  tripped, the active `C` and `E`, the frozen `log_seq_start`, and the
+  remedy for that arm. They fire on a collection's first deferral and
+  then at most once per `MAINTENANCE_WARN_INTERVAL_WRITES = 1000`
+  writes, rate-limited by `current.json.last_warned_seq`. Every defer
+  also bumps `db.compaction.deferred_total` (labels `dimension`, `gate`)
+  and `db.compaction.deferred_bytes_total` or
+  `db.compaction.deferred_rows_total`. On Cloudflare the fold runs in
+  `ctx.waitUntil` after the request's canonical line is written, so the
+  log record is the signal you will see there.
+- **It can close at either of two gates.** The usual one is the
+  pre-fold check on the stored snapshot (`gate: "pre-fold"`). The other
+  is compact()'s own check on the rebuilt snapshot (`gate: "rebuild"`):
+  the stored snapshot is still under `C` but the fold would push it
+  over. That is how bytes typically first cross `C`, and because the
+  stored figure never catches up, every ratio-tripping write repeats
+  the rebuild and defers again.
 
 ### The drain-rate safety invariant
 
@@ -146,7 +180,8 @@ Retirement runs on every maintenance pass rather than on the
 fold rate and the window is the standing residual.
 
 Neither invariant bounds live log growth behind a deferred fold, or
-inert objects under the legacy `content/` prefix.
+inert objects under the legacy `content/` prefix: retirement trails
+`log_seq_start`, which a deferred fold freezes.
 
 One thing upstream of the GC sweep can bind before sweep throughput
 does, and raising the sweep rate does not fix it:
@@ -225,9 +260,11 @@ override `C` past the profile value, size it to memory, not CPU; see
 ### 2. On serverful Node: raise the env var
 
 When the warning names bytes, this is not a tier graduation. A Node host
-has no per-request CPU wall; the ceiling is host RAM, and the node
-profile already ships `C = 32 MiB` — the top of the measured grid, not
-a measured wall, so a host with headroom can go further. Raise
+has no per-request CPU wall, so the byte ceiling is host RAM, and the
+node profile already ships `C = 32 MiB` — the top of the measured grid,
+not a measured wall, so a host with headroom can go further. Rows are a
+separate ceiling that RAM does not move: `E = 65,536`, which a
+collection of documents under ~512 B reaches before it reaches `C`. Raise
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, scaling by `C ≈ heap / 10`
 ([where that rule comes from](../spec/scale-ceilings.md#what-is-shipped-vs-estimated));
 the fold completes on the next write, with one inline
