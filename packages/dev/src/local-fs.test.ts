@@ -278,6 +278,19 @@ describe("LocalFsStorage — impl-specific", () => {
     }
   });
 
+  test.skipIf(CASE_INSENSITIVE_FS)(
+    "a stray beside the key it folds to is a separate file and is skipped",
+    async () => {
+      // Case-sensitive only: `README.md` and the key `readme.md` are two
+      // files, so the stray's fold names a file but not the same inode.
+      await s.put("readme.md", utf8("key"));
+      writeFileSync(join(root, "README.md"), "dropped in by hand");
+      const listed = await collect(s.list(""));
+      expect(listed.map((e) => e.key)).toEqual(["readme.md"]);
+      expect(fromBytes((await s.get("readme.md"))!.body)).toBe("key");
+    },
+  );
+
   test.skipIf(!CASE_INSENSITIVE_FS)(
     "a stray that APFS full-case-folds onto a key is reported, not hidden",
     async () => {
@@ -692,6 +705,21 @@ describe("LocalFsStorage — impl-specific", () => {
       );
       expect(err?.code).toBe("InvalidConfig");
       expect(err?.message).toContain("app/x/index/i/.hidden.json");
+      expect(existsSync(join(root, MARKER))).toBe(false);
+    });
+
+    test("a legacy nested file named like the format marker is refused", async () => {
+      // Only the root marker is the adapter's; the old layout stored a key
+      // segment named `.baerly-localfs.json` verbatim, so a nested one is
+      // data the encoding would hide.
+      mkdirSync(join(root, "app", "x"), { recursive: true });
+      writeFileSync(join(root, "app", "x", "current.json"), "{}");
+      writeFileSync(join(root, "app", "x", MARKER), "{}");
+      const legacy = new LocalFsStorage({ root });
+      await expect(collect(legacy.list(""))).rejects.toMatchObject({
+        code: "InvalidConfig",
+        message: expect.stringContaining(`app/x/${MARKER}`),
+      });
       expect(existsSync(join(root, MARKER))).toBe(false);
     });
 
