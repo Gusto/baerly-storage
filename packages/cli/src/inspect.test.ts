@@ -337,6 +337,26 @@ describe("baerly inspect", () => {
       expect(gate.node?.verdict).toBe("open");
     });
 
+    // The runner's projection is `snapshot_bytes <= C` and
+    // `snapshot_rows + maxFoldEntriesPerPass <= E`, so a snapshot sitting
+    // exactly on either ceiling still folds.
+    test("exactly C stored bytes is still open", async () => {
+      const free = MAINTENANCE_PROFILE_CF_FREE;
+      await provisionAt({ snapshot_bytes: free.maxFoldBytes, snapshot_rows: 0 });
+      const gate = await inspectGate("--profile=cf-free");
+      expect(gate["cf-free"]?.verdict).toBe("open");
+    });
+
+    test("exactly E - maxFoldEntriesPerPass stored rows is still open", async () => {
+      const free = MAINTENANCE_PROFILE_CF_FREE;
+      await provisionAt({
+        snapshot_bytes: 0,
+        snapshot_rows: free.maxFoldRows - free.maxFoldEntriesPerPass,
+      });
+      const gate = await inspectGate("--profile=cf-free");
+      expect(gate["cf-free"]?.verdict).toBe("open");
+    });
+
     test("the bytes arm closes past C; --profile narrows the report to one host", async () => {
       await provisionAt({
         snapshot_bytes: MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes + 1,
