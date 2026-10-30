@@ -58,9 +58,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 419277,
-      "gz": 125982,
-      "minGz": 39701,
+      "raw": 422403,
+      "gz": 127295,
+      "minGz": 40108,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {

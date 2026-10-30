@@ -137,6 +137,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
+   * @throws BaerlyError{code: "InvalidConfig"} — the patch's
+   *         top-level `_id` is present and is not the row's `_id`
+   *         (`null` included). A patch cannot re-key or strip a row;
+   *         omit `_id`, or pass the row's own `_id`.
    *
    * @example
    * ```ts
@@ -418,6 +422,11 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         caller that needs to resume must re-read.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
+   * @throws BaerlyError{code: "InvalidConfig"} — the patch's
+   *         top-level `_id` is present and is not a matched row's
+   *         `_id` (`null` included). Checked per row before that row
+   *         commits, so rows earlier in the batch may already be
+   *         applied.
    *
    * @example
    * ```ts

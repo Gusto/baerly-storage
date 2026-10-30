@@ -36,6 +36,7 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
+import { seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 
 const APP = "test";
@@ -240,6 +241,166 @@ describe("Query.update", () => {
       expect(entry.before).toBeUndefined();
       expect(entry.key_old).toBeUndefined();
     }
+  });
+});
+
+describe("Query.update — _id identity", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+  });
+
+  const tailHint = async (): Promise<number> => {
+    const raw = (await storage.get(currentJsonKey()))!;
+    return (JSON.parse(new TextDecoder().decode(raw.body)) as CurrentJson).tail_hint;
+  };
+
+  const logSeqs = async (): Promise<number[]> => {
+    const seqs: number[] = [];
+    for await (const entry of storage.list(`app/${APP}/tenant/${TENANT}/manifests/${COLL}/log/`)) {
+      seqs.push(Number(/\/log\/(\d+)\.json$/.exec(entry.key)![1]));
+    }
+    return seqs.toSorted((a, b) => a - b);
+  };
+
+  test("a patch that changes _id is rejected and cannot re-key or duplicate the row", async () => {
+    const t = db.collection(COLL) as Collection<TicketDoc>;
+    await t.insert({ _id: "a", title: "x", status: "open" });
+
+    await expect(t.update("a", { _id: "b" })).rejects.toMatchObject({ code: "InvalidConfig" });
+    await expect(logSeqs()).resolves.toEqual([0]);
+    await expect(t.get("a")).resolves.toEqual({ _id: "a", title: "x", status: "open" });
+    await expect(t.get("b")).resolves.toBeUndefined();
+
+    // The next ordinary update still commits under the row's own id, so
+    // the collection keeps exactly one row.
+    await t.update("a", { title: "y" });
+    const rows = await t.where({}).all();
+    expect(rows).toEqual([{ _id: "a", title: "y", status: "open" }]);
+    await expect(readLogEntry(storage, 1)).resolves.toMatchObject({ doc_id: "a" });
+  });
+
+  test("a patch with _id: null is rejected and a predicate delete still removes the row", async () => {
+    const t = db.collection(COLL) as Collection<DocumentData>;
+    await t.insert({ _id: "q2", k: 9 });
+
+    await expect(t.update("q2", { _id: null } as unknown as DocumentData)).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+    await expect(t.get("q2")).resolves.toEqual({ _id: "q2", k: 9 });
+
+    await expect(t.where({ k: 9 }).delete()).resolves.toEqual({ deleted: 1 });
+    await expect(readLogEntry(storage, 1)).resolves.toMatchObject({ doc_id: "q2" });
+    await expect(t.where({}).all()).resolves.toEqual([]);
+  });
+
+  test("a non-string patch _id is rejected", async () => {
+    const t = db.collection(COLL) as Collection<DocumentData>;
+    await t.insert({ _id: "n", k: 1 });
+    for (const bad of [42, true, {}, [], -0, Number.NaN]) {
+      await expect(t.update("n", { _id: bad } as unknown as DocumentData)).rejects.toMatchObject({
+        code: "InvalidConfig",
+      });
+    }
+    await expect(logSeqs()).resolves.toEqual([0]);
+  });
+
+  test("a patch whose _id equals the row's id is accepted", async () => {
+    const t = db.collection(COLL) as Collection<TicketDoc>;
+    await t.insert({ _id: "same", title: "x", status: "open" });
+    // A full-document round-trip patch carries the row's own `_id`.
+    const row = (await t.get("same"))!;
+    await expect(t.update("same", { ...row, title: "y" })).resolves.toEqual({ modified: 1 });
+    await expect(t.get("same")).resolves.toEqual({ _id: "same", title: "y", status: "open" });
+  });
+
+  test("a patch with _id: undefined treats _id as absent", async () => {
+    const t = db.collection(COLL) as Collection<TicketDoc>;
+    await t.insert({ _id: "u", title: "x", status: "open" });
+    await expect(
+      t.update("u", { _id: undefined, title: "y" } as unknown as Partial<TicketDoc>),
+    ).resolves.toEqual({ modified: 1 });
+    await expect(t.get("u")).resolves.toEqual({ _id: "u", title: "y", status: "open" });
+  });
+
+  test("a predicate update that names a foreign _id commits no row", async () => {
+    const t = db.collection(COLL) as Collection<TicketDoc>;
+    await t.insert({ _id: "p1", title: "1", status: "open" });
+    await t.insert({ _id: "p2", title: "2", status: "open" });
+    const before = await tailHint();
+
+    await expect(t.where({ status: "open" }).update({ _id: "other" })).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+    await expect(tailHint()).resolves.toBe(before);
+    await expect(logSeqs()).resolves.toEqual([0, 1]);
+    await expect(t.where({ status: "open" }).all()).resolves.toHaveLength(2);
+  });
+
+  test("the identity check runs before schema validation", async () => {
+    let validated = 0;
+    const schemaDb = Db.create({
+      storage,
+      app: APP,
+      tenant: TENANT,
+      config: {
+        collections: {
+          [COLL]: {
+            schema: {
+              "~standard": {
+                version: 1,
+                vendor: "test",
+                validate: (value: unknown) => {
+                  validated++;
+                  return { value };
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const t = schemaDb.collection(COLL) as Collection<TicketDoc>;
+    await t.insert({ _id: "s", title: "x", status: "open" });
+    validated = 0;
+    await expect(t.update("s", { _id: "z" })).rejects.toMatchObject({ code: "InvalidConfig" });
+    expect(validated).toBe(0);
+  });
+});
+
+describe("stored rows without a string _id", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+    // A stored `I` whose post-image carries no `_id` — the shape an old
+    // `update(id, { _id: null })` left behind.
+    await seedLogEntry(storage, `app/${APP}/tenant/${TENANT}/manifests/${COLL}`, 0, {
+      collection: COLL,
+      doc_id: "q2",
+      after: { k: 9 },
+    });
+  });
+
+  test("a predicate update throws InvalidResponse instead of committing to doc_id 'undefined'", async () => {
+    const t = db.collection(COLL) as Collection<DocumentData>;
+    await expect(t.where({ k: 9 }).update({ m: 1 })).rejects.toMatchObject({
+      code: "InvalidResponse",
+    });
+    await expect(storage.get(logKey(1))).resolves.toBeNull();
+  });
+
+  test("a predicate delete throws InvalidResponse instead of tombstoning doc_id 'undefined'", async () => {
+    const t = db.collection(COLL) as Collection<DocumentData>;
+    await expect(t.where({ k: 9 }).delete()).rejects.toMatchObject({ code: "InvalidResponse" });
+    await expect(storage.get(logKey(1))).resolves.toBeNull();
   });
 });
 
