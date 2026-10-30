@@ -15,8 +15,16 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  CURRENT_JSON_SCHEMA_VERSION,
+  createCurrentJson,
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
+  MAINTENANCE_PROFILE_NODE,
+  type Storage,
+  WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+} from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runInspect } from "./inspect.ts";
@@ -232,5 +240,178 @@ describe("baerly inspect", () => {
     }
     expect(exitCode).toBe(1);
     expect(stderr.captured.join("")).toContain("unknown flag");
+  });
+
+  describe("fold_gate verdict", () => {
+    interface GateVerdict {
+      verdict: "open" | "closed:bytes" | "closed:rows";
+      ceiling_bytes: number;
+      ceiling_rows: number;
+      retention_stalled: boolean;
+    }
+    type FoldGate = Partial<Record<"cf-free" | "cf-paid" | "node", GateVerdict>>;
+
+    /** Provision with the stored snapshot figures the gate reads, plus `tail` live entries. */
+    const provisionAt = async (
+      figures: { snapshot_bytes: number; snapshot_rows: number },
+      tail = 0,
+    ): Promise<void> => {
+      await createCurrentJson(storage, CURRENT_JSON_KEY, {
+        schema_version: CURRENT_JSON_SCHEMA_VERSION,
+        snapshot: null,
+        tail_hint: 0,
+        log_seq_start: 0,
+        writer_fence: { epoch: 0, owner: "inspect-test", claimed_at: "" },
+        ...figures,
+      });
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
+      for (let i = 0; i < tail; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLL,
+          docId: `t-${i}`,
+          body: { _id: `t-${i}` },
+        });
+      }
+    };
+
+    const inspectGate = async (...extra: string[]): Promise<FoldGate> => {
+      const stdout = captureStream(process.stdout);
+      let exitCode: number;
+      try {
+        exitCode = await runInspect([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--json",
+          ...extra,
+        ]);
+      } finally {
+        stdout.restore();
+      }
+      // A closed gate is a report, not a failure: the command's exit-0 contract holds.
+      expect(exitCode).toBe(0);
+      return (JSON.parse(stdout.captured.join("").trim()) as { result: { fold_gate: FoldGate } })
+        .result.fold_gate;
+    };
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    test("an empty collection is open on every profile", async () => {
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
+      const gate = await inspectGate();
+      expect(gate).toEqual({
+        "cf-free": {
+          verdict: "open",
+          ceiling_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes,
+          ceiling_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
+          retention_stalled: false,
+        },
+        "cf-paid": {
+          verdict: "open",
+          ceiling_bytes: MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes,
+          ceiling_rows: MAINTENANCE_PROFILE_CF_PAID.maxFoldRows,
+          retention_stalled: false,
+        },
+        node: {
+          verdict: "open",
+          ceiling_bytes: MAINTENANCE_PROFILE_NODE.maxFoldBytes,
+          ceiling_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows,
+          retention_stalled: false,
+        },
+      });
+    });
+
+    test("the rows arm closes at E - maxFoldEntriesPerPass + 1 stored rows, per profile", async () => {
+      const free = MAINTENANCE_PROFILE_CF_FREE;
+      await provisionAt({
+        snapshot_bytes: 0,
+        snapshot_rows: free.maxFoldRows - free.maxFoldEntriesPerPass + 1,
+      });
+      const gate = await inspectGate();
+      expect(gate["cf-free"]?.verdict).toBe("closed:rows");
+      expect(gate["cf-paid"]?.verdict).toBe("open");
+      expect(gate.node?.verdict).toBe("open");
+    });
+
+    test("the bytes arm closes past C; --profile narrows the report to one host", async () => {
+      await provisionAt({
+        snapshot_bytes: MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes + 1,
+        snapshot_rows: 0,
+      });
+      await expect(inspectGate("--profile=cf-paid")).resolves.toEqual({
+        "cf-paid": {
+          verdict: "closed:bytes",
+          ceiling_bytes: MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes,
+          ceiling_rows: MAINTENANCE_PROFILE_CF_PAID.maxFoldRows,
+          retention_stalled: false,
+        },
+      });
+      const nodeOnly = await inspectGate("--profile=node");
+      expect(nodeOnly.node?.verdict).toBe("open");
+    });
+
+    test("BAERLY_MAINTENANCE_MAX_FOLD_BYTES in the CLI's environment overrides C", async () => {
+      await provisionAt({ snapshot_bytes: 4096, snapshot_rows: 0 });
+      vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", "4095");
+      const gate = await inspectGate();
+      for (const profile of ["cf-free", "cf-paid", "node"] as const) {
+        expect(gate[profile]?.verdict).toBe("closed:bytes");
+        expect(gate[profile]?.ceiling_bytes).toBe(4095);
+      }
+    });
+
+    test("retention_stalled: a closed gate with a foldable-length live tail", async () => {
+      await provisionAt(
+        { snapshot_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes + 1, snapshot_rows: 0 },
+        WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+      );
+      const gate = await inspectGate();
+      expect(gate["cf-free"]).toMatchObject({ verdict: "closed:bytes", retention_stalled: true });
+      // Open gates never report a stall, however long the tail.
+      expect(gate["cf-paid"]).toMatchObject({ verdict: "open", retention_stalled: false });
+    });
+
+    test("text mode prints one verdict line per profile", async () => {
+      await provisionAt({
+        snapshot_bytes: 0,
+        snapshot_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
+      });
+      const stdout = captureStream(process.stdout);
+      try {
+        await runInspect([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+        ]);
+      } finally {
+        stdout.restore();
+      }
+      const text = stdout.captured.join("");
+      expect(text).toMatch(/fold_gate \(cf-free\): +closed:rows/);
+      expect(text).toMatch(/fold_gate \(node\): +open/);
+    });
+
+    test("an unknown --profile is rejected (exit 1)", async () => {
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
+      const stderr = captureStream(process.stderr);
+      let exitCode: number;
+      try {
+        exitCode = await runInspect([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--profile=lambda",
+        ]);
+      } finally {
+        stderr.restore();
+      }
+      expect(exitCode).toBe(1);
+    });
   });
 });

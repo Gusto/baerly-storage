@@ -7,6 +7,8 @@
  *   --tenant   Required (or via baerly.config.ts).
  *   --collection Required. Collection name.
  *   --config   Optional path to baerly.config.{js,mjs,json} for index info.
+ *   --profile  Optional host profile (cf-free | cf-paid | node) for the
+ *              fold_gate verdict. Default: report all three.
  *   --json     JSON envelope.
  *
  * Reports, per-collection:
@@ -16,6 +18,17 @@
  *   - snapshot key (or null).
  *   - snapshot_bytes / snapshot_rows (the fold-ceiling inputs C / E
  *     are compared against; see graduation.md).
+ *   - fold_gate, per host profile: `open`, `closed:bytes`, or
+ *     `closed:rows` — the write-tick runner's pre-fold projection
+ *     (`snapshot_bytes <= C && snapshot_rows + maxFoldEntriesPerPass <= E`)
+ *     against that profile's ceilings, with `C` overridden by
+ *     `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from the CLI's environment. Plus
+ *     `retention_stalled`: the gate is closed and the live tail has
+ *     reached the write-tick fold floor, so the tail and log retention
+ *     are frozen. The CLI cannot know the host, hence one verdict per
+ *     profile. A collection whose stored snapshot is under `C` but whose
+ *     next rebuild would exceed it reads `open` here; the runner's
+ *     `fold_deferred` warning (gate `rebuild`) is that case's signal.
  *   - writer_fence (epoch, owner, claimed_at).
  *   - materialised row count (via export/loadMaterialisedView).
  *   - per-declared-index key count (when --config supplied).
@@ -44,8 +57,18 @@
  */
 
 import { type ArgsDef } from "citty";
-import { BaerlyError, readCurrentJson, type CurrentJson, type Storage } from "@baerly/protocol";
+import {
+  BaerlyError,
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
+  MAINTENANCE_PROFILE_NODE,
+  readCurrentJson,
+  type CurrentJson,
+  type Storage,
+  WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+} from "@baerly/protocol";
 import { probeTailFrom } from "@baerly/server";
+import { type MaintenanceProfile, parseMaintenanceEnv } from "@baerly/server/maintenance";
 import { loadMaterialisedView } from "./export/index.ts";
 import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
@@ -72,8 +95,61 @@ const INSPECT_ARGS = {
       "Path to baerly.config.{js,mjs,json}; pulls declared indexes for key-count probes.",
     valueHint: "path",
   },
+  profile: {
+    type: "enum",
+    options: ["cf-free", "cf-paid", "node"],
+    required: false,
+    description:
+      "Host profile for the fold_gate verdict: cf-free | cf-paid | node. Default: all three.",
+  },
   json: JSON_ARG,
 } as const satisfies ArgsDef;
+
+/** The host profiles `BAERLY_MAINTENANCE_PROFILE` / the adapters select, keyed by name. */
+const HOST_PROFILES = {
+  "cf-free": MAINTENANCE_PROFILE_CF_FREE,
+  "cf-paid": MAINTENANCE_PROFILE_CF_PAID,
+  node: MAINTENANCE_PROFILE_NODE,
+} as const satisfies Record<string, MaintenanceProfile>;
+
+type HostProfileName = keyof typeof HOST_PROFILES;
+
+interface FoldGateVerdict {
+  verdict: "open" | "closed:bytes" | "closed:rows";
+  /** `C` for this profile, after any `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` override. */
+  ceiling_bytes: number;
+  /** `E` for this profile (no env override exists). */
+  ceiling_rows: number;
+  /** Gate closed AND the live tail has reached the write-tick fold floor. */
+  retention_stalled: boolean;
+}
+
+/**
+ * The write-tick runner's pre-fold projection, evaluated off stored
+ * figures for one profile. Bytes is checked first, matching the runner's
+ * `dimension` label.
+ */
+const foldGateVerdict = (
+  cur: CurrentJson,
+  liveLogTail: number,
+  profile: MaintenanceProfile,
+  maxFoldBytes: number | undefined,
+): FoldGateVerdict => {
+  const ceilingBytes = maxFoldBytes ?? profile.maxFoldBytes;
+  const ceilingRows = profile.maxFoldRows;
+  let verdict: FoldGateVerdict["verdict"] = "open";
+  if (cur.snapshot_bytes > ceilingBytes) {
+    verdict = "closed:bytes";
+  } else if (cur.snapshot_rows + profile.maxFoldEntriesPerPass > ceilingRows) {
+    verdict = "closed:rows";
+  }
+  return {
+    verdict,
+    ceiling_bytes: ceilingBytes,
+    ceiling_rows: ceilingRows,
+    retention_stalled: verdict !== "open" && liveLogTail >= WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
+  };
+};
 
 const countListEntries = async (
   storage: Storage,
@@ -100,6 +176,7 @@ interface InspectResult {
   snapshot: string | null;
   snapshot_bytes: number;
   snapshot_rows: number;
+  fold_gate: Partial<Record<HostProfileName, FoldGateVerdict>>;
   writer_fence: CurrentJson["writer_fence"];
   materialised_rows: number;
   indexes: { name: string; count: number }[];
@@ -119,6 +196,11 @@ const renderText = (r: InspectResult, collection: string): string => {
   lines.push(`  snapshot:            ${r.snapshot ?? "(none)"}`);
   lines.push(`  snapshot_bytes:      ${r.snapshot_bytes}`);
   lines.push(`  snapshot_rows:       ${r.snapshot_rows}`);
+  for (const [name, g] of Object.entries(r.fold_gate)) {
+    const label = `fold_gate (${name}):`.padEnd(21);
+    const stalled = g.retention_stalled ? " retention_stalled" : "";
+    lines.push(`  ${label}${g.verdict} (C=${g.ceiling_bytes} E=${g.ceiling_rows})${stalled}`);
+  }
   lines.push(
     `  writer_fence:        epoch=${r.writer_fence.epoch} owner=${JSON.stringify(r.writer_fence.owner)} claimed_at=${JSON.stringify(r.writer_fence.claimed_at)}`,
   );
@@ -213,16 +295,28 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
+    const liveLogTail = discoveredTail - log_seq_start;
+    const { maxFoldBytes } = parseMaintenanceEnv((k) => process.env[k]);
+    const profileNames: readonly HostProfileName[] =
+      args.profile === undefined
+        ? (Object.keys(HOST_PROFILES) as HostProfileName[])
+        : [args.profile as HostProfileName];
+    const foldGate: InspectResult["fold_gate"] = {};
+    for (const name of profileNames) {
+      foldGate[name] = foldGateVerdict(cur, liveLogTail, HOST_PROFILES[name], maxFoldBytes);
+    }
+
     const result: InspectResult = {
       currentJsonKey,
       schema_version: cur.schema_version,
       tail_hint: cur.tail_hint,
       discovered_tail: discoveredTail,
       log_seq_start,
-      live_log_tail: discoveredTail - log_seq_start,
+      live_log_tail: liveLogTail,
       snapshot: cur.snapshot,
       snapshot_bytes: cur.snapshot_bytes,
       snapshot_rows: cur.snapshot_rows,
+      fold_gate: foldGate,
       writer_fence: cur.writer_fence,
       materialised_rows: materialisedRows,
       indexes,
