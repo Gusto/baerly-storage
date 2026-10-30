@@ -287,6 +287,73 @@ const runDocIdBoundary = async (
   });
 };
 
+/**
+ * Byte-exact names at the `Db` level: `_id`s and collection names that
+ * differ only by case or Unicode normalization are distinct. Index markers
+ * embed the raw `_id` and the query walk decodes it from the listed key,
+ * so a backend that folds keys (local-fs on a folding filesystem, before
+ * its key escaping) returns the wrong rows and lets a stale-marker delete
+ * for one twin de-index the other.
+ */
+const runCaseAndNormalizationTwins = async (
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const NFC = "é";
+  const NFD = "é";
+  const ids = [NFC, NFD, "A", "a"];
+
+  // Indexed `_id` twins.
+  const t = freshTableName("twins");
+  await provision(storage, app, tenant, t);
+  const db = Db.create({
+    storage,
+    app,
+    tenant,
+    config: { collections: { [t]: { indexes: [{ name: "by_kind", on: "kind" }] } } },
+  });
+  const twins = db.collection(t);
+  for (const id of ids) {
+    await twins.insert({ _id: id, kind: "twin", label: `label:${id}` });
+  }
+  const sortIds = (rows: ReadonlyArray<DocumentData>): string[] =>
+    rows.map((r) => r["_id"] as string).toSorted();
+  const all = await twins.where({ kind: "twin" }).all();
+  expect(sortIds(all), "indexed where over _id twins").toEqual(ids.toSorted());
+  for (const row of all) {
+    expect(row["label"]).toBe(`label:${row["_id"] as string}`);
+  }
+  await twins.delete(NFD);
+  await twins.delete("a");
+  const survivors = await twins.where({ kind: "twin" }).all();
+  expect(sortIds(survivors), "survivors keep their index markers").toEqual([NFC, "A"].toSorted());
+  const markers: string[] = [];
+  for await (const entry of storage.list(
+    `app/${app}/tenant/${tenant}/manifests/${t}/index/by_kind/`,
+  )) {
+    markers.push(entry.key);
+  }
+  expect(markers, "one live index marker per surviving twin").toHaveLength(2);
+
+  // Collection-name twins: `Users` and `users` are separate collections.
+  const suffix = uuid().slice(0, 8);
+  const upper = `Users-${suffix}`;
+  const lower = `users-${suffix}`;
+  await provision(storage, app, tenant, upper);
+  await provision(storage, app, tenant, lower);
+  const plain = Db.create({ storage, app, tenant });
+  await plain.collection(upper).insert({ _id: "u1", who: "upper" });
+  await plain.collection(lower).insert({ _id: "u1", who: "lower" });
+  await plain.collection(lower).insert({ _id: "u2", who: "lower" });
+  await expect(plain.collection(upper).count()).resolves.toBe(1);
+  await expect(plain.collection(lower).count()).resolves.toBe(2);
+  const upperRow = await plain.collection(upper).get("u1");
+  const lowerRow = await plain.collection(lower).get("u1");
+  expect(upperRow?.["who"]).toBe("upper");
+  expect(lowerRow?.["who"]).toBe("lower");
+};
+
 /** Update contract: RFC 7386 — multiple matches, `null` strips key. */
 const runUpdateContract = async (
   db: Db,
@@ -973,6 +1040,7 @@ export const runCollectionApiCascade = async (opts: {
   // 3. Writes.
   await runInsertContract(db, opts.storage, APP, tenant);
   await runDocIdBoundary(db, opts.storage, APP, tenant);
+  await runCaseAndNormalizationTwins(opts.storage, APP, tenant);
   await runUpdateContract(db, opts.storage, APP, tenant);
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);

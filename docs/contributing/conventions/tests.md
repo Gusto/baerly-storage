@@ -107,8 +107,11 @@ The four storage adapters — `MemoryStorage`, `LocalFsStorage`, `S3HttpStorage`
 `runCollectionApiCascade` / `runCausalConsistencyCascade` drivers. `green locally ⇒ green
 in cloud` rests on memory/local-fs reproducing the minio/r2 **error codes** (the
 `error-code parity` table), **CAS semantics** (exactly-one-winner under concurrent
-create), and **validation order** (`$`-key rejection is synchronous + I/O-free; schema
-validation rejects an invalid write before any mutating I/O reaches the bucket).
+create), **byte-exact keys** (keys, `_id`s, and collection names differing only by case
+or Unicode normalization are distinct — the case `LocalFsStorage` on a folding
+filesystem would otherwise merge), and **validation order** (`$`-key rejection is
+synchronous + I/O-free; schema validation rejects an invalid write before any mutating
+I/O reaches the bucket).
 
 Run it:
 
@@ -127,6 +130,11 @@ Run it:
   lock across the whole read-compare-write, so single-process CAS (which is what the
   suite exercises) has parity with the real backends, including exactly-one-winner
   under concurrency. The gate does not claim cross-process parity for local-fs.
+- **Linux CI never folds keys.** ext4 is byte-exact, so the byte-exact-keys rows pass
+  there for any local-fs implementation. `local-fs.folding-fs.test.ts` shims
+  `node:fs/promises` with a case + NFD fold to reproduce default macOS APFS on Linux;
+  the `CASE_INSENSITIVE_FS`-gated cases in `local-fs.test.ts` run on a real folding
+  volume and only on macOS.
 - **HTTP-wire CAS parity is a known hole** (`tests/fixtures/http-conformance-cascade.ts`
   defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does
   not cover the HTTP `If-Match` round-trip.

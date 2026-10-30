@@ -28,8 +28,12 @@ export interface ConformanceOptions {
   // / R2 provide the cross-process guarantee the no-lease fold relies on.
   /**
    * When false, generated key arbitraries must yield case-insensitively
-   * distinct keys (some object stores fold case). Defaults to `true`;
-   * both in-tree impls preserve case verbatim.
+   * distinct keys (some object stores fold case), and the fixed-vector
+   * "keys differing only by case or Unicode normalization are distinct
+   * objects" case is skipped. Defaults to `true`; every in-tree adapter
+   * keeps keys byte-exact — `LocalFsStorage` included, which escapes
+   * keys on disk so a case- or normalization-folding filesystem cannot
+   * merge them.
    */
   readonly caseSensitiveKeys?: boolean;
   /** Override the default key arbitrary. Default: printable-ASCII non-slash, len 1..32. */
@@ -874,6 +878,39 @@ export function defineStorageConformanceSuite(
         // match the expected UTF-8 order, so the assertion above has teeth.
         expect(keys.toSorted()).not.toEqual(expected);
       });
+
+      // Keys are byte-exact: distinct UTF-8 byte sequences are distinct
+      // objects, including spellings that differ only by case or Unicode
+      // normalization. Index markers embed caller `_id`s and collection
+      // names raw, so a backend that folds either one silently merges rows.
+      // A filesystem-backed store on a folding filesystem (default macOS
+      // APFS) is the realistic offender; `keyArb` is too narrow to find it.
+      // @see docs/spec/storage-compatibility.md "Key namespace".
+      test.skipIf(!opts.caseSensitiveKeys)(
+        "keys differing only by case or Unicode normalization are distinct objects",
+        async () => {
+          const enc = new TextEncoder();
+          const NFC = "é"; // é, precomposed
+          const NFD = "é"; // é, e + combining acute
+          expect(NFC.normalize("NFD")).toBe(NFD); // canonically equivalent
+          const keys = [NFC, NFD, "A", "a"];
+          for (const k of keys) {
+            await s.put(k, enc.encode(`body:${k}`));
+          }
+          // UTF-8 byte order: "A" 0x41 < "a" 0x61 < "é" 0x65.. < "é" 0xC3..
+          await expectEventuallyEqual(
+            () => collect(s.list("")).then((l) => l.map((e) => e.key)),
+            ["A", "a", NFD, NFC],
+            settle,
+          );
+          const dec = new TextDecoder();
+          for (const k of keys) {
+            const got = await s.get(k);
+            expect(got, `get(${JSON.stringify(k)})`).not.toBeNull();
+            expect(dec.decode(got!.body)).toBe(`body:${k}`);
+          }
+        },
+      );
 
       // Property: list(prefix) returns lex-sorted keys-with-prefix.
       // `keyArb` is constrained to non-slash characters, so prefixes

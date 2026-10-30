@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -84,23 +85,31 @@ const CASE_INSENSITIVE_FS = ((): boolean => {
   }
 })();
 
-// LocalFsStorage-specific key arbitrary:
-//   - Lowercase only. Case-insensitive filesystems (default macOS
-//     HFS+/APFS) collapse two keys differing only in case onto the
-//     same file; the PBT would shrink to a case-collision
-//     counterexample on darwin. Linux/CI is case-sensitive but we
-//     pick the safer subset so the suite passes everywhere.
-//   - Excludes `.` and `..` (rejected as path segments by
-//     LocalFsStorage's `#pathFor` — see `local-fs.ts`).
-// `caseSensitiveKeys: true` is still accurate — under this arb every
-// generated key is already unique under case-sensitive comparison.
+// LocalFsStorage-specific key arbitrary: single-segment keys over the BMP,
+// weighted toward characters a folding filesystem would merge (case pairs,
+// NFC/NFD `é`, `Σ`/`σ`/`ς`, `K`/Kelvin) and the codec's own escape
+// characters. On a stock macOS volume this is what makes the list/startAfter
+// properties exercise the on-disk key encoding.
+//   - Excludes `/` (the suite's properties assume one segment), `\` (rejected
+//     by `#pathFor`), and a bare `.`/`..`.
+//   - BMP only, no surrogates: the suite's properties compute the expected
+//     order with `toSorted()` (UTF-16), which matches the UTF-8 byte order
+//     `list` yields only within the BMP. Supplementary-plane order is pinned
+//     by the suite's fixed "UTF-8 byte order" vector instead.
+const FOLD_PRONE = ["A", "a", "é", "e", "́", "Σ", "σ", "ς", "K", "K"];
 const LOCALFS_KEY_ARB = fc
   .string({
     minLength: 1,
     maxLength: 32,
-    unit: fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz0123456789-_".split("")),
+    unit: fc.oneof(
+      fc.constantFrom(...FOLD_PRONE, "%", "~", ".", "-", "_"),
+      fc
+        .integer({ min: 0x20, max: 0xfffd })
+        .filter((c) => c < 0xd800 || c > 0xdfff)
+        .map((c) => String.fromCharCode(c)),
+    ),
   })
-  .filter((k) => k !== "." && k !== "..");
+  .filter((k) => k !== "." && k !== ".." && !k.includes("/") && !k.includes("\\"));
 
 defineStorageConformanceSuite(
   "LocalFsStorage",
@@ -210,18 +219,58 @@ describe("LocalFsStorage — impl-specific", () => {
     }
   });
 
-  test("keys in the reserved temp namespace are rejected", async () => {
-    // `walk` skips TEMP_PREFIX so staging temps never surface as keys —
-    // which means a real key there would be writable and readable but
-    // invisible to list(), silently violating put-then-list. The namespace
-    // is reserved rather than left as a hole for `tempPathFor` alone to
-    // avoid.
-    for (const bad of [".baerly-tmp-mine", "nested/.baerly-tmp-mine", ".baerly-tmp-"]) {
-      await expect(s.put(bad, utf8("v"))).rejects.toMatchObject({ code: "InvalidConfig" });
-      await expect(s.get(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
-      await expect(s.delete(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
+  test("dot-prefixed keys are ordinary keys, including the temp and marker names", async () => {
+    // A leading `.` is escaped on disk, so no key can land on an
+    // adapter-private name (staging temps, the format marker) and none is
+    // hidden by `walk`'s dot-name skip. Put-then-list holds for all of them.
+    const keys = [
+      ".baerly-tmp-mine",
+      "nested/.baerly-tmp-mine",
+      ".baerly-localfs.json",
+      ".DS_Store",
+    ];
+    for (const k of keys) {
+      await s.put(k, utf8(k));
     }
+    const listed = await collect(s.list(""));
+    expect(listed.map((e) => e.key)).toEqual(keys.toSorted());
+    for (const k of keys) {
+      expect(fromBytes((await s.get(k))!.body)).toBe(k);
+    }
+    // The real marker is untouched by the key that shares its name.
+    expect(JSON.parse(readFileSync(join(root, ".baerly-localfs.json"), "utf8"))).toEqual({
+      key_encoding: 1,
+    });
   });
+
+  test("lone surrogates are rejected rather than aliased through U+FFFD", async () => {
+    await expect(s.put("a\uD800", utf8("v"))).rejects.toMatchObject({ code: "InvalidConfig" });
+    await expect(s.get("a\uDFFF")).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
+
+  test("a foreign file in the data directory fails list loudly", async () => {
+    await s.put("k", utf8("v"));
+    writeFileSync(join(root, "README.TXT"), "dropped in by hand");
+    await expect(collect(s.list(""))).rejects.toMatchObject({ code: "InvalidResponse" });
+  });
+
+  test.skipIf(!CASE_INSENSITIVE_FS)(
+    "keys differing only by case or Unicode normalization stay distinct on this filesystem",
+    async () => {
+      const prefix = "p/index/i/x/";
+      const ids = ["é", "é", "A", "a"];
+      for (const id of ids) {
+        await s.put(`${prefix}${id}.json`, utf8(`body:${id}`));
+      }
+      const listed = await collect(s.list(prefix));
+      expect(listed.map((e) => e.key)).toEqual(
+        ["A", "a", "é", "é"].map((id) => `${prefix}${id}.json`),
+      );
+      for (const id of ids) {
+        expect(fromBytes((await s.get(`${prefix}${id}.json`))!.body)).toBe(`body:${id}`);
+      }
+    },
+  );
 
   test("list() tolerates a key deleted mid-iteration", async () => {
     // `list` walks names, then reads each file to hash its etag. A delete
@@ -463,29 +512,42 @@ describe("LocalFsStorage — impl-specific", () => {
   });
 
   test.skipIf(!CASE_INSENSITIVE_FS)(
-    "concurrent ifMatch on case-variant keys has exactly one winner",
+    "case-variant keys are independent objects, each with its own exactly-one-winner CAS",
     async () => {
-      // The case/normalization arm. It only means anything where the
-      // filesystem folds case — on a case-sensitive one these spellings
-      // are genuinely different objects and the assertion would hold
-      // trivially — so it skips honestly rather than passing for free and
-      // looking like coverage it is not providing. The symlink arm above
-      // is what guards the same mechanism on Linux CI.
-      const seed = await s.put("alias", utf8("v0"));
+      // Only meaningful where the filesystem folds case — on a
+      // case-sensitive one these spellings are distinct files whatever the
+      // adapter does, so it skips honestly. The folding-filesystem shim in
+      // `local-fs.folding-fs.test.ts` covers the same property on Linux CI.
       const spellings = ["alias", "ALIAS", "Alias", "aLiAs"];
-      const outcomes = await Promise.allSettled(
-        spellings.flatMap((spelling) =>
-          Array.from({ length: 4 }, (_, j) =>
-            s.put(spelling, utf8(`w-${spelling}-${j}`), { ifMatch: seed.etag }),
-          ),
-        ),
+      const seeds = new Map<string, string>();
+      for (const spelling of spellings) {
+        const seeded = await s.put(spelling, utf8(`v0-${spelling}`));
+        seeds.set(spelling, seeded.etag);
+      }
+      const outcomes = await Promise.all(
+        spellings.map(async (spelling) => {
+          const settled = await Promise.allSettled(
+            Array.from({ length: 4 }, (_, j) =>
+              s.put(spelling, utf8(`w-${spelling}-${j}`), { ifMatch: seeds.get(spelling)! }),
+            ),
+          );
+          return { spelling, settled };
+        }),
       );
-      const winners = outcomes.filter((o) => o.status === "fulfilled").length;
-      const nonConflict = outcomes.filter(
-        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
-      );
-      expect(nonConflict).toEqual([]);
-      expect(winners).toBe(1);
+      for (const { spelling, settled } of outcomes) {
+        const winners = settled.filter((o) => o.status === "fulfilled").length;
+        const nonConflict = settled.filter(
+          (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+        );
+        expect({ spelling, nonConflict, winners }).toEqual({
+          spelling,
+          nonConflict: [],
+          winners: 1,
+        });
+        expect(fromBytes((await s.get(spelling))!.body)).toMatch(new RegExp(`^w-${spelling}-\\d$`));
+      }
+      const listed = await collect(s.list(""));
+      expect(listed.map((e) => e.key)).toEqual(spellings.toSorted());
     },
   );
 
@@ -521,6 +583,83 @@ describe("LocalFsStorage — impl-specific", () => {
     ]);
     expect(fromBytes((await s.get("key-a"))!.body)).toBe("a");
     expect(fromBytes((await s.get("key-b"))!.body)).toBe("b");
+  });
+
+  // --- Data directories written before keys were escaped ---
+
+  describe("legacy data directories", () => {
+    const MARKER = ".baerly-localfs.json";
+
+    test("a fresh root is stamped on first write", async () => {
+      await s.put("k", utf8("v"));
+      expect(JSON.parse(readFileSync(join(root, MARKER), "utf8"))).toEqual({ key_encoding: 1 });
+    });
+
+    test("reads of an absent root neither fail nor create it", async () => {
+      const absentRoot = join(root, "absent");
+      const absent = new LocalFsStorage({ root: absentRoot });
+      await expect(absent.get("k")).resolves.toBeNull();
+      await expect(collect(absent.list(""))).resolves.toEqual([]);
+      expect(existsSync(absentRoot)).toBe(false);
+    });
+
+    test("a legacy tree of identity-valid names is adopted and stamped", async () => {
+      const prefix = "app/a/tenant/t/manifests/users";
+      mkdirSync(join(root, prefix, "log"), { recursive: true });
+      writeFileSync(join(root, prefix, "current.json"), "{}");
+      writeFileSync(join(root, prefix, "log", "0000000000000001.json"), "{}");
+      const legacy = new LocalFsStorage({ root });
+      const listed = await collect(legacy.list(""));
+      expect(listed.map((e) => e.key)).toEqual([
+        `${prefix}/current.json`,
+        `${prefix}/log/0000000000000001.json`,
+      ]);
+      expect(JSON.parse(readFileSync(join(root, MARKER), "utf8"))).toEqual({ key_encoding: 1 });
+    });
+
+    test("a legacy tree with a name the encoding reads differently is refused", async () => {
+      mkdirSync(join(root, "p", "index"), { recursive: true });
+      writeFileSync(join(root, "p", "index", "A.json"), "{}");
+      writeFileSync(join(root, "p", "index", "a.json"), "{}");
+      const legacy = new LocalFsStorage({ root });
+      for (const op of [
+        () => legacy.get("p/index/a.json"),
+        () => legacy.put("p/index/b.json", utf8("v")),
+        () => legacy.delete("p/index/a.json"),
+        () => collect(legacy.list("")),
+      ]) {
+        const err = await op().then(
+          () => null,
+          (error: unknown) => error as { code?: string; message?: string },
+        );
+        expect(err?.code).toBe("InvalidConfig");
+        expect(err?.message).toContain("p/index/A.json");
+        expect(err?.message).not.toContain("p/index/a.json");
+        expect(err?.message).toMatch(/baerly admin dump/);
+        expect(err?.message).toMatch(/baerly admin restore/);
+      }
+      // Refusal moves and stamps nothing.
+      expect(existsSync(join(root, MARKER))).toBe(false);
+      expect(existsSync(join(root, "p", "index", "b.json"))).toBe(false);
+    });
+
+    test("a stamped root is never rescanned", async () => {
+      await s.put("k", utf8("v"));
+      // A name the scan would refuse, planted after stamping: a fresh
+      // instance trusts the marker and does not walk the tree to open.
+      writeFileSync(join(root, "Stray.json"), "{}");
+      const reopened = new LocalFsStorage({ root });
+      await expect(reopened.get("k")).resolves.not.toBeNull();
+      await expect(reopened.put("k2", utf8("v"))).resolves.toMatchObject({
+        etag: expect.any(String),
+      });
+    });
+
+    test("a marker naming another encoding is refused", async () => {
+      writeFileSync(join(root, MARKER), JSON.stringify({ key_encoding: 2 }));
+      const newer = new LocalFsStorage({ root });
+      await expect(newer.get("k")).rejects.toMatchObject({ code: "InvalidConfig" });
+    });
   });
 
   // --- AbortSignal must be re-checked inside the critical section ---
