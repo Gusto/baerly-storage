@@ -16,6 +16,7 @@ import {
   deriveOutcome,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
+  logMaintenanceWarning,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
@@ -114,6 +115,8 @@ export const nodeMaintenanceDispatch = (
     // falls back to `dispatchInlineAwaited`).
     ...(disabled && { disabled: true }),
     ...(maxFoldBytes !== undefined && { maxFoldBytes }),
+    // Structured `fold_deferred` (and future maintenance) warnings.
+    warn: logMaintenanceWarning,
     options: {
       phasesPerTick: "both",
       profile: MAINTENANCE_PROFILE_NODE,

@@ -1251,3 +1251,221 @@ describe("dispatchInlineAwaited", () => {
     expect(ran).toBe(true);
   });
 });
+
+/**
+ * The fold wall: once `snapshot_bytes > C` or `snapshot_rows +
+ * maxFoldEntriesPerPass > E`, `compact()` never lands again, so
+ * `log_seq_start` freezes and log retention (which only deletes below
+ * `log_seq_start - window`) freezes with it. Writes keep succeeding, so the
+ * stall must be LOUD: one structured record through the adapter's
+ * `MaintenanceDispatch.warn` sink (the only signal that reaches a Cloudflare
+ * `waitUntil` tick), dimension-named counters (the canonical line flattens
+ * labels), and the same path at both gates.
+ */
+describe("runBoundedMaintenance — fold-wall deferral signal", () => {
+  interface WarnRecord {
+    readonly event: string;
+    readonly properties: Readonly<Record<string, unknown>>;
+  }
+  let records: WarnRecord[] = [];
+  const deferRecords = (): WarnRecord[] => records.filter((r) => r.event === "fold_deferred");
+
+  /** Run `fn` under a context carrying a spy recorder and a `warn` sink, as an adapter would. */
+  const withSignalSinks = async (
+    fn: () => Promise<void>,
+  ): Promise<RequestScopedMetricsRecorder> => {
+    records = [];
+    const recorder = new RequestScopedMetricsRecorder();
+    const ctx = createObservabilityContext({
+      recorder,
+      maintenance: { warn: (event, properties) => records.push({ event, properties }) },
+    });
+    await runWithContext(ctx, fn);
+    return recorder;
+  };
+
+  const C_FREE = MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes;
+  const E_FREE = MAINTENANCE_PROFILE_CF_FREE.maxFoldRows;
+  const WARN_SEQ = MAINTENANCE_WARN_INTERVAL_WRITES + 5;
+
+  /** Pre-fold fixture: stored snapshot already past the wall on one arm. */
+  const seedPreFoldWall = async (
+    inner: MemoryStorage,
+    over: Pick<CurrentJson, "snapshot_bytes" | "snapshot_rows">,
+  ): Promise<void> => {
+    await seedLog(inner, KEY, COLL, 60);
+    await casUpdateCurrentJson(inner, KEY, (cur) => ({
+      ...cur,
+      ...over,
+      mean_entry_bytes: RATIO_TRIPPING_MEAN,
+      tail_hint: WARN_SEQ,
+      log_seq_start: 0,
+    }));
+  };
+
+  test("a rows-arm pre-fold defer emits the structured record, names C and E, and does not recommend the bytes override", async () => {
+    const inner = new MemoryStorage();
+    await seedPreFoldWall(inner, { snapshot_bytes: 0, snapshot_rows: 1_000_000 });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await withSignalSinks(() =>
+        runBoundedMaintenance(
+          { storage: inner, currentJsonKey: KEY, prevSeq: WARN_SEQ },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
+        ),
+      );
+      const recs = deferRecords();
+      expect(recs).toHaveLength(1);
+      expect(recs[0]!.properties).toMatchObject({
+        collection: COLL,
+        dimension: "rows",
+        gate: "pre-fold",
+        snapshot_bytes: 0,
+        snapshot_rows: 1_000_000,
+        ceiling_bytes: C_FREE,
+        ceiling_rows: E_FREE,
+        live_log_tail: WARN_SEQ,
+        log_seq_start: 0,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      expect(msg).toContain(String(C_FREE));
+      expect(msg).toContain(String(E_FREE));
+      expect(msg).toMatch(/log retention/i);
+      expect(msg).not.toMatch(/raise `?BAERLY_MAINTENANCE_MAX_FOLD_BYTES/i);
+      expect(msg).toContain("BAERLY_MAINTENANCE_PROFILE=cf-paid");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test("a bytes-arm pre-fold defer emits the structured record and a dimension-named counter the canonical line keeps", async () => {
+    const inner = new MemoryStorage();
+    await seedPreFoldWall(inner, { snapshot_bytes: C_FREE + 1, snapshot_rows: 0 });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const recorder = await withSignalSinks(async () => {
+        await runBoundedMaintenance(
+          { storage: inner, currentJsonKey: KEY, prevSeq: WARN_SEQ },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
+        );
+      });
+      const recs = deferRecords();
+      expect(recs).toHaveLength(1);
+      expect(recs[0]!.properties).toMatchObject({
+        dimension: "bytes",
+        gate: "pre-fold",
+        snapshot_bytes: C_FREE + 1,
+      });
+      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      expect(msg).toMatch(/raise `?BAERLY_MAINTENANCE_MAX_FOLD_BYTES/i);
+      const summary = recorder.summarize();
+      expect(summary["db.compaction.deferred_total"]).toBe(1);
+      expect(summary["db.compaction.deferred_bytes_total"]).toBe(1);
+      expect(summary["db.compaction.deferred_rows_total"]).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  /**
+   * Rebuild-gate fixture: the stored `snapshot_bytes` (0) is under `C`, so
+   * the pre-fold gate is OPEN and compact() runs; the rebuilt 20-doc
+   * snapshot is over the tiny `C`, so compact()'s own ceiling check
+   * defers. This is how bytes first cross `C` in practice — the stored
+   * figure never catches up, so the pre-fold gate never closes.
+   */
+  const TINY_C = 50;
+  const seedRebuildWall = async (inner: MemoryStorage): Promise<void> => {
+    await createCurrentJson(
+      inner,
+      KEY,
+      logStateCurrentJson({ mean_entry_bytes: RATIO_TRIPPING_MEAN }),
+    );
+    await seedLogEntries(inner, COLLECTION_PREFIX, 0, WARN_SEQ, (seq) => ({
+      after: { _id: `d${seq}`, n: seq },
+    }));
+  };
+  // 1003 → 1005 crosses a soft GC boundary (interval 4) but not the hard
+  // one (16), so the tick reaches the fold rather than the starvation guard.
+  const rebuildArgs = (storage: Storage) => ({
+    storage,
+    currentJsonKey: KEY,
+    prevSeq: WARN_SEQ - 2,
+    observedTail: WARN_SEQ,
+    maxFoldBytes: TINY_C,
+  });
+
+  test("a rebuild-gate defer signals once, stamps the warn and tail_hint in one CAS, and ends a single-phase tick", async () => {
+    const inner = new MemoryStorage();
+    await seedRebuildWall(inner);
+    const counted = countingStorage(inner);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let recorder: RequestScopedMetricsRecorder;
+    try {
+      recorder = await withSignalSinks(async () => {
+        await runBoundedMaintenance(rebuildArgs(counted.storage), {
+          profile: MAINTENANCE_PROFILE_CF_FREE,
+        });
+      });
+      const recs = deferRecords();
+      expect(recs).toHaveLength(1);
+      expect(recs[0]!.properties).toMatchObject({
+        collection: COLL,
+        dimension: "bytes",
+        gate: "rebuild",
+        ceiling_bytes: TINY_C,
+        ceiling_rows: E_FREE,
+        snapshot_rows: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+        live_log_tail: WARN_SEQ,
+        log_seq_start: 0,
+      });
+      expect(recs[0]!.properties["snapshot_bytes"]).toBeGreaterThan(TINY_C);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // One deferral counts once, not once per gate layer.
+    const summary = recorder.summarize();
+    expect(summary["db.compaction.deferred_total"]).toBe(1);
+    expect(summary["db.compaction.deferred_bytes_total"]).toBe(1);
+    // Nothing folded; one PUT published both the warn stamp and the hint.
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
+    await expect(readLastWarnedSeq(inner, KEY)).resolves.toBe(WARN_SEQ);
+    await expect(readTailHint(inner, KEY)).resolves.toBe(WARN_SEQ);
+    expect(counted.report()["put"]).toBe(1);
+    // The compact() walk was this tick's one phase: no GC on "single".
+    await expect(inner.get(`${COLLECTION_PREFIX}/gc/pending.json`)).resolves.toBeNull();
+  });
+
+  test("a rebuild-gate defer on a two-phase tick falls through to GC", async () => {
+    const inner = new MemoryStorage();
+    await seedRebuildWall(inner);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await withSignalSinks(() =>
+        runBoundedMaintenance(rebuildArgs(inner), {
+          profile: MAINTENANCE_PROFILE_CF_FREE,
+          phasesPerTick: "both",
+        }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(deferRecords()).toHaveLength(1);
+    await expect(readTailHint(inner, KEY)).resolves.toBe(WARN_SEQ);
+    await expect(inner.get(`${COLLECTION_PREFIX}/gc/pending.json`)).resolves.not.toBeNull();
+  });
+
+  test("a fold that lands emits no deferral record", async () => {
+    const inner = new MemoryStorage();
+    await seedPreFoldWall(inner, { snapshot_bytes: 0, snapshot_rows: 0 });
+    await withSignalSinks(() =>
+      runBoundedMaintenance(
+        { storage: inner, currentJsonKey: KEY, prevSeq: WARN_SEQ },
+        { profile: MAINTENANCE_PROFILE_CF_FREE },
+      ),
+    );
+    expect(deferRecords()).toHaveLength(0);
+  });
+});

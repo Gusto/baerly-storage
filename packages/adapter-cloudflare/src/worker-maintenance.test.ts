@@ -48,6 +48,7 @@ import {
   runWithContext,
 } from "@baerly/server/observability";
 import { Writer } from "@baerly/server/_internal/testing";
+import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
@@ -380,6 +381,71 @@ describe("cas_lost_total records from inside the waitUntil continuation", () => 
       .counters.filter((c) => c.name === "db.compaction.cas_lost_total")
       .reduce((acc, c) => acc + c.value, 0);
     expect(casLost).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("fold-wall deferral signal from inside the waitUntil continuation", () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await reset();
+  });
+
+  test("a deferring tick dispatched via ctx.waitUntil emits the fold_deferred log record after the response", async () => {
+    // The canonical line is flushed before `waitUntil` drains, so the
+    // deferral counter never reaches it on Cloudflare. The structured log
+    // record is the operator's signal (`wrangler tail`); pin that it fires
+    // from the post-response continuation.
+    const bucket = getBinding();
+    const tenant = tenantId("wall");
+    const storage = r2BindingStorage(bucket);
+    await provision(storage, tenant);
+    await seedTail(storage, KEY(tenant), 60);
+    // Close the cf-free rows arm on the stored snapshot.
+    const got = (await storage.get(KEY(tenant)))!;
+    const cur = JSON.parse(new TextDecoder().decode(got.body)) as Record<string, unknown>;
+    cur["snapshot_rows"] = MAINTENANCE_PROFILE_CF_FREE.maxFoldRows;
+    await storage.put(KEY(tenant), new TextEncoder().encode(JSON.stringify(cur)), {
+      contentType: "application/json",
+    });
+
+    const records: LogRecord[] = [];
+    const sink: Sink = (r) => records.push(r);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const handler = baerlyWorker<BaerlyEnv>(() => ({
+      config: testConfig,
+      verifier,
+      observability: { level: "info", sink },
+    }));
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    const { ctx, drain } = makeCollectingCtx();
+
+    const res = await handler.fetch!(
+      new Request("https://x/v1/c/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "trigger", n: 1 } }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    const deferLogs = (): LogRecord[] =>
+      records.filter((r) => r.category.join(".") === "baerly.maintenance");
+    // Queued, not yet run.
+    expect(deferLogs()).toHaveLength(0);
+
+    await drain();
+
+    expect(deferLogs()).toHaveLength(1);
+    expect(deferLogs()[0]!.properties).toMatchObject({
+      collection: "c",
+      dimension: "rows",
+      gate: "pre-fold",
+      ceiling_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes,
+      ceiling_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
+      log_seq_start: 0,
+    });
   });
 });
 

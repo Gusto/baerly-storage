@@ -29,6 +29,7 @@ import {
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
+  MAINTENANCE_PROFILE_NODE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
@@ -419,6 +420,64 @@ export interface BoundedMaintenanceOptions {
   readonly signal?: AbortSignal;
 }
 
+/** Which fold gate closed: the runner's pre-fold projection, or compact()'s post-rebuild check. */
+type FoldGate = "pre-fold" | "rebuild";
+
+/**
+ * Structured fields of one fold-wall deferral — the `fold_deferred`
+ * LogTape record carries exactly these, and {@link foldDeferredWarning}
+ * renders them for humans. `snapshot_*` are the stored figures on a
+ * `pre-fold` defer and the rebuilt (unwritten) figures on a `rebuild` one.
+ */
+// A `type` (not `interface`) so it is assignable to the `warn` sink's
+// `Readonly<Record<string, unknown>>` parameter.
+type FoldDeferredFields = {
+  readonly collection: string;
+  readonly dimension: "bytes" | "rows";
+  readonly gate: FoldGate;
+  readonly snapshot_bytes: number;
+  readonly snapshot_rows: number;
+  /** `C`, after any `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` override. */
+  readonly ceiling_bytes: number;
+  /** `E` — per host profile, no env override. */
+  readonly ceiling_rows: number;
+  readonly max_fold_entries_per_pass: number;
+  readonly live_log_tail: number;
+  readonly log_seq_start: number;
+};
+
+/**
+ * Human-readable line for a fold-wall deferral. Names both ceilings, which
+ * arm tripped, that `log_seq_start` and log retention are frozen, and the
+ * remedy that actually applies to that arm — the bytes override does
+ * nothing for rows.
+ */
+const foldDeferredWarning = (f: FoldDeferredFields): string => {
+  const which = f.gate === "rebuild" ? "rebuilt" : "stored";
+  const tripped =
+    f.dimension === "bytes"
+      ? `the bytes arm tripped (snapshot_bytes > C)`
+      : `the rows arm tripped (snapshot_rows + ${f.max_fold_entries_per_pass} per-pass entries > E)`;
+  const remedy =
+    f.dimension === "bytes"
+      ? `On Workers Paid set BAERLY_MAINTENANCE_PROFILE=cf-paid (C=${MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes}); ` +
+        `on paid Cloudflare / Node you can also raise BAERLY_MAINTENANCE_MAX_FOLD_BYTES — but on ` +
+        `Cloudflare a cap above what a single isolate can fold makes folds get CPU-killed ` +
+        `mid-flight and silently not land. Otherwise, move to a database service (D1 / Postgres).`
+      : `E has no env override, and BAERLY_MAINTENANCE_MAX_FOLD_BYTES does not apply to rows. ` +
+        `On Cloudflare, move to Workers Paid and set BAERLY_MAINTENANCE_PROFILE=cf-paid ` +
+        `(E=${MAINTENANCE_PROFILE_CF_PAID.maxFoldRows}); on Node (E=${MAINTENANCE_PROFILE_NODE.maxFoldRows}) ` +
+        `or past the paid ceiling, split the collection or move to a database service (D1 / Postgres).`;
+  return (
+    `baerly-storage: collection "${f.collection}" has stopped compacting — the ${which} ` +
+    `snapshot is ${f.snapshot_bytes} bytes / ${f.snapshot_rows} rows against this host's fold ` +
+    `ceiling C=${f.ceiling_bytes} bytes, E=${f.ceiling_rows} rows, and ${tripped}. Until it ` +
+    `folds again log_seq_start stays at ${f.log_seq_start}, log retention is paused, the live ` +
+    `tail (${f.live_log_tail} entries) and the bucket grow without bound, and every read ` +
+    `replays the tail. ${remedy} See docs/about/graduation.md.`
+  );
+};
+
 /**
  * The write-tick maintenance runner: a bounded, single-attempt
  * composition of {@link compact} and {@link runGc} for one collection,
@@ -429,8 +488,9 @@ export interface BoundedMaintenanceOptions {
  * See `maintenance-profile-equivalence.test.ts`.
  *
  * Never throws — the write-tick caller must never see a maintenance
- * failure. Expected signals (CAS contention, an over-ceiling deferral)
- * are swallowed quietly; unexpected throws bump
+ * failure. CAS contention is swallowed quietly; an over-ceiling deferral
+ * is not an error but is signalled loudly (see `signalFoldDeferred`
+ * inside); unexpected throws bump
  * `db.maintenance.unexpected_error_total`, log a stack, and are
  * swallowed.
  *
@@ -439,9 +499,11 @@ export interface BoundedMaintenanceOptions {
  *      tail_hint refresh that bounds read/write forward-probes.
  *   1. Read `current.json` once.
  *   2. Hard-GC starvation boundary (`"single"` only) → GC slice, skip fold.
- *   3. Gate 1 (ratio AND entry floor) trips → fold if viable, else
- *      defer (and metric); on `"single"` a successful fold attempt is
- *      this tick's one phase.
+ *   3. Gate 1 (ratio AND entry floor) trips → fold if the pre-fold
+ *      projection is viable, else defer and signal. On `"single"` a fold
+ *      attempt is this tick's one phase — including one that compact()
+ *      deferred after rebuilding, which signals the same way and ends the
+ *      tick. A pre-fold defer falls through to Step 4.
  *   4. Otherwise (or on `"both"`) → GC iff the cadence boundary crossed.
  *
  * Steps 0, 2, 3-defer, and 4 all take the rate-limited `tail_hint`
@@ -561,12 +623,18 @@ export const runBoundedMaintenance = async (
     // GET+PUT for no state change.
     let tailHintPublished = false;
 
-    const refreshTailHintIfNeeded = async (): Promise<void> => {
-      if (tailHintPublished) {
-        return;
-      }
-      if (nextSeq - current.tail_hint < MAINTENANCE_TAIL_HINT_REFRESH_WRITES) {
-        return;
+    // `stampWarnedSeq` rides the deferral warn's `last_warned_seq` stamp on
+    // the SAME CAS as the hint refresh, so a warning defer costs one
+    // GET+PUT, not two. That keeps a rebuild-gate defer tick (runner GET +
+    // a deferred compact() at ≤47 ops) inside CF-free's 50 subrequests.
+    const refreshTailHintIfNeeded = async (stampWarnedSeq = false): Promise<void> => {
+      if (!stampWarnedSeq) {
+        if (tailHintPublished) {
+          return;
+        }
+        if (nextSeq - current.tail_hint < MAINTENANCE_TAIL_HINT_REFRESH_WRITES) {
+          return;
+        }
       }
       // Set before the CAS, so this counts publication ATTEMPTS: a lost
       // CAS means a peer advanced the hint (the stamp is monotone, so it
@@ -578,14 +646,85 @@ export const runBoundedMaintenance = async (
         await casUpdateCurrentJson(
           storage,
           currentJsonKey,
-          (c) => ({ ...c, tail_hint: Math.max(c.tail_hint, nextSeq) }),
+          (c) => ({
+            ...c,
+            tail_hint: Math.max(c.tail_hint, nextSeq),
+            ...(stampWarnedSeq && { last_warned_seq: nextSeq }),
+          }),
           signal !== undefined ? { signal } : undefined,
         );
       } catch {
         // Swallow — Conflict (compactor/another isolate advanced first) or
         // any transient error. A missed advance just means the next tick
-        // catches up; never throw out of write-tick maintenance.
+        // catches up; a lost warn stamp just means another isolate warns
+        // slightly sooner/later. Never throw out of write-tick maintenance.
       }
+    };
+
+    /**
+     * The one fold-wall deferral signal, shared by both gates so a
+     * deferral counts once and reads the same wherever it closed:
+     *
+     * - `db.compaction.deferred_total` (labels `collection`, `dimension`,
+     *   `gate`) plus `db.compaction.deferred_{bytes,rows}_total` — distinct
+     *   names, because the canonical line keys counters by name alone and
+     *   drops labels.
+     * - A `fold_deferred` structured warning through the adapter's
+     *   {@link MaintenanceDispatch.warn} sink plus a human `console.warn`,
+     *   rate-limited by the SHARED `current.json.last_warned_seq` (not a
+     *   per-isolate Set — a fresh isolate must honour it). A collection
+     *   that has never warned warns on its first deferral. On Cloudflare
+     *   the tick runs in `ctx.waitUntil` after the canonical line flushed,
+     *   so the log record is the only signal an operator sees.
+     * - The bounded `tail_hint` refresh (HR-2): a deferring collection
+     *   never reaches compact()'s Step-7 CAS, so without it every read
+     *   would re-walk the whole growing tail. Write-tick only; reads stay
+     *   pure.
+     */
+    const signalFoldDeferred = async (d: {
+      gate: FoldGate;
+      dimension: "bytes" | "rows";
+      snapshotBytes: number;
+      snapshotRows: number;
+    }): Promise<void> => {
+      const metrics = ctxMetrics();
+      metrics.counter("db.compaction.deferred_total", 1, {
+        collection,
+        dimension: d.dimension,
+        gate: d.gate,
+      });
+      metrics.counter(
+        d.dimension === "bytes"
+          ? "db.compaction.deferred_bytes_total"
+          : "db.compaction.deferred_rows_total",
+        1,
+        { collection, gate: d.gate },
+      );
+      // A collection that has never warned warns on its FIRST deferral, so a
+      // young collection does not sit silent until seq 1000.
+      const warnDue =
+        current.last_warned_seq === undefined ||
+        nextSeq - current.last_warned_seq >= MAINTENANCE_WARN_INTERVAL_WRITES;
+      if (warnDue) {
+        const fields: FoldDeferredFields = {
+          collection,
+          dimension: d.dimension,
+          gate: d.gate,
+          snapshot_bytes: d.snapshotBytes,
+          snapshot_rows: d.snapshotRows,
+          ceiling_bytes: C,
+          ceiling_rows: E,
+          max_fold_entries_per_pass: maxFoldEntriesPerPass,
+          live_log_tail: nextSeq - logSeqStart,
+          log_seq_start: logSeqStart,
+        };
+        getCurrentContext()?.maintenance?.warn?.("fold_deferred", fields);
+        // Always emitted, alongside the structured record: a bare
+        // `Db.create()` with no adapter (or `observability: false`) has no
+        // `warn` sink, and this line is then the only one.
+        console.warn(foldDeferredWarning(fields));
+      }
+      await refreshTailHintIfNeeded(warnDue);
     };
 
     const runGcAndRefreshTailHint = async (): Promise<void> => {
@@ -649,65 +788,35 @@ export const runBoundedMaintenance = async (
         if (foldRes.written) {
           tailHintPublished = true;
         }
+        // REBUILD-GATE DEFER: the stored snapshot passed the projection but
+        // the rebuilt one is over `C` / `E` — the realistic way bytes first
+        // cross `C`, since the stored `snapshot_bytes` never catches up.
+        // Same signal as the pre-fold defer below.
+        if (foldRes.deferral !== undefined) {
+          await signalFoldDeferred({
+            gate: "rebuild",
+            dimension: foldRes.deferral.dimension,
+            snapshotBytes: foldRes.deferral.snapshotBytes,
+            snapshotRows: foldRes.deferral.snapshotRows,
+          });
+        }
         if (phasesPerTick === "single") {
-          return; // this tick's one phase was the fold (attempt)
+          // This tick's one phase was the fold attempt. A rebuild defer
+          // already spent a full compact() walk, so it must NOT also GC:
+          // runner GET + deferred compact (≤47) + the one signal CAS (2)
+          // is the CF-free 50-subrequest ceiling.
+          return;
         }
         // "both": fall through to GC.
       } else {
-        // DEFER: snapshot over the ceiling (bytes OR rows).
-        // Graduation-pending. A deferring bucket MUST still GC, so we
-        // fall through.
-        ctxMetrics().counter("db.compaction.deferred_total", 1, {
-          collection,
+        // PRE-FOLD DEFER: stored snapshot over the ceiling (bytes OR rows).
+        // A deferring bucket MUST still GC, so we fall through.
+        await signalFoldDeferred({
+          gate: "pre-fold",
           dimension: snapshotBytes > C ? "bytes" : "rows",
+          snapshotBytes,
+          snapshotRows,
         });
-        // HR-2: advance `tail_hint` toward the observed tail even though
-        // we're NOT folding. A deferring collection never reaches the
-        // compactor's Step-7 fold CAS, so without this bounded refresh
-        // the gap `(true_tail − tail_hint)`
-        // grows without bound and every READ re-walks the whole live tail
-        // via `probeTailFrom` (and eventually throws at the cap, B3).
-        // Rate-limited by `MAINTENANCE_TAIL_HINT_REFRESH_WRITES` so this is
-        // NOT a per-commit `current.json` write (which single-write commit
-        // removed); a deferring collection's read-walk stays bounded to
-        // ≤ that interval. Best-effort / conflict-swallowing: a lost CAS
-        // (e.g. against a concurrent compactor's fold CAS, or another
-        // deferring isolate) just means someone else advanced it — the
-        // stamp is monotone (`Math.max`) so a lost race never lowers it.
-        // This is a WRITE-TICK action; reads stay pure.
-        await refreshTailHintIfNeeded();
-        // Advisory graduation warn, rate-limited off the SHARED
-        // current.json.last_warned_seq (NOT a per-isolate Set — a fresh
-        // isolate must honour the same rate-limit). Fires only when at
-        // least MAINTENANCE_WARN_INTERVAL_WRITES writes have accrued
-        // since the last warn, then best-effort CASes the stamp forward.
-        if (nextSeq - (current.last_warned_seq ?? 0) >= MAINTENANCE_WARN_INTERVAL_WRITES) {
-          console.warn(
-            `baerly-storage: collection "${collection}" is deferring compaction — its ` +
-              `snapshot exceeds the fold ceiling (${snapshotBytes > C ? `${C} bytes` : `${E} rows`}), ` +
-              `so the tail keeps growing and read amplification will climb. The dataset has ` +
-              `outgrown the maintenance envelope. On paid Cloudflare / Node you can raise ` +
-              `BAERLY_MAINTENANCE_MAX_FOLD_BYTES — but on Cloudflare a cap above what a single ` +
-              `isolate can fold makes folds get CPU-killed mid-flight and silently not land ` +
-              `(no clean metric — watch snapshot age / object count); see docs/about/graduation.md. ` +
-              `Otherwise, move to a database service (D1 / Postgres).`,
-          );
-          // SEPARATE best-effort CAS — explicitly NOT folded into any
-          // commit CAS. A lost stamp just means another isolate warns
-          // slightly sooner/later; it must never throw out of the runner
-          // nor block the GC fall-through below.
-          try {
-            await casUpdateCurrentJson(
-              storage,
-              currentJsonKey,
-              (c) => ({ ...c, last_warned_seq: nextSeq }),
-              signal !== undefined ? { signal } : undefined,
-            );
-          } catch {
-            // Swallow — Conflict (another isolate stamped first) or any
-            // transient error. The warn already fired; GC must still run.
-          }
-        }
       }
     }
 
@@ -772,6 +881,17 @@ export interface MaintenanceDispatch {
   readonly maxFoldBytes?: number;
   /** Per-tier caps forwarded to {@link runBoundedMaintenance}. */
   readonly options?: BoundedMaintenanceOptions;
+  /**
+   * Structured warning sink for maintenance events — today only
+   * `fold_deferred`, whose properties are the `collection` / `dimension`
+   * / `gate` / `snapshot_*` / `ceiling_*` / `live_log_tail` /
+   * `log_seq_start` fields an operator alerts on. Adapters bind it to
+   * LogTape's `["baerly", "maintenance"]` category; the kernel never
+   * imports LogTape, which keeps the observability subgraph out of the
+   * `index.js` / `maintenance.js` bundles. Absent ⇒ the runner's human
+   * `console.warn` line is the only log output.
+   */
+  readonly warn?: (event: string, properties: Readonly<Record<string, unknown>>) => void;
 }
 
 /**

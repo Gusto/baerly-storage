@@ -25,6 +25,7 @@ import {
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
   getLogger,
+  logMaintenanceWarning,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
@@ -195,6 +196,10 @@ export const cfMaintenanceDispatch = (
     dispatch: (task: () => Promise<void>): void => ctx.waitUntil(task()),
     ...(disabled && { disabled: true }),
     ...(maxFoldBytes !== undefined && { maxFoldBytes }),
+    // Structured `fold_deferred` warnings. The tick runs in `waitUntil`
+    // after the canonical line flushed, so this record (not the deferral
+    // counter) is what reaches `wrangler tail` / Workers Logs.
+    warn: logMaintenanceWarning,
     options: {
       // A CPU-killable free isolate does ONE phase per request.
       phasesPerTick: "single",

@@ -59,6 +59,8 @@ import {
  */
 export const CATEGORY = {
   http: ["baerly", "http"],
+  /** Write-tick maintenance events, routed via `MaintenanceDispatch.warn`. */
+  maintenance: ["baerly", "maintenance"],
   storage: ["baerly", "storage"],
 } as const;
 
@@ -163,6 +165,19 @@ const isBaerlyOwnedConfig = (cfg: ReturnType<typeof getConfig> & object): boolea
  */
 export const getLogger = (category: string | readonly string[]): Logger =>
   logtapeGetLogger(category);
+
+/**
+ * LogTape-backed `MaintenanceDispatch.warn` sink: routes a write-tick
+ * maintenance event (e.g. `fold_deferred`) to {@link CATEGORY.maintenance}
+ * at `warning`. Adapters wire it; the kernel calls it through the
+ * observability context so LogTape stays out of the kernel bundle.
+ */
+export const logMaintenanceWarning = (
+  event: string,
+  properties: Readonly<Record<string, unknown>>,
+): void => {
+  getLogger(CATEGORY.maintenance).warn(event, { ...properties });
+};
 
 // ---------- internals ----------
 

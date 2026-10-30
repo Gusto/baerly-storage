@@ -130,7 +130,8 @@ export interface CurrentJson {
    * durable state, not per-isolate memory. The warn fires when the
    * observed/probed tail minus `last_warned_seq` reaches
    * MAINTENANCE_WARN_INTERVAL_WRITES, and that firing CASes
-   * `last_warned_seq` to the observed/probed tail. Absent → 0.
+   * `last_warned_seq` to the observed/probed tail. Absent → the
+   * collection has never warned, so its first deferral warns.
    */
   last_warned_seq?: number;
 

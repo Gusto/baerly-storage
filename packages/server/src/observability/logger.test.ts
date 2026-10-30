@@ -149,6 +149,7 @@ describe("CATEGORY", () => {
   test('includes every documented category as a ["baerly", <unit>] tuple', () => {
     expect(CATEGORY).toEqual({
       http: ["baerly", "http"],
+      maintenance: ["baerly", "maintenance"],
       storage: ["baerly", "storage"],
     });
   });
