@@ -19,6 +19,7 @@ import {
 } from "./snapshot-chunk-builder.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
+import { postImageIdentityViolations } from "../../../tests/fixtures/post-image-identity-violations.ts";
 import { makeValidDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 
 const collection = "tickets";
@@ -692,6 +693,41 @@ describe("snapshot chunk builder", () => {
     expect(result.used_neighbor_chunk_index).toBeNull();
     expect(result.chunks.length).toBe(2);
   });
+});
+
+describe("snapshot chunk builder: post-image identity is caller input", () => {
+  const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+
+  test.each(postImageIdentityViolations)(
+    "rejects $name with InvalidConfig",
+    async ({ docId, after }) => {
+      const d0Docs = [doc("a", 1), doc("b", 2)];
+      const d1Docs = [doc("m", 3), doc("n", 4)];
+      const d0Desc = await createDescriptor(d0Docs);
+      const d1Desc = await createDescriptor(d1Docs);
+      const mutation = { op: "U", doc_id: docId, after: after() } as ReferenceMutation;
+
+      // Both the empty-collection path and the descriptor-routing path.
+      for (const descriptors of [[], [d0Desc, d1Desc]]) {
+        await expect(
+          evaluateSnapshotChunks({
+            collection,
+            collectionPrefix,
+            descriptors,
+            loadedChunks: new Map<string, readonly DocumentData[]>([
+              [d0Desc.key, d0Docs],
+              [d1Desc.key, d1Docs],
+            ]),
+            mutations: mutationMap([{ op: "U", doc_id: "b", after: doc("b", 20) }, mutation]),
+            incarnation,
+            policy,
+            lockedDirectOwnerIndex: descriptors.length === 0 ? null : 0,
+            selectedNeighborIndex: descriptors.length === 0 ? null : 1,
+          }),
+        ).rejects.toMatchObject({ code: "InvalidConfig" });
+      }
+    },
+  );
 });
 
 const idArb = makeValidDocIdArb({ maxCodePoints: 5, longBand: false });

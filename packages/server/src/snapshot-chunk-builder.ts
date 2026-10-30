@@ -1,5 +1,6 @@
 import { BaerlyError, type DocumentData, encodeJsonBytes, snapshotHash } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
+import { assertPostImageIdentity } from "./post-image-identity.ts";
 import {
   type CodecCode,
   INCARNATION_PATTERN,
@@ -429,14 +430,20 @@ export const evaluateSnapshotChunks = async (
   }
 
   // The map is already keyed by doc_id, so collapse needs no work — what
-  // remains is ingress validation: keys must be scalar-orderable, and each
-  // mutation's doc_id must agree with the key it is filed under. The
-  // planner's entryToMutation derives both from the same entry.doc_id, so
-  // production paths never trip the equality check.
+  // remains is ingress validation: keys must be scalar-orderable, each
+  // mutation's doc_id must agree with the key it is filed under, and each
+  // insert/update post-image's _id must equal that doc_id (rows are keyed by
+  // doc_id below but sorted and bounded by _id). The planner's
+  // entryToMutation derives the key and doc_id from the same entry.doc_id
+  // and rejects a stored _id mismatch as InvalidResponse, so production paths
+  // never trip these checks; they are caller-input guards for direct callers.
   for (const [docId, mutation] of mutations) {
     assertSnapshotDocId(docId);
     if (docId !== mutation.doc_id) {
       invalid("InvalidConfig", "mutation doc_id must match its map key");
+    }
+    if (mutation.op !== "D") {
+      assertPostImageIdentity(docId, mutation.after, "InvalidConfig", invalid);
     }
   }
 
