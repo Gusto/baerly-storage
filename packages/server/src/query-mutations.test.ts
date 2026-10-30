@@ -372,37 +372,58 @@ describe("Query.update — _id identity", () => {
   });
 });
 
-describe("stored rows without a string _id", () => {
-  let storage: MemoryStorage;
-  let db: Db;
+// Stored rows whose `_id` is not their storage key — shapes the
+// pre-fix `update` left behind: `_id: null` stripped it, a numeric patch
+// replaced it, and `{ _id: "b" }` re-keyed the post-image under `"a"`.
+const corruptStoredRows: ReadonlyArray<readonly [string, DocumentData]> = [
+  ["a missing _id", { k: 9 }],
+  ["a numeric _id", { _id: 42, k: 9 }],
+  ["an _id that is not its storage key", { _id: "b", k: 9 }],
+];
 
-  beforeEach(async () => {
-    storage = new MemoryStorage();
-    db = Db.create({ storage, app: APP, tenant: TENANT });
-    await provision(storage);
-    // A stored `I` whose post-image carries no `_id` — the shape an old
-    // `update(id, { _id: null })` left behind.
-    await seedLogEntry(storage, `app/${APP}/tenant/${TENANT}/manifests/${COLL}`, 0, {
-      collection: COLL,
-      doc_id: "q2",
-      after: { k: 9 },
+for (const [label, after] of corruptStoredRows) {
+  describe(`stored row with ${label}`, () => {
+    let storage: MemoryStorage;
+    let db: Db;
+
+    beforeEach(async () => {
+      storage = new MemoryStorage();
+      db = Db.create({ storage, app: APP, tenant: TENANT });
+      await provision(storage);
+      await seedLogEntry(storage, `app/${APP}/tenant/${TENANT}/manifests/${COLL}`, 0, {
+        collection: COLL,
+        doc_id: "a",
+        after,
+      });
+    });
+
+    test("update by id and by predicate throw InvalidResponse and commit nothing", async () => {
+      const t = db.collection(COLL) as Collection<DocumentData>;
+      await expect(t.update("a", { k: 2 })).rejects.toMatchObject({ code: "InvalidResponse" });
+      await expect(t.where({ k: 9 }).update({ m: 1 })).rejects.toMatchObject({
+        code: "InvalidResponse",
+      });
+      await expect(storage.get(logKey(1))).resolves.toBeNull();
+    });
+
+    test("delete by id and by predicate throw InvalidResponse and commit nothing", async () => {
+      const t = db.collection(COLL) as Collection<DocumentData>;
+      await expect(t.delete("a")).rejects.toMatchObject({ code: "InvalidResponse" });
+      await expect(t.where({ k: 9 }).delete()).rejects.toMatchObject({ code: "InvalidResponse" });
+      await expect(storage.get(logKey(1))).resolves.toBeNull();
+    });
+
+    test("replace(id, doc) repairs the row so update and delete work again", async () => {
+      const t = db.collection(COLL) as Collection<DocumentData>;
+      await t.replace("a", { k: 10 });
+      await expect(t.get("a")).resolves.toEqual({ _id: "a", k: 10 });
+      await expect(t.update("a", { k: 11 })).resolves.toEqual({ modified: 1 });
+      await expect(t.where({}).all()).resolves.toEqual([{ _id: "a", k: 11 }]);
+      await expect(t.delete("a")).resolves.toEqual({ deleted: 1 });
+      await expect(t.where({}).all()).resolves.toEqual([]);
     });
   });
-
-  test("a predicate update throws InvalidResponse instead of committing to doc_id 'undefined'", async () => {
-    const t = db.collection(COLL) as Collection<DocumentData>;
-    await expect(t.where({ k: 9 }).update({ m: 1 })).rejects.toMatchObject({
-      code: "InvalidResponse",
-    });
-    await expect(storage.get(logKey(1))).resolves.toBeNull();
-  });
-
-  test("a predicate delete throws InvalidResponse instead of tombstoning doc_id 'undefined'", async () => {
-    const t = db.collection(COLL) as Collection<DocumentData>;
-    await expect(t.where({ k: 9 }).delete()).rejects.toMatchObject({ code: "InvalidResponse" });
-    await expect(storage.get(logKey(1))).resolves.toBeNull();
-  });
-});
+}
 
 describe("Collection.replace", () => {
   let storage: MemoryStorage;

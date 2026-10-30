@@ -141,6 +141,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         top-level `_id` is present and is not the row's `_id`
    *         (`null` included). A patch cannot re-key or strip a row;
    *         omit `_id`, or pass the row's own `_id`.
+   * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
+   *         `_id` is not the string `id`. Repair it with
+   *         `replace(id, doc)`.
    *
    * @example
    * ```ts
@@ -177,6 +180,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         floor, so the tombstone may or may not have been
    *         applied. Not retriable-by-default; handle the code
    *         explicitly.
+   * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
+   *         `_id` is not the string `id` (left by an older release
+   *         that let a patch strip or re-key `_id`). Repair it with
+   *         `replace(id, doc)`.
    *
    * @example
    * ```ts
@@ -427,6 +434,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         `_id` (`null` included). Checked per row before that row
    *         commits, so rows earlier in the batch may already be
    *         applied.
+   * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
+   *         row's `_id` is not the string it is stored under (left by
+   *         an older release). Checked per row before that row
+   *         commits. Repair it with `replace(id, doc)`.
    *
    * @example
    * ```ts
@@ -446,6 +457,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         certified delete floor. Rows before it in the batch are
    *         already tombstoned and that row's own fate is unknown;
    *         the partial-progress `deleted` count is NOT returned.
+   * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
+   *         row's `_id` is not the string it is stored under (left by
+   *         an older release). Checked per row before that row
+   *         commits. Repair it with `replace(id, doc)`.
    *
    * @example
    * ```ts

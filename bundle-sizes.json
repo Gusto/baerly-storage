@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 286651,
-      "gz": 90596,
-      "minGz": 22458,
+      "raw": 291177,
+      "gz": 92184,
+      "minGz": 22982,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
