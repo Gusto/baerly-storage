@@ -261,6 +261,12 @@ describe("baerlyDev() plugin", () => {
 describe("baerlyDev — default dataDir", () => {
   test("defaults storage to <vite root>/.baerly-data when dataDir is omitted", async () => {
     const root = await mkdtemp(join(tmpdir(), "baerly-vite-root-"));
+    // No `dataDir` — the plugin must derive it from server.config.root.
+    const plugin = baerlyDev({
+      config: baseConfig("shared-secret"),
+      secret: "test-secret",
+      banner: false,
+    });
     try {
       const captured: CapturedMw[] = [];
       const fakeServer = {
@@ -268,12 +274,6 @@ describe("baerlyDev — default dataDir", () => {
         httpServer: null,
         config: { root },
       };
-      // No `dataDir` — the plugin must derive it from server.config.root.
-      const plugin = baerlyDev({
-        config: baseConfig("shared-secret"),
-        secret: "test-secret",
-        banner: false,
-      });
       const configureServer = plugin.configureServer;
       if (typeof configureServer !== "function") {
         throw new Error("configureServer must be a function");
@@ -296,6 +296,7 @@ describe("baerlyDev — default dataDir", () => {
       }
       expect(existsSync(join(root, ".baerly-data"))).toBe(true);
     } finally {
+      await whenSettled(plugin);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -320,12 +321,19 @@ describe("baerlyDev — config loading", () => {
     };
   };
 
+  // Background setups kicked off by `start`, drained by `settleAll` before a
+  // test removes its root (see `whenSettled`).
+  const started: Array<ReturnType<typeof baerlyDev>> = [];
   const start = (plugin: ReturnType<typeof baerlyDev>, server: unknown): void => {
     const configureServer = plugin.configureServer;
     if (typeof configureServer !== "function") {
       throw new Error("configureServer must be a function");
     }
     configureServer.call(null as never, server as never);
+    started.push(plugin);
+  };
+  const settleAll = async (): Promise<void> => {
+    await Promise.all(started.splice(0).map(whenSettled));
   };
 
   // Kick a /v1 request and wait until `requested` is populated (the async
@@ -349,6 +357,7 @@ describe("baerlyDev — config loading", () => {
       await driveAndWait(captured, requested);
       expect(requested).toEqual([join(root, "src/baerly.config.ts")]);
     } finally {
+      await settleAll();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -366,6 +375,7 @@ describe("baerlyDev — config loading", () => {
       await driveAndWait(captured, requested);
       expect(requested).toEqual([custom]);
     } finally {
+      await settleAll();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -388,6 +398,7 @@ describe("baerlyDev — config loading", () => {
       expect(req.headers["authorization"]).toBe("Bearer lazy-secret");
       expect(headersFromRaw(req).get("authorization")).toBe("Bearer lazy-secret");
     } finally {
+      await settleAll();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -406,6 +417,7 @@ describe("baerlyDev — config loading", () => {
       // was never consulted.
       expect(requested).toEqual([]);
     } finally {
+      await settleAll();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -436,6 +448,7 @@ describe("baerlyDev — config loading", () => {
         errorSpy.mockRestore();
       }
     } finally {
+      await settleAll();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -478,6 +491,7 @@ describe("baerlyDev — config loading", () => {
         process.off("unhandledRejection", onRejection);
       }
     } finally {
+      await settleAll();
       await rm(root, { recursive: true, force: true });
     }
   });
