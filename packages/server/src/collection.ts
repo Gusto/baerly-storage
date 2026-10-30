@@ -104,6 +104,10 @@ export const makeCollection = <T extends DocumentData>(
      * @throws BaerlyError code="SchemaError" — merged post-image rejected by the
      *   collection's bound validator, or `merge(prev, patch)` produced
      *   `undefined`.
+     * @throws BaerlyError code="InvalidConfig" — the patch's top-level `_id`
+     *   is present and is not `id` (`null` included).
+     * @throws BaerlyError code="InvalidResponse" — the stored row's `_id` is
+     *   not the string `id`; repair it with `replace(id, doc)`.
      */
     update: (id, patch) => makeQuery<T>(ctx, byId(id)).update(patch),
     /**
@@ -130,6 +134,8 @@ export const makeCollection = <T extends DocumentData>(
      *   below the collection's certified delete floor, so the tombstone may or
      *   may not have been applied. Not retriable-by-default; see
      *   `Writer.commit`.
+     * @throws BaerlyError code="InvalidResponse" — the stored row's `_id` is
+     *   not the string `id`; repair it with `replace(id, doc)`.
      */
     delete: (id) => makeQuery<T>(ctx, byId(id)).delete(),
   };

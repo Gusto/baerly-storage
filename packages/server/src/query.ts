@@ -442,22 +442,32 @@ export const runInsert = async <T extends DocumentData>(
 };
 
 /**
- * The `_id` of a materialised row, which `update` / `delete` commit under.
- * Every stored `I` / `U` post-image carries its own string `_id`; a row
- * without one is stored corruption, so it fails loud rather than committing
- * to a coerced `doc_id` such as `"undefined"`.
+ * The `doc_id` that `update` / `delete` commit a materialised row under,
+ * after checking that the row's own `_id` is that same string. Every
+ * stored `I` / `U` post-image names its storage key; a row whose `_id` is
+ * missing, not a string, or a different id is stored corruption (an older
+ * release let a patch strip or re-key `_id`). Committing it anyway would
+ * duplicate the row under its `_id`, or tombstone a key that does not
+ * hold it, so it fails loud instead. `replace(id, doc)` repairs such a
+ * row: it forces `_id` to `id`.
  *
- * @throws BaerlyError code="InvalidResponse" — the row's `_id` is not a string.
+ * @throws BaerlyError code="InvalidResponse" — the row's `_id` is not the
+ *   string it is stored under.
  */
-const storedRowId = (doc: DocumentData, verb: "update" | "delete"): string => {
-  const id = doc["_id"];
-  if (typeof id !== "string") {
+const storedRowId = <T extends DocumentData>(
+  row: StoredRow<T>,
+  verb: "update" | "delete",
+): string => {
+  const id = row.doc["_id"];
+  if (id !== row.docId) {
     throw new BaerlyError(
       "InvalidResponse",
-      `Query.${verb}: stored row has no string _id (got ${typeof id})`,
+      `Query.${verb}: stored row ${JSON.stringify(row.docId)} carries _id ${
+        typeof id === "string" ? JSON.stringify(id) : `of type ${typeof id}`
+      }; repair it with replace(id, doc)`,
     );
   }
-  return id;
+  return row.docId;
 };
 
 /**
@@ -522,18 +532,19 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
  *   other than the row's (see {@link assertPatchKeepsId}). Checked per
  *   row, before that row's schema validation and commit.
- * @throws BaerlyError code="InvalidResponse" — a matched stored row has
- *   no string `_id`.
+ * @throws BaerlyError code="InvalidResponse" — a matched stored row's
+ *   `_id` is not the string it is stored under.
  */
 const runUpdate = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
-  const { rows } = await runRead<T>(ctx, state);
+  const { rows } = await runReadRows<T>(ctx, state);
   let modified = 0;
-  for (const doc of rows) {
-    const docId = storedRowId(doc, "update");
+  for (const row of rows) {
+    const doc = row.doc;
+    const docId = storedRowId(row, "update");
     assertPatchKeepsId(patch, docId);
     const merged = merge(doc as DocumentData, patch as Partial<DocumentData>);
     if (merged === undefined) {
@@ -642,20 +653,20 @@ export const runReplaceById = async <T extends DocumentData>(
  *   landed below the collection's certified delete floor. Rows before it in
  *   the batch are already tombstoned and that row's own fate is unknown; the
  *   partial-progress `deleted` count is NOT returned. See `Writer.commit`.
- * @throws BaerlyError code="InvalidResponse" — a matched stored row has
- *   no string `_id`.
+ * @throws BaerlyError code="InvalidResponse" — a matched stored row's
+ *   `_id` is not the string it is stored under.
  */
 const runDelete = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
-  const { rows } = await runRead<T>(ctx, state);
+  const { rows } = await runReadRows<T>(ctx, state);
   let deleted = 0;
-  for (const doc of rows) {
+  for (const row of rows) {
     await writerFor(ctx).commit({
       op: "D",
       collection: ctx.collectionName,
-      docId: storedRowId(doc, "delete"),
+      docId: storedRowId(row, "delete"),
     });
     deleted++;
   }
@@ -676,6 +687,29 @@ const runRead = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<ReadResult<T>> => {
+  const { rows, manifestPointer, fresh } = await runReadRows(ctx, state);
+  return { rows: rows.map((row) => row.doc), manifestPointer, fresh };
+};
+
+/**
+ * A materialised row paired with the `doc_id` it is stored under. The
+ * mutation verbs commit under `docId`, and check that the row's own `_id`
+ * agrees with it (see {@link storedRowId}).
+ */
+interface StoredRow<T extends DocumentData> {
+  readonly docId: string;
+  readonly doc: T;
+}
+
+/** {@link runRead}, keeping each row's storage key. */
+const runReadRows = async <T extends DocumentData>(
+  ctx: CollectionReadContext,
+  state: QueryState<T>,
+): Promise<{
+  readonly rows: StoredRow<T>[];
+  readonly manifestPointer: string;
+  readonly fresh: boolean;
+}> => {
   // ── Step 1. Read current.json. ────────────────────────────────────
   // Every read GETs `current.json` fresh — mirrors the multi-instance
   // rules: every read sees a fresh CAS snapshot, matching the writer's
@@ -757,15 +791,15 @@ const runRead = async <T extends DocumentData>(
   // O(n) scan with a `Map.get` on the same snapshot — observable
   // contract unchanged.
   const fastId = singleIdFromPredicate(state.wire);
-  let rows: T[];
+  let rows: StoredRow<T>[];
   if (fastId !== undefined) {
     const hit = docs.get(fastId);
-    rows = hit === undefined ? [] : [hit];
+    rows = hit === undefined ? [] : [{ docId: fastId, doc: hit }];
   } else {
-    rows = Array.from(docs.values());
+    rows = Array.from(docs, ([docId, doc]) => ({ docId, doc }));
     if (state.wire !== undefined) {
       const w = state.wire;
-      rows = rows.filter((d) => matchesWire(w, d));
+      rows = rows.filter((row) => matchesWire(w, row.doc));
     }
   }
 
@@ -860,7 +894,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   head: CurrentJson,
   state: QueryState<T>,
   plan: IndexWalkPlan,
-): Promise<{ rows: T[]; tail: number }> => {
+): Promise<{ rows: StoredRow<T>[]; tail: number }> => {
   const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
   const eqPrefix =
     encodedSegments.length === 0
@@ -1029,11 +1063,11 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   //    doc still passes the original wire, it stays. Range / `in`
   //    clauses that landed in `plan.postFilter` are part of
   //    `state.wire` — they pass through here automatically.
-  const rows: T[] = [];
+  const rows: StoredRow<T>[] = [];
   const wire = state.wire;
-  for (const doc of docs.values()) {
+  for (const [docId, doc] of docs) {
     if (wire === undefined || matchesWire(wire, doc)) {
-      rows.push(doc);
+      rows.push({ docId, doc });
     }
   }
   return { rows, tail };
@@ -1050,12 +1084,15 @@ const runIndexWalkPlan = async <T extends DocumentData>(
  * objects falls through to "considered equal," which preserves the
  * stable-sort order of the input.
  */
-const sortByOrderSpec = <T extends DocumentData>(rows: T[], spec: OrderSpec<T>): T[] => {
+const sortByOrderSpec = <T extends DocumentData>(
+  rows: StoredRow<T>[],
+  spec: OrderSpec<T>,
+): StoredRow<T>[] => {
   const entries = Object.entries(spec) as Array<[keyof T, "asc" | "desc"]>;
   return rows.toSorted((a, b) => {
     for (const [field, dir] of entries) {
-      const av: T[keyof T] | undefined = a[field];
-      const bv: T[keyof T] | undefined = b[field];
+      const av: T[keyof T] | undefined = a.doc[field];
+      const bv: T[keyof T] | undefined = b.doc[field];
       if (av === bv) {
         continue;
       }
