@@ -625,8 +625,10 @@ export const runBoundedMaintenance = async (
 
     // `stampWarnedSeq` rides the deferral warn's `last_warned_seq` stamp on
     // the SAME CAS as the hint refresh, so a warning defer costs one
-    // GET+PUT, not two. That keeps a rebuild-gate defer tick (runner GET +
-    // a deferred compact() at ≤47 ops) inside CF-free's 50 subrequests.
+    // GET+PUT, not two. A single-phase rebuild-gate defer tick then costs
+    // 26 ops — runner GET 1 + deferred compact() 23 (current.json GET,
+    // `knownTail` probe, snapshot GET, 20 log GETs) + this CAS 2 — inside
+    // CF-free's 50 subrequests; pinned in `maintenance-budget.test.ts`.
     const refreshTailHintIfNeeded = async (stampWarnedSeq = false): Promise<void> => {
       if (!stampWarnedSeq) {
         if (tailHintPublished) {
@@ -803,8 +805,9 @@ export const runBoundedMaintenance = async (
         if (phasesPerTick === "single") {
           // This tick's one phase was the fold attempt. A rebuild defer
           // already spent a full compact() walk, so it must NOT also GC:
-          // runner GET + deferred compact (≤47) + the one signal CAS (2)
-          // is the CF-free 50-subrequest ceiling.
+          // runner GET (1) + deferred compact (23) + the one signal CAS (2)
+          // is 26 ops, and a GC slice on top would spend the headroom that
+          // keeps the tick under CF-free's 50 subrequests.
           return;
         }
         // "both": fall through to GC.

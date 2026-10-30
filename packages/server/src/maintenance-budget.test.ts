@@ -41,14 +41,14 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   LOG_STATE_GENERATION,
   logStateCurrentJson,
   seedLogEntries,
 } from "../../../tests/fixtures/log-state.ts";
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
-import { compact } from "./compactor.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { runGc } from "./gc.ts";
 import { computeRetirableRange } from "./log-retention.ts";
 import { CLOUDFLARE_FREE_TIER, crossesGcBoundary, runBoundedMaintenance } from "./maintenance.ts";
@@ -555,6 +555,75 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
       FREE_TIER_BUDGET,
     );
+  });
+
+  // Hand-derived count for a single-phase rebuild-gate defer tick — the
+  // stored snapshot passes the pre-fold projection, compact() rebuilds,
+  // and the rebuilt body is over `C`:
+  //   1 runner `current.json` GET
+  // + 1 compact() `current.json` GET
+  // + 1 tail probe from `knownTail` (immediate 404)
+  // + 1 prior-snapshot GET
+  // + 20 log GETs (WRITE_TICK_FOLD_ENTRIES_PER_PASS)
+  // + 2 for the one signal CAS (GET + PUT) stamping `last_warned_seq` and
+  //   `tail_hint` together
+  // = 26, against a 50-subrequest invocation cap. No GC, no retirement:
+  // the compact() walk is this tick's one phase.
+  test("a single-phase rebuild-gate defer tick stays at 26 storage operations", async () => {
+    const inner = new MemoryStorage();
+    const prefix = "app/t/tenant/x/manifests/c";
+    const observedTail = 81;
+    await createCurrentJson(inner, KEY, logStateCurrentJson({ log_seq_start: 0, tail_hint: 0 }));
+    await seedLogEntries(inner, prefix, 0, observedTail, (seq) => ({
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    // Land a prior snapshot so the rebuild pays its snapshot GET.
+    const first = await compact({ storage: inner, currentJsonKey: KEY }, {
+      maxEntriesPerRun: WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+      minEntriesToCompact: 1,
+    } as InternalCompactOptions);
+    expect(first.written).toBe(true);
+    const { casUpdateCurrentJson, MAINTENANCE_MIN_LIVE_BYTES } = await import("@baerly/protocol");
+    await casUpdateCurrentJson(inner, KEY, (c) => ({
+      ...c,
+      mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
+    }));
+    const seeded = (await readCurrentJson(inner, KEY))!.json;
+    expect(seeded.snapshot).not.toBeNull();
+    expect(seeded.last_warned_seq).toBeUndefined();
+    // `C` = the stored size exactly: the pre-fold gate (`<=`) stays open, and
+    // the rebuild over 20 more docs is strictly larger, so compact() defers.
+    const C = seeded.snapshot_bytes;
+    // 80 → 81 does not cross the hard-GC boundary (16), so the tick reaches the
+    // fold; a soft GC boundary is irrelevant because "single" ends there.
+    const prevSeq = observedTail - 1;
+    expect(
+      crossesGcBoundary(
+        prevSeq,
+        observedTail,
+        MAINTENANCE_PROFILE_CF_FREE.gcInterval * GC_STARVATION_GUARD,
+      ),
+    ).toBe(false);
+    const counted = countingStorage(inner);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await runBoundedMaintenance(
+        { storage: counted.storage, currentJsonKey: KEY, prevSeq, observedTail, maxFoldBytes: C },
+        { profile: MAINTENANCE_PROFILE_CF_FREE, phasesPerTick: "single" },
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    // It deferred at the rebuild gate: nothing folded, the warn was stamped.
+    const after = (await readCurrentJson(inner, KEY))!.json;
+    expect(after.log_seq_start).toBe(seeded.log_seq_start);
+    expect(after.last_warned_seq).toBe(observedTail);
+    expect(after.tail_hint).toBe(observedTail);
+    expect(counted.report()).toEqual({ get: 25, put: 1, delete: 0, list: 0 });
+    const totalOps = counted.getOps();
+    expect(totalOps).toBe(26);
+    expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
   });
 
   // Fold/retire phase separation. In `"single"` phase mode a write-tick
