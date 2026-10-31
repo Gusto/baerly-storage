@@ -1,6 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import {
-  type BaerlyError,
+  BaerlyError,
   type DocumentData,
   type DocumentValue,
   type LogEntry,
@@ -12,14 +12,31 @@ import {
   prefetchChunkedFold,
 } from "./chunked-fold-planner.ts";
 import {
+  foldChunkedSnapshotReference,
+  type ReferenceMutation,
+  type ReferenceRow,
+} from "./chunked-snapshot-reference.ts";
+import { decodeSnapshotChunk } from "./snapshot-chunk.ts";
+import {
   buildSnapshotChunks,
   CHUNK_BOUNDARY_POLICIES,
+  deriveOwnerAndNeighbor,
+  routeMutationToDescriptor,
   type SnapshotChunkBoundaryPolicy,
+  type SnapshotChunkBuildResult,
 } from "./snapshot-chunk-builder.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
 import { makeSnapshotChunkFixtures } from "../../../tests/fixtures/snapshot-chunks.ts";
-import { makeValidDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
+import {
+  postImageIdentityAdmissible,
+  postImageIdentityViolations,
+} from "../../../tests/fixtures/post-image-identity-violations.ts";
+import {
+  docIdNearPairArb,
+  makeValidDocIdArb,
+  validDocIdArb,
+} from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 
 const collection = "tickets";
 const collectionPrefix = "app/demo/tenant/acme/manifests/tickets";
@@ -616,6 +633,143 @@ describe("chunked fold planner", () => {
   });
 });
 
+describe("chunked fold planner: stored post-image identity", () => {
+  const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+
+  // D0 [a, b] and D1 [m, n]: every violation's doc_id routes into one of
+  // them, so an unguarded planner would build a plan from it.
+  const setup = async () => {
+    const d0Docs = [doc("a", 1), doc("b", 2)];
+    const d1Docs = [doc("m", 3), doc("n", 4)];
+    const d0Desc = await createDescriptor(d0Docs);
+    const d1Desc = await createDescriptor(d1Docs);
+    return {
+      descriptors: [d0Desc, d1Desc],
+      loadedChunks: new Map<string, readonly DocumentData[]>([
+        [d0Desc.key, d0Docs],
+        [d1Desc.key, d1Docs],
+      ]),
+    };
+  };
+
+  const offending = (seq: number, docId: string, after: unknown): LogEntry =>
+    makeLogEntry(seq, "U", docId, after as DocumentData);
+
+  const expectBothPhasesReject = async (
+    entries: readonly LogEntry[],
+    budget: ChunkedFoldBudget = defaultBudget,
+  ): Promise<void> => {
+    const { descriptors, loadedChunks } = await setup();
+    let prefetchCode: string | undefined;
+    try {
+      prefetchChunkedFold({ entries, descriptors, budget });
+    } catch (error) {
+      expect(error).toBeInstanceOf(BaerlyError);
+      prefetchCode = (error as BaerlyError).code;
+    }
+    expect(prefetchCode).toBe("InvalidResponse");
+    await expect(
+      planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries,
+        descriptors,
+        loadedChunks,
+        budget,
+        incarnation,
+        policy,
+      }),
+    ).rejects.toMatchObject({ code: "InvalidResponse" });
+  };
+
+  describe.each(postImageIdentityViolations)("$name", ({ docId, after }) => {
+    test("rejects as the only entry", async () => {
+      await expectBothPhasesReject([offending(1, docId, after())]);
+    });
+
+    test("rejects after an admissible prefix instead of shortening it", async () => {
+      await expectBothPhasesReject([
+        makeLogEntry(1, "U", "a", doc("a", 10)),
+        makeLogEntry(2, "U", "b", doc("b", 20)),
+        offending(3, docId, after()),
+        makeLogEntry(4, "U", "n", doc("n", 40)),
+      ]);
+    });
+
+    test("rejects even when a later entry rewrites the same doc_id correctly", async () => {
+      await expectBothPhasesReject([
+        makeLogEntry(1, "U", "a", doc("a", 10)),
+        offending(2, docId, after()),
+        makeLogEntry(3, "U", docId, doc(docId, 30)),
+      ]);
+    });
+  });
+
+  test.each(postImageIdentityAdmissible)(
+    "accepts $name in both phases",
+    async ({ docId, after }) => {
+      const { descriptors, loadedChunks } = await setup();
+      const entries = [makeLogEntry(1, "U", "b", doc("b", 20)), offending(2, docId, after())];
+      expect(
+        prefetchChunkedFold({ entries, descriptors, budget: defaultBudget }).candidate_log_seq_ends,
+      ).toEqual([1, 2]);
+      const plan = await planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries,
+        descriptors,
+        loadedChunks,
+        budget: defaultBudget,
+        incarnation,
+        policy,
+      });
+      expect(plan?.log_seq_end).toBe(2);
+      expect(plan?.mutations.get(docId)).toMatchObject({ op: "U", after: { _id: docId } });
+    },
+  );
+
+  test("an offending entry that also busts the mutation-byte cap fails the call", async () => {
+    // The walk converts each entry before testing the byte cap, so the
+    // identity gate fires first. A shorter prefix would only defer the same
+    // wedge by one fold.
+    const big = "x".repeat(4096);
+    const budget = { ...defaultBudget, max_mutation_bytes: 1024 };
+    const { descriptors } = await setup();
+    const control = prefetchChunkedFold({
+      entries: [makeLogEntry(1, "U", "a", doc("a", 1)), makeLogEntry(2, "U", "m", doc("m", big))],
+      descriptors,
+      budget,
+    });
+    // The same oversized entry with a matching _id only shortens the prefix.
+    expect(control.candidate_log_seq_ends).toEqual([1]);
+
+    await expectBothPhasesReject(
+      [makeLogEntry(1, "U", "a", doc("a", 1)), offending(2, "m", { _id: "zz", value: big })],
+      budget,
+    );
+  });
+
+  test("an offending entry past max_log_entries is outside the walk", async () => {
+    const { descriptors, loadedChunks } = await setup();
+    const entries = [makeLogEntry(1, "U", "a", doc("a", 10)), offending(2, "m", { _id: "zz" })];
+    const budget = { ...defaultBudget, max_log_entries: 1 };
+    expect(prefetchChunkedFold({ entries, descriptors, budget }).candidate_log_seq_ends).toEqual([
+      1,
+    ]);
+    const plan = await planChunkedFold({
+      collection,
+      collectionPrefix,
+      entries,
+      descriptors,
+      loadedChunks,
+      budget,
+      incarnation,
+      policy,
+    });
+    expect(plan?.log_seq_end).toBe(1);
+  });
+});
+
 const idArb = makeValidDocIdArb({ maxCodePoints: 5, longBand: false });
 
 fcTest.prop({
@@ -731,6 +885,223 @@ fcTest.prop({
       for (const idx of planSmall1.touched_chunk_indexes) {
         expect(planSmall1.prefetch.chunk_indexes).toContain(idx);
       }
+    }
+  },
+);
+
+type IdentityViolationKind =
+  | "other-id"
+  | "near-pair"
+  | "missing"
+  | "number"
+  | "accessor"
+  | "inherited";
+
+/** Rebuild the logical rows a build publishes: rewritten chunks plus untouched loaded ones. */
+const buildRows = async (
+  build: SnapshotChunkBuildResult,
+  loadedChunks: ReadonlyMap<string, readonly DocumentData[]>,
+): Promise<ReferenceRow[]> => {
+  const changedByKey = new Map(build.changed_chunks.map((item) => [item.descriptor.key, item]));
+  const rows: ReferenceRow[] = [];
+  for (const descriptor of build.chunks) {
+    const changed = changedByKey.get(descriptor.key);
+    let docs = loadedChunks.get(descriptor.key)!;
+    if (changed !== undefined) {
+      const decoded = await decodeSnapshotChunk(
+        changed.bytes,
+        descriptor.key,
+        collection,
+        descriptor,
+      );
+      docs = decoded.docs;
+    }
+    for (const d of docs) {
+      rows.push({ _id: d["_id"] as string, body: d });
+    }
+  }
+  return rows;
+};
+
+const toReferenceMutation = (entry: LogEntry): ReferenceMutation =>
+  entry.op === "D"
+    ? { op: "D", doc_id: entry.doc_id }
+    : ({ op: entry.op, doc_id: entry.doc_id, after: entry.after } as ReferenceMutation);
+
+/** Run `action`, returning its value or the error it threw. */
+const settle = async <T>(
+  action: () => T | Promise<T>,
+): Promise<{ value: T } | { error: unknown }> => {
+  try {
+    return { value: await action() };
+  } catch (error) {
+    return { error };
+  }
+};
+
+fcTest.prop({
+  allIds: fc.uniqueArray(validDocIdArb, { minLength: 2, maxLength: 12 }),
+  initialFraction: fc.double({ min: 0.2, max: 0.8, noNaN: true }),
+  chunkPartitionSizes: fc.array(fc.integer({ min: 1, max: 4 }), { minLength: 1, maxLength: 4 }),
+  logOps: fc.array(
+    fc.record({
+      op: fc.constantFrom<"I" | "U" | "D">("I", "U", "D"),
+      idIndex: fc.nat(),
+      value: fc.integer(),
+      violation: fc.option(
+        fc.record({
+          kind: fc.constantFrom<IdentityViolationKind>(
+            "other-id",
+            "near-pair",
+            "missing",
+            "number",
+            "accessor",
+            "inherited",
+          ),
+          otherOffset: fc.nat(),
+          // NFC/NFD, case, proper-prefix, and high-BMP/astral spellings.
+          nearPair: docIdNearPairArb,
+          swap: fc.boolean(),
+        }),
+        { freq: 4, nil: undefined },
+      ),
+    }),
+    { minLength: 1, maxLength: 12 },
+  ),
+})(
+  "planner, builder, and reference fold agree on post-image identity",
+  async ({ allIds, initialFraction, chunkPartitionSizes, logOps }) => {
+    const sortedIds = [...allIds].toSorted(compareDocIds);
+    const initialIds = sortedIds.slice(0, Math.floor(sortedIds.length * initialFraction));
+
+    const initialChunksDocs: DocumentData[][] = [];
+    let idPointer = 0;
+    for (const size of chunkPartitionSizes) {
+      if (idPointer >= initialIds.length) {
+        break;
+      }
+      initialChunksDocs.push(initialIds.slice(idPointer, idPointer + size).map((id) => doc(id, 0)));
+      idPointer += size;
+    }
+    if (idPointer < initialIds.length) {
+      initialChunksDocs.push(initialIds.slice(idPointer).map((id) => doc(id, 0)));
+    }
+
+    const descriptors: SnapshotChunkDescriptor[] = [];
+    const loadedChunks = new Map<string, readonly DocumentData[]>();
+    for (const chunkDocs of initialChunksDocs) {
+      const descriptor = await createDescriptor(chunkDocs);
+      descriptors.push(descriptor);
+      loadedChunks.set(descriptor.key, chunkDocs);
+    }
+    const initialRows: ReferenceRow[] = initialChunksDocs.flat().map((d) => ({
+      _id: d["_id"] as string,
+      body: d,
+    }));
+
+    const entries: LogEntry[] = logOps.map(({ op, idIndex, value, violation }, index) => {
+      const seq = index + 1;
+      const slot = idIndex % sortedIds.length;
+      const id = sortedIds[slot]!;
+      if (op === "D") {
+        return makeLogEntry(seq, op, id);
+      }
+      if (violation === undefined) {
+        return makeLogEntry(seq, op, id, doc(id, value));
+      }
+      if (violation.kind === "near-pair") {
+        const { left, right } = violation.nearPair;
+        const [docId, storedId] = violation.swap ? [right, left] : [left, right];
+        return makeLogEntry(seq, op, docId, doc(storedId, value));
+      }
+      const other =
+        sortedIds[
+          (slot + 1 + (violation.otherOffset % (sortedIds.length - 1))) % sortedIds.length
+        ]!;
+      const after: Record<Exclude<IdentityViolationKind, "near-pair">, () => unknown> = {
+        "other-id": () => doc(other, value),
+        missing: () => ({ value }),
+        number: () => ({ _id: value, value }),
+        accessor: () =>
+          Object.defineProperty({ value }, "_id", { get: () => id, enumerable: true }),
+        inherited: () => Object.assign(Object.create({ _id: id }), { value }),
+      };
+      return makeLogEntry(seq, op, id, after[violation.kind]() as DocumentData);
+    });
+
+    const fold = (mutations: readonly ReferenceMutation[]) =>
+      foldChunkedSnapshotReference(initialRows, mutations);
+    const policy = CHUNK_BOUNDARY_POLICIES["c128-r512"];
+
+    // Planner (stored polarity) against the reference over the same entries.
+    const planned = await settle(() =>
+      planChunkedFold({
+        collection,
+        collectionPrefix,
+        entries,
+        descriptors,
+        loadedChunks,
+        budget: { ...defaultBudget, max_split_increments: Number.MAX_SAFE_INTEGER },
+        incarnation,
+        policy,
+      }),
+    );
+    if ("error" in planned) {
+      // Both reject: the planner fails closed, and so does the reference.
+      expect(planned.error).toMatchObject({ code: "InvalidResponse" });
+      expect(() => fold(entries.map(toReferenceMutation))).toThrow(
+        expect.objectContaining({ code: "InvalidResponse" }),
+      );
+    } else {
+      // Both accept: the reference admits the planner's prefix and publishes
+      // the same logical rows.
+      const plan = planned.value;
+      expect(plan).not.toBeNull();
+      const prefix = entries.filter((entry) => entry.seq <= plan!.log_seq_end);
+      await expect(buildRows(plan!.build, loadedChunks)).resolves.toEqual(
+        fold(prefix.map(toReferenceMutation)),
+      );
+    }
+
+    // Builder (caller polarity) against the reference over the collapsed
+    // last-write-wins mutations it is handed.
+    const collapsed = new Map<string, ReferenceMutation>();
+    for (const entry of entries) {
+      collapsed.set(entry.doc_id, toReferenceMutation(entry));
+    }
+    const directIndexes = new Set<number>();
+    for (const [docId, mutation] of collapsed) {
+      const target = routeMutationToDescriptor(docId, mutation.op, descriptors);
+      if (target !== null) {
+        directIndexes.add(target);
+      }
+    }
+    const { leftmostOwnerIndex, selectedNeighborIndex } = deriveOwnerAndNeighbor(
+      directIndexes,
+      descriptors.length,
+    );
+    const built = await settle(() =>
+      buildSnapshotChunks({
+        collection,
+        collectionPrefix,
+        descriptors,
+        loadedChunks,
+        mutations: collapsed,
+        incarnation,
+        policy,
+        lockedDirectOwnerIndex: leftmostOwnerIndex,
+        selectedNeighborIndex,
+      }),
+    );
+    const referenced = await settle(() => fold([...collapsed.values()]));
+    if ("error" in built) {
+      expect(built.error).toMatchObject({ code: "InvalidConfig" });
+      expect("error" in referenced && referenced.error).toMatchObject({ code: "InvalidResponse" });
+    } else {
+      expect(referenced).not.toHaveProperty("error");
+      await expect(buildRows(built.value, loadedChunks)).resolves.toEqual(
+        "value" in referenced ? referenced.value : undefined,
+      );
     }
   },
 );

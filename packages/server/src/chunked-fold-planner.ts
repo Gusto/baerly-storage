@@ -1,5 +1,6 @@
 import { type DocumentData, encodeJsonBytes, type LogEntry } from "@baerly/protocol";
 import { type ReferenceMutation } from "./chunked-snapshot-reference.ts";
+import { assertPostImageIdentity } from "./post-image-identity.ts";
 import {
   evaluateSnapshotChunks,
   deriveOwnerAndNeighbor,
@@ -83,8 +84,13 @@ function assertStoredEntryDocId(id: string): void {
 
 /**
  * Convert one stored log entry into the mutation both fold phases operate on.
- * A missing post-image on an insert or update is a stored-data failure, so it
- * raises InvalidResponse rather than InvalidConfig.
+ * A missing post-image on an insert or update, or one whose `_id` is not the
+ * entry's `doc_id`, is a stored-data failure, so it raises InvalidResponse
+ * rather than InvalidConfig. The builder files a mutation under `doc_id` but
+ * sorts and bounds chunks by `after._id`, so a mismatch that got past here
+ * would silently re-key the row. Both phases call this per entry, before any
+ * routing or accounting, so an offending entry fails the whole call rather
+ * than shortening the admitted prefix.
  */
 function entryToMutation(entry: LogEntry): ReferenceMutation {
   assertStoredEntryDocId(entry.doc_id);
@@ -94,6 +100,8 @@ function entryToMutation(entry: LogEntry): ReferenceMutation {
   if (entry.after === undefined) {
     invalid("InvalidResponse", "insert or update log entry missing after post-image");
   }
+  // The doc_id domain was checked above, so the identity-only check suffices.
+  assertPostImageIdentity(entry.doc_id, entry.after, "InvalidResponse", invalid);
   return { op: entry.op, doc_id: entry.doc_id, after: entry.after };
 }
 
