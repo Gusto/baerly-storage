@@ -9,6 +9,7 @@ import {
 } from "./snapshot-chunk.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
 import type { SnapshotChunkDescriptor } from "./snapshot-manifest.ts";
+import { makeValidDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 
 const prefix = "app/demo/tenant/acme/manifests/tickets";
 const incarnation = "00112233445566778899aabbccddeeff";
@@ -372,10 +373,7 @@ describe("snapshot chunk codec", () => {
   });
 });
 
-const idArb = fc.oneof(
-  fc.stringMatching(/^[a-z][a-z0-9]{0,5}$/),
-  fc.constantFrom("é", "e\u0301", "\u{10000}", "\u{1f600}"),
-);
+const idArb = makeValidDocIdArb({ maxCodePoints: 6, longBand: false });
 const valueArb = fc.oneof(fc.string(), fc.integer(), fc.boolean());
 
 fcTest.prop({
