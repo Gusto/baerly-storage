@@ -34,6 +34,7 @@ import {
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
 } from "@baerly/protocol";
+import { isCallerFacing, markCallerFacing } from "../caller-facing-error.ts";
 import type { Db } from "../db.ts";
 import {
   errorEnvelope,
@@ -466,8 +467,6 @@ type ErrorCodePolicy =
       readonly shouldExpose: (err: BaerlyError) => boolean;
     };
 
-const CALLER_FACING_INVALID_CONFIG_ERRORS = new WeakSet<BaerlyError>();
-
 const ERROR_CODE_POLICY = {
   AccessDenied: {
     messagePolicy: "scrubbed",
@@ -489,7 +488,7 @@ const ERROR_CODE_POLICY = {
   InvalidConfig: {
     messagePolicy: "contextual",
     scrubbedMessage: "invalid server configuration",
-    shouldExpose: (err) => CALLER_FACING_INVALID_CONFIG_ERRORS.has(err),
+    shouldExpose: (err) => isCallerFacing(err),
   },
   InvalidResponse: {
     messagePolicy: "scrubbed",
@@ -533,7 +532,7 @@ export const errorMessagePolicyFor = (code: BaerlyErrorCode): ErrorMessagePolicy
 
 const markCallerFacingInvalidConfig = (err: unknown): unknown => {
   if (err instanceof BaerlyError && err.code === "InvalidConfig") {
-    CALLER_FACING_INVALID_CONFIG_ERRORS.add(err);
+    markCallerFacing(err);
   }
   return err;
 };

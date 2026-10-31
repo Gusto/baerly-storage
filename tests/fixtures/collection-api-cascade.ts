@@ -258,7 +258,8 @@ const runInsertContract = async (
  * on `local-fs` the bad id is refused before it reaches `#pathFor`
  * (never a real filesystem write). The guard is `assertDocId`
  * (`packages/server/src/doc-id.ts`), the `_id` analogue of
- * `assertKeySegment` for app/tenant/collection.
+ * `assertKeySegment` for app/tenant/collection. The same boundary pins the
+ * `update` identity rule: a patch cannot change or strip a row's `_id`.
  */
 const runDocIdBoundary = async (
   db: Db,
@@ -285,6 +286,24 @@ const runDocIdBoundary = async (
   await expect(notes.replace("", { title: "x" } as never)).rejects.toMatchObject({
     code: "InvalidConfig",
   });
+
+  // `update` identity: a patch whose top-level `_id` is present and not
+  // the row's own `_id` (`null` included) is rejected, so a patch can
+  // neither re-key nor strip a row. An equal `_id` is accepted.
+  const { _id: rowId } = await notes.insert({ _id: "keyed", k: 9 });
+  for (const patch of [{ _id: "rekeyed" }, { _id: null }, { _id: 42 }]) {
+    await expect(notes.update(rowId, patch as never)).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+  }
+  await expect(notes.get("rekeyed")).resolves.toBeUndefined();
+  await expect(notes.update(rowId, { _id: rowId, k: 10 } as never)).resolves.toEqual({
+    modified: 1,
+  });
+  await expect(notes.where({}).all()).resolves.toEqual([{ _id: rowId, k: 10 }]);
+  // The row kept its `_id`, so a predicate delete tombstones it.
+  await expect(notes.where({ k: 10 }).delete()).resolves.toEqual({ deleted: 1 });
+  await expect(notes.where({}).all()).resolves.toEqual([]);
 };
 
 /**

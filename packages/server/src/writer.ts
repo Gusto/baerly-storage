@@ -80,6 +80,7 @@ import {
   shouldFireMaintenance,
 } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
+import { assertPostImageIdentity } from "./post-image-identity.ts";
 
 const CAS_CONFLICT_RESOLUTION = "Re-read and retry.";
 const AMBIGUOUS_COMMIT_RESOLUTION =
@@ -335,6 +336,9 @@ export class Writer {
    *   (compactor bug or stale `current.json`).
    * @throws BaerlyError code="InvalidResponse" when a log-entry body
    *   isn't valid JSON.
+   * @throws BaerlyError code="InvalidConfig" when an `I` / `U` body is
+   *   not a plain object whose own `_id` is the string `docId`. Checked
+   *   before any I/O.
    *
    * **Implicit provisioning.** When `current.json` does not exist at
    * `currentJsonKey` (fresh bucket, fresh collection), the writer
@@ -352,6 +356,13 @@ export class Writer {
     // overlong `docId` as `BaerlyError{code:"InvalidConfig"}`, so a
     // traversal-shaped `_id` can never become a written key segment.
     assertDocId(input.docId);
+    // An `I` / `U` post-image must name the document it is stored under:
+    // a plain object whose own `_id` is the string `docId`. Without this,
+    // `log/<seq>` would record a row whose `after._id` disagrees with its
+    // `doc_id`, and later reads key that row by the wrong id.
+    if (input.op !== "D") {
+      assertPostImageIdentity(input.docId, input.body, "InvalidConfig");
+    }
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 

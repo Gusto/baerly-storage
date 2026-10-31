@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 286651,
-      "gz": 90596,
-      "minGz": 22458,
+      "raw": 291177,
+      "gz": 92184,
+      "minGz": 22982,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
@@ -37,9 +37,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 486194,
-      "gz": 147067,
-      "minGz": 47243,
+      "raw": 490921,
+      "gz": 149007,
+      "minGz": 47774,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
@@ -58,9 +58,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 419277,
-      "gz": 125982,
-      "minGz": 39701,
+      "raw": 422403,
+      "gz": 127295,
+      "minGz": 40108,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
