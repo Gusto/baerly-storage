@@ -57,7 +57,7 @@
       "httpStatus": 409,
       "retriable": false,
       "messagePolicy": "scrubbed",
-      "summary": "Commit landed below the certified delete floor; retry is at-least-once."
+      "summary": "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry."
     },
     {
       "code": "Unauthorized",

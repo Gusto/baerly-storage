@@ -176,6 +176,14 @@ The load-bearing kernel metrics today (canonical list in
   the delete-floor check was skipped for that commit instead of
   evaluated. A sustained rate means the check is not covering the writes
   it exists to protect, even though no individual commit is rejected.
+- `db.write.unresolved_create_total` — writer counter, labelled by
+  `collection`. A rejected committing create could not be resolved by
+  readback, so the commit failed with `AmbiguousCommit`. Any sustained rate
+  means storage is dropping create acknowledgements or occupant reads.
+- `db.write.maintenance_dispatch_failed_total` — writer counter, labelled
+  by `collection`. The host's maintenance dispatcher threw or rejected after
+  a durable commit, so that write's maintenance tick did not run. A
+  sustained rate means write-tick maintenance is off and backlog is growing.
 - `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`
   loss counter.
 - `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.

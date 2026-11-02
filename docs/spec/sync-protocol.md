@@ -278,9 +278,51 @@ The per-commit `session` is minted once, **outside** the retry loop,
 and the LSN encodes the `seq`, so a dropped ack is unambiguously
 distinguishable from a genuine peer. The foreign-occupant path is
 bounded by the forward-probe cap; exhausting that cap is an `Internal`
-runaway alarm, not a normal high-contention conflict. Persistent
-transport/storage failures still surface to the caller through the
-ordinary `BaerlyError` path.
+runaway alarm, not a normal high-contention conflict. Failures before the
+committing create is dispatched surface through the ordinary `BaerlyError`
+path. A failed committing-create call gets bounded readback because a
+storage adapter may report failure after an internal attempt became durable,
+unless every send at the slot was provably not applied.
+The `AmbiguousCommit` contract below applies when readback cannot resolve it.
+
+### Unresolved create fate
+
+Before reporting a failed committing create, the writer attempts bounded
+readback. One transient budget per commit covers same-slot resends after a
+transient transport error and retries of a failed readback; an exhausted
+budget still gets one final readback. Other reported failures do not trigger
+a same-slot resend. An exact own-entry occupant is adopted as committed. An
+identified foreign occupant advances the writer to the next slot. A missing,
+unreadable, malformed, or otherwise unidentifiable occupant cannot prove that
+no internal attempt committed, so the writer reports
+`BaerlyError{code:"AmbiguousCommit"}` with `retriable: false`.
+
+`AccessDenied` and `InvalidConfig` from a slot's only send skip the readback
+and propagate as-is. The `Storage.put` contract makes them definitive for a
+create-only put: an adapter that retries internally reports a rejection that
+follows an attempt of unknown outcome as `NetworkError` instead. After an
+uncertain send at the same slot, those codes resolve by readback like any
+other rejection. A `NetworkError` whose `cause.notApplied` is `true` reports
+that no attempt of that call was applied: the S3 and GCS adapters set it when
+every internal attempt was throttled (`429`, or S3's `503 SlowDown`). Such a
+send does not make the slot uncertain; if every send at the slot was one, the
+`NetworkError` propagates as-is without readback. This contract is scoped to
+failed committing-create calls; earlier read, configuration, and index-write
+errors keep their ordinary error behavior. The same code also covers the
+certified-delete-floor case described in invariant 5: a create may have
+landed beneath every reader's floor, and durable state cannot establish
+whether an earlier attempt was folded before retirement.
+
+Callers should re-read the affected row by its stable `_id` and compare it with
+the intended state before deciding what to do. A matching row can help
+reconcile the outcome, but absence is not proof that the create failed: a send
+may still complete, or a later write may have superseded the effect. Retrying
+is an explicit at-least-once choice and may repeat logical work. Supplying a
+stable `_id` makes reconciliation possible when an insert's result was not
+returned, but does not make retries idempotent or provide exactly-once
+execution across calls, restarts, or lost responses. For multi-row operations,
+rows committed before the ambiguous row remain applied; the operation does not
+return its partial-progress count.
 
 ### Crash safety
 

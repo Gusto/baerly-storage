@@ -361,8 +361,8 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  *
  * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
  *   CAS retry budget exhausted inside `Writer.commit()`.
- * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
- *   below the collection's certified delete floor, so the row may or may not
+ * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
+ *   durable, but its outcome could not be resolved. The row may or may not
  *   have been inserted. Not retriable-by-default; see `Writer.commit`.
  * @throws BaerlyError code="SchemaError" — from the per-collection
  *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
@@ -525,10 +525,11 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  *   exhausted inside `Writer.commit()`. The partial-progress
  *   `modified` count is NOT returned in that case.
  * @throws BaerlyError code="AmbiguousCommit" — one row's committing create
- *   landed below the collection's certified delete floor. Rows before it in
+ *   may be durable, but its outcome could not be resolved. Rows before it in
  *   the batch are already applied and that row's own fate is unknown; the
- *   partial-progress `modified` count is NOT returned, so a caller that needs
- *   to resume must re-read. See `Writer.commit`.
+ *   partial-progress `modified` count is NOT returned. Re-read rows by `_id`
+ *   before deciding whether to resume; absence does not prove a create failed.
+ *   See `Writer.commit`.
  * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
  *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
  *   root in the type system).
@@ -596,9 +597,10 @@ const runUpdate = async <T extends DocumentData>(
  *   the collection's bound validator.
  * @throws BaerlyError code="Conflict" — writer CAS retry budget
  *   exhausted.
- * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
- *   below the collection's certified delete floor, so the replace may or may
- *   not have been applied. See `Writer.commit`.
+ * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
+ *   durable, but its outcome could not be resolved, so the replace may or may
+ *   not have been applied. Re-read the row by `id` before deciding whether to
+ *   retry; absence does not prove the create failed. See `Writer.commit`.
  */
 export const runReplaceById = async <T extends DocumentData>(
   ctx: CollectionReadContext,
@@ -653,9 +655,10 @@ export const runReplaceById = async <T extends DocumentData>(
  *   exhausted. The partial-progress `deleted` count is NOT returned
  *   in that case.
  * @throws BaerlyError code="AmbiguousCommit" — one row's committing create
- *   landed below the collection's certified delete floor. Rows before it in
+ *   may be durable, but its outcome could not be resolved. Rows before it in
  *   the batch are already tombstoned and that row's own fate is unknown; the
- *   partial-progress `deleted` count is NOT returned. See `Writer.commit`.
+ *   partial-progress `deleted` count is NOT returned. Re-read rows by `_id`
+ *   before deciding whether to resume. See `Writer.commit`.
  * @throws BaerlyError code="InvalidResponse" — a matched stored row's
  *   `_id` is not the string it is stored under.
  */

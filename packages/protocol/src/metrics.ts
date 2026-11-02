@@ -35,6 +35,12 @@
  *     the delete-floor check was skipped for that commit rather than
  *     evaluated. A sustained rate means the check is not covering the writes
  *     it exists to protect, even though no individual commit is rejected.
+ *   - `db.write.unresolved_create_total` — counter, labelled by
+ *     `collection`. A rejected committing create could not be resolved by
+ *     readback, so the commit failed with `AmbiguousCommit`.
+ *   - `db.write.maintenance_dispatch_failed_total` — counter, labelled by
+ *     `collection`. The maintenance dispatcher threw or rejected after a
+ *     durable commit, so that write's maintenance tick did not run.
  *   - `db.manifest.lag_window_depth` — gauge (alert at >100)
  *   - `db.gc.entries_swept_per_second` — gauge (livelock indicator when <writes/s)
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)

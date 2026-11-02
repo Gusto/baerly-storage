@@ -97,8 +97,8 @@ export class S3HttpStorage implements Storage {
     }
   }
 
-  #retry<T>(fn: () => Promise<T>): Promise<T> {
-    return retry(fn, { retries: this.#retries, backoffMs: this.#backoffMs });
+  #retry<T>(fn: () => Promise<T>, conditionalCreate = false): Promise<T> {
+    return retry(fn, { retries: this.#retries, backoffMs: this.#backoffMs, conditionalCreate });
   }
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
@@ -199,7 +199,7 @@ export class S3HttpStorage implements Storage {
         result.versionId = versionId;
       }
       return result;
-    });
+    }, opts?.ifNoneMatch === "*");
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {

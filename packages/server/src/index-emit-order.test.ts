@@ -127,9 +127,14 @@ describe("hybrid index ordering: additive PUTs before commit, stale DELETEs afte
       try {
         await crashDb.collection(COLL).update(TARGET, { status: "closed" });
       } catch (error) {
-        // The synthetic AbortError (or a Conflict the abort induced) is
-        // expected; rethrow anything else.
-        if (
+        // An aborted committing PUT has unresolved fate at the writer
+        // boundary; earlier aborts still propagate directly.
+        if ((error as { code?: string })?.code === "AmbiguousCommit") {
+          expect(error).toMatchObject({ retriable: false });
+          const cause = (error as { cause?: unknown }).cause;
+          expect(cause).toBeInstanceOf(AggregateError);
+          expect((cause as AggregateError).errors[0]).toMatchObject({ name: "AbortError" });
+        } else if (
           !(error instanceof Error) ||
           !(error.name === "AbortError" || (error as { code?: string }).code === "Conflict")
         ) {

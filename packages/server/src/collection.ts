@@ -84,9 +84,10 @@ export const makeCollection = <T extends DocumentData>(
      *
      * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit
      *   check) or CAS retry budget exhausted.
-     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
-     *   below the collection's certified delete floor, so the row may or may not
-     *   have been inserted. Not retriable-by-default; see `Writer.commit`.
+     * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
+     *   durable, but its outcome could not be resolved, so the row may or may
+     *   not have been inserted. Re-read by a stable `_id`; absence is not proof
+     *   of failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — from the per-collection
      *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
      */
@@ -98,9 +99,10 @@ export const makeCollection = <T extends DocumentData>(
      *
      * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
      *   `Writer.commit()`.
-     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
-     *   below the collection's certified delete floor, so the update may or may
-     *   not have been applied. Not retriable-by-default; see `Writer.commit`.
+     * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
+     *   durable, but its outcome could not be resolved, so the update may or
+     *   may not have been applied. Re-read by `id`; absence is not proof of
+     *   failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — merged post-image rejected by the
      *   collection's bound validator, or `merge(prev, patch)` produced
      *   `undefined`.
@@ -116,9 +118,10 @@ export const makeCollection = <T extends DocumentData>(
      * @throws BaerlyError code="NotFound" — no row exists at `id`.
      * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
      *   `Writer.commit()`.
-     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
-     *   below the collection's certified delete floor, so the replace may or may
-     *   not have been applied. Not retriable-by-default; see `Writer.commit`.
+     * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
+     *   durable, but its outcome could not be resolved, so the replace may or
+     *   may not have been applied. Re-read by `id`; absence is not proof of
+     *   failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — post-image rejected by the
      *   collection's bound validator.
      */
@@ -130,10 +133,10 @@ export const makeCollection = <T extends DocumentData>(
      *
      * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
      *   `Writer.commit()`.
-     * @throws BaerlyError code="AmbiguousCommit" — the committing create landed
-     *   below the collection's certified delete floor, so the tombstone may or
-     *   may not have been applied. Not retriable-by-default; see
-     *   `Writer.commit`.
+     * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
+     *   durable, but its outcome could not be resolved, so the tombstone may or
+     *   may not have been applied. Re-read by `id`; absence is not proof of
+     *   failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="InvalidResponse" — the stored row's `_id` is
      *   not the string `id`; repair it with `replace(id, doc)`.
      */
