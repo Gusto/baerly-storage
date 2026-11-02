@@ -109,7 +109,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the row may or may not have been inserted.
-   *         Re-read by a stable `_id`; absence is not proof of failure.
+   *         `err._id` is the row's id, minted or supplied: re-read it
+   *         (absence is not proof of failure), and retry with that same
+   *         `_id` so a retry cannot mint a second document.
    *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
    *         schema-validation failure (when a schema is declared
@@ -135,7 +137,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the update may or may not have been applied.
-   *         Re-read by `id`; absence is not proof of failure.
+   *         Re-read by `id` (also `err._id`); absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
@@ -162,7 +164,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the replace may or may not have been applied.
-   *         Re-read by `id`; absence is not proof of failure.
+   *         Re-read by `id` (also `err._id`); absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
    *
    * @example
@@ -181,8 +183,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the tombstone may or may not have been
-   *         applied. Re-read by `id`; absence is not proof of failure.
-   *         Not retriable-by-default; handle the code explicitly.
+   *         applied. Re-read by `id` (also `err._id`); absence is not
+   *         proof of failure. Not retriable-by-default; handle the code
+   *         explicitly.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id` (left by an older release
    *         that let a patch strip or re-key `_id`). Repair it with
@@ -427,8 +430,8 @@ export interface Query<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
    *         committing create may be durable, but its outcome could
    *         not be resolved. Rows before it are already applied; the
-   *         partial-progress `modified` count is NOT returned. Re-read
-   *         affected rows by `_id`; absence is not proof of failure.
+   *         partial-progress `modified` count is NOT returned. `err._id`
+   *         names that row; absence is not proof of failure.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
@@ -458,8 +461,8 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         committing create may be durable, but its outcome could
    *         not be resolved. Rows before it are already tombstoned;
    *         the partial-progress `deleted` count is NOT returned.
-   *         Re-read affected rows by `_id` before deciding whether to
-   *         resume.
+   *         `err._id` names that row; re-read before deciding whether
+   *         to resume.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked per row before that row

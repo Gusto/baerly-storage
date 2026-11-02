@@ -317,10 +317,13 @@ Callers should re-read the affected row by its stable `_id` and compare it with
 the intended state before deciding what to do. A matching row can help
 reconcile the outcome, but absence is not proof that the create failed: a send
 may still complete, or a later write may have superseded the effect. Retrying
-is an explicit at-least-once choice and may repeat logical work. Supplying a
-stable `_id` makes reconciliation possible when an insert's result was not
-returned, but does not make retries idempotent or provide exactly-once
-execution across calls, restarts, or lost responses. For multi-row operations,
+is an explicit at-least-once choice and may repeat logical work. The error
+carries the affected row's `_id` (`BaerlyError._id`, and `error._id` in the
+HTTP envelope), including the id an auto-ID insert minted, so a retry can reuse
+it: every create for one `_id` targets one row, so a same-`_id` retry cannot
+mint a second document. It does not make retries idempotent or provide
+exactly-once execution across calls, restarts, or lost responses; a replayed
+post-image can still overwrite a concurrent change. For multi-row operations,
 rows committed before the ambiguous row remain applied; the operation does not
 return its partial-progress count.
 

@@ -169,6 +169,27 @@ describe("mapError", () => {
     });
   });
 
+  test("AmbiguousCommit scrubs its message but keeps the row _id", () => {
+    const err = new BaerlyError(
+      "AmbiguousCommit",
+      "Writer: the committing create at seq 4 on app/router-test/tenant/t1/manifests/notes/current.json was rejected",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "row-7",
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(409);
+    expect(envelope.error).toMatchObject({
+      code: "AmbiguousCommit",
+      message: "commit outcome is ambiguous; the mutation may or may not have been applied",
+      retriable: false,
+      _id: "row-7",
+    });
+  });
+
   test("InvalidConfig scrubs storage config detail by default", () => {
     const storageError = new BaerlyError(
       "InvalidConfig",

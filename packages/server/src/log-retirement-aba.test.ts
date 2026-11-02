@@ -179,6 +179,7 @@ describe("log retirement vs. the numbered-log create", () => {
 
     await expect(pausedCommit).rejects.toMatchObject({
       code: "AmbiguousCommit",
+      _id: DOC_ID,
       retriable: false,
     });
     const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
@@ -212,6 +213,7 @@ describe("log retirement vs. the numbered-log create", () => {
 
     await expect(pausedCommit).rejects.toMatchObject({
       code: "AmbiguousCommit",
+      _id: DOC_ID,
       retriable: false,
     });
     const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
@@ -365,6 +367,7 @@ describe("log retirement vs. the numbered-log create", () => {
     // string-matching the error message, per test conventions.)
     await expect(pausedCommit).rejects.toMatchObject({
       code: "AmbiguousCommit",
+      _id: DOC_ID,
       retriable: false,
     });
     // The fold absorbed the PEER doc, not ours — the adopted entry is a

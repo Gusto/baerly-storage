@@ -34,6 +34,8 @@ export interface HttpErrorEnvelope {
     }>;
     /** Human-readable remediation hint. Present when the code has a per-code default or a site override; absent for opaque/transient codes. */
     readonly resolution?: string;
+    /** The affected row's `_id`, present only when `code === "AmbiguousCommit"`. Additive. */
+    readonly _id?: string;
   };
 }
 
@@ -49,6 +51,7 @@ export const errorEnvelope = (
   issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>,
   resolution?: string,
   retriable?: boolean,
+  _id?: string,
 ): HttpErrorEnvelope => {
   const resolved = resolution ?? CODE_RESOLUTIONS[code];
   return {
@@ -58,6 +61,7 @@ export const errorEnvelope = (
       retriable: retriable ?? isRetriableCode(code),
       ...(issues !== undefined && issues.length > 0 ? { issues } : {}),
       ...(resolved !== undefined ? { resolution: resolved } : {}),
+      ...(_id !== undefined && code === "AmbiguousCommit" ? { _id } : {}),
     },
   };
 };
