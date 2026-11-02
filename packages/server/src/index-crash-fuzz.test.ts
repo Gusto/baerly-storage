@@ -154,8 +154,8 @@ describe("index emission survives a single crash anywhere in the commit", () => 
         });
       }
 
-      // Arm and try the crash-injected commit. Catch the synthetic
-      // AbortError so the property body can continue to the rebuild.
+      // Arm and try the crash-injected commit. Reconcile the live state
+      // after the injected abort, including unresolved create fate.
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
       const crashWriter = new Writer({
@@ -186,11 +186,14 @@ describe("index emission survives a single crash anywhere in the commit", () => 
           });
         }
       } catch (error) {
-        // Either the synthetic AbortError fired mid-commit, or the
-        // writer surfaced a `Conflict` from a CAS race the abort
-        // induced. Both are expected; the property body proceeds
-        // unconditionally.
-        if (
+        // A committing-PUT abort is wrapped as non-retriable ambiguity;
+        // prove that it still came from this harness's injected abort.
+        if ((error as { code?: string })?.code === "AmbiguousCommit") {
+          expect(error).toMatchObject({ retriable: false });
+          const cause = (error as { cause?: unknown }).cause;
+          expect(cause).toBeInstanceOf(AggregateError);
+          expect((cause as AggregateError).errors[0]).toMatchObject({ name: "AbortError" });
+        } else if (
           !(error instanceof Error) ||
           !(error.name === "AbortError" || (error as { code?: string }).code === "Conflict")
         ) {

@@ -85,7 +85,7 @@ boundaries), never `instanceof` chains.
 | `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate)                         |
 | `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
 | `Conflict`               | 409  | `insert` `_id` collision (duplicate `_id`)                             |
-| `AmbiguousCommit`        | 409  | Commit landed below the certified delete floor; retry is at-least-once |
+| `AmbiguousCommit`        | 409  | A committing create may be durable, but its outcome could not be resolved |
 | `Unauthorized`           | 401  | Verifier returned no identity                                          |
 | `AccessDenied`           | 403  | S3 403 or bucket policy denied                                         |
 | `NotFound`               | 404  | Row by id not found                                                    |

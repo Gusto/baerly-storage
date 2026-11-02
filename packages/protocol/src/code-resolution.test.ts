@@ -7,7 +7,13 @@ import {
 
 describe("CODE_RESOLUTIONS", () => {
   test("covers the actionable codes with a non-empty string", () => {
-    for (const code of ["PayloadTooLarge", "Unauthorized", "AccessDenied", "NotFound"] as const) {
+    for (const code of [
+      "AmbiguousCommit",
+      "PayloadTooLarge",
+      "Unauthorized",
+      "AccessDenied",
+      "NotFound",
+    ] as const) {
       expect(CODE_RESOLUTIONS[code]).toBeTypeOf("string");
       expect(CODE_RESOLUTIONS[code]!.length).toBeGreaterThan(0);
     }

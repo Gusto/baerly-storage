@@ -106,9 +106,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *
    * @throws BaerlyError{code: "Conflict"} — `_id` collision on
    *         caller-supplied id.
-   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
-   *         create landed below the collection's certified delete
-   *         floor, so the row may or may not have been inserted.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
+   *         create may be durable, but its outcome could not be
+   *         resolved, so the row may or may not have been inserted.
+   *         Re-read by a stable `_id`; absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
    *         schema-validation failure (when a schema is declared
@@ -131,9 +132,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *
    * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
-   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
-   *         create landed below the collection's certified delete
-   *         floor, so the update may or may not have been applied.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
+   *         create may be durable, but its outcome could not be
+   *         resolved, so the update may or may not have been applied.
+   *         Re-read by `id`; absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
@@ -157,9 +159,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Whole-document replace on one row by primary key. Throws
    * `BaerlyError{code:"NotFound"}` when no row exists at `id`.
    *
-   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
-   *         create landed below the collection's certified delete
-   *         floor, so the replace may or may not have been applied.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
+   *         create may be durable, but its outcome could not be
+   *         resolved, so the replace may or may not have been applied.
+   *         Re-read by `id`; absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
    *
    * @example
@@ -175,11 +178,11 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * id is unknown rather than throwing. For predicate-aware bulk
    * delete, use `.where(predicate).delete()` on {@link Query}.
    *
-   * @throws BaerlyError{code: "AmbiguousCommit"} — the committing
-   *         create landed below the collection's certified delete
-   *         floor, so the tombstone may or may not have been
-   *         applied. Not retriable-by-default; handle the code
-   *         explicitly.
+   * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
+   *         create may be durable, but its outcome could not be
+   *         resolved, so the tombstone may or may not have been
+   *         applied. Re-read by `id`; absence is not proof of failure.
+   *         Not retriable-by-default; handle the code explicitly.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id` (left by an older release
    *         that let a patch strip or re-key `_id`). Repair it with
@@ -422,11 +425,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "Conflict"} — concurrent write lost
    *         the CAS race. Caller's choice whether to retry.
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
-   *         committing create landed below the collection's
-   *         certified delete floor. Rows before it in the batch are
-   *         already applied and that row's own fate is unknown; the
-   *         partial-progress `modified` count is NOT returned, so a
-   *         caller that needs to resume must re-read.
+   *         committing create may be durable, but its outcome could
+   *         not be resolved. Rows before it are already applied; the
+   *         partial-progress `modified` count is NOT returned. Re-read
+   *         affected rows by `_id`; absence is not proof of failure.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
@@ -453,10 +455,11 @@ export interface Query<T extends DocumentData = DocumentData> {
    * single-row case prefer {@link Collection.delete}(id).
    *
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
-   *         committing create landed below the collection's
-   *         certified delete floor. Rows before it in the batch are
-   *         already tombstoned and that row's own fate is unknown;
+   *         committing create may be durable, but its outcome could
+   *         not be resolved. Rows before it are already tombstoned;
    *         the partial-progress `deleted` count is NOT returned.
+   *         Re-read affected rows by `_id` before deciding whether to
+   *         resume.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked per row before that row

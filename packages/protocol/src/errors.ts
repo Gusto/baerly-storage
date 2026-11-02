@@ -33,23 +33,19 @@ export type BaerlyErrorCode =
    */
   | "Conflict"
   /**
-   * A committing `log/<seq>` create won at a sequence the collection has
-   * already certified deleted (`seq < min(log_delete_floor, log_seq_start)`),
-   * so the object it wrote is beneath every reader's floor and invisible.
+   * A write's commit outcome cannot be resolved: one or more committing
+   * `log/<seq>` creates may already be durable, but the writer cannot adopt or
+   * report a confirmed commit. This includes an unresolved create acknowledgement
+   * after same-slot resends/readback, and a create that landed below the
+   * certified delete floor (`seq < min(log_delete_floor, log_seq_start)`).
    *
-   * The logical mutation's fate is genuinely unknown, not merely unreported: an
-   * earlier attempt by the same writer may have landed and been folded into the
-   * snapshot before retirement removed the slot, and no durable state
-   * distinguishes that history from one where a foreign writer's entry was
-   * folded instead (`docs/spec/sync-protocol.md` invariant 11 —
-   * `writer_fence` is not a replay filter — and `SnapshotBody.docs`, which
-   * keeps no writer identity).
-   *
-   * Retrying the same logical write is permitted and is the intended recovery,
-   * but the write contract under this fault is **at-least-once**: a retry may
-   * apply the mutation a second time. That is why this is a distinct code and
-   * why `retriable` is `false` — a generic conflict-retry wrapper must not
-   * absorb it silently. HTTP layer maps this to 409.
+   * Re-read the row by its stable `_id` and compare it with the intended state
+   * before deciding what to do. A matching row helps reconcile the outcome;
+   * absence does not prove that a create failed, since a send may still complete
+   * or its effect may have been superseded. Retrying is an explicit at-least-once
+   * choice and may repeat logical work. A stable `_id` helps reconciliation but
+   * does not make retries idempotent. `retriable` is `false` so generic retry
+   * wrappers do not repeat the operation silently. HTTP maps this code to 409.
    */
   | "AmbiguousCommit"
   /**

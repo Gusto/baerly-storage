@@ -93,8 +93,8 @@ export class GcsHttpStorage implements Storage {
     }
   }
 
-  #retry<T>(fn: () => Promise<T>): Promise<T> {
-    return retry(fn, { retries: this.#retries, backoffMs: this.#backoffMs });
+  #retry<T>(fn: () => Promise<T>, conditionalCreate = false): Promise<T> {
+    return retry(fn, { retries: this.#retries, backoffMs: this.#backoffMs, conditionalCreate });
   }
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
@@ -187,7 +187,7 @@ export class GcsHttpStorage implements Storage {
         result.serverDate = new Date(dateStr);
       }
       return result;
-    });
+    }, opts?.ifNoneMatch === "*");
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {

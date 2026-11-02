@@ -35,6 +35,20 @@ choose a different `_id`, or omit `_id` so baerly-storage can mint one.
 The in-process writer already retries a bounded number of CAS attempts; a
 remote client that sees `retriable: true` should apply its own bounded backoff.
 
+### AmbiguousCommit recovery
+
+`AmbiguousCommit` (HTTP 409) means a committing create may be durable, but its
+outcome could not be resolved. It is not retriable by default. Re-read the
+affected row by its stable `_id` and compare it with the intended state. A
+matching row can help reconcile the outcome; absence does not prove failure,
+because a send may still complete or a later write may have superseded it.
+Retrying is an explicit at-least-once choice and may repeat logical work. A
+stable `_id` helps reconciliation but does not make retries idempotent. For
+inserts that need reconciliation, supply `_id`; an auto-generated id is
+returned only after success. For bulk mutations, rows before the ambiguous row
+are already applied, but no partial-progress count is returned; inspect the
+affected rows before deciding whether to resume.
+
 ### `db.collection(name).insertOne(...)` / `.find(...)` is not a function
 
 **Cause:** Mongo muscle memory. No such method.

@@ -36,6 +36,15 @@ export interface Storage {
    * compare-and-swap (write only if the current ETag matches), or
    * `ifNoneMatch: "*"` for create-only (write only if no object
    * exists). Conflicts throw `BaerlyError` with HTTP 412 semantics.
+   *
+   * A create-only put that rejects with `AccessDenied` or `InvalidConfig`
+   * must guarantee that no attempt of that call can still land. An
+   * implementation that retries internally reports a rejection that
+   * follows an attempt of unknown outcome as `NetworkError` instead; the
+   * writer resolves `NetworkError` by reading the slot back. A create-only
+   * put's `NetworkError` whose `cause.notApplied` is `true` must guarantee
+   * that no attempt of that call was applied (for example, every attempt was
+   * throttled); the writer then skips the readback.
    */
   put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult>;
 

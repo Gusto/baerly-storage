@@ -2,6 +2,8 @@ import type { BaerlyErrorCode } from "./errors.ts";
 
 /** Canonical per-code corrective action; `errorEnvelope` falls back to this and it crosses the wire as `resolution`. Actionable codes only — context-sensitive codes use throw-site overrides. */
 export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
+  AmbiguousCommit:
+    "Do not retry automatically. Reconcile using the document's stable _id where possible; absence does not prove the write failed. A deliberate retry may duplicate logical work.",
   PayloadTooLarge: "Reduce the request body below the server's body-size cap (1 MiB default).",
   Unauthorized: "Send a valid Authorization header for the server's configured auth method.",
   AccessDenied: "These credentials are denied for this tenant prefix or bucket policy.",

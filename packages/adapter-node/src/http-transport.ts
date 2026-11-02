@@ -97,7 +97,8 @@ export const xmlErrorDetail = (status: number, body: string): string => {
  * first; the rest route here: `403`→AccessDenied (permanent), `429`/`≥500`→
  * retryable NetworkError carrying `{status, retryAfterSeconds?}`, else
  * InvalidResponse. Callers `throw` the result; consumes `res.text()` on the
- * non-`403` paths.
+ * non-`403` paths. A throttle (`429`, or S3's `503 SlowDown`) also carries
+ * `throttled: true`: the store refused the request without applying it.
  */
 export const mapStorageError = async (
   res: Response,
@@ -108,9 +109,11 @@ export const mapStorageError = async (
     return new BaerlyError("AccessDenied", `${verb} ${key}: 403`);
   }
   if (res.status === 429 || res.status >= 500) {
-    return new BaerlyError("NetworkError", `${verb} ${key}: ${res.status} ${await res.text()}`, {
+    const body = await res.text();
+    return new BaerlyError("NetworkError", `${verb} ${key}: ${res.status} ${body}`, {
       status: res.status,
       ...retryAfterCause(res),
+      ...(isThrottle(res.status, body) && { throttled: true }),
     });
   }
   return new BaerlyError(
@@ -119,19 +122,60 @@ export const mapStorageError = async (
   );
 };
 
+const isThrottle = (status: number, body: string): boolean =>
+  status === 429 || (status === 503 && parseS3Error(body)?.Code === "SlowDown");
+
+/** `true` when an attempt's rejection proves that attempt was not applied. */
+const isThrottled = (e: unknown): boolean =>
+  e instanceof BaerlyError && (e.cause as { throttled?: boolean } | undefined)?.throttled === true;
+
+/**
+ * Retry `fn` on non-permanent failures with exponential backoff.
+ *
+ * Set `conditionalCreate` for an `If-None-Match: "*"` PUT. An attempt that
+ * failed transiently may still have landed, so a later permanent rejection
+ * other than `Conflict` (for example a 403) cannot prove the create is not
+ * durable. That rejection is reported as `NetworkError` carrying the
+ * original error as its cause, per the `Storage.put` contract. When every
+ * attempt was throttled, nothing was applied, so the final `NetworkError`'s
+ * cause carries `notApplied: true`.
+ */
 export const retry = async <T>(
   fn: () => Promise<T>,
-  { retries = S3_REQUEST_MAX_RETRIES, backoffMs = 100, maxDelayMs = 10_000 } = {},
+  {
+    retries = S3_REQUEST_MAX_RETRIES,
+    backoffMs = 100,
+    maxDelayMs = 10_000,
+    conditionalCreate = false,
+  } = {},
 ): Promise<T> => {
   let wait = backoffMs;
+  // Set once an attempt of a conditional create ends with an unknown outcome.
+  let uncertain = false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn();
     } catch (error) {
       if (error instanceof BaerlyError && PERMANENT_ERROR_CODES.has(error.code)) {
+        if (conditionalCreate && uncertain && error.code !== "Conflict") {
+          throw new BaerlyError(
+            "NetworkError",
+            `${error.message} (an earlier attempt of this conditional create may have landed)`,
+            error,
+          );
+        }
         throw error;
       }
+      if (!isThrottled(error)) {
+        uncertain = true;
+      }
       if (attempt === retries) {
+        if (conditionalCreate && !uncertain && error instanceof BaerlyError) {
+          throw new BaerlyError(error.code, error.message, {
+            ...(error.cause as object),
+            notApplied: true,
+          });
+        }
         throw error;
       }
       const hintMs = retryAfterHintMs(error, maxDelayMs);

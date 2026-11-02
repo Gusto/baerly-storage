@@ -158,7 +158,7 @@ describe("abortingStorage harness — fault-injection trap behavior", () => {
 });
 
 describe("Writer empty-tail abort at the committing log PUT", () => {
-  test("op 3 abort leaves no readable row", async () => {
+  test("op 3 abort reports ambiguous commit fate and leaves no readable row", async () => {
     const inner = new MemoryStorage();
     await provision(inner);
     const handle = abortingStorage(inner);
@@ -179,8 +179,13 @@ describe("Writer empty-tail abort at the committing log PUT", () => {
       caught = error;
     }
 
-    expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).name).toBe("AbortError");
+    // The harness traps before dispatch, but Writer cannot distinguish
+    // that from an adapter aborting after an earlier durable send.
+    expect(caught).toMatchObject({ code: "AmbiguousCommit", retriable: false });
+    expect((caught as BaerlyError).cause).toBeInstanceOf(AggregateError);
+    expect(((caught as BaerlyError).cause as AggregateError).errors[0]).toMatchObject({
+      name: "AbortError",
+    });
     await expect(readAllRowIds(inner)).resolves.toEqual([]);
   });
 });

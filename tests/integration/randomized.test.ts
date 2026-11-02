@@ -27,10 +27,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AwsClient } from "aws4fetch";
+import { fc, test as fcTest } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { getOrCreateMemoryStorageForBucket, type Storage, uuid } from "@baerly/protocol";
+import {
+  BaerlyError,
+  createCurrentJson,
+  decodeJsonBytes,
+  getOrCreateMemoryStorageForBucket,
+  type LogEntry,
+  MemoryStorage,
+  type Storage,
+  uuid,
+} from "@baerly/protocol";
 import { S3HttpStorage, gcsStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
+import { Writer } from "../../packages/server/src/writer.ts";
+import { logStateCurrentJson } from "../fixtures/log-state.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { type EndpointCreds, loadEndpointCreds } from "../fixtures/endpoint-creds.ts";
 import {
@@ -45,6 +57,91 @@ import {
   TOXIPROXY_ADMIN_ENDPOINT,
   TOXIPROXY_ENDPOINT,
 } from "../setup/ports.ts";
+
+fcTest.prop({
+  resendBudget: fc.integer({ min: 1, max: 3 }),
+  failedResends: fc.integer({ min: 0, max: 4 }),
+  unreadableResolution: fc.boolean(),
+})(
+  "lost-ack histories preserve one durable commit per logical call",
+  async ({ resendBudget, failedResends, unreadableResolution }) => {
+    const prefix = "app/fate/tenant/t/manifests/c";
+    const firstSlot = `${prefix}/log/0.json`;
+    let faultEnabled = true;
+    let putAttempts = 0;
+    class FaultStorage extends MemoryStorage {
+      override async put(
+        ...args: Parameters<MemoryStorage["put"]>
+      ): ReturnType<MemoryStorage["put"]> {
+        if (faultEnabled && args[0] === firstSlot && args[2]?.ifNoneMatch === "*") {
+          putAttempts++;
+          if (putAttempts === 1) {
+            await super.put(...args);
+            throw new BaerlyError("NetworkError", "durable create acknowledgement lost");
+          }
+          if (putAttempts <= failedResends + 1) {
+            throw new BaerlyError("NetworkError", "resend unavailable");
+          }
+        }
+        return super.put(...args);
+      }
+
+      override async get(
+        ...args: Parameters<MemoryStorage["get"]>
+      ): ReturnType<MemoryStorage["get"]> {
+        if (faultEnabled && unreadableResolution && putAttempts > 0 && args[0] === firstSlot) {
+          throw new BaerlyError("NetworkError", "resolution unavailable");
+        }
+        return super.get(...args);
+      }
+    }
+    const storage = new FaultStorage();
+    const currentJsonKey = `${prefix}/current.json`;
+    await createCurrentJson(storage, currentJsonKey, logStateCurrentJson());
+    const newWriter = () =>
+      new Writer({
+        storage,
+        currentJsonKey,
+        options: { maxRetries: resendBudget, initialBackoffMs: 0 },
+      });
+    const logicalCall = () =>
+      newWriter().commit({
+        op: "I",
+        collection: "c",
+        docId: "own",
+        body: { _id: "own" },
+      });
+    let failure: unknown;
+    try {
+      await logicalCall();
+    } catch (error) {
+      failure = error;
+      faultEnabled = false;
+      if ((error as BaerlyError).retriable) {
+        await logicalCall();
+      }
+    }
+    faultEnabled = false;
+    const next = await newWriter().commit({
+      op: "I",
+      collection: "c",
+      docId: "next",
+      body: { _id: "next" },
+    });
+    const history: LogEntry[] = [];
+    for await (const listed of storage.list(`${prefix}/log/`)) {
+      history.push(decodeJsonBytes<LogEntry>((await storage.get(listed.key))!.body));
+    }
+    expect(history.map((entry) => entry.doc_id)).toEqual(["own", "next"]);
+    expect(next.entry.seq).toBe(1);
+    expect(putAttempts).toBe(Math.min(failedResends + 2, resendBudget + 1));
+    if (unreadableResolution) {
+      expect(failure).toMatchObject({ code: "AmbiguousCommit", retriable: false });
+    } else {
+      expect(failure).toBeUndefined();
+    }
+  },
+);
 
 /**
  * (a) Per-doc consistency: `observed` must be a subsequence of `written`
