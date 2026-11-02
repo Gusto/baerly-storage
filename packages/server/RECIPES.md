@@ -38,16 +38,37 @@ remote client that sees `retriable: true` should apply its own bounded backoff.
 ### AmbiguousCommit recovery
 
 `AmbiguousCommit` (HTTP 409) means a committing create may be durable, but its
-outcome could not be resolved. It is not retriable by default. Re-read the
-affected row by its stable `_id` and compare it with the intended state. A
-matching row can help reconcile the outcome; absence does not prove failure,
-because a send may still complete or a later write may have superseded it.
-Retrying is an explicit at-least-once choice and may repeat logical work. A
-stable `_id` helps reconciliation but does not make retries idempotent. For
-inserts that need reconciliation, supply `_id`; an auto-generated id is
-returned only after success. For bulk mutations, rows before the ambiguous row
-are already applied, but no partial-progress count is returned; inspect the
-affected rows before deciding whether to resume.
+outcome could not be resolved. It is not retriable by default. `err._id` names
+the affected row, including the id an auto-ID insert minted. Re-read that row
+and compare it with the intended state. A matching row can help reconcile the
+outcome; absence does not prove failure, because a send may still complete or
+a later write may have superseded it.
+
+```ts
+const tickets = db.collection("tickets");
+try {
+  await tickets.insert({ title: "hi" });
+} catch (err) {
+  if (!(err instanceof BaerlyError) || err.code !== "AmbiguousCommit" || !err._id) {
+    throw err;
+  }
+  if ((await tickets.get(err._id)) === undefined) {
+    // The same `_id` targets the same row, never a second document.
+    await tickets.insert({ _id: err._id, title: "hi" }).catch((retryErr: unknown) => {
+      // `Conflict`: the first attempt landed after the re-read.
+      if (!(retryErr instanceof BaerlyError) || retryErr.code !== "Conflict") {
+        throw retryErr;
+      }
+    });
+  }
+}
+```
+
+Retrying is an explicit at-least-once choice and may repeat logical work: a
+same-`_id` retry targets one row, but it can still overwrite a concurrent
+change to it. For bulk mutations, rows before the ambiguous row are already
+applied and `err._id` names the ambiguous one, but no partial-progress count is
+returned; inspect the affected rows before deciding whether to resume.
 
 ### `db.collection(name).insertOne(...)` / `.find(...)` is not a function
 

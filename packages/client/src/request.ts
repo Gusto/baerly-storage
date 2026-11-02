@@ -120,6 +120,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
       res.status,
       envelope?.error?.resolution,
       envelope?.error?.retriable,
+      envelope?.error?._id,
     );
   }
 

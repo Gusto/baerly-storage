@@ -359,7 +359,7 @@ try {
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                       |
 | `UnsatisfiablePredicate` | 400  | Predicate is well-formed but contradicts itself (empty `in` set, etc.) |
 
-Recovery: [AmbiguousCommit](RECIPES.md#ambiguouscommit-recovery).
+Recovery: [AmbiguousCommit](RECIPES.md#ambiguouscommit-recovery) — `err._id` names the row.
 
 ### Mapping errors to HTTP yourself
 

@@ -332,7 +332,8 @@ export class Writer {
    *
    * @throws BaerlyError code="AmbiguousCommit" when the committing create
    *   landed below `min(log_delete_floor, log_seq_start)`, or a possibly
-   *   durable create could not be resolved. The mutation's fate is unknown.
+   *   durable create could not be resolved. The mutation's fate is unknown;
+   *   `err._id` is `input.docId`.
    * @throws BaerlyError code="Conflict" when a retryable conflict
    *   escapes the single-attempt helper and exhausts the retry budget
    *   (presently unreachable on the log-create 412 path).
@@ -595,6 +596,8 @@ export class Writer {
         undefined,
         undefined,
         CODE_RESOLUTIONS.AmbiguousCommit,
+        undefined,
+        entry.doc_id,
       );
     };
     for (;;) {
@@ -706,7 +709,13 @@ export class Writer {
     // live value may still BE that old value, and de-indexing it
     // would be the one failure the hybrid emission polarity exists to
     // prevent (invariant 7).
-    await this.#assertCommitAboveDeleteFloor(logPrefix, seq, input.collection, errorPrefix);
+    await this.#assertCommitAboveDeleteFloor(
+      logPrefix,
+      seq,
+      input.collection,
+      input.docId,
+      errorPrefix,
+    );
     const committedEntries: readonly LogEntry[] = [committedEntry];
 
     // ── Step 5b. DELETE stale secondary-index keys (AFTER the commit). ─
@@ -1153,6 +1162,7 @@ export class Writer {
     logPrefix: string,
     seq: number,
     collection: string,
+    docId: string,
     errorPrefix: string,
   ): Promise<void> {
     let read: CurrentJsonRead | null;
@@ -1204,6 +1214,8 @@ export class Writer {
       undefined,
       undefined,
       CODE_RESOLUTIONS.AmbiguousCommit,
+      undefined,
+      docId,
     );
   }
 

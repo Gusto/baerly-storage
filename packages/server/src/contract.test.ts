@@ -62,4 +62,11 @@ describe("errorEnvelope", () => {
       resolution,
     );
   });
+
+  test("_id is carried only for AmbiguousCommit", () => {
+    const args = [undefined, undefined, undefined, "row-7"] as const;
+    expect(errorEnvelope("AmbiguousCommit", "x", ...args).error._id).toBe("row-7");
+    expect(errorEnvelope("Conflict", "x", ...args).error).not.toHaveProperty("_id");
+    expect(errorEnvelope("AmbiguousCommit", "x").error).not.toHaveProperty("_id");
+  });
 });

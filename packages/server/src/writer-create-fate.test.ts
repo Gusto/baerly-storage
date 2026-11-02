@@ -163,6 +163,7 @@ describe("Writer create fate", () => {
     ).resolves.toBe(1);
     expect(failure).toMatchObject({
       code: "AmbiguousCommit",
+      _id: "one",
       retriable: false,
     });
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}0.json`]);
@@ -203,6 +204,7 @@ describe("Writer create fate", () => {
       await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
       await expect(insert(makeWriter(storage))).rejects.toMatchObject({
         code: "AmbiguousCommit",
+        _id: "one",
         retriable: false,
       });
     },
@@ -404,6 +406,7 @@ describe("Writer create fate", () => {
 
     await expect(runWithContext(ctx, () => insert(makeWriter(storage)))).rejects.toMatchObject({
       code: "AmbiguousCommit",
+      _id: "one",
     });
     expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(1);
   });
@@ -431,6 +434,9 @@ describe("Writer create fate", () => {
       await expect(collection.where({}).all()).resolves.toHaveLength(1);
       if (fault === "unreadable-occupant") {
         expect(failure).toMatchObject({ code: "AmbiguousCommit", retriable: false });
+        // The minted id names the row that landed.
+        const [row] = await collection.where({}).all();
+        expect((failure as BaerlyError)._id).toBe(row!["_id"]);
       } else {
         expect(failure).toBeUndefined();
       }
@@ -460,7 +466,7 @@ describe("Writer create fate", () => {
       await expect(
         Db.create({ storage, app: "test", tenant: "t" }).collection("tickets").count(),
       ).resolves.toBe(1);
-      expect(failure).toMatchObject({ code: "AmbiguousCommit", retriable: false });
+      expect(failure).toMatchObject({ code: "AmbiguousCommit", _id: "one", retriable: false });
       expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}0.json`]);
     },
   );

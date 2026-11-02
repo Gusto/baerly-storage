@@ -592,12 +592,22 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
           undefined,
           wireCode === "Conflict" ? err.resolution : undefined,
           wireCode === err.code ? err.retriable : undefined,
+          // The row id is caller-owned data, not a storage diagnostic, so
+          // it survives the message scrub.
+          wireCode === err.code ? err._id : undefined,
         ),
       };
     }
     return {
       status,
-      envelope: errorEnvelope(err.code, err.message, err.issues, err.resolution, err.retriable),
+      envelope: errorEnvelope(
+        err.code,
+        err.message,
+        err.issues,
+        err.resolution,
+        err.retriable,
+        err._id,
+      ),
     };
   }
   // Unknown thrown value: the message may carry internal detail

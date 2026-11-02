@@ -59,6 +59,12 @@ export interface HttpErrorEnvelope {
      * Older servers may omit it.
      */
     readonly resolution?: string;
+    /**
+     * The affected row's `_id`, present only when
+     * `code === "AmbiguousCommit"`. Mirrors the server contract. Older
+     * servers omit this field.
+     */
+    readonly _id?: string;
   };
 }
 

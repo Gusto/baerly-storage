@@ -39,13 +39,16 @@ export type BaerlyErrorCode =
    * after same-slot resends/readback, and a create that landed below the
    * certified delete floor (`seq < min(log_delete_floor, log_seq_start)`).
    *
-   * Re-read the row by its stable `_id` and compare it with the intended state
-   * before deciding what to do. A matching row helps reconcile the outcome;
-   * absence does not prove that a create failed, since a send may still complete
-   * or its effect may have been superseded. Retrying is an explicit at-least-once
-   * choice and may repeat logical work. A stable `_id` helps reconciliation but
-   * does not make retries idempotent. `retriable` is `false` so generic retry
-   * wrappers do not repeat the operation silently. HTTP maps this code to 409.
+   * `BaerlyError._id` names the affected row, including an auto-ID insert's
+   * minted id. Re-read that row and compare it with the intended state before
+   * deciding what to do. A matching row helps reconcile the outcome; absence
+   * does not prove that a create failed, since a send may still complete or its
+   * effect may have been superseded. Retrying is an explicit at-least-once
+   * choice and may repeat logical work. Retry an insert with the same `_id`:
+   * a second create then targets the same row instead of minting a second
+   * document, though it can still overwrite a concurrent change. `retriable`
+   * is `false` so generic retry wrappers do not repeat the operation silently.
+   * HTTP maps this code to 409.
    */
   | "AmbiguousCommit"
   /**
@@ -225,6 +228,14 @@ export class BaerlyError extends Error {
     readonly message: string;
   }>;
   /**
+   * The `_id` of the row whose commit outcome is unknown, set only when
+   * `code === "AmbiguousCommit"`. For an auto-ID insert it is the minted
+   * id, so the caller can re-read the row and retry with the same `_id`
+   * rather than mint a second document. A missing row does not prove the
+   * write failed. The HTTP layer carries it in `HttpErrorEnvelope`.
+   */
+  readonly _id?: string;
+  /**
    * Raw HTTP status, set only by the client-side wire decoder when
    * inflating an `HttpErrorEnvelope` into this class. Server-side
    * throws never set it (the HTTP layer's `mapError` derives the
@@ -257,6 +268,7 @@ export class BaerlyError extends Error {
     status?: number,
     resolution?: string,
     retriableOverride?: boolean,
+    _id?: string,
   ) {
     super(message);
     this.name = "BaerlyError";
@@ -274,6 +286,10 @@ export class BaerlyError extends Error {
     // Stryker disable next-line ConditionalExpression: same rationale as `issues` above
     if (resolution !== undefined) {
       this.resolution = resolution;
+    }
+    // Stryker disable next-line ConditionalExpression: same rationale as `issues` above
+    if (_id !== undefined) {
+      this._id = _id;
     }
   }
 }

@@ -79,6 +79,18 @@ test.each(["exhausted-resends", "unreadable-occupant"] as const)(
       expect(failure).toMatchObject({ code: "AmbiguousCommit", status: 409, retriable: false });
       expect((failure as BaerlyError).resolution).toBeTruthy();
       expect((failure as BaerlyError).message).not.toContain("manifests/");
+      // The envelope names the minted id, so the documented recovery works
+      // for an auto-ID insert: re-read it, and retry with the same `_id`.
+      const { _id } = failure as BaerlyError;
+      expect(_id).toEqual(expect.any(String));
+      await expect(client.collection("tickets").get(_id!)).resolves.toMatchObject({
+        _id,
+        title: "one logical insert",
+      });
+      await expect(
+        client.collection("tickets").insert({ _id: _id!, title: "one logical insert" }),
+      ).rejects.toMatchObject({ code: "Conflict" });
+      await expect(db.collection("tickets").where({}).all()).resolves.toHaveLength(1);
     } else {
       expect(failure).toBeUndefined();
     }
