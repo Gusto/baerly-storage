@@ -61,7 +61,7 @@ import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
 export const SEED = 0xf01d_c057;
 const SESSION = "fold000"; // 7 chars; the bench doesn't validate sessions.
 const COLLECTION = "notes";
-const CURRENT_JSON_KEY = `app/x/tenant/t/manifests/${COLLECTION}/current.json`;
+export const FOLD_CURRENT_JSON_KEY = `app/x/tenant/t/manifests/${COLLECTION}/current.json`;
 const COLLECTION_PREFIX = `app/x/tenant/t/manifests/${COLLECTION}`;
 
 /** Heap-sampling interval during a fold (ms). */
@@ -134,11 +134,27 @@ export interface FoldFixture {
 
 /**
  * Seed a fresh `MemoryStorage` with a `current.json` + a prior snapshot
- * of (rows × bytesPerDoc) + a `TAIL_ENTRIES`-long log tail that updates
+ * of (rows × bytesPerDoc) + a configurable log tail that updates
  * existing docs. After this returns, a single `compact()` call folds the
  * whole tail into a rebuilt snapshot of the same shape.
  */
-export const buildFixture = async (rows: number, bytesPerDoc: number): Promise<FoldFixture> => {
+export const buildFixture = async (
+  rows: number,
+  bytesPerDoc: number,
+  tailEntries = TAIL_ENTRIES,
+): Promise<FoldFixture> => {
+  if (
+    !Number.isSafeInteger(rows) ||
+    rows < 1 ||
+    !Number.isSafeInteger(bytesPerDoc) ||
+    bytesPerDoc < 1 ||
+    !Number.isSafeInteger(tailEntries) ||
+    tailEntries < 0
+  ) {
+    throw new RangeError(
+      "fold fixture: rows/bytesPerDoc must be positive integers; tail must be nonnegative",
+    );
+  }
   const storage = new MemoryStorage();
   const rng = mulberry32(SEED ^ (rows * 0x9e37_79b1) ^ bytesPerDoc);
 
@@ -161,10 +177,10 @@ export const buildFixture = async (rows: number, bytesPerDoc: number): Promise<F
   const snapKey = snapshotKey(COLLECTION_PREFIX, 0, rows, sha);
   await storage.put(snapKey, snapBytes, { contentType: "application/json" });
 
-  // 2. Log tail: TAIL_ENTRIES updates to existing docs at seqs
-  //    [rows, rows + TAIL_ENTRIES). U with a full post-image keeps the
+  // 2. Log tail: tailEntries updates to existing docs at seqs
+  //    [rows, rows + tailEntries). U with a full post-image keeps the
   //    rebuilt snapshot the same row count (steady-state fold).
-  for (let t = 0; t < TAIL_ENTRIES; t++) {
+  for (let t = 0; t < tailEntries; t++) {
     const seq = rows + t;
     const targetIdx = Math.floor(rng() * rows);
     const id = `doc-${targetIdx.toString().padStart(8, "0")}`;
@@ -188,13 +204,13 @@ export const buildFixture = async (rows: number, bytesPerDoc: number): Promise<F
   const current: CurrentJson = {
     schema_version: 3,
     snapshot: snapKey,
-    tail_hint: rows + TAIL_ENTRIES,
+    tail_hint: rows + tailEntries,
     log_seq_start: rows,
     writer_fence: { epoch: 1, owner: "fold-cost-bench", claimed_at: "" },
     snapshot_bytes: snapBytes.byteLength,
     snapshot_rows: rows,
   };
-  await storage.put(CURRENT_JSON_KEY, encodeJsonBytes(current), {
+  await storage.put(FOLD_CURRENT_JSON_KEY, encodeJsonBytes(current), {
     ifNoneMatch: "*",
     contentType: "application/json",
   });
@@ -225,7 +241,7 @@ export const measureOneFold = async (
     minEntriesToCompact: 1,
     maxEntriesPerRun: Number.MAX_SAFE_INTEGER,
   };
-  const res = await compact({ storage, currentJsonKey: CURRENT_JSON_KEY }, opts);
+  const res = await compact({ storage, currentJsonKey: FOLD_CURRENT_JSON_KEY }, opts);
   const cpu1 = process.cpuUsage(cpu0);
   clearInterval(sampler);
 

@@ -9,13 +9,14 @@ related: ["../docs/about/cost-model.md", "../tests/integration/maintenance-e2e.t
 
 # Bench harnesses
 
-Two harnesses live under `bench/`:
+The benchmark harnesses and shared measurement tools live under `bench/`:
 
 | Harness | What it measures | When to run |
 |---|---|---|
 | `bench/r2-contention.ts` | Synthetic `current.json` CAS coordination/historical harness; measures 412/429 rates and validates the idle-reader bound on the wire, but does not exercise the current Writer | When changing coordination primitives or the historical CAS retry model. For current Writer changes, run `packages/server/src/writer.test.ts` and `tests/integration/write-amp.test.ts` instead |
 | `bench/load-harness/` | Object-storage ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model. `--variant=node-gcs` (gated on `GCS=1` + `credentials/gcs.json`) is the source of the measured GCS write-amp behind the GCS row in [docs/about/cost-model.md](../docs/about/cost-model.md#cost-vs-scale-table) | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 | `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/spec/scale-ceilings.md](../docs/spec/scale-ceilings.md) |
+| [`bench/measurement/fold-cpu-run.ts`](measurement/fold-cpu-README.md) | Complete point reads, scans and folds over MemoryStorage, with source/environment provenance, actual operation counts and optional invocation-scoped CPU profiles. | Use `pnpm bench:fold-cpu` for a local main-layout baseline and hotspot screening |
 | `bench/measurement/fold-ceiling-probe-run.ts` | Node-host fold CPU and sampled heap deltas across byte, row, and mixed workload shapes; no production ceiling recommendations. Reuses the `fold-cost.ts` fixture verbatim so cells stay comparable to its frozen baseline. No infra (MemoryStorage). MEASURES ONLY. **Diagnostic only** — read the sampling caveats below; production admission belongs to the deployed study. | When revisiting whether `C` / `E` can be raised on a more capable host |
 | `bench/measurement/workload-ceiling-arm-symmetry-run.ts` | Paired Node CPU probe for the workload-ceiling control and chunked candidate under two read shapes: `fold-read` (the candidate's manifest plus the bounded prefetch set its fold admits) plus each arm's 20-mutation fold, with candidate-minus-control net cost; and `query-read` (the complete materialising read), reported separately and excluded from the net. Hash/decode/canonical-re-encode are broken out per shape. `BAERLY_ARM_SYMMETRY_N` raises N. Workerd figures are visibly marked inherited, unverified conversions rather than measurements. No infra. MEASURES ONLY; chooses no admission margin. | Before deciding the locality-specific workload-ceiling admission margins |
 | `bench/maintenance-backlog.ts` | Maintenance backlog (live log-tail entries + bucket object count + snapshot-over-ceiling minutes) vs. write rate, per trigger (in-band write-tick / scheduled cron) and profile (cf-free / node); Phase 2 evidence for whether FREE-RATE maintenance keeps up within the ~30 writes/min M-size envelope. Verdict is per-axis (tail + objects) then combined. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting whether the per-host maintenance profile (`MAINTENANCE_PROFILE_CF_FREE` vs `MAINTENANCE_PROFILE_NODE`) is justified |
@@ -338,6 +339,9 @@ pnpm vitest run bench/measurement/storage-journal.test.ts \
 ```
 
 ## bench/fold-cost.ts
+
+For complete point reads, materialized scans and folds with source/environment
+provenance, use [`pnpm bench:fold-cpu`](measurement/fold-cpu-README.md).
 
 A no-infra microbench (MemoryStorage) that measures the cost of ONE
 compaction fold — the **unsliceable snapshot rebuild** — as a function
