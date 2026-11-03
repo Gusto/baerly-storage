@@ -12,12 +12,7 @@
  * project, like `r2-binding-storage.test.ts`.
  */
 
-import {
-  type BaerlyError,
-  createCurrentJson,
-  STORAGE_RETRY_MAX_ATTEMPTS,
-  WRITER_COMMIT_MAX_RETRIES,
-} from "@baerly/protocol";
+import { type BaerlyError, createCurrentJson, STORAGE_RETRY_MAX_ATTEMPTS } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
 import { describe, expect, test } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
@@ -253,7 +248,6 @@ const setupWriter = async (logPutFault: (ordinal: number) => LogPutFault) => {
   const writer = new Writer({
     storage: counted.storage,
     currentJsonKey: CURRENT_KEY,
-    options: { initialBackoffMs: 0, random: () => 0 },
   });
   const commit = () =>
     writer.commit({
@@ -269,19 +263,19 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
   // The unfaulted path reads log/0 once (404 tail probe) before the create.
   const TAIL_PROBE_GETS = 1;
 
-  test("every log put throws — (1 + 8) outer puts × 3 binding calls = 27 binding PUTs, one readback; AmbiguousCommit", async () => {
+  test("every log put throws — 1 outer put × 3 binding calls = 3 binding PUTs, one readback; AmbiguousCommit", async () => {
     const { counted, calls, commit } = await setupWriter(() => "throw");
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(AMBIGUOUS_COMMIT);
+    expect(err.retriable).toBe(false);
     // A plain binding error carries no notApplied, so the slot is uncertain:
-    // the Writer resends its full default budget, each outer put spending
-    // the adapter's 3 attempts, then reads the empty slot back once
-    // (null ⇒ not retried).
-    const outerPuts = 1 + WRITER_COMMIT_MAX_RETRIES;
-    expect(counted.puts).toBe(outerPuts);
-    expect(calls.logPuts).toBe(outerPuts * STORAGE_RETRY_MAX_ATTEMPTS);
-    expect(calls.logPuts).toBe(27);
+    // the Writer sends once (the adapter spends its 3 attempts) and reads
+    // the empty slot back once (null ⇒ not re-read).
+    expect(counted.puts).toBe(1);
+    expect(calls.logPuts).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
+    expect(calls.logPuts).toBe(3);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
+    expect(counted.gets).toBe(3);
   });
 
   test("lost ack (lands, then throws) — the adapter's own resend is refused by the precondition, readback adopts; outer 1 put, 2 binding PUTs", async () => {
@@ -308,5 +302,13 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
     expect(err.code).toBe(NETWORK_ERROR);
     expect((err.cause as { notApplied?: boolean } | undefined)?.notApplied).toBeUndefined();
     expect(calls.logPuts).toBe(2);
+  });
+
+  test("at Writer level, a create denied after a landed attempt is adopted by readback", async () => {
+    const { counted, calls, commit } = await setupWriter(landThenDeny);
+    await expect(commit()).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
+    expect(counted.puts).toBe(1);
+    expect(calls.logPuts).toBe(2);
+    expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
   });
 });

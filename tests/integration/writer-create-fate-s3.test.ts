@@ -55,9 +55,10 @@ describe("Writer fate across S3 adapter retries", () => {
       await expect(
         writer.commit({ op: "I", collection: "tickets", docId: "one", body: { _id: "one" } }),
       ).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
-      // The adapter reports its post-retry 403 as NetworkError, so Writer
-      // resends; that 403 follows an uncertain send and resolves by readback.
-      expect(logPutAttempts).toBe(fault === "lost-ack-then-denied" ? 3 : 1);
+      // The adapter reports its post-retry 403 as NetworkError (an earlier
+      // attempt was uncertain), and Writer resolves it by readback with no
+      // resend: the adapter's 2 attempts (`retries: 1`) are the only sends.
+      expect(logPutAttempts).toBe(fault === "lost-ack-then-denied" ? 2 : 1);
     },
   );
 
@@ -119,7 +120,6 @@ describe("Writer fate across S3 adapter retries", () => {
       const writer = new Writer({
         storage,
         currentJsonKey: CURRENT_KEY,
-        options: { maxRetries: 1, initialBackoffMs: 0 },
       });
       const failure: unknown = await writer
         .commit({ op: "I", collection: "tickets", docId: "one", body: { _id: "one" } })
@@ -128,9 +128,9 @@ describe("Writer fate across S3 adapter retries", () => {
       // Writer saw a single Storage.put reject with 412; the adapter's
       // hidden first HTTP attempt already committed the same entry.
       expect(logPutAttempts).toBe(2);
-      // An unavailable readback is retried once on Writer's transient budget,
-      // and each read spends the adapter's own retry.
-      expect(unresolvedReadbacks).toBe(readback === "unavailable" ? 4 : 1);
+      // Writer reads back once and never re-reads; an unavailable read
+      // spends only the adapter's own 2 attempts (`retries: 1`).
+      expect(unresolvedReadbacks).toBe(readback === "unavailable" ? 2 : 1);
       const durable = await bucket.get(LOG_KEY);
       expect(durable).not.toBeNull();
       expect(decodeJsonBytes<LogEntry>(durable!.body)).toMatchObject({
@@ -177,12 +177,11 @@ describe("Writer under S3 throttling", () => {
         backoffMs: 0,
       }),
       currentJsonKey: CURRENT_KEY,
-      options: { maxRetries: 1, initialBackoffMs: 0 },
     });
     await expect(
       writer.commit({ op: "I", collection: "tickets", docId: "one", body: { _id: "one" } }),
     ).rejects.toMatchObject({ code, retriable: code === "NetworkError" });
-    // Two Writer sends, each spending the adapter's one internal retry.
-    expect(logPutAttempts).toBe(4);
+    // One Writer send, spending the adapter's 2 attempts (`retries: 1`).
+    expect(logPutAttempts).toBe(2);
   });
 });

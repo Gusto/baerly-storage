@@ -8,8 +8,8 @@
  * previously inlined the same range-build + unbounded `Promise.all`
  * pattern; on a free-tier collection where the compactor lags the
  * tail to 50-100 entries, that fans out 50-100 concurrent GETs per
- * call — and a contended writer multiplies that by the CAS retry
- * budget. `walkLogRange` caps concurrency at
+ * call — and a contended writer multiplies that by its forward
+ * probes. `walkLogRange` caps concurrency at
  * {@link MAX_PARALLEL_LOG_READS} so a single call costs at most that
  * many simultaneous GETs against the storage backend.
  *

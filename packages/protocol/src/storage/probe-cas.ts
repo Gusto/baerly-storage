@@ -128,7 +128,7 @@ export const probeCas = async (
     // winners ⇒ two writers believe they appended the same log seq.
     // Transient non-WriteConflict losers (e.g. an S3 409
     // ConditionalRequestConflict, which the adapter maps to a retryable
-    // NetworkError) are inconclusive — the writer re-issues the same-seq
+    // NetworkError) are inconclusive — the adapter's retry re-issues the
     // PUT and resolves to 200/412 — not proof of a broken backend. The
     // deploy-time probe still fails closed so operators retry for a clean race.
     const raceKey = `${prefix}__baerly_cas_probe__/${uuid()}`;

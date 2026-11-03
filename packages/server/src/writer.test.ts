@@ -9,7 +9,6 @@ import {
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MemoryStorage,
   BaerlyError,
-  CODE_RESOLUTIONS,
   PREIMAGE_SCAN_MAX_GETS,
   resetMemoryStorage,
   str2uintDesc,
@@ -121,10 +120,9 @@ class LostAckStorage extends MemoryStorage {
 
 /**
  * Drops the ack on the FIRST log-create PUT (after the write lands,
- * like {@link LostAckStorage}) but throws a *transient* `NetworkError`,
- * driving the inner transient-retry loop. Unlike `LostAckStorage` this
- * exposes the count so a wall-clock test can prove backoff is applied
- * before the same-seq re-PUT.
+ * like {@link LostAckStorage}) with a transient `NetworkError`, and
+ * counts log-create calls so a test can prove the Writer never resends
+ * the create at the same seq.
  */
 class TransientLogCreateStorage extends MemoryStorage {
   dropNextLogCreateAck = false;
@@ -173,10 +171,11 @@ class SameSessionDifferentBodyStorage extends MemoryStorage {
 }
 
 /**
- * Fault injection for the writer's retry arm: the first `failReads`
- * reads of `current.json` throw a storage precondition failure. No
- * natural path lets one escape `#singleAttemptCommit`, so this is the
- * only way to drive the budget-exhausted throw.
+ * Fault injection: the first `failReads` reads of `current.json` throw a
+ * storage precondition failure. The `Storage` contract raises
+ * `WriteConflict` only for a rejected put precondition, and every writer
+ * put resolves its own, so no natural path lets one escape the commit
+ * attempt; this pins what the single attempt does if one ever does.
  */
 class ConflictingCurrentReadStorage extends MemoryStorage {
   failReads = 0;
@@ -210,7 +209,6 @@ describe("Writer", () => {
       body: { _id: "doc-1", title: "hello" },
     });
 
-    expect(result.attempts).toBe(1);
     expect(result.entry.seq).toBe(0);
     expect(result.entry.op).toBe("I");
     expect(result.entry.collection).toBe(COLL);
@@ -283,7 +281,6 @@ describe("Writer", () => {
       body: { _id: "doc-1", title: "hello" },
     });
 
-    expect(result.attempts).toBe(1);
     expect(result.entry.seq).toBe(0);
 
     const stored = await storage.get(CURRENT_KEY);
@@ -314,19 +311,17 @@ describe("Writer", () => {
     // Two writers point at the same `currentJsonKey` and both see
     // null on the initial read. One wins the `If-None-Match: "*"`
     // create; the other recovers via re-read and proceeds. Both
-    // commits must land successfully — the loser's retry budget
-    // absorbs the CAS-conflict on `current.json` once the first
-    // writer's manifest is in place.
+    // commits must land successfully — the loser re-reads the winner's
+    // manifest, and a lost race on log/0 resolves by readback plus a
+    // forward probe.
     const storage = getOrCreateMemoryStorageForBucket(BUCKET);
     const writerA = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
     const writerB = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
 
     const [a, b] = await Promise.all([
@@ -358,7 +353,6 @@ describe("Writer", () => {
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
 
     const result = await writer.commit({
@@ -371,54 +365,26 @@ describe("Writer", () => {
     // The foreign occupant landed at seq 0; the writer re-probed forward
     // and committed at seq 1 WITHIN a single attempt (the forward-probe
     // loop is internal to #singleAttemptCommit — no commit() retry).
-    expect(result.attempts).toBe(1);
     expect(result.entry.seq).toBe(1);
     await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
   });
 
-  test("an exhausted retry budget surfaces a retriable WriteConflict", async () => {
+  test("a WriteConflict before the log create surfaces after one attempt, with no create", async () => {
     const storage = new ConflictingCurrentReadStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    storage.failReads = 3;
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
-    });
+    storage.failReads = 2;
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
     const err = await writer
       .commit({ op: "I", collection: COLL, docId: "doc-1", body: { _id: "doc-1" } })
       .catch((error: unknown) => error);
 
+    // No Writer-level retry: the one failed read propagates unchanged and
+    // the caller re-runs the operation from its read step.
     expect(err).toBeInstanceOf(BaerlyError);
-    expect(err).toMatchObject({
-      code: "WriteConflict",
-      retriable: true,
-      resolution: CODE_RESOLUTIONS.WriteConflict,
-    });
-    expect(storage.failReads).toBe(0);
+    expect(err).toMatchObject({ code: "WriteConflict", retriable: true });
+    expect(storage.failReads).toBe(1);
     await expect(durableLogSeqs(storage)).resolves.toEqual([]);
-  });
-
-  test("a precondition failure inside the budget retries and commits", async () => {
-    const storage = new ConflictingCurrentReadStorage();
-    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    storage.failReads = 1;
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
-    });
-
-    const result = await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "doc-1",
-      body: { _id: "doc-1" },
-    });
-
-    expect(result.attempts).toBe(2);
-    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
   });
 
   test("repeated foreign occupants: writer probes past them and commits — no wedge", async () => {
@@ -432,7 +398,6 @@ describe("Writer", () => {
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { maxRetries: 3, initialBackoffMs: 1, random: () => 0 },
     });
 
     const result = await writer.commit({
@@ -454,7 +419,6 @@ describe("Writer", () => {
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 0, random: () => 0 },
     });
 
     const result = await writer.commit({
@@ -469,37 +433,23 @@ describe("Writer", () => {
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
   });
 
-  test("inner transient-retry loop sleeps via #backoff before the same-seq re-PUT", async () => {
-    // The inner transient loop re-issues the SAME-seq log-create PUT on a
-    // transient NetworkError. It must sleep via `#backoff` first, not spin
-    // a tight loop that burns the retry budget in microseconds. The small
-    // `initialBackoffMs` keeps the real sleep from slowing the suite.
+  test("a transient lost ack resolves by readback with no same-seq re-PUT", async () => {
+    // The log create lands, then the call fails with a NetworkError. The
+    // adapter already retried that call, so the Writer reads the slot back
+    // and adopts its own entry instead of resending the create.
     const storage = new TransientLogCreateStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     storage.dropNextLogCreateAck = true;
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      // Non-zero so `#backoff` computes a real sleep; `random: () => 1`
-      // makes the full-jitter delay deterministic (== base == 30ms).
-      options: { initialBackoffMs: 30, random: () => 1 },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
-    const start = Date.now();
     const result = await writer.commit({
       op: "I",
       collection: COLL,
       docId: "transient",
       body: { _id: "transient", from: "writer" },
     });
-    const backoffSleepMs = Date.now() - start;
 
-    // Exactly one transient retry → exactly one backoff sleep → the SAME
-    // seq re-PUT (2 log-create attempts), adopted as the durable
-    // own-session entry. A tight no-backoff loop would resolve in well
-    // under the 30ms backoff; the wall-clock floor proves the sleep ran.
-    expect(storage.logCreateAttempts).toBe(2);
-    expect(backoffSleepMs).toBeGreaterThanOrEqual(25);
+    expect(storage.logCreateAttempts).toBe(1);
     expect(result.entry.seq).toBe(0);
     expect(result.entry.doc_id).toBe("transient");
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
@@ -512,7 +462,6 @@ describe("Writer", () => {
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 0, random: () => 0 },
     });
 
     const result = await writer.commit({
@@ -567,7 +516,6 @@ describe("Writer", () => {
       body: { _id: "new-doc" },
     });
 
-    expect(result.attempts).toBe(1);
     expect(result.entry.seq).toBe(3);
 
     // The writer no longer touches current.json: tail_hint and
@@ -586,12 +534,10 @@ describe("Writer", () => {
     const w1 = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
     const w2 = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
 
     const [r1, r2] = await Promise.all([
@@ -613,7 +559,6 @@ describe("Writer", () => {
     const seqs = [r1.entry.seq, r2.entry.seq].toSorted();
     expect(seqs).toEqual([0, 1]);
     // At least one writer won outright on its first attempt.
-    expect(Math.min(r1.attempts, r2.attempts)).toBe(1);
 
     // Both log entries persisted, no gaps (the discovered tail is 2; the
     // writer doesn't advance the stored hint).
@@ -677,7 +622,6 @@ describe("Writer", () => {
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
 
     const ctx = createObservabilityContext();
@@ -756,13 +700,12 @@ describe("Writer", () => {
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
     // Pure smoke: commit succeeds without an active context.
-    const r = await writer.commit({
+    await writer.commit({
       op: "I",
       collection: COLL,
       docId: "doc-noop",
       body: { _id: "doc-noop" },
     });
-    expect(r.attempts).toBe(1);
   });
 
   test("a commit never lands below the log_seq_start observed after it", async () => {
@@ -904,13 +847,12 @@ describe("Writer — writer fence", () => {
       currentJsonKey: CURRENT_KEY,
     });
 
-    const r = await writer.commit({
+    await writer.commit({
       op: "I",
       collection: COLL,
       docId: "doc-fence-ok",
       body: { _id: "doc-fence-ok" },
     });
-    expect(r.attempts).toBe(1);
 
     const persisted = decodeJson<CurrentJson>((await storage.get(CURRENT_KEY))!.body);
     expect(persisted.writer_fence.epoch).toBe(0);
@@ -929,13 +871,12 @@ describe("Writer — writer fence", () => {
       currentJsonKey: CURRENT_KEY,
     });
 
-    const r = await writer.commit({
+    await writer.commit({
       op: "I",
       collection: COLL,
       docId: "doc-fence-bumped",
       body: { _id: "doc-fence-bumped" },
     });
-    expect(r.attempts).toBe(1);
 
     // The log entry (the commit) is durable on the bucket.
     const seqs = await durableLogSeqs(storage);
@@ -1358,7 +1299,6 @@ describe("Writer — write-tick maintenance dispatch", () => {
     const writer = new Writer({
       storage,
       currentJsonKey: CURRENT_KEY,
-      options: { initialBackoffMs: 1, random: () => 0 },
     });
     const { maintenance, calls } = recordingDispatch();
 
@@ -1367,7 +1307,6 @@ describe("Writer — write-tick maintenance dispatch", () => {
     );
 
     // The re-probe is internal to one attempt — no commit() retry.
-    expect(r.attempts).toBe(1);
     expect(r.entry.seq).toBe(2);
     expect(calls()).toBe(1);
   });

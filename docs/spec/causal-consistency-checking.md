@@ -349,7 +349,7 @@ deterministic protocol, reader-seam, restore, and commit-path tests:
   before the post-create read, whose mutation is visible through the snapshot
   and whose commit fails anyway; and the two-history result that argues for
   explicit failure over discard-and-re-probe — every object in the bucket at
-  the retry decision point is byte-identical whether the writer's own create
+  the readback decision point is byte-identical whether the writer's own create
   or a foreign writer's landed and was folded, and no surviving object names
   the writer's session.
 

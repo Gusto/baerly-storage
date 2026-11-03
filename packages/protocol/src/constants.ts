@@ -160,35 +160,17 @@ export const STORAGE_RETRY_THROTTLE_BASE_MILLIS: number = 1000;
 export const STORAGE_RETRY_MAX_DELAY_MILLIS: number = 20_000;
 
 /**
- * Default `Writer` resend budget for one commit (`WriterOptions.maxRetries`):
- * how many times the Writer may resend an uncertain log create or retry
- * an occupant readback, one budget shared by both. Each resend is a
- * full `Storage.put`, so it multiplies the adapter's
- * {@link STORAGE_RETRY_MAX_ATTEMPTS}.
- *
- * 8 is provisional, not derived from prior art. It is re-derived once
- * the Writer resolves an uncertain create by readback instead of
- * resending it, which removes the multiplication.
- *
- * @see packages/server/src/writer.ts (`Writer` constructor)
- */
-export const WRITER_COMMIT_MAX_RETRIES: number = 8;
-
-/**
  * Maximum concurrent log-entry GETs issued by a single `walkLogRange`
  * call. Bounds Class-B fan-out per read and per CAS attempt — without
  * a bound, a reader on a collection whose compactor has fallen behind
  * fans out one GET per live-tail entry (measured at 150-360 entries at
- * steady state on the free-tier profile), and a contended writer
- * multiplies that by its resend budget ({@link WRITER_COMMIT_MAX_RETRIES}).
+ * steady state on the free-tier profile).
  *
- * 16 bounds CONCURRENCY, not the per-request total. `16 * 8 = 128` is
- * the whole-request worst case across the retry budget, which fits the
- * Cloudflare PAID subrequest cap (10,000/request since 2026-02-11) but
- * not the free cap (50/request) — see `docs/spec/scale-ceilings.md`
+ * 16 bounds CONCURRENCY, not the per-request total: a walk still issues
+ * one GET per live-tail entry, 16 at a time. The free cap (50/request)
+ * is not met by this bound — see `docs/spec/scale-ceilings.md`
  * §Per-tier bounds. A free-tier reader relies on the compactor keeping
- * the live tail short enough that the walk never approaches it. Do not
- * cite this 128 as a per-request budget for anything else.
+ * the live tail short enough that the walk never approaches it.
  *
  * @see packages/server/src/log-walk.ts (`walkLogRange`)
  */

@@ -63,7 +63,6 @@ import {
   PREIMAGE_SCAN_MAX_GETS,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
-  WRITER_COMMIT_MAX_RETRIES,
   SESSION_ID_LENGTH,
   countKey,
   readCurrentJson,
@@ -87,30 +86,13 @@ import { assertPostImageIdentity } from "./post-image-identity.ts";
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
- * Tunables for {@link Writer}. All optional; defaults match the
- * legacy retry budget so the new loop is a drop-in replacement.
+ * Tunables for {@link Writer}. All optional.
+ *
+ * There is no Writer retry knob: the `Storage` adapter retries each
+ * request under the one storage retry policy, and the Writer resolves an
+ * uncertain log create by occupant readback rather than resending it.
  */
 export interface WriterOptions {
-  /**
-   * Max transient retries per commit, shared by same-slot resends after
-   * `NetworkError` and readbacks of a rejected create's slot. An exhausted
-   * budget still gets one final readback. Also caps outer retryable
-   * `WriteConflict` attempts before throwing `WriteConflict`.
-   * Foreign log-create 412s are resolved inside a single attempt by
-   * occupant read-back plus bounded forward re-probe; this budget is
-   * retained for future retryable conflicts and tests.
-   */
-  readonly maxRetries?: number;
-
-  /** Initial backoff in ms; doubles per attempt, capped at 1500ms. Default 25. */
-  readonly initialBackoffMs?: number;
-
-  /**
-   * Pure function returning a number in [0, 1). Used for jitter; tests
-   * inject a deterministic generator. Defaults to `Math.random`.
-   */
-  readonly random?: () => number;
-
   /**
    * Optional. Indexes declared for the collection this writer
    * commits to. Each commit emits one zero-byte PUT per declared
@@ -149,9 +131,8 @@ export interface WriterOptions {
    * (`./query.ts`) and any hole inside the visible range would also
    * fire on the next read.
    *
-   * Production callers default this OFF: under contention the walk
-   * issues `O(tail)` Class-B GETs per CAS attempt and the retry
-   * budget multiplies that by {@link WRITER_COMMIT_MAX_RETRIES}. Tests
+   * Production callers default this OFF: the walk issues `O(tail)`
+   * Class-B GETs on every commit. Tests
    * that intentionally puncture bucket state to exercise the
    * invariant trigger opt in by passing `true`.
    *
@@ -195,13 +176,8 @@ export interface CommitResult {
    * not a post-write one.
    */
   readonly currentEtag: string;
-
-  /** How many commit attempts it took (1 = first try won). */
-  readonly attempts: number;
 }
 
-const DEFAULT_INITIAL_BACKOFF_MS = 25;
-const MAX_BACKOFF_MS = 1500;
 const APPLICATION_JSON = "application/json";
 
 /**
@@ -249,15 +225,12 @@ interface SingleAttemptSuccess {
  *   docId: "doc-1",
  *   body: { _id: "doc-1", title: "hello" },
  * });
- * console.log(result.entry.seq, result.attempts);
+ * console.log(result.entry.seq);
  * ```
  */
 export class Writer {
   readonly #storage: Storage;
   readonly #currentJsonKey: string;
-  readonly #maxRetries: number;
-  readonly #initialBackoffMs: number;
-  readonly #random: () => number;
   readonly #indexes: ReadonlyArray<IndexDefinition>;
   readonly #verifyLogIntegrityOnCommit: boolean;
 
@@ -275,9 +248,6 @@ export class Writer {
   }) {
     this.#storage = opts.storage;
     this.#currentJsonKey = opts.currentJsonKey;
-    this.#maxRetries = opts.options?.maxRetries ?? WRITER_COMMIT_MAX_RETRIES;
-    this.#initialBackoffMs = opts.options?.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
-    this.#random = opts.options?.random ?? Math.random;
     const indexes = opts.options?.indexes ?? [];
     for (const def of indexes) {
       validateIndexDefinition(def);
@@ -303,8 +273,9 @@ export class Writer {
    * (`#assertCommitAboveDeleteFloor`). Each
    * declared index that projects a key on this write adds one PUT
    * (new key, before the commit) and, on U/D, up to one DELETE (stale
-   * key, after the commit). An in-flight peer write costs one extra GET
-   * + the backoff sleep per retry.
+   * key, after the commit). A peer that won the slot costs one occupant
+   * readback GET, the forward probe's GETs, and one more create at the
+   * next slot.
    *
    * Idempotency: `LogEntry.after` carries the full post-image, and the
    * `log/<seq>` create uses `If-None-Match: "*"`, so two writers racing
@@ -322,9 +293,10 @@ export class Writer {
    * own landed and was folded before retirement removed the slot, so the
    * mutation may or may not have been applied. The same uncertainty exists
    * when a rejected create cannot be resolved by reading its slot, including
-   * rejections that follow a send of unknown outcome. Transient failures receive
-   * bounded same-slot resends first. A missing readback does not prove that an
-   * earlier send will not land. Exact own-entry readback is adopted; an
+   * rejections that follow a send of unknown outcome. The Writer never
+   * resends a create at the same slot (the adapter already retried it); it
+   * reads the slot back once instead. A missing readback does not prove that
+   * an earlier send will not land. Exact own-entry readback is adopted; an
    * unresolved fate throws `AmbiguousCommit` with `err.retriable === false`.
    * Reconcile state before deliberately retrying: a new logical call can
    * duplicate work, including minting a second auto-ID document.
@@ -333,10 +305,6 @@ export class Writer {
    *   landed below `min(log_delete_floor, log_seq_start)`, or a possibly
    *   durable create could not be resolved. The mutation's fate is unknown;
    *   `err._id` is `input.docId`.
-   * @throws BaerlyError code="WriteConflict" (retriable) when a retryable
-   *   conflict escapes the single-attempt helper and exhausts the retry
-   *   budget; this write was not committed (presently unreachable on the
-   *   log-create 412 path).
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, tail_hint)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
@@ -372,49 +340,16 @@ export class Writer {
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
-    // NOTE: with the post-commit fence-verify removed, no `WriteConflict`
-    // currently escapes `#singleAttemptCommit` — a log-create 412 is
-    // always resolved internally (own-session adoption or a bounded
-    // forward-probe to the next empty slot; only an exhausted probe cap
-    // throws, as `Internal`, not `WriteConflict`). So the retry-catch arm and
-    // the budget-exhausted `WriteConflict` throw below are presently
-    // unreachable. They are retained deliberately: they cost nothing on
-    // the happy path and re-arm automatically if a future change ever
-    // re-introduces a retryable `WriteConflict` out of the helper.
-    for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
-      let success: SingleAttemptSuccess;
-      try {
-        success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
-      } catch (error) {
-        // Only a retryable `WriteConflict` (see NOTE above — currently none)
-        // backs off and retries. Anything else propagates.
-        if (!isWriteConflict(error)) {
-          throw error;
-        }
-        await this.#backoff(attempt);
-        continue;
-      }
-      // `success.classAOps` is the per-attempt base; add `(attempt
-      // - 1)` to bill prior failed attempts as one PUT each (the
-      // simple-and-test-locked cost model — not a precise replay
-      // of every PUT in every dropped attempt).
-      this.#emitWriteMetrics(input.collection, success.classAOps + (attempt - 1));
-      return {
-        entry: success.entries[0]!,
-        currentEtag: success.currentEtag,
-        attempts: attempt,
-      };
-    }
-
-    // Retry budget exhausted.
-    throw new BaerlyError(
-      "WriteConflict",
-      `Writer: lost the commit race in collection ${JSON.stringify(input.collection)} after ${this.#maxRetries} attempts; this write was not committed`,
-      undefined,
-      undefined,
-      undefined,
-      CODE_RESOLUTIONS.WriteConflict,
-    );
+    // One attempt: a log-create 412 is resolved inside it (own-session
+    // adoption or a bounded forward-probe), and nothing after the create
+    // may re-run it — a durable create re-run at a fresh tail would
+    // duplicate the logical write.
+    const success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
+    this.#emitWriteMetrics(input.collection, success.classAOps);
+    return {
+      entry: success.entries[0]!,
+      currentEtag: success.currentEtag,
+    };
   }
 
   /**
@@ -430,16 +365,15 @@ export class Writer {
    *
    * A log-create 412 is disambiguated by session read-back: own session
    * / own seq ⇒ our crashed-or-lost-ack commit is already durable ⇒
-   * adopt; foreign session ⇒ re-probe forward and retry at the next
-   * empty slot. Transient sends retry the same entry within the commit's
-   * transient budget, then read it back; when every send at the slot was
-   * refused unapplied (`cause.notApplied`), the `NetworkError` propagates
-   * without a readback. A 412, or any rejection after a
-   * send of unknown outcome, also resolves by readback because adapters can
-   * hide earlier sends. A definitive `AccessDenied` / `InvalidConfig` with no
-   * earlier uncertain send at the slot propagates as-is. Unresolved creates
-   * throw non-retriable `AmbiguousCommit`; failures before the create
-   * propagate.
+   * adopt; foreign session ⇒ re-probe forward and create at the next
+   * empty slot. Each slot gets one `Storage.put` and never a same-slot
+   * resend, because the adapter already retried it. When that call reports
+   * every attempt refused unapplied (`cause.notApplied`), the `NetworkError`
+   * propagates without a readback; a definitive `AccessDenied` /
+   * `InvalidConfig` propagates as-is. A 412 or an uncertain failure resolves
+   * by one occupant readback, because adapters can hide earlier sends.
+   * Unresolved creates throw non-retriable `AmbiguousCommit`; failures
+   * before the create propagate.
    *
    * Crash safety invariant: additive index `newKeys` PUTs are awaited
    * before the log create. `LogEntry.after` is the authoritative post-image.
@@ -564,26 +498,24 @@ export class Writer {
     // `current.json` CAS follows it — the create is the linearization
     // point (exactly-one-winner, CI-gated across all backends).
     //
-    // 200 ⇒ committed at `seq`. 412 ⇒ disambiguate by session read-back:
-    //   - own session / own seq ⇒ our crashed-or-lost-ack commit is
-    //     already durable at `seq` ⇒ adopt the resolved `seq` and fall
-    //     through to the SAME stale-key cleanup (Step 5b). The adopted
-    //     commit is EXACTLY the attempt that may have died after creating
-    //     `log/<seq>` but before deleting stale keys, so re-running the
-    //     (idempotent) cleanup completes it.
-    //   - foreign session / wrong seq ⇒ re-probe forward and retry at the
-    //     new first-empty slot (bounded by LOG_FORWARD_PROBE_CAP).
-    // A transient NetworkError (e.g. a dropped ack on a create that may
-    // already have landed) retries the SAME `seq`: the retry either
-    // re-creates (write never landed) or hits the durable write → 412 →
-    // own-session adoption. Either way the write lands at EXACTLY `seq`,
-    // never duplicated.
+    // Each slot gets exactly ONE `storage.put`: the adapter already retried
+    // it under the storage retry policy, so a Writer-level resend would
+    // multiply that policy's attempts (retry at one layer). The outcome of
+    // that one call decides the next step:
+    //   - success ⇒ committed at `seq`;
+    //   - `cause.notApplied` (every attempt throttled) ⇒ nothing of ours
+    //     can be at `seq`; the retriable `NetworkError` propagates;
+    //   - `AccessDenied` / `InvalidConfig` ⇒ definitive under the
+    //     `Storage.put` contract; propagates as-is;
+    //   - a 412, or any other failure (an uncertain send — e.g. a dropped
+    //     ack on a create that may already have landed) ⇒ one occupant
+    //     readback. Own entry ⇒ adopt; foreign ⇒ forward-probe (a new
+    //     slot, not a resend); absent or unreadable ⇒ `AmbiguousCommit`,
+    //     because an absent slot cannot prove an in-flight send won't land.
+    // A lost ack resolves without a resend: the adapter's own next attempt
+    // sees the landed object as a 412, or the readback finds it.
     let committedEntry: LogEntry = entry;
     let probes = 0;
-    // One transient budget per commit, shared by same-slot resends and
-    // occupant readbacks, so contention on a flaky backend cannot multiply
-    // the subrequest count per slot.
-    let transientRetries = 0;
     const ambiguous = (cause: unknown): BaerlyError => {
       ctxMetrics().counter("db.write.unresolved_create_total", 1, {
         collection: entry.collection,
@@ -601,73 +533,38 @@ export class Writer {
     for (;;) {
       const logEntryKey = logObjectKey(logPrefix, seq);
       assertKeyWithinLimit(logEntryKey);
+      // Encoded outside the try: an unencodable entry is the caller's
+      // error, and no send was made that a readback would need to resolve.
       const entryBody = encodeJsonBytes(entry);
-      // Set once a send at this slot ends with an unknown outcome. Until
-      // then a definitive rejection proves nothing of ours is at `seq`.
-      let slotUncertain = false;
       let createFailure: unknown;
-      let committed = false;
-      for (;;) {
-        try {
-          await this.#storage.put(logEntryKey, entryBody, {
-            ifNoneMatch: "*",
-            contentType: APPLICATION_JSON,
-          });
-          committed = true;
-          break;
-        } catch (error) {
-          createFailure = error;
-          this.#observe429(error, entry.collection);
-          if (isWriteConflict(error)) {
-            ctxMetrics().counter("db.r2.put.412_total", 1, {
-              collection: entry.collection,
-              step: "log-put",
-            });
-            // Even an initial visible 412 can be our entry: the adapter may
-            // have retried a landed send internally.
-            break;
-          }
-          if (isDefinitiveCreateRejection(error) && !slotUncertain) {
-            // `Storage.put` contract: no attempt of this call can land, and
-            // no earlier send at this slot is outstanding.
-            throw error;
-          }
-          if (!isCreateNotApplied(error)) {
-            slotUncertain = true;
-          }
-          if (isTransientWrite(error) && transientRetries < this.#maxRetries) {
-            // Reuse the exact entry at this seq so a landed send is adopted.
-            transientRetries++;
-            await this.#backoff(transientRetries);
-            continue;
-          }
-          if (!slotUncertain) {
-            // Every send at this slot was refused unapplied (throttled), so
-            // nothing of ours can land here: the transient error stands.
-            throw error;
-          }
-          // Exhausted resends, or a rejection after an uncertain send, still
-          // need a readback. A negative read cannot prove an earlier
-          // in-flight create will not land.
-          break;
-        }
-      }
-      if (committed) {
+      try {
+        await this.#storage.put(logEntryKey, entryBody, {
+          ifNoneMatch: "*",
+          contentType: APPLICATION_JSON,
+        });
         committedEntry = entry;
         break;
+      } catch (error) {
+        createFailure = error;
+        this.#observe429(error, entry.collection);
+        if (isWriteConflict(error)) {
+          ctxMetrics().counter("db.r2.put.412_total", 1, {
+            collection: entry.collection,
+            step: "log-put",
+          });
+          // Even a visible 412 can be our entry: the adapter may have
+          // retried a landed send internally.
+        } else if (isDefinitiveCreateRejection(error) || isCreateNotApplied(error)) {
+          // `Storage.put` contract: no attempt of this call was applied, and
+          // this is the slot's only send, so nothing of ours is at `seq`.
+          throw error;
+        }
       }
       let decision: ReturnType<typeof tryAdoptOwnSessionLogEntry>;
       try {
         decision = tryAdoptOwnSessionLogEntry({
           self: entry,
-          existing: await this.#readLogOccupant(logEntryKey, async (error) => {
-            if (isTransientWrite(error) && transientRetries < this.#maxRetries) {
-              transientRetries++;
-              await this.#backoff(transientRetries);
-              return true;
-            }
-            return false;
-          }),
+          existing: await this.#readLogOccupant(logEntryKey),
         });
       } catch (error) {
         throw ambiguous(
@@ -688,7 +585,7 @@ export class Writer {
         break;
       }
       // Foreign session (or wrong seq) — re-probe forward from seq+1 and
-      // retry at the new first-empty slot, re-minting seq + LSN.
+      // create at the new first-empty slot, re-minting seq + LSN.
       if (++probes > LOG_FORWARD_PROBE_CAP) {
         throw new BaerlyError(
           "Internal",
@@ -849,11 +746,10 @@ export class Writer {
       }
     }
 
-    // Base class-A op count for this attempt: the single log create +
-    // index PUTs + index DELETEs.
-    // No current.json CAS anymore. Forward-probe GETs are Class B and
-    // excluded. The caller of `commit()` adds `(attempt - 1)` for retry
-    // cost.
+    // Class-A op count for this commit: the committing log create +
+    // index PUTs + index DELETEs. No current.json CAS. Forward-probe and
+    // readback GETs are Class B and excluded, as are creates refused at
+    // slots a foreign writer won.
     const classAOps = 1 + indexClassA;
     return {
       entries: committedEntries,
@@ -1237,40 +1133,28 @@ export class Writer {
   }
 
   /**
-   * Read the occupant of a slot whose committing create was rejected. A
-   * failed read is retried while `retry` grants budget. An empty slot or an
-   * occupant without a writer identity throws: neither proves the slot holds
-   * a foreign entry rather than a pending send of our own.
+   * Read the occupant of a slot whose committing create was rejected, with
+   * one `Storage.get` (the adapter retries it; the Writer does not). A failed
+   * read, an empty slot, or an occupant without a writer identity throws:
+   * none of them proves the slot holds a foreign entry rather than a pending
+   * send of our own.
    */
-  async #readLogOccupant(
-    key: string,
-    retry: (error: unknown) => Promise<boolean>,
-  ): Promise<LogEntry> {
-    for (;;) {
-      let got: Awaited<ReturnType<Storage["get"]>>;
-      try {
-        got = await this.#storage.get(key);
-      } catch (error) {
-        if (await retry(error)) {
-          continue;
-        }
-        throw error;
-      }
-      if (got === null) {
-        throw new BaerlyError("NotFound", `Writer: ${key} is empty after its create was rejected`);
-      }
-      let existing: unknown;
-      try {
-        existing = decodeJsonBytes(got.body);
-      } catch (error) {
-        throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`, error);
-      }
-      if (!hasWriterIdentity(existing)) {
-        // Parsed JSON alone cannot establish a conflicting writer's identity.
-        throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`);
-      }
-      return existing;
+  async #readLogOccupant(key: string): Promise<LogEntry> {
+    const got = await this.#storage.get(key);
+    if (got === null) {
+      throw new BaerlyError("NotFound", `Writer: ${key} is empty after its create was rejected`);
     }
+    let existing: unknown;
+    try {
+      existing = decodeJsonBytes(got.body);
+    } catch (error) {
+      throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`, error);
+    }
+    if (!hasWriterIdentity(existing)) {
+      // Parsed JSON alone cannot establish a conflicting writer's identity.
+      throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`);
+    }
+    return existing;
   }
 
   /**
@@ -1278,7 +1162,7 @@ export class Writer {
    * R2 prefix-partition rate-limit. Best-effort: detected via
    * `BaerlyError{code:"NetworkError"}` with a `429` token in the
    * message. Called from every PUT call site's catch arm; mutually
-   * exclusive in practice with `isPreconditionFailed` (412 ≠ 429).
+   * exclusive in practice with `isWriteConflict` (412 ≠ 429).
    */
   #observe429(err: unknown, collection: string): void {
     if (is429(err)) {
@@ -1288,43 +1172,17 @@ export class Writer {
 
   /**
    * Emit the per-logical-write `class_a_ops_per_logical_write`
-   * histogram for `commit`. `classAOps` is the per-attempt base plus
-   * a charge for prior failed attempts (the retry-budget cost model),
-   * computed by the caller.
+   * histogram for `commit`. `classAOps` is the committing create plus
+   * the index PUTs and DELETEs, computed by `#singleAttemptCommit`.
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
     ctxMetrics().histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });
-  }
-
-  /**
-   * Exponential backoff with full jitter. `25 * 2^(attempt-1)` capped
-   * at 1500ms; uniform jitter in `[0, base)` keeps colliding peers
-   * from re-racing in lockstep. Worst-case total wait across the
-   * default 8 attempts is roughly 2.5 s — well under a typical
-   * Worker request budget.
-   */
-  async #backoff(attempt: number): Promise<void> {
-    const base = Math.min(this.#initialBackoffMs * 2 ** (attempt - 1), MAX_BACKOFF_MS);
-    const sleepMs = base * this.#random();
-    if (sleepMs <= 0) {
-      return;
-    }
-    await new Promise<void>((r) => setTimeout(r, sleepMs));
   }
 }
 
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
-
-/**
- * `true` when a log-create PUT failed transiently (a `NetworkError`) —
- * the write may or may not have landed (a dropped ack). Safe to retry
- * the SAME seq: own-session adoption closes the double-commit window if
- * it did land. NOT a 412 (that's handled by adoption directly).
- */
-const isTransientWrite = (err: unknown): boolean =>
-  err instanceof BaerlyError && err.code === "NetworkError";
 
 /**
  * `true` when a create rejection proves the create did not land. Under the
@@ -1339,7 +1197,8 @@ const isDefinitiveCreateRejection = (err: unknown): boolean =>
  * `Storage.put` contract, that no attempt of the call was applied.
  */
 const isCreateNotApplied = (err: unknown): boolean =>
-  isTransientWrite(err) &&
+  err instanceof BaerlyError &&
+  err.code === "NetworkError" &&
   ((err as BaerlyError).cause as { notApplied?: boolean } | undefined)?.notApplied === true;
 
 /** `true` when a decoded log occupant carries the identity adoption compares. */

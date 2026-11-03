@@ -29,8 +29,9 @@ export type BaerlyErrorCode =
    * Another write won a race this call needed to win, and the losing commit
    * did not land. Re-read, then retry; `retriable` is `true`. Each
    * `Collection` / `Query` verb re-reads on every call, so re-issuing the same
-   * call is the retry. The writer already retries the commit race internally,
-   * so this surfaces only after that budget is spent. Maintenance passes
+   * call is the retry. The writer makes one commit attempt and resolves a
+   * log-create race inside it, so this surfaces from a write only for a
+   * rejected precondition the writer does not resolve. Maintenance passes
    * (`compact`, `runGc`, log retirement) raise it when a concurrent pass or
    * writer moved `current.json` first; the next pass retries. HTTP maps this
    * code to 409 with a generic message.
@@ -60,7 +61,7 @@ export type BaerlyErrorCode =
    * A write's commit outcome cannot be resolved: one or more committing
    * `log/<seq>` creates may already be durable, but the writer cannot adopt or
    * report a confirmed commit. This includes an unresolved create acknowledgement
-   * after same-slot resends/readback, and a create that landed below the
+   * after the occupant readback, and a create that landed below the
    * certified delete floor (`seq < min(log_delete_floor, log_seq_start)`).
    *
    * `BaerlyError._id` names the affected row, including an auto-ID insert's

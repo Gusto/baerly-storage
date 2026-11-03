@@ -287,10 +287,7 @@ const buildInstances = async (
     const writer = new Writer({
       storage,
       currentJsonKey: sharedCurrentKey,
-      // Smaller initial backoff to keep N-way races snappy under
-      // memory; the legacy POLL_TICK_MS budget assumes sub-second
-      // commit latency.
-      options: indexes.length > 0 ? { initialBackoffMs: 5, indexes } : { initialBackoffMs: 5 },
+      ...(indexes.length > 0 && { options: { indexes } }),
     });
     return {
       db,

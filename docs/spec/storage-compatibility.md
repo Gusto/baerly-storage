@@ -128,9 +128,10 @@ Two subtleties are load-bearing:
 - **`409` vs `412` on a conditional create diverge by intent.** A `409
   ConditionalRequestConflict` on an `If-None-Match: "*"` create means the
   write was _contended_ and may not have landed, so it maps to a
-  **retryable** `NetworkError` — the single-write-commit writer re-probes
-  and either wins or sees `412`. A direct `WriteConflict` there would adopt-read
-  a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch ===
+  **retryable** `NetworkError` — the adapter's retry of the create either
+  wins or sees `412`, and a create still failing after its last attempt is
+  resolved by the writer's occupant readback. A direct `WriteConflict` there
+  would adopt-read a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch ===
   "*"` branch.)
 
 | Condition (over the wire / at the boundary)                    | `BaerlyError.code` | Nominal `httpStatus` | Retriable | Source                                                              |

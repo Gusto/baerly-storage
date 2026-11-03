@@ -78,15 +78,16 @@ export const makeCollection = <T extends DocumentData>(
      * to the writer — matches the locked `Collection.insert` throws
      * contract (`@baerly/protocol/src/collection-api.ts`).
      *
-     * Single-attempt per call: CAS retries (up to 8 attempts) live
-     * inside `Writer.commit()`. On retry-budget exhaustion the
-     * writer throws `WriteConflict` and we surface unchanged.
+     * Single-attempt per call: log-create contention is resolved inside
+     * `Writer.commit()`, and its errors surface unchanged.
      *
      * @throws BaerlyError code="AlreadyExists" — `_id` matches an
      *   already-committed row (pre-commit check; concurrent uncommitted
      *   inserts are not detected). Not retriable.
-     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted;
-     *   the commit did not land. Retriable.
+     * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
+     *   the writer does not resolve; the write was not committed. The writer
+     *   makes one attempt (log-create races are resolved inside it), so
+     *   re-run the call to retry. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the row may or may
      *   not have been inserted. Re-read by a stable `_id`; absence is not proof
@@ -100,8 +101,10 @@ export const makeCollection = <T extends DocumentData>(
      * predicate-form `runUpdate` through a `byId` wire, so at most one row
      * is matched.
      *
-     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted inside
-     *   `Writer.commit()`.
+     * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
+     *   the writer does not resolve; the write was not committed. The writer
+     *   makes one attempt (log-create races are resolved inside it), so
+     *   re-run the call to retry. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the update may or
      *   may not have been applied. Re-read by `id`; absence is not proof of
@@ -119,8 +122,10 @@ export const makeCollection = <T extends DocumentData>(
      * Replace the row at `id` wholesale, preserving doc identity.
      *
      * @throws BaerlyError code="NotFound" — no row exists at `id`.
-     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted inside
-     *   `Writer.commit()`.
+     * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
+     *   the writer does not resolve; the write was not committed. The writer
+     *   makes one attempt (log-create races are resolved inside it), so
+     *   re-run the call to retry. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the replace may or
      *   may not have been applied. Re-read by `id`; absence is not proof of
@@ -134,8 +139,10 @@ export const makeCollection = <T extends DocumentData>(
      * through a `byId` wire, so at most one row is matched. A missing row is
      * not an error — `deleted` is `0`.
      *
-     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted inside
-     *   `Writer.commit()`.
+     * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
+     *   the writer does not resolve; the write was not committed. The writer
+     *   makes one attempt (log-create races are resolved inside it), so
+     *   re-run the call to retry. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the tombstone may or
      *   may not have been applied. Re-read by `id`; absence is not proof of
