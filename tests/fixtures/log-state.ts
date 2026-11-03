@@ -74,17 +74,28 @@ export const logStateCurrentJson = (overrides: Partial<CurrentJson> = {}): Curre
  * any field — `op` / `collection` / `doc_id` / `after` / `session` are
  * the usual ones. Internal: the seeders below build on it; export when a
  * test first needs the literal in hand rather than a PUT.
+ *
+ * `I` and `U` entries default to the minimal post-image
+ * `after: { _id: doc_id }`, derived from the resolved `doc_id`, because
+ * stored `I` / `U` entries always carry one; a seed without it is a log
+ * shape the writer never produces. `D` entries carry no `after`. An
+ * explicit `after` override (including `after: undefined`) wins.
  */
-const logStateEntry = (seq: number, overrides: Partial<LogEntry> = {}): LogEntry => ({
-  lsn: `lsn-${seq}`,
-  commit_ts: "2026-01-01T00:00:00.000Z",
-  op: "I",
-  collection: "c",
-  doc_id: `d${seq}`,
-  session: "ssn001",
-  seq,
-  ...overrides,
-});
+const logStateEntry = (seq: number, overrides: Partial<LogEntry> = {}): LogEntry => {
+  const op = overrides.op ?? "I";
+  const docId = overrides.doc_id ?? `d${seq}`;
+  return {
+    lsn: `lsn-${seq}`,
+    commit_ts: "2026-01-01T00:00:00.000Z",
+    op,
+    collection: "c",
+    doc_id: docId,
+    session: "ssn001",
+    seq,
+    ...(op === "D" ? {} : { after: { _id: docId } }),
+    ...overrides,
+  };
+};
 
 /**
  * PUT one raw `log/<seq>.json` object under `logPrefix` carrying a valid
