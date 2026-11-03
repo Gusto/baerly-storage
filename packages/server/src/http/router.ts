@@ -526,7 +526,7 @@ const ERROR_CODE_POLICY = {
   WriteConflict: {
     messagePolicy: "scrubbed",
     scrubbedMessage:
-      "write conflict: another write changed this data first and nothing was committed; re-read and retry",
+      "write conflict: another write changed this data first; this commit did not land",
   },
 } as const satisfies Record<BaerlyErrorCode, ErrorCodePolicy>;
 

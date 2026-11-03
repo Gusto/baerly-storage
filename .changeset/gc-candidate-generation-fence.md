@@ -14,7 +14,7 @@ mark decision taken under one view of the bucket could therefore
 execute up to seven days later against a different one.
 
 The reachable consequence involved no crash. `runGc` sweeps `log/K` and
-then loses the `gc/pending.json` CAS; it catches that `Conflict` and
+then loses the `gc/pending.json` CAS; it catches that `WriteConflict` and
 reports success, so the swept candidate stays in the ledger. `baerly
 admin restore --force` reseeds `log_seq_start` from the surviving log
 objects — the deliberate floor exemption, which can land the floor
@@ -45,12 +45,12 @@ tick maintenance in-band and so can run `runGc` inside the restore
 itself.
 
 Relatedly, `casUpdateGcPending` now reports a missing `gc/pending.json`
-as `Conflict` rather than `InvalidResponse`. Nothing in the system
+as `WriteConflict` rather than `InvalidResponse`. Nothing in the system
 deleted that object before this change, so the branch was unreachable;
 the restore clear above makes it routine. It is a CAS precondition
 failure rather than a separate class of fault — the pre-read is an
 optimisation, and the `If-Match` PUT it short-circuits would have
-returned 412 against a deleted key and been translated to `Conflict`
+returned 412 against a deleted key and been translated to `WriteConflict`
 anyway. Without the reclassification, a GC pass that read the ledger
 before a concurrent restore and reached its CAS afterwards would throw
 out of `runGc`: the write tick would count an alert-grade

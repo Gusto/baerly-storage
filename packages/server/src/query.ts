@@ -348,7 +348,7 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
   });
 
 /**
- * `Collection.insert` / `Query.insert` implementation. Mints a UUIDv7 `_id`
+ * `Collection.insert` implementation. Mints a UUIDv7 `_id`
  * when the caller omits it (or supplies an empty string); honours a
  * caller-supplied non-empty `_id`. On collision (the materialised
  * collection already carries that `_id`) throws non-retriable
@@ -422,7 +422,7 @@ export const runInsert = async <T extends DocumentData>(
   if (existing.rows.length > 0) {
     throw new BaerlyError(
       "AlreadyExists",
-      `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
+      `insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
       undefined,
       undefined,
       undefined,

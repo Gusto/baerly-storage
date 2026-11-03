@@ -148,7 +148,7 @@ baerly admin restore \
 ```
 
 If the target collection's `current.json` already exists, restore
-refuses with `Conflict`. With `--force`, restore does not delete old
+refuses with `AlreadyExists`. With `--force`, restore does not delete old
 objects first. It moves the collection's starting log position past the
 old numbered log files and imports rows at new sequence numbers.
 Maintenance can later reclaim the surviving `log/` objects via

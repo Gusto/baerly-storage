@@ -26,8 +26,8 @@ export type BaerlyErrorCode =
    */
   | "SchemaError"
   /**
-   * Another write won a race this call needed to win, and nothing from this
-   * call was committed. Re-read, then retry; `retriable` is `true`. Each
+   * Another write won a race this call needed to win, and the losing commit
+   * did not land. Re-read, then retry; `retriable` is `true`. Each
    * `Collection` / `Query` verb re-reads on every call, so re-issuing the same
    * call is the retry. The writer already retries the commit race internally,
    * so this surfaces only after that budget is spent. Maintenance passes
@@ -45,11 +45,15 @@ export type BaerlyErrorCode =
   /**
    * The thing being created already exists, so the same request can never
    * succeed; `retriable` is `false`. `Collection.insert` raises it for a
-   * caller-supplied `_id` that is already stored: insert under a different
-   * `_id`, omit `_id` to mint one, or change the stored row with `update` /
-   * `replace`. `baerly admin restore` raises it when the target collection
-   * already exists and `--force` was not passed. HTTP maps this code to 409
-   * and keeps the message, which names the id and collection.
+   * caller-supplied `_id` that an already-committed row holds (the check
+   * sees committed rows only, so two concurrent inserts of one `_id` can
+   * both succeed). Insert under a different `_id`, omit `_id` to mint one,
+   * or change the stored row with `update` / `replace` — unless this follows
+   * a same-`_id` retry after `AmbiguousCommit`, where the stored row may be
+   * the first attempt: re-read it instead of inserting under a new `_id`.
+   * `baerly admin restore` raises it when the target collection already
+   * exists and `--force` was not passed. HTTP maps this code to 409 and
+   * keeps the message, which names the id and collection.
    */
   | "AlreadyExists"
   /**
@@ -66,9 +70,11 @@ export type BaerlyErrorCode =
    * effect may have been superseded. Retrying is an explicit at-least-once
    * choice and may repeat logical work. Retry an insert with the same `_id`:
    * a second create then targets the same row instead of minting a second
-   * document, though it can still overwrite a concurrent change. `retriable`
-   * is `false` so generic retry wrappers do not repeat the operation silently.
-   * HTTP maps this code to 409.
+   * document, though it can still overwrite a concurrent change. An
+   * `AlreadyExists` on that retry means a row with that `_id` is committed:
+   * re-read it and compare with the intended state rather than inserting
+   * under a new `_id`. `retriable` is `false` so generic retry wrappers do
+   * not repeat the operation silently. HTTP maps this code to 409.
    */
   | "AmbiguousCommit"
   /**
@@ -299,11 +305,14 @@ export class BaerlyError extends Error {
   readonly resolution?: string;
 
   /**
-   * `true` iff retrying can succeed without changing the request:
-   * `WriteConflict` (re-read, then retry) and `NetworkError` (retry with
-   * backoff). A pure function of `code` ({@link isRetriableCode}): every
-   * instance of a code gives the same answer. `AmbiguousCommit` is `false`
-   * because the write may have landed; reconcile by `_id` first.
+   * `true` iff re-running the operation from its read step can succeed:
+   * `NetworkError` (retry with backoff) and `WriteConflict` (re-read, then
+   * write again). A `Collection` / `Query` verb re-reads on every call, so
+   * calling it again is the retry; a blind resend of the same conditional
+   * `Storage` put loses again. A pure function of `code`
+   * ({@link isRetriableCode}): every instance of a code gives the same
+   * answer. `AmbiguousCommit` is `false` because the write may have landed;
+   * reconcile by `_id` first.
    */
   get retriable(): boolean {
     return isRetriableCode(this.code);

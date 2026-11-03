@@ -33,7 +33,7 @@ A production backend certified as full `Storage` MUST support:
   log-append commit relies on it.
 - UTF-8 byte-ordered `list` with `startAfter` + `maxKeys` pagination.
 - Correct storage error-code mapping (stale `ifMatch` / existing
-  `ifNoneMatch:"*"` / concurrent-create loser → `Conflict` or
+  `ifNoneMatch:"*"` / concurrent-create loser → `WriteConflict` or
   retryable `NetworkError`).
 
 There is **no `supportsCAS` opt-out**. The conformance suite enforces

@@ -121,7 +121,7 @@ Run it:
 
 **Legitimate divergences the gate does NOT over-assert:**
 
-- A contended create-loser may surface `Conflict` (412) **or** a retryable `NetworkError`
+- A contended create-loser may surface `WriteConflict` (412) **or** a retryable `NetworkError`
   (409 ConditionalRequestConflict, real AWS S3) — the parity table accepts a code *set*.
 - CAS **fairness is not a parity property** ([ADR-002](../../adr/002-ephemeral-coordination.md)
   "No fairness"); only exactly-one-winner + code-on-loss are asserted, never

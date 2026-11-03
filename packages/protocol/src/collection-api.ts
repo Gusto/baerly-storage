@@ -104,11 +104,12 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Insert a new document. UUIDv7 auto-id on `_id`; caller can
    * supply `_id` and the server honours it. Returns the new id.
    *
-   * @throws BaerlyError{code: "AlreadyExists"} — `_id` collision on
-   *         caller-supplied id. Not retriable: insert under another
-   *         `_id`, omit `_id`, or use `update` / `replace`.
-   * @throws BaerlyError{code: "WriteConflict"} — concurrent write lost
-   *         the CAS race and nothing was committed. Retriable.
+   * @throws BaerlyError{code: "AlreadyExists"} — caller-supplied `_id`
+   *         matches an already-committed row (concurrent uncommitted
+   *         inserts are not detected). Not retriable: insert under
+   *         another `_id`, omit `_id`, or use `update` / `replace`.
+   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
+   *         the CAS race and this commit did not land. Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the row may or may not have been inserted.
@@ -135,8 +136,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * For predicate-aware bulk mutation, use
    * `.where(predicate).update(patch)` on {@link Query}.
    *
-   * @throws BaerlyError{code: "WriteConflict"} — concurrent write lost
-   *         the CAS race and nothing was committed. Retriable.
+   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
+   *         the CAS race and this commit did not land. Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the update may or may not have been applied.
@@ -164,6 +165,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Whole-document replace on one row by primary key. Throws
    * `BaerlyError{code:"NotFound"}` when no row exists at `id`.
    *
+   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
+   *         the CAS race and this commit did not land. Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the replace may or may not have been applied.
@@ -183,6 +186,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * id is unknown rather than throwing. For predicate-aware bulk
    * delete, use `.where(predicate).delete()` on {@link Query}.
    *
+   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
+   *         the CAS race and this commit did not land. Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the tombstone may or may not have been
@@ -428,8 +433,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    * field deletes it. For the single-row case prefer
    * {@link Collection.update}(id, patch).
    *
-   * @throws BaerlyError{code: "WriteConflict"} — concurrent write lost
-   *         the CAS race and nothing was committed. Retriable.
+   * @throws BaerlyError{code: "WriteConflict"} — one row's commit lost
+   *         a CAS race and did not land. Rows before it may already
+   *         be applied; re-issuing the call is safe (it re-reads and
+   *         re-matches). Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
    *         committing create may be durable, but its outcome could
    *         not be resolved. Rows before it are already applied; the
@@ -460,6 +467,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    * Predicate-aware bulk delete: every matching document. For the
    * single-row case prefer {@link Collection.delete}(id).
    *
+   * @throws BaerlyError{code: "WriteConflict"} — one row's commit lost
+   *         a CAS race and did not land. Rows before it may already
+   *         be tombstoned; re-issuing the call is safe (it re-reads and
+   *         re-matches). Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
    *         committing create may be durable, but its outcome could
    *         not be resolved. Rows before it are already tombstoned;

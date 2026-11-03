@@ -318,7 +318,7 @@ deterministic protocol, reader-seam, restore, and commit-path tests:
   anything, under two concurrent-`current.json`-writer schedules — a
   `restore --force`-shaped reseed that lowers `log_seq_start` in the gap
   between the pass's advisory gate read and the CAS's own read, which
-  aborts the pass with `Conflict` and zero DELETEs; and a rival that
+  aborts the pass with `WriteConflict` and zero DELETEs; and a rival that
   legally advances `log_delete_floor` in that same gap, after which the
   pass deletes the range its own CAS validated rather than the wider
   advisory gate;

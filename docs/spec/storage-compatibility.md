@@ -129,25 +129,29 @@ Two subtleties are load-bearing:
   ConditionalRequestConflict` on an `If-None-Match: "*"` create means the
   write was _contended_ and may not have landed, so it maps to a
   **retryable** `NetworkError` — the single-write-commit writer re-probes
-  and either wins or sees `412`. A direct `Conflict` there would adopt-read
+  and either wins or sees `412`. A direct `WriteConflict` there would adopt-read
   a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch ===
   "*"` branch.)
 
 | Condition (over the wire / at the boundary)                    | `BaerlyError.code` | Nominal `httpStatus` | Retriable | Source                                                              |
 | -------------------------------------------------------------- | ------------------ | -------------------- | --------- | ------------------------------------------------------------------- |
 | `GET` / `HEAD` `404` (missing key)                             | _(none — `null`)_  | —                    | —         | `s3-http.ts` `get` `case 404: return null`                          |
-| `PUT` with `If-Match` sees `412`                               | `Conflict`         | 409                  | Yes       | `s3-http.ts` `put` `res.status === 412`; spec.json `Conflict`       |
-| `PUT` with `If-Match` sees `404` (MinIO's stale-CAS shape)     | `Conflict`         | 409                  | Yes       | `s3-http.ts` `put` `404 && ifMatch !== undefined`                   |
+| `PUT` with `If-Match` sees `412`                               | `WriteConflict`    | 409                  | Yes       | `s3-http.ts` `put` `res.status === 412`; spec.json `WriteConflict`  |
+| `PUT` with `If-Match` sees `404` (MinIO's stale-CAS shape)     | `WriteConflict`    | 409                  | Yes       | `s3-http.ts` `put` `404 && ifMatch !== undefined`                   |
 | `PUT` `If-None-Match: "*"` sees `409` (contended create)       | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `put` `409 && ifNoneMatch === "*"`                     |
 | Any verb sees `403`                                            | `AccessDenied`     | 403                  | No        | `s3-http.ts` `403` branches; spec.json `AccessDenied`               |
 | Any verb sees `429` or `5xx` (retries exhausted)               | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `429 \|\| status >= 500` branches; spec.json           |
 | Unparseable / unexpected success body or missing `ETag`        | `InvalidResponse`  | 502                  | No        | `s3-http.ts` `InvalidResponse` branches; spec.json                  |
 | Empty key or a `.` / `..` path segment (rejected pre-request)  | `InvalidConfig`    | 400                  | No        | `assertValidStorageKey`; spec.json `InvalidConfig`; see [Key namespace](#key-namespace) |
 
-The `Conflict` code has a nominal `httpStatus` of `409` and is marked
-`retriable: true` in `baerly.spec.json` (CAS lost — the writer re-reads and
-retries). `NetworkError` is `retriable: true` (`httpStatus` `502`);
-`AccessDenied`, `InvalidResponse`, `NotFound`, and `InvalidConfig` are all
+The `WriteConflict` code has a nominal `httpStatus` of `409` and is marked
+`retriable: true` in `baerly.spec.json` (a precondition was rejected — the
+writer re-reads and retries). A `Storage` port throws `WriteConflict` for
+every rejected precondition (stale `If-Match`, `If-Match` against a missing
+key, or an `If-None-Match: "*"` collision); `AlreadyExists` (duplicate
+`_id`) is raised by the kernel before commit, never by a `Storage` port.
+`NetworkError` is `retriable: true` (`httpStatus` `502`); `AccessDenied`,
+`InvalidResponse`, `NotFound`, and `InvalidConfig` are all
 `retriable: false`. A `DELETE` against a missing key throws nothing at all
 — see clause 1 below.
 
@@ -369,7 +373,7 @@ preconditions against the XML API at `https://storage.googleapis.com`:
 - CAS (compactor / `restore`) → `x-goog-if-generation-match: <generation>`
 
 Both return **412** on a lost write, which the adapter maps to
-`BaerlyError{code:"Conflict"}` — there is no S3-style `409`-contended
+`BaerlyError{code:"WriteConflict"}` — there is no S3-style `409`-contended
 branch. The object `generation` (from the `x-goog-generation` response
 header) is carried verbatim as the opaque `Storage` etag; nothing parses,
 orders, or compares it.

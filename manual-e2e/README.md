@@ -302,7 +302,7 @@ The check passes when all of:
    `{ "error": { "code": "Unauthorized", "message": ... } }`
    envelope.
 6. Zero spurious 5xx. Transient 503 due to PATCH contention is OK
-   (the protocol surfaces them as `Conflict` at the next layer); raw
+   (the protocol surfaces them as `WriteConflict` at the next layer); raw
    5xx without a structured envelope is a fail.
 
 If any single budget gets relaxed on a given run (e.g. CF P95 hits

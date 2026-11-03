@@ -336,30 +336,34 @@ Two ways to get a typed row:
 
 ```ts
 try {
-  await db.collection("tickets").insert({ title: "hi" });
+  await db.collection("tickets").insert({ _id: "t-1", title: "hi" });
 } catch (err) {
-  if (err instanceof BaerlyError && err.code === "Conflict") {
-    // Check err.retriable: CAS conflicts can retry; duplicate _id cannot.
-  }
+  if (!(err instanceof BaerlyError)) throw err;
+  if (err.code === "AmbiguousCommit") {
+    // May have landed: re-read err._id before deciding.
+  } else if (!err.retriable) throw err; // AlreadyExists: t-1 is taken
+  // else WriteConflict / NetworkError: retry with bounded backoff
 }
 ```
 
-| `code`                   | HTTP | When                                                                   |
-| ------------------------ | ---- | ---------------------------------------------------------------------- |
-| `InvalidConfig`          | 400  | Caller config/input is invalid (bad bucket, malformed predicate, …)    |
-| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                                  |
-| `AccessDenied`           | 403  | S3 403 or bucket policy denied                                         |
-| `InvalidResponse`        | 502  | Server returned unparseable body                                       |
-| `Internal`               | 500  | Invariant violation — file a bug                                       |
-| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
-| `Conflict`               | 409  | CAS retry budget exhausted, or `insert` `_id` collision                |
-| `AmbiguousCommit`        | 409  | A committing create may be durable, but its outcome could not be resolved |
-| `Unauthorized`           | 401  | Verifier returned no identity                                          |
-| `NotFound`               | 404  | Row by id not found                                                    |
-| `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                                       |
-| `UnsatisfiablePredicate` | 400  | Predicate is well-formed but contradicts itself (empty `in` set, etc.) |
+| `code`                   | HTTP | When                                             |
+| ------------------------ | ---- | ------------------------------------------------ |
+| `InvalidConfig`          | 400  | Bad caller config/input (bucket, predicate, …)   |
+| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)            |
+| `AccessDenied`           | 403  | S3 403 or bucket policy denied                   |
+| `InvalidResponse`        | 502  | Server returned unparseable body                 |
+| `Internal`               | 500  | Invariant violation — file a bug                 |
+| `SchemaError`            | 400  | Bad JSON shape, or bound schema rejected it      |
+| `WriteConflict`          | 409  | Lost a write race; re-read, then retry           |
+| `AlreadyExists`          | 409  | `insert` `_id` taken, or `restore` target exists |
+| `AmbiguousCommit`        | 409  | Commit may be durable; outcome unresolved        |
+| `Unauthorized`           | 401  | Verifier returned no identity                    |
+| `NotFound`               | 404  | Row by id not found                              |
+| `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |
+| `UnsatisfiablePredicate` | 400  | Predicate contradicts itself (empty `in`, …)     |
 
-Recovery: [AmbiguousCommit](RECIPES.md#ambiguouscommit-recovery) — `err._id` names the row.
+Only `NetworkError` and `WriteConflict` are `retriable`. Recovery:
+[RECIPES.md](RECIPES.md#ambiguouscommit-recovery).
 
 ### Mapping errors to HTTP yourself
 
@@ -370,10 +374,8 @@ If you mount the kernel's router directly (`createRouter` from
 under `/v1/*`.
 
 For an **embed-by-hand** router (your own Hono / Express / Fastify
-app calling `Db` directly, layering custom routes on top), reach
-for `mapError` from the same subpath — it consumes the table above
-in one call and returns the envelope and status code, so handlers
-don't grow a five-arm `if (err.code === ...)` ladder:
+app calling `Db` directly), use `mapError` from the same subpath — it
+applies the table above and returns the envelope and status code:
 
 ```ts
 import { mapError } from "@gusto/baerly-storage/http";
@@ -391,11 +393,11 @@ app.post("/notes", async (c) => {
 
 `mapError` accepts any thrown value. Caller-facing errors such as
 `SchemaError`, `NotFound`, `PayloadTooLarge`, predicate `InvalidConfig`,
-and non-retriable caller `Conflict`s keep their actionable message.
+and `AlreadyExists` keep their actionable message.
 Storage/server diagnostics such as `Internal`, `NetworkError`,
 `InvalidResponse`, storage `AccessDenied`, storage `InvalidConfig`, and
-retriable CAS/storage `Conflict`s keep their code/status/retriable shape
-but use a generic wire message; the full thrown error is logged via the
+`WriteConflict` keep their code/status/`retriable` shape but use a
+generic wire message; the full thrown error is logged via the
 observability channel. Non-`BaerlyError` throws fall through to
 `500 Internal` with the message redacted. The HTTP status / envelope shape
 is locked.

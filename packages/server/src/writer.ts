@@ -335,7 +335,7 @@ export class Writer {
    *   `err._id` is `input.docId`.
    * @throws BaerlyError code="WriteConflict" (retriable) when a retryable
    *   conflict escapes the single-attempt helper and exhausts the retry
-   *   budget; nothing was committed (presently unreachable on the
+   *   budget; this write was not committed (presently unreachable on the
    *   log-create 412 path).
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, tail_hint)` is missing — a protocol-invariant violation
@@ -409,7 +409,7 @@ export class Writer {
     // Retry budget exhausted.
     throw new BaerlyError(
       "WriteConflict",
-      `Writer: lost the commit race in collection ${JSON.stringify(input.collection)} after ${this.#maxRetries} attempts; nothing was committed`,
+      `Writer: lost the commit race in collection ${JSON.stringify(input.collection)} after ${this.#maxRetries} attempts; this write was not committed`,
       undefined,
       undefined,
       undefined,

@@ -30,15 +30,14 @@ The threshold idea: baerly logs the request, not every internal step.
 At the end of each HTTP request, the kernel emits **one canonical log
 line**. More precisely, the line is `info` by default, rises to `warn`
 on any 4xx — a client error is the caller's fault, not a server fault,
-so a `409 Conflict` (a duplicate-`_id` insert) stays `warn` — and rises
-to `error` only on a 5xx or an otherwise-unclassified thrown error. It
-carries a
-`request_id`, an `outcome` (`read` / `committed` / `conflict` /
+so a `409` (a duplicate-`_id` insert raises `AlreadyExists`) stays
+`warn` — and rises to `error` only on a 5xx or an otherwise-unclassified
+thrown error. It carries a `request_id`, an `outcome` (`read` / `committed` / `conflict` /
 `error`), and the per-request `db.*` counters.
 
 Maintenance is the exception because it can run outside that request
 boundary. The in-band write-tick runner (`runBoundedMaintenance`) never
-throws: it swallows expected `Conflict` CAS losses silently, and on an
+throws: it swallows expected `WriteConflict` CAS losses silently, and on an
 unexpected error it increments `db.maintenance.unexpected_error_total`
 and logs the stack via `console.error`. A separate, rate-limited
 `fold_deferred` warning fires when compaction defers — a record on the
@@ -61,7 +60,7 @@ verbosity.
 | Signal                                        | Indicates                                                    | First response                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `status >= 500` or `outcome:"error"`          | User-visible API failure                                     | Inspect `error.code`, storage status, and the request path.                                                                                                                                                                                                                                                               |
-| `outcome:"conflict"` rate rising              | HTTP 409; the only reachable 409 is a duplicate-`_id` insert | App-level id collision (clients reusing `_id`s or double-submitting POSTs), not storage contention — prefer letting the server mint `_id` (omit it on insert). Write contention is absorbed by the forward-probe and surfaces on `db.r2.put.412_total`, not here.                                                         |
+| `outcome:"conflict"` rate rising              | HTTP 409; in practice a duplicate-`_id` insert (`AlreadyExists`). `WriteConflict` and `AmbiguousCommit` also map to 409 but are rare | App-level id collision (clients reusing `_id`s or double-submitting POSTs), not storage contention — prefer letting the server mint `_id` (omit it on insert). Write contention is absorbed by the forward-probe and surfaces on `db.r2.put.412_total`, not here.                                                         |
 | `db.r2.put.412_total` sustained               | Conditional-write (412) losses on log creates                | Check writes/min for the hot collection; retry at app edge if bursty, graduate if sustained. This is the storage-level conditional-write contention meter.                                                                                                                                                                |
 | `db.compaction.deferred_bytes_total` / `deferred_rows_total`, or a `fold_deferred` log record | Snapshot exceeded the byte or row fold ceiling; compaction and log retention have stopped | The counter name carries the dimension (the canonical line drops labels). On Cloudflare the fold runs after the canonical line is written, so the `fold_deferred` record (category `baerly.maintenance`, rate-limited) is the signal there; it names the arm, `C`, `E`, and `log_seq_start`. Run `baerly inspect` for `fold_gate`. Bytes: switch to `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Workers Paid, or raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. Rows: no env var applies; switch profile on Cloudflare, split or graduate on Node. Then read [graduation.md](../about/graduation.md). |
 | `db.compaction.below_min_total` sustained on a scheduled loop | `compact()` skipped: a non-empty live tail sat under `minEntriesToCompact` (and no fold budget checkpoint). Idle (`available === 0`) does not increment this counter. | Sustained rate means every read replays those unfolded entries at one GET apiece. Raise the cron cadence, lower the threshold, or fold more per pass. |

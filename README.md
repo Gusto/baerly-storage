@@ -114,7 +114,7 @@ db.collection("tickets").where({ status: "closed" }).delete();
 | **Verbs**     | `first` `all` `count` `get` · `insert` `update` `replace` `delete`                    |
 | **Modifiers** | `where` `order` `limit`                                                                |
 | **Operators** | `eq` `gt` `gte` `lt` `lte` `in`                                                        |
-| **Errors**    | one `BaerlyError`, discriminate by `.code` (`Conflict`, `NotFound`, `SchemaError`, …) |
+| **Errors**    | one `BaerlyError`, discriminate by `.code` (`WriteConflict`, `NotFound`, `SchemaError`, …) |
 
 Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md),
 or `cat node_modules/@gusto/baerly-storage/dist/API.md` in an installed

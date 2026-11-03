@@ -3,11 +3,11 @@ import type { BaerlyErrorCode } from "./errors.ts";
 /** Canonical per-code corrective action; `errorEnvelope` falls back to this and it crosses the wire as `resolution`. Actionable codes only. One canonical action per actionable code; a throw site may pass a more specific resolution (CLI `restore`), never a different retry meaning. */
 export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
   WriteConflict:
-    "Another write changed this data first and nothing from this call was committed. Re-read, then retry.",
+    "Another write changed this data first and this commit did not land. Re-read, then retry.",
   AlreadyExists:
-    "Do not retry. A row with this _id already exists: insert with a different _id or omit _id to auto-generate one, or use update or replace to change the existing row.",
+    "Do not retry. A row with this _id is already committed: insert with a different _id or omit _id to auto-generate one, or use update or replace to change the existing row; after an AmbiguousCommit retry, re-read that row instead.",
   AmbiguousCommit:
-    "Do not retry automatically. Re-read the row named by the error's _id; absence does not prove the write failed. A deliberate retry may repeat logical work; retry an insert with the same _id.",
+    "Do not retry automatically. Re-read the row named by the error's _id; absence does not prove the write failed. A deliberate retry may repeat logical work; retry an insert with the same _id, and treat AlreadyExists on that retry as a committed row to re-read.",
   PayloadTooLarge: "Reduce the request body below the server's body-size cap (1 MiB default).",
   Unauthorized: "Send a valid Authorization header for the server's configured auth method.",
   AccessDenied: "These credentials are denied for this tenant prefix or bucket policy.",

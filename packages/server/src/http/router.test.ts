@@ -165,8 +165,7 @@ describe("mapError", () => {
     expect(status).toBe(409);
     expect(envelope.error).toEqual({
       code: "WriteConflict",
-      message:
-        "write conflict: another write changed this data first and nothing was committed; re-read and retry",
+      message: "write conflict: another write changed this data first; this commit did not land",
       retriable: true,
       resolution: CODE_RESOLUTIONS.WriteConflict,
     });
@@ -178,13 +177,13 @@ describe("mapError", () => {
   test("AlreadyExists keeps its caller-facing message", () => {
     const err = new BaerlyError(
       "AlreadyExists",
-      'Collection.insert: _id "t-1" already exists in collection "tickets"',
+      'insert: _id "t-1" already exists in collection "tickets"',
     );
     const { status, envelope } = mapError(err);
     expect(status).toBe(409);
     expect(envelope.error).toEqual({
       code: "AlreadyExists",
-      message: 'Collection.insert: _id "t-1" already exists in collection "tickets"',
+      message: 'insert: _id "t-1" already exists in collection "tickets"',
       retriable: false,
       resolution: CODE_RESOLUTIONS.AlreadyExists,
     });
@@ -376,7 +375,7 @@ describe("observability middleware", () => {
     const err = p["error"] as { code: string; message: string };
     expect(err.code).toBe("WriteConflict");
     expect(err.message).toBe(
-      "write conflict: another write changed this data first and nothing was committed; re-read and retry",
+      "write conflict: another write changed this data first; this commit did not land",
     );
   });
 

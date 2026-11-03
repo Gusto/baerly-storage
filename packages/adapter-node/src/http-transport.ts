@@ -12,10 +12,10 @@ import { parseS3Error } from "./xml.ts";
  * These represent caller- or environment-level faults where retrying
  * cannot succeed: `AccessDenied` (403 — credentials/policy),
  * `InvalidConfig` (bad bucket / unsupported credential type),
- * `InvalidResponse` (server returned unparseable data),
- * `WriteConflict` (a precondition was rejected), and `AlreadyExists`
- * (the create target exists). `NetworkError` is intentionally absent —
- * it covers transient transport faults and stays retryable.
+ * `InvalidResponse` (server returned unparseable data), and
+ * `WriteConflict` (a precondition was rejected). `NetworkError` is
+ * intentionally absent — it covers transient transport faults and stays
+ * retryable.
  *
  * Transport-layer set, distinct from `RETRIABLE_CODES` in `@baerly/protocol`'s
  * `errors.ts`. A blind re-PUT of the same request re-loses a rejected
@@ -28,7 +28,6 @@ const PERMANENT_ERROR_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorC
   "InvalidConfig",
   "InvalidResponse",
   "WriteConflict",
-  "AlreadyExists",
 ]);
 
 /**
