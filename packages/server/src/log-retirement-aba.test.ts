@@ -192,7 +192,7 @@ describe("log retirement vs. the numbered-log create", () => {
     ).resolves.toBeNull();
   });
 
-  test("T2: a lost-ack retry of the same seq across fold+retirement fails AmbiguousCommit", async () => {
+  test("T2: a create that never landed, resolved across fold+retirement, fails AmbiguousCommit", async () => {
     const inner = new MemoryStorage();
     await seedManifest(inner);
     const gate = gatedPutStorage(inner, logObjectKey(PREFIX, 0), "fail");
@@ -332,16 +332,14 @@ describe("log retirement vs. the numbered-log create", () => {
   test("T4: a lost-ack adoption of the same seq across fold+retirement fails AmbiguousCommit", async () => {
     const inner = new MemoryStorage();
     await seedManifest(inner);
-    // `"landThenFail"`: the first create PUT of log/0 LANDS in the retired
-    // hole, then its ack is dropped — unlike T2's `"fail"`, where nothing
-    // ever lands durably and the retry re-creates fresh. The transient
-    // retry here re-PUTs the SAME seq (byte-identical entry, `commit_ts`
-    // included — the transient-retry arm does not re-mint), 412s against
-    // our own durable entry, and the session read-back ADOPTS it. The
-    // break out of the create loop is therefore the own-session-adoption
-    // break, not the fresh win T1/T2 exercise — this is the second path
-    // `#assertCommitAboveDeleteFloor`'s docstring and
-    // `docs/spec/sync-protocol.md` §5 both claim it covers.
+    // `"landThenFail"`: the create PUT of log/0 LANDS in the retired hole,
+    // then its ack is dropped — unlike T2's `"fail"`, where nothing of ours
+    // ever lands. The uncertain failure resolves by the Writer's one
+    // occupant readback, which finds our own entry (byte-identical,
+    // `commit_ts` included) and ADOPTS it. The break out of the create loop
+    // is therefore the own-session-adoption break, not the fresh win T1
+    // exercises — this is the second path `#assertCommitAboveDeleteFloor`'s
+    // docstring and `docs/spec/sync-protocol.md` §5 both claim it covers.
     const gate = gatedPutStorage(inner, logObjectKey(PREFIX, 0), "landThenFail");
 
     const pausedCommit = runWithContext(MAINTENANCE_OFF, () =>
@@ -769,7 +767,8 @@ describe("log retirement vs. the numbered-log create", () => {
   /**
    * Why the answer is an explicit failure and not discard-and-re-probe.
    *
-   * At the retry decision point the entire bucket is byte-for-byte identical
+   * At the decision point (the occupant readback after the uncertain create)
+   * the entire bucket is byte-for-byte identical
    * whether the writer's own create landed and was folded, or a foreign
    * writer's did. No surviving object names the writer's session. The two
    * histories require opposite outcomes — adopt the prior completion vs. place
@@ -777,7 +776,7 @@ describe("log retirement vs. the numbered-log create", () => {
    * over durable state can choose between them. That is why the writer reports
    * at-least-once instead of guessing.
    */
-  test("the durable state at the retry decision point cannot distinguish the two histories", async () => {
+  test("the durable state at the readback decision point cannot distinguish the two histories", async () => {
     // ── History A: the writer's own create landed at slot 0, then the ack
     // was lost, the entry was folded, and slot 0 was retired.
     const runHistoryA = async (): Promise<{
@@ -797,9 +796,16 @@ describe("log retirement vs. the numbered-log create", () => {
       let dump: Array<[string, string]> = [];
       let landedBytes: Uint8Array = new Uint8Array(0);
       let first = true;
-      let secondPut = false;
+      let captured = false;
       const storage: Storage = {
-        get: (k, o) => inner.get(k, o),
+        async get(k, o) {
+          if (k === logObjectKey(PREFIX, 0) && !first && !captured) {
+            captured = true;
+            // Snapshot the bucket at the occupant readback.
+            dump = await dumpBucket(inner);
+          }
+          return inner.get(k, o);
+        },
         list: (p, o) => inner.list(p, o),
         delete: (k, o) => inner.delete(k, o),
         async put(k, b, o) {
@@ -811,11 +817,6 @@ describe("log retirement vs. the numbered-log create", () => {
             reached();
             await released;
             throw new BaerlyError("NetworkError", "test: dropped ack after a durable create");
-          }
-          if (k === logObjectKey(PREFIX, 0) && !secondPut) {
-            secondPut = true;
-            // Snapshot the bucket at the retry decision point.
-            dump = await dumpBucket(inner);
           }
           return inner.put(k, b, o);
         },
@@ -866,9 +867,16 @@ describe("log retirement vs. the numbered-log create", () => {
       });
       let dump: Array<[string, string]> = [];
       let first = true;
-      let secondPut = false;
+      let captured = false;
       const storage: Storage = {
-        get: (k, o) => inner.get(k, o),
+        async get(k, o) {
+          if (k === logObjectKey(PREFIX, 0) && !first && !captured) {
+            captured = true;
+            // Snapshot the bucket at the occupant readback.
+            dump = await dumpBucket(inner);
+          }
+          return inner.get(k, o);
+        },
         list: (p, o) => inner.list(p, o),
         delete: (k, o) => inner.delete(k, o),
         async put(k, b, o) {
@@ -881,10 +889,6 @@ describe("log retirement vs. the numbered-log create", () => {
               "NetworkError",
               "test: dropped ack on a create that never landed",
             );
-          }
-          if (k === logObjectKey(PREFIX, 0) && !secondPut) {
-            secondPut = true;
-            dump = await dumpBucket(inner);
           }
           return inner.put(k, b, o);
         },

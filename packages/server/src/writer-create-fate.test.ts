@@ -23,17 +23,14 @@ const LOG_PREFIX = "app/test/tenant/t/manifests/tickets/log/";
 const isLogCreate = (key: string, opts?: StoragePutOptions): boolean =>
   key.startsWith(LOG_PREFIX) && opts?.ifNoneMatch === "*";
 
-type Fault =
-  | "exhausted-resends"
-  | "unreadable-occupant"
-  | "malformed-occupant"
-  | "malformed-final-readback"
-  | "unreadable-final-readback"
-  | "denied-resend"
-  | "denied-resend-unreadable"
-  | "missing-readback";
+type Fault = "lost-ack" | "unreadable-readback" | "malformed-readback" | "missing-readback";
 
-/** Faults begin only after a conditional log create is dispatched. */
+/**
+ * Faults begin only after a conditional log create is dispatched. The first
+ * create at the slot fails with a `NetworkError` (landed, except under
+ * `missing-readback`); any further create at that slot also fails, so a
+ * Writer-level same-slot resend shows up in `attempts` and never helps.
+ */
 class CreateFateStorage extends MemoryStorage {
   faultEnabled = true;
   readonly attempts: string[] = [];
@@ -67,25 +64,15 @@ class CreateFateStorage extends MemoryStorage {
       }
       throw new BaerlyError("NetworkError", "lost create acknowledgement");
     }
-    if (this.fault === "unreadable-occupant" || this.fault === "malformed-occupant") {
-      return super.put(key, body, opts);
-    }
-    if (this.fault === "denied-resend" || this.fault === "denied-resend-unreadable") {
-      throw new BaerlyError("AccessDenied", "resend credentials revoked");
-    }
     throw new BaerlyError("NetworkError", "resend transport unavailable");
   }
 
   override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     if (this.faultEnabled && key === this.#slot) {
-      if (
-        this.fault === "unreadable-occupant" ||
-        this.fault === "unreadable-final-readback" ||
-        this.fault === "denied-resend-unreadable"
-      ) {
+      if (this.fault === "unreadable-readback") {
         throw new BaerlyError("NetworkError", "occupant read unavailable");
       }
-      if (this.fault === "malformed-occupant" || this.fault === "malformed-final-readback") {
+      if (this.fault === "malformed-readback") {
         const existing = await super.get(key, opts);
         if (existing !== null) {
           return { ...existing, body: new TextEncoder().encode("{broken-json") };
@@ -107,7 +94,6 @@ const makeWriter = (storage: MemoryStorage): Writer =>
   new Writer({
     storage,
     currentJsonKey: CURRENT_KEY,
-    options: { maxRetries: 1, initialBackoffMs: 0, random: () => 0 },
   });
 
 const insert = (writer: Writer) =>
@@ -122,52 +108,45 @@ const sumCounter = (ctx: ObservabilityContext, name: string): number =>
 describe("Writer create fate", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  test.each(["exhausted-resends", "denied-resend"] as const)(
-    "%s adopts a final readback of the durable own entry",
-    async (fault) => {
-      const storage = new CreateFateStorage(fault);
-      await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
-
-      await expect(insert(makeWriter(storage))).resolves.toMatchObject({
-        entry: { seq: 0, doc_id: "one" },
-      });
-      expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}0.json`]);
-      storage.faultEnabled = false;
-      await expect(
-        Db.create({ storage, app: "test", tenant: "t" }).collection("tickets").count(),
-      ).resolves.toBe(1);
-    },
-  );
-
-  test.each([
-    "unreadable-occupant",
-    "malformed-occupant",
-    "malformed-final-readback",
-    "unreadable-final-readback",
-    "denied-resend-unreadable",
-    "missing-readback",
-  ] as const)("%s after a possibly durable create is non-retriable ambiguity", async (fault) => {
-    const storage = new CreateFateStorage(fault);
+  test("a lost ack is adopted by one readback, with no same-slot resend", async () => {
+    const storage = new CreateFateStorage("lost-ack");
     await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
 
-    const failure: unknown = await insert(makeWriter(storage)).catch((error: unknown) => error);
-    if (fault === "missing-readback") {
-      // Complete the original dispatch after the call has already failed.
-      // A null readback must not permit a safe-to-retry classification.
-      await expect(storage.get(`${LOG_PREFIX}0.json`)).resolves.toBeNull();
-      await storage.completeDelayedCreate();
-    }
+    await expect(insert(makeWriter(storage))).resolves.toMatchObject({
+      entry: { seq: 0, doc_id: "one" },
+    });
+    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
     storage.faultEnabled = false;
     await expect(
       Db.create({ storage, app: "test", tenant: "t" }).collection("tickets").count(),
     ).resolves.toBe(1);
-    expect(failure).toMatchObject({
-      code: "AmbiguousCommit",
-      _id: "one",
-      retriable: false,
-    });
-    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}0.json`]);
   });
+
+  test.each(["unreadable-readback", "malformed-readback", "missing-readback"] as const)(
+    "%s after a possibly durable create is non-retriable ambiguity, with no same-slot resend",
+    async (fault) => {
+      const storage = new CreateFateStorage(fault);
+      await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+
+      const failure: unknown = await insert(makeWriter(storage)).catch((error: unknown) => error);
+      if (fault === "missing-readback") {
+        // Complete the original dispatch after the call has already failed.
+        // A null readback must not permit a safe-to-retry classification.
+        await expect(storage.get(`${LOG_PREFIX}0.json`)).resolves.toBeNull();
+        await storage.completeDelayedCreate();
+      }
+      storage.faultEnabled = false;
+      await expect(
+        Db.create({ storage, app: "test", tenant: "t" }).collection("tickets").count(),
+      ).resolves.toBe(1);
+      expect(failure).toMatchObject({
+        code: "AmbiguousCommit",
+        _id: "one",
+        retriable: false,
+      });
+      expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
+    },
+  );
 
   test.each(["unavailable", "malformed"] as const)(
     "an initial visible 412 with %s readback cannot exclude hidden adapter sends",
@@ -211,7 +190,7 @@ describe("Writer create fate", () => {
   );
 
   test.each(["success", "denied"] as const)(
-    "a foreign final readback does not adopt or duplicate the entry; the next slot's %s is reported as-is",
+    "a foreign readback after an uncertain send does not adopt or duplicate the entry; the next slot's %s is reported as-is",
     async (nextSlot) => {
       class ForeignFinalReadbackStorage extends MemoryStorage {
         readonly attempts: string[] = [];
@@ -255,15 +234,12 @@ describe("Writer create fate", () => {
       if (nextSlot === "success") {
         await expect(action).resolves.toMatchObject({ entry: { seq: 1, doc_id: "one" } });
       } else {
-        // Our only send at seq 1 was definitively rejected and every send at
+        // Our only send at seq 1 was definitively rejected and the send at
         // seq 0 resolved to the foreign occupant, so nothing of ours landed.
         await expect(action).rejects.toMatchObject({ code: "AccessDenied" });
       }
-      expect(storage.attempts).toEqual([
-        `${LOG_PREFIX}0.json`,
-        `${LOG_PREFIX}0.json`,
-        `${LOG_PREFIX}1.json`,
-      ]);
+      // One send per slot: seq 0 resolves by readback, seq 1 is a new slot.
+      expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}1.json`]);
     },
   );
 
@@ -307,10 +283,52 @@ describe("Writer create fate", () => {
     },
   );
 
-  test.each(["throttled", "lost-ack-then-throttled"] as const)(
-    "a send refused unapplied does not make the slot uncertain (%s)",
-    async (fault) => {
-      class ThrottledCreateStorage extends MemoryStorage {
+  test("a create refused unapplied propagates its retriable NetworkError with no resend or readback", async () => {
+    class ThrottledCreateStorage extends MemoryStorage {
+      readonly attempts: string[] = [];
+      slotReads = 0;
+
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (isLogCreate(key, opts)) {
+          this.attempts.push(key);
+          throw new BaerlyError("NetworkError", "throttled", { status: 429, notApplied: true });
+        }
+        return super.put(key, body, opts);
+      }
+
+      override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+        if (key.startsWith(LOG_PREFIX)) {
+          this.slotReads++;
+        }
+        return super.get(key, opts);
+      }
+    }
+    const storage = new ThrottledCreateStorage();
+    await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+    const readsBeforeCreate = storage.slotReads;
+    const ctx = createObservabilityContext();
+    const outcome = runWithContext(ctx, () => insert(makeWriter(storage)));
+
+    // Nothing of ours can be at the slot, so the retriable error stands.
+    await expect(outcome).rejects.toMatchObject({
+      code: "NetworkError",
+      retriable: true,
+      cause: { notApplied: true },
+    });
+    // The one log read is the tail probe; there is no occupant readback.
+    expect(storage.slotReads - readsBeforeCreate).toBe(1);
+    expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
+    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
+  });
+
+  test.each(["bigint", "circular"] as const)(
+    "a %s body that cannot be encoded surfaces its own error with no create, readback, or unresolved count",
+    async (shape) => {
+      class CountingStorage extends MemoryStorage {
         readonly attempts: string[] = [];
         slotReads = 0;
 
@@ -321,11 +339,6 @@ describe("Writer create fate", () => {
         ): Promise<StoragePutResult> {
           if (isLogCreate(key, opts)) {
             this.attempts.push(key);
-            if (fault === "lost-ack-then-throttled" && this.attempts.length === 1) {
-              await super.put(key, body, opts);
-              throw new BaerlyError("NetworkError", "lost create acknowledgement");
-            }
-            throw new BaerlyError("NetworkError", "throttled", { status: 429, notApplied: true });
           }
           return super.put(key, body, opts);
         }
@@ -340,29 +353,83 @@ describe("Writer create fate", () => {
           return super.get(key, opts);
         }
       }
-      const storage = new ThrottledCreateStorage();
+      const storage = new CountingStorage();
       await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
       const readsBeforeCreate = storage.slotReads;
-      const ctx = createObservabilityContext();
-      const outcome = runWithContext(ctx, () => insert(makeWriter(storage)));
-
-      if (fault === "throttled") {
-        // Nothing of ours can be at the slot, so the retriable error stands.
-        await expect(outcome).rejects.toMatchObject({ code: "NetworkError", retriable: true });
-        expect(storage.slotReads - readsBeforeCreate).toBe(1);
-        expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
+      const body: Record<string, unknown> = { _id: "one" };
+      if (shape === "bigint") {
+        body["n"] = 1n;
       } else {
-        // The lost ack keeps the slot uncertain; readback adopts it.
-        await expect(outcome).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
+        body["self"] = body;
       }
-      expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}0.json`]);
+      const ctx = createObservabilityContext({ maintenance: { disabled: true } });
+      let failure: unknown;
+      try {
+        await runWithContext(ctx, () =>
+          makeWriter(storage).commit({
+            op: "I",
+            collection: "tickets",
+            docId: "one",
+            body: body as never,
+          }),
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      // The encode failure is the caller's error, not an uncertain send.
+      expect(failure).toBeInstanceOf(TypeError);
+      expect(storage.attempts).toEqual([]);
+      // The one log read is the tail probe; there is no occupant readback.
+      expect(storage.slotReads - readsBeforeCreate).toBe(1);
+      expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
     },
   );
 
-  test("a transient readback failure is retried within the commit's budget", async () => {
+  test("a create failing with a non-BaerlyError is uncertain and resolves by readback", async () => {
+    class PlainErrorLostAckStorage extends MemoryStorage {
+      readonly attempts: string[] = [];
+      slotReadbacks = 0;
+      #created = false;
+
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (!isLogCreate(key, opts)) {
+          return super.put(key, body, opts);
+        }
+        this.attempts.push(key);
+        // A raw runtime error after the object landed: nothing in it
+        // proves the create was not applied.
+        await super.put(key, body, opts);
+        this.#created = true;
+        throw new Error("socket hang up");
+      }
+
+      override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+        if (this.#created && key === `${LOG_PREFIX}0.json`) {
+          this.slotReadbacks++;
+        }
+        return super.get(key, opts);
+      }
+    }
+    const storage = new PlainErrorLostAckStorage();
+    await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+
+    await expect(insert(makeWriter(storage))).resolves.toMatchObject({
+      entry: { seq: 0, doc_id: "one" },
+    });
+    expect(storage.slotReadbacks).toBe(1);
+    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
+  });
+
+  test("a failed readback is not re-read by the Writer; the fate is ambiguous", async () => {
     class HiddenRetryFlakyReadStorage extends MemoryStorage {
       readonly attempts: string[] = [];
       failedReads = 0;
+      slotReadbacks = 0;
       #created = false;
 
       override async put(
@@ -382,9 +449,12 @@ describe("Writer create fate", () => {
       }
 
       override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
-        if (this.#created && key === `${LOG_PREFIX}0.json` && this.failedReads === 0) {
-          this.failedReads++;
-          throw new BaerlyError("NetworkError", "occupant read blipped");
+        if (this.#created && key === `${LOG_PREFIX}0.json`) {
+          this.slotReadbacks++;
+          if (this.failedReads === 0) {
+            this.failedReads++;
+            throw new BaerlyError("NetworkError", "occupant read blipped");
+          }
         }
         return super.get(key, opts);
       }
@@ -392,15 +462,21 @@ describe("Writer create fate", () => {
     const storage = new HiddenRetryFlakyReadStorage();
     await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
 
-    await expect(insert(makeWriter(storage))).resolves.toMatchObject({
-      entry: { seq: 0, doc_id: "one" },
+    // The adapter owns retries of the readback GET, so one failed
+    // `Storage.get` leaves the fate unresolved even though our entry is
+    // durable.
+    await expect(insert(makeWriter(storage))).rejects.toMatchObject({
+      code: "AmbiguousCommit",
+      _id: "one",
+      retriable: false,
     });
     expect(storage.failedReads).toBe(1);
+    expect(storage.slotReadbacks).toBe(1);
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
   });
 
   test("an unresolved create is counted on db.write.unresolved_create_total", async () => {
-    const storage = new CreateFateStorage("unreadable-occupant");
+    const storage = new CreateFateStorage("unreadable-readback");
     await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
     const ctx = createObservabilityContext({ maintenance: { disabled: true } });
 
@@ -411,7 +487,7 @@ describe("Writer create fate", () => {
     expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(1);
   });
 
-  test.each(["exhausted-resends", "unreadable-occupant"] as const)(
+  test.each(["lost-ack", "unreadable-readback"] as const)(
     "public auto-ID insert does not duplicate under an automatic retry after %s",
     async (fault) => {
       vi.spyOn(Math, "random").mockReturnValue(0);
@@ -432,7 +508,7 @@ describe("Writer create fate", () => {
       }
       storage.faultEnabled = false;
       await expect(collection.where({}).all()).resolves.toHaveLength(1);
-      if (fault === "unreadable-occupant") {
+      if (fault === "unreadable-readback") {
         expect(failure).toMatchObject({ code: "AmbiguousCommit", retriable: false });
         // The minted id names the row that landed.
         const [row] = await collection.where({}).all();
@@ -459,7 +535,7 @@ describe("Writer create fate", () => {
           return super.get(key, opts);
         }
       }
-      const storage = new MalformedJsonOccupantStorage("unreadable-occupant");
+      const storage = new MalformedJsonOccupantStorage("lost-ack");
       await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
       const failure: unknown = await insert(makeWriter(storage)).catch((error: unknown) => error);
       storage.faultEnabled = false;
@@ -467,11 +543,11 @@ describe("Writer create fate", () => {
         Db.create({ storage, app: "test", tenant: "t" }).collection("tickets").count(),
       ).resolves.toBe(1);
       expect(failure).toMatchObject({ code: "AmbiguousCommit", _id: "one", retriable: false });
-      expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}0.json`]);
+      expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
     },
   );
 
-  test("a foreign occupant spends the commit's transient budget; the next slot's lost ack still resolves by readback", async () => {
+  test("an uncertain send into a foreign slot forward-probes; the next slot's lost ack resolves by readback", async () => {
     class ForeignThenOwnLostAckStorage extends MemoryStorage {
       readonly attempts = new Map<string, number>();
 
@@ -509,9 +585,8 @@ describe("Writer create fate", () => {
     });
     expect(storage.attempts).toEqual(
       new Map([
-        [`${LOG_PREFIX}0.json`, 2],
-        // The single resend went to seq 0; seq 1's lost ack is adopted by
-        // readback rather than a second send.
+        // One send per slot: each uncertain send resolves by readback.
+        [`${LOG_PREFIX}0.json`, 1],
         [`${LOG_PREFIX}1.json`, 1],
       ]),
     );

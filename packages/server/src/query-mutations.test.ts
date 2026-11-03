@@ -16,8 +16,8 @@
  *    matched-row `_id` preservation when `doc._id` differs.
  *  - Delete tombstone shape (no after/before/key_old), return shape,
  *    post-delete visibility.
- *  - Per-row CAS retry semantics: forced contention succeeds within
- *    budget; exhausted budget surfaces WriteConflict.
+ *  - Per-row contention semantics: forced log-create contention is
+ *    resolved by the writer's forward probe and the mutation lands.
  *
  * Fast-check property tests are explicitly OUT OF SCOPE — cross-
  * adapter coverage lives in `tests/integration/randomized.test.ts`.

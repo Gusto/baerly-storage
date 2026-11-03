@@ -30,8 +30,9 @@ validator runs on the post-image, so optional `_id` is wrong.
 commit did not land. `retriable` is `true`. A bulk `.where(...).update()` /
 `.delete()` may have applied earlier rows; re-issuing the call is safe.
 **Fix:** re-read, re-apply, and retry with bounded backoff. The in-process
-writer already retries a bounded number of attempts; a remote client that
-sees `retriable: true` should apply its own bounded backoff.
+writer makes one commit attempt and does not retry it (storage adapters retry
+individual requests); a remote client that sees `retriable: true` should apply
+its own bounded backoff.
 
 ### `BaerlyError code="AlreadyExists"` (HTTP 409)
 

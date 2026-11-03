@@ -109,8 +109,8 @@ is a **graduation signal, not silent breakage**.
   4.0 ([CASSANDRA-13910](https://issues.apache.org/jira/browse/CASSANDRA-13910)).
 - **The log-retention sequence window as a paused-writer fence.** Withdrawn.
   `LOG_RETENTION_SEQ_WINDOW` bounds no wall-clock and no commit count, so a
-  delayed create PUT, an isolate suspension, or the writer's own transient-retry
-  loop can each straddle an unbounded number of peer commits and folds. The
+  delayed create PUT, an isolate suspension, or the adapter's retry of a create
+  can each straddle an unbounded number of peer commits and folds. The
   commit-path check (`assertCommitAboveDeleteFloor` in invariant 5) closes that
   schedule instead. The window survives as a pre-image cost margin and a retirement
   rate limit, with no safety property attached.

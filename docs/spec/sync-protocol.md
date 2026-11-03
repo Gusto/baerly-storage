@@ -274,41 +274,43 @@ disambiguate:
   writer re-runs GET-based tail discovery from `seq + 1` and tries the
   new first-empty slot.
 
-The per-commit `session` is minted once, **outside** the retry loop,
-and the LSN encodes the `seq`, so a dropped ack is unambiguously
+The per-commit `session` is minted once, **before** the first create
+and reused across forward probes, and the LSN encodes the `seq`, so a dropped ack is unambiguously
 distinguishable from a genuine peer. The foreign-occupant path is
 bounded by the forward-probe cap; exhausting that cap is an `Internal`
 runaway alarm, not a normal high-contention conflict. Failures before the
 committing create is dispatched surface through the ordinary `BaerlyError`
-path. A failed committing-create call gets bounded readback because a
+path. A failed committing-create call gets one readback because a
 storage adapter may report failure after an internal attempt became durable,
-unless every send at the slot was provably not applied.
+unless the call was provably not applied.
 The `AmbiguousCommit` contract below applies when readback cannot resolve it.
 
 ### Unresolved create fate
 
-Before reporting a failed committing create, the writer attempts bounded
-readback. One transient budget per commit covers same-slot resends after a
-transient transport error and retries of a failed readback; an exhausted
-budget still gets one final readback. Other reported failures do not trigger
-a same-slot resend. An exact own-entry occupant is adopted as committed. An
-identified foreign occupant advances the writer to the next slot. A missing,
-unreadable, malformed, or otherwise unidentifiable occupant cannot prove that
-no internal attempt committed, so the writer reports
+Retries happen at one layer. The `Storage` adapter retries each request
+under the storage retry policy (`STORAGE_RETRY_MAX_ATTEMPTS` attempts in
+total), so the writer issues exactly one `Storage.put` per slot and never
+resends a create at the same slot. A lost acknowledgement needs no resend:
+the adapter's own next attempt sees the landed object as a `412`, or the
+readback finds it. Before reporting a failed committing create, the writer
+reads the slot back with one `Storage.get`, which the adapter likewise
+retries; the writer does not re-read. An exact own-entry occupant is
+adopted as committed. An identified foreign occupant advances the writer
+to the next slot. A missing, unreadable, malformed, or otherwise
+unidentifiable occupant cannot prove that no internal attempt committed,
+so the writer reports
 `BaerlyError{code:"AmbiguousCommit"}` with `retriable: false`.
 
-`AccessDenied` and `InvalidConfig` from a slot's only send skip the readback
+`AccessDenied` and `InvalidConfig` from a slot's send skip the readback
 and propagate as-is. The `Storage.put` contract makes them definitive for a
 create-only put: an adapter that retries internally reports a rejection that
-follows an attempt of unknown outcome as `NetworkError` instead. After an
-uncertain send at the same slot, those codes resolve by readback like any
-other rejection. A `NetworkError` whose `cause.notApplied` is `true` reports
-that no attempt of that call was applied: the S3 and GCS adapters set it when
-every internal attempt was throttled (`429`, or S3's `503 SlowDown`). Such a
-send does not make the slot uncertain; if every send at the slot was one, the
-`NetworkError` propagates as-is without readback. This contract is scoped to
-failed committing-create calls; earlier read, configuration, and index-write
-errors keep their ordinary error behavior. The same code also covers the
+follows an attempt of unknown outcome as `NetworkError` instead. A
+`NetworkError` whose `cause.notApplied` is `true` reports that no attempt of
+that call was applied: the S3 and GCS adapters set it when every internal
+attempt was throttled (`429`, or S3's `503 SlowDown`); an R2-binding error
+never proves that. Such a `NetworkError` propagates as-is without
+readback. This contract is scoped to failed committing-create calls;
+earlier read, configuration, and index-write errors keep their ordinary error behavior. The same code also covers the
 certified-delete-floor case described in invariant 5: a create may have
 landed beneath every reader's floor, and durable state cannot establish
 whether an earlier attempt was folded before retirement.
@@ -737,7 +739,7 @@ These are the load-bearing rules.
     on how fast retirement approaches the live floor. It is **not** a
     paused-writer fence and no safety property may be derived from it: it
     bounds no wall-clock and no commit count, so a delayed create PUT, an
-    isolate suspension, or a writer's own transient-retry loop can each
+    isolate suspension, or the adapter's retry of a create can each
     straddle an unbounded number of peer commits and folds. What closes that
     schedule is the commit-path check in invariant 5, which fails rather than
     acknowledging an invisible mutation.

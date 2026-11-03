@@ -69,29 +69,38 @@ import {
 } from "../setup/ports.ts";
 
 fcTest.prop({
-  resendBudget: fc.integer({ min: 1, max: 3 }),
-  failedResends: fc.integer({ min: 0, max: 4 }),
+  // How the first create's outcome reaches the Writer: the call fails after
+  // landing (a lost ack), the adapter's hidden retry sees the landed object
+  // as a 412, or the call fails without landing (an in-flight send that may
+  // still land, or never will).
+  createOutcome: fc.constantFrom("lost-ack", "hidden-retry-412", "not-landed"),
   unreadableResolution: fc.boolean(),
 })(
-  "lost-ack histories preserve one durable commit per logical call",
-  async ({ resendBudget, failedResends, unreadableResolution }) => {
+  "uncertain create histories preserve at most one durable commit per logical call, with one create per slot",
+  async ({ createOutcome, unreadableResolution }) => {
     const prefix = "app/fate/tenant/t/manifests/c";
     const firstSlot = `${prefix}/log/0.json`;
     let faultEnabled = true;
     let putAttempts = 0;
+    let readbacks = 0;
     class FaultStorage extends MemoryStorage {
       override async put(
         ...args: Parameters<MemoryStorage["put"]>
       ): ReturnType<MemoryStorage["put"]> {
         if (faultEnabled && args[0] === firstSlot && args[2]?.ifNoneMatch === "*") {
           putAttempts++;
-          if (putAttempts === 1) {
-            await super.put(...args);
-            throw new BaerlyError("NetworkError", "durable create acknowledgement lost");
-          }
-          if (putAttempts <= failedResends + 1) {
+          if (putAttempts > 1) {
+            // A Writer-level resend: never honoured, so it cannot mask a
+            // missing readback.
             throw new BaerlyError("NetworkError", "resend unavailable");
           }
+          if (createOutcome !== "not-landed") {
+            await super.put(...args);
+          }
+          if (createOutcome === "hidden-retry-412") {
+            throw new BaerlyError("WriteConflict", "412 precondition failed");
+          }
+          throw new BaerlyError("NetworkError", "create acknowledgement lost");
         }
         return super.put(...args);
       }
@@ -99,8 +108,11 @@ fcTest.prop({
       override async get(
         ...args: Parameters<MemoryStorage["get"]>
       ): ReturnType<MemoryStorage["get"]> {
-        if (faultEnabled && unreadableResolution && putAttempts > 0 && args[0] === firstSlot) {
-          throw new BaerlyError("NetworkError", "resolution unavailable");
+        if (faultEnabled && putAttempts > 0 && args[0] === firstSlot) {
+          readbacks++;
+          if (unreadableResolution) {
+            throw new BaerlyError("NetworkError", "resolution unavailable");
+          }
         }
         return super.get(...args);
       }
@@ -108,12 +120,7 @@ fcTest.prop({
     const storage = new FaultStorage();
     const currentJsonKey = `${prefix}/current.json`;
     await createCurrentJson(storage, currentJsonKey, logStateCurrentJson());
-    const newWriter = () =>
-      new Writer({
-        storage,
-        currentJsonKey,
-        options: { maxRetries: resendBudget, initialBackoffMs: 0 },
-      });
+    const newWriter = () => new Writer({ storage, currentJsonKey });
     const logicalCall = () =>
       newWriter().commit({
         op: "I",
@@ -132,6 +139,7 @@ fcTest.prop({
       }
     }
     faultEnabled = false;
+    const landed = createOutcome !== "not-landed";
     const next = await newWriter().commit({
       op: "I",
       collection: "c",
@@ -142,10 +150,13 @@ fcTest.prop({
     for await (const listed of storage.list(`${prefix}/log/`)) {
       history.push(decodeJsonBytes<LogEntry>((await storage.get(listed.key))!.body));
     }
-    expect(history.map((entry) => entry.doc_id)).toEqual(["own", "next"]);
-    expect(next.entry.seq).toBe(1);
-    expect(putAttempts).toBe(Math.min(failedResends + 2, resendBudget + 1));
-    if (unreadableResolution) {
+    expect(history.map((entry) => entry.doc_id)).toEqual(landed ? ["own", "next"] : ["next"]);
+    expect(next.entry.seq).toBe(landed ? 1 : 0);
+    // One create and one readback at the slot: the adapter owns retries.
+    expect(putAttempts).toBe(1);
+    expect(readbacks).toBe(1);
+    if (unreadableResolution || !landed) {
+      // An unreadable or absent slot cannot prove the send won't land.
       expect(failure).toMatchObject({ code: "AmbiguousCommit", retriable: false });
     } else {
       expect(failure).toBeUndefined();
@@ -385,10 +396,7 @@ const runFoldCommitOrdering = async (
   const prefix = `app/${ORDERING_APP}/tenant/${tenant}/manifests/${ORDERING_COLLECTION}`;
   const currentJsonKey = `${prefix}/current.json`;
   await createCurrentJson(storages[0]!, currentJsonKey, logStateCurrentJson());
-  const writers = [0, 1].map(
-    (index) =>
-      new Writer({ storage: storages[index]!, currentJsonKey, options: { initialBackoffMs: 1 } }),
-  );
+  const writers = [0, 1].map((index) => new Writer({ storage: storages[index]!, currentJsonKey }));
   const model = new Map<string, DocumentData>();
   const committedSeqs: number[] = [];
   const publishedFloors: number[] = [];

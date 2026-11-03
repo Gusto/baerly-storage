@@ -219,7 +219,7 @@ const pickLevel = (opts: FlushCanonicalLineOptions): Level => {
   // `withHttpObservability` reconstructs one for every non-2xx). This is
   // deliberate: a 4xx is the caller's fault, not a server fault. The
   // common 409 is `AlreadyExists` (a reused id or a double-submitted POST);
-  // `WriteConflict` (retry budget spent) and `AmbiguousCommit` also map to
+  // `WriteConflict` (an unresolved lost precondition) and `AmbiguousCommit` also map to
   // 409, while ordinary contention is absorbed internally. 401/404/400 are
   // likewise the caller's fault. Escalating any of them to `error` would
   // burn error budget and page on-call for normal operation. `error` is

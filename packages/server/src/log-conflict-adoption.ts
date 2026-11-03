@@ -156,9 +156,10 @@ export const tryAdoptOwnSessionLogEntry = (ctx: AdoptionContext): AdoptionDecisi
   // `commit_ts`. A legitimate lost-ack self-retry passes this ONLY under
   // two premises:
   //   P1 (single mint): `commit_ts`/`lsn`/`session` are minted once per
-  //      `#singleAttemptCommit` (one `Date.now()`) and the inner
-  //      transient-retry loop re-PUTs the IDENTICAL `entry`, so a real
-  //      read-back is byte-identical to `self`, `commit_ts` included.
+  //      slot in `#singleAttemptCommit` (one `Date.now()`), the Writer
+  //      sends that entry once, and the adapter's retries re-send the same
+  //      bytes, so a real read-back is byte-identical to `self`,
+  //      `commit_ts` included.
   //   P2 (order-stable round-trip): stored bytes are
   //      `encodeJsonBytes` (`JSON.stringify`) and read back via
   //      `JSON.parse`; `JSON.stringify(JSON.parse(...))` preserves key

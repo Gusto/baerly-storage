@@ -202,10 +202,6 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     const writer = new Writer({
       storage: forgery.storage,
       currentJsonKey: CURRENT_JSON_KEY,
-      // Fast-path retry budget so the test doesn't burn seconds
-      // on backoff. The safety claim is about the OUTCOME (never
-      // adopt the forged entry), not the retry count.
-      options: { maxRetries: 1, initialBackoffMs: 0, random: () => 0 },
     });
 
     const result = await writer.commit({

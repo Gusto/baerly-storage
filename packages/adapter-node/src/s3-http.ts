@@ -172,9 +172,9 @@ export class S3HttpStorage implements Storage {
       // AWS S3 returns 409 ConditionalRequestConflict when a concurrent
       // conditional create (If-None-Match:"*") races; Minio returns 412.
       // 409 means the write was contended and may NOT have landed, so it
-      // maps to a retryable NetworkError — the single-write-commit writer
-      // re-issues the same-seq PUT, which resolves deterministically to 200
-      // (we win) or 412 (key now present → WriteConflict → adopt/re-probe). A
+      // maps to a retryable NetworkError — this adapter's retry re-issues
+      // the same PUT, which resolves to 200 (we win) or 412 (key now
+      // present → WriteConflict → the Writer's readback adopts or re-probes). A
       // direct WriteConflict here would adopt-read a possibly-absent entry.
       if (res.status === 409 && opts?.ifNoneMatch === "*") {
         throw new BaerlyError(

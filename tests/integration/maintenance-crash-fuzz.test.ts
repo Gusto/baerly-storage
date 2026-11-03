@@ -832,7 +832,6 @@ describe("single-write commit — win-or-lose-cleanly", () => {
       const freshWriter = new Writer({
         storage,
         currentJsonKey,
-        options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
       });
       await freshWriter.commit({
         op: "I",
@@ -869,9 +868,8 @@ describe("single-write commit — win-or-lose-cleanly", () => {
       const tablePrefix = TABLE_PREFIX;
       await provision(storage);
 
-      const opts = { maxRetries: 5, initialBackoffMs: 0, random: () => 0 } as const;
-      const w1 = new Writer({ storage, currentJsonKey, options: opts });
-      const w2 = new Writer({ storage, currentJsonKey, options: opts });
+      const w1 = new Writer({ storage, currentJsonKey });
+      const w2 = new Writer({ storage, currentJsonKey });
 
       // Both start from tail_hint=0 (fresh) and contend on log/0.
       const [r1, r2] = await Promise.allSettled([
@@ -964,10 +962,9 @@ describe("single-write commit — win-or-lose-cleanly", () => {
       const w = new Writer({
         storage: lossy,
         currentJsonKey,
-        options: { maxRetries: 5, initialBackoffMs: 0, random: () => 0 },
       });
-      // The writer's own retry inside commit() must adopt the lost-ack
-      // write and return success — NOT throw, NOT double-commit.
+      // The writer's occupant readback inside commit() must adopt the
+      // lost-ack write and return success — NOT throw, NOT double-commit.
       const result = await w.commit({
         op: "I",
         collection: COLLECTION,
@@ -1008,7 +1005,6 @@ describe("single-write commit — win-or-lose-cleanly", () => {
         const w = new Writer({
           storage,
           currentJsonKey,
-          options: { maxRetries: 5, initialBackoffMs: 0, random: () => 0 },
         });
         for (let i = 0; i < seeds; i++) {
           const id = `d-${i}`;

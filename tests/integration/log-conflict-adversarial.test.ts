@@ -77,14 +77,11 @@ const seedCurrent = (): CurrentJson => ({
  * attempt a single-input commit. Returns whichever outcome the
  * writer produced.
  *
- * `fastPath: true` sets `maxRetries: 1` and `initialBackoffMs: 0` so
- * the property test doesn't burn seconds on backoff sleeps across 100
- * runs. The property assertion is about the safety invariant (never
- * adopt a foreign entry), not about retry-budget behaviour.
+ * The assertion is about the safety invariant (never adopt a foreign
+ * entry).
  */
 const runAttack = async (
   forged: LogEntry,
-  fastPath = false,
 ): Promise<
   | { kind: "adopted"; entry: LogEntry }
   | { kind: "rejected"; code: string; message: string }
@@ -101,9 +98,6 @@ const runAttack = async (
   const writer = new Writer({
     storage,
     currentJsonKey: CURRENT_JSON_KEY,
-    ...(fastPath
-      ? { options: { maxRetries: 1, initialBackoffMs: 0, random: () => 0 } }
-      : undefined),
   });
   try {
     const result = await writer.commit({
@@ -142,7 +136,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
   propTest.prop({ forged: arbForgedEntry })(
     "no forged pre-populated log entry produces a 'successful commit with a foreign LogEntry'",
     async ({ forged }) => {
-      const outcome = await runAttack(forged, /* fastPath */ true);
+      const outcome = await runAttack(forged);
       if (outcome.kind === "adopted") {
         // Adoption is permitted ONLY when the forged entry was
         // byte-identical to what the writer minted (same session,
