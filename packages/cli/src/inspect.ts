@@ -52,8 +52,8 @@
  *   0 — inspection ran (status may be "ok" or "error"; both exit 0).
  *   1 — InvalidConfig (bad bucket URI, missing args, unknown flag).
  *   2 — Storage / Network error.
- *   3 — Protocol invariant (Conflict / Internal / InvalidResponse /
- *       AmbiguousCommit).
+ *   3 — Protocol invariant / conflict (WriteConflict / AlreadyExists /
+ *       Internal / InvalidResponse / AmbiguousCommit).
  */
 
 import { type ArgsDef } from "citty";

@@ -85,7 +85,7 @@ describe("subscription-pool", () => {
     const pool = poolFor(client);
     const fetcher = vi
       .fn<() => Promise<unknown>>()
-      .mockRejectedValue(new BaerlyError("Conflict", "lost"));
+      .mockRejectedValue(new BaerlyError("WriteConflict", "lost"));
     const unsubscribe = pool.attach(
       "sig-E",
       ["notes"],

@@ -121,56 +121,34 @@ describe("mapError", () => {
 
   test("BaerlyError retriable override reaches the wire envelope", () => {
     const err = new BaerlyError(
-      "Conflict",
+      "AlreadyExists",
       "duplicate _id",
       undefined,
       undefined,
       undefined,
       "Choose a different `_id`.",
-      false,
+      true,
     );
     const { status, envelope } = mapError(err);
     expect(status).toBe(409);
     expect(envelope.error).toEqual({
-      code: "Conflict",
+      code: "AlreadyExists",
       message: "duplicate _id",
-      retriable: false,
+      retriable: true,
       resolution: "Choose a different `_id`.",
     });
   });
 
-  test("retriable Conflict is scrubbed but non-retriable caller Conflict stays actionable", () => {
-    const storageConflict = new BaerlyError(
-      "Conflict",
+  test("a scrubbed code drops a throw-site resolution for the canonical one", () => {
+    const err = new BaerlyError(
+      "WriteConflict",
       "Writer: CAS conflict on app/router-test/tenant/t1/manifests/notes/current.json",
       undefined,
       undefined,
       undefined,
-      "Re-read and re-apply your change.",
-      true,
+      "Retry the PUT to app/router-test/tenant/t1/manifests/notes/current.json.",
     );
-    expect(mapError(storageConflict).envelope.error).toEqual({
-      code: "Conflict",
-      message: "write conflict",
-      retriable: true,
-      resolution: "Re-read and re-apply your change.",
-    });
-
-    const callerConflict = new BaerlyError(
-      "Conflict",
-      "duplicate _id",
-      undefined,
-      undefined,
-      undefined,
-      "Choose a different `_id`.",
-      false,
-    );
-    expect(mapError(callerConflict).envelope.error).toEqual({
-      code: "Conflict",
-      message: "duplicate _id",
-      retriable: false,
-      resolution: "Choose a different `_id`.",
-    });
+    expect(mapError(err).envelope.error.resolution).toBe(CODE_RESOLUTIONS.WriteConflict);
   });
 
   test("every server-side code maps to its HTTP status and code-default retriable", () => {
@@ -181,7 +159,6 @@ describe("mapError", () => {
       InvalidResponse: { status: 502, retriable: false },
       Internal: { status: 500, retriable: false },
       SchemaError: { status: 400, retriable: false },
-      Conflict: { status: 409, retriable: true },
       WriteConflict: { status: 409, retriable: true },
       AlreadyExists: { status: 409, retriable: false },
       AmbiguousCommit: { status: 409, retriable: false },
@@ -385,8 +362,8 @@ describe("observability middleware", () => {
     expect(p["duration_ms"] as number).toBeGreaterThanOrEqual(0);
   });
 
-  test("failed request emits one canonical WARN line (Conflict → 409)", async () => {
-    // Register a route AFTER `createRouter` that throws Conflict
+  test("failed request emits one canonical WARN line (WriteConflict → 409)", async () => {
+    // Register a route AFTER `createRouter` that throws WriteConflict
     // synthetically. Hono's compose catches the throw and routes it
     // through `onError`; the helper reconstructs the BaerlyError from
     // the wire envelope onto the canonical line's `error` property.
@@ -400,7 +377,7 @@ describe("observability middleware", () => {
     });
     const conflictApp = createRouter({ db });
     conflictApp.get("/v1/throw-conflict", () => {
-      throw new BaerlyError("Conflict", "CAS lost");
+      throw new BaerlyError("WriteConflict", "CAS lost");
     });
     conflictApp.onError((err) => {
       const { status, envelope } = mapError(err);
@@ -418,8 +395,10 @@ describe("observability middleware", () => {
     expect(p["status"]).toBe(409);
     expect(p["outcome"]).toBe("conflict");
     const err = p["error"] as { code: string; message: string };
-    expect(err.code).toBe("Conflict");
-    expect(err.message).toBe("write conflict");
+    expect(err.code).toBe("WriteConflict");
+    expect(err.message).toBe(
+      "write conflict: another write changed this data first and nothing was committed; re-read and retry",
+    );
   });
 
   test("x-request-id header is honoured", async () => {

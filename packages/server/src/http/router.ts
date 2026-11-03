@@ -432,7 +432,6 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["Unauthorized", 401],
   ["AccessDenied", 403],
   ["NotFound", 404],
-  ["Conflict", 409],
   ["WriteConflict", 409],
   ["AlreadyExists", 409],
   ["AmbiguousCommit", 409],
@@ -447,11 +446,10 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
 
 /**
  * Machine-visible policy for whether an error code's thrown message is
- * safe to copy into the HTTP envelope. This is code-level metadata;
- * `Conflict` is instance-contextual because duplicate `_id` conflicts are
- * caller-facing, while retriable CAS/storage conflicts may carry bucket keys.
- * `InvalidConfig` is also contextual: predicate-wire validation errors are
- * caller-facing, but storage/adapter config errors may carry internal layout.
+ * safe to copy into the HTTP envelope. This is code-level metadata.
+ * `InvalidConfig` is the one contextual code: predicate-wire validation
+ * errors are caller-facing, but storage/adapter config errors may carry
+ * internal layout.
  *
  * Deliberately NOT re-exported from the `@baerly/server/http` barrel.
  */
@@ -480,11 +478,6 @@ const ERROR_CODE_POLICY = {
   AmbiguousCommit: {
     messagePolicy: "scrubbed",
     scrubbedMessage: "commit outcome is ambiguous; the mutation may or may not have been applied",
-  },
-  Conflict: {
-    messagePolicy: "contextual",
-    scrubbedMessage: "write conflict",
-    shouldExpose: (err) => !err.retriable,
   },
   Internal: {
     messagePolicy: "scrubbed",
@@ -600,7 +593,7 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
           wireCode,
           scrubbedMessageFor(wireCode),
           undefined,
-          wireCode === "Conflict" ? err.resolution : undefined,
+          undefined,
           wireCode === err.code ? err.retriable : undefined,
           // The row id is caller-owned data, not a storage diagnostic, so
           // it survives the message scrub.

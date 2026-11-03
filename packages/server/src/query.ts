@@ -588,7 +588,7 @@ const runUpdate = async <T extends DocumentData>(
 /**
  * `Collection.replace` implementation. Existence check via `runRead` over
  * a `byId`-shaped wire so the `singleIdFromPredicate` PK fast path
- * (`Map.get`) fires. Missing row → `NotFound` directly (no Conflict-string
+ * (`Map.get`) fires. Missing row → `NotFound` directly (no conflict-string
  * indirection through the router). Present row → emit a single
  * `op:"U"` `LogEntry` carrying `doc` as the post-image, with `_id`
  * forced to the requested `id` so doc identity is preserved across

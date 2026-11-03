@@ -13,10 +13,10 @@ describe("buildSpecIR", () => {
   test("lists every BaerlyErrorCode with its httpStatus + retriable flag", () => {
     const codes = ir.errorCodes.map((e) => e.code).toSorted();
     expect(codes).toEqual([...ERROR_CODES].toSorted());
-    const conflict = ir.errorCodes.find((e) => e.code === "Conflict");
-    expect(conflict?.httpStatus).toBe(409);
-    expect(conflict?.retriable).toBe(true);
-    expect(conflict?.messagePolicy).toBe("contextual");
+    expect(ir.errorCodes.find((e) => e.code === ("Conflict" as string))).toBeUndefined();
+    expect(
+      ir.errorCodes.filter((e) => e.messagePolicy === "contextual").map((e) => e.code),
+    ).toEqual(["InvalidConfig"]);
     expect(ir.errorCodes.find((e) => e.code === "NetworkError")?.httpStatus).toBe(502);
     expect(ir.errorCodes.find((e) => e.code === "NetworkError")?.retriable).toBe(true);
     expect(ir.errorCodes.find((e) => e.code === "NetworkError")?.messagePolicy).toBe("scrubbed");

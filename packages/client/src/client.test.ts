@@ -245,32 +245,32 @@ describe("createBaerlyClient", () => {
     });
   });
 
-  test("client surfaces retriable:true on Conflict", async () => {
+  test("client surfaces retriable:true on WriteConflict", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", () =>
-      jsonResponse({ error: { code: "Conflict", message: "CAS lost", retriable: true } }, 409),
+      jsonResponse({ error: { code: "WriteConflict", message: "CAS lost", retriable: true } }, 409),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
       name: "BaerlyError",
-      code: "Conflict",
+      code: "WriteConflict",
       status: 409,
       retriable: true,
     });
   });
 
-  test("client preserves retriable:false on terminal Conflict", async () => {
+  test("client surfaces retriable:false on AlreadyExists", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", () =>
       jsonResponse(
-        { error: { code: "Conflict", message: "duplicate _id", retriable: false } },
+        { error: { code: "AlreadyExists", message: "duplicate _id", retriable: false } },
         409,
       ),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     await expect(client.collection("tickets").insert({ _id: "x" })).rejects.toMatchObject({
       name: "BaerlyError",
-      code: "Conflict",
+      code: "AlreadyExists",
       status: 409,
       retriable: false,
     });
@@ -278,16 +278,16 @@ describe("createBaerlyClient", () => {
 
   test("client falls back to the code default when the server omits retriable", async () => {
     // Older server: the envelope carries no `retriable` field. The client
-    // must fall back to the code-derived default (Conflict → retriable),
+    // must fall back to the code-derived default (WriteConflict → retriable),
     // not silently treat the missing field as non-retriable.
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", () =>
-      jsonResponse({ error: { code: "Conflict", message: "CAS lost" } }, 409),
+      jsonResponse({ error: { code: "WriteConflict", message: "CAS lost" } }, 409),
     );
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
       name: "BaerlyError",
-      code: "Conflict",
+      code: "WriteConflict",
       status: 409,
       retriable: true,
     });

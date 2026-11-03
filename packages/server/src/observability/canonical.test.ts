@@ -124,14 +124,14 @@ describe("flushCanonicalLine", () => {
       expect(records[0]!.level).toBe("warning");
     });
 
-    test("409 Conflict with an attached error → warning (client-attributable, routine)", () => {
+    test("409 WriteConflict with an attached error → warning (client-attributable, routine)", () => {
       // A 409 is client-attributable and routine — no operator action.
       // It stays `warn`.
       flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",
         outcome: "conflict",
         status: 409,
-        error: new BaerlyError("Conflict", "write conflict"),
+        error: new BaerlyError("WriteConflict", "write conflict"),
       });
       expect(records[0]!.level).toBe("warning");
     });
@@ -170,11 +170,11 @@ describe("flushCanonicalLine", () => {
       unit: "http",
       outcome: "conflict",
       status: 409,
-      error: new BaerlyError("Conflict", "CAS lost"),
+      error: new BaerlyError("WriteConflict", "CAS lost"),
     });
     expect(records).toHaveLength(1);
     const err = records[0]!.properties["error"] as { code: string; message: string };
-    expect(err.code).toBe("Conflict");
+    expect(err.code).toBe("WriteConflict");
     expect(err.message).toBe("CAS lost");
   });
 
@@ -192,8 +192,8 @@ describe("flushCanonicalLine", () => {
 describe("serializeError", () => {
   describe("BaerlyError", () => {
     test("preserves the code discriminant", () => {
-      const err = new BaerlyError("Conflict", "CAS lost");
-      expect(serializeError(err)).toEqual({ code: "Conflict", message: "CAS lost" });
+      const err = new BaerlyError("WriteConflict", "CAS lost");
+      expect(serializeError(err)).toEqual({ code: "WriteConflict", message: "CAS lost" });
     });
 
     test("does not include the stack by default", () => {

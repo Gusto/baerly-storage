@@ -3,7 +3,8 @@ import { errorEnvelope } from "./contract.ts";
 
 describe("errorEnvelope", () => {
   test("carries retriable derived from code", () => {
-    expect(errorEnvelope("Conflict", "x").error.retriable).toBe(true);
+    expect(errorEnvelope("WriteConflict", "x").error.retriable).toBe(true);
+    expect(errorEnvelope("AlreadyExists", "x").error.retriable).toBe(false);
     expect(errorEnvelope("NetworkError", "x").error.retriable).toBe(true);
     expect(errorEnvelope("SchemaError", "x").error.retriable).toBe(false);
   });
@@ -15,13 +16,13 @@ describe("errorEnvelope", () => {
   });
 
   test("retriable is always present (never undefined)", () => {
-    const env = errorEnvelope("Conflict", "x");
+    const env = errorEnvelope("WriteConflict", "x");
     expect(typeof env.error.retriable).toBe("boolean");
   });
 
   test("retriable can be overridden per error instance", () => {
     expect(
-      errorEnvelope("Conflict", "duplicate _id", undefined, undefined, false).error.retriable,
+      errorEnvelope("WriteConflict", "lost race", undefined, undefined, false).error.retriable,
     ).toBe(false);
     expect(
       errorEnvelope("SchemaError", "temporary", undefined, undefined, true).error.retriable,
@@ -45,28 +46,20 @@ describe("errorEnvelope", () => {
   });
 
   test("a site-provided resolution wins over the per-code default", () => {
-    expect(errorEnvelope("Conflict", "x", undefined, "custom fix").error.resolution).toBe(
+    expect(errorEnvelope("WriteConflict", "x", undefined, "custom fix").error.resolution).toBe(
       "custom fix",
     );
   });
 
   test("codes without a default and without a site value omit resolution", () => {
-    expect(errorEnvelope("Conflict", "CAS lost").error.resolution).toBeUndefined();
     expect(errorEnvelope("NetworkError", "x").error.resolution).toBeUndefined();
     expect(errorEnvelope("Internal", "boom").error.resolution).toBeUndefined();
-  });
-
-  test("CAS conflict resolution is supplied by the throw site", () => {
-    const resolution = "Re-read and re-apply your change.";
-    expect(errorEnvelope("Conflict", "CAS lost", undefined, resolution).error.resolution).toBe(
-      resolution,
-    );
   });
 
   test("_id is carried only for AmbiguousCommit", () => {
     const args = [undefined, undefined, undefined, "row-7"] as const;
     expect(errorEnvelope("AmbiguousCommit", "x", ...args).error._id).toBe("row-7");
-    expect(errorEnvelope("Conflict", "x", ...args).error).not.toHaveProperty("_id");
+    expect(errorEnvelope("WriteConflict", "x", ...args).error).not.toHaveProperty("_id");
     expect(errorEnvelope("AmbiguousCommit", "x").error).not.toHaveProperty("_id");
   });
 });

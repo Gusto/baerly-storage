@@ -46,13 +46,6 @@
       "summary": "Document body failed schema validation; carries .issues."
     },
     {
-      "code": "Conflict",
-      "httpStatus": 409,
-      "retriable": true,
-      "messagePolicy": "contextual",
-      "summary": "Write conflicted (CAS exhausted, duplicate _id, guarded key)."
-    },
-    {
       "code": "WriteConflict",
       "httpStatus": 409,
       "retriable": true,

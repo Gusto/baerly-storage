@@ -88,7 +88,6 @@ export const errorToExitCode = (code: string): number => {
     return 1;
   }
   if (
-    code === "Conflict" ||
     code === "WriteConflict" ||
     code === "AlreadyExists" ||
     code === "Internal" ||

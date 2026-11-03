@@ -26,13 +26,6 @@ export type BaerlyErrorCode =
    */
   | "SchemaError"
   /**
-   * Write conflicted with current state: CAS retry budget exhausted,
-   * duplicate caller-supplied `_id`, or an already-existing guarded
-   * storage key. Check `BaerlyError.retriable` to decide whether the
-   * same logical operation should be retried.
-   */
-  | "Conflict"
-  /**
    * Another write won a race this call needed to win, and nothing from this
    * call was committed. Re-read, then retry; `retriable` is `true`. Each
    * `Collection` / `Query` verb re-reads on every call, so re-issuing the same
@@ -169,7 +162,6 @@ export const ERROR_CODES = [
   "InvalidResponse",
   "Internal",
   "SchemaError",
-  "Conflict",
   "WriteConflict",
   "AlreadyExists",
   "AmbiguousCommit",
@@ -198,7 +190,6 @@ void _errorCodesExhaustive;
  */
 export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
   "NetworkError",
-  "Conflict",
   "WriteConflict",
 ]);
 

@@ -970,14 +970,18 @@ export const runHttpConformanceCascade = (opts: {
 
       test("served errorCode→httpStatus/retriable map matches the wire behavior tested above", async () => {
         // Drift gate: the contract a port reads MUST agree with the statuses
-        // the cascade actually observes. NotFound→404 (non-retriable) and
-        // Conflict→409 (retriable) are asserted on live responses elsewhere in
-        // this cascade; pin that the self-described map says the same.
+        // the cascade actually observes. NotFound→404 and AlreadyExists→409
+        // (both non-retriable) are asserted on live responses elsewhere in
+        // this cascade; pin that the self-described map says the same, that
+        // WriteConflict is the retriable 409, and that the removed `Conflict`
+        // code is gone.
         const res = await doFetch(new Request(`${BASE}/v1/spec`, { method: "GET" }));
         const body = (await res.json()) as SpecBody;
         const byCode = new Map((body.errorCodes ?? []).map((e) => [e.code, e]));
         expect(byCode.get("NotFound")).toMatchObject({ httpStatus: 404, retriable: false });
-        expect(byCode.get("Conflict")).toMatchObject({ httpStatus: 409, retriable: true });
+        expect(byCode.get("WriteConflict")).toMatchObject({ httpStatus: 409, retriable: true });
+        expect(byCode.get("AlreadyExists")).toMatchObject({ httpStatus: 409, retriable: false });
+        expect(byCode.has("Conflict")).toBe(false);
         expect(byCode.get("Unauthorized")).toMatchObject({ httpStatus: 401 });
       });
     });
