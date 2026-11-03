@@ -43,23 +43,32 @@ export const COLLECTION = "tickets";
 export type Doc = DocumentData & { _id: string; v: number };
 
 /**
+ * The `I`/`U`/`D` op arbitrary over an id arbitrary, with a 100-value
+ * payload space. A suite that widens the id domain (scalar IDs, NFC/NFD
+ * pairs) passes a small id pool here and keeps the op mix and payloads every
+ * other suite explores.
+ */
+export const opArbOver = (idArb: fc.Arbitrary<string>): fc.Arbitrary<Op> =>
+  fc.oneof(
+    fc.record({
+      kind: fc.constant("I" as const),
+      id: idArb,
+      v: fc.integer({ min: 0, max: 99 }),
+    }),
+    fc.record({
+      kind: fc.constant("U" as const),
+      id: idArb,
+      v: fc.integer({ min: 0, max: 99 }),
+    }),
+    fc.record({ kind: fc.constant("D" as const), id: idArb }),
+  );
+
+/**
  * Four ids over a 100-value payload space: small enough that a 20-op round
  * reliably produces overwrites and re-inserts (the interesting fold and
  * retirement inputs) rather than 20 unrelated documents.
  */
-export const opArb = fc.oneof(
-  fc.record({
-    kind: fc.constant("I" as const),
-    id: fc.constantFrom("a", "b", "c", "d"),
-    v: fc.integer({ min: 0, max: 99 }),
-  }),
-  fc.record({
-    kind: fc.constant("U" as const),
-    id: fc.constantFrom("a", "b", "c", "d"),
-    v: fc.integer({ min: 0, max: 99 }),
-  }),
-  fc.record({ kind: fc.constant("D" as const), id: fc.constantFrom("a", "b", "c", "d") }),
-);
+export const opArb = opArbOver(fc.constantFrom("a", "b", "c", "d"));
 
 export type Op = { kind: "I" | "U" | "D"; id: string; v?: number };
 
