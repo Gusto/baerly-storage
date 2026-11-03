@@ -166,6 +166,17 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       expect(f.issued).toBe(attemptsFor(S3_REQUEST_MAX_RETRIES));
     });
 
+    test("delete: 500 ×2 then 204 with retries: 2 — outer 1 delete, transport issues 3", async () => {
+      const retries = 2;
+      const f = scriptedFetch((n) =>
+        n < retries ? fail500() : new Response(null, { status: 204 }),
+      );
+      const counted = wrapCountingStorage(adapter.make(f.fetchImpl, retries));
+      await counted.storage.delete("k");
+      expect(counted.deletes).toBe(1);
+      expect(f.issued).toBe(attemptsFor(retries));
+    });
+
     test("delete: always 500 with default retries — outer 1 delete, transport issues 9", async () => {
       const f = scriptedFetch(fail500);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
@@ -190,7 +201,13 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
     });
 
     test("an exactly-full page at maxKeys stops without a follow-up fetch despite a token", async () => {
-      const f = scriptedFetch(() => new Response(adapter.listPage(["p/a", "p/b"], "t1")));
+      // A follow-up request is answered 403 (not retried) so an adapter
+      // that ignores the cap fails fast instead of paging forever.
+      const f = scriptedFetch((n) =>
+        n === 0
+          ? new Response(adapter.listPage(["p/a", "p/b"], "t1"))
+          : new Response(null, { status: 403 }),
+      );
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl, 0));
       await expect(drain(counted.storage.list("p/", { maxKeys: 2 }))).resolves.toEqual([
         "p/a",
@@ -242,6 +259,26 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       await expect(drainUnderFakeTimers(counted.storage)).resolves.toEqual({ keys: ["p/a"] });
       expect(counted.lists).toBe(1);
       expect(f.issued).toBe(throttles + 1);
+    });
+
+    test("two pages, each throttled LIST_OBJECT_MAX_RETRIES - 1 times — the 429 budget is per page; transport issues 2 × 10", async () => {
+      const throttlesPerPage = LIST_OBJECT_MAX_RETRIES - 1;
+      const perPage = throttlesPerPage + 1;
+      const f = scriptedFetch((n) => {
+        if (n % perPage < throttlesPerPage) {
+          return throttle429();
+        }
+        return new Response(
+          n < perPage ? adapter.listPage(["p/a"], "t1") : adapter.listPage(["p/b"]),
+        );
+      });
+      const counted = wrapCountingStorage(adapter.make(f.fetchImpl, 0));
+      await expect(drainUnderFakeTimers(counted.storage)).resolves.toEqual({
+        keys: ["p/a", "p/b"],
+      });
+      expect(counted.lists).toBe(1);
+      expect(f.issued).toBe(2 * LIST_OBJECT_MAX_RETRIES);
+      expect(f.urls[perPage]).toContain("continuation-token=t1");
     });
 
     test("429 forever with retries: 0 — still LIST_OBJECT_MAX_RETRIES (10) fetches; retries does not bound the 429 loop", async () => {
