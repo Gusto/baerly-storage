@@ -72,6 +72,8 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   Internal: "Internal invariant violation — file a bug.",
   SchemaError: "Document body failed schema validation; carries .issues.",
   Conflict: "Write conflicted (CAS exhausted, duplicate _id, guarded key).",
+  WriteConflict: "A concurrent write won the race; nothing was committed. Re-read, then retry.",
+  AlreadyExists: "The create target already exists (duplicate _id); never retriable.",
   AmbiguousCommit:
     "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry.",
   Unauthorized: "Verifier returned no identity.",

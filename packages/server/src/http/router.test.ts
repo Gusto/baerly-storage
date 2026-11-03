@@ -1,6 +1,10 @@
 import {
   BaerlyError,
+  CLIENT_RUNTIME_CODES,
+  CODE_RESOLUTIONS,
+  ERROR_CODES,
   MemoryStorage,
+  type BaerlyErrorCode,
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
 } from "@baerly/protocol";
@@ -167,6 +171,67 @@ describe("mapError", () => {
       retriable: false,
       resolution: "Choose a different `_id`.",
     });
+  });
+
+  test("every server-side code maps to its HTTP status and code-default retriable", () => {
+    const expected: Partial<Record<BaerlyErrorCode, { status: number; retriable: boolean }>> = {
+      InvalidConfig: { status: 400, retriable: false },
+      NetworkError: { status: 502, retriable: true },
+      AccessDenied: { status: 403, retriable: false },
+      InvalidResponse: { status: 502, retriable: false },
+      Internal: { status: 500, retriable: false },
+      SchemaError: { status: 400, retriable: false },
+      Conflict: { status: 409, retriable: true },
+      WriteConflict: { status: 409, retriable: true },
+      AlreadyExists: { status: 409, retriable: false },
+      AmbiguousCommit: { status: 409, retriable: false },
+      Unauthorized: { status: 401, retriable: false },
+      NotFound: { status: 404, retriable: false },
+      PayloadTooLarge: { status: 413, retriable: false },
+      UnsatisfiablePredicate: { status: 400, retriable: false },
+    };
+    const actual = Object.fromEntries(
+      ERROR_CODES.filter((code) => !CLIENT_RUNTIME_CODES.has(code)).map((code) => {
+        const { status, envelope } = mapError(new BaerlyError(code, "x"));
+        return [code, { status, retriable: envelope.error.retriable }];
+      }),
+    );
+    expect(actual).toEqual(expected);
+  });
+
+  test("WriteConflict is scrubbed and carries the canonical resolution", () => {
+    const err = new BaerlyError(
+      "WriteConflict",
+      "PUT app/router-test/tenant/t1/manifests/notes/current.json: precondition failed",
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(409);
+    expect(envelope.error).toEqual({
+      code: "WriteConflict",
+      message:
+        "write conflict: another write changed this data first and nothing was committed; re-read and retry",
+      retriable: true,
+      resolution: CODE_RESOLUTIONS.WriteConflict,
+    });
+    expect(records).toHaveLength(1);
+    const serialized = records[0]!.properties["error"] as { code: string; message: string };
+    expect(serialized.message).toContain("current.json");
+  });
+
+  test("AlreadyExists keeps its caller-facing message", () => {
+    const err = new BaerlyError(
+      "AlreadyExists",
+      'Collection.insert: _id "t-1" already exists in collection "tickets"',
+    );
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(409);
+    expect(envelope.error).toEqual({
+      code: "AlreadyExists",
+      message: 'Collection.insert: _id "t-1" already exists in collection "tickets"',
+      retriable: false,
+      resolution: CODE_RESOLUTIONS.AlreadyExists,
+    });
+    expect(records).toHaveLength(0);
   });
 
   test("AmbiguousCommit scrubs its message but keeps the row _id", () => {
