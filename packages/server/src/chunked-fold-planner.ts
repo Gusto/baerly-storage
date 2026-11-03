@@ -257,8 +257,7 @@ export const prefetchChunkedFold = (input: PrefetchChunkedFoldInput): ChunkedFol
  * scan. Each candidate is an encode-only {@link evaluateSnapshotChunks} run;
  * `snapshotHash` runs once, on the admitted prefix. Remaining deferred
  * fold-path costs (splitter byte-backoff re-encode, O(K²) direct-target
- * re-derivation) are tracked in
- * `docs/superpowers/trackers/deferred-defects.md`.
+ * re-derivation) are known and deferred.
  */
 export const planChunkedFold = async (
   input: PlanChunkedFoldInput,

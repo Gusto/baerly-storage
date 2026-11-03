@@ -7,9 +7,8 @@
  *   1. `no-await-in-use-query`: a `useQuery(callback, deps?)`
  *      callback must not `await` anything that flows from the
  *      recorder `client` parameter. The recorder doesn't survive
- *      an `await` — see the spec at
- *      `docs/superpowers/specs/2026-05-25-react-hooks-collapse-design.md`
- *      §"Recorder throws on `await`". This rule catches both
+ *      an `await` (see the sentinel in `use-query.ts`). This rule
+ *      catches both
  *      `useQuery(async (c) => ...)` (any async callback) and
  *      `await c.table(...).…` patterns inside the callback.
  *

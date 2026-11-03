@@ -34,15 +34,7 @@ export default {
   //     `ENOENT: copyfile`.
   //   - the worktree roots and agent scratch are gigabytes of sibling
   //     checkouts; `dist/` is build output the mutated sources don't use.
-  ignorePatterns: [
-    "credentials",
-    ".pnpm-store",
-    ".worktrees",
-    ".claude",
-    ".plans",
-    ".superpowers",
-    "dist",
-  ],
+  ignorePatterns: ["credentials", ".pnpm-store", ".worktrees", ".claude", ".plans", "dist"],
   // pnpm isolates each package under .pnpm/; the vitest-runner lives in its
   // own bucket, invisible to Stryker's default "@stryker-mutator/*" glob
   // (which resolves relative to core's own isolated node_modules). Adding an

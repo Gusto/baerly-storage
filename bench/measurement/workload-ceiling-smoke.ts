@@ -3,8 +3,7 @@
  * provision → (manual Worker invocation) → collect → validate. It is the
  * single-invocation debugging tool for the deployed harness, and the
  * verbatim GraphQL response it leaves under
- * `bench/results/workload-ceiling/smoke-control/` is the provenance source
- * cited in `docs/superpowers/programs/increase-workload-ceiling/runbooks/lane-b-preflight.md`.
+ * `bench/results/workload-ceiling/smoke-control/` is its provenance record.
  *
  * The Worker invocation itself is NOT automated: it needs the shared
  * secret, which this repo never persists to disk or env (see
