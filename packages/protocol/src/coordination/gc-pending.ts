@@ -23,7 +23,7 @@ import {
   GC_PENDING_CONTENT_TYPE,
   GC_PENDING_SCHEMA_VERSION,
 } from "../constants.ts";
-import { BaerlyError } from "../errors.ts";
+import { BaerlyError, isWriteConflict } from "../errors.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
@@ -254,7 +254,7 @@ export const casUpdateGcPending = async (
       const translated = translateCasError(error, key);
       // Only `WriteConflict` is retryable — re-read latest and re-merge.
       // Anything else (AccessDenied, InvalidResponse, …) is terminal.
-      if (translated.code !== "WriteConflict") {
+      if (!isWriteConflict(translated)) {
         throw translated;
       }
       lastConflict = translated;
@@ -430,7 +430,7 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
  * through; non-`BaerlyError` falls through as `InvalidResponse`.
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
-  if (e instanceof BaerlyError && e.code === "WriteConflict") {
+  if (isWriteConflict(e)) {
     return new BaerlyError("WriteConflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, e);
   }
   if (e instanceof BaerlyError) {

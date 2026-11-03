@@ -193,6 +193,21 @@ export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyError
   "WriteConflict",
 ]);
 
+/**
+ * True iff `err` is a `WriteConflict`: a lost conditional write or CAS
+ * race. The one predicate every kernel catch site uses, so the code's
+ * meaning is tested in one place. Matches on `name` and `code` rather
+ * than `instanceof`, so an error from a second loaded copy of this module
+ * or another realm still classifies.
+ */
+export const isWriteConflict = (
+  err: unknown,
+): err is BaerlyError & { readonly code: "WriteConflict" } =>
+  typeof err === "object" &&
+  err !== null &&
+  (err as { readonly name?: unknown }).name === "BaerlyError" &&
+  (err as { readonly code?: unknown }).code === "WriteConflict";
+
 /** True iff this error code is retriable (membership in {@link RETRIABLE_CODES}). */
 export const isRetriableCode = (code: BaerlyErrorCode): boolean => RETRIABLE_CODES.has(code);
 

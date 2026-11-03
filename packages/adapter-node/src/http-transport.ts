@@ -3,6 +3,7 @@ import {
   RETRY_AFTER_MAX_SECONDS,
   S3_REQUEST_MAX_RETRIES,
   delay,
+  type BaerlyErrorCode,
 } from "@baerly/protocol";
 import { parseS3Error } from "./xml.ts";
 
@@ -22,7 +23,7 @@ import { parseS3Error } from "./xml.ts";
  * retriable for the logical caller: it re-reads and issues a new request,
  * which is what `retriable` means.
  */
-const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
+const PERMANENT_ERROR_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
   "AccessDenied",
   "InvalidConfig",
   "InvalidResponse",

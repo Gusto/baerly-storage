@@ -56,6 +56,7 @@ import {
   logSeqStartOf,
   mintGeneration,
   BaerlyError,
+  isWriteConflict,
   noopMetricsRecorder,
   type Storage,
   LOG_FORWARD_PROBE_CAP,
@@ -387,7 +388,7 @@ export class Writer {
       } catch (error) {
         // Only a retryable `WriteConflict` (see NOTE above — currently none)
         // backs off and retries. Anything else propagates.
-        if (!isPreconditionFailed(error)) {
+        if (!isWriteConflict(error)) {
           throw error;
         }
         await this.#backoff(attempt);
@@ -548,7 +549,7 @@ export class Writer {
             .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
             .catch((error: unknown) => {
               this.#observe429(error, input.collection);
-              if (isPreconditionFailed(error)) {
+              if (isWriteConflict(error)) {
                 return;
               }
               throw error;
@@ -617,7 +618,7 @@ export class Writer {
         } catch (error) {
           createFailure = error;
           this.#observe429(error, entry.collection);
-          if (isPreconditionFailed(error)) {
+          if (isWriteConflict(error)) {
             ctxMetrics().counter("db.r2.put.412_total", 1, {
               collection: entry.collection,
               step: "log-put",
@@ -902,7 +903,7 @@ export class Writer {
     try {
       return await createCurrentJson(this.#storage, this.#currentJsonKey, initial);
     } catch (error) {
-      if (!(error instanceof BaerlyError) || error.code !== "WriteConflict") {
+      if (!isWriteConflict(error)) {
         throw error;
       }
     }
@@ -1315,14 +1316,6 @@ export class Writer {
 // ---------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------
-
-/**
- * `true` when the underlying storage surfaced a `PreconditionFailed`
- * 412 (or its non-S3 equivalents). Every in-tree {@link Storage} impl
- * surfaces a lost CAS as `BaerlyError{code:"WriteConflict"}`.
- */
-const isPreconditionFailed = (err: unknown): boolean =>
-  err instanceof BaerlyError && err.code === "WriteConflict";
 
 /**
  * `true` when a log-create PUT failed transiently (a `NetworkError`) —

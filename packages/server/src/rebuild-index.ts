@@ -34,6 +34,7 @@
 
 import {
   BaerlyError,
+  isWriteConflict,
   type DocumentData,
   logSeqStartOf,
   readCurrentJson,
@@ -228,7 +229,7 @@ export const rebuildIndex = async (
       // 412 = a peer wrote the entry between our `list` and our
       // PUT. The entry exists; we couldn't have written different
       // bytes (zero-byte body); count it as kept and move on.
-      if (error instanceof BaerlyError && error.code === "WriteConflict") {
+      if (isWriteConflict(error)) {
         kept += 1;
       } else {
         throw error;
