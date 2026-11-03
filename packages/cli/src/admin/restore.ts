@@ -149,7 +149,6 @@ const bundle = defineBaerlySubcommand({
         undefined,
         undefined,
         "Pass --force to truncate the existing collection, or restore into an empty target.",
-        false,
       );
     }
     if (head !== null) {

@@ -36,9 +36,9 @@ export interface HttpErrorEnvelope {
     readonly code: BaerlyErrorCode;
     readonly message: string;
     /**
-     * Whether this error instance is retriable. Servers always send it;
-     * older servers may omit it. The client preserves the wire hint when
-     * present and otherwise falls back to the code-derived default.
+     * Whether retrying can succeed. The server sends it, derived from
+     * `code`, for non-SDK consumers; older servers may omit it. The SDK
+     * ignores this field and derives `BaerlyError.retriable` from `code`.
      * Mirrors `HttpErrorEnvelope.error.retriable` in
      * `packages/server/src/contract.ts`.
      */

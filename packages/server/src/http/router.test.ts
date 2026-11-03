@@ -119,26 +119,6 @@ describe("mapError", () => {
     expect(envelope.error.code).toBe("UnsatisfiablePredicate");
   });
 
-  test("BaerlyError retriable override reaches the wire envelope", () => {
-    const err = new BaerlyError(
-      "AlreadyExists",
-      "duplicate _id",
-      undefined,
-      undefined,
-      undefined,
-      "Choose a different `_id`.",
-      true,
-    );
-    const { status, envelope } = mapError(err);
-    expect(status).toBe(409);
-    expect(envelope.error).toEqual({
-      code: "AlreadyExists",
-      message: "duplicate _id",
-      retriable: true,
-      resolution: "Choose a different `_id`.",
-    });
-  });
-
   test("a scrubbed code drops a throw-site resolution for the canonical one", () => {
     const err = new BaerlyError(
       "WriteConflict",
@@ -215,7 +195,6 @@ describe("mapError", () => {
     const err = new BaerlyError(
       "AmbiguousCommit",
       "Writer: the committing create at seq 4 on app/router-test/tenant/t1/manifests/notes/current.json was rejected",
-      undefined,
       undefined,
       undefined,
       undefined,

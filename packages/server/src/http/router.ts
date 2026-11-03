@@ -594,7 +594,6 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
           scrubbedMessageFor(wireCode),
           undefined,
           undefined,
-          wireCode === err.code ? err.retriable : undefined,
           // The row id is caller-owned data, not a storage diagnostic, so
           // it survives the message scrub.
           wireCode === err.code ? err._id : undefined,
@@ -603,14 +602,7 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
     }
     return {
       status,
-      envelope: errorEnvelope(
-        err.code,
-        err.message,
-        err.issues,
-        err.resolution,
-        err.retriable,
-        err._id,
-      ),
+      envelope: errorEnvelope(err.code, err.message, err.issues, err.resolution, err._id),
     };
   }
   // Unknown thrown value: the message may carry internal detail

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { ERROR_CODES, isRetriableCode } from "@baerly/protocol";
 import { errorEnvelope } from "./contract.ts";
 
 describe("errorEnvelope", () => {
@@ -20,13 +21,10 @@ describe("errorEnvelope", () => {
     expect(typeof env.error.retriable).toBe("boolean");
   });
 
-  test("retriable can be overridden per error instance", () => {
-    expect(
-      errorEnvelope("WriteConflict", "lost race", undefined, undefined, false).error.retriable,
-    ).toBe(false);
-    expect(
-      errorEnvelope("SchemaError", "temporary", undefined, undefined, true).error.retriable,
-    ).toBe(true);
+  test("retriable is always isRetriableCode(code)", () => {
+    for (const code of ERROR_CODES) {
+      expect(errorEnvelope(code, "x").error.retriable).toBe(isRetriableCode(code));
+    }
   });
 
   test("resolution is included when provided", () => {
@@ -57,7 +55,8 @@ describe("errorEnvelope", () => {
   });
 
   test("_id is carried only for AmbiguousCommit", () => {
-    const args = [undefined, undefined, undefined, "row-7"] as const;
+    // issues, resolution, _id
+    const args = [undefined, undefined, "row-7"] as const;
     expect(errorEnvelope("AmbiguousCommit", "x", ...args).error._id).toBe("row-7");
     expect(errorEnvelope("WriteConflict", "x", ...args).error).not.toHaveProperty("_id");
     expect(errorEnvelope("AmbiguousCommit", "x").error).not.toHaveProperty("_id");

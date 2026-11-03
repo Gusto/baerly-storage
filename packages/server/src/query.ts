@@ -427,7 +427,6 @@ export const runInsert = async <T extends DocumentData>(
       undefined,
       undefined,
       CODE_RESOLUTIONS.AlreadyExists,
-      false,
     );
   }
 

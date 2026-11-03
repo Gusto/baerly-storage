@@ -96,21 +96,25 @@ describe("retriable classification", () => {
     expect(new BaerlyError("SchemaError", "x").retriable).toBe(false);
   });
 
-  test("BaerlyError.retriable can be overridden per instance", () => {
+  test("BaerlyError has no per-instance way to set retriable", () => {
+    // Slot 7 is `_id`; there is no eighth slot for a retriable override.
+    const err = new BaerlyError(
+      "WriteConflict",
+      "lost race",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "row-1",
+      // @ts-expect-error -- the constructor takes at most seven arguments
+      false,
+    );
+    expect(err._id).toBe("row-1");
+    expect(err.retriable).toBe(true);
+    // `retriable` is a getter-only prototype accessor, not an own field.
     expect(
-      new BaerlyError(
-        "WriteConflict",
-        "lost race",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        false,
-      ).retriable,
-    ).toBe(false);
-    expect(
-      new BaerlyError("SchemaError", "temporary", undefined, undefined, undefined, undefined, true)
-        .retriable,
-    ).toBe(true);
+      Object.getOwnPropertyDescriptor(BaerlyError.prototype, "retriable")?.set,
+    ).toBeUndefined();
+    expect(Object.hasOwn(err, "retriable")).toBe(false);
   });
 });
