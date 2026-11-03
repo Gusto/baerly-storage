@@ -1,5 +1,5 @@
 import {
-  BaerlyError,
+  isWriteConflict,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   mintGeneration,
@@ -54,7 +54,7 @@ export const ensureTable = async (
       generation: mintGeneration(),
     });
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "WriteConflict") {
+    if (isWriteConflict(error)) {
       return;
     }
     throw error;

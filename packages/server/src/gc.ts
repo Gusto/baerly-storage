@@ -79,7 +79,7 @@ import {
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
   NO_GENERATION,
-  BaerlyError,
+  isWriteConflict,
   casUpdateGcPending,
   createGcPending,
   gcPendingKey,
@@ -245,7 +245,7 @@ export const runGc = async (
     try {
       pending = await createGcPending(storage, pendingKey, initial, signalOpts);
     } catch (error) {
-      if (error instanceof BaerlyError && error.code === "WriteConflict") {
+      if (isWriteConflict(error)) {
         pending = await readGcPending(storage, pendingKey, signalOpts);
         if (pending === null) {
           throw error;
@@ -513,7 +513,7 @@ export const runGc = async (
     // would surface a routine restore to an operator's cron.
     // `InvalidResponse` — a ledger body that is present but corrupt — is
     // deliberately NOT in this arm and still escapes.
-    if (error instanceof BaerlyError && error.code === "WriteConflict") {
+    if (isWriteConflict(error)) {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.
       pendingDepth = remaining.length;

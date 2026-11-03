@@ -37,7 +37,7 @@
 
 import { encodeJsonBytes } from "../bytes.ts";
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants.ts";
-import { BaerlyError } from "../errors.ts";
+import { BaerlyError, isWriteConflict } from "../errors.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
@@ -789,7 +789,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
  * practice unreachable — every in-tree `Storage` impl wraps).
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
-  if (e instanceof BaerlyError && e.code === "WriteConflict") {
+  if (isWriteConflict(e)) {
     return new BaerlyError("WriteConflict", `current.json CAS lost at ${key}: ${e.message}`, e);
   }
   if (e instanceof BaerlyError) {

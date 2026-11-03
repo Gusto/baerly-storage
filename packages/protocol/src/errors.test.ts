@@ -5,6 +5,7 @@ import {
   ERROR_CODES,
   RETRIABLE_CODES,
   isRetriableCode,
+  isWriteConflict,
   type BaerlyErrorCode,
 } from "./errors.ts";
 
@@ -50,6 +51,36 @@ describe("BaerlyError", () => {
 
   test("leaves resolution undefined when not provided", () => {
     expect(new BaerlyError("InvalidConfig", "bad").resolution).toBeUndefined();
+  });
+});
+
+describe("isWriteConflict", () => {
+  test("matches WriteConflict only", () => {
+    expect(isWriteConflict(new BaerlyError("WriteConflict", "x"))).toBe(true);
+    expect(isWriteConflict(new BaerlyError("AlreadyExists", "x"))).toBe(false);
+    expect(isWriteConflict(new BaerlyError("NetworkError", "x"))).toBe(false);
+    expect(isWriteConflict(new Error("WriteConflict"))).toBe(false);
+    expect(isWriteConflict(undefined)).toBe(false);
+    expect(isWriteConflict("WriteConflict")).toBe(false);
+  });
+
+  test("matches by name and code, not class identity", () => {
+    // A BaerlyError from a second loaded copy of this module, or one that
+    // crossed a realm as JSON, fails `instanceof` but keeps name and code.
+    const foreign = JSON.parse(JSON.stringify(new BaerlyError("WriteConflict", "x"))) as unknown;
+    expect(foreign instanceof BaerlyError).toBe(false);
+    expect(isWriteConflict(foreign)).toBe(true);
+    expect(isWriteConflict({ name: "OtherError", code: "WriteConflict" })).toBe(false);
+  });
+
+  test("the false branch keeps every other code", () => {
+    const e: BaerlyError = new BaerlyError("NetworkError", "x");
+    if (isWriteConflict(e)) {
+      throw new Error("unreachable");
+    }
+    // Type-checks only if the false branch did not narrow `e` to `never`.
+    const code: BaerlyErrorCode = e.code;
+    expect(code).toBe("NetworkError");
   });
 });
 

@@ -22,6 +22,7 @@ import {
   type MetricsRecorder,
   type Storage,
   BaerlyError,
+  isWriteConflict,
   casUpdateCurrentJson,
   CF_FREE_COMPACT_TAIL_PROBE_GETS,
   GC_STARVATION_GUARD,
@@ -109,7 +110,7 @@ const retireLogs = async (
       collection,
     });
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "WriteConflict") {
+    if (isWriteConflict(error)) {
       return; // routine CAS contention — the next pass retries
     }
     throw error;
@@ -873,7 +874,7 @@ export const runBoundedMaintenance = async (
   } catch (error) {
     // CAS contention (WriteConflict) thrown by compact()/runGc() is an
     // EXPECTED signal — swallow without the unexpected-error counter.
-    if (error instanceof BaerlyError && error.code === "WriteConflict") {
+    if (isWriteConflict(error)) {
       return;
     }
     // Anything else is unexpected: count it, log the stack, swallow.

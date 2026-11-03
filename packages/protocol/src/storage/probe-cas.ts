@@ -1,9 +1,6 @@
-import { BaerlyError } from "../errors.ts";
+import { isWriteConflict } from "../errors.ts";
 import { uuid } from "../types.ts";
 import type { Storage } from "./types.ts";
-
-const isConflict = (error: unknown): boolean =>
-  error instanceof BaerlyError && error.code === "WriteConflict";
 
 /** One CAS sub-check's outcome. */
 export interface CasProbeCheck {
@@ -84,7 +81,7 @@ export const probeCas = async (
       });
     } catch (error) {
       checks.push(
-        isConflict(error)
+        isWriteConflict(error)
           ? {
               name: "ifMatch-stale",
               ok: true,
@@ -110,7 +107,7 @@ export const probeCas = async (
       });
     } catch (error) {
       checks.push(
-        isConflict(error)
+        isWriteConflict(error)
           ? {
               name: "ifNoneMatch-exists",
               ok: true,
@@ -145,7 +142,7 @@ export const probeCas = async (
       );
       const winners = outcomes.filter((o) => o.status === "fulfilled").length;
       const transient = outcomes.filter(
-        (o) => o.status === "rejected" && !isConflict(o.reason),
+        (o) => o.status === "rejected" && !isWriteConflict(o.reason),
       ).length;
       if (winners > 1) {
         checks.push({

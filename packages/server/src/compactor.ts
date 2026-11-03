@@ -41,7 +41,7 @@ import {
   assertCurrentJsonTransition,
   encodeJsonBytes,
   logSeqStartOf,
-  BaerlyError,
+  isWriteConflict,
   noopMetricsRecorder,
   readCurrentJson,
   SNAPSHOT_SCHEMA_VERSION,
@@ -339,7 +339,7 @@ export const compact = async (
       try {
         await storage.put(currentJsonKey, checkpointBody, checkpointCasOpts);
       } catch (error) {
-        if (isCasConflict(error)) {
+        if (isWriteConflict(error)) {
           ctxMetrics().counter("db.compaction.cas_lost_total", 1, { collection: collectionName });
           return {
             written: false,
@@ -540,7 +540,7 @@ export const compact = async (
   try {
     await storage.put(currentJsonKey, nextBody, casOpts);
   } catch (error) {
-    if (isCasConflict(error)) {
+    if (isWriteConflict(error)) {
       // Another writer landed between our read and write. The
       // snapshot file we just wrote is now an orphan (correct
       // content, unreferenced) — `runGc()` will sweep it. Surface
@@ -589,15 +589,3 @@ export const compact = async (
     entriesFolded,
   };
 };
-
-// ---------------------------------------------------------------------
-// Internals
-// ---------------------------------------------------------------------
-
-/**
- * `true` when an `If-Match` CAS guard lost. Every in-tree
- * {@link Storage} impl surfaces a lost CAS as
- * `BaerlyError{code:"WriteConflict"}`.
- */
-const isCasConflict = (err: unknown): boolean =>
-  err instanceof BaerlyError && err.code === "WriteConflict";
