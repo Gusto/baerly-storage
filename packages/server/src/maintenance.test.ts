@@ -909,6 +909,149 @@ describe("runBoundedMaintenance", () => {
     expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBe(0);
   });
 
+  // Every tick that is due must refresh `tail_hint`, whichever way it exits:
+  // the writer's `findLogTail` gallops from the stored hint, so each skipped
+  // refresh leaves the next commit paying `2 * ceil(log2(lag + 1))` GETs.
+  // The tail is one GC interval past the refresh interval, so the tick is
+  // due for a refresh, and `prevSeq = tail - 1` crosses the soft GC boundary
+  // but not the hard one.
+  describe("refreshes tail_hint on every exit, so the next commit's tail search is one GET", () => {
+    const tail = MAINTENANCE_TAIL_HINT_REFRESH_WRITES + WRITE_TICK_GC_INTERVAL;
+    const prevSeq = tail - 1;
+
+    /** Storage that fails one op, chosen per case, and records current.json PUTs. */
+    const faulty = (
+      inner: Storage,
+      fault: (op: "get" | "put", key: string, opts?: StoragePutOptions) => BaerlyError | null,
+    ): { storage: Storage; headPuts: () => number; faulted: () => boolean } => {
+      let headPuts = 0;
+      let faulted = false;
+      const maybeFault = (op: "get" | "put", key: string, opts?: StoragePutOptions): void => {
+        if (faulted) {
+          return;
+        }
+        const error = fault(op, key, opts);
+        if (error !== null) {
+          faulted = true;
+          throw error;
+        }
+      };
+      return {
+        storage: {
+          async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+            maybeFault("get", key);
+            return inner.get(key, opts);
+          },
+          async put(
+            key: string,
+            body: Uint8Array,
+            opts?: StoragePutOptions,
+          ): Promise<StoragePutResult> {
+            if (key === KEY) {
+              headPuts += 1;
+            }
+            maybeFault("put", key, opts);
+            return inner.put(key, body, opts);
+          },
+          delete: inner.delete.bind(inner),
+          list: inner.list.bind(inner),
+        },
+        headPuts: (): number => headPuts,
+        faulted: (): boolean => faulted,
+      };
+    };
+
+    const cases: ReadonlyArray<{
+      name: string;
+      /** Gate 1 trips (fold attempted) when true; otherwise the tick GCs. */
+      fold: boolean;
+      fault: (op: "get" | "put", key: string, opts?: StoragePutOptions) => BaerlyError | null;
+      /** current.json PUTs the tick issues: a lost fold CAS, then the refresh. */
+      headPuts: number;
+    }> = [
+      {
+        name: "a single-phase fold whose CAS is lost",
+        fold: true,
+        fault: (op, key, opts) =>
+          op === "put" && key === KEY && opts?.ifMatch !== undefined
+            ? new BaerlyError("Conflict", "simulated fold CAS loss")
+            : null,
+        headPuts: 2,
+      },
+      {
+        name: "a fold that throws on the snapshot PUT",
+        fold: true,
+        fault: (op, key) =>
+          op === "put" && key !== KEY && !key.includes("/log/")
+            ? new BaerlyError("NetworkError", "simulated 503 on the snapshot PUT")
+            : null,
+        headPuts: 1,
+      },
+      {
+        name: "a GC slice that throws reading gc/pending.json",
+        fold: false,
+        fault: (op, key) =>
+          op === "get" && key.includes("/gc/")
+            ? new BaerlyError("NetworkError", "simulated 503 on gc/pending.json")
+            : null,
+        headPuts: 1,
+      },
+    ];
+
+    test.each(cases)("$name", async ({ fold, fault, headPuts }) => {
+      // The fixture relies on these: a soft GC tick that the fold may
+      // preempt, not a hard-GC tick that skips the fold.
+      const { gcInterval } = MAINTENANCE_PROFILE_CF_FREE;
+      expect(crossesGcBoundary(prevSeq, tail, gcInterval)).toBe(true);
+      expect(crossesGcBoundary(prevSeq, tail, gcInterval * GC_STARVATION_GUARD)).toBe(false);
+      const inner = new MemoryStorage();
+      await bootstrap(inner, KEY); // tail_hint = 0 ⇒ the lag is the whole tail
+      await seedLogEntries(inner, COLLECTION_PREFIX, 0, tail);
+      await patchCurrent(inner, KEY, {
+        mean_entry_bytes: RATIO_TRIPPING_MEAN,
+        snapshot_bytes: fold ? 0 : 10_000_000, // ratio >= 1 only on the fold cases
+        snapshot_rows: 0,
+      });
+      const f = faulty(inner, fault);
+      // The throwing cases are unexpected errors, which the runner logs.
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await runBoundedMaintenance(
+          { storage: f.storage, currentJsonKey: KEY, prevSeq, observedTail: tail },
+          { profile: MAINTENANCE_PROFILE_CF_FREE },
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+      expect(f.faulted()).toBe(true);
+      await expect(readSeqStart(inner, KEY)).resolves.toBe(0); // nothing folded
+      // One publication per tick: the refresh is the tick's only landed PUT.
+      expect(f.headPuts()).toBe(headPuts);
+      await expect(readTailHint(inner, KEY)).resolves.toBe(tail);
+
+      // The next commit's tail search starts at the refreshed hint: one
+      // log GET (a 404 at `tail`), not a gallop over the whole lag.
+      const logGets: string[] = [];
+      const counting: Storage = {
+        async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+          if (key.includes("/log/")) {
+            logGets.push(key);
+          }
+          return inner.get(key, opts);
+        },
+        put: inner.put.bind(inner),
+        delete: inner.delete.bind(inner),
+        list: inner.list.bind(inner),
+      };
+      const noTick = createObservabilityContext({ maintenance: { dispatch: () => {} } });
+      const writer = new Writer({ storage: counting, currentJsonKey: KEY });
+      await runWithContext(noTick, () =>
+        writer.commit({ op: "I", collection: COLL, docId: "next", body: { _id: "next" } }),
+      );
+      expect(logGets).toHaveLength(1);
+    });
+  });
+
   test('phasesPerTick "both" runs a fold AND a gc in one call', async () => {
     const inner = new MemoryStorage();
     await seedLog(inner, KEY, COLL, 60);
