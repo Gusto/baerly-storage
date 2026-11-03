@@ -31,16 +31,26 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   BaerlyError,
+  type Collection,
   createCurrentJson,
   decodeJsonBytes,
+  type DocumentData,
   getOrCreateMemoryStorageForBucket,
   type LogEntry,
+  logSeqStartOf,
   MemoryStorage,
+  readCurrentJson,
   type Storage,
   uuid,
 } from "@baerly/protocol";
 import { S3HttpStorage, gcsStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
+import { Db, loadSnapshotAsMap, walkLogRange } from "@baerly/server";
+import { compact } from "@baerly/server/maintenance";
+import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
+import { type Op, opArbOver } from "../../packages/server/src/_internal/randomized-model.ts";
+import { foldLogEntriesOnto } from "../../packages/server/src/log-walk.ts";
 import { Writer } from "../../packages/server/src/writer.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
@@ -321,6 +331,145 @@ const allVariants: Variant[] = [
   },
 ];
 
+/**
+ * Fold-versus-commit protocol ordering. Two writers own disjoint scalar IDs
+ * (an NFC/NFD pair split across them, plus an astral ID) and commit while
+ * up to two compactors fold the same collection concurrently. After every
+ * round:
+ *
+ * - a fold publishes an exact prefix of the linearized log: the head's
+ *   snapshot, read through `loadSnapshotAsMap`, equals the reference fold
+ *   of `log/[0, log_seq_start)`;
+ * - no two published folds advance from the same captured floor (one
+ *   winner per head), and the floor never moves backward. Concurrent fold
+ *   attempts may start from the same floor; only one of them may publish;
+ * - the customer-visible read equals the committed model.
+ *
+ * At the end the committed `log/<seq>` slots are gap-free.
+ */
+const WRITER_IDS: readonly (readonly [string, string])[] = [
+  ["a", "\u00e9"],
+  ["e\u0301", "\u{10000}"],
+];
+const ORDERING_APP = "ordering";
+const ORDERING_COLLECTION = "rows";
+
+type OrderingRound = {
+  readonly commits: readonly [Op | null, Op | null];
+  readonly compactors: number;
+  /**
+   * `maxEntriesPerRun` for this round's folds; `null` folds to the tail. A
+   * capped fold still stamps the probed tail as `tail_hint`, so the reader's
+   * strict walk over `[log_seq_start, tail_hint)` carries entries.
+   */
+  readonly foldCap: number | null;
+};
+const writerOpArb = (writerIndex: number): fc.Arbitrary<Op | null> =>
+  fc.option(opArbOver(fc.constantFrom(...WRITER_IDS[writerIndex]!)));
+const orderingRoundsArb: fc.Arbitrary<OrderingRound[]> = fc.array(
+  fc.record({
+    commits: fc.tuple(writerOpArb(0), writerOpArb(1)),
+    compactors: fc.integer({ min: 0, max: 2 }),
+    foldCap: fc.option(fc.integer({ min: 1, max: 3 })),
+  }),
+  { minLength: 1, maxLength: 10 },
+);
+
+const GLOBAL_RUNS = fc.readConfigureGlobal().numRuns ?? 100;
+
+const runFoldCommitOrdering = async (
+  storages: readonly Storage[],
+  rounds: readonly OrderingRound[],
+): Promise<void> => {
+  const tenant = `ord-${uuid().slice(0, 8)}`;
+  const prefix = `app/${ORDERING_APP}/tenant/${tenant}/manifests/${ORDERING_COLLECTION}`;
+  const currentJsonKey = `${prefix}/current.json`;
+  await createCurrentJson(storages[0]!, currentJsonKey, logStateCurrentJson());
+  const writers = [0, 1].map(
+    (index) =>
+      new Writer({ storage: storages[index]!, currentJsonKey, options: { initialBackoffMs: 1 } }),
+  );
+  const model = new Map<string, DocumentData>();
+  const committedSeqs: number[] = [];
+  const publishedFloors: number[] = [];
+  let lastFloor = 0;
+
+  for (const round of rounds) {
+    const actions: Promise<unknown>[] = [];
+    round.commits.forEach((op, writerIndex) => {
+      if (op === null) {
+        return;
+      }
+      // Each writer owns its ids, so the model check cannot race the
+      // other writer's commit in the same round.
+      const live = model.has(op.id);
+      if ((op.kind === "I" && live) || (op.kind !== "I" && !live)) {
+        return;
+      }
+      const body = { _id: op.id, v: op.v! };
+      actions.push(
+        writers[writerIndex]!.commit(
+          op.kind === "D"
+            ? { op: "D", collection: ORDERING_COLLECTION, docId: op.id }
+            : { op: op.kind, collection: ORDERING_COLLECTION, docId: op.id, body },
+        ).then((result) => {
+          committedSeqs.push(result.entry.seq);
+          if (op.kind === "D") {
+            model.delete(op.id);
+          } else {
+            model.set(op.id, body);
+          }
+        }),
+      );
+    });
+    for (let k = 0; k < round.compactors; k++) {
+      actions.push(
+        compact({ storage: storages[2 + k]!, currentJsonKey }, {
+          minEntriesToCompact: 1,
+          ...(round.foldCap !== null && { maxEntriesPerRun: round.foldCap }),
+        } as InternalCompactOptions).then((result) => {
+          expect(["below-min-threshold", "cas-lost", undefined]).toContain(result.skippedReason);
+          if (result.written) {
+            publishedFloors.push(result.logSeqStartBefore);
+            expect(result.logSeqStartAfter).toBeGreaterThan(result.logSeqStartBefore);
+          }
+        }),
+      );
+    }
+    await Promise.all(actions);
+
+    expect(
+      new Set(publishedFloors).size,
+      `two folds published from one floor: ${JSON.stringify(publishedFloors)}`,
+    ).toBe(publishedFloors.length);
+    const read = (await readCurrentJson(storages[0]!, currentJsonKey))!;
+    const floor = logSeqStartOf(read.json);
+    expect(floor, "log_seq_start moved backward").toBeGreaterThanOrEqual(lastFloor);
+    expect(floor).toBeLessThanOrEqual(committedSeqs.length);
+    lastFloor = floor;
+
+    const reference = new Map<string, DocumentData>();
+    foldLogEntriesOnto(reference, await walkLogRange(storages[0]!, prefix, 0, floor), {
+      collection: ORDERING_COLLECTION,
+    });
+    const snapshot =
+      read.json.snapshot === null
+        ? new Map<string, DocumentData>()
+        : await loadSnapshotAsMap(storages[0]!, read.json.snapshot, ORDERING_COLLECTION);
+    expect(Object.fromEntries(snapshot)).toEqual(Object.fromEntries(reference));
+
+    const db = Db.create({ storage: storages[1]!, app: ORDERING_APP, tenant });
+    const rows = await (db.collection(ORDERING_COLLECTION) as Collection<DocumentData>)
+      .where({})
+      .all();
+    expect(Object.fromEntries(rows.map((r) => [r["_id"] as string, r]))).toEqual(
+      Object.fromEntries(model),
+    );
+  }
+  const seqs = committedSeqs.toSorted((a, b) => a - b);
+  expect(seqs).toEqual(seqs.map((_, index) => index));
+};
+
 const variants = allVariants.filter(
   (v) => (!v.requiresMinio || minioEnabled) && (!v.requiresGcs || gcsEnabled),
 );
@@ -451,6 +600,31 @@ describe("randomized (Db + Writer)", () => {
             totalObserved,
             `Σ observed per-doc values (${totalObserved}) != committed slot count (${seqs.length})`,
           ).toBe(seqs.length);
+        },
+      );
+
+      // Fold-versus-commit ordering runs on the zero-infra variants; the
+      // remote ones add only latency to a backend-agnostic protocol check.
+      test.skipIf(variant.label !== "memory" && variant.label !== "local-fs")(
+        "fold vs commit ordering: concurrent folds publish an exact log prefix, one winner per floor",
+        { timeout: GLOBAL_RUNS > 1_000 ? 600_000 : 60_000 },
+        async () => {
+          // Each run is real concurrent I/O, so the count is fixed rather
+          // than `FC_NUM_RUNS`; `test:randomize` runs five times as many.
+          const base = variant.label === "memory" ? 20 : 8;
+          await fc.assert(
+            fc.asyncProperty(orderingRoundsArb, async (rounds) => {
+              const bucket = `ord-${variant.label}-${uuid().slice(0, 8)}`;
+              const storages = await variant.makeStorages(bucket, 4);
+              // Write-tick maintenance off: the compactors are the only
+              // folders, so the ordering under test is fold vs commit.
+              await runWithContext(
+                createObservabilityContext({ maintenance: { disabled: true } }),
+                () => runFoldCommitOrdering(storages, rounds),
+              );
+            }),
+            { numRuns: GLOBAL_RUNS > 1_000 ? base * 5 : base },
+          );
         },
       );
 
