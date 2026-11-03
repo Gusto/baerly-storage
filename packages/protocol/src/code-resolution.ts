@@ -1,6 +1,6 @@
 import type { BaerlyErrorCode } from "./errors.ts";
 
-/** Canonical per-code corrective action; `errorEnvelope` falls back to this and it crosses the wire as `resolution`. Actionable codes only — context-sensitive codes use throw-site overrides. */
+/** Canonical per-code corrective action; `errorEnvelope` falls back to this and it crosses the wire as `resolution`. Actionable codes only. One canonical action per actionable code; a throw site may pass a more specific resolution (CLI `restore`), never a different retry meaning. */
 export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
   WriteConflict:
     "Another write changed this data first and nothing from this call was committed. Re-read, then retry.",

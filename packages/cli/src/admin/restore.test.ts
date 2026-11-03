@@ -177,7 +177,7 @@ describe("baerly admin restore", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
-  test("re-running without --force on a populated target → Conflict (exit 3)", async () => {
+  test("re-running without --force on a populated target → AlreadyExists (exit 3)", async () => {
     await writeFile(stdinPath, CANONICAL_NDJSON, "utf8");
     const first = await runRestore(
       [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
@@ -195,7 +195,10 @@ describe("baerly admin restore", () => {
       stderr.restore();
     }
     expect(second).toBe(3);
-    expect(stderr.captured.join("")).toContain("pass --force to truncate");
+    const output = stderr.captured.join("");
+    expect(output).toContain(": AlreadyExists: ");
+    expect(output).toContain(`collection "${COLL}"`);
+    expect(output).toContain("pass --force to truncate");
   });
 
   test("re-running with --force truncates and reseeds", async () => {

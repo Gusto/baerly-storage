@@ -111,25 +111,25 @@ const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
     name: "insert",
     params: "doc: Partial<T> & DocumentData",
     returns: "Promise<{ _id: string }>",
-    throws: ["SchemaError", "Conflict"],
+    throws: ["SchemaError", "AlreadyExists", "WriteConflict", "AmbiguousCommit"],
   },
   {
     name: "update",
     params: "id: string, patch: Partial<T>",
     returns: "Promise<{ modified: number }>",
-    throws: ["SchemaError", "Conflict"],
+    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit"],
   },
   {
     name: "replace",
     params: "id: string, doc: T",
     returns: "Promise<void>",
-    throws: ["SchemaError", "Conflict", "NotFound"],
+    throws: ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit"],
   },
   {
     name: "delete",
     params: "id: string",
     returns: "Promise<{ deleted: number }>",
-    throws: ["Conflict"],
+    throws: ["WriteConflict", "AmbiguousCommit"],
   },
 ];
 
@@ -144,9 +144,14 @@ const QUERY_METHODS: ReadonlyArray<SpecMethod> = [
     name: "update",
     params: "patch: Partial<T>",
     returns: "Promise<{ modified: number }>",
-    throws: ["SchemaError", "Conflict"],
+    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit"],
   },
-  { name: "delete", params: "", returns: "Promise<{ deleted: number }>", throws: ["Conflict"] },
+  {
+    name: "delete",
+    params: "",
+    returns: "Promise<{ deleted: number }>",
+    throws: ["WriteConflict", "AmbiguousCommit"],
+  },
 ];
 
 const STORAGE_INTERFACE: ReadonlyArray<SpecMethod> = [

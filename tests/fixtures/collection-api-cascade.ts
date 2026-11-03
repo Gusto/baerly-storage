@@ -461,7 +461,7 @@ const runDeleteContract = async (
  * Cross-writer Conflict: two concurrent direct mutations racing on the
  * same table's `current.json`. The locked contract
  * (`packages/protocol/src/collection-api.ts:211-215`) says single-attempt — at
- * least one writer throws `BaerlyError{code:"Conflict"}` on CAS loss.
+ * least one writer throws `BaerlyError{code:"WriteConflict"}` on CAS loss.
  *
  * In-process variants (memory, local-fs) share state via the
  * backing-store singleton, so two mutations on the same `db`
@@ -494,13 +494,13 @@ const runConcurrentWriteConflict = async (
   // is the locked contract — but on backends where the two commits
   // serialise inside the same event-loop tick (memory under
   // single-fork vitest) both can succeed in sequence. We assert the
-  // weaker "at most one Conflict, all rejections are Conflict" shape
+  // weaker "at most one WriteConflict, all rejections are WriteConflict" shape
   // — strong enough to fail if a writer ever rejects with another
   // code, weak enough to avoid flake on serialising backends.
   for (const r of rejected) {
     const err = (r as PromiseRejectedResult).reason as BaerlyError;
     expect(err).toBeInstanceOf(BaerlyError);
-    expect(err.code).toBe("Conflict");
+    expect(err.code).toBe("WriteConflict");
   }
 };
 

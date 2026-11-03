@@ -194,8 +194,7 @@ void _errorCodesExhaustive;
 
 /**
  * Codes whose default failure class is resolved by retrying with a fresh read.
- * Throw sites may override this when the same code is context-sensitive
- * (notably caller-supplied `_id` collisions, which also use `Conflict`).
+ * `BaerlyError.retriable` defaults to membership in this set.
  */
 export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
   "NetworkError",
@@ -231,12 +230,18 @@ export const CLIENT_RUNTIME_CODES: ReadonlySet<BaerlyErrorCode> = new Set<Baerly
  * @example
  * ```ts
  * try {
- *   await db.collection("tickets").insert({ title: "hi" });
+ *   await db.collection("tickets").insert({ _id: "t-1", title: "hi" });
  * } catch (err) {
- *   if (err instanceof BaerlyError && err.code === "Conflict") {
- *     // Check err.retriable; CAS can retry, duplicate _id cannot.
+ *   if (!(err instanceof BaerlyError)) throw err;
+ *   if (err.code === "AlreadyExists") {
+ *     // t-1 is taken; retrying cannot succeed.
+ *   } else if (err.code === "AmbiguousCommit") {
+ *     // May have landed: re-read err._id before deciding.
+ *   } else if (err.retriable) {
+ *     // WriteConflict or NetworkError: retry with bounded backoff.
+ *   } else {
+ *     throw err;
  *   }
- *   throw err;
  * }
  * ```
  */

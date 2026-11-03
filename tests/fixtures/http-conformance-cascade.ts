@@ -351,7 +351,7 @@ export const runHttpConformanceCascade = (opts: {
         expect(env.error?.retriable).toBe(false);
       });
 
-      test("POST duplicate caller-supplied _id returns terminal 409 Conflict", async () => {
+      test("POST duplicate caller-supplied _id returns terminal 409 AlreadyExists", async () => {
         const table = await mintTable("rt-duplicate-id");
         const first = await postDoc(table, { _id: "user-chosen-id", seed: 1 });
         expect(first.status).toBe(201);
@@ -364,9 +364,10 @@ export const runHttpConformanceCascade = (opts: {
         );
         expect(res.status).toBe(409);
         const env = (await res.json()) as ErrorEnvelope;
-        expect(env.error?.code).toBe("Conflict");
+        expect(env.error?.code).toBe("AlreadyExists");
         expect(env.error?.retriable).toBe(false);
-        expect(env.error?.resolution).toContain("different `_id`");
+        expect(env.error?.message).toContain("user-chosen-id");
+        expect(env.error?.resolution).toContain("different _id");
       });
 
       test("PATCH of missing _id returns 404 with NotFound", async () => {
