@@ -54,14 +54,14 @@ describe("current.json on LocalFsStorage", () => {
     expect(claimed.json.writer_fence.claimed_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  test("create-only guard rejects an existing key with Conflict", async () => {
+  test("create-only guard rejects an existing key with WriteConflict", async () => {
     await createCurrentJson(storage, "k", seed);
     await expect(createCurrentJson(storage, "k", seed)).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
   });
 
-  test("stale-etag update surfaces as Conflict", async () => {
+  test("stale-etag update surfaces as WriteConflict", async () => {
     // In-process multi-writer races are covered directly in
     // `local-fs.test.ts` ("concurrent ifMatch … exactly one winner") and
     // by the shared storage conformance suite; `LocalFsStorage`
@@ -70,7 +70,7 @@ describe("current.json on LocalFsStorage", () => {
     // processes there is still no such guarantee — that is delegated to
     // S3/R2 (see `local-fs.ts` class JSDoc). What we verify HERE is
     // narrower: when the storage layer observes a stale etag, it
-    // surfaces `Conflict` directly — no string-sentinel translation.
+    // surfaces `WriteConflict` directly — no string-sentinel translation.
     await createCurrentJson(storage, "k", seed);
     // Stage a stale read by snapshotting etag, then landing a
     // separate update that bumps it.
@@ -82,6 +82,6 @@ describe("current.json on LocalFsStorage", () => {
         ifMatch: stale!.etag,
         contentType: "application/json",
       }),
-    ).rejects.toMatchObject({ code: "Conflict" });
+    ).rejects.toMatchObject({ code: "WriteConflict" });
   });
 });

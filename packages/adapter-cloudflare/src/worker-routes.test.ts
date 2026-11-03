@@ -85,7 +85,7 @@ interface BaseEnvelope {
  * `createCurrentJson` at deploy time. Same shape as the cascade
  * fixtures in `tests/fixtures/collection-api-cascade.ts`. The miniflare
  * R2 binding is shared across tests in this suite, so an already-
- * provisioned key surfaces as `Conflict` — adopt it.
+ * provisioned key surfaces as `WriteConflict` — adopt it.
  */
 const provisionTable = async (bucket: R2Bucket, table: string, tenant = "acme"): Promise<void> => {
   const storage = r2BindingStorage(bucket);
@@ -101,7 +101,7 @@ const provisionTable = async (bucket: R2Bucket, table: string, tenant = "acme"):
       snapshot_rows: 0,
     });
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;
     }
     throw error;

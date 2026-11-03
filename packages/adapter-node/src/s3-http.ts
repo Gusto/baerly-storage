@@ -156,15 +156,15 @@ export class S3HttpStorage implements Storage {
         }),
       );
       if (res.status === 412) {
-        throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
+        throw new BaerlyError("WriteConflict", `PUT ${key}: precondition failed`);
       }
       // AWS S3 returns 409 ConditionalRequestConflict when a concurrent
       // conditional create (If-None-Match:"*") races; Minio returns 412.
       // 409 means the write was contended and may NOT have landed, so it
       // maps to a retryable NetworkError — the single-write-commit writer
       // re-issues the same-seq PUT, which resolves deterministically to 200
-      // (we win) or 412 (key now present → Conflict → adopt/re-probe). A
-      // direct Conflict here would adopt-read a possibly-absent entry.
+      // (we win) or 412 (key now present → WriteConflict → adopt/re-probe). A
+      // direct WriteConflict here would adopt-read a possibly-absent entry.
       if (res.status === 409 && opts?.ifNoneMatch === "*") {
         throw new BaerlyError(
           "NetworkError",
@@ -174,11 +174,11 @@ export class S3HttpStorage implements Storage {
       }
       // S3-compatible servers diverge on `If-Match` against a missing
       // key: AWS S3 returns 412, Minio returns 404 (NoSuchKey). Map
-      // 404-with-ifMatch to the same `Conflict` semantic so consumers
+      // 404-with-ifMatch to the same `WriteConflict` semantic so consumers
       // don't have to special-case the wire reply.
       if (res.status === 404 && opts?.ifMatch !== undefined) {
         throw new BaerlyError(
-          "Conflict",
+          "WriteConflict",
           `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
         );
       }

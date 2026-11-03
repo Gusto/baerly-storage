@@ -18,7 +18,7 @@ import {
  *
  * Wraps {@link createCurrentJson} with the canonical key shape
  * (`app/<app>/tenant/<tenant>/manifests/<table>/current.json`) and
- * swallows `BaerlyError{code:"Conflict"}` so re-runs are safe. An
+ * swallows `BaerlyError{code:"WriteConflict"}` so re-runs are safe. An
  * existing manifest is preserved verbatim — this function never
  * overwrites a populated manifest. The seed shape matches the kernel's
  * auto-create, with one deliberate exception: `generation` is a fresh
@@ -54,7 +54,7 @@ export const ensureTable = async (
       generation: mintGeneration(),
     });
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;
     }
     throw error;

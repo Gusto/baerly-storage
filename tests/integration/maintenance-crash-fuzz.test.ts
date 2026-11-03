@@ -238,7 +238,7 @@ describe("Writer crash never leaves readable phantom row", () => {
         postCrashCommitted = true;
       } catch {
         // Expected — we injected an abort, OR `MemoryStorage` raised
-        // a CAS `Conflict`. The post-state invariant is the gate.
+        // a CAS `WriteConflict`. The post-state invariant is the gate.
       }
 
       // INVARIANT: a fresh reader sees a consistent view.
@@ -308,7 +308,7 @@ describe("Compactor crash never leaves readable corrupt snapshot", () => {
           maxEntriesPerRun: numInserts,
         } as InternalCompactOptions);
       } catch {
-        // Expected — abort or `Conflict`. Either way, the bucket must
+        // Expected — abort or `WriteConflict`. Either way, the bucket must
         // still surface the original row set to a fresh reader.
       }
 
@@ -354,7 +354,7 @@ describe("GC crash never deletes a still-referenced key", () => {
           maxSweepsPerRun: 200,
         } as InternalRunGcOptions);
       } catch {
-        // Expected — abort or `Conflict`. The reader contract is the
+        // Expected — abort or `WriteConflict`. The reader contract is the
         // gate.
       }
 
@@ -404,7 +404,7 @@ describe("Retirement crash never deletes a live log", () => {
           maxDeletes: numInserts,
         });
       } catch {
-        // Expected — the injected abort (or the CAS `Conflict` it can
+        // Expected — the injected abort (or the CAS `WriteConflict` it can
         // surface as). Either way the reader contract is the gate.
       }
 
@@ -455,7 +455,7 @@ describe("Write-tick fold crash preserves the reader view after GC", () => {
           maxEntriesPerRun: numInserts,
         } as InternalCompactOptions);
       } catch {
-        // Expected — injected abort or CAS Conflict. The post-state is
+        // Expected — injected abort or CAS WriteConflict. The post-state is
         // the gate.
       }
 
@@ -689,7 +689,7 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
                   }
                 }
               } catch {
-                // Aborts and `Conflict`s are expected; the post-loop
+                // Aborts and `WriteConflict`s are expected; the post-loop
                 // reader view is the only gate.
               }
             }

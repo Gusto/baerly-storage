@@ -303,7 +303,7 @@ describe("cas_lost_total records from inside the waitUntil continuation", () => 
     //   (b) force the fold's current.json CAS PUT to lose EXACTLY once —
     //       R2 signals a failed `onlyIf.etagMatches` precondition by
     //       returning `null`, which `r2BindingStorage` maps to a
-    //       `Conflict`; the compactor's cas-lost branch then fires.
+    //       `WriteConflict`; the compactor's cas-lost branch then fires.
     type Recorder = NonNullable<ReturnType<typeof getCurrentContext>>["recorder"];
     let capturedRecorder: Recorder | undefined;
     let armed = false; // only fail the CAS for the handler's write-tick, not the seed
@@ -327,7 +327,7 @@ describe("cas_lost_total records from inside the waitUntil continuation", () => 
               "etagMatches" in (options.onlyIf as Record<string, unknown>);
             if (armed && !failedFoldCasOnce && isManifestCas) {
               failedFoldCasOnce = true;
-              // R2 returns null on a precondition miss → Conflict.
+              // R2 returns null on a precondition miss → WriteConflict.
               return null;
             }
             return target.put(key, value, options);

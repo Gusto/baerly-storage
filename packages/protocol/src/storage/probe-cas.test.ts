@@ -144,7 +144,7 @@ describe("probeCas", () => {
     const check = result.checks.find((c) => c.name === "ifMatch-stale");
     expect(check?.ok).toBe(true);
     expect(check?.detail).toContain("stale If-Match rejected");
-    expect(check?.detail).toContain("Conflict");
+    expect(check?.detail).toContain("WriteConflict");
   });
 
   test("check details for ifNoneMatch-exists honored path contain expected substrings", async () => {
@@ -153,7 +153,7 @@ describe("probeCas", () => {
     const check = result.checks.find((c) => c.name === "ifNoneMatch-exists");
     expect(check?.ok).toBe(true);
     expect(check?.detail).toContain("If-None-Match");
-    expect(check?.detail).toContain("Conflict");
+    expect(check?.detail).toContain("WriteConflict");
   });
 
   test("check detail for ifNoneMatch-exists ignored path contains expected substrings", async () => {
@@ -175,8 +175,8 @@ describe("probeCas", () => {
     expect(check?.detail).toContain("ignores If-None-Match");
   });
 
-  test("non-Conflict error on ifMatch check is recorded as ok:false with message", async () => {
-    // Covers L77-80 (NoCoverage path): when storage.put throws a non-Conflict error
+  test("non-WriteConflict error on ifMatch check is recorded as ok:false with message", async () => {
+    // Covers L77-80 (NoCoverage path): when storage.put throws a non-WriteConflict error
     // for the stale-ifMatch write, the check must be recorded as failed with
     // the original error's message embedded in the detail.
     const boom = new BaerlyError("NetworkError", "upstream TCP timeout");
@@ -193,7 +193,7 @@ describe("probeCas", () => {
           return super.put(key, body, opts);
         }
         if (opts?.ifMatch !== undefined) {
-          // Second put (ifMatch probe): throw a non-Conflict error.
+          // Second put (ifMatch probe): throw a non-WriteConflict error.
           throw boom;
         }
         return super.put(key, body, opts);
@@ -203,11 +203,11 @@ describe("probeCas", () => {
     const result = await probeCas(new NetworkErrorStorage());
     const check = result.checks.find((c) => c.name === "ifMatch-stale");
     expect(check?.ok).toBe(false);
-    expect(check?.detail).toContain("non-Conflict error");
+    expect(check?.detail).toContain("non-WriteConflict error");
     expect(check?.detail).toContain("upstream TCP timeout");
   });
 
-  test("non-Conflict error on ifNoneMatch check is recorded as ok:false with message", async () => {
+  test("non-WriteConflict error on ifNoneMatch check is recorded as ok:false with message", async () => {
     // Covers L102-105 (NoCoverage path): same shape for the ifNoneMatch probe.
     const boom = new BaerlyError("NetworkError", "timeout on ifNoneMatch write");
     class NetworkErrorOnNoneMatchStorage extends MemoryStorage {
@@ -222,11 +222,11 @@ describe("probeCas", () => {
           return super.put(key, body, opts); // initial put — succeed
         }
         if (opts?.ifMatch !== undefined) {
-          // ifMatch probe: throw Conflict so check 1 passes
-          throw new BaerlyError("Conflict", "stale");
+          // ifMatch probe: throw WriteConflict so check 1 passes
+          throw new BaerlyError("WriteConflict", "stale");
         }
         if (opts?.ifNoneMatch !== undefined) {
-          // ifNoneMatch probe: throw a non-Conflict error
+          // ifNoneMatch probe: throw a non-WriteConflict error
           throw boom;
         }
         return super.put(key, body, opts);
@@ -236,11 +236,11 @@ describe("probeCas", () => {
     const result = await probeCas(new NetworkErrorOnNoneMatchStorage());
     const check = result.checks.find((c) => c.name === "ifNoneMatch-exists");
     expect(check?.ok).toBe(false);
-    expect(check?.detail).toContain("non-Conflict error");
+    expect(check?.detail).toContain("non-WriteConflict error");
     expect(check?.detail).toContain("timeout on ifNoneMatch write");
   });
 
-  test("non-Error throwable message is stringified in the non-Conflict detail", async () => {
+  test("non-Error throwable message is stringified in the non-WriteConflict detail", async () => {
     // Kills the `error instanceof Error ? error.message : String(error)` branch:
     // throw a plain string to exercise the String(error) arm.
     class StringThrowStorage extends MemoryStorage {
@@ -317,8 +317,8 @@ describe("probeCas", () => {
     expect(deleteSigArg).toBeUndefined();
   });
 
-  test("isConflict: BaerlyError with wrong code is NOT treated as Conflict", async () => {
-    // Kills L6 LogicalOperator (||) mutant: a BaerlyError with code !== "Conflict"
+  test("isConflict: BaerlyError with wrong code is NOT treated as WriteConflict", async () => {
+    // Kills L6 LogicalOperator (||) mutant: a BaerlyError with code !== "WriteConflict"
     // must produce ok:false, not ok:true.
     const nonConflictBaerlyError = new BaerlyError("NetworkError", "wrong code");
     class WrongCodeStorage extends MemoryStorage {
@@ -341,14 +341,14 @@ describe("probeCas", () => {
 
     const result = await probeCas(new WrongCodeStorage());
     const check = result.checks.find((c) => c.name === "ifMatch-stale");
-    // A BaerlyError with code "NetworkError" is NOT a Conflict → ok must be false
+    // A BaerlyError with code "NetworkError" is NOT a WriteConflict → ok must be false
     expect(check?.ok).toBe(false);
-    expect(check?.detail).toContain("non-Conflict error");
+    expect(check?.detail).toContain("non-WriteConflict error");
   });
 
-  test("isConflict: non-BaerlyError is not treated as Conflict", async () => {
+  test("isConflict: non-BaerlyError is not treated as WriteConflict", async () => {
     // Kills L6 ConditionalExpression → true mutant: a plain Error is not a
-    // BaerlyError and must not be treated as a valid Conflict rejection.
+    // BaerlyError and must not be treated as a valid WriteConflict rejection.
     const plainError = new Error("generic failure");
     class PlainErrorStorage extends MemoryStorage {
       private callCount = 0;
@@ -464,7 +464,7 @@ describe("probeCas", () => {
     expect(firstPutBody!.length).toBeGreaterThan(0);
   });
 
-  test("cleans up sentinel even when a check throws a non-Conflict error", async () => {
+  test("cleans up sentinel even when a check throws a non-WriteConflict error", async () => {
     // Covers NoCoverage cleanup path: even when isConflict fails, finally must
     // still delete the key. Reuses NetworkErrorStorage shape.
     class NetworkErrorStorage extends MemoryStorage {
@@ -544,14 +544,14 @@ describe("probeCas — ifNoneMatch-concurrent", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("a transient non-Conflict loser makes the race inconclusive", async () => {
+  test("a transient non-WriteConflict loser makes the race inconclusive", async () => {
     // Exactly one winner, but one racer hits a transient error (e.g. an
     // unmapped S3 409 / network blip). The exactly-one-winner invariant
     // held, so the check must not scream "backend NOT linearizable"; still,
     // the deploy-time probe must fail closed and ask for a clean retry.
     // Conditional puts in this fake run check-then-act with no intervening
     // await, so the burst is deterministic. ifNoneMatch:"*" calls: #1 is the
-    // sentinel's Check 2 (over an existing key → Conflict); #2.. is the race
+    // sentinel's Check 2 (over an existing key → WriteConflict); #2.. is the race
     // burst — inject the transient on the second race write.
     const exists = new Set<string>();
     let inmCalls = 0;
@@ -567,13 +567,13 @@ describe("probeCas — ifNoneMatch-concurrent", () => {
             throw new BaerlyError("NetworkError", "transient blip mid-race");
           }
           if (exists.has(key)) {
-            throw new BaerlyError("Conflict", "key exists");
+            throw new BaerlyError("WriteConflict", "key exists");
           }
           exists.add(key);
           return { etag: '"w"' };
         }
         if (opts?.ifMatch !== undefined) {
-          throw new BaerlyError("Conflict", "stale If-Match");
+          throw new BaerlyError("WriteConflict", "stale If-Match");
         }
         exists.add(key);
         return { etag: '"u"' };

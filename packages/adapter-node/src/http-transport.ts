@@ -11,21 +11,23 @@ import { parseS3Error } from "./xml.ts";
  * These represent caller- or environment-level faults where retrying
  * cannot succeed: `AccessDenied` (403 — credentials/policy),
  * `InvalidConfig` (bad bucket / unsupported credential type),
- * `InvalidResponse` (server returned unparseable data), and
- * `Conflict` (CAS guard lost — retrying would just re-lose against
- * the same state). `NetworkError` is intentionally absent — it covers
- * transient transport faults and stays retryable.
+ * `InvalidResponse` (server returned unparseable data),
+ * `WriteConflict` (a precondition was rejected), and `AlreadyExists`
+ * (the create target exists). `NetworkError` is intentionally absent —
+ * it covers transient transport faults and stays retryable.
  *
  * Transport-layer set, distinct from `RETRIABLE_CODES` in `@baerly/protocol`'s
- * `errors.ts` (the default wire `retriable` hint). `Conflict` is "permanent"
- * here (a blind re-PUT re-loses the CAS race) yet retryable for logical CAS
- * callers that can fresh-read + re-apply. Same code, two different questions.
+ * `errors.ts`. A blind re-PUT of the same request re-loses a rejected
+ * precondition, so this layer never resends it. `WriteConflict` is still
+ * retriable for the logical caller: it re-reads and issues a new request,
+ * which is what `retriable` means.
  */
 const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
   "AccessDenied",
   "InvalidConfig",
   "InvalidResponse",
-  "Conflict",
+  "WriteConflict",
+  "AlreadyExists",
 ]);
 
 /**
@@ -134,7 +136,7 @@ const isThrottled = (e: unknown): boolean =>
  *
  * Set `conditionalCreate` for an `If-None-Match: "*"` PUT. An attempt that
  * failed transiently may still have landed, so a later permanent rejection
- * other than `Conflict` (for example a 403) cannot prove the create is not
+ * other than `WriteConflict` (for example a 403) cannot prove the create is not
  * durable. That rejection is reported as `NetworkError` carrying the
  * original error as its cause, per the `Storage.put` contract. When every
  * attempt was throttled, nothing was applied, so the final `NetworkError`'s
@@ -157,7 +159,7 @@ export const retry = async <T>(
       return await fn();
     } catch (error) {
       if (error instanceof BaerlyError && PERMANENT_ERROR_CODES.has(error.code)) {
-        if (conditionalCreate && uncertain && error.code !== "Conflict") {
+        if (conditionalCreate && uncertain && error.code !== "WriteConflict") {
           throw new BaerlyError(
             "NetworkError",
             `${error.message} (an earlier attempt of this conditional create may have landed)`,

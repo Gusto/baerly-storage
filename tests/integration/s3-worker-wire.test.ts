@@ -79,7 +79,7 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
     assertAllRequestsSigned(seen);
   });
 
-  test("If-None-Match:'*' create-if-absent conflict maps to Conflict", async () => {
+  test("If-None-Match:'*' create-if-absent conflict maps to WriteConflict", async () => {
     const { fetchImpl } = makeS3Stub(BUCKET);
     const s = mkStorage(fetchImpl);
 
@@ -88,7 +88,7 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
       .put("log/00000001", new Uint8Array([2]), { ifNoneMatch: "*" })
       .catch((error: unknown) => error);
     expect(conflict).toBeInstanceOf(BaerlyError);
-    expect((conflict as BaerlyError).code).toBe("Conflict");
+    expect((conflict as BaerlyError).code).toBe("WriteConflict");
   });
 
   test("list parses ListObjectsV2 XML with @rgrove/parse-xml in-isolate", async () => {

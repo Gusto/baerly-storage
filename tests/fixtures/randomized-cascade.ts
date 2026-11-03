@@ -143,14 +143,14 @@ const seedCurrent = (): CurrentJson => logStateCurrentJson();
 /**
  * Tolerant `createCurrentJson` — multiple test instances share the
  * same backing store, so exactly one wins the bootstrap CAS and the
- * others see `Conflict` (which the protocol translates from
+ * others see `WriteConflict` (which the protocol translates from
  * `PreconditionFailed`). The losers adopt the existing record.
  */
 const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
   try {
     await createCurrentJson(storage, key, seedCurrent());
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       const got = await readCurrentJson(storage, key);
       if (got !== null) {
         return;
@@ -558,10 +558,10 @@ export const runCausalConsistencyCascade = (opts: {
                   ).toBe(true);
                 }
               } catch (error) {
-                // Transient Conflict under contention is fine — the
+                // Transient WriteConflict under contention is fine — the
                 // peer will re-broadcast on its next observe. Other
                 // errors propagate.
-                if (error instanceof BaerlyError && error.code === "Conflict") {
+                if (error instanceof BaerlyError && error.code === "WriteConflict") {
                   return;
                 }
                 finished = true;
@@ -779,11 +779,11 @@ export const runMultiDocCascade = async (opts: {
           body: { ...message, token, _id: docId },
         });
       } catch (error) {
-        // Transient Conflict under contention is expected — the value is
+        // Transient WriteConflict under contention is expected — the value is
         // simply not committed (and won't appear in `observedPerDoc`),
         // which keeps the subsequence property intact. Other errors
         // propagate.
-        if (error instanceof BaerlyError && error.code === "Conflict") {
+        if (error instanceof BaerlyError && error.code === "WriteConflict") {
           return;
         }
         throw error;

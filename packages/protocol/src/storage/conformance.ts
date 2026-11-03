@@ -84,13 +84,13 @@ export interface ConformanceOptions {
   /**
    * A well-formed etag that is guaranteed *not* to be the current version
    * of any key — fed into the CAS-failure assertions (`ifMatch` on an
-   * absent or stale key must reject with `Conflict`). Defaults to the
+   * absent or stale key must reject with `WriteConflict`). Defaults to the
    * S3/R2-shaped quoted hex `'"deadbeef"'`, which every ETag-versioned
    * backend treats as a non-matching-but-valid token. GCS's version token
    * is an int64 `generation`, so a quoted-hex value is a *malformed*
    * precondition there (400 InvalidArgument, not a 412 conflict); the
    * native GCS adapter overrides this with a well-formed-but-stale
-   * generation (`"1"`, which no live object ever carries → 412 → Conflict).
+   * generation (`"1"`, which no live object ever carries → 412 → WriteConflict).
    */
   readonly staleEtag?: string;
   /**
@@ -483,20 +483,20 @@ export function defineStorageConformanceSuite(
         expect(got!.etag).toBe(second.etag);
       });
 
-      test("fails with BaerlyError Conflict when key is absent", async () => {
+      test("fails with BaerlyError WriteConflict when key is absent", async () => {
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: opts.staleEtag }),
         ).rejects.toBeInstanceOf(BaerlyError);
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: opts.staleEtag }),
-        ).rejects.toMatchObject({ code: "Conflict" });
+        ).rejects.toMatchObject({ code: "WriteConflict" });
       });
 
-      test("fails with BaerlyError Conflict on stale etag", async () => {
+      test("fails with BaerlyError WriteConflict on stale etag", async () => {
         await s.put("k", new TextEncoder().encode("v1"));
         await expect(
           s.put("k", new TextEncoder().encode("v2"), { ifMatch: opts.staleEtag }),
-        ).rejects.toMatchObject({ code: "Conflict" });
+        ).rejects.toMatchObject({ code: "WriteConflict" });
       });
 
       test("admits exactly one winner under concurrent ifMatch on the same etag", async () => {
@@ -536,7 +536,7 @@ export function defineStorageConformanceSuite(
           (o) =>
             o.status === "rejected" &&
             o.reason instanceof BaerlyError &&
-            (o.reason.code === "Conflict" || o.reason.code === "NetworkError"),
+            (o.reason.code === "WriteConflict" || o.reason.code === "NetworkError"),
         ).length;
         expect(winners).toBe(1);
         expect(losers).toBe(RACERS - 1);
@@ -551,14 +551,14 @@ export function defineStorageConformanceSuite(
         expect(etag).toBeTruthy();
       });
 
-      test("fails with BaerlyError Conflict when key exists", async () => {
+      test("fails with BaerlyError WriteConflict when key exists", async () => {
         await s.put("k", new TextEncoder().encode("v"));
         await expect(
           s.put("k", new TextEncoder().encode("v2"), { ifNoneMatch: "*" }),
         ).rejects.toBeInstanceOf(BaerlyError);
         await expect(
           s.put("k", new TextEncoder().encode("v3"), { ifNoneMatch: "*" }),
-        ).rejects.toMatchObject({ code: "Conflict" });
+        ).rejects.toMatchObject({ code: "WriteConflict" });
       });
 
       test("body is not modified on conflict", async () => {
@@ -585,7 +585,7 @@ export function defineStorageConformanceSuite(
           ),
         );
         const winners = outcomes.filter((o) => o.status === "fulfilled").length;
-        // A contended loser may legitimately surface as either `Conflict`
+        // A contended loser may legitimately surface as either `WriteConflict`
         // (412 — Memory/LocalFs/Minio/R2) or a retryable `NetworkError`
         // (409 ConditionalRequestConflict — real AWS S3). Both are valid
         // loser outcomes at the raw-`Storage.put` layer (no writer retry);
@@ -594,7 +594,7 @@ export function defineStorageConformanceSuite(
           (o) =>
             o.status === "rejected" &&
             o.reason instanceof BaerlyError &&
-            (o.reason.code === "Conflict" || o.reason.code === "NetworkError"),
+            (o.reason.code === "WriteConflict" || o.reason.code === "NetworkError"),
         ).length;
         expect(winners).toBe(1);
         expect(losers).toBe(RACERS - 1);
@@ -605,7 +605,7 @@ export function defineStorageConformanceSuite(
     // BaerlyError.code for the same illegal op" statement. The suite runs
     // against all four adapters, so this single table is the cross-adapter
     // equivalence assertion. `expectedCodes` is a SET, never a single code:
-    // a contended create-loser legitimately diverges between `Conflict`
+    // a contended create-loser legitimately diverges between `WriteConflict`
     // (412 — Memory/LocalFs/Minio/R2) and a retryable `NetworkError`
     // (409 ConditionalRequestConflict — real AWS S3); see the
     // exactly-one-winner test above. Asserting a single code would
@@ -622,7 +622,7 @@ export function defineStorageConformanceSuite(
           await store.put("k", ENC.encode("v1"));
           return store.put("k", ENC.encode("v2"), { ifMatch: opts.staleEtag });
         },
-        expectedCodes: ["Conflict"],
+        expectedCodes: ["WriteConflict"],
       },
       {
         label: 'ifNoneMatch:"*" on existing key',
@@ -630,7 +630,7 @@ export function defineStorageConformanceSuite(
           await store.put("k", ENC.encode("v"));
           return store.put("k", ENC.encode("v2"), { ifNoneMatch: "*" });
         },
-        expectedCodes: ["Conflict"],
+        expectedCodes: ["WriteConflict"],
       },
       {
         label: "concurrent create-if-absent loser",
@@ -646,7 +646,7 @@ export function defineStorageConformanceSuite(
           }
           throw (loser as PromiseRejectedResult).reason;
         },
-        expectedCodes: ["Conflict", "NetworkError"],
+        expectedCodes: ["WriteConflict", "NetworkError"],
       },
       {
         label: "concurrent ifMatch loser",
@@ -675,7 +675,7 @@ export function defineStorageConformanceSuite(
           }
           throw (loser as PromiseRejectedResult).reason;
         },
-        expectedCodes: ["Conflict", "NetworkError"],
+        expectedCodes: ["WriteConflict", "NetworkError"],
       },
     ];
 

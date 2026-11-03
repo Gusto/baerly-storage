@@ -103,7 +103,7 @@ describe("Writer fate across S3 adapter retries", () => {
           );
           return new Response(null, { status: 200, headers: { ETag: stored.etag } });
         } catch (error) {
-          if ((error as BaerlyError).code === "Conflict") {
+          if ((error as BaerlyError).code === "WriteConflict") {
             return new Response(null, { status: 412 });
           }
           throw error;

@@ -35,7 +35,8 @@ export interface Storage {
    * `undefined` if no server clock is available. Use `ifMatch` for
    * compare-and-swap (write only if the current ETag matches), or
    * `ifNoneMatch: "*"` for create-only (write only if no object
-   * exists). Conflicts throw `BaerlyError` with HTTP 412 semantics.
+   * exists). A rejected precondition throws
+   * `BaerlyError{code:"WriteConflict"}` (HTTP 412 semantics).
    *
    * A create-only put that rejects with `AccessDenied` or `InvalidConfig`
    * must guarantee that no attempt of that call can still land. An

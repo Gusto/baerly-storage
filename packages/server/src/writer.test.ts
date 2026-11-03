@@ -95,7 +95,7 @@ class InstrumentedStorage extends MemoryStorage {
       const foreign = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
       foreign["session"] = "INTRUDR0";
       await super.put(key, new TextEncoder().encode(JSON.stringify(foreign)), opts);
-      throw new BaerlyError("Conflict", `simulated 412 on ${key}: precondition failed`);
+      throw new BaerlyError("WriteConflict", `simulated 412 on ${key}: precondition failed`);
     }
     return super.put(key, body, opts);
   }
@@ -166,7 +166,7 @@ class SameSessionDifferentBodyStorage extends MemoryStorage {
         after: { _id: "same-session-intruder", from: "collision" },
       };
       await super.put(key, new TextEncoder().encode(JSON.stringify(forged)), opts);
-      throw new BaerlyError("Conflict", `simulated same-session collision on ${key}`);
+      throw new BaerlyError("WriteConflict", `simulated same-session collision on ${key}`);
     }
     return super.put(key, body, opts);
   }
@@ -187,7 +187,7 @@ class ConflictingCurrentReadStorage extends MemoryStorage {
   ): ReturnType<MemoryStorage["get"]> {
     if (key === CURRENT_KEY && this.failReads > 0) {
       this.failReads -= 1;
-      throw new BaerlyError("Conflict", `simulated precondition failure reading ${key}`);
+      throw new BaerlyError("WriteConflict", `simulated precondition failure reading ${key}`);
     }
     return super.get(key, opts);
   }
@@ -921,9 +921,9 @@ describe("Writer — writer fence", () => {
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     // Arm the bump on the SECOND current.json GET. With the old
     // post-commit fence-verify, that second GET was the verify read: it
-    // observed the bumped epoch and threw Conflict on a log/<seq> entry
+    // observed the bumped epoch and threw WriteConflict on a log/<seq> entry
     // that had ALREADY committed and was visible — a committed-but-
-    // Conflict inconsistency. Under single-write commit the numbered log
+    // WriteConflict inconsistency. Under single-write commit the numbered log
     // create IS the commit and there is no verify read, so the commit
     // succeeds; the entry is durable.
     storage.bumpAfterReadsCount = 2;

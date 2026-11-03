@@ -518,7 +518,7 @@ describe("runGc", () => {
     // and lands. The candidate therefore LEAVES the ledger and nothing is
     // sticky. Pinned so the contrast with the exhausted-budget test below
     // is explicit rather than incidental — that test is the one that
-    // reaches `gc.ts`'s `Conflict` catch, and this one never does.
+    // reaches `gc.ts`'s `WriteConflict` catch, and this one never does.
     const converged = await readGcPending(s, PENDING_KEY);
     expect(converged?.json.candidates).toEqual([]);
   });
@@ -568,7 +568,7 @@ describe("runGc", () => {
     await createGcPending(s, PENDING_KEY, pre);
     // Exhaust the budget: land a rival CAS before EVERY guarded PUT, not
     // just the first, so all `GC_PENDING_CAS_MAX_ATTEMPTS` attempts lose
-    // and `casUpdateGcPending` surfaces `Conflict`. `inRival` is the
+    // and `casUpdateGcPending` surfaces `WriteConflict`. `inRival` is the
     // re-entrancy guard — the rival's own guarded PUT re-enters this
     // wrapper and would otherwise recurse forever.
     const origPut = s.put.bind(s);
@@ -609,16 +609,16 @@ describe("runGc", () => {
     // `pendingDepth` is best-effort on this path and deliberately does NOT
     // agree with the ledger: it reports our post-sweep view (0), while the
     // durable ledger still holds 1. Pinned because that divergence is the
-    // documented contract of the `Conflict` catch, not a bug to "fix".
+    // documented contract of the `WriteConflict` catch, not a bug to "fix".
     expect(r.pendingDepth).toBe(0);
     expect(stuck?.json.candidates).toHaveLength(1);
   });
 
   test("returns success when the ledger is deleted mid-pass (concurrent restore)", async () => {
-    // The deleted-ledger variant of the Conflict tolerance above. A
+    // The deleted-ledger variant of the WriteConflict tolerance above. A
     // concurrent `baerly admin restore --force` deletes `gc/pending.json`
     // on both reseed branches; `casUpdateGcPending` reports the vanished
-    // key as `Conflict` — a failed If-Match precondition, see its JSDoc —
+    // key as `WriteConflict` — a failed If-Match precondition, see its JSDoc —
     // and the same step-6 arm tolerates it as a lost race. The pass must
     // not resurrect the ledger the restore deleted: the next pass
     // bootstraps a fresh one against the new generation.

@@ -892,7 +892,7 @@ describe("runBoundedMaintenance", () => {
       ): Promise<StoragePutResult> {
         if (!failedOnce && key === KEY && opts?.ifMatch !== undefined) {
           failedOnce = true;
-          throw new BaerlyError("Conflict", "simulated CAS loss");
+          throw new BaerlyError("WriteConflict", "simulated CAS loss");
         }
         return inner.put(key, body, opts);
       },
@@ -974,7 +974,7 @@ describe("runBoundedMaintenance", () => {
         fold: true,
         fault: (op, key, opts) =>
           op === "put" && key === KEY && opts?.ifMatch !== undefined
-            ? new BaerlyError("Conflict", "simulated fold CAS loss")
+            ? new BaerlyError("WriteConflict", "simulated fold CAS loss")
             : null,
         headPuts: 2,
       },
@@ -1154,7 +1154,7 @@ describe("runBoundedMaintenance", () => {
       snapshot_rows: 0,
     });
     // Storage whose first GET (readCurrentJson inside the runner) throws
-    // a non-Conflict error.
+    // a non-WriteConflict error.
     const boom: Storage = {
       get(): Promise<StorageGetResult | null> {
         return Promise.reject(new Error("disk on fire"));
@@ -1211,7 +1211,7 @@ describe("retireLogs error policy (via the runners)", () => {
   };
 
   /**
-   * Throws `Conflict` on any conditional (`ifMatch`) current.json PUT —
+   * Throws `WriteConflict` on any conditional (`ifMatch`) current.json PUT —
    * retirement's floor CAS in this state. GC's `gc/pending.json`
    * bootstrap PUTs with `ifNoneMatch` and passes through untouched.
    */
@@ -1221,7 +1221,7 @@ describe("retireLogs error policy (via the runners)", () => {
     list: inner.list.bind(inner),
     async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
       if (key === KEY && opts?.ifMatch !== undefined) {
-        throw new BaerlyError("Conflict", "simulated retirement floor CAS loss");
+        throw new BaerlyError("WriteConflict", "simulated retirement floor CAS loss");
       }
       return inner.put(key, body, opts);
     },
@@ -1244,16 +1244,16 @@ describe("retireLogs error policy (via the runners)", () => {
     },
   });
 
-  test("Conflict from the floor CAS is swallowed — runScheduledMaintenance resolves, floor unpublished", async () => {
+  test("WriteConflict from the floor CAS is swallowed — runScheduledMaintenance resolves, floor unpublished", async () => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
-    // `Conflict` is routine CAS contention (the next pass retries), per
+    // `WriteConflict` is routine CAS contention (the next pass retries), per
     // the helper's documented error policy — must NOT reject.
     await runScheduledMaintenance(
       { storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY },
       { logRetention: { window: 5 } } as InternalMaintenanceOptions,
     );
-    // Non-vacuity: the swallowed Conflict came from retirement's own
+    // Non-vacuity: the swallowed WriteConflict came from retirement's own
     // floor CAS, so the floor was never published. (A wrapper hit on an
     // earlier compact/GC current.json CAS would have REJECTED the call —
     // runScheduledMaintenance propagates those — so resolving here plus
@@ -1262,7 +1262,7 @@ describe("retireLogs error policy (via the runners)", () => {
     expect(logDeleteFloorOf(after!.json)).toBe(0);
   });
 
-  test("a non-Conflict DELETE failure re-throws out of runScheduledMaintenance — after the floor CAS landed", async () => {
+  test("a non-WriteConflict DELETE failure re-throws out of runScheduledMaintenance — after the floor CAS landed", async () => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
     await expect(
@@ -1300,7 +1300,7 @@ describe("retireLogs error policy (via the runners)", () => {
     }
   });
 
-  test("Conflict through runBoundedMaintenance stays expected — no unexpected_error_total bump", async () => {
+  test("WriteConflict through runBoundedMaintenance stays expected — no unexpected_error_total bump", async () => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
     const recorder = await withRecorder(async () => {
@@ -1309,7 +1309,7 @@ describe("retireLogs error policy (via the runners)", () => {
         { logRetention: { window: 5 } },
       );
     });
-    // The helper swallows Conflict itself — it must never reach the
+    // The helper swallows WriteConflict itself — it must never reach the
     // outer catch, which is reserved for unexpected errors.
     expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBe(0);
   });

@@ -929,7 +929,7 @@ describe("compact", () => {
       ): Promise<StoragePutResult> {
         if (!failedOnce && key === KEY && opts?.ifMatch !== undefined) {
           failedOnce = true;
-          throw new BaerlyError("Conflict", "simulated checkpoint CAS loss");
+          throw new BaerlyError("WriteConflict", "simulated checkpoint CAS loss");
         }
         return inner.put(key, body, opts);
       },
@@ -979,7 +979,7 @@ describe("compact", () => {
       async put(k: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
         if (!failedOnce && k === KEY && opts?.ifMatch !== undefined) {
           failedOnce = true;
-          throw new BaerlyError("Conflict", "simulated CAS loss");
+          throw new BaerlyError("WriteConflict", "simulated CAS loss");
         }
         return inner.put(k, body, opts);
       },

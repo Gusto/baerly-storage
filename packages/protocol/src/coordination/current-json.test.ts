@@ -227,11 +227,11 @@ describe("createCurrentJson", () => {
     expect(r.etag).toMatch(/^"[0-9a-f]+"$/);
   });
 
-  plainTest("throws Conflict on existing key", async () => {
+  plainTest("throws WriteConflict on existing key", async () => {
     const s = new MemoryStorage();
     await createCurrentJson(s, "k", seedJson());
     await expect(createCurrentJson(s, "k", seedJson({ tail_hint: 1 }))).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
   });
 });
@@ -252,12 +252,12 @@ describe("casUpdateCurrentJson", () => {
     expect(got!.json.tail_hint).toBe(1);
   });
 
-  plainTest("throws Conflict deterministically when interleaved", async () => {
+  plainTest("throws WriteConflict deterministically when interleaved", async () => {
     const s = new MemoryStorage();
     await createCurrentJson(s, "k", seedJson());
     // Both reads complete before either put fires (Promise.allSettled
     // serializes neither). Both writes commit at the same etag; the
-    // storage layer surfaces the second one as `Conflict`.
+    // storage layer surfaces the second one as `WriteConflict`.
     let mutator1Calls = 0;
     let mutator2Calls = 0;
     const p1 = casUpdateCurrentJson(s, "k", (c) => {
@@ -272,7 +272,7 @@ describe("casUpdateCurrentJson", () => {
     const failed = results.filter((r) => r.status === "rejected");
     expect(failed.length).toBe(1);
     expect((failed[0] as PromiseRejectedResult).reason).toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
     expect(mutator1Calls).toBeGreaterThan(0);
     expect(mutator2Calls).toBeGreaterThan(0);
@@ -406,7 +406,7 @@ describe("claimWriter", () => {
       });
 
       await expect(claimWriter(storage, "k", "owner-a")).rejects.toMatchObject({
-        code: "Conflict",
+        code: "WriteConflict",
       });
 
       // The epoch bump from PUT #1 is durable — the patent claim's
@@ -887,7 +887,7 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
             claimed_at: r.json.writer_fence.claimed_at,
           });
         } catch (error) {
-          if (!(error instanceof BaerlyError) || error.code !== "Conflict") {
+          if (!(error instanceof BaerlyError) || error.code !== "WriteConflict") {
             throw error;
           }
         }
@@ -991,8 +991,8 @@ describe("claimWriter vs single-PUT counter-example (patent C1)", () => {
         } catch (error) {
           // The adversary may force a CAS loss on the stamp PUT under
           // a poorly-behaved peer, but in this single-writer setup
-          // there are no peers; any thrown Conflict is unexpected.
-          if (!(error instanceof BaerlyError) || error.code !== "Conflict") {
+          // there are no peers; any thrown WriteConflict is unexpected.
+          if (!(error instanceof BaerlyError) || error.code !== "WriteConflict") {
             throw error;
           }
         }
@@ -1757,8 +1757,8 @@ describe("assertCurrentJson — log_delete_floor guard", () => {
 });
 
 describe("translateCasError — all three branches", () => {
-  // L556: `e instanceof BaerlyError && e.code === "Conflict"`
-  // Survivors: ConditionalExpression→true/false, EqualityOperator (code!=="Conflict"),
+  // L556: `e instanceof BaerlyError && e.code === "WriteConflict"`
+  // Survivors: ConditionalExpression→true/false, EqualityOperator (code!=="WriteConflict"),
   // LogicalOperator (&&→||), StringLiteral in message.
   //
   // To exercise translateCasError from the outside we trigger storage CAS failures
@@ -1767,17 +1767,17 @@ describe("translateCasError — all three branches", () => {
   // third branch (L562).
 
   plainTest(
-    "Conflict on createCurrentJson comes back as code:Conflict with 'CAS lost' annotation",
+    "WriteConflict on createCurrentJson comes back as code:WriteConflict with 'CAS lost' annotation",
     async () => {
       const s = new MemoryStorage();
       await createCurrentJson(s, "k-cas", seedJson());
       const err = await createCurrentJson(s, "k-cas", seedJson()).catch((error: unknown) => error);
       expect(err).toBeInstanceOf(BaerlyError);
-      expect((err as BaerlyError).code).toBe("Conflict");
+      expect((err as BaerlyError).code).toBe("WriteConflict");
       // L556 ConditionalExpression→false kill: message must contain the "CAS lost" annotation.
       // When the first branch body is emptied (BlockStatement→{}) or its condition is →false,
       // translateCasError falls to `return e` and the annotation is absent.
-      // L556 StringLiteral→"": "Conflict" → "" means the condition is never true;
+      // L556 StringLiteral→"": "WriteConflict" → "" means the condition is never true;
       // same fallthrough; annotation absent.
       // Using a distinctive key "k-cas" ensures the message contains it (kills L557 StringLiteral).
       expect((err as BaerlyError).message).toMatch(/CAS lost/);
@@ -1786,7 +1786,7 @@ describe("translateCasError — all three branches", () => {
   );
 
   plainTest(
-    "Conflict on casUpdateCurrentJson comes back as code:Conflict with key in message",
+    "WriteConflict on casUpdateCurrentJson comes back as code:WriteConflict with key in message",
     async () => {
       const s = new MemoryStorage();
       await createCurrentJson(s, "k2", seedJson());
@@ -1794,12 +1794,12 @@ describe("translateCasError — all three branches", () => {
       const etag1 = (await readCurrentJson(s, "k2"))!.etag;
       // Manually put something to invalidate etag1 by advancing past it
       await casUpdateCurrentJson(s, "k2", (c) => ({ ...c, tail_hint: 1 }));
-      // Now try a manual put at the stale etag to force Conflict
+      // Now try a manual put at the stale etag to force WriteConflict
       const err = await s
         .put("k2", new TextEncoder().encode(JSON.stringify(seedJson())), { ifMatch: etag1 })
         .catch((error: unknown) => error);
-      // The storage itself throws Conflict; we just verify it's a BaerlyError
-      expect((err as BaerlyError).code).toBe("Conflict");
+      // The storage itself throws WriteConflict; we just verify it's a BaerlyError
+      expect((err as BaerlyError).code).toBe("WriteConflict");
     },
   );
 
@@ -1832,7 +1832,7 @@ describe("translateCasError — all three branches", () => {
   );
 
   plainTest(
-    "BaerlyError (non-Conflict) from storage passes through unchanged (second branch)",
+    "BaerlyError (non-WriteConflict) from storage passes through unchanged (second branch)",
     async () => {
       // Build a Storage that throws a BaerlyError{code:"NetworkError"} on put.
       const inner = new MemoryStorage();
@@ -1980,10 +1980,10 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
   });
 
   plainTest(
-    "claimWriter provisional PUT Conflict (L373 NoCoverage): Conflict before first PUT",
+    "claimWriter provisional PUT WriteConflict (L373 NoCoverage): WriteConflict before first PUT",
     async () => {
       // L373 NoCoverage: the catch block wrapping the provisional storage.put inside
-      // claimWriter. To reach it, the provisional PUT itself must throw Conflict — meaning
+      // claimWriter. To reach it, the provisional PUT itself must throw WriteConflict — meaning
       // another writer landed between claimWriter's read and its first PUT.
       //
       // Strategy: use a storage whose get() returns the INITIAL etag but ALSO fires a
@@ -2013,10 +2013,10 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
         list: (p, o) => inner.list(p, o),
         put: (k: string, b: Uint8Array, o?: StoragePutOptions) => inner.put(k, b, o),
       };
-      // claimWriter reads with staleEtag, then tries PUT ifMatch:staleEtag → Conflict
-      // because inner is already at a newer etag → L373 catch fires → throws Conflict.
+      // claimWriter reads with staleEtag, then tries PUT ifMatch:staleEtag → WriteConflict
+      // because inner is already at a newer etag → L373 catch fires → throws WriteConflict.
       await expect(claimWriter(raceStorage, "k", "owner")).rejects.toMatchObject({
-        code: "Conflict",
+        code: "WriteConflict",
         message: expect.stringMatching(/CAS lost/),
       });
     },
@@ -2057,22 +2057,22 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
 
   plainTest("L365 ObjectLiteral→{} kill: concurrent claimWriter — exactly one wins", async () => {
     // L365 ObjectLiteral→{}: putOpts={} — no ifMatch. An unconditional PUT always succeeds,
-    // so two concurrent claimWriter calls would BOTH succeed (neither gets Conflict).
-    // This test fires two concurrent claims; exactly one must throw Conflict.
+    // so two concurrent claimWriter calls would BOTH succeed (neither gets WriteConflict).
+    // This test fires two concurrent claims; exactly one must throw WriteConflict.
     const s = new MemoryStorage();
     await createCurrentJson(s, "k", seedJson());
     // Both calls read the same initial etag (epoch=0). Without L365 mutant, the second
-    // call's provisional PUT has ifMatch= stale etag → Conflict. With the mutant, both
+    // call's provisional PUT has ifMatch= stale etag → WriteConflict. With the mutant, both
     // PUTs are unconditional → both succeed → results.filter(rejected).length is 0.
     const results = await Promise.allSettled([
       claimWriter(s, "k", "writer-A"),
       claimWriter(s, "k", "writer-B"),
     ]);
     const failed = results.filter((r) => r.status === "rejected");
-    // Exactly one must fail with Conflict
+    // Exactly one must fail with WriteConflict
     expect(failed.length).toBe(1);
     expect((failed[0] as PromiseRejectedResult).reason).toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
     // The epoch from the successful claim must be exactly 1 above the initial
     const succeeded = results.filter((r) => r.status === "fulfilled") as Array<
@@ -2082,7 +2082,7 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
     expect(succeeded[0]!.value.json.writer_fence.epoch).toBe(1);
   });
 
-  plainTest("claimWriter Conflict wraps correctly with key in message", async () => {
+  plainTest("claimWriter WriteConflict wraps correctly with key in message", async () => {
     const inner = new MemoryStorage();
     await createCurrentJson(inner, "k", seedJson());
     // Use an interposing storage that, after the first put, fires a conflicting write
@@ -2092,22 +2092,25 @@ describe("claimWriter — signal propagation and lease_until forwarding", () => 
     });
     const err = await claimWriter(storage, "k", "owner").catch((error: unknown) => error);
     expect(err).toBeInstanceOf(BaerlyError);
-    expect((err as BaerlyError).code).toBe("Conflict");
+    expect((err as BaerlyError).code).toBe("WriteConflict");
     // L557 StringLiteral: message must contain the key
     expect((err as BaerlyError).message).toContain("k");
   });
 
-  plainTest("claimWriter stamp-PUT Conflict loses cleanly (key in Conflict message)", async () => {
-    // Same as the two-phase peer test but verifying the message contains key.
-    const inner = new MemoryStorage();
-    await createCurrentJson(inner, "k-stamp", seedJson());
-    const storage = new InterposingStorage(inner, async () => {
-      await casUpdateCurrentJson(inner, "k-stamp", (c) => ({ ...c, tail_hint: c.tail_hint + 1 }));
-    });
-    const err = await claimWriter(storage, "k-stamp", "owner").catch((error: unknown) => error);
-    expect((err as BaerlyError).code).toBe("Conflict");
-    expect((err as BaerlyError).message).toContain("k-stamp");
-  });
+  plainTest(
+    "claimWriter stamp-PUT WriteConflict loses cleanly (key in WriteConflict message)",
+    async () => {
+      // Same as the two-phase peer test but verifying the message contains key.
+      const inner = new MemoryStorage();
+      await createCurrentJson(inner, "k-stamp", seedJson());
+      const storage = new InterposingStorage(inner, async () => {
+        await casUpdateCurrentJson(inner, "k-stamp", (c) => ({ ...c, tail_hint: c.tail_hint + 1 }));
+      });
+      const err = await claimWriter(storage, "k-stamp", "owner").catch((error: unknown) => error);
+      expect((err as BaerlyError).code).toBe("WriteConflict");
+      expect((err as BaerlyError).message).toContain("k-stamp");
+    },
+  );
 });
 
 describe("createCurrentJson — assertCurrentJson pre-flight", () => {

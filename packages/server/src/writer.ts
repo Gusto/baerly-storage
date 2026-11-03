@@ -94,7 +94,7 @@ export interface WriterOptions {
    * Max transient retries per commit, shared by same-slot resends after
    * `NetworkError` and readbacks of a rejected create's slot. An exhausted
    * budget still gets one final readback. Also caps outer retryable
-   * `Conflict` attempts before throwing `WriteConflict`.
+   * `WriteConflict` attempts before throwing `WriteConflict`.
    * Foreign log-create 412s are resolved inside a single attempt by
    * occupant read-back plus bounded forward re-probe; this budget is
    * retained for future retryable conflicts and tests.
@@ -371,21 +371,21 @@ export class Writer {
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
 
-    // NOTE: with the post-commit fence-verify removed, no `Conflict`
+    // NOTE: with the post-commit fence-verify removed, no `WriteConflict`
     // currently escapes `#singleAttemptCommit` — a log-create 412 is
     // always resolved internally (own-session adoption or a bounded
     // forward-probe to the next empty slot; only an exhausted probe cap
-    // throws, as `Internal`, not `Conflict`). So the retry-catch arm and
+    // throws, as `Internal`, not `WriteConflict`). So the retry-catch arm and
     // the budget-exhausted `WriteConflict` throw below are presently
     // unreachable. They are retained deliberately: they cost nothing on
     // the happy path and re-arm automatically if a future change ever
-    // re-introduces a retryable `Conflict` out of the helper.
+    // re-introduces a retryable `WriteConflict` out of the helper.
     for (let attempt = 1; attempt <= this.#maxRetries; attempt++) {
       let success: SingleAttemptSuccess;
       try {
         success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
       } catch (error) {
-        // Only a retryable `Conflict` (see NOTE above — currently none)
+        // Only a retryable `WriteConflict` (see NOTE above — currently none)
         // backs off and retries. Anything else propagates.
         if (!isPreconditionFailed(error)) {
           throw error;
@@ -872,7 +872,7 @@ export class Writer {
    * bucket / fresh collection).
    *
    * Concurrency: `createCurrentJson` uses `If-None-Match: "*"`. If a
-   * peer raced us and won, the storage layer surfaces `Conflict`; we
+   * peer raced us and won, the storage layer surfaces `WriteConflict`; we
    * recover by re-reading the now-present manifest. We do NOT retry
    * the create — a single recover-via-read covers every race that
    * could have produced our null read.
@@ -888,7 +888,7 @@ export class Writer {
    *
    * @throws BaerlyError code="InvalidResponse" — the post-recover
    *   re-read also returned null. Defensive guard; in practice
-   *   unreachable because the Conflict implies the key now exists.
+   *   unreachable because the WriteConflict implies the key now exists.
    */
   async #provisionCurrentJson(): Promise<CurrentJsonRead> {
     const initial: CurrentJson = {
@@ -904,7 +904,7 @@ export class Writer {
     try {
       return await createCurrentJson(this.#storage, this.#currentJsonKey, initial);
     } catch (error) {
-      if (!(error instanceof BaerlyError) || error.code !== "Conflict") {
+      if (!(error instanceof BaerlyError) || error.code !== "WriteConflict") {
         throw error;
       }
     }
@@ -1322,10 +1322,10 @@ export class Writer {
 /**
  * `true` when the underlying storage surfaced a `PreconditionFailed`
  * 412 (or its non-S3 equivalents). Every in-tree {@link Storage} impl
- * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`.
+ * surfaces a lost CAS as `BaerlyError{code:"WriteConflict"}`.
  */
 const isPreconditionFailed = (err: unknown): boolean =>
-  err instanceof BaerlyError && err.code === "Conflict";
+  err instanceof BaerlyError && err.code === "WriteConflict";
 
 /**
  * `true` when a log-create PUT failed transiently (a `NetworkError`) —

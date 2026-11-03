@@ -28,7 +28,7 @@ import { type DoctorFinding, type DoctorReport, rollupStatus } from "./cloudflar
  * live object will ever carry generation `"1"` — a mismatch here is
  * guaranteed, and (unlike the CAS probe's default quoted-string
  * sentinel) it is syntactically valid for `x-goog-if-generation-match`,
- * so GCS answers with 412 (Conflict) rather than 400 (malformed
+ * so GCS answers with 412 (WriteConflict) rather than 400 (malformed
  * precondition). Mirrors the conformance suite's GCS `staleEtag`
  * override in `packages/protocol/src/storage/conformance.ts`.
  */

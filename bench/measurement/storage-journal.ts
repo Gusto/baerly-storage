@@ -114,7 +114,7 @@ const stringField = (error: unknown, field: "name" | "message" | "code"): string
 };
 
 const CODE_TO_CLASS: Readonly<Record<string, StorageErrorClass>> = {
-  Conflict: "conflict",
+  WriteConflict: "conflict",
   NetworkError: "network_error",
   InvalidResponse: "invalid_response",
   Internal: "internal",
@@ -450,7 +450,7 @@ export const wrapJournaledStorage = (input: {
   };
 
   /**
-   * Conflict leaves prior state unchanged; any other failure class removes the
+   * WriteConflict leaves prior state unchanged; any other failure class removes the
    * key from the exactly-known set and records WHY. The evidence row is what
    * lets a downstream consumer narrow (see `aborted_at_dispatch`) without this
    * module assuming anything the `Storage` contract does not state.

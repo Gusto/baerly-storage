@@ -57,7 +57,7 @@ describe("GcsHttpStorage", () => {
     expect(hasHeader).toBe(false);
   });
 
-  test("412 maps to Conflict for a create collision (ifNoneMatch:'*')", async () => {
+  test("412 maps to WriteConflict for a create collision (ifNoneMatch:'*')", async () => {
     const s = new GcsHttpStorage({
       bucket: "b",
       sign: passthroughSign,
@@ -66,11 +66,11 @@ describe("GcsHttpStorage", () => {
       ),
     });
     await expect(s.put("log/1", new Uint8Array([1]), { ifNoneMatch: "*" })).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
   });
 
-  test("412 maps to Conflict for a stale CAS (ifMatch)", async () => {
+  test("412 maps to WriteConflict for a stale CAS (ifMatch)", async () => {
     const s = new GcsHttpStorage({
       bucket: "b",
       sign: passthroughSign,
@@ -78,7 +78,7 @@ describe("GcsHttpStorage", () => {
     });
     await expect(
       s.put("current.json", new Uint8Array([1]), { ifMatch: "stale" }),
-    ).rejects.toMatchObject({ code: "Conflict" });
+    ).rejects.toMatchObject({ code: "WriteConflict" });
   });
 
   test("put surfaces AccessDenied on 403", async () => {

@@ -154,7 +154,7 @@ export const readGcPending = async (
  * `If-None-Match: "*"`). Use this once per collection at first GC
  * run; subsequent updates go through {@link casUpdateGcPending}.
  *
- * @throws BaerlyError{code:"Conflict"} — the key already exists.
+ * @throws BaerlyError{code:"WriteConflict"} — the key already exists.
  * @throws BaerlyError{code:"InvalidResponse"} — `initial` fails the
  *         runtime shape guard.
  */
@@ -184,10 +184,10 @@ export const createGcPending = async (
  * Read-modify-write `gc/pending.json` under CAS, with a bounded retry
  * loop. Each attempt re-reads the latest body, hands the `mutator`
  * that latest value, and writes the result with
- * `If-Match: <latest etag>`. On `Conflict` (a concurrent writer landed
+ * `If-Match: <latest etag>`. On `WriteConflict` (a concurrent writer landed
  * between this attempt's read and write) the loop re-reads and
  * re-applies the mutator, up to {@link GC_PENDING_CAS_MAX_ATTEMPTS}
- * total attempts, then surfaces `Conflict`.
+ * total attempts, then surfaces `WriteConflict`.
  *
  * `mutator` MUST be a pure, deterministic MERGE of this pass's results
  * INTO the `latest` value it is handed — it is called once per attempt
@@ -197,23 +197,23 @@ export const createGcPending = async (
  * If-Match succeeds (it used the fresh etag), so no conflict is
  * raised, and the concurrent marks are lost. See {@link mergeGcPending}.
  *
- * @throws BaerlyError{code:"Conflict"} — another writer kept landing a
+ * @throws BaerlyError{code:"WriteConflict"} — another writer kept landing a
  *         write between this function's read and write for every
  *         attempt, OR `key` does not exist. The missing-key case is a
  *         CAS precondition failure, not a separate class of fault: the
  *         pre-read is an optimisation, and a bare
  *         `If-Match: <etag>` PUT against a key another actor deleted
- *         would have surfaced `412` → `Conflict` from the storage layer
+ *         would have surfaced `412` → `WriteConflict` from the storage layer
  *         anyway. It is deliberately NOT retried — a deleted ledger
  *         stays deleted until someone calls {@link createGcPending},
  *         which the next `runGc` pass does. `baerly admin restore`
  *         deletes `gc/pending.json` on both reseed branches, so a
  *         concurrent pass reaches this routinely; `runGc` treats
- *         `Conflict` as benign best-effort.
+ *         `WriteConflict` as benign best-effort.
  * @throws BaerlyError{code:"InvalidResponse"} — the stored body doesn't
  *         parse or fails the shape guard. Kept distinct from the
  *         missing-key case on purpose: a caller that tolerates
- *         `Conflict` as a race must not thereby swallow a corrupt
+ *         `WriteConflict` as a race must not thereby swallow a corrupt
  *         ledger, which fails identically on every future pass.
  */
 export const casUpdateGcPending = async (
@@ -226,7 +226,7 @@ export const casUpdateGcPending = async (
   for (let attempt = 0; attempt < GC_PENDING_CAS_MAX_ATTEMPTS; attempt++) {
     const existing = await readGcPending(storage, key, opts);
     if (existing === null) {
-      // `Conflict`, not `InvalidResponse`: the object was there when the
+      // `WriteConflict`, not `InvalidResponse`: the object was there when the
       // caller decided to update it and is not there now, which is the
       // If-Match precondition failing — the same 412 the storage layer
       // would have raised had this helper skipped its pre-read. Callers
@@ -235,7 +235,7 @@ export const casUpdateGcPending = async (
       // also having to tolerate `InvalidResponse`, which stays reserved
       // for a body that is present but broken.
       throw new BaerlyError(
-        "Conflict",
+        "WriteConflict",
         `gc/pending.json at ${key} does not exist; it was deleted concurrently, or was never created — see createGcPending`,
       );
     }
@@ -252,9 +252,9 @@ export const casUpdateGcPending = async (
       return { json: next, etag: result.etag };
     } catch (error) {
       const translated = translateCasError(error, key);
-      // Only `Conflict` is retryable — re-read latest and re-merge.
+      // Only `WriteConflict` is retryable — re-read latest and re-merge.
       // Anything else (AccessDenied, InvalidResponse, …) is terminal.
-      if (translated.code !== "Conflict") {
+      if (translated.code !== "WriteConflict") {
         throw translated;
       }
       lastConflict = translated;
@@ -425,13 +425,13 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
 
 /**
  * Wrap a storage-level error with `gc/pending.json at <key>`
- * location context. `Conflict` (the storage layer's CAS-lost signal)
+ * location context. `WriteConflict` (the storage layer's CAS-lost signal)
  * is re-thrown with an annotated message; other `BaerlyError`s pass
  * through; non-`BaerlyError` falls through as `InvalidResponse`.
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
-  if (e instanceof BaerlyError && e.code === "Conflict") {
-    return new BaerlyError("Conflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, e);
+  if (e instanceof BaerlyError && e.code === "WriteConflict") {
+    return new BaerlyError("WriteConflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, e);
   }
   if (e instanceof BaerlyError) {
     return e;

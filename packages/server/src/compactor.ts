@@ -597,7 +597,7 @@ export const compact = async (
 /**
  * `true` when an `If-Match` CAS guard lost. Every in-tree
  * {@link Storage} impl surfaces a lost CAS as
- * `BaerlyError{code:"Conflict"}`.
+ * `BaerlyError{code:"WriteConflict"}`.
  */
 const isCasConflict = (err: unknown): boolean =>
-  err instanceof BaerlyError && err.code === "Conflict";
+  err instanceof BaerlyError && err.code === "WriteConflict";

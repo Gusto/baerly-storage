@@ -182,7 +182,7 @@ describe("Writer create fate", () => {
         ): Promise<StoragePutResult> {
           if (isLogCreate(key, opts)) {
             this.#conflicted = true;
-            throw new BaerlyError("Conflict", "412 precondition failed");
+            throw new BaerlyError("WriteConflict", "412 precondition failed");
           }
           return super.put(key, body, opts);
         }
@@ -378,7 +378,7 @@ describe("Writer create fate", () => {
         // internal retry saw the durable object as a 412.
         await super.put(key, body, opts);
         this.#created = true;
-        throw new BaerlyError("Conflict", "412 precondition failed");
+        throw new BaerlyError("WriteConflict", "412 precondition failed");
       }
 
       override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {

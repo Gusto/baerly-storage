@@ -57,7 +57,7 @@ describe("MemoryStorage list() UTF-8 byte order", () => {
 // Stryker mutates the message string literals to ""; asserting the
 // message text kills those StringLiteral survivors on L90/97/103.
 // --------------------------------------------------------------------
-describe("MemoryStorage put() — Conflict error messages", () => {
+describe("MemoryStorage put() — WriteConflict error messages", () => {
   const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 
   test("ifNoneMatch='*' conflict message includes the key and reason", async () => {

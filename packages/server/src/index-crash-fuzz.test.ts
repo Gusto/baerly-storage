@@ -195,7 +195,7 @@ describe("index emission survives a single crash anywhere in the commit", () => 
           expect((cause as AggregateError).errors[0]).toMatchObject({ name: "AbortError" });
         } else if (
           !(error instanceof Error) ||
-          !(error.name === "AbortError" || (error as { code?: string }).code === "Conflict")
+          !(error.name === "AbortError" || (error as { code?: string }).code === "WriteConflict")
         ) {
           throw error;
         }

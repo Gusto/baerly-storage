@@ -56,7 +56,7 @@ const APPLICATION_JSON = "application/json";
  * have produced — storage is unchanged. `kept` counts pre-existing
  * intersection keys (`expected ∩ actual`) at function entry. In a real
  * run, `kept` may also include keys promoted from `added` via the
- * Conflict-race fallback (a PUT with `ifNoneMatch:"*"` returned 412
+ * WriteConflict-race fallback (a PUT with `ifNoneMatch:"*"` returned 412
  * because a peer wrote the same key first, so the key was already
  * in place by the time we observed it); dryRun mode never issues
  * those PUTs and therefore does not observe that race.
@@ -104,7 +104,7 @@ export interface RebuildIndexOptions {
    *
    * `kept` is reported as the pre-existing intersection
    * (`expected ∩ actual`); a real run can additionally fold
-   * Conflict-race-demoted PUTs into `kept`, which dryRun does not
+   * WriteConflict-race-demoted PUTs into `kept`, which dryRun does not
    * observe. See {@link RebuildIndexResult}.
    */
   readonly dryRun?: boolean;
@@ -228,7 +228,7 @@ export const rebuildIndex = async (
       // 412 = a peer wrote the entry between our `list` and our
       // PUT. The entry exists; we couldn't have written different
       // bytes (zero-byte body); count it as kept and move on.
-      if (error instanceof BaerlyError && error.code === "Conflict") {
+      if (error instanceof BaerlyError && error.code === "WriteConflict") {
         kept += 1;
       } else {
         throw error;

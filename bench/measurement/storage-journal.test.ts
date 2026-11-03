@@ -342,7 +342,7 @@ describe("operation journal", () => {
   test("classifies every error class and rethrows the same object", async () => {
     const cases: readonly { readonly thrown: unknown; readonly expected: string }[] = [
       { thrown: abortedError(), expected: "aborted" },
-      { thrown: new BaerlyError("Conflict", "precondition failed"), expected: "conflict" },
+      { thrown: new BaerlyError("WriteConflict", "precondition failed"), expected: "conflict" },
       { thrown: new BaerlyError("NetworkError", "503"), expected: "network_error" },
       { thrown: new BaerlyError("InvalidResponse", "bad xml"), expected: "invalid_response" },
       { thrown: new BaerlyError("Internal", "bug"), expected: "internal" },
@@ -507,12 +507,12 @@ describe("billing class", () => {
 
   test("a failed operation still counts — the request was still billed", async () => {
     const stub = new StubStorage();
-    stub.failOn.set("put:x", new BaerlyError("Conflict", "precondition failed"));
+    stub.failOn.set("put:x", new BaerlyError("WriteConflict", "precondition failed"));
     const { storage, journal } = wrapJournaledStorage({
       attemptId: asAttemptId("attempt-bill-2"),
       storage: stub,
     });
-    await expect(storage.put("x", enc("v"))).rejects.toMatchObject({ code: "Conflict" });
+    await expect(storage.put("x", enc("v"))).rejects.toMatchObject({ code: "WriteConflict" });
     expect(journal.billingSummary()).toEqual({ class_a: 1, class_b: 0, free: 0 });
   });
 });
@@ -647,13 +647,13 @@ describe("namespace journal", () => {
 
   test("a conflicting PUT leaves namespace truth unchanged", async () => {
     const stub = new StubStorage();
-    stub.failOn.set("put:c", new BaerlyError("Conflict", "precondition failed"));
+    stub.failOn.set("put:c", new BaerlyError("WriteConflict", "precondition failed"));
     const { storage, journal } = wrapJournaledStorage({
       attemptId: asAttemptId("attempt-ns-2"),
       storage: stub,
     });
     journal.recordProvisioned([{ key: "c", byte_length: 3 }]);
-    await expect(storage.put("c", enc("zzzz"))).rejects.toMatchObject({ code: "Conflict" });
+    await expect(storage.put("c", enc("zzzz"))).rejects.toMatchObject({ code: "WriteConflict" });
     const snapshot = journal.snapshotNamespace();
     expect(snapshot.exact).toBe(true);
     expect(snapshot.entries).toEqual([

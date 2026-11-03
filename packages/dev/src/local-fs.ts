@@ -136,7 +136,7 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  *
  * Scope of that guarantee, precisely: **one loaded copy of this module**.
  * Within it, concurrent CAS on one key admits exactly one winner and the
- * losers get `Conflict`, across any number of `LocalFsStorage` instances
+ * losers get `WriteConflict`, across any number of `LocalFsStorage` instances
  * whose roots resolve — through symlinks — to the same directory. That is
  * one process in every normal setup, but the lock lives in a module-level
  * map, so a process that somehow loads both this source and the bundled
@@ -245,7 +245,7 @@ export class LocalFsStorage implements Storage {
       } catch (error) {
         if (isErrnoException(error) && error.code === "EEXIST") {
           throw new BaerlyError(
-            "Conflict",
+            "WriteConflict",
             `PUT ${key}: precondition failed (ifNoneMatch="*" but key exists)`,
           );
         }
@@ -256,7 +256,7 @@ export class LocalFsStorage implements Storage {
         );
       } finally {
         // Best-effort cleanup — a failed write may leave a partial temp,
-        // and a cleanup failure must not mask a Conflict thrown above.
+        // and a cleanup failure must not mask a WriteConflict thrown above.
         await rm(tmp, { force: true }).catch(() => {});
       }
       return { etag: newEtag, serverDate: new Date() };
@@ -269,14 +269,14 @@ export class LocalFsStorage implements Storage {
       const existing = await readExisting(path);
       if (existing === null) {
         throw new BaerlyError(
-          "Conflict",
+          "WriteConflict",
           `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but key does not exist)`,
         );
       }
       const currentEtag = etagOf(existing);
       if (currentEtag !== opts.ifMatch) {
         throw new BaerlyError(
-          "Conflict",
+          "WriteConflict",
           `PUT ${key}: precondition failed (ifMatch=${opts.ifMatch} but current ETag is ${currentEtag})`,
         );
       }
