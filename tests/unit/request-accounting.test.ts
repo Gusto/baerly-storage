@@ -9,10 +9,10 @@
  * derived from the constants:
  *
  * - each `Storage.put` makes `1 + retries` HTTP attempts
- *   (adapter default `S3_REQUEST_MAX_RETRIES`);
+ *   (adapter default `STORAGE_RETRY_MAX_ATTEMPTS`, 3, in total);
  * - `Writer` resends a transient log create up to `maxRetries` times
- *   (default `S3_REQUEST_MAX_RETRIES`), one budget shared with occupant
- *   readbacks.
+ *   (default `WRITER_COMMIT_MAX_RETRIES`, 8), one budget shared with
+ *   occupant readbacks.
  *
  * So an all-throttled create costs `(1 + maxRetries) × (1 + retries)`
  * HTTP PUTs while the outer meter sees `1 + maxRetries` puts.
@@ -23,8 +23,9 @@ import {
   type BaerlyError,
   createCurrentJson,
   MemoryStorage,
-  S3_REQUEST_MAX_RETRIES,
+  STORAGE_RETRY_MAX_ATTEMPTS,
   type Storage,
+  WRITER_COMMIT_MAX_RETRIES,
 } from "@baerly/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -177,7 +178,7 @@ const outerShape = (c: CountingStorage) => ({ gets: c.gets, puts: c.puts, lists:
 
 /**
  * Seed `current.json`, then wire a counted `Writer` and arm the faults.
- * `maxRetries` omitted ⇒ the Writer default (`S3_REQUEST_MAX_RETRIES`).
+ * `maxRetries` omitted ⇒ the Writer default (`WRITER_COMMIT_MAX_RETRIES`).
  */
 const setup = async (opts: {
   retries?: number;
@@ -259,27 +260,28 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"]);
   });
 
-  test("defaults, every log PUT SlowDown — outer sees 9 log puts, transport issues 81", async () => {
+  test("defaults, every log PUT SlowDown — outer sees (1 + 8) = 9 log puts, transport issues 9 × 3 = 27", async () => {
     const { counted, issued, commit } = await setup({ fault: slowDown503 });
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(NETWORK_ERROR);
     expect(err.cause).toMatchObject({ notApplied: true });
-    const logPutCalls = 1 + S3_REQUEST_MAX_RETRIES;
+    const logPutCalls = 1 + WRITER_COMMIT_MAX_RETRIES;
     expect(counted.puts).toBe(HOT_PATH["PUT index"] + logPutCalls);
-    expect(issued.get("PUT log")).toBe(logPutCalls * (1 + S3_REQUEST_MAX_RETRIES));
-    expect(issued.get("PUT log")).toBe(81);
+    expect(issued.get("PUT log")).toBe(logPutCalls * STORAGE_RETRY_MAX_ATTEMPTS);
+    expect(issued.get("PUT log")).toBe(27);
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"]);
   });
 
-  test("defaults, every log PUT 500 (not a throttle) — 81 PUTs then a readback; AmbiguousCommit", async () => {
+  test("defaults, every log PUT 500 (not a throttle) — 9 × 3 = 27 PUTs then a readback; AmbiguousCommit", async () => {
     const { counted, issued, commit } = await setup({
       fault: () => ({ kind: "respond", response: new Response("boom", { status: 500 }) }),
     });
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(AMBIGUOUS_COMMIT);
-    const logPutCalls = 1 + S3_REQUEST_MAX_RETRIES;
+    const logPutCalls = 1 + WRITER_COMMIT_MAX_RETRIES;
     expect(counted.puts).toBe(HOT_PATH["PUT index"] + logPutCalls);
-    expect(issued.get("PUT log")).toBe(logPutCalls * (1 + S3_REQUEST_MAX_RETRIES));
+    expect(issued.get("PUT log")).toBe(logPutCalls * STORAGE_RETRY_MAX_ATTEMPTS);
+    expect(issued.get("PUT log")).toBe(27);
     // The resend budget is spent, so the final readback gets one outer
     // call; the slot is empty (404), so it is not retried.
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);

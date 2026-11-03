@@ -28,9 +28,9 @@ export const timestamp = (epoch: number): string => {
 /**
  * Delay for `ms` milliseconds, with optional cancellation. If
  * `signal` aborts before the delay elapses, the returned promise
- * rejects with `signal.reason`. Used by `S3HttpStorage`'s retry
- * loop so shutdown can interrupt an in-flight backoff instead of
- * waiting for it to complete.
+ * rejects with `signal.reason`. `retryStorageCall` uses it for its
+ * backoff without a signal, so a backoff it has started always runs
+ * to completion.
  */
 export const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise<void>((resolve, reject) => {

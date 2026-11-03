@@ -1,16 +1,23 @@
 /**
  * Characterization: binding calls `r2BindingStorage` issues behind ONE
- * outer `Storage` call. The adapter has no retry loop, so get / put /
- * delete are exactly one binding call each — success or failure. `list`
- * is one `bucket.list` per page, so an outer meter that counts one
- * `list` per call (`wrapCountingStorage`, `observableStorage`) undercounts
- * by the page count.
+ * outer `Storage` call. The adapter wraps every binding call in the
+ * shared storage retry policy, so a succeeding get / put / delete is one
+ * binding call and a failing one is `STORAGE_RETRY_MAX_ATTEMPTS` (3).
+ * `list` is one `bucket.list` per page (each page under the same
+ * budget), so an outer meter that counts one `list` per call
+ * (`wrapCountingStorage`, `observableStorage`) undercounts by the page
+ * count.
  *
  * Plain unit tests over a fake binding — runs in the default vitest
  * project, like `r2-binding-storage.test.ts`.
  */
 
-import { type BaerlyError, createCurrentJson, S3_REQUEST_MAX_RETRIES } from "@baerly/protocol";
+import {
+  type BaerlyError,
+  createCurrentJson,
+  STORAGE_RETRY_MAX_ATTEMPTS,
+  WRITER_COMMIT_MAX_RETRIES,
+} from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
 import { describe, expect, test } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
@@ -91,7 +98,7 @@ describe("r2BindingStorage request accounting", () => {
     expect([calls.get, calls.put, calls.delete]).toEqual([1, 1, 1]);
   });
 
-  test("a failing get / put / delete is one binding call — no adapter retries", async () => {
+  test("a failing get / put / delete is STORAGE_RETRY_MAX_ATTEMPTS (3) binding calls each — outer 1 each", async () => {
     const { bucket, calls } = mkBucket([], true);
     const counted = wrapCountingStorage(r2BindingStorage(bucket));
     for (const op of [
@@ -103,7 +110,9 @@ describe("r2BindingStorage request accounting", () => {
       expect(err.code).toBe(NETWORK_ERROR);
     }
     expect([counted.gets, counted.puts, counted.deletes]).toEqual([1, 1, 1]);
-    expect([calls.get, calls.put, calls.delete]).toEqual([1, 1, 1]);
+    const issued = STORAGE_RETRY_MAX_ATTEMPTS;
+    expect([calls.get, calls.put, calls.delete]).toEqual([issued, issued, issued]);
+    expect(issued).toBe(3);
   });
 
   test("3 pages — outer meter sees 1 list, binding sees 3", async () => {
@@ -153,7 +162,7 @@ const CURRENT_KEY = "app/test/tenant/t/manifests/tickets/current.json";
 const LOG_PREFIX = "app/test/tenant/t/manifests/tickets/log/";
 
 /** What the fault hook does to one log-create binding `put`. */
-type LogPutFault = "pass" | "throw" | "land-then-throw";
+type LogPutFault = "pass" | "throw" | "land-then-throw" | "deny";
 
 /**
  * An in-memory `R2Bucket` honoring the `onlyIf` shapes the adapter
@@ -203,6 +212,9 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault) => {
       if (fault === "throw") {
         return Promise.reject(new Error("internal error"));
       }
+      if (fault === "deny") {
+        return Promise.reject(new Error("permission denied"));
+      }
       const onlyIf = opts?.onlyIf as R2Conditional | undefined;
       const existing = objects.get(key);
       if (onlyIf?.etagDoesNotMatch === "*" && existing !== undefined) {
@@ -250,32 +262,51 @@ const setupWriter = async (logPutFault: (ordinal: number) => LogPutFault) => {
       docId: "one",
       body: { _id: "one", status: "open" },
     });
-  return { counted, calls: mem.calls, commit };
+  return { counted, calls: mem.calls, commit, storage };
 };
 
 describe("Writer commit over r2BindingStorage: binding calls behind the log create", () => {
   // The unfaulted path reads log/0 once (404 tail probe) before the create.
   const TAIL_PROBE_GETS = 1;
 
-  test("every log put throws — 1 + maxRetries binding PUTs (no adapter multiplier), one readback; AmbiguousCommit", async () => {
+  test("every log put throws — (1 + 8) outer puts × 3 binding calls = 27 binding PUTs, one readback; AmbiguousCommit", async () => {
     const { counted, calls, commit } = await setupWriter(() => "throw");
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(AMBIGUOUS_COMMIT);
     // A plain binding error carries no notApplied, so the slot is uncertain:
-    // the Writer resends its full default budget, one binding call each,
-    // then reads the empty slot back once (null ⇒ not retried).
-    expect(calls.logPuts).toBe(1 + S3_REQUEST_MAX_RETRIES);
+    // the Writer resends its full default budget, each outer put spending
+    // the adapter's 3 attempts, then reads the empty slot back once
+    // (null ⇒ not retried).
+    const outerPuts = 1 + WRITER_COMMIT_MAX_RETRIES;
+    expect(counted.puts).toBe(outerPuts);
+    expect(calls.logPuts).toBe(outerPuts * STORAGE_RETRY_MAX_ATTEMPTS);
+    expect(calls.logPuts).toBe(27);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
-    expect(counted.puts).toBe(1 + S3_REQUEST_MAX_RETRIES);
   });
 
-  test("lost ack (lands, then throws) — the resend is refused by the precondition, readback adopts; 2 binding PUTs", async () => {
+  test("lost ack (lands, then throws) — the adapter's own resend is refused by the precondition, readback adopts; outer 1 put, 2 binding PUTs", async () => {
     const { counted, calls, commit } = await setupWriter((n) =>
       n === 0 ? "land-then-throw" : "pass",
     );
     await expect(commit()).resolves.toMatchObject({ entry: { seq: 0 } });
     expect(calls.logPuts).toBe(2);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
-    expect(counted.puts).toBe(2);
+    expect(counted.puts).toBe(1);
+  });
+
+  // The first binding put lands, then fails generically; the adapter's
+  // retry then gets a permission-shaped rejection. The landed attempt
+  // means that rejection cannot prove the create absent.
+  const landThenDeny = (n: number): LogPutFault =>
+    (["land-then-throw", "deny"] as const)[n] ?? "pass";
+
+  test("a create denied after a landed attempt is an uncertain NetworkError, not AccessDenied", async () => {
+    const { storage, calls } = await setupWriter(landThenDeny);
+    const err = (await storage
+      .put(`${LOG_PREFIX}0.json`, new Uint8Array([1]), { ifNoneMatch: "*" })
+      .catch((error: unknown) => error)) as BaerlyError;
+    expect(err.code).toBe(NETWORK_ERROR);
+    expect((err.cause as { notApplied?: boolean } | undefined)?.notApplied).toBeUndefined();
+    expect(calls.logPuts).toBe(2);
   });
 });
