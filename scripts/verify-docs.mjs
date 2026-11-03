@@ -24,10 +24,8 @@ const STALE_AFTER_DAYS = 180;
 const findings = [];
 
 // Skip these directory NAMES anywhere they appear in the walk.
-// `superpowers` is the working-tree-only scratch space used by the
-// superpowers harness; it's gitignored, so it never appears in CI but
-// does locally, and its plan/spec files don't carry doc frontmatter.
-const SKIP_DIR_NAMES = new Set(["node_modules", "superpowers"]);
+// Planning artifacts live in root `.plans/`, outside this docs-only walk.
+const SKIP_DIR_NAMES = new Set(["node_modules"]);
 
 function walk(dir) {
   for (const name of readdirSync(dir)) {

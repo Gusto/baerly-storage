@@ -84,8 +84,7 @@ export const ARM_SYMMETRY_FOLD_READ_MAX_CHUNKS =
 
 export const WORKERD_CONVERSION_PROVENANCE = {
   status: "inherited-unverified",
-  source:
-    "docs/superpowers/programs/increase-workload-ceiling/plans/tickets/edit-scale-ceilings-workerd-factor.md; original driver 05-workerd-ratio.ts is deleted with no history",
+  source: "original driver 05-workerd-ratio.ts is deleted with no history",
   warning: "Converted workerd values are estimates, not measurements.",
   factors_by_cell: {
     "0.5MiB": 6.89,

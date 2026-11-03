@@ -1,7 +1,6 @@
 # Workload-ceiling study Worker
 
-Deployed evidence harness for the workload-ceiling study (parent plan Task 8,
-`docs/superpowers/programs/increase-workload-ceiling/`). This Worker is
+Deployed evidence harness for the workload-ceiling study. This Worker is
 measurement-only: it is not part of any published `@gusto/baerly-storage`
 entry point, it is not reachable from a user's application, and it changes no
 production behavior.

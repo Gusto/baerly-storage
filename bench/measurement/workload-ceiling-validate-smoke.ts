@@ -1,7 +1,6 @@
 /**
  * Post-collection correlation-field validator for the deployed
- * workload-ceiling smoke run (Lane A, ticket 3/4 of
- * `docs/superpowers/programs/increase-workload-ceiling/`).
+ * workload-ceiling smoke run.
  *
  * `workload-ceiling-collect.ts` already round-trips its output through
  * {@link decodeWorkloadCeilingRawEvent}, so a malformed event never reaches

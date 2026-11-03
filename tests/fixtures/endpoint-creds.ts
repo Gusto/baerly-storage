@@ -42,10 +42,8 @@ export async function loadEndpointCreds(file: string): Promise<EndpointCreds | n
  * NOTE: the "free" suffix names a credential set, NEVER a verified Workers
  * plan tier. The 2026-08-20 rehearsal found the account behind
  * `cloudflare-deploy-free.json` does NOT enforce the free plan's 10 ms CPU
- * limit (cpu_ms 52–54 succeeded), i.e. almost certainly a paid plan — see
- * `docs/superpowers/programs/increase-workload-ceiling/runbooks/
- * lane-b-preflight.md` § Q4 before treating `WORKLOAD_CEILING_TIER=free`
- * output as `cf-free` evidence.
+ * limit (cpu_ms 52–54 succeeded), i.e. almost certainly a paid plan. Do
+ * not treat `WORKLOAD_CEILING_TIER=free` output as `cf-free` evidence.
  *
  * Which tier a given run uses is decided by the study's own
  * `bench/measurement/workload-ceiling-tier.ts`, not here: this fixture is

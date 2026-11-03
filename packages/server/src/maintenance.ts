@@ -333,8 +333,6 @@ export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = profileToScheduledOption
 // on a CPU-killable Cloudflare isolate the kill would land mid-rebuild,
 // before any post-rebuild size check could fire, so the only safe gate
 // is one that never starts an over-ceiling fold.
-//
-// §8.3 of docs/superpowers/plans/2026-05-29-just-a-bucket-maintenance.md.
 // =====================================================================
 
 /**

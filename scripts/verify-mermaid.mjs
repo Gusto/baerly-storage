@@ -25,7 +25,7 @@
  *   1 — one or more blocks failed to parse (printed with file + error)
  *
  * Scope: all git-tracked `*.md` / `*.mdx` files (respects
- * `.gitignore`, so node_modules / dist / the gitignored superpowers
+ * `.gitignore`, so node_modules / dist / the gitignored .plans
  * scratch space are excluded for free).
  */
 import { readFileSync } from "node:fs";
