@@ -297,35 +297,71 @@ describe("createBaerlyClient", () => {
     },
   );
 
-  test("an unknown wire code is not retriable", async () => {
-    // An older server can still send the removed `Conflict` code; it
-    // fails closed rather than being retried.
-    const mock = new MockFetch();
-    mock.on("POST", "/v1/c/tickets", () =>
-      jsonResponse({ error: { code: "Conflict", message: "CAS lost", retriable: true } }, 409),
-    );
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+  test.each([
+    // An older server's removed `Conflict` code: a 4xx, so it fails closed.
+    ["Conflict", 409, "Internal", false],
+    // A newer server's code (e.g. backpressure): a 5xx, so it stays retriable.
+    ["SomeFutureCode", 503, "NetworkError", true],
+    // Throttling and request timeouts clear on their own, so they stay retriable.
+    ["Throttled", 429, "NetworkError", true],
+    ["SomeFutureCode", 408, "NetworkError", true],
+  ] as const)(
+    "an unknown wire code %s (%i) decodes by status as %s",
+    async (wireCode, status, code, retriable) => {
+      const wire = { code: wireCode, message: "from another version", retriable: true };
+      const mock = new MockFetch();
+      mock.on("POST", "/v1/c/tickets", () => jsonResponse({ error: wire }, status));
+      const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+      await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+        name: "BaerlyError",
+        code,
+        status,
+        retriable,
+        message: "from another version",
+        cause: wire,
+      });
+    },
+  );
+
+  test("an unknown wire code drops resolution, issues and _id that belong to it", async () => {
+    const wire = {
       code: "Conflict",
-      status: 409,
-      retriable: false,
-    });
+      message: "write conflict",
+      retriable: true,
+      resolution: "Re-read and retry.",
+      issues: [{ path: ["a"], message: "x" }],
+      _id: "row-1",
+    };
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () => jsonResponse({ error: wire }, 409));
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    const err = await client
+      .collection("tickets")
+      .insert({ x: 1 })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(err).toMatchObject({ code: "Internal", retriable: false, cause: wire });
+    const decoded = err as { resolution?: unknown; issues?: unknown; _id?: unknown };
+    expect(decoded.resolution).toBeUndefined();
+    expect(decoded.issues).toBeUndefined();
+    expect(decoded._id).toBeUndefined();
   });
 
-  test("client falls back to the code default when the server omits retriable", async () => {
-    // Older server: the envelope carries no `retriable` field. The client
-    // must fall back to the code-derived default (WriteConflict → retriable),
-    // not silently treat the missing field as non-retriable.
+  test.each([
+    [429, "NetworkError", true],
+    [408, "NetworkError", true],
+    [502, "NetworkError", true],
+    [404, "Internal", false],
+  ] as const)("an envelope-less %i decodes as %s", async (status, code, retriable) => {
     const mock = new MockFetch();
-    mock.on("POST", "/v1/c/tickets", () =>
-      jsonResponse({ error: { code: "WriteConflict", message: "CAS lost" } }, 409),
-    );
+    mock.on("GET", "/v1/c/tickets", () => new Response("upstream says no", { status }));
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
-      name: "BaerlyError",
-      code: "WriteConflict",
-      status: 409,
-      retriable: true,
+    await expect(client.collection("tickets").all()).rejects.toMatchObject({
+      code,
+      status,
+      retriable,
     });
   });
 });

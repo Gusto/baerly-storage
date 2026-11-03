@@ -194,6 +194,15 @@ export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyError
 ]);
 
 /**
+ * True iff `value` is a code this build knows. Wire decoders use it to
+ * catch a code minted by a newer server before it reaches `code`, where
+ * an unknown string would defeat both exhaustive switches and
+ * {@link isRetriableCode}.
+ */
+export const isBaerlyErrorCode = (value: unknown): value is BaerlyErrorCode =>
+  typeof value === "string" && (ERROR_CODES as readonly string[]).includes(value);
+
+/**
  * True iff `err` is a `WriteConflict`: a lost conditional write or CAS
  * race. The one predicate every kernel catch site uses, so the code's
  * meaning is tested in one place. Matches on `name` and `code` rather

@@ -1,4 +1,4 @@
-import { BaerlyError, type BaerlyErrorCode } from "@baerly/protocol";
+import { BaerlyError, isBaerlyErrorCode } from "@baerly/protocol";
 import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract.ts";
 
 /**
@@ -54,7 +54,8 @@ const parseSuccessfulJson = async (
  *   {@link BaerlyError} with `status` set to the wire HTTP code.
  *   Bodies that carry no envelope (a proxy or CDN answering for the
  *   server) still get a structured throw, with the code synthesized
- *   from the status: `NetworkError` for 5xx, `Internal` for 4xx.
+ *   from the status: `NetworkError` for 5xx, `Internal` for 4xx. An
+ *   envelope whose code this build doesn't know is treated the same way.
  * - 200 on non-`GET` (PATCH, future mutations) → raw parsed body
  *   as T (e.g. `{ modified }`).
  * - 200 on `GET /v1/since` → raw `SinceResponse` as T (no `data` unwrap).
@@ -98,28 +99,45 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
       // structured throw.
     }
     // No envelope means the response came from something between the
-    // caller and the server — a load balancer, CDN, or service mesh —
-    // so the server's own failure class is unavailable and we infer
-    // one from the status. A 5xx from that layer is a transport
-    // condition that clears when the backend comes back, and
-    // `NetworkError` is the only synthesized code whose default
-    // `retriable` says so. `Internal` does not: the React
-    // subscription pool treats a non-retriable error as permanently
-    // terminal, so labelling a rolling-deploy 502 `Internal` would
-    // park every live query on a dead poll until the user remounted.
-    // A 4xx without an envelope is a caller or routing fault, which
-    // retrying cannot clear — it stays `Internal`.
-    const synthesized: BaerlyErrorCode = res.status >= 500 ? "NetworkError" : "Internal";
-    const code: BaerlyErrorCode = envelope?.error?.code ?? synthesized;
-    const message = envelope?.error?.message ?? `HTTP ${res.status}`;
+    // caller and the server — a load balancer, CDN, rate limiter, or
+    // service mesh — so the server's own failure class is unavailable and
+    // we infer one from the status. 5xx, 408 Request Timeout and 429 Too
+    // Many Requests are transient conditions that clear on their own, and
+    // `NetworkError` is the only synthesized code whose `retriable` says
+    // so. `Internal` does not: the React subscription pool treats a
+    // non-retriable error as permanently terminal, so labelling a
+    // rolling-deploy 502 or an edge 429 `Internal` would park every live
+    // query on a dead poll until the user remounted. Any other 4xx without
+    // an envelope is a caller or routing fault that retrying cannot clear,
+    // so it stays `Internal`.
+    //
+    // A code this build doesn't know (minted by a newer server, or
+    // `Conflict` from an older one) gets the same status-derived code, so
+    // a newer server's 503 backpressure keeps a subscription reconnecting
+    // and `code` never holds a string outside `BaerlyErrorCode`. Only the
+    // message carries over: `resolution`, `issues` and `_id` belong to the
+    // undecoded code and would contradict the synthesized one, so the
+    // whole wire error rides on `cause` instead.
+    const wire = envelope?.error;
+    const wireCode = wire?.code;
+    if (wire !== undefined && isBaerlyErrorCode(wireCode)) {
+      throw new BaerlyError(
+        wireCode,
+        wire.message ?? `HTTP ${res.status}`,
+        undefined,
+        wire.issues,
+        res.status,
+        wire.resolution,
+        wire._id,
+      );
+    }
+    const transient = res.status >= 500 || res.status === 408 || res.status === 429;
     throw new BaerlyError(
-      code,
-      message,
+      transient ? "NetworkError" : "Internal",
+      wire?.message ?? `HTTP ${res.status}`,
+      wire,
       undefined,
-      envelope?.error?.issues,
       res.status,
-      envelope?.error?.resolution,
-      envelope?.error?._id,
     );
   }
 
