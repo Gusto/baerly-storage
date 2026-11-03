@@ -8,6 +8,8 @@ import {
 describe("CODE_RESOLUTIONS", () => {
   test("covers the actionable codes with a non-empty string", () => {
     for (const code of [
+      "WriteConflict",
+      "AlreadyExists",
       "AmbiguousCommit",
       "PayloadTooLarge",
       "Unauthorized",

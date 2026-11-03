@@ -53,6 +53,20 @@
       "summary": "Write conflicted (CAS exhausted, duplicate _id, guarded key)."
     },
     {
+      "code": "WriteConflict",
+      "httpStatus": 409,
+      "retriable": true,
+      "messagePolicy": "scrubbed",
+      "summary": "A concurrent write won the race; nothing was committed. Re-read, then retry."
+    },
+    {
+      "code": "AlreadyExists",
+      "httpStatus": 409,
+      "retriable": false,
+      "messagePolicy": "public",
+      "summary": "The create target already exists (duplicate _id); never retriable."
+    },
+    {
       "code": "AmbiguousCommit",
       "httpStatus": 409,
       "retriable": false,

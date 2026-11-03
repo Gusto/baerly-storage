@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 
-import { BaerlyError, RETRIABLE_CODES, isRetriableCode } from "./errors.ts";
+import {
+  BaerlyError,
+  ERROR_CODES,
+  RETRIABLE_CODES,
+  isRetriableCode,
+  type BaerlyErrorCode,
+} from "./errors.ts";
 
 describe("BaerlyError", () => {
   test("is an Error carrying name, code, and message", () => {
@@ -48,8 +54,34 @@ describe("BaerlyError", () => {
 });
 
 describe("retriable classification", () => {
-  test("RETRIABLE_CODES is exactly {NetworkError, Conflict}", () => {
-    expect([...RETRIABLE_CODES].toSorted()).toEqual(["Conflict", "NetworkError"]);
+  test("RETRIABLE_CODES is exactly {NetworkError, Conflict, WriteConflict}", () => {
+    expect([...RETRIABLE_CODES].toSorted()).toEqual(["Conflict", "NetworkError", "WriteConflict"]);
+  });
+
+  test("every code's default retriable value", () => {
+    const expected: Record<BaerlyErrorCode, boolean> = {
+      InvalidConfig: false,
+      NetworkError: true,
+      AccessDenied: false,
+      InvalidResponse: false,
+      Internal: false,
+      SchemaError: false,
+      Conflict: true,
+      WriteConflict: true,
+      AlreadyExists: false,
+      AmbiguousCommit: false,
+      Unauthorized: false,
+      NotFound: false,
+      PayloadTooLarge: false,
+      UnsatisfiablePredicate: false,
+      UseQueryAwaitedRecorder: false,
+      UnexpectedWriteInQuery: false,
+      MutationFailed: false,
+    };
+    const actual = Object.fromEntries(
+      ERROR_CODES.map((code) => [code, new BaerlyError(code, "x").retriable]),
+    );
+    expect(actual).toEqual(expected);
   });
   test("isRetriableCode reflects the set", () => {
     expect(isRetriableCode("NetworkError")).toBe(true);

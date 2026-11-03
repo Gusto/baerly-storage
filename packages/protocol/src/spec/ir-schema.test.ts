@@ -24,9 +24,9 @@ describe("spec IR shared enumerations", () => {
     const _check: readonly BaerlyErrorCode[] = ERROR_CODES;
     void _codeFromTuple;
     void _check;
-    // 15 codes in the live union (verified 2026-08-14). Bump deliberately
+    // 17 codes in the live union. Bump deliberately
     // when the union changes.
-    expect(ERROR_CODES.length).toBe(15);
+    expect(ERROR_CODES.length).toBe(17);
     expect(new Set(ERROR_CODES).size).toBe(ERROR_CODES.length); // no dupes
   });
 

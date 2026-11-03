@@ -77,6 +77,16 @@ describe("buildSpecIR", () => {
     expect(entry?.messagePolicy).toBe("scrubbed");
   });
 
+  test("WriteConflict is a retriable, scrubbed 409", () => {
+    const entry = ir.errorCodes.find((e) => e.code === "WriteConflict");
+    expect(entry).toMatchObject({ httpStatus: 409, retriable: true, messagePolicy: "scrubbed" });
+  });
+
+  test("AlreadyExists is a non-retriable, public 409", () => {
+    const entry = ir.errorCodes.find((e) => e.code === "AlreadyExists");
+    expect(entry).toMatchObject({ httpStatus: 409, retriable: false, messagePolicy: "public" });
+  });
+
   test("declares the /v1 routes including the new /v1/spec", () => {
     const paths = ir.httpRoutes.map((r) => r.path);
     expect(paths).toContain("/v1/spec");

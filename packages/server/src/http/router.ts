@@ -433,6 +433,8 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["AccessDenied", 403],
   ["NotFound", 404],
   ["Conflict", 409],
+  ["WriteConflict", 409],
+  ["AlreadyExists", 409],
   ["AmbiguousCommit", 409],
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
@@ -471,6 +473,9 @@ const ERROR_CODE_POLICY = {
   AccessDenied: {
     messagePolicy: "scrubbed",
     scrubbedMessage: "access denied",
+  },
+  AlreadyExists: {
+    messagePolicy: "public",
   },
   AmbiguousCommit: {
     messagePolicy: "scrubbed",
@@ -524,6 +529,11 @@ const ERROR_CODE_POLICY = {
   UseQueryAwaitedRecorder: {
     messagePolicy: "scrubbed",
     scrubbedMessage: "internal error",
+  },
+  WriteConflict: {
+    messagePolicy: "scrubbed",
+    scrubbedMessage:
+      "write conflict: another write changed this data first and nothing was committed; re-read and retry",
   },
 } as const satisfies Record<BaerlyErrorCode, ErrorCodePolicy>;
 

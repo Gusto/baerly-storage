@@ -33,6 +33,33 @@ export type BaerlyErrorCode =
    */
   | "Conflict"
   /**
+   * Another write won a race this call needed to win, and nothing from this
+   * call was committed. Re-read, then retry; `retriable` is `true`. Each
+   * `Collection` / `Query` verb re-reads on every call, so re-issuing the same
+   * call is the retry. The writer already retries the commit race internally,
+   * so this surfaces only after that budget is spent. Maintenance passes
+   * (`compact`, `runGc`, log retirement) raise it when a concurrent pass or
+   * writer moved `current.json` first; the next pass retries. HTTP maps this
+   * code to 409 with a generic message.
+   *
+   * `Storage` implementations throw this code for every rejected
+   * precondition: a stale `ifMatch`, an `ifMatch` against a missing key, or
+   * an `ifNoneMatch: "*"` create over an existing key. For a create-only put
+   * that followed an attempt of unknown outcome, the occupant may be this
+   * call's own earlier write. Callers that care read the key back.
+   */
+  | "WriteConflict"
+  /**
+   * The thing being created already exists, so the same request can never
+   * succeed; `retriable` is `false`. `Collection.insert` raises it for a
+   * caller-supplied `_id` that is already stored: insert under a different
+   * `_id`, omit `_id` to mint one, or change the stored row with `update` /
+   * `replace`. `baerly admin restore` raises it when the target collection
+   * already exists and `--force` was not passed. HTTP maps this code to 409
+   * and keeps the message, which names the id and collection.
+   */
+  | "AlreadyExists"
+  /**
    * A write's commit outcome cannot be resolved: one or more committing
    * `log/<seq>` creates may already be durable, but the writer cannot adopt or
    * report a confirmed commit. This includes an unresolved create acknowledgement
@@ -143,6 +170,8 @@ export const ERROR_CODES = [
   "Internal",
   "SchemaError",
   "Conflict",
+  "WriteConflict",
+  "AlreadyExists",
   "AmbiguousCommit",
   "Unauthorized",
   "NotFound",
@@ -171,6 +200,7 @@ void _errorCodesExhaustive;
 export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
   "NetworkError",
   "Conflict",
+  "WriteConflict",
 ]);
 
 /** True iff this error code's default failure class is retriable. */
