@@ -92,7 +92,7 @@ class R2BindingStorageImpl implements Storage {
     );
     if (result === null) {
       // Binding signals precondition failure as `null`.
-      throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
+      throw new BaerlyError("WriteConflict", `PUT ${key}: precondition failed`);
     }
     // `R2Object.uploaded` is the server-side write clock — surface it
     // verbatim. The kernel's adaptive-clock-skew loop consumes it

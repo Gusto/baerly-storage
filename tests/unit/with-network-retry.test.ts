@@ -39,9 +39,9 @@ describe("withNetworkRetry", () => {
     await expect(
       withNetworkRetry(async () => {
         calls++;
-        throw new BaerlyError("Conflict", "someone else won the slot");
+        throw new BaerlyError("WriteConflict", "someone else won the slot");
       }),
-    ).rejects.toMatchObject({ code: "Conflict" });
+    ).rejects.toMatchObject({ code: "WriteConflict" });
     expect(calls).toBe(1);
   });
 

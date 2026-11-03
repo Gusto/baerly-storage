@@ -25,10 +25,10 @@
  * `claimed_at: ""` first, then overwrites itself with the correct
  * `serverDate.toISOString()` in a second CAS. The epoch bump is
  * already durable from the first put either way; a peer landing
- * between the two writes loses cleanly with `Conflict`.
+ * between the two writes loses cleanly with `WriteConflict`.
  *
  * Why CAS errors are wrapped: every in-tree {@link Storage} impl
- * surfaces a lost CAS as `BaerlyError{code:"Conflict"}`. Downstream
+ * surfaces a lost CAS as `BaerlyError{code:"WriteConflict"}`. Downstream
  * callers — the Writer, the compactor, the sweeper —
  * discriminate by `code` to decide whether to retry.
  * We re-wrap here only to add the `current.json at <key>` location
@@ -323,7 +323,7 @@ const GENERATION_RE = /^[0-9a-f]+$/;
  * `If-None-Match: "*"`). Use this once per collection at provisioning
  * time; subsequent updates go through {@link casUpdateCurrentJson}.
  *
- * @throws BaerlyError{code:"Conflict"} — the key already exists.
+ * @throws BaerlyError{code:"WriteConflict"} — the key already exists.
  *         Caller decides whether to read + reconcile or surface.
  * @throws BaerlyError{code:"InvalidResponse"} — `initial` fails the
  *         runtime shape guard.
@@ -417,7 +417,7 @@ export const assertCurrentJsonTransition = (
  * multiple times if the caller wraps this in a retry loop, so it
  * must not have side effects.
  *
- * @throws BaerlyError{code:"Conflict"} — another writer landed a write
+ * @throws BaerlyError{code:"WriteConflict"} — another writer landed a write
  *         between this function's read and write. Caller decides
  *         whether to retry (read + remutate + rewrite).
  * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist
@@ -480,7 +480,7 @@ export async function casUpdateCurrentJson(
  * lands, this function writes the record with `claimed_at: ""`
  * first, then overwrites itself with the correct
  * `serverDate.toISOString()` in a second CAS. A peer landing between
- * the two writes loses cleanly with `Conflict` — the epoch bump is
+ * the two writes loses cleanly with `WriteConflict` — the epoch bump is
  * already durable from the first put either way. If `serverDate` is
  * `undefined` on the first PUT (impl doesn't surface it), the second
  * write is skipped and `claimed_at` remains the empty string;
@@ -495,7 +495,7 @@ export async function casUpdateCurrentJson(
  *   IDS-shaped prior-art differentiation against mps3, SlateDB,
  *   Iceberg, Delta, and the broader S3-leader-election literature.
  *
- * @throws BaerlyError{code:"Conflict"} — another writer claimed the
+ * @throws BaerlyError{code:"WriteConflict"} — another writer claimed the
  *         fence between this call's read and write. Caller decides
  *         whether to retry.
  * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist.
@@ -547,7 +547,7 @@ export async function claimWriter(
     return { json: provisional, etag: result.etag };
   }
   // Stamp the server clock through a second CAS-on-our-own-etag. A
-  // peer landing between the two writes loses cleanly with Conflict
+  // peer landing between the two writes loses cleanly with WriteConflict
   // (the fence is safe — next claim will bump past both).
   const stamped: CurrentJson = {
     ...provisional,
@@ -783,14 +783,14 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
 
 /**
  * Wrap a storage-level error with `current.json at <key>` location
- * context. `Conflict` (the storage layer's CAS-lost signal) is
+ * context. `WriteConflict` (the storage layer's CAS-lost signal) is
  * re-thrown with an annotated message; other `BaerlyError`s pass
  * through; non-`BaerlyError` falls through as `InvalidResponse` (in
  * practice unreachable — every in-tree `Storage` impl wraps).
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
-  if (e instanceof BaerlyError && e.code === "Conflict") {
-    return new BaerlyError("Conflict", `current.json CAS lost at ${key}: ${e.message}`, e);
+  if (e instanceof BaerlyError && e.code === "WriteConflict") {
+    return new BaerlyError("WriteConflict", `current.json CAS lost at ${key}: ${e.message}`, e);
   }
   if (e instanceof BaerlyError) {
     return e;

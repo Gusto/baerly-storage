@@ -3,7 +3,7 @@ import { uuid } from "../types.ts";
 import type { Storage } from "./types.ts";
 
 const isConflict = (error: unknown): boolean =>
-  error instanceof BaerlyError && error.code === "Conflict";
+  error instanceof BaerlyError && error.code === "WriteConflict";
 
 /** One CAS sub-check's outcome. */
 export interface CasProbeCheck {
@@ -38,16 +38,16 @@ export interface CasProbeResult {
  * Writes throwaway sentinels under `keyPrefix` and deletes them on
  * the way out (even on failure). Three checks, mirroring the conformance
  * suite:
- *   - `ifMatch-stale`: a PUT with a stale `ifMatch` must reject (Conflict).
+ *   - `ifMatch-stale`: a PUT with a stale `ifMatch` must reject (WriteConflict).
  *   - `ifNoneMatch-exists`: a PUT with `ifNoneMatch:"*"` over an existing
- *     key must reject (Conflict).
+ *     key must reject (WriteConflict).
  *   - `ifNoneMatch-concurrent`: at most one of N concurrent create-if-absent
  *     writes on a fresh key wins — the linearizability the writer's log-append
  *     commit already relies on (`writer.ts`).
  *
- * A rejected write surfaces as a `BaerlyError` with `code === "Conflict"`
+ * A rejected write surfaces as a `BaerlyError` with `code === "WriteConflict"`
  * (the contract `Storage.put` documents); anything else — a resolved
- * promise, or a non-Conflict error — is reported as a failed or
+ * promise, or a non-WriteConflict error — is reported as a failed or
  * inconclusive check rather than thrown.
  */
 export const probeCas = async (
@@ -88,12 +88,12 @@ export const probeCas = async (
           ? {
               name: "ifMatch-stale",
               ok: true,
-              detail: "stale If-Match rejected (Conflict), as required.",
+              detail: "stale If-Match rejected (WriteConflict), as required.",
             }
           : {
               name: "ifMatch-stale",
               ok: false,
-              detail: `stale If-Match raised a non-Conflict error: ${error instanceof Error ? error.message : String(error)}`,
+              detail: `stale If-Match raised a non-WriteConflict error: ${error instanceof Error ? error.message : String(error)}`,
             },
       );
     }
@@ -114,12 +114,13 @@ export const probeCas = async (
           ? {
               name: "ifNoneMatch-exists",
               ok: true,
-              detail: 'If-None-Match:"*" over an existing key rejected (Conflict), as required.',
+              detail:
+                'If-None-Match:"*" over an existing key rejected (WriteConflict), as required.',
             }
           : {
               name: "ifNoneMatch-exists",
               ok: false,
-              detail: `If-None-Match:"*" raised a non-Conflict error: ${error instanceof Error ? error.message : String(error)}`,
+              detail: `If-None-Match:"*" raised a non-WriteConflict error: ${error instanceof Error ? error.message : String(error)}`,
             },
       );
     }
@@ -128,7 +129,7 @@ export const probeCas = async (
     // The writer already depends on this today: log entries are PUT with
     // ifNoneMatch:"*", and a 412 means a peer won that seq (writer.ts). Two
     // winners ⇒ two writers believe they appended the same log seq.
-    // Transient non-Conflict losers (e.g. an S3 409
+    // Transient non-WriteConflict losers (e.g. an S3 409
     // ConditionalRequestConflict, which the adapter maps to a retryable
     // NetworkError) are inconclusive — the writer re-issues the same-seq
     // PUT and resolves to 200/412 — not proof of a broken backend. The
@@ -157,13 +158,13 @@ export const probeCas = async (
           checks.push({
             name: "ifNoneMatch-concurrent",
             ok: true,
-            detail: `exactly one of ${RACERS} concurrent create-if-absent writes won; the rest rejected (Conflict), as required.`,
+            detail: `exactly one of ${RACERS} concurrent create-if-absent writes won; the rest rejected (WriteConflict), as required.`,
           });
         } else {
           checks.push({
             name: "ifNoneMatch-concurrent",
             ok: false,
-            detail: `exactly one of ${RACERS} concurrent create-if-absent writes won, but ${transient} loser(s) returned a transient non-Conflict error — inconclusive; retry for a clean race.`,
+            detail: `exactly one of ${RACERS} concurrent create-if-absent writes won, but ${transient} loser(s) returned a transient non-WriteConflict error — inconclusive; retry for a clean race.`,
           });
         }
       } else {

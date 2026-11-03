@@ -234,7 +234,7 @@ export const runGc = async (
 
   // ── Step 2. Read or create gc/pending.json. ─────────────────────
   // Race-tolerant create: a concurrent pass may have bootstrapped
-  // between our read and our create. Re-read on Conflict.
+  // between our read and our create. Re-read on WriteConflict.
   let pending = await readGcPending(storage, pendingKey, signalOpts);
   if (pending === null) {
     const initial: GcPending = {
@@ -245,7 +245,7 @@ export const runGc = async (
     try {
       pending = await createGcPending(storage, pendingKey, initial, signalOpts);
     } catch (error) {
-      if (error instanceof BaerlyError && error.code === "Conflict") {
+      if (error instanceof BaerlyError && error.code === "WriteConflict") {
         pending = await readGcPending(storage, pendingKey, signalOpts);
         if (pending === null) {
           throw error;
@@ -496,14 +496,14 @@ export const runGc = async (
     );
     pendingDepth = updated.json.candidates.length;
   } catch (error) {
-    // `Conflict` covers two benign races, and the DELETEs we issued are
+    // `WriteConflict` covers two benign races, and the DELETEs we issued are
     // durable in both:
     //   - CAS-lost on pending.json after exhausting the bounded retry —
     //     another GC pass kept landing concurrently;
     //   - the ledger VANISHED between step 2 and here. `baerly admin
     //     restore` deletes `gc/pending.json` on both reseed branches, so
     //     this is routine rather than exceptional.
-    //     `casUpdateGcPending` reports it as `Conflict` because it IS a
+    //     `casUpdateGcPending` reports it as `WriteConflict` because it IS a
     //     CAS precondition failure — an `If-Match` PUT against the
     //     deleted key would have 412'd.
     // Either way the next pass re-marks whatever we couldn't persist,
@@ -513,7 +513,7 @@ export const runGc = async (
     // would surface a routine restore to an operator's cron.
     // `InvalidResponse` — a ledger body that is present but corrupt — is
     // deliberately NOT in this arm and still escapes.
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.
       pendingDepth = remaining.length;

@@ -60,6 +60,6 @@ export const isMonotonicRead = (observedSeq: number, lastObservedSeq: number): b
  * surfaces as a rejection instead of hanging until the test timeout.
  *
  * This is the read-side policy only; the write-side commit serializer has
- * its own, stricter policy (only `Conflict` is transient there).
+ * its own, stricter policy (only `WriteConflict` is transient there).
  */
 export const isTransientReadError = (error: unknown): boolean => error instanceof BaerlyError;

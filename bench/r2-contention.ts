@@ -126,7 +126,7 @@ async function seedCurrentJson(storage: CountingStorage): Promise<void> {
   try {
     await createCurrentJson(storage, CURRENT_KEY, SEED);
   } catch (error: unknown) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;
     } // already there
     throw error;
@@ -152,7 +152,7 @@ async function s1Writer(
         metrics.recordCommit(performance.now() - t0, attempts);
         break;
       } catch (error: unknown) {
-        if (error instanceof BaerlyError && error.code === "Conflict") {
+        if (error instanceof BaerlyError && error.code === "WriteConflict") {
           metrics.recordConflict412();
           const sleepMs = jitter(retryPolicy, attempts, prevSleep);
           prevSleep = sleepMs;
@@ -278,13 +278,13 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
   const storage = buildBenchStorage({ via, bucket: BUCKET });
   await ensureBucket({ via, bucket: BUCKET });
 
-  // Seed M current.json keys. Idempotent (Conflict tolerated).
+  // Seed M current.json keys. Idempotent (WriteConflict tolerated).
   for (let i = 0; i < cell.collections; i++) {
     const key = multiCollectionKey(i);
     try {
       await createCurrentJson(storage, key, SEED);
     } catch (error: unknown) {
-      if (error instanceof BaerlyError && error.code === "Conflict") {
+      if (error instanceof BaerlyError && error.code === "WriteConflict") {
         continue;
       }
       throw error;
@@ -315,7 +315,7 @@ async function runS2Multi(cell: SweepCell): Promise<RunResult> {
           metrics.recordCommit(performance.now() - tCommit, attempts);
           break;
         } catch (error: unknown) {
-          if (error instanceof BaerlyError && error.code === "Conflict") {
+          if (error instanceof BaerlyError && error.code === "WriteConflict") {
             // Should be ~impossible (single writer per key) but
             // count the same way so the metric is comparable.
             metrics.recordConflict412();
@@ -554,7 +554,7 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
 
   // Bootstrap current.json. The compactor needs it to exist.
   await createCurrentJson(storage, S5_CURRENT_KEY, SEED).catch((error: unknown) => {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;
     }
     throw error;
@@ -580,7 +580,7 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
       await storage
         .put(contentKey, body, { ifNoneMatch: "*", contentType: "application/json" })
         .catch((error: unknown) => {
-          if (error instanceof BaerlyError && error.code === "Conflict") {
+          if (error instanceof BaerlyError && error.code === "WriteConflict") {
             return;
           } // idempotent
           throw error;
@@ -627,9 +627,9 @@ async function s5Writer(storage: CountingStorage, signal: AbortSignal): Promise<
         }
       }
     } catch (error: unknown) {
-      // Conflict on CAS is expected — back off and re-read. Don't
+      // WriteConflict on CAS is expected — back off and re-read. Don't
       // count as a violation. Other errors are surfaced.
-      if (error instanceof BaerlyError && error.code === "Conflict") {
+      if (error instanceof BaerlyError && error.code === "WriteConflict") {
         continue;
       }
       if (

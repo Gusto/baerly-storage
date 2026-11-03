@@ -387,7 +387,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
           return inner.put(key, body, opts);
         }
         if (key === `${prefix}/gc/pending.json` && opts?.ifMatch !== undefined) {
-          throw new BaerlyError("Conflict", "forced final pending CAS conflict");
+          throw new BaerlyError("WriteConflict", "forced final pending CAS conflict");
         }
         return inner.put(key, body, opts);
       },

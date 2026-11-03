@@ -56,13 +56,13 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 async function main(): Promise<void> {
   const storage = buildBenchStorage({ via, bucket });
   await ensureBucket({ via, bucket });
-  // Re-create current.json. Conflict is fine — the parent reset it
+  // Re-create current.json. WriteConflict is fine — the parent reset it
   // between trials but a stale value from an earlier crash is also OK
   // (we'll CAS over it in step 3).
   try {
     await createCurrentJson(storage, SIGKILL_CURRENT_KEY, SEED);
   } catch (error) {
-    if (!(error instanceof BaerlyError && error.code === "Conflict")) {
+    if (!(error instanceof BaerlyError && error.code === "WriteConflict")) {
       throw error;
     }
   }
@@ -78,8 +78,8 @@ async function main(): Promise<void> {
       contentType: "application/json",
     })
     .catch((error: unknown) => {
-      // ifNoneMatch:"*" returns Conflict on idempotent re-write; ignore.
-      if (error instanceof BaerlyError && error.code === "Conflict") {
+      // ifNoneMatch:"*" returns WriteConflict on idempotent re-write; ignore.
+      if (error instanceof BaerlyError && error.code === "WriteConflict") {
         return;
       }
       throw error;

@@ -39,7 +39,7 @@ describe("collection API", () => {
     test("happy-path + writes + LogEntry shape", { timeout: 60 * 1000 }, async () => {
       const binding = getBinding();
       // Two `r2BindingStorage` wrappers over the SAME binding share
-      // a backing store, so the cross-writer Conflict assertion can
+      // a backing store, so the cross-writer WriteConflict assertion can
       // run on cloudflare-r2 the same way it does on memory /
       // local-fs.
       await runCollectionApiCascade({

@@ -46,7 +46,7 @@ interface Variant {
   /**
    * Build a `(storage, rivalStorage?, cleanup?)` triple. The
    * `rivalStorage` handle, if present, shares a backing store with
-   * `storage` so the cross-writer Conflict assertion can run; absent,
+   * `storage` so the cross-writer WriteConflict assertion can run; absent,
    * that assertion is skipped (the cascade's contract documents the
    * tolerance).
    */

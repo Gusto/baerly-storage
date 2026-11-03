@@ -86,7 +86,7 @@ export interface RetireLogRangeResult {
  * makes plan and validation atomic: whatever floor this call publishes is the
  * floor its own DELETEs are authorized by. If the fresh state yields an empty
  * range (a `restore --force` reseed lowered `log_seq_start` — the one writer
- * allowed to, `restore.ts:191-206`), the pass aborts with `Conflict` and zero
+ * allowed to, `restore.ts:191-206`), the pass aborts with `WriteConflict` and zero
  * DELETEs rather than publishing a floor above the live one.
  *
  * **CAS before deleting, never after.** Every floor this function publishes
@@ -131,11 +131,11 @@ export interface RetireLogRangeResult {
  *   {@link LOG_RETENTION_MAX_DELETES_PER_TICK}. Same caveat as `opts.window`:
  *   a scoped override for exercising the budget boundary in tests, not a
  *   knob meant to reach a config surface.
- * @throws BaerlyError{code:"Conflict"} if the floor CAS loses to another
+ * @throws BaerlyError{code:"WriteConflict"} if the floor CAS loses to another
  *   `current.json` writer, or if the fresh state authorizes nothing. The
  *   maintenance call sites' shared `retireLogs` helper (`maintenance.ts`)
  *   swallows exactly this code and re-throws everything else, matching how
- *   `Conflict` from `compact()` / `runGc()` is treated at every call site;
+ *   `WriteConflict` from `compact()` / `runGc()` is treated at every call site;
  *   returning it unwrapped here is what keeps that policy in one place.
  * @throws BaerlyError{code:"Internal"} if the floor CAS completes without
  *   having authorized the range it published — a wiring tripwire, not a
@@ -172,7 +172,7 @@ export async function retireLogRange(
       authorized = computeRetirableRange(current, opts);
       if (authorized.start >= authorized.end) {
         throw new BaerlyError(
-          "Conflict",
+          "WriteConflict",
           `retireLogRange: ${currentJsonKey} authorizes no retirable range at CAS time; a concurrent writer moved log_seq_start`,
         );
       }

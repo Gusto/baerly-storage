@@ -298,7 +298,7 @@ describe("retireLogRange vs. a concurrent current.json writer", () => {
     try {
       await expect(
         retireLogRange(storage, CURRENT_KEY, { window: 5, maxDeletes: 20 }),
-      ).rejects.toMatchObject({ code: "Conflict" });
+      ).rejects.toMatchObject({ code: "WriteConflict" });
     } finally {
       storage.get = origGet;
     }

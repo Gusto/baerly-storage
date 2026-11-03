@@ -8,7 +8,7 @@
  * infra required.
  *
  * The matrix this file covers:
- *  - Insert auto-id, caller-supplied id, duplicate-id Conflict,
+ *  - Insert auto-id, caller-supplied id, duplicate-id AlreadyExists,
  *    LogEntry shape parity.
  *  - Update single/multi-match, RFC 7386 null-delete, return shape,
  *    zero-match no-op.
@@ -17,7 +17,7 @@
  *  - Delete tombstone shape (no after/before/key_old), return shape,
  *    post-delete visibility.
  *  - Per-row CAS retry semantics: forced contention succeeds within
- *    budget; exhausted budget surfaces Conflict.
+ *    budget; exhausted budget surfaces WriteConflict.
  *
  * Fast-check property tests are explicitly OUT OF SCOPE — cross-
  * adapter coverage lives in `tests/integration/randomized.test.ts`.
@@ -546,7 +546,7 @@ describe("Query.delete", () => {
  * to the next empty slot. `bumpFenceOnNextLogCreate` simulates a
  * concurrent `claimWriter` that lands between this writer's read and its
  * create; under single-write commit the log create IS the commit, so the
- * write still lands and is visible (no committed-but-Conflict). Kept
+ * write still lands and is visible (no committed-but-WriteConflict). Kept
  * local to this file — not exported.
  */
 class InstrumentedStorage extends MemoryStorage {
@@ -569,7 +569,7 @@ class InstrumentedStorage extends MemoryStorage {
       const foreign = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
       foreign["session"] = "INTRUDR0";
       await super.put(key, new TextEncoder().encode(JSON.stringify(foreign)), opts);
-      throw new BaerlyError("Conflict", `simulated 412 on ${key}: precondition failed`);
+      throw new BaerlyError("WriteConflict", `simulated 412 on ${key}: precondition failed`);
     }
     if (isLogCreate && this.bumpFenceOnNextLogCreate) {
       this.bumpFenceOnNextLogCreate = false;
@@ -610,7 +610,7 @@ describe("Per-row contention semantics (internal forward-probe inside Writer)", 
     expect(after).toEqual({ _id: "x", title: "v1", status: "open" });
   });
 
-  test("fence bump mid-commit: write still commits and is visible (no committed-but-Conflict)", async () => {
+  test("fence bump mid-commit: write still commits and is visible (no committed-but-WriteConflict)", async () => {
     const storage = new InstrumentedStorage();
     await provision(storage);
     const db = Db.create({ storage, app: APP, tenant: TENANT });
@@ -622,7 +622,7 @@ describe("Per-row contention semantics (internal forward-probe inside Writer)", 
     // single-write commit the log create IS the commit — it has already
     // landed and is visible by the time any later check could run, so the
     // (now-removed) post-commit fence-verify must NOT manufacture a
-    // committed-but-Conflict state. The write commits; the row is readable.
+    // committed-but-WriteConflict state. The write commits; the row is readable.
     storage.bumpFenceOnNextLogCreate = true;
     const result = await t.update("winner", { title: "v1" });
     expect(result).toEqual({ modified: 1 });

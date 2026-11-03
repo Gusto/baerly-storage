@@ -160,11 +160,11 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
         // what the adversary forged.
         expect((outcome.entry.after as { from?: string } | undefined)?.from).toBe("writer");
       } else if (outcome.kind === "rejected") {
-        // The only Baerly error code on this path is Conflict
+        // The only Baerly error code on this path is WriteConflict
         // (the adoption helper's failure clauses) or
         // InvalidResponse (a forged body that didn't parse as a
         // LogEntry — covered by the readLogEntry helper).
-        expect(["Conflict", "InvalidResponse"]).toContain(outcome.code);
+        expect(["WriteConflict", "InvalidResponse"]).toContain(outcome.code);
       } else {
         // Any other thrown shape is a test bug — fail loud.
         throw outcome.error;

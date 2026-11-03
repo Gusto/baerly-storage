@@ -49,8 +49,9 @@
  *   1 — InvalidConfig (bad bucket URI, missing args).
  *   2 — Network / storage error mid-stream, or a malformed NDJSON
  *       line (raised as a plain `Error`, not `BaerlyError`).
- *   3 — Conflict from a pre-existing target without --force, or a lost
- *       `current.json` CAS against maintenance/compaction during --force.
+ *   3 — AlreadyExists from a pre-existing target without --force, or a
+ *       WriteConflict from a lost `current.json` CAS against
+ *       maintenance/compaction during --force.
  */
 
 import { createInterface } from "node:readline";
@@ -156,7 +157,7 @@ const bundle = defineBaerlySubcommand({
       // If-Match. The If-Match guards against a concurrent COMPACTOR
       // (the only steady-state writer of `current.json` under
       // single-write commit) landing between our read and our PUT —
-      // that surfaces Conflict (exit 3). It does NOT fence concurrent
+      // that surfaces WriteConflict (exit 3). It does NOT fence concurrent
       // WRITERS: under single-write commit writers never touch
       // `current.json`, so the dormant `writer_fence` epoch is no
       // longer consulted. `restore` therefore assumes operational
@@ -176,7 +177,7 @@ const bundle = defineBaerlySubcommand({
       // its candidates into memory before the clear landed. A concurrent
       // `retireLogRange` is fenced instead of raced — it recomputes its
       // range inside the CAS mutator, so a reseed that lands first makes
-      // it abort with `Conflict` and zero DELETEs.
+      // it abort with `WriteConflict` and zero DELETEs.
       //
       // CRITICAL: stale log entries from the old generation still
       // live on disk under `log/<seq>.json` paths. The writer's
@@ -389,7 +390,7 @@ const bundle = defineBaerlySubcommand({
     // bulk restore knows exactly how many rows it wrote, so it stamps the
     // true tail (`baseSeq + count`) under If-Match so the restored bucket
     // reads efficiently without a forward-probe. A concurrent compactor
-    // between our last commit and this stamp surfaces Conflict (exit 3).
+    // between our last commit and this stamp surfaces WriteConflict (exit 3).
     // CLAMP: `tail_hint` is a monotone lower bound, so never stamp it
     // BELOW what is already durable — take the max of our computed tail,
     // the value already stored, and `log_seq_start`. (Defends against a

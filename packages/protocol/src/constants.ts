@@ -403,10 +403,10 @@ export const GC_MAX_PENDING_CANDIDATES: number = 1000;
 
 /**
  * Bounded retry cap for the `gc/pending.json` CAS read-modify-write
- * loop in {@link casUpdateGcPending}. On `Conflict` (a concurrent GC
+ * loop in {@link casUpdateGcPending}. On `WriteConflict` (a concurrent GC
  * pass landed between this pass's read and its write) the loop
  * re-reads `latest` and re-applies the pure merge mutator, retrying up
- * to this many total attempts before surfacing `Conflict`. Safe to
+ * to this many total attempts before surfacing `WriteConflict`. Safe to
  * retry because the mutator is pure and the sweep DELETEs are
  * idempotent and already performed; a re-merge against fresh state
  * never loses a concurrently-marked candidate. Small fixed cap — under

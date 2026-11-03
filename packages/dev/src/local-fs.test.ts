@@ -422,7 +422,7 @@ describe("LocalFsStorage — impl-specific", () => {
       );
       const winners = outcomes.filter((o) => o.status === "fulfilled").length;
       const conflicts = outcomes.filter(
-        (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "WriteConflict",
       ).length;
       expect(winners).toBe(1);
       expect(conflicts).toBe(RACERS - 1);
@@ -449,7 +449,7 @@ describe("LocalFsStorage — impl-specific", () => {
     );
     const winners = outcomes.filter((o) => o.status === "fulfilled").length;
     const conflicts = outcomes.filter(
-      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "WriteConflict",
     ).length;
     expect(winners).toBe(1);
     expect(conflicts).toBe(RACERS - 1);
@@ -470,7 +470,7 @@ describe("LocalFsStorage — impl-specific", () => {
     );
     const winners = outcomes.filter((o) => o.status === "fulfilled").length;
     const conflicts = outcomes.filter(
-      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+      (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "WriteConflict",
     ).length;
     expect(winners).toBe(1);
     expect(conflicts).toBe(RACERS - 1);
@@ -507,7 +507,7 @@ describe("LocalFsStorage — impl-specific", () => {
       ]);
       const winners = outcomes.filter((o) => o.status === "fulfilled").length;
       const nonConflict = outcomes.filter(
-        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "WriteConflict",
       );
       expect(nonConflict).toEqual([]);
       expect(winners).toBe(1);
@@ -584,7 +584,8 @@ describe("LocalFsStorage — impl-specific", () => {
       for (const { spelling, settled } of outcomes) {
         const winners = settled.filter((o) => o.status === "fulfilled").length;
         const nonConflict = settled.filter(
-          (o) => o.status === "rejected" && (o.reason as { code?: string }).code !== "Conflict",
+          (o) =>
+            o.status === "rejected" && (o.reason as { code?: string }).code !== "WriteConflict",
         );
         expect({ spelling, nonConflict, winners }).toEqual({
           spelling,

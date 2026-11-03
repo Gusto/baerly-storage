@@ -71,13 +71,13 @@ const seedCurrent = (): CurrentJson =>
  * Tolerant `createCurrentJson` — when the cross-writer variant
  * passes a `rivalStorage` sharing the same backing store, the rival
  * may have already seeded the key. Adopt the existing seed on
- * Conflict.
+ * WriteConflict.
  */
 const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
   try {
     await createCurrentJson(storage, key, seedCurrent());
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;
     }
     throw error;
@@ -458,7 +458,7 @@ const runDeleteContract = async (
 };
 
 /**
- * Cross-writer Conflict: two concurrent direct mutations racing on the
+ * Cross-writer WriteConflict: two concurrent direct mutations racing on the
  * same table's `current.json`. The locked contract
  * (`packages/protocol/src/collection-api.ts:211-215`) says single-attempt — at
  * least one writer throws `BaerlyError{code:"WriteConflict"}` on CAS loss.
@@ -1031,7 +1031,7 @@ const runLogEntryShape = async (
  * @param opts.storage      One {@link Storage} handle (writes + reads).
  * @param opts.rivalStorage Optional second handle sharing the same
  *                          backing store. When present, the
- *                          cross-writer Conflict test runs; absent,
+ *                          cross-writer WriteConflict test runs; absent,
  *                          it's skipped (variants where a second
  *                          handle isn't cheap to construct).
  */
@@ -1064,7 +1064,7 @@ export const runCollectionApiCascade = async (opts: {
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);
 
-  // 4. Concurrent-write Conflict (cross-writer CAS loss on a single doc).
+  // 4. Concurrent-write WriteConflict (cross-writer CAS loss on a single doc).
   if (opts.rivalStorage !== undefined) {
     const rival = Db.create({ storage: opts.rivalStorage, app: APP, tenant });
     await runConcurrentWriteConflict(db, rival, opts.storage, APP, tenant);

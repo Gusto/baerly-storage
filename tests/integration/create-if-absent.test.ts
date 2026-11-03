@@ -16,12 +16,12 @@
  * conformance cascade wouldn't make the cause obvious. This focused
  * sequential test pins the bare-vs-quoted invariant: against live
  * MinIO, the first create succeeds and a second create on the same key
- * rejects with `Conflict`.
+ * rejects with `WriteConflict`.
  *
  * This file now pins BOTH the sequential bare-`*` encoding AND the
  * concurrent exactly-one-winner atomicity: eight writers race the same
  * fresh key against live MinIO; exactly one must succeed and all others
- * must reject with `Conflict`.
+ * must reject with `WriteConflict`.
  *
  * Gated on `MINIO=1` via `describe.runIf`, so it runs under
  * `pnpm test:minio` against `pnpm dev:storage`'s `127.0.0.1:9102` and
@@ -75,13 +75,13 @@ describe.runIf(MINIO)("create-if-absent (bare-* against MinIO)", () => {
       // 1. Create succeeds — no object at `key` yet.
       await expect(storage.put(key, body, { ifNoneMatch: "*" })).resolves.toBeDefined();
 
-      // 2. Re-create with bare-`*` rejects with `Conflict` — the object
-      //    now exists, so create-if-absent (412 → BaerlyError "Conflict")
+      // 2. Re-create with bare-`*` rejects with `WriteConflict` — the object
+      //    now exists, so create-if-absent (412 → BaerlyError "WriteConflict")
       //    is enforced on the wire. A quoted-header refactor would fail
       //    this assertion against MinIO.
       await expect(
         storage.put(key, new TextEncoder().encode("second"), { ifNoneMatch: "*" }),
-      ).rejects.toMatchObject({ code: "Conflict" });
+      ).rejects.toMatchObject({ code: "WriteConflict" });
     } finally {
       // 3. Clean up — best-effort; a leaked key doesn't fail the test.
       await storage.delete(key).catch(() => {});
@@ -101,7 +101,7 @@ describe.runIf(MINIO)("create-if-absent (bare-* against MinIO)", () => {
       );
       const winners = outcomes.filter((o) => o.status === "fulfilled").length;
       const conflicts = outcomes.filter(
-        (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "Conflict",
+        (o) => o.status === "rejected" && (o.reason as { code?: string }).code === "WriteConflict",
       ).length;
       expect(winners).toBe(1);
       expect(conflicts).toBe(RACERS - 1);

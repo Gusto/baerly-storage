@@ -81,7 +81,7 @@ export interface MaintenanceResult {
  * `runBoundedMaintenance`), so the metric name, option threading, and
  * error policy cannot drift between call sites.
  *
- * Error policy — deliberately NOT a bare swallow: `Conflict` (the floor
+ * Error policy — deliberately NOT a bare swallow: `WriteConflict` (the floor
  * CAS lost to another writer, or a concurrent fold moved `log_seq_start`)
  * is routine contention, swallowed here and retried by the next pass.
  * Anything else is re-thrown for the caller's own error path, matching
@@ -109,7 +109,7 @@ const retireLogs = async (
       collection,
     });
   } catch (error) {
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return; // routine CAS contention — the next pass retries
     }
     throw error;
@@ -208,7 +208,7 @@ export const runScheduledMaintenance = async (
 
   // Retire stale log objects. Cheap and bounded — a computed key range,
   // no LIST — and placed after GC so it runs on every maintenance pass.
-  // `Conflict` is swallowed inside `retireLogs`; an unexpected error
+  // `WriteConflict` is swallowed inside `retireLogs`; an unexpected error
   // propagates like a compact()/runGc() error, per the contract above.
   await retireLogs(args.storage, args.currentJsonKey, {
     logRetention: (options as InternalMaintenanceOptions).logRetention,
@@ -654,7 +654,7 @@ export const runBoundedMaintenance = async (
           signal !== undefined ? { signal } : undefined,
         );
       } catch {
-        // Swallow — Conflict (compactor/another isolate advanced first) or
+        // Swallow — WriteConflict (compactor/another isolate advanced first) or
         // any transient error. A missed advance just means the next tick
         // catches up; a lost warn stamp just means another isolate warns
         // slightly sooner/later. Never throw out of write-tick maintenance.
@@ -775,7 +775,7 @@ export const runBoundedMaintenance = async (
       if (phasesPerTick === "single" && hardGc) {
         await runGcAndRefreshTailHint();
         // Retire stale logs after GC even on the early-return path.
-        // Non-Conflict errors re-throw into the outer catch below
+        // Non-WriteConflict errors re-throw into the outer catch below
         // (unexpected_error_total + stack log), like every other phase.
         await retireLogs(storage, currentJsonKey, {
           logRetention: options?.logRetention,
@@ -859,7 +859,7 @@ export const runBoundedMaintenance = async (
 
       // ── Step 5. Retire stale log objects. ──────────────────────────────
       // Cheap and bounded — a computed key range, no LIST — and placed
-      // after GC so it runs on every maintenance pass. `Conflict` is
+      // after GC so it runs on every maintenance pass. `WriteConflict` is
       // swallowed inside `retireLogs`; anything unexpected re-throws into
       // this runner's outer catch (counter + stack log), never out of the
       // write-tick path.
@@ -871,9 +871,9 @@ export const runBoundedMaintenance = async (
       await refreshTailHintIfNeeded();
     }
   } catch (error) {
-    // CAS contention (Conflict) thrown by compact()/runGc() is an
+    // CAS contention (WriteConflict) thrown by compact()/runGc() is an
     // EXPECTED signal — swallow without the unexpected-error counter.
-    if (error instanceof BaerlyError && error.code === "Conflict") {
+    if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;
     }
     // Anything else is unexpected: count it, log the stack, swallow.

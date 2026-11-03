@@ -168,7 +168,7 @@ export class GcsHttpStorage implements Storage {
       // BOTH create-collision and stale-CAS. No S3-style 409-contended
       // branch, no 404-with-ifMatch branch.
       if (res.status === 412) {
-        throw new BaerlyError("Conflict", `PUT ${key}: precondition failed`);
+        throw new BaerlyError("WriteConflict", `PUT ${key}: precondition failed`);
       }
       if (res.status !== 200 && res.status !== 204) {
         throw await mapStorageError(res, "PUT", key);

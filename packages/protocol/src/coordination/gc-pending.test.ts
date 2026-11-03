@@ -58,11 +58,11 @@ describe("gc-pending", () => {
     expect(read?.etag).toBe(created.etag);
   });
 
-  test("create-only: throws Conflict if the key already exists", async () => {
+  test("create-only: throws WriteConflict if the key already exists", async () => {
     const s = new MemoryStorage();
     await createGcPending(s, KEY, initial());
     await expect(createGcPending(s, KEY, initial())).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
   });
 
@@ -85,7 +85,7 @@ describe("gc-pending", () => {
     expect(read?.json.candidates[0]?.reason).toBe("stale-log");
   });
 
-  test("cas-update on a stale etag throws Conflict", async () => {
+  test("cas-update on a stale etag throws WriteConflict", async () => {
     const s = new MemoryStorage();
     const created = await createGcPending(s, KEY, initial());
     // First update commits.
@@ -104,19 +104,19 @@ describe("gc-pending", () => {
     const stale = new TextEncoder().encode(JSON.stringify(initial()));
     await expect(
       s.put(KEY, stale, { ifMatch: created.etag, contentType: "application/json" }),
-    ).rejects.toMatchObject({ code: "Conflict" });
+    ).rejects.toMatchObject({ code: "WriteConflict" });
   });
 
-  test("cas-update on a missing key throws Conflict, not InvalidResponse", async () => {
+  test("cas-update on a missing key throws WriteConflict, not InvalidResponse", async () => {
     // The code is load-bearing, not cosmetic. `runGc` tolerates
-    // `Conflict` from its step-7 CAS as a benign lost race and rethrows
+    // `WriteConflict` from its step-7 CAS as a benign lost race and rethrows
     // everything else, and `admin restore` deletes this very key on both
     // reseed branches — so a ledger that vanishes mid-pass MUST arrive
     // as the tolerated code. `InvalidResponse` stays reserved for a body
     // that is present but broken, which must keep escaping.
     const s = new MemoryStorage();
     await expect(casUpdateGcPending(s, KEY, (cur) => cur)).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
   });
 
@@ -547,7 +547,7 @@ describe("gc-pending", () => {
   test("cas-update on missing key error message mentions 'does not exist'", async () => {
     const s = new MemoryStorage();
     const err = await casUpdateGcPending(s, KEY, (cur) => cur).catch((error: unknown) => error);
-    expect((err as BaerlyError).code).toBe("Conflict");
+    expect((err as BaerlyError).code).toBe("WriteConflict");
     // L173: message must contain the 'does not exist' explanation
     expect((err as BaerlyError).message).toContain("does not exist");
     // …and must not read as a pure programming error, since the
@@ -590,12 +590,12 @@ describe("gc-pending", () => {
     // Advance the document so first.etag is now stale
     await casUpdateGcPending(s, KEY, (cur) => ({ ...cur, last_swept_at: "2026-01-01T00:00:00Z" }));
 
-    // Now try to put using the STALE etag directly. MemoryStorage should reject with Conflict.
+    // Now try to put using the STALE etag directly. MemoryStorage should reject with WriteConflict.
     // This verifies that CAS is enforced in the put path (the same mechanism casUpdateGcPending relies on).
     const staleBody = new TextEncoder().encode(JSON.stringify(initial()));
     await expect(
       s.put(KEY, staleBody, { ifMatch: first!.etag, contentType: GC_PENDING_CONTENT_TYPE }),
-    ).rejects.toMatchObject({ code: "Conflict" });
+    ).rejects.toMatchObject({ code: "WriteConflict" });
 
     // Additionally, assert that casUpdateGcPending sends the current etag as ifMatch
     // by proxying the put call and asserting ifMatch is provided.
@@ -687,24 +687,24 @@ describe("gc-pending", () => {
     expect(capturedPutSignal).toBe(ctrl.signal);
   });
 
-  // ---- translateCasError: Conflict vs non-Conflict BaerlyError vs unknown (L282-290) ----
+  // ---- translateCasError: WriteConflict vs non-WriteConflict BaerlyError vs unknown (L282-290) ----
 
-  test("translateCasError: Conflict from storage.put annotates with CAS-lost message (L282, L283)", async () => {
+  test("translateCasError: WriteConflict from storage.put annotates with CAS-lost message (L282, L283)", async () => {
     // Force a CAS conflict at the storage.put layer inside createGcPending
     // by having the key already exist (triggers ifNoneMatch: "*" conflict).
     const s = new MemoryStorage();
     await createGcPending(s, KEY, initial());
-    // Creating again on the same key raises Conflict through translateCasError
+    // Creating again on the same key raises WriteConflict through translateCasError
     const err = await createGcPending(s, KEY, initial()).catch((error: unknown) => error);
-    expect((err as BaerlyError).code).toBe("Conflict");
-    // L283: the rethrown Conflict must contain 'CAS lost'
+    expect((err as BaerlyError).code).toBe("WriteConflict");
+    // L283: the rethrown WriteConflict must contain 'CAS lost'
     expect((err as BaerlyError).message).toContain("CAS lost");
     // L283: the original conflict error is the cause
     expect((err as BaerlyError).cause).toBeInstanceOf(BaerlyError);
-    expect(((err as BaerlyError).cause as BaerlyError).code).toBe("Conflict");
+    expect(((err as BaerlyError).cause as BaerlyError).code).toBe("WriteConflict");
   });
 
-  test("translateCasError: Conflict from casUpdateGcPending CAS-lost at write (L282, L283)", async () => {
+  test("translateCasError: WriteConflict from casUpdateGcPending CAS-lost at write (L282, L283)", async () => {
     const s = new MemoryStorage();
     await createGcPending(s, KEY, initial());
     // Grab the current etag
@@ -722,11 +722,11 @@ describe("gc-pending", () => {
         contentType: GC_PENDING_CONTENT_TYPE,
       })
       .catch((error: unknown) => error);
-    expect((err as BaerlyError).code).toBe("Conflict");
+    expect((err as BaerlyError).code).toBe("WriteConflict");
   });
 
-  test("translateCasError: non-Conflict BaerlyError passes through unchanged (L285, L286)", async () => {
-    // To hit the L285 branch we need storage.put to throw a non-Conflict BaerlyError.
+  test("translateCasError: non-WriteConflict BaerlyError passes through unchanged (L285, L286)", async () => {
+    // To hit the L285 branch we need storage.put to throw a non-WriteConflict BaerlyError.
     // We do this by using a custom Storage that throws AccessDenied on put.
     const mockStorage = {
       put: async () => {
@@ -745,7 +745,7 @@ describe("gc-pending", () => {
       KEY,
       initial(),
     ).catch((error: unknown) => error);
-    // L285-286: non-Conflict BaerlyError passes through unchanged
+    // L285-286: non-WriteConflict BaerlyError passes through unchanged
     expect((err as BaerlyError).code).toBe("AccessDenied");
     expect((err as BaerlyError).message).toBe("permission denied");
   });
@@ -772,10 +772,10 @@ describe("gc-pending", () => {
     expect((err as BaerlyError).message).toContain("connection reset");
   });
 
-  // ---- casUpdateGcPending: Conflict from write-back (L187) ----
+  // ---- casUpdateGcPending: WriteConflict from write-back (L187) ----
 
-  test("casUpdateGcPending: Conflict from write-back is translated to Conflict (L187)", async () => {
-    // We need storage.put to throw Conflict during casUpdateGcPending's write phase.
+  test("casUpdateGcPending: WriteConflict from write-back is translated to WriteConflict (L187)", async () => {
+    // We need storage.put to throw WriteConflict during casUpdateGcPending's write phase.
     const s = new MemoryStorage();
     let putCallCount = 0;
     const conflicting = {
@@ -788,8 +788,8 @@ describe("gc-pending", () => {
           // First call: real put to create the document
           return s.put(...args);
         }
-        // Subsequent calls: throw Conflict to simulate a racing writer
-        throw new BaerlyError("Conflict", "etag mismatch");
+        // Subsequent calls: throw WriteConflict to simulate a racing writer
+        throw new BaerlyError("WriteConflict", "etag mismatch");
       },
     };
     await createGcPending(conflicting as unknown as MemoryStorage, KEY, initial());
@@ -798,8 +798,8 @@ describe("gc-pending", () => {
       KEY,
       (cur) => cur,
     ).catch((error: unknown) => error);
-    // L187: the error propagates as Conflict (through translateCasError)
-    expect((err as BaerlyError).code).toBe("Conflict");
+    // L187: the error propagates as WriteConflict (through translateCasError)
+    expect((err as BaerlyError).code).toBe("WriteConflict");
     expect((err as BaerlyError).message).toContain("CAS lost");
   });
 
@@ -1009,7 +1009,7 @@ describe("gc-pending", () => {
 
   // ---- casUpdateGcPending bounded retry (the lost-marks-on-conflict fix) ----
 
-  test("casUpdateGcPending: retries on Conflict and converges", async () => {
+  test("casUpdateGcPending: retries on WriteConflict and converges", async () => {
     // Simulate a racing writer that lands exactly one write between our
     // first read and our first put. A pure-merge mutator + bounded
     // retry must re-read, re-merge, and persist BOTH the injected
@@ -1026,7 +1026,7 @@ describe("gc-pending", () => {
         putCount++;
         if (putCount === 1) {
           // A concurrent pass lands first, advancing the etag so OUR
-          // ifMatch put (this call) will be stale → Conflict on retry.
+          // ifMatch put (this call) will be stale → WriteConflict on retry.
           await casUpdateGcPending(s, KEY, (latest) => ({
             ...latest,
             candidates: [...latest.candidates, cand("concurrent.json")],
@@ -1052,7 +1052,7 @@ describe("gc-pending", () => {
     expect(keys).toContain("mine.json");
   });
 
-  test("casUpdateGcPending: throws Conflict after exhausting retries", async () => {
+  test("casUpdateGcPending: throws WriteConflict after exhausting retries", async () => {
     const s = new MemoryStorage();
     await createGcPending(s, KEY, initial());
     // put always Conflicts after the create.
@@ -1063,14 +1063,14 @@ describe("gc-pending", () => {
       delete: (k: string, o?: unknown) => s.delete(k, o as Parameters<typeof s.delete>[1]),
       put: async (..._args: Parameters<typeof s.put>) => {
         putCount++;
-        throw new BaerlyError("Conflict", "etag mismatch");
+        throw new BaerlyError("WriteConflict", "etag mismatch");
       },
     };
     await expect(
       casUpdateGcPending(alwaysConflict as unknown as MemoryStorage, KEY, (latest) => latest),
-    ).rejects.toMatchObject({ code: "Conflict" });
+    ).rejects.toMatchObject({ code: "WriteConflict" });
     // Bounded: exactly GC_PENDING_CAS_MAX_ATTEMPTS puts (one per retry),
-    // then Conflict. Pinned to the constant so a bump is caught.
+    // then WriteConflict. Pinned to the constant so a bump is caught.
     expect(putCount).toBe(GC_PENDING_CAS_MAX_ATTEMPTS);
   });
 });

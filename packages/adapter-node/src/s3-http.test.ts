@@ -162,11 +162,11 @@ describe("S3HttpStorage.put", () => {
     expect(req.headers.get("Content-Type")).toBe("application/json");
   });
 
-  test("412 with ifMatch → Conflict", async () => {
+  test("412 with ifMatch → WriteConflict", async () => {
     const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(412));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0), { ifMatch: '"old"' })).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
       message: expect.stringContaining("precondition failed"),
     });
   });
@@ -232,12 +232,12 @@ describe("S3HttpStorage.put", () => {
     });
   });
 
-  test("409 on contended ifNoneMatch='*' → retryable NetworkError (not Conflict/InvalidResponse)", async () => {
+  test("409 on contended ifNoneMatch='*' → retryable NetworkError (not WriteConflict/InvalidResponse)", async () => {
     // AWS S3 returns 409 ConditionalRequestConflict when a concurrent
     // conditional create (If-None-Match:"*") races; Minio returns 412.
     // 409 must map to a retryable NetworkError so the single-write-commit
-    // writer re-issues the same-seq PUT (→ 200 win or 412 Conflict), not a
-    // direct Conflict, which would adopt-read a possibly-absent entry.
+    // writer re-issues the same-seq PUT (→ 200 win or 412 WriteConflict), not a
+    // direct WriteConflict, which would adopt-read a possibly-absent entry.
     const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(409));
     const s = mkStorage(fetchFn as unknown as typeof fetch);
     await expect(s.put("k", new Uint8Array(0), { ifNoneMatch: "*" })).rejects.toMatchObject({
@@ -596,7 +596,7 @@ describe("raw network error wrapping", () => {
   });
 
   test("a BaerlyError thrown by fetch passes through unwrapped (no double-wrap)", async () => {
-    const original = new BaerlyError("Conflict", "precondition failed");
+    const original = new BaerlyError("WriteConflict", "precondition failed");
     const fetchFn = vi.fn<typeof fetch>(async (_req) => {
       throw original;
     });

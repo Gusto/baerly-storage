@@ -75,10 +75,10 @@ describe("retry with conditionalCreate", () => {
     expect(failure).toMatchObject({ code: "NetworkError", cause: denied });
   });
 
-  test("a Conflict after an uncertain attempt stays Conflict", async () => {
-    const { fn } = sequence([new TypeError("ack lost"), new BaerlyError("Conflict", "412")]);
+  test("a WriteConflict after an uncertain attempt stays WriteConflict", async () => {
+    const { fn } = sequence([new TypeError("ack lost"), new BaerlyError("WriteConflict", "412")]);
     await expect(retry(fn, { backoffMs: 0, conditionalCreate: true })).rejects.toMatchObject({
-      code: "Conflict",
+      code: "WriteConflict",
     });
   });
 

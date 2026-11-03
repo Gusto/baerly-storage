@@ -188,13 +188,13 @@ export class CountingStorage implements Storage {
     try {
       return await this.inner.put(key, body, opts);
     } catch (error: unknown) {
-      // 412 surfaces as BaerlyError{code:"Conflict"}; 429 / 503-SlowDown
+      // 412 surfaces as BaerlyError{code:"WriteConflict"}; 429 / 503-SlowDown
       // surface as BaerlyError{code:"NetworkError"} once the retry budget
       // is exhausted (bench passes retries=0, so on the first wire reply).
       // 429 has no dedicated code, so fall back to message sniffing for
       // the rate-limit bucket only.
       if (error instanceof BaerlyError) {
-        if (error.code === "Conflict") {
+        if (error.code === "WriteConflict") {
           this.conflict412++;
         } else if (
           error.code === "NetworkError" &&
