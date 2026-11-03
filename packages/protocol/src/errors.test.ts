@@ -4,6 +4,7 @@ import {
   BaerlyError,
   ERROR_CODES,
   RETRIABLE_CODES,
+  isBaerlyErrorCode,
   isRetriableCode,
   isWriteConflict,
   type BaerlyErrorCode,
@@ -120,6 +121,14 @@ describe("retriable classification", () => {
     expect(isRetriableCode("SchemaError")).toBe(false);
     expect(isRetriableCode("NotFound")).toBe(false);
     expect(isRetriableCode("AmbiguousCommit")).toBe(false);
+  });
+  test("isBaerlyErrorCode accepts exactly the known codes", () => {
+    for (const code of ERROR_CODES) {
+      expect(isBaerlyErrorCode(code)).toBe(true);
+    }
+    expect(isBaerlyErrorCode("Conflict")).toBe(false);
+    expect(isBaerlyErrorCode(undefined)).toBe(false);
+    expect(isBaerlyErrorCode(409)).toBe(false);
   });
   test("BaerlyError.retriable defaults from code", () => {
     expect(new BaerlyError("WriteConflict", "x").retriable).toBe(true);
