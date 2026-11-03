@@ -47,7 +47,7 @@ const drain = async (iter: AsyncIterable<{ key: string }>): Promise<string[]> =>
   return out;
 };
 
-describe("in-process adapters: the outer count IS the issued count", () => {
+describe("in-process adapters: one list() call is one pass, no paging layer", () => {
   const root = mkdtempSync(join(tmpdir(), "baerly-request-accounting-"));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -57,9 +57,11 @@ describe("in-process adapters: the outer count IS the issued count", () => {
   ];
 
   // Neither adapter retries or pages, so one outer `list` is one pass
-  // over the keyspace regardless of `maxKeys` / `startAfter`.
+  // over the keyspace regardless of `maxKeys` / `startAfter`. Results
+  // only: no issued counter here (LocalFsStorage's pass is a directory
+  // walk plus one read per yielded key, not a request count).
   describe.each(adapters)("$name", ({ make }) => {
-    test("one list() call covers every page shape: full, exact-full at maxKeys, startAfter, empty", async () => {
+    test("one list() call returns every page shape in one pass: full, exact-full at maxKeys, startAfter, empty", async () => {
       const inner = make();
       const keys = Array.from({ length: 5 }, (_, i) => `p/${i}`);
       for (const k of keys) {
@@ -99,7 +101,9 @@ type Fault =
   | { kind: "pass" }
   | { kind: "respond"; response: Response }
   /** Let the request land in the stub, then answer `status` (a lost ack). */
-  | { kind: "land-then"; status: number };
+  | { kind: "land-then"; status: number }
+  /** Store `body` at the request's key first, then pass the request through. */
+  | { kind: "occupy-then-pass"; body: string };
 
 const PASS: Fault = { kind: "pass" };
 const throttle429 = (): Fault => ({
@@ -119,25 +123,36 @@ const slowDown503 = (): Fault => ({
 const throttledS3 = (opts: {
   retries?: number;
   fault: (logPutOrdinal: number) => Fault;
+  /** Same hook for log GETs (tail probes and occupant readbacks). */
+  getFault?: (logGetOrdinal: number) => Fault;
 }): { storage: S3HttpStorage; issued: Map<string, number>; reset(): void } => {
   const stub = makeS3Stub("b");
   const issued = new Map<string, number>();
   let logPuts = 0;
+  let logGets = 0;
   let armed = false;
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = new Request(input, init);
     const key = decodeURIComponent(new URL(req.url).pathname.replace(/^\/b\//, ""));
     const label = `${req.method} ${classify(key)}`;
     issued.set(label, (issued.get(label) ?? 0) + 1);
-    if (armed && req.method === "PUT" && classify(key) === "log") {
-      const fault = opts.fault(logPuts++);
-      if (fault.kind === "respond") {
-        return fault.response;
+    let fault: Fault = PASS;
+    if (armed && classify(key) === "log") {
+      if (req.method === "PUT") {
+        fault = opts.fault(logPuts++);
+      } else if (req.method === "GET" && opts.getFault !== undefined) {
+        fault = opts.getFault(logGets++);
       }
-      if (fault.kind === "land-then") {
-        await stub.fetchImpl(req);
-        return new Response(null, { status: fault.status });
-      }
+    }
+    if (fault.kind === "respond") {
+      return fault.response;
+    }
+    if (fault.kind === "land-then") {
+      await stub.fetchImpl(req);
+      return new Response(null, { status: fault.status });
+    }
+    if (fault.kind === "occupy-then-pass") {
+      await stub.fetchImpl(new Request(req.url, { method: "PUT", body: fault.body }));
     }
     return stub.fetchImpl(req);
   }) as typeof fetch;
@@ -168,6 +183,7 @@ const setup = async (opts: {
   retries?: number;
   maxRetries?: number;
   fault: (logPutOrdinal: number) => Fault;
+  getFault?: (logGetOrdinal: number) => Fault;
 }) => {
   const s3 = throttledS3(opts);
   await createCurrentJson(s3.storage, CURRENT_KEY, logStateCurrentJson());
@@ -268,6 +284,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     // call; the slot is empty (404), so it is not retried.
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
     expect(counted.gets).toBe(2 + 1);
+    expect(counted.lists).toBe(0);
   });
 
   test("defaults, lost ack (lands, answers 500) — adapter's own resend sees 412; outer 1 log put, transport 2, plus 1 readback", async () => {
@@ -281,5 +298,59 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(issued.get("PUT log")).toBe(2);
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
     expect(outerShape(counted)).toEqual({ gets: 4, puts: 2, lists: 0 });
+  });
+
+  // The readback share of the one transient budget. `retries: 0` makes
+  // each outer call one HTTP request, so every count below is a Writer
+  // decision. Log GET ordinal 0 is the tail probe; readbacks follow.
+  const TAIL_PROBE_GETS = 1;
+  const fail500 = (): Fault => ({
+    kind: "respond",
+    response: new Response("boom", { status: 500 }),
+  });
+
+  test("retries: 0, maxRetries: 2, every log PUT 500, readback 503 — resends spend the budget, readback gets one try; AmbiguousCommit", async () => {
+    const maxRetries = 2;
+    const { counted, issued, commit } = await setup({
+      retries: 0,
+      maxRetries,
+      fault: fail500,
+      getFault: (n) => (n < TAIL_PROBE_GETS ? PASS : slowDown503()),
+    });
+    const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
+    expect(err.code).toBe(AMBIGUOUS_COMMIT);
+    // 500 is not notApplied, so the slot is uncertain: the first send plus
+    // `maxRetries` resends exhaust the budget before the readback runs.
+    expect(issued.get("PUT log")).toBe(1 + maxRetries);
+    // The readback's 503 finds no budget left, so it is not retried.
+    expect(issued.get("GET log")).toBe(TAIL_PROBE_GETS + 1);
+    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1 + maxRetries);
+    expect(counted.lists).toBe(0);
+  });
+
+  test("retries: 0, maxRetries: 2, foreign occupant at log/0 read back through 2 SlowDowns — next slot's 500 gets no resend; AmbiguousCommit", async () => {
+    const maxRetries = 2;
+    const readbackFailures = 2;
+    const foreign = JSON.stringify({ session: "foreign-session", seq: 0 });
+    const { counted, issued, commit } = await setup({
+      retries: 0,
+      maxRetries,
+      // log/0: a foreign writer lands first, so our create sees a genuine
+      // 412 (no budget). log/1: 500 on every send.
+      fault: (n) => (n === 0 ? { kind: "occupy-then-pass", body: foreign } : fail500()),
+      // Ordinals 1..readbackFailures are the log/0 readbacks.
+      getFault: (n) =>
+        n >= TAIL_PROBE_GETS && n < TAIL_PROBE_GETS + readbackFailures ? slowDown503() : PASS,
+    });
+    const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
+    expect(err.code).toBe(AMBIGUOUS_COMMIT);
+    // The log/0 readback spent the whole budget, so the log/1 create is
+    // sent once and never resent.
+    expect(readbackFailures).toBe(maxRetries);
+    expect(issued.get("PUT log")).toBe(2);
+    // tail probe + log/0 readbacks (failures + success) + forward probe
+    // of log/1 + one log/1 readback (404 ⇒ not retried).
+    expect(issued.get("GET log")).toBe(TAIL_PROBE_GETS + (readbackFailures + 1) + 1 + 1);
+    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 2);
   });
 });
