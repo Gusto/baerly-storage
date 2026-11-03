@@ -748,112 +748,128 @@ export const runBoundedMaintenance = async (
       await refreshTailHintIfNeeded();
     };
 
-    // ── Step 0. Phase disable. ───────────────────────────────────────
-    // `BAERLY_MAINTENANCE_DISABLE` suppresses fold/GC work, but it must
-    // not let `(true_tail - tail_hint)` grow past the read/write
-    // forward-probe cap. Keep the same bounded, best-effort hint refresh
-    // used by deferring collections; reads stay pure because this path
-    // only runs from write-tick maintenance.
-    if (args.disabled === true) {
-      await refreshTailHintIfNeeded();
-      return;
-    }
+    // Every tick that is due takes the rate-limited refresh, whichever way
+    // it exits: a single-phase fold that published nothing returns early,
+    // and with zero adapter retries one 503 throws out of compact() or
+    // runGc(). A skipped refresh leaves the writer's `findLogTail` galloping
+    // over the lag on every commit. `tailHintPublished` makes this a no-op
+    // once a landed fold or an earlier refresh published the hint, so the
+    // tick still publishes at most once.
+    try {
+      // ── Step 0. Phase disable. ───────────────────────────────────────
+      // `BAERLY_MAINTENANCE_DISABLE` suppresses fold/GC work, but it must
+      // not let `(true_tail - tail_hint)` grow past the read/write
+      // forward-probe cap. Keep the same bounded, best-effort hint refresh
+      // used by deferring collections; reads stay pure because this path
+      // only runs from write-tick maintenance.
+      if (args.disabled === true) {
+        await refreshTailHintIfNeeded();
+        return;
+      }
 
-    // ── Step 2. Hard-GC starvation guard ("single" only). ────────────
-    // A long fold-heavy drain would otherwise starve GC on every
-    // ratio-tripping tick. A COARSE cadence the fold may NOT preempt
-    // guarantees ~1 GC tick per GC_STARVATION_GUARD intervals.
-    const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
-    if (phasesPerTick === "single" && hardGc) {
-      await runGcAndRefreshTailHint();
-      // Retire stale logs after GC even on the early-return path.
-      // Non-Conflict errors re-throw into the outer catch below
-      // (unexpected_error_total + stack log), like every other phase.
+      // ── Step 2. Hard-GC starvation guard ("single" only). ────────────
+      // A long fold-heavy drain would otherwise starve GC on every
+      // ratio-tripping tick. A COARSE cadence the fold may NOT preempt
+      // guarantees ~1 GC tick per GC_STARVATION_GUARD intervals.
+      const hardGc = crossesGcBoundary(prevSeq, nextSeq, gcInterval * GC_STARVATION_GUARD);
+      if (phasesPerTick === "single" && hardGc) {
+        await runGcAndRefreshTailHint();
+        // Retire stale logs after GC even on the early-return path.
+        // Non-Conflict errors re-throw into the outer catch below
+        // (unexpected_error_total + stack log), like every other phase.
+        await retireLogs(storage, currentJsonKey, {
+          logRetention: options?.logRetention,
+          ...(signal !== undefined && { signal }),
+        });
+        return;
+      }
+
+      // ── Step 3. Fold-priority. ───────────────────────────────────────
+      if (gate1) {
+        if (foldViable) {
+          // Thread the same `C` / `E` ceilings the pre-fold projection
+          // above used into compact() as a Node-side belt-and-suspenders.
+          // compact() emits `db.compaction.cas_lost_total` itself on a
+          // lost CAS, so the runner does NOT (avoids double-count).
+          const foldRes = await compact({ storage, currentJsonKey }, {
+            maxEntriesPerRun: maxFoldEntriesPerPass,
+            minEntriesToCompact,
+            ceilingBytes: C,
+            ceilingEntries: E,
+            // B4: on the write-tick path the runner already knows a fresh
+            // tail lower bound (`nextSeq`, derived from the writer's
+            // `observedTail`). Pass it as the compactor's probe floor so the
+            // ceiling probe is bounded by commits since this writer's commit,
+            // not by an O(gap) re-walk from a stale stored `tail_hint`. On
+            // the scheduled path (no `observedTail`) `nextSeq` is itself the
+            // freshly-probed tail, so it's still a valid (tight) floor.
+            knownTail: nextSeq,
+            ...(signal !== undefined && { signal }),
+          } as InternalCompactOptions);
+          // A `written` fold stamped `max(stored, discoveredTail)` at or past
+          // `nextSeq` via Step-7. Every other outcome reachable here (failed,
+          // skipped, deferred, CAS-lost) published nothing, so it takes the
+          // closing refresh. The one skip that does publish,
+          // `probe-budget-checkpointed`, needs `maxTailProbeGets`, which this
+          // runner never passes.
+          if (foldRes.written) {
+            tailHintPublished = true;
+          }
+          // REBUILD-GATE DEFER: the stored snapshot passed the projection but
+          // the rebuilt one is over `C` / `E` — the realistic way bytes first
+          // cross `C`, since the stored `snapshot_bytes` never catches up.
+          // Same signal as the pre-fold defer below.
+          if (foldRes.deferral !== undefined) {
+            await signalFoldDeferred({
+              gate: "rebuild",
+              dimension: foldRes.deferral.dimension,
+              snapshotBytes: foldRes.deferral.snapshotBytes,
+              snapshotRows: foldRes.deferral.snapshotRows,
+            });
+          }
+          if (phasesPerTick === "single") {
+            // This tick's one phase was the fold attempt. A rebuild defer
+            // already spent a full compact() walk, so it must NOT also GC:
+            // runner GET (1) + deferred compact (23) + the one signal CAS (2)
+            // is 26 ops, and a GC slice on top would spend the headroom that
+            // keeps the tick under CF-free's 50 subrequests. An unpublished
+            // fold takes the closing refresh in the `finally` below; after a
+            // rebuild defer the signal already took it, so that is a no-op.
+            return;
+          }
+          // "both": fall through to GC.
+        } else {
+          // PRE-FOLD DEFER: stored snapshot over the ceiling (bytes OR rows).
+          // A deferring bucket MUST still GC, so we fall through.
+          await signalFoldDeferred({
+            gate: "pre-fold",
+            dimension: snapshotBytes > C ? "bytes" : "rows",
+            snapshotBytes,
+            snapshotRows,
+          });
+        }
+      }
+
+      // ── Step 4. GC phase — cadence-gated. ────────────────────────────
+      // Reaching here on "single" means we did NOT fold (gate1 false, or
+      // deferred). Run GC iff the cadence boundary was crossed.
+      if (gcDue) {
+        await runGcAndRefreshTailHint();
+      }
+
+      // ── Step 5. Retire stale log objects. ──────────────────────────────
+      // Cheap and bounded — a computed key range, no LIST — and placed
+      // after GC so it runs on every maintenance pass. `Conflict` is
+      // swallowed inside `retireLogs`; anything unexpected re-throws into
+      // this runner's outer catch (counter + stack log), never out of the
+      // write-tick path.
       await retireLogs(storage, currentJsonKey, {
         logRetention: options?.logRetention,
         ...(signal !== undefined && { signal }),
       });
-      return;
+    } finally {
+      await refreshTailHintIfNeeded();
     }
-
-    // ── Step 3. Fold-priority. ───────────────────────────────────────
-    if (gate1) {
-      if (foldViable) {
-        // Thread the same `C` / `E` ceilings the pre-fold projection
-        // above used into compact() as a Node-side belt-and-suspenders.
-        // compact() emits `db.compaction.cas_lost_total` itself on a
-        // lost CAS, so the runner does NOT (avoids double-count).
-        const foldRes = await compact({ storage, currentJsonKey }, {
-          maxEntriesPerRun: maxFoldEntriesPerPass,
-          minEntriesToCompact,
-          ceilingBytes: C,
-          ceilingEntries: E,
-          // B4: on the write-tick path the runner already knows a fresh
-          // tail lower bound (`nextSeq`, derived from the writer's
-          // `observedTail`). Pass it as the compactor's probe floor so the
-          // ceiling probe is bounded by commits since this writer's commit,
-          // not by an O(gap) re-walk from a stale stored `tail_hint`. On
-          // the scheduled path (no `observedTail`) `nextSeq` is itself the
-          // freshly-probed tail, so it's still a valid (tight) floor.
-          knownTail: nextSeq,
-          ...(signal !== undefined && { signal }),
-        } as InternalCompactOptions);
-        // A `written` fold stamped `max(stored, discoveredTail)` at or past
-        // `nextSeq` via Step-7. A failed, skipped, deferred, or CAS-lost
-        // attempt published nothing, so those still take the refresh below.
-        if (foldRes.written) {
-          tailHintPublished = true;
-        }
-        // REBUILD-GATE DEFER: the stored snapshot passed the projection but
-        // the rebuilt one is over `C` / `E` — the realistic way bytes first
-        // cross `C`, since the stored `snapshot_bytes` never catches up.
-        // Same signal as the pre-fold defer below.
-        if (foldRes.deferral !== undefined) {
-          await signalFoldDeferred({
-            gate: "rebuild",
-            dimension: foldRes.deferral.dimension,
-            snapshotBytes: foldRes.deferral.snapshotBytes,
-            snapshotRows: foldRes.deferral.snapshotRows,
-          });
-        }
-        if (phasesPerTick === "single") {
-          // This tick's one phase was the fold attempt. A rebuild defer
-          // already spent a full compact() walk, so it must NOT also GC:
-          // runner GET (1) + deferred compact (23) + the one signal CAS (2)
-          // is 26 ops, and a GC slice on top would spend the headroom that
-          // keeps the tick under CF-free's 50 subrequests.
-          return;
-        }
-        // "both": fall through to GC.
-      } else {
-        // PRE-FOLD DEFER: stored snapshot over the ceiling (bytes OR rows).
-        // A deferring bucket MUST still GC, so we fall through.
-        await signalFoldDeferred({
-          gate: "pre-fold",
-          dimension: snapshotBytes > C ? "bytes" : "rows",
-          snapshotBytes,
-          snapshotRows,
-        });
-      }
-    }
-
-    // ── Step 4. GC phase — cadence-gated. ────────────────────────────
-    // Reaching here on "single" means we did NOT fold (gate1 false, or
-    // deferred). Run GC iff the cadence boundary was crossed.
-    if (gcDue) {
-      await runGcAndRefreshTailHint();
-    }
-
-    // ── Step 5. Retire stale log objects. ──────────────────────────────
-    // Cheap and bounded — a computed key range, no LIST — and placed
-    // after GC so it runs on every maintenance pass. `Conflict` is
-    // swallowed inside `retireLogs`; anything unexpected re-throws into
-    // this runner's outer catch (counter + stack log), never out of the
-    // write-tick path.
-    await retireLogs(storage, currentJsonKey, {
-      logRetention: options?.logRetention,
-      ...(signal !== undefined && { signal }),
-    });
   } catch (error) {
     // CAS contention (Conflict) thrown by compact()/runGc() is an
     // EXPECTED signal — swallow without the unexpected-error counter.
