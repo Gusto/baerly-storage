@@ -74,16 +74,18 @@ export const makeCollection = <T extends DocumentData>(
      * Insert one document. UUIDv7 auto-id when `_id` is absent or
      * empty; otherwise the caller-supplied `_id` is honoured. A
      * pre-commit existence check against the materialised collection
-     * surfaces `Conflict` on duplicate `_id` without round-tripping
+     * surfaces `AlreadyExists` on duplicate `_id` without round-tripping
      * to the writer — matches the locked `Collection.insert` throws
      * contract (`@baerly/protocol/src/collection-api.ts`).
      *
      * Single-attempt per call: CAS retries (up to 8 attempts) live
      * inside `Writer.commit()`. On retry-budget exhaustion the
-     * writer throws `Conflict` and we surface unchanged.
+     * writer throws `WriteConflict` and we surface unchanged.
      *
-     * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit
-     *   check) or CAS retry budget exhausted.
+     * @throws BaerlyError code="AlreadyExists" — `_id` collision (pre-commit
+     *   check). Not retriable.
+     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted;
+     *   nothing was committed. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the row may or may
      *   not have been inserted. Re-read by a stable `_id`; absence is not proof
@@ -97,7 +99,7 @@ export const makeCollection = <T extends DocumentData>(
      * predicate-form `runUpdate` through a `byId` wire, so at most one row
      * is matched.
      *
-     * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
+     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted inside
      *   `Writer.commit()`.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the update may or
@@ -116,7 +118,7 @@ export const makeCollection = <T extends DocumentData>(
      * Replace the row at `id` wholesale, preserving doc identity.
      *
      * @throws BaerlyError code="NotFound" — no row exists at `id`.
-     * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
+     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted inside
      *   `Writer.commit()`.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the replace may or
@@ -131,7 +133,7 @@ export const makeCollection = <T extends DocumentData>(
      * through a `byId` wire, so at most one row is matched. A missing row is
      * not an error — `deleted` is `0`.
      *
-     * @throws BaerlyError code="Conflict" — CAS retry budget exhausted inside
+     * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted inside
      *   `Writer.commit()`.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the tombstone may or

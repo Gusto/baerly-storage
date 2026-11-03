@@ -32,6 +32,7 @@ import {
   type LogEntry,
   MemoryStorage,
   BaerlyError,
+  CODE_RESOLUTIONS,
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
@@ -105,7 +106,7 @@ describe("Collection.insert", () => {
     expect(found!._id).toBe("custom-id-42");
   });
 
-  test("duplicate _id on insert throws Conflict", async () => {
+  test("duplicate _id on insert throws AlreadyExists", async () => {
     const t = db.collection(COLL) as Collection<TicketDoc>;
     await t.insert({ _id: "dup", title: "first", status: "open" });
     let thrown: unknown;
@@ -115,11 +116,11 @@ describe("Collection.insert", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("Conflict");
+    expect((thrown as BaerlyError).code).toBe("AlreadyExists");
     expect((thrown as BaerlyError).retriable).toBe(false);
-    expect((thrown as BaerlyError).resolution).toContain("different `_id`");
-    // Cardinality / id should appear in the message so callers can
-    // distinguish "duplicate id" from a generic CAS conflict.
+    expect((thrown as BaerlyError).resolution).toBe(CODE_RESOLUTIONS.AlreadyExists);
+    // The id should appear in the message so callers can see which
+    // insert collided.
     expect((thrown as BaerlyError).message).toContain("dup");
   });
 

@@ -89,7 +89,7 @@ test.each(["exhausted-resends", "unreadable-occupant"] as const)(
       });
       await expect(
         client.collection("tickets").insert({ _id: _id!, title: "one logical insert" }),
-      ).rejects.toMatchObject({ code: "Conflict" });
+      ).rejects.toMatchObject({ code: "AlreadyExists", retriable: false });
       await expect(db.collection("tickets").where({}).all()).resolves.toHaveLength(1);
     } else {
       expect(failure).toBeUndefined();

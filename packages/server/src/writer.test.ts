@@ -9,6 +9,7 @@ import {
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MemoryStorage,
   BaerlyError,
+  CODE_RESOLUTIONS,
   PREIMAGE_SCAN_MAX_GETS,
   resetMemoryStorage,
   str2uintDesc,
@@ -168,6 +169,27 @@ class SameSessionDifferentBodyStorage extends MemoryStorage {
       throw new BaerlyError("Conflict", `simulated same-session collision on ${key}`);
     }
     return super.put(key, body, opts);
+  }
+}
+
+/**
+ * Fault injection for the writer's retry arm: the first `failReads`
+ * reads of `current.json` throw a storage precondition failure. No
+ * natural path lets one escape `#singleAttemptCommit`, so this is the
+ * only way to drive the budget-exhausted throw.
+ */
+class ConflictingCurrentReadStorage extends MemoryStorage {
+  failReads = 0;
+
+  override async get(
+    key: string,
+    opts?: Parameters<MemoryStorage["get"]>[1],
+  ): ReturnType<MemoryStorage["get"]> {
+    if (key === CURRENT_KEY && this.failReads > 0) {
+      this.failReads -= 1;
+      throw new BaerlyError("Conflict", `simulated precondition failure reading ${key}`);
+    }
+    return super.get(key, opts);
   }
 }
 
@@ -352,6 +374,51 @@ describe("Writer", () => {
     expect(result.attempts).toBe(1);
     expect(result.entry.seq).toBe(1);
     await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
+  });
+
+  test("an exhausted retry budget surfaces a retriable WriteConflict", async () => {
+    const storage = new ConflictingCurrentReadStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.failReads = 3;
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
+    });
+
+    const err = await writer
+      .commit({ op: "I", collection: COLL, docId: "doc-1", body: { _id: "doc-1" } })
+      .catch((error: unknown) => error);
+
+    expect(err).toBeInstanceOf(BaerlyError);
+    expect(err).toMatchObject({
+      code: "WriteConflict",
+      retriable: true,
+      resolution: CODE_RESOLUTIONS.WriteConflict,
+    });
+    expect(storage.failReads).toBe(0);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([]);
+  });
+
+  test("a precondition failure inside the budget retries and commits", async () => {
+    const storage = new ConflictingCurrentReadStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    storage.failReads = 1;
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { maxRetries: 3, initialBackoffMs: 0, random: () => 0 },
+    });
+
+    const result = await writer.commit({
+      op: "I",
+      collection: COLL,
+      docId: "doc-1",
+      body: { _id: "doc-1" },
+    });
+
+    expect(result.attempts).toBe(2);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
   });
 
   test("repeated foreign occupants: writer probes past them and commits — no wedge", async () => {

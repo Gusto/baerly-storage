@@ -83,8 +83,6 @@ import {
 import { getCurrentContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 
-const CAS_CONFLICT_RESOLUTION = "Re-read and retry.";
-
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
@@ -96,7 +94,7 @@ export interface WriterOptions {
    * Max transient retries per commit, shared by same-slot resends after
    * `NetworkError` and readbacks of a rejected create's slot. An exhausted
    * budget still gets one final readback. Also caps outer retryable
-   * `Conflict` attempts before throwing `Conflict`.
+   * `Conflict` attempts before throwing `WriteConflict`.
    * Foreign log-create 412s are resolved inside a single attempt by
    * occupant read-back plus bounded forward re-probe; this budget is
    * retained for future retryable conflicts and tests.
@@ -334,9 +332,10 @@ export class Writer {
    *   landed below `min(log_delete_floor, log_seq_start)`, or a possibly
    *   durable create could not be resolved. The mutation's fate is unknown;
    *   `err._id` is `input.docId`.
-   * @throws BaerlyError code="Conflict" when a retryable conflict
-   *   escapes the single-attempt helper and exhausts the retry budget
-   *   (presently unreachable on the log-create 412 path).
+   * @throws BaerlyError code="WriteConflict" (retriable) when a retryable
+   *   conflict escapes the single-attempt helper and exhausts the retry
+   *   budget; nothing was committed (presently unreachable on the
+   *   log-create 412 path).
    * @throws BaerlyError code="Internal" when a log entry expected in
    *   `[0, tail_hint)` is missing — a protocol-invariant violation
    *   (compactor bug or stale `current.json`).
@@ -377,7 +376,7 @@ export class Writer {
     // always resolved internally (own-session adoption or a bounded
     // forward-probe to the next empty slot; only an exhausted probe cap
     // throws, as `Internal`, not `Conflict`). So the retry-catch arm and
-    // the budget-exhausted `Conflict` throw below are presently
+    // the budget-exhausted `WriteConflict` throw below are presently
     // unreachable. They are retained deliberately: they cost nothing on
     // the happy path and re-arm automatically if a future change ever
     // re-introduces a retryable `Conflict` out of the helper.
@@ -408,12 +407,12 @@ export class Writer {
 
     // Retry budget exhausted.
     throw new BaerlyError(
-      "Conflict",
-      `Writer: CAS conflict on ${this.#currentJsonKey} after ${this.#maxRetries} attempts`,
+      "WriteConflict",
+      `Writer: lost the commit race in collection ${JSON.stringify(input.collection)} after ${this.#maxRetries} attempts; nothing was committed`,
       undefined,
       undefined,
       undefined,
-      CAS_CONFLICT_RESOLUTION,
+      CODE_RESOLUTIONS.WriteConflict,
       true,
     );
   }

@@ -26,8 +26,8 @@
  * Mutation terminals are SINGLE-ATTEMPT per call site. CAS contention
  * retries (up to 8 attempts) live inside `Writer.commit()`; the
  * verbs do NOT add their own retry loop. On retry-budget exhaustion
- * `commit()` throws `BaerlyError{code:"Conflict"}` and the verb
- * surfaces it unchanged — the caller decides whether to re-run.
+ * `commit()` throws a retriable `BaerlyError{code:"WriteConflict"}` and
+ * the verb surfaces it unchanged — the caller decides whether to re-run.
  *
  * @see ../../../docs/spec/sync-protocol.md
  */
@@ -44,6 +44,7 @@ import {
   normalizePredicateArg,
   validateWire,
   BaerlyError,
+  CODE_RESOLUTIONS,
   type OrderSpec,
   type PredicateWire,
   type Query,
@@ -61,7 +62,6 @@ import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.t
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { Writer } from "./writer.ts";
 
-const DUPLICATE_ID_RESOLUTION = "Use different `_id` or omit it.";
 const PATCH_ID_RESOLUTION = "Omit `_id` from the patch, or pass the row's own `_id`.";
 
 /**
@@ -351,16 +351,18 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * `Collection.insert` / `Query.insert` implementation. Mints a UUIDv7 `_id`
  * when the caller omits it (or supplies an empty string); honours a
  * caller-supplied non-empty `_id`. On collision (the materialised
- * collection already carries that `_id`) throws
- * `BaerlyError{code:"Conflict"}` BEFORE issuing the writer round-trip
+ * collection already carries that `_id`) throws non-retriable
+ * `BaerlyError{code:"AlreadyExists"}` BEFORE issuing the writer round-trip
  * — matches the locked `Collection.insert` contract
  * (`packages/protocol/src/collection-api.ts:123–125`).
  *
  * The emitted `LogEntry` has `op:"I"` and `after === {...doc, _id}`
  * (today's per-doc-replace model).
  *
- * @throws BaerlyError code="Conflict" — `_id` collision (pre-commit check) or
- *   CAS retry budget exhausted inside `Writer.commit()`.
+ * @throws BaerlyError code="AlreadyExists" — `_id` collision (pre-commit
+ *   check). Not retriable.
+ * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted
+ *   inside `Writer.commit()`; nothing was committed. Retriable.
  * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
  *   durable, but its outcome could not be resolved. The row may or may not
  *   have been inserted. Not retriable-by-default; see `Writer.commit`.
@@ -419,18 +421,18 @@ export const runInsert = async <T extends DocumentData>(
   });
   if (existing.rows.length > 0) {
     throw new BaerlyError(
-      "Conflict",
+      "AlreadyExists",
       `Query.insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
       undefined,
       undefined,
       undefined,
-      DUPLICATE_ID_RESOLUTION,
+      CODE_RESOLUTIONS.AlreadyExists,
       false,
     );
   }
 
   // Single-attempt at the verb level; CAS retries are internal to
-  // `Writer.commit()`. If `commit` throws `Conflict`, the
+  // `Writer.commit()`. If `commit` throws `WriteConflict`, the
   // budget is exhausted and we surface unchanged.
   await writerFor(ctx).commit({
     op: "I",
@@ -521,7 +523,7 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  * under `PATCH_ONLY` need to maintain a shadow table — see
  * `packages/protocol/src/log.ts:102–118`.
  *
- * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
+ * @throws BaerlyError code="WriteConflict" — any one row's CAS retry budget
  *   exhausted inside `Writer.commit()`. The partial-progress
  *   `modified` count is NOT returned in that case.
  * @throws BaerlyError code="AmbiguousCommit" — one row's committing create
@@ -595,7 +597,7 @@ const runUpdate = async <T extends DocumentData>(
  * @throws BaerlyError code="NotFound" — no row exists at `id`.
  * @throws BaerlyError code="SchemaError" — post-image rejected by
  *   the collection's bound validator.
- * @throws BaerlyError code="Conflict" — writer CAS retry budget
+ * @throws BaerlyError code="WriteConflict" — writer CAS retry budget
  *   exhausted.
  * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
  *   durable, but its outcome could not be resolved, so the replace may or may
@@ -651,7 +653,7 @@ export const runReplaceById = async <T extends DocumentData>(
  * `Query.update`. The document is the atomic unit; there is no
  * multi-row batch.
  *
- * @throws BaerlyError code="Conflict" — any one row's CAS retry budget
+ * @throws BaerlyError code="WriteConflict" — any one row's CAS retry budget
  *   exhausted. The partial-progress `deleted` count is NOT returned
  *   in that case.
  * @throws BaerlyError code="AmbiguousCommit" — one row's committing create

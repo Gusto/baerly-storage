@@ -142,12 +142,12 @@ const bundle = defineBaerlySubcommand({
     const head = await readCurrentJson(bucket.storage, currentJsonKey);
     if (head !== null && args.force !== true) {
       throw new BaerlyError(
-        "Conflict",
-        `baerly admin restore: ${currentJsonKey} exists; pass --force to truncate`,
+        "AlreadyExists",
+        `baerly admin restore: collection ${JSON.stringify(args.collection)} (app ${JSON.stringify(app)}, tenant ${JSON.stringify(tenant)}) already exists; pass --force to truncate it`,
         undefined,
         undefined,
         undefined,
-        "Pass --force to truncate the existing collection, or choose an empty target.",
+        "Pass --force to truncate the existing collection, or restore into an empty target.",
         false,
       );
     }

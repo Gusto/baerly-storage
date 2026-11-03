@@ -244,7 +244,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(proxy.counts.list).toBe(0);
   });
 
-  test("duplicate-_id Conflict emits a warning-level line with the canonical totals", async () => {
+  test("duplicate-_id AlreadyExists emits a warning-level line with the canonical totals", async () => {
     const memory = new MemoryStorage();
     await bootstrap(memory);
 
@@ -273,7 +273,7 @@ describe("observability integration — canonical line vs physical reality", () 
     try {
       await runWithContext(ctx, async () => {
         // Duplicate `_id` — Query.insert's pre-commit collision
-        // precondition throws BaerlyError{code:"Conflict"} BEFORE
+        // precondition throws BaerlyError{code:"AlreadyExists"} BEFORE
         // issuing a writer commit. The failing precondition is a
         // GET-only path; we assert the canonical line still tracks
         // the exact physical-op count.
@@ -294,7 +294,7 @@ describe("observability integration — canonical line vs physical reality", () 
     });
 
     expect(caught).toBeInstanceOf(BaerlyError);
-    expect((caught as BaerlyError).code).toBe("Conflict");
+    expect((caught as BaerlyError).code).toBe("AlreadyExists");
 
     expect(records).toHaveLength(1);
     const record = records[0]!;
@@ -305,7 +305,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(record.level).toBe("warning");
     expect(props["outcome"]).toBe("conflict");
     const err = props["error"] as { code: string };
-    expect(err.code).toBe("Conflict");
+    expect(err.code).toBe("AlreadyExists");
 
     const physicalA = proxy.counts.put + proxy.counts.delete + proxy.counts.list;
     const physicalB = proxy.counts.get;
@@ -315,7 +315,7 @@ describe("observability integration — canonical line vs physical reality", () 
     expect(props["db.storage.class_b_ops_total"] ?? 0).toBe(physicalB);
 
     // The collision precondition is the only physical I/O before the
-    // Conflict throw: zero PUTs, zero DELETEs. The class A total may
+    // AlreadyExists throw: zero PUTs, zero DELETEs. The class A total may
     // be zero (GET-only path) — if it ever flips non-zero, the read
     // path took a LIST and the cost-model story needs updating.
     expect(proxy.counts.put).toBe(0);
