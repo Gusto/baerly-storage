@@ -336,8 +336,8 @@ live runs against that bucket:
   GCS parity means the provider adds no extra ops, not that the measured
   Node profile is 3×.
 - **Latency and rate-limiting are real, but the counter has a blind
-  spot.** `gcsStorage()` retries a `429`/`5xx` internally (default 8
-  attempts, `RATE_LIMIT_BACKOFF_MILLIS`-floored exponential backoff)
+  spot.** `gcsStorage()` retries a `429`/`5xx` internally (3 attempts in
+  total, full-jitter exponential backoff with a 1 s base after a throttle)
   before surfacing anything to the caller, so `object_store.rate_limit_429`
   in the load-harness result JSON only counts *retry-budget-exhausted*
   429s, not each individual one absorbed in a retry loop — a single

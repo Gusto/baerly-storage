@@ -94,21 +94,6 @@ export const TIMESTAMP_BIT_WIDTH: number = 42;
 export const SESSION_ID_LENGTH: number = 6;
 
 /**
- * Maximum attempts `S3HttpStorage.list` will make per page when the
- * server replies 429 (rate-limited). After this many in a row, it
- * gives up with `NetworkError`. Separate from the inner transient-
- * failure budget so a single hot page can't burn the whole retry
- * allowance.
- */
-export const LIST_OBJECT_MAX_RETRIES: number = 10;
-
-/**
- * Backoff (in milliseconds) inserted between LIST attempts when S3
- * returns 429 (rate-limited).
- */
-export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
-
-/**
  * Upper clamp on a server-provided `Retry-After` hint, in seconds.
  * RFC 7231 §7.1.3 allows arbitrary delta-seconds or HTTP-dates, but a
  * client that blindly honours a multi-hour hint hands a misbehaving
@@ -120,25 +105,82 @@ export const RATE_LIMIT_BACKOFF_MILLIS: number = 1000;
 export const RETRY_AFTER_MAX_SECONDS: number = 60;
 
 /**
- * Default retry budget for `S3HttpStorage.retry` (the wrapper around
- * each of the four `Storage` methods). Bounded so that permanent
- * failures (CORS misconfig, NXDOMAIN, persistent 5xx) surface to
- * callers as rejected promises instead of retrying forever and
- * leaving `Writer.commit()` permanently pending.
+ * Total attempts (first try included) every storage adapter makes for
+ * one `Storage` call before surfacing the last failure: S3, GCS, and
+ * the R2 binding, for `get` / `put` / `delete` and for each `list`
+ * page. 429 and 5xx share this one counter, so a failing call costs at
+ * most 3 requests on every host. Applied by `retryStorageCall`.
  *
- * 8 attempts at the existing 100ms→×1.5→10s schedule covers ~30s of
- * transient turbulence, which is enough to ride out a leader election
- * or a brief network blip without papering over a real outage.
+ * 3 is the common prior-art cap: AWS SDK standard retry mode allows 3
+ * attempts (https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html),
+ * and the Google SRE book caps per-request retries at 3
+ * (https://sre.google/sre-book/handling-overload/). Retrying happens at
+ * this one layer only: stacked retry loops multiply ("3 retries at 5
+ * layers = 243x", AWS Builders' Library, "Timeouts, retries and backoff
+ * with jitter"). A store failing three times in a row is reported as a
+ * retriable `NetworkError` rather than ridden out here.
+ *
+ * @see packages/protocol/src/storage/retry.ts (`retryStorageCall`)
  */
-export const S3_REQUEST_MAX_RETRIES: number = 8;
+export const STORAGE_RETRY_MAX_ATTEMPTS: number = 3;
+
+/**
+ * Full-jitter backoff base, in milliseconds, after a transient failure
+ * (5xx, network error): retry `n` (0-based) waits
+ * `random() * min(STORAGE_RETRY_MAX_DELAY_MILLIS, base * 2^n)`.
+ *
+ * 50 ms is the AWS SDKs' transient base
+ * (https://aws.amazon.com/blogs/developer/announcing-updated-retry-behavior-for-aws-sdks-and-tools/).
+ *
+ * @see packages/protocol/src/storage/retry.ts (`storageRetryDelayMillis`)
+ */
+export const STORAGE_RETRY_TRANSIENT_BASE_MILLIS: number = 50;
+
+/**
+ * Full-jitter backoff base, in milliseconds, after a throttle (`429`,
+ * S3 `503 SlowDown`; any error whose cause carries `throttled: true`).
+ * Longer than {@link STORAGE_RETRY_TRANSIENT_BASE_MILLIS} because a
+ * throttle says the store is overloaded, and an early resend adds load.
+ *
+ * 1 s is the AWS SDKs' throttle base
+ * (https://aws.amazon.com/blogs/developer/announcing-updated-retry-behavior-for-aws-sdks-and-tools/).
+ *
+ * @see packages/protocol/src/storage/retry.ts (`storageRetryDelayMillis`)
+ */
+export const STORAGE_RETRY_THROTTLE_BASE_MILLIS: number = 1000;
+
+/**
+ * Upper bound, in milliseconds, on one backoff between storage
+ * attempts, jittered or server-hinted (`Retry-After` is clamped to
+ * it). 20 s is the AWS SDKs' backoff cap
+ * (https://aws.amazon.com/blogs/developer/announcing-updated-retry-behavior-for-aws-sdks-and-tools/).
+ *
+ * @see packages/protocol/src/storage/retry.ts (`storageRetryDelayMillis`)
+ */
+export const STORAGE_RETRY_MAX_DELAY_MILLIS: number = 20_000;
+
+/**
+ * Default `Writer` resend budget for one commit (`WriterOptions.maxRetries`):
+ * how many times the Writer may resend an uncertain log create or retry
+ * an occupant readback, one budget shared by both. Each resend is a
+ * full `Storage.put`, so it multiplies the adapter's
+ * {@link STORAGE_RETRY_MAX_ATTEMPTS}.
+ *
+ * 8 is provisional, not derived from prior art. It is re-derived once
+ * the Writer resolves an uncertain create by readback instead of
+ * resending it, which removes the multiplication.
+ *
+ * @see packages/server/src/writer.ts (`Writer` constructor)
+ */
+export const WRITER_COMMIT_MAX_RETRIES: number = 8;
 
 /**
  * Maximum concurrent log-entry GETs issued by a single `walkLogRange`
  * call. Bounds Class-B fan-out per read and per CAS attempt — without
  * a bound, a reader on a collection whose compactor has fallen behind
- * fans out one GET per live-tail entry (typically 50-100 on the free-
- * tier profile), and a contended writer multiplies that by the CAS
- * retry budget ({@link S3_REQUEST_MAX_RETRIES}).
+ * fans out one GET per live-tail entry (measured at 150-360 entries at
+ * steady state on the free-tier profile), and a contended writer
+ * multiplies that by its resend budget ({@link WRITER_COMMIT_MAX_RETRIES}).
  *
  * 16 bounds CONCURRENCY, not the per-request total. `16 * 8 = 128` is
  * the whole-request worst case across the retry budget, which fits the
@@ -368,7 +410,7 @@ export const GC_PENDING_CONTENT_TYPE: string = "application/json";
  * Why 7 days specifically:
  *  - **1 day is too aggressive for batch workloads.** Worker isolate
  *    scheduling pauses, cross-region replication lag, and
- *    {@link RATE_LIMIT_BACKOFF_MILLIS} retry cascades can plausibly
+ *    {@link STORAGE_RETRY_THROTTLE_BASE_MILLIS} retry cascades can plausibly
  *    exceed an hour under pathological conditions.
  *  - **30 days is conservative beyond the worst plausible pause.**
  *    Doubles `gc/pending.json` size at steady state and slows

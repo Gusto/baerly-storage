@@ -16,3 +16,9 @@ export type {
 export { defineStorageConformanceSuite } from "./conformance.ts";
 export { probeCas } from "./probe-cas.ts";
 export type { CasProbeCheck, CasProbeResult } from "./probe-cas.ts";
+export {
+  PERMANENT_STORAGE_ERROR_CODES,
+  retryStorageCall,
+  storageRetryDelayMillis,
+} from "./retry.ts";
+export type { StorageRetryOptions } from "./retry.ts";

@@ -63,7 +63,7 @@ import {
   PREIMAGE_SCAN_MAX_GETS,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
-  S3_REQUEST_MAX_RETRIES,
+  WRITER_COMMIT_MAX_RETRIES,
   SESSION_ID_LENGTH,
   countKey,
   readCurrentJson,
@@ -151,7 +151,7 @@ export interface WriterOptions {
    *
    * Production callers default this OFF: under contention the walk
    * issues `O(tail)` Class-B GETs per CAS attempt and the retry
-   * budget multiplies that by {@link S3_REQUEST_MAX_RETRIES}. Tests
+   * budget multiplies that by {@link WRITER_COMMIT_MAX_RETRIES}. Tests
    * that intentionally puncture bucket state to exercise the
    * invariant trigger opt in by passing `true`.
    *
@@ -275,7 +275,7 @@ export class Writer {
   }) {
     this.#storage = opts.storage;
     this.#currentJsonKey = opts.currentJsonKey;
-    this.#maxRetries = opts.options?.maxRetries ?? S3_REQUEST_MAX_RETRIES;
+    this.#maxRetries = opts.options?.maxRetries ?? WRITER_COMMIT_MAX_RETRIES;
     this.#initialBackoffMs = opts.options?.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     this.#random = opts.options?.random ?? Math.random;
     const indexes = opts.options?.indexes ?? [];

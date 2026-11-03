@@ -342,10 +342,16 @@ describe("GcsHttpStorage.list retry + pagination", () => {
     (nextToken !== undefined ? `<NextContinuationToken>${nextToken}</NextContinuationToken>` : "") +
     `</ListBucketResult>`;
 
-  // retries:0 so the inner per-request #retry adds no timers — the outer
-  // rate-limit loop's delay is then the only clock, matching the s3 fixture.
+  // retries: 2 (3 attempts per page, the default) with backoffMs: 0, so a
+  // Retry-After hint is the only clock in the 429 tests below.
   const mkList = (fetchImpl: typeof fetch): GcsHttpStorage =>
-    new GcsHttpStorage({ bucket: "b", sign: passthroughSign, fetch: fetchImpl, retries: 0 });
+    new GcsHttpStorage({
+      bucket: "b",
+      sign: passthroughSign,
+      fetch: fetchImpl,
+      retries: 2,
+      backoffMs: 0,
+    });
 
   const urlOf = (input: RequestInfo | URL): string => {
     if (typeof input === "string") {
@@ -422,7 +428,7 @@ describe("GcsHttpStorage.list retry + pagination", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  test("429 with Retry-After → outer loop waits the hint, not the default backoff", async () => {
+  test("429 with Retry-After → the page retry waits the hint, not the jittered backoff", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
@@ -440,7 +446,7 @@ describe("GcsHttpStorage.list retry + pagination", () => {
       })();
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchFn).toHaveBeenCalledTimes(1);
-      // Without the hint the loop retries at the 1s default; the 3s hint wins.
+      // Without the hint the retry would not wait at all (backoffMs: 0); the 3s hint wins.
       await vi.advanceTimersByTimeAsync(2999);
       expect(fetchFn).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
@@ -463,12 +469,13 @@ describe("GcsHttpStorage.list retry + pagination", () => {
         }
       })();
       const caught = drain.catch((error: unknown) => error);
-      // 10 attempts × max(2s hint, 1s default) = 20s of in-loop waits.
+      // 3 attempts, 2 × 2s of in-loop waits.
       await vi.advanceTimersByTimeAsync(60_000);
       const err = (await caught) as BaerlyError;
       expect(err).toBeInstanceOf(BaerlyError);
       expect(err.code).toBe("NetworkError");
       expect(err.cause).toMatchObject({ status: 429, retryAfterSeconds: 2 });
+      expect(fetchFn).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

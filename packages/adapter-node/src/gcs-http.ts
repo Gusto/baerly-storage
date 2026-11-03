@@ -1,10 +1,7 @@
 import {
   BaerlyError,
-  LIST_OBJECT_MAX_RETRIES,
-  RATE_LIMIT_BACKOFF_MILLIS,
-  S3_REQUEST_MAX_RETRIES,
   assertValidStorageKey,
-  delay,
+  retryStorageCall,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -12,7 +9,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { mapStorageError, parseRetryAfter, retry } from "./http-transport.ts";
+import { mapStorageError } from "./http-transport.ts";
 import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
 /** Default GCS native XML API endpoint. */
@@ -34,9 +31,19 @@ export interface GcsHttpStorageOptions {
   fetch?: typeof fetch;
   /** Signs requests before send. GOOG4-HMAC-SHA256 in production. */
   sign?: (req: Request) => Promise<Request>;
-  /** Max retries for transient (non-permanent) failures. */
+  /**
+   * Retries after the first attempt, for throttled and transient failures
+   * alike (and per `list` page). Default `STORAGE_RETRY_MAX_ATTEMPTS - 1`
+   * (2, so 3 attempts in total); `0` sends each request once. Must be a
+   * non-negative integer; any other value makes each request reject with
+   * `InvalidConfig` before it is sent.
+   */
   retries?: number;
-  /** Initial backoff in ms. */
+  /**
+   * Backoff base in ms, overriding both default bases (50 ms after a
+   * transient failure, 1 s after a throttle). Full jitter applies either
+   * way. Omit for the default policy.
+   */
   backoffMs?: number;
 }
 
@@ -56,16 +63,16 @@ export class GcsHttpStorage implements Storage {
   readonly #bucket: string;
   readonly #fetch: typeof fetch;
   readonly #sign?: (req: Request) => Promise<Request>;
-  readonly #retries: number;
-  readonly #backoffMs: number;
+  readonly #retries: number | undefined;
+  readonly #backoffMs: number | undefined;
 
   constructor(options: GcsHttpStorageOptions) {
     this.#endpoint = (options.endpoint ?? DEFAULT_GCS_ENDPOINT).replace(/\/+$/, "");
     this.#bucket = options.bucket;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#sign = options.sign;
-    this.#retries = options.retries ?? S3_REQUEST_MAX_RETRIES;
-    this.#backoffMs = options.backoffMs ?? 100;
+    this.#retries = options.retries;
+    this.#backoffMs = options.backoffMs;
   }
 
   #objectUrl(key: string, generation?: string): string {
@@ -94,7 +101,11 @@ export class GcsHttpStorage implements Storage {
   }
 
   #retry<T>(fn: () => Promise<T>, conditionalCreate = false): Promise<T> {
-    return retry(fn, { retries: this.#retries, backoffMs: this.#backoffMs, conditionalCreate });
+    return retryStorageCall(fn, {
+      ...(this.#retries !== undefined && { retries: this.#retries }),
+      ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
+      conditionalCreate,
+    });
   }
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
@@ -231,39 +242,19 @@ export class GcsHttpStorage implements Storage {
       }
       const url = `${this.#endpoint}/${this.#bucket}/?${params.toString()}`;
 
-      let parsed: Awaited<ReturnType<typeof parseListObjectsV2CommandOutput>> | undefined;
-      let lastHint: number | undefined;
-      for (let attempt = 0; attempt < LIST_OBJECT_MAX_RETRIES; attempt++) {
-        const outcome = await this.#retry(async () => {
+      // One retry budget per page: 429 and 5xx share the attempt counter,
+      // so a page costs at most `retries + 1` requests whatever fails.
+      const parsed = parseListObjectsV2CommandOutput(
+        await this.#retry(async () => {
           const res = await this.#dispatch(
             new Request(url, { method: "GET", signal: opts?.signal ?? null }),
           );
-          if (res.status === 200) {
-            return { kind: "ok" as const, body: await res.text() };
+          if (res.status !== 200) {
+            throw await mapStorageError(res, "LIST", prefix);
           }
-          if (res.status === 429) {
-            return {
-              kind: "ratelimited" as const,
-              retryAfterSeconds: parseRetryAfter(res.headers.get("Retry-After")),
-            };
-          }
-          throw await mapStorageError(res, "LIST", prefix);
-        });
-        if (outcome.kind === "ok") {
-          parsed = parseListObjectsV2CommandOutput(outcome.body);
-          break;
-        }
-        lastHint = outcome.retryAfterSeconds;
-        const hintMs =
-          outcome.retryAfterSeconds !== undefined ? outcome.retryAfterSeconds * 1000 : 0;
-        await delay(Math.max(hintMs, RATE_LIMIT_BACKOFF_MILLIS));
-      }
-      if (parsed === undefined) {
-        throw new BaerlyError("NetworkError", `LIST ${prefix}: rate-limited`, {
-          status: 429,
-          ...(lastHint !== undefined ? { retryAfterSeconds: lastHint } : {}),
-        });
-      }
+          return res.text();
+        }),
+      );
 
       for (const entry of parsed.Contents ?? []) {
         if (entry.Key === undefined) {

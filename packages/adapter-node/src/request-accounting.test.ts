@@ -9,20 +9,13 @@
  * `issued` from the injected `fetch`. Every expectation is derived from
  * the transport constants so the multiplier documents itself:
  *
- * - get / put / delete: `retry()` makes `retries + 1` attempts
- *   (default `S3_REQUEST_MAX_RETRIES`).
- * - list: one request per page, and per page an outer 429 loop of
- *   `LIST_OBJECT_MAX_RETRIES` attempts, each wrapping the ordinary
- *   `retries + 1` loop (which retries 5xx but hands 429 to the outer
- *   loop).
+ * - get / put / delete: `retryStorageCall` makes `retries + 1` attempts
+ *   (default `STORAGE_RETRY_MAX_ATTEMPTS`, 3), throttles and 5xx alike.
+ * - list: one request per page, each page under the same single
+ *   `retries + 1` budget; 429 and 5xx share one counter per page.
  */
 
-import {
-  type BaerlyError,
-  LIST_OBJECT_MAX_RETRIES,
-  S3_REQUEST_MAX_RETRIES,
-  type Storage,
-} from "@baerly/protocol";
+import { type BaerlyError, STORAGE_RETRY_MAX_ATTEMPTS, type Storage } from "@baerly/protocol";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { GcsHttpStorage } from "./gcs-http.ts";
@@ -30,12 +23,15 @@ import { S3HttpStorage } from "./s3-http.ts";
 
 const NETWORK_ERROR = "NetworkError" as const;
 
-/** Attempts `retry()` makes for one call: the first try plus `retries`. */
+/** Attempts `retryStorageCall` makes for one call: the first try plus `retries`. */
 const attemptsFor = (retries: number): number => 1 + retries;
+
+/** Attempts per call (and per list page) when `retries` is omitted. */
+const DEFAULT_ATTEMPTS = STORAGE_RETRY_MAX_ATTEMPTS;
 
 interface Adapter {
   readonly name: string;
-  /** `retries` omitted ⇒ the adapter default (`S3_REQUEST_MAX_RETRIES`). */
+  /** `retries` omitted ⇒ the adapter default (`STORAGE_RETRY_MAX_ATTEMPTS - 1`). */
   make(fetchImpl: typeof fetch, retries?: number): Storage;
   /** A successful object GET / PUT response carrying the version token. */
   ok(body?: string): Response;
@@ -109,8 +105,8 @@ const drain = async (iter: AsyncIterable<{ key: string }>): Promise<string[]> =>
 
 describe.each([s3, gcs])("$name request accounting", (adapter) => {
   describe("get / put / delete retries", () => {
-    test("get: 500 ×3 then 200 — outer meter sees 1 get, transport issues 4", async () => {
-      const failures = 3;
+    test("get: 500 ×2 then 200 — outer meter sees 1 get, transport issues 3", async () => {
+      const failures = DEFAULT_ATTEMPTS - 1;
       const f = scriptedFetch((n) => (n < failures ? fail500() : adapter.ok("x")));
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       await expect(counted.storage.get("k")).resolves.not.toBeNull();
@@ -118,13 +114,13 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       expect(f.issued).toBe(failures + 1);
     });
 
-    test("get: always 500 with default retries — outer 1 get, transport issues 1 + S3_REQUEST_MAX_RETRIES (9)", async () => {
+    test("get: always 500 with default retries — outer 1 get, transport issues STORAGE_RETRY_MAX_ATTEMPTS (3)", async () => {
       const f = scriptedFetch(fail500);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       await expect(counted.storage.get("k")).rejects.toMatchObject({ code: NETWORK_ERROR });
       expect(counted.gets).toBe(1);
-      expect(f.issued).toBe(attemptsFor(S3_REQUEST_MAX_RETRIES));
-      expect(f.issued).toBe(9);
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
+      expect(f.issued).toBe(3);
     });
 
     test("get: always 500 with retries: 2 — outer 1 get, transport issues 3", async () => {
@@ -144,17 +140,17 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       expect(f.issued).toBe(3);
     });
 
-    test("put: always 500 with default retries — outer 1 put, transport issues 9", async () => {
+    test("put: always 500 with default retries — outer 1 put, transport issues 3", async () => {
       const f = scriptedFetch(fail500);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       await expect(counted.storage.put("k", new Uint8Array([1]))).rejects.toMatchObject({
         code: NETWORK_ERROR,
       });
       expect(counted.puts).toBe(1);
-      expect(f.issued).toBe(attemptsFor(S3_REQUEST_MAX_RETRIES));
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
     });
 
-    test("conditional create throttled on every attempt — outer 1 put, transport issues 9, cause.notApplied", async () => {
+    test("conditional create throttled on every attempt — outer 1 put, transport issues 3, cause.notApplied", async () => {
       const f = scriptedFetch(throttle429);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       const err = (await counted.storage
@@ -163,7 +159,7 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       expect(err.code).toBe(NETWORK_ERROR);
       expect(err.cause).toMatchObject({ status: 429, throttled: true, notApplied: true });
       expect(counted.puts).toBe(1);
-      expect(f.issued).toBe(attemptsFor(S3_REQUEST_MAX_RETRIES));
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
     });
 
     test("delete: 500 ×2 then 204 with retries: 2 — outer 1 delete, transport issues 3", async () => {
@@ -177,12 +173,12 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       expect(f.issued).toBe(attemptsFor(retries));
     });
 
-    test("delete: always 500 with default retries — outer 1 delete, transport issues 9", async () => {
+    test("delete: always 500 with default retries — outer 1 delete, transport issues 3", async () => {
       const f = scriptedFetch(fail500);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       await expect(counted.storage.delete("k")).rejects.toMatchObject({ code: NETWORK_ERROR });
       expect(counted.deletes).toBe(1);
-      expect(f.issued).toBe(attemptsFor(S3_REQUEST_MAX_RETRIES));
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
     });
   });
 
@@ -239,7 +235,7 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       vi.useRealTimers();
     });
 
-    /** Drain `list` under fake timers, flushing the non-injectable rate-limit delay. */
+    /** Drain `list` under fake timers, flushing any backoff delay. */
     const drainUnderFakeTimers = async (storage: Storage): Promise<unknown> => {
       vi.useFakeTimers();
       const settled = drain(storage.list("p/")).then(
@@ -250,19 +246,19 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
       return settled;
     };
 
-    test("429 ×3 then 200 — outer 1 list, transport issues 4", async () => {
-      const throttles = 3;
+    test("429 ×2 then 200 — outer 1 list, transport issues 3", async () => {
+      const throttles = DEFAULT_ATTEMPTS - 1;
       const f = scriptedFetch((n) =>
         n < throttles ? throttle429() : new Response(adapter.listPage(["p/a"])),
       );
-      const counted = wrapCountingStorage(adapter.make(f.fetchImpl, 0));
+      const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       await expect(drainUnderFakeTimers(counted.storage)).resolves.toEqual({ keys: ["p/a"] });
       expect(counted.lists).toBe(1);
       expect(f.issued).toBe(throttles + 1);
     });
 
-    test("two pages, each throttled LIST_OBJECT_MAX_RETRIES - 1 times — the 429 budget is per page; transport issues 2 × 10", async () => {
-      const throttlesPerPage = LIST_OBJECT_MAX_RETRIES - 1;
+    test("two pages, each throttled STORAGE_RETRY_MAX_ATTEMPTS - 1 times — the budget is per page; transport issues 2 × 3", async () => {
+      const throttlesPerPage = DEFAULT_ATTEMPTS - 1;
       const perPage = throttlesPerPage + 1;
       const f = scriptedFetch((n) => {
         if (n % perPage < throttlesPerPage) {
@@ -272,69 +268,67 @@ describe.each([s3, gcs])("$name request accounting", (adapter) => {
           n < perPage ? adapter.listPage(["p/a"], "t1") : adapter.listPage(["p/b"]),
         );
       });
-      const counted = wrapCountingStorage(adapter.make(f.fetchImpl, 0));
+      const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       await expect(drainUnderFakeTimers(counted.storage)).resolves.toEqual({
         keys: ["p/a", "p/b"],
       });
       expect(counted.lists).toBe(1);
-      expect(f.issued).toBe(2 * LIST_OBJECT_MAX_RETRIES);
+      expect(f.issued).toBe(2 * DEFAULT_ATTEMPTS);
+      expect(f.issued).toBe(6);
       expect(f.urls[perPage]).toContain("continuation-token=t1");
     });
 
-    test("429 forever with retries: 0 — still LIST_OBJECT_MAX_RETRIES (10) fetches; retries does not bound the 429 loop", async () => {
+    test("429 forever with retries: 0 — 1 fetch; retries bounds the 429 path too", async () => {
       const f = scriptedFetch(throttle429);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl, 0));
       const out = (await drainUnderFakeTimers(counted.storage)) as { error: BaerlyError };
       expect(out.error.code).toBe(NETWORK_ERROR);
+      expect(out.error.retriable).toBe(true);
       expect(out.error.cause).toMatchObject({ status: 429 });
       expect(counted.lists).toBe(1);
-      expect(f.issued).toBe(LIST_OBJECT_MAX_RETRIES);
-      expect(f.issued).toBe(10);
+      expect(f.issued).toBe(attemptsFor(0));
+      expect(f.issued).toBe(1);
     });
 
-    test("429 forever with default retries — also 10 fetches; the inner loop never retries a 429", async () => {
-      const f = scriptedFetch(throttle429);
+    test("429 forever with default retries — 3 fetches, retriable NetworkError with status 429 and the hint", async () => {
+      const f = scriptedFetch(
+        () => new Response(null, { status: 429, headers: { "Retry-After": "1" } }),
+      );
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       const out = (await drainUnderFakeTimers(counted.storage)) as { error: BaerlyError };
       expect(out.error.code).toBe(NETWORK_ERROR);
-      expect(f.issued).toBe(LIST_OBJECT_MAX_RETRIES);
+      expect(out.error.retriable).toBe(true);
+      expect(out.error.cause).toMatchObject({ status: 429, retryAfterSeconds: 1 });
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
     });
 
-    test("500 forever with default retries — 9 fetches; the outer loop never retries a 5xx", async () => {
+    test("500 forever with default retries — 3 fetches", async () => {
       const f = scriptedFetch(fail500);
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       const out = (await drainUnderFakeTimers(counted.storage)) as { error: BaerlyError };
       expect(out.error.code).toBe(NETWORK_ERROR);
       expect(counted.lists).toBe(1);
-      expect(f.issued).toBe(attemptsFor(S3_REQUEST_MAX_RETRIES));
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
     });
 
-    test("500 ×retries then 429, repeating, with retries: 2 — loops multiply to 10 × 3 = 30 fetches", async () => {
+    test("500 and 429 alternating with retries: 2 — one counter per page, so 3 fetches", async () => {
       const retries = 2;
-      const perAttempt = attemptsFor(retries);
-      // Each inner `retry()` run sees `retries` 500s, then a 429 that it
-      // hands back as "ratelimited" to the outer loop.
-      const f = scriptedFetch((n) =>
-        n % perAttempt === perAttempt - 1 ? throttle429() : fail500(),
-      );
+      const f = scriptedFetch((n) => (n % 2 === 0 ? fail500() : throttle429()));
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl, retries));
       const out = (await drainUnderFakeTimers(counted.storage)) as { error: BaerlyError };
       expect(out.error.code).toBe(NETWORK_ERROR);
       expect(counted.lists).toBe(1);
-      expect(f.issued).toBe(LIST_OBJECT_MAX_RETRIES * perAttempt);
+      expect(f.issued).toBe(attemptsFor(retries));
     });
 
-    test("same pattern with default retries — outer meter sees 1 list, transport issues 10 × 9 = 90 for ONE page", async () => {
-      const perAttempt = attemptsFor(S3_REQUEST_MAX_RETRIES);
-      const f = scriptedFetch((n) =>
-        n % perAttempt === perAttempt - 1 ? throttle429() : fail500(),
-      );
+    test("429 and 500 alternating with default retries — outer meter sees 1 list, transport issues 3 for ONE page", async () => {
+      const f = scriptedFetch((n) => (n % 2 === 0 ? throttle429() : fail500()));
       const counted = wrapCountingStorage(adapter.make(f.fetchImpl));
       const out = (await drainUnderFakeTimers(counted.storage)) as { error: BaerlyError };
       expect(out.error.code).toBe(NETWORK_ERROR);
       expect(counted.lists).toBe(1);
-      expect(f.issued).toBe(LIST_OBJECT_MAX_RETRIES * perAttempt);
-      expect(f.issued).toBe(90);
+      expect(f.issued).toBe(DEFAULT_ATTEMPTS);
+      expect(f.issued).toBe(3);
     });
   });
 });

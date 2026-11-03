@@ -1,6 +1,7 @@
 import {
   BaerlyError,
   assertValidStorageKey,
+  retryStorageCall,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -89,9 +90,13 @@ class R2BindingStorageImpl implements Storage {
     const result = await this.#callBinding(
       () => this.#bucket.put(key, body, putOpts),
       `PUT ${key}`,
+      opts?.ifNoneMatch === "*",
     );
     if (result === null) {
-      // Binding signals precondition failure as `null`.
+      // Binding signals precondition failure as `null`. It resolves rather
+      // than throws, so it ends the retry loop: a lost-ack resend of a
+      // create that already landed surfaces here as a precondition failure,
+      // which the Writer resolves by readback.
       throw new BaerlyError("WriteConflict", `PUT ${key}: precondition failed`);
     }
     // `R2Object.uploaded` is the server-side write clock — surface it
@@ -161,27 +166,40 @@ class R2BindingStorageImpl implements Storage {
   }
 
   /**
-   * Map binding-layer errors to `BaerlyError` codes. The R2 binding
-   * surfaces failures as plain `Error` with messages; sniff the
-   * common ones. If the binding ever adds typed errors, tighten the
-   * sniff and keep the message fallback for older runtimes.
+   * Run one binding call under the shared storage retry policy
+   * (`retryStorageCall`: 3 attempts, full-jitter backoff), mapping
+   * binding-layer errors to `BaerlyError` codes. The R2 binding surfaces
+   * failures as plain `Error` with messages; sniff the common ones. If
+   * the binding ever adds typed errors, tighten the sniff and keep the
+   * message fallback for older runtimes.
+   *
+   * `AccessDenied` and `InvalidConfig` are permanent and not retried.
+   * Everything else is a `NetworkError` with an unknown outcome: a plain
+   * binding error never proves the call was not applied, so it is never
+   * tagged `throttled` and an exhausted conditional create never reports
+   * `notApplied`.
    */
-  async #callBinding<T>(fn: () => Promise<T>, op: string): Promise<T> {
-    try {
-      return await fn();
-    } catch (error) {
-      if (error instanceof BaerlyError) {
-        throw error;
-      }
-      const msg = error instanceof Error ? error.message : String(error);
-      if (/auth|permission|forbidden/i.test(msg)) {
-        throw new BaerlyError("AccessDenied", `${op}: ${msg}`, error);
-      }
-      if (/not.*found|no.*such.*bucket/i.test(msg)) {
-        throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, error);
-      }
-      throw new BaerlyError("NetworkError", `${op}: ${msg}`, error);
-    }
+  #callBinding<T>(fn: () => Promise<T>, op: string, conditionalCreate = false): Promise<T> {
+    return retryStorageCall(
+      async () => {
+        try {
+          return await fn();
+        } catch (error) {
+          if (error instanceof BaerlyError) {
+            throw error;
+          }
+          const msg = error instanceof Error ? error.message : String(error);
+          if (/auth|permission|forbidden/i.test(msg)) {
+            throw new BaerlyError("AccessDenied", `${op}: ${msg}`, error);
+          }
+          if (/not.*found|no.*such.*bucket/i.test(msg)) {
+            throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, error);
+          }
+          throw new BaerlyError("NetworkError", `${op}: ${msg}`, error);
+        }
+      },
+      { conditionalCreate },
+    );
   }
 }
 
@@ -209,7 +227,9 @@ class R2BindingStorageImpl implements Storage {
  * `S3HttpStorage`: `AccessDenied` for binding-level permission
  * failures, `NetworkError` for transient R2 platform failures,
  * `InvalidResponse` for precondition (CAS) failures, `InvalidConfig`
- * if the caller hands in a null/undefined binding.
+ * if the caller hands in a null/undefined binding. A failing binding
+ * call is retried under the same policy as `S3HttpStorage`: at most 3
+ * calls per `get` / `put` / `delete` and per `list` page.
  *
  * @example
  * ```ts

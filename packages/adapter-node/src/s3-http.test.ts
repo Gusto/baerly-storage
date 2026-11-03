@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { BaerlyError } from "@baerly/protocol";
+import { BaerlyError, STORAGE_RETRY_MAX_DELAY_MILLIS } from "@baerly/protocol";
 import { S3HttpStorage } from "./s3-http.ts";
 
 const mkStorage = (
@@ -468,7 +468,7 @@ describe("S3HttpStorage.list", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  test("429 with Retry-After → outer loop waits the hint, not the 1s default", async () => {
+  test("429 with Retry-After → the page retry waits the hint, not the jittered backoff", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
@@ -479,7 +479,7 @@ describe("S3HttpStorage.list", () => {
         }
         return new Response(xmlPage([]), { status: 200 });
       });
-      const s = mkStorage(fetchFn as unknown as typeof fetch);
+      const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1 });
       const iter = s.list("p/");
       const drain = (async () => {
         for await (const _ of iter) {
@@ -488,7 +488,7 @@ describe("S3HttpStorage.list", () => {
       })();
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchFn).toHaveBeenCalledTimes(1);
-      // Without the hint the loop would retry at 1s. The hint pushes it to 3s.
+      // Without the hint the retry would wait at most `backoffMs`. The hint pushes it to 3s.
       await vi.advanceTimersByTimeAsync(2999);
       expect(fetchFn).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
@@ -503,7 +503,7 @@ describe("S3HttpStorage.list", () => {
     vi.useFakeTimers();
     try {
       const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(429, { "Retry-After": "2" }));
-      const s = mkStorage(fetchFn as unknown as typeof fetch);
+      const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 2 });
       const iter = s.list("p/");
       const drain = (async () => {
         for await (const _ of iter) {
@@ -511,12 +511,13 @@ describe("S3HttpStorage.list", () => {
         }
       })();
       const caught = drain.catch((error: unknown) => error);
-      // 10 attempts × 2s = 20s of in-loop waits.
+      // 3 attempts, 2 × 2s of in-loop waits.
       await vi.advanceTimersByTimeAsync(60_000);
       const err = (await caught) as BaerlyError;
       expect(err).toBeInstanceOf(BaerlyError);
       expect(err.code).toBe("NetworkError");
       expect(err.cause).toMatchObject({ status: 429, retryAfterSeconds: 2 });
+      expect(fetchFn).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
@@ -551,14 +552,14 @@ describe("retry honors Retry-After hint", () => {
     }
   });
 
-  test("clamps hint to maxDelayMs", async () => {
+  test("clamps hint to STORAGE_RETRY_MAX_DELAY_MILLIS", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
       const fetchFn = vi.fn<typeof fetch>(async (_req) => {
         calls++;
         // 60 seconds — clamped by parseRetryAfter to RETRY_AFTER_MAX_SECONDS,
-        // and then clamped again to retry()'s maxDelayMs of 10_000ms.
+        // and then clamped again to STORAGE_RETRY_MAX_DELAY_MILLIS (20_000ms).
         if (calls === 1) {
           return noBody(429, { "Retry-After": "60" });
         }
@@ -568,7 +569,7 @@ describe("retry honors Retry-After hint", () => {
       const p = s.get("k");
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchFn).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(9999);
+      await vi.advanceTimersByTimeAsync(STORAGE_RETRY_MAX_DELAY_MILLIS - 1);
       expect(fetchFn).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(fetchFn).toHaveBeenCalledTimes(2);
