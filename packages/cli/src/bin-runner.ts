@@ -25,7 +25,7 @@
  *     …)` semantics.
  *   - Maps `BaerlyError.code` through the same 3-bucket exit-code
  *     table the per-subcommand wrappers use (`InvalidConfig → 1`,
- *     `Conflict|Internal|InvalidResponse|AmbiguousCommit → 3`, else 2).
+ *     `WriteConflict|AlreadyExists|Internal|InvalidResponse|AmbiguousCommit → 3`, else 2).
  */
 
 import {

@@ -55,7 +55,8 @@ export interface HttpErrorEnvelope {
      * Human-readable remediation hint. Mirrors the server contract:
      * present when the code has a per-code default or a site override
      * (e.g. `PayloadTooLarge`, `Unauthorized`, `AccessDenied`, `NotFound`,
-     * or a context-specific `Conflict`); absent for opaque/transient codes.
+     * `WriteConflict`, `AlreadyExists`, `AmbiguousCommit`); absent for
+     * opaque/transient codes.
      * Older servers may omit it.
      */
     readonly resolution?: string;

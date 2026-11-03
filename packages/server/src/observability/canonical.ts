@@ -16,7 +16,7 @@
  * - `status >= 500` → `error`
  * - `status >= 400` → `warn` (client error — a 4xx is the caller's
  *   fault, not a server fault; an attached structured error, including
- *   a 409 Conflict, does NOT escalate it)
+ *   a 409 WriteConflict, does NOT escalate it)
  * - `status` 2xx/3xx with an attached `error` → `error` (anomalous)
  * - no `status`, `error` present → `error`
  * - otherwise → `info`

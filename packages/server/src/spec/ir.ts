@@ -71,7 +71,6 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   InvalidResponse: "Server returned unparseable data.",
   Internal: "Internal invariant violation — file a bug.",
   SchemaError: "Document body failed schema validation; carries .issues.",
-  Conflict: "Write conflicted (CAS exhausted, duplicate _id, guarded key).",
   WriteConflict: "A concurrent write won the race; nothing was committed. Re-read, then retry.",
   AlreadyExists: "The create target already exists (duplicate _id); never retriable.",
   AmbiguousCommit:

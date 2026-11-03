@@ -11,7 +11,6 @@ describe("errorToExitCode", () => {
       InvalidResponse: 3,
       Internal: 3,
       SchemaError: 2,
-      Conflict: 3,
       WriteConflict: 3,
       AlreadyExists: 3,
       AmbiguousCommit: 3,

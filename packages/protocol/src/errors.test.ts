@@ -10,10 +10,10 @@ import {
 
 describe("BaerlyError", () => {
   test("is an Error carrying name, code, and message", () => {
-    const e = new BaerlyError("Conflict", "CAS lost");
+    const e = new BaerlyError("WriteConflict", "CAS lost");
     expect(e).toBeInstanceOf(Error);
     expect(e.name).toBe("BaerlyError");
-    expect(e.code).toBe("Conflict");
+    expect(e.code).toBe("WriteConflict");
     expect(e.message).toBe("CAS lost");
   });
 
@@ -54,8 +54,8 @@ describe("BaerlyError", () => {
 });
 
 describe("retriable classification", () => {
-  test("RETRIABLE_CODES is exactly {NetworkError, Conflict, WriteConflict}", () => {
-    expect([...RETRIABLE_CODES].toSorted()).toEqual(["Conflict", "NetworkError", "WriteConflict"]);
+  test("RETRIABLE_CODES is exactly {NetworkError, WriteConflict}", () => {
+    expect([...RETRIABLE_CODES].toSorted()).toEqual(["NetworkError", "WriteConflict"]);
   });
 
   test("every code's default retriable value", () => {
@@ -66,7 +66,6 @@ describe("retriable classification", () => {
       InvalidResponse: false,
       Internal: false,
       SchemaError: false,
-      Conflict: true,
       WriteConflict: true,
       AlreadyExists: false,
       AmbiguousCommit: false,
@@ -85,13 +84,14 @@ describe("retriable classification", () => {
   });
   test("isRetriableCode reflects the set", () => {
     expect(isRetriableCode("NetworkError")).toBe(true);
-    expect(isRetriableCode("Conflict")).toBe(true);
+    expect(isRetriableCode("WriteConflict")).toBe(true);
+    expect(isRetriableCode("AlreadyExists")).toBe(false);
     expect(isRetriableCode("SchemaError")).toBe(false);
     expect(isRetriableCode("NotFound")).toBe(false);
     expect(isRetriableCode("AmbiguousCommit")).toBe(false);
   });
   test("BaerlyError.retriable defaults from code", () => {
-    expect(new BaerlyError("Conflict", "x").retriable).toBe(true);
+    expect(new BaerlyError("WriteConflict", "x").retriable).toBe(true);
     expect(new BaerlyError("NetworkError", "x").retriable).toBe(true);
     expect(new BaerlyError("SchemaError", "x").retriable).toBe(false);
   });
@@ -99,8 +99,8 @@ describe("retriable classification", () => {
   test("BaerlyError.retriable can be overridden per instance", () => {
     expect(
       new BaerlyError(
-        "Conflict",
-        "duplicate _id",
+        "WriteConflict",
+        "lost race",
         undefined,
         undefined,
         undefined,

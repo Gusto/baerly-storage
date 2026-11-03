@@ -5,7 +5,7 @@
  *   2. Unknown-flag rejection.
  *   3. resolveAppTenant: explicit flags, config-only, partial flags.
  *   4. resolveAppTenant fail-loud when no flags AND no config.
- *   5. BaerlyError → exit code mapping (Conflict → 3).
+ *   5. BaerlyError → exit code mapping (WriteConflict → 3).
  */
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -137,13 +137,13 @@ describe("defineBaerlySubcommand", () => {
     expect(resolved).toEqual({ app: "override-app", tenant: "cfg-tenant" });
   });
 
-  test('BaerlyError("Conflict") in handler → exit 3', async () => {
+  test('BaerlyError("WriteConflict") in handler → exit 3', async () => {
     const { run } = defineBaerlySubcommand({
       name: "probe",
       meta: { description: "test" },
       args: { json: { type: "boolean" } },
       handler: async () => {
-        throw new BaerlyError("Conflict", "synthetic");
+        throw new BaerlyError("WriteConflict", "synthetic");
       },
     });
     const stderr = captureStream(process.stderr);
@@ -157,7 +157,7 @@ describe("defineBaerlySubcommand", () => {
     const envelope = JSON.parse(stderr.captured.join("").trim()) as {
       error: { code: string; message: string };
     };
-    expect(envelope.error.code).toBe("Conflict");
+    expect(envelope.error.code).toBe("WriteConflict");
     expect(envelope.error.message).toBe("synthetic");
   });
 });

@@ -8,7 +8,8 @@
  *   1. `setJsonMode(args.json === true)` before any emission.
  *   2. A `KNOWN_KEYS` whitelist asserting unknown `--flag` rejection.
  *   3. An `errorToExitCode(code)` mapping —
- *      `InvalidConfig → 1`, `Conflict|Internal|InvalidResponse|AmbiguousCommit → 3`,
+ *      `InvalidConfig → 1`,
+ *      `WriteConflict|AlreadyExists|Internal|InvalidResponse|AmbiguousCommit → 3`,
  *      else `2`.
  *   4. `resolveAppTenant(args)` falling back through `baerly.config.*`
  *      to either real values or hard-coded `"app"` / `"tenant"`
@@ -18,7 +19,7 @@
  *      function for in-process tests that returns the exit code.
  *
  * The five copies drifted: some commands suppressed protocol-level
- * errors (no `Conflict|Internal|InvalidResponse → 3` arm), and the
+ * errors (no protocol-invariant `→ 3` arm), and the
  * config-fallback silently produced `"app"` / `"tenant"` literals
  * (confidently-wrong output when no config is present).
  *

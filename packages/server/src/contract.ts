@@ -127,7 +127,7 @@ export interface SinceResponse {
  * | 401    | `Verifier` returned null → `code:"Unauthorized"`, `message: "Missing or invalid Authorization header"`. |
  * | 403    | Auth ok but tenant prefix denied → `code:"AccessDenied"`.        |
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
- * | 409    | Write conflict → `code:"Conflict"` (`retriable` says whether to retry). Non-retriable caller conflicts keep their message; retriable CAS/storage conflicts are scrubbed. |
+ * | 409    | Lost race → `code:"WriteConflict"` (retriable, generic message). Create target exists → `code:"AlreadyExists"` (not retriable, message kept). Unresolved commit → `code:"AmbiguousCommit"` (not retriable, carries `_id`). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
  * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"` with a generic message. |
  * | 500    | Anything else → `code:"Internal"` with a generic message.         |

@@ -37,7 +37,8 @@
  *   0 — dump completed.
  *   1 — InvalidConfig (bad args / bucket URI / --where JSON / unknown --target).
  *   2 — Storage / Network error.
- *   3 — Protocol invariant (Internal / InvalidResponse / Conflict).
+ *   3 — Protocol invariant / conflict (Internal / InvalidResponse /
+ *       WriteConflict / AlreadyExists).
  */
 
 import { writeFile } from "node:fs/promises";

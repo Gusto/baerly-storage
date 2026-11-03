@@ -23,7 +23,6 @@ describe("CODE_RESOLUTIONS", () => {
 
   test("omits transient/opaque and context-dependent codes", () => {
     for (const code of [
-      "Conflict",
       "NetworkError",
       "InvalidResponse",
       "Internal",

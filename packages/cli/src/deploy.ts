@@ -12,8 +12,8 @@
  *   - 1 user error (InvalidConfig, missing config, unknown target).
  *   - 2 storage / external error (NetworkError, Wrangler returned
  *     non-zero, anything non-BaerlyError).
- *   - 3 protocol invariant (Conflict, Internal, InvalidResponse,
- *     AmbiguousCommit — should not happen here unless someone
+ *   - 3 protocol invariant / conflict (WriteConflict, AlreadyExists,
+ *     Internal, InvalidResponse, AmbiguousCommit — should not happen here unless someone
  *     hand-edited mid-flight).
  */
 

@@ -71,7 +71,7 @@ describe("useMutation", () => {
     let fail = true;
     mock.on("POST", "/v1/c/notes", () =>
       fail
-        ? jsonResponse({ error: { code: "Conflict", message: "boom" } }, 409)
+        ? jsonResponse({ error: { code: "WriteConflict", message: "boom" } }, 409)
         : jsonResponse({ _id: "ok" }, 201),
     );
     const client = makeClient(mock);
@@ -79,10 +79,10 @@ describe("useMutation", () => {
     await act(async () => {
       await expect(
         result.current[0]((c) => c.collection("notes").insert({ body: "x" })),
-      ).rejects.toMatchObject({ name: "BaerlyError", code: "Conflict" });
+      ).rejects.toMatchObject({ name: "BaerlyError", code: "WriteConflict" });
     });
     expect(result.current[1].error).toBeInstanceOf(BaerlyError);
-    expect(result.current[1].error?.code).toBe("Conflict");
+    expect(result.current[1].error?.code).toBe("WriteConflict");
     fail = false;
     await act(async () => {
       await result.current[0]((c) => c.collection("notes").insert({ body: "y" }));
