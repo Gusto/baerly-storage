@@ -413,7 +413,6 @@ export class Writer {
       undefined,
       undefined,
       CODE_RESOLUTIONS.WriteConflict,
-      true,
     );
   }
 
@@ -595,7 +594,6 @@ export class Writer {
         undefined,
         undefined,
         CODE_RESOLUTIONS.AmbiguousCommit,
-        undefined,
         entry.doc_id,
       );
     };
@@ -1213,7 +1211,6 @@ export class Writer {
       undefined,
       undefined,
       CODE_RESOLUTIONS.AmbiguousCommit,
-      undefined,
       docId,
     );
   }

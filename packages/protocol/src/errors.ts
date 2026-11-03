@@ -185,15 +185,15 @@ const _errorCodesExhaustive: _ErrorCodesExhaustive = true;
 void _errorCodesExhaustive;
 
 /**
- * Codes whose default failure class is resolved by retrying with a fresh read.
- * `BaerlyError.retriable` defaults to membership in this set.
+ * Codes whose failure can clear on retry. `BaerlyError.retriable` is
+ * exactly membership in this set; there are no per-instance overrides.
  */
 export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
   "NetworkError",
   "WriteConflict",
 ]);
 
-/** True iff this error code's default failure class is retriable. */
+/** True iff this error code is retriable (membership in {@link RETRIABLE_CODES}). */
 export const isRetriableCode = (code: BaerlyErrorCode): boolean => RETRIABLE_CODES.has(code);
 
 /**
@@ -273,14 +273,16 @@ export class BaerlyError extends Error {
   readonly status?: number;
   /** Canonical corrective action; crosses the wire via `HttpErrorEnvelope.error.resolution`. */
   readonly resolution?: string;
-  private readonly retriableOverride: boolean | undefined;
 
   /**
-   * Whether this error instance is retriable. Defaults from `code`, but
-   * context-sensitive throw sites can override it.
+   * `true` iff retrying can succeed without changing the request:
+   * `WriteConflict` (re-read, then retry) and `NetworkError` (retry with
+   * backoff). A pure function of `code` ({@link isRetriableCode}): every
+   * instance of a code gives the same answer. `AmbiguousCommit` is `false`
+   * because the write may have landed; reconcile by `_id` first.
    */
   get retriable(): boolean {
-    return this.retriableOverride ?? isRetriableCode(this.code);
+    return isRetriableCode(this.code);
   }
 
   constructor(
@@ -293,14 +295,12 @@ export class BaerlyError extends Error {
     }>,
     status?: number,
     resolution?: string,
-    retriableOverride?: boolean,
     _id?: string,
   ) {
     super(message);
     this.name = "BaerlyError";
     this.code = code;
     this.cause = cause;
-    this.retriableOverride = retriableOverride;
     // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (issues !== undefined) {
       this.issues = issues;

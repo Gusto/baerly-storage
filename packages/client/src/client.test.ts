@@ -276,6 +276,42 @@ describe("createBaerlyClient", () => {
     });
   });
 
+  test.each([
+    ["WriteConflict", false, true],
+    ["AlreadyExists", true, false],
+  ] as const)(
+    "client derives retriable from code, ignoring wire %s retriable:%s",
+    async (code, wireRetriable, expected) => {
+      // The wire field is advisory for non-SDK consumers. The SDK reads the
+      // code, so a wire value that disagrees with the code cannot flip it.
+      const mock = new MockFetch();
+      mock.on("POST", "/v1/c/tickets", () =>
+        jsonResponse({ error: { code, message: "x", retriable: wireRetriable } }, 409),
+      );
+      const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+      await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+        code,
+        status: 409,
+        retriable: expected,
+      });
+    },
+  );
+
+  test("an unknown wire code is not retriable", async () => {
+    // An older server can still send the removed `Conflict` code; it
+    // fails closed rather than being retried.
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse({ error: { code: "Conflict", message: "CAS lost", retriable: true } }, 409),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+      code: "Conflict",
+      status: 409,
+      retriable: false,
+    });
+  });
+
   test("client falls back to the code default when the server omits retriable", async () => {
     // Older server: the envelope carries no `retriable` field. The client
     // must fall back to the code-derived default (WriteConflict → retriable),

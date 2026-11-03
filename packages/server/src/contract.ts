@@ -19,7 +19,7 @@ export interface HttpErrorEnvelope {
   readonly error: {
     readonly code: BaerlyErrorCode;
     readonly message: string;
-    /** Whether this error instance is retriable. Always present; defaults from `code`, with throw-site overrides. Additive. */
+    /** Whether retrying can succeed. Derived from `code` only (`isRetriableCode`) and always present, so non-SDK consumers need no code table. SDK clients derive it themselves and ignore this field. */
     readonly retriable: boolean;
     /**
      * Field-path issues, present only when `code === "SchemaError"`.
@@ -42,15 +42,14 @@ export interface HttpErrorEnvelope {
 /**
  * Single drift surface for the {@link HttpErrorEnvelope} shape. The
  * router and both adapters call this — adding or renaming a field on
- * the wire is a one-edit change here. `retriable` is additive (always
- * present, defaulted from `code`); older clients ignore it.
+ * the wire is a one-edit change here. `retriable` is always present and
+ * derived from `code` alone; older clients ignore it.
  */
 export const errorEnvelope = (
   code: BaerlyErrorCode,
   message: string,
   issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>,
   resolution?: string,
-  retriable?: boolean,
   _id?: string,
 ): HttpErrorEnvelope => {
   const resolved = resolution ?? CODE_RESOLUTIONS[code];
@@ -58,7 +57,7 @@ export const errorEnvelope = (
     error: {
       code,
       message,
-      retriable: retriable ?? isRetriableCode(code),
+      retriable: isRetriableCode(code),
       ...(issues !== undefined && issues.length > 0 ? { issues } : {}),
       ...(resolved !== undefined ? { resolution: resolved } : {}),
       ...(_id !== undefined && code === "AmbiguousCommit" ? { _id } : {}),
