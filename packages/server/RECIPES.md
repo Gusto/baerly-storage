@@ -24,16 +24,25 @@ RFC 7386 deletion sentinel, not a storable value).
 field path. Declare `_id: z.string()` (required) in your schema — the
 validator runs on the post-image, so optional `_id` is wrong.
 
-### `BaerlyError code="Conflict"` (HTTP 409)
+### `BaerlyError code="WriteConflict"` (HTTP 409)
 
-**Cause:** the write conflicted with existing state. CAS conflicts are
-retryable (`retriable: true`); duplicate caller-supplied `_id` inserts are
-terminal (`retriable: false`).
-**Fix:** follow the wire `resolution`. For retryable CAS conflicts, re-read,
-re-apply, and retry with bounded backoff. For duplicate `_id` conflicts,
-choose a different `_id`, or omit `_id` so baerly-storage can mint one.
-The in-process writer already retries a bounded number of CAS attempts; a
-remote client that sees `retriable: true` should apply its own bounded backoff.
+**Cause:** another write won a race this call needed to win, and the losing
+commit did not land. `retriable` is `true`. A bulk `.where(...).update()` /
+`.delete()` may have applied earlier rows; re-issuing the call is safe.
+**Fix:** re-read, re-apply, and retry with bounded backoff. The in-process
+writer already retries a bounded number of attempts; a remote client that
+sees `retriable: true` should apply its own bounded backoff.
+
+### `BaerlyError code="AlreadyExists"` (HTTP 409)
+
+**Cause:** a caller-supplied `_id` on `insert` matches an already-committed
+row (or `baerly admin restore` targeted an existing collection without
+`--force`). The check sees committed rows only, so two concurrent inserts of
+one `_id` can both succeed. `retriable` is `false`: never retry.
+**Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
+or change the stored row with `update` / `replace`. After a same-`_id` retry
+following `AmbiguousCommit`, the stored row may be your first attempt: re-read
+it instead (see below).
 
 ### AmbiguousCommit recovery
 
@@ -55,8 +64,9 @@ try {
   if ((await tickets.get(err._id)) === undefined) {
     // The same `_id` targets the same row, never a second document.
     await tickets.insert({ _id: err._id, title: "hi" }).catch((retryErr: unknown) => {
-      // `Conflict`: the first attempt landed after the re-read.
-      if (!(retryErr instanceof BaerlyError) || retryErr.code !== "Conflict") {
+      // `AlreadyExists`: the first attempt landed after the re-read;
+      // re-read and compare rather than inserting under a new `_id`.
+      if (!(retryErr instanceof BaerlyError) || retryErr.code !== "AlreadyExists") {
         throw retryErr;
       }
     });

@@ -919,13 +919,10 @@ describe("Writer — writer fence", () => {
   test("fence bump no longer aborts a committed write (post-commit verify removed)", async () => {
     const storage = new FenceBumpingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    // Arm the bump on the SECOND current.json GET. With the old
-    // post-commit fence-verify, that second GET was the verify read: it
-    // observed the bumped epoch and threw WriteConflict on a log/<seq> entry
-    // that had ALREADY committed and was visible — a committed-but-
-    // WriteConflict inconsistency. Under single-write commit the numbered log
-    // create IS the commit and there is no verify read, so the commit
-    // succeeds; the entry is durable.
+    // Arm the bump on the SECOND current.json GET. The numbered log/<seq>
+    // create IS the commit and nothing after it re-checks the fence, so a
+    // fence bump cannot turn a committed, visible entry into an error: the
+    // commit succeeds and the entry is durable.
     storage.bumpAfterReadsCount = 2;
     const writer = new Writer({
       storage,

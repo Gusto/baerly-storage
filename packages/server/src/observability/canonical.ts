@@ -218,9 +218,9 @@ const pickLevel = (opts: FlushCanonicalLineOptions): Level => {
   // `warn` even when a structured error is attached (as
   // `withHttpObservability` reconstructs one for every non-2xx). This is
   // deliberate: a 4xx is the caller's fault, not a server fault. The
-  // reachable 409 is a duplicate-`_id` insert (a reused id or a
-  // double-submitted POST); ordinary write contention is absorbed by the
-  // log forward-probe as a 412 counter, not a client 409. 401/404/400 are
+  // common 409 is `AlreadyExists` (a reused id or a double-submitted POST);
+  // `WriteConflict` (retry budget spent) and `AmbiguousCommit` also map to
+  // 409, while ordinary contention is absorbed internally. 401/404/400 are
   // likewise the caller's fault. Escalating any of them to `error` would
   // burn error budget and page on-call for normal operation. `error` is
   // reserved for genuine server faults.

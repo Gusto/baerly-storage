@@ -10,7 +10,7 @@ staged and published the new one — with awaited filesystem operations in
 between, and no lock. Because `node:fs/promises` yields the event loop at
 each of those, concurrent callers all read the same base etag, all passed
 the comparison, and all published. Measured on the pre-fix code, 16 racers
-against one base etag produced **16 winners and zero `Conflict`s**; the
+against one base etag produced **16 winners and zero `WriteConflict`s**; the
 same held across 16 separate `LocalFsStorage` instances over one directory.
 Every update but the last was silently lost.
 

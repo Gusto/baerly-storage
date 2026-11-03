@@ -73,7 +73,7 @@ export const makeCollection = <T extends DocumentData>(
     /**
      * Insert one document. UUIDv7 auto-id when `_id` is absent or
      * empty; otherwise the caller-supplied `_id` is honoured. A
-     * pre-commit existence check against the materialised collection
+     * pre-commit existence check against the committed collection
      * surfaces `AlreadyExists` on duplicate `_id` without round-tripping
      * to the writer — matches the locked `Collection.insert` throws
      * contract (`@baerly/protocol/src/collection-api.ts`).
@@ -82,10 +82,11 @@ export const makeCollection = <T extends DocumentData>(
      * inside `Writer.commit()`. On retry-budget exhaustion the
      * writer throws `WriteConflict` and we surface unchanged.
      *
-     * @throws BaerlyError code="AlreadyExists" — `_id` collision (pre-commit
-     *   check). Not retriable.
+     * @throws BaerlyError code="AlreadyExists" — `_id` matches an
+     *   already-committed row (pre-commit check; concurrent uncommitted
+     *   inserts are not detected). Not retriable.
      * @throws BaerlyError code="WriteConflict" — CAS retry budget exhausted;
-     *   nothing was committed. Retriable.
+     *   the commit did not land. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the row may or may
      *   not have been inserted. Re-read by a stable `_id`; absence is not proof

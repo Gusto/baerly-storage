@@ -50,7 +50,7 @@
       "httpStatus": 409,
       "retriable": true,
       "messagePolicy": "scrubbed",
-      "summary": "A concurrent write won the race; nothing was committed. Re-read, then retry."
+      "summary": "A concurrent write won the race; the losing commit did not land. Re-read, then retry."
     },
     {
       "code": "AlreadyExists",

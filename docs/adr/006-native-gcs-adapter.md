@@ -50,7 +50,7 @@ Four facts are load-bearing:
    `ETag` (quoted-MD5) is never a fallback, since a wrong token would
    poison the next `ifMatch`.
 2. **412-only conflict mapping.** Both create-collision and stale-CAS
-   return 412 → `BaerlyError{code:"Conflict"}`. The S3 adapter's
+   return 412 → `BaerlyError{code:"WriteConflict"}`. The S3 adapter's
    `409`-contended branch is deliberately absent — GCS has no contended
    status here.
 3. **Dynamic `SignedHeaders`.** The transport sets
@@ -77,7 +77,7 @@ PR-CI gated because the oracle is a live credentialed bucket.
 - GCS is a first-class Node backend; the S3-interop path stays
   Unsupported and callers are told to use the native adapter.
 - `baerly doctor` recognizes the native path (its three CAS sub-checks
-  pass on the 412→Conflict mapping), actively probes Object Versioning
+  pass on the 412→WriteConflict mapping), actively probes Object Versioning
   (warns when enabled), and carries a static soft-delete advisory — the
   soft-delete setting isn't readable over the HMAC/XML API. Both Object
   Versioning and soft-delete turn baerly's GC `DELETE`s into billed
