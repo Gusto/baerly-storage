@@ -184,6 +184,11 @@ The load-bearing kernel metrics today (canonical list in
   by `collection`. The host's maintenance dispatcher threw or rejected after
   a durable commit, so that write's maintenance tick did not run. A
   sustained rate means write-tick maintenance is off and backlog is growing.
+- `db.write.insert_replayed_total` — counter, labelled by `collection`.
+  An SDK-minted insert (`mintedId`) found its identical row already stored
+  and returned it as the original success, committing nothing. A replay
+  records no write metric, so this is its only signal; a rate tracks
+  clients retransmitting inserts after lost responses.
 - `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`
   loss counter.
 - `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.

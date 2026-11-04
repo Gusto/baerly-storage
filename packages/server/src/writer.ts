@@ -79,7 +79,12 @@ import {
   timestamp,
   uuid,
 } from "@baerly/protocol";
-import { assertDocId, insertAlreadyExists, insertReplaysRow } from "./doc-id.ts";
+import {
+  assertDocId,
+  insertAlreadyExists,
+  insertReplaysRow,
+  recordInsertReplay,
+} from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
@@ -435,8 +440,11 @@ export class Writer {
     // duplicate the logical write.
     const success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
     // A replay committed nothing, so it is not a logical write and records
-    // no write-amplification sample (its orphan marker PUTs included).
-    if (!success.replayed) {
+    // no write-amplification sample (its orphan marker PUTs included); it is
+    // counted as a replay instead.
+    if (success.replayed) {
+      recordInsertReplay(input.collection);
+    } else {
       this.#emitWriteMetrics(input.collection, success.classAOps);
     }
     return {

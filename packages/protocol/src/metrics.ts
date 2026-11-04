@@ -1,6 +1,6 @@
 /**
- * `MetricsRecorder` — internal emission contract for the twelve
- * load-bearing kernel metrics. Writer / compactor / GC emit through
+ * `MetricsRecorder` — internal emission contract for the load-bearing
+ * kernel metrics. Writer / compactor / GC emit through
  * an instance of this interface; in production the instance is the
  * per-request `RequestScopedMetricsRecorder` on the active
  * `ObservabilityContext`, and emissions flow onto the canonical line
@@ -41,6 +41,10 @@
  *   - `db.write.maintenance_dispatch_failed_total` — counter, labelled by
  *     `collection`. The maintenance dispatcher threw or rejected after a
  *     durable commit, so that write's maintenance tick did not run.
+ *   - `db.write.insert_replayed_total` — counter, labelled by `collection`.
+ *     An SDK-minted insert (`mintedId`) found its identical row already
+ *     stored and returned it as the original success, committing nothing.
+ *     A rate tracks clients retransmitting inserts after lost responses.
  *   - `db.manifest.lag_window_depth` — gauge (alert at >100)
  *   - `db.gc.entries_swept_per_second` — gauge (livelock indicator when <writes/s)
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)
