@@ -52,10 +52,9 @@ export interface ConformanceOptions {
   /** Pinned size-boundary cap. Default: 1 MiB. */
   readonly maxBodyBytes?: number;
   /**
-   * When true, the backend's `list` is eventually consistent —
-   * list-after-write and list-after-delete may lag, as real Cloudflare
-   * R2's S3 `ListObjectsV2` does (object read-after-write and the
-   * conditional-write verbs stay strong; only the bucket index lags).
+   * Enable polling tolerance for list-after-write and list-after-delete
+   * assertions. This setting does not establish a provider's consistency
+   * model; R2 guarantees strongly consistent listing via S3 and bindings.
    * List/read-back assertions and the per-test `drain()` reset then poll
    * until the store converges instead of asserting a single immediate
    * snapshot. Defaults to false — Memory/LocalFs/Minio/native-R2-binding
@@ -156,15 +155,15 @@ const EVENTUAL_CONSISTENCY_POLL_MILLIS = 250;
  */
 const REMOTE_NETWORK_TEST_TIMEOUT_MILLIS = 120_000;
 /**
- * Per-test/hook timeout for an eventually-consistent backend (R2 over the
- * S3 HTTP API). Larger than {@link REMOTE_NETWORK_TEST_TIMEOUT_MILLIS}
+ * Per-test/hook timeout when LIST polling tolerance is enabled.
+ * Larger than {@link REMOTE_NETWORK_TEST_TIMEOUT_MILLIS}
  * because each property iteration pays *two* convergence-poll windows —
  * the `drain()` reset at the top of the iteration and the settle-assert —
  * each bounded by {@link EVENTUAL_CONSISTENCY_SETTLE_MILLIS}. Worst case is
  * therefore ~`numRuns × (2 × settle + put-time)` plus the `beforeEach`
  * drain; at {@link EVENTUAL_CONSISTENCY_PROPERTY_RUNS} runs and a 15s settle
  * that approaches ~190s, so a flat 120s under-runs the work it bounds
- * whenever R2 is in a laggy stretch and the property tests time out even
+ * when the polling windows are exhausted and the property tests time out even
  * though they would have converged. This ceiling sits comfortably above
  * that worst case; typical runs still finish in well under half of it — it
  * only exists so a slow-convergence window can't trip a false timeout.

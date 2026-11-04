@@ -327,12 +327,16 @@ not see:
 canonical UUIDv7 equal to `doc._id`) is a client resending an insert of an
 `_id` it minted. At step 1 and at every step-3 decision, a live last entry
 whose `after` equals the insert's post-image after a JSON round-trip (key
-order ignored) is that insert's own earlier success: the insert returns
+order ignored) is treated as replay success: the insert returns
 `{ _id }` and writes nothing further, with no create, no stale-marker
 cleanup and no maintenance tick (markers already PUT at step 4 stay as
 the same benign orphans). Any other live row still fails with
 `AlreadyExists`, and an insert without `mintedId` never replays, so a
-caller-chosen `_id` keeps exactly one winner.
+caller-chosen `_id` keeps exactly one winner. Equality is against the current
+live row, not a retained request result: deletion permits reinsertion, an
+update to a different body yields `AlreadyExists`, and updating back to the
+original body permits replay. Calling the client's `insert(doc)` again is a
+new operation and mints a new auto-ID.
 
 Own-entry adoption, `AmbiguousCommit` precedence (an unresolved create fate
 is reported as `AmbiguousCommit`, never as `AlreadyExists`), and reads are

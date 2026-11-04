@@ -169,9 +169,11 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
    * A non-empty string `_id` is caller-chosen and sent as-is; a second
    * insert of the same `_id` rejects with `AlreadyExists`. When `_id` is
    * omitted (or `""`, or not a string), the client mints a UUIDv7 before
-   * the first attempt and flags it as minted, so the server treats an
-   * identical resend of the same request as the original success rather
-   * than a duplicate or a collision. The caller's `doc` is not modified.
+   * the request is sent and flags it as minted. An identical retransmission
+   * returns success when the current live row matches; a different current
+   * body yields `AlreadyExists`. Deletion permits reinsertion. Calling
+   * `insert(doc)` again mints a new auto-ID; it is a new operation.
+   * The caller's `doc` is not modified.
    */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
   /** JSON-merge-patch applied to one row by primary key. */

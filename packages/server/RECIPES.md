@@ -55,7 +55,10 @@ duplicate and gets `409 AlreadyExists`, though the row is the client's own.
 **Fix:** send the minted id in both places,
 `{ "doc": { "_id": m, ... }, "mintedId": m }`. A resend that finds a live row
 for `m` holding the same document (key order ignored) returns the original
-`201 { "_id": m }` and commits nothing; a different body still gets `409`.
+`201 { "_id": m }` and commits nothing; a different current body gets
+`409 AlreadyExists`. Deletion permits reinsertion; updating back to the
+original body permits replay. Calling `insert(doc)` again is a new operation
+and mints a new auto-ID, rather than retransmitting the constructed request.
 `mintedId` must be a canonical UUIDv7 equal to `doc._id`, else
 `400 SchemaError`, so a human-chosen id like `"migration-x"` cannot opt in.
 Leave `mintedId` out whenever you chose the `_id`: an insert without it keeps

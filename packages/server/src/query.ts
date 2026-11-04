@@ -442,10 +442,10 @@ export const runInsert = async <T extends DocumentData>(
   // completeness is not guaranteed. A writer's stale-marker DELETE runs
   // after its commit and can land after a peer's re-PUT of the same
   // marker was swallowed as a 412, leaving a live row with no marker (the
-  // ABA noted on `Writer#readPreImage`), and R2's S3 `ListObjectsV2` is
-  // eventually consistent (`docs/spec/storage-compatibility.md`). Either
-  // way an index-walk check could miss a live row and let a second `I`
-  // for its `_id` commit.
+  // ABA noted on `Writer#readPreImage`). Even with strongly consistent
+  // LIST (including R2), a commit between the LIST and the tail probe can
+  // be absent from the index result. Either race could miss a live row
+  // and let a second `I` for its `_id` commit.
   const existing = await runReadRows<DocumentData>(
     { ...ctx, indexes: [] },
     {
@@ -756,11 +756,10 @@ const runReadRows = async <T extends DocumentData>(
    * The log tail this read folded through: the first empty slot its
    * probe found, or `0` when the collection is not provisioned. On the
    * full-scan path `rows` is the complete matching state at that tail. On
-   * the index-walk path `rows` is only as complete as the index and the
-   * store's LIST consistency: a live row whose marker is missing (a
-   * stale-marker DELETE that raced a re-PUT) or not yet listed (R2's
-   * eventually consistent S3 LIST, or a commit landing between the LIST
-   * and the probe) is absent from `rows` although its entry sits below
+   * the index-walk path `rows` is only as complete as the index at LIST
+   * time: a live row whose marker is missing (a stale-marker DELETE that
+   * raced a re-PUT) or whose commit landed between the LIST and the probe
+   * can be absent from `rows` although its entry sits below
    * `tail`. A caller that needs a sound "absent through `tail`" must read
    * on the full fold (`indexes: []`), as `runInsert` does.
    */

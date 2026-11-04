@@ -281,25 +281,19 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 | **Unsupported**   | GCS via S3-interop, Azure Blob  | GCS's **S3-interop** endpoint scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so that path **cannot** linearize the commit log. Use the native `gcsStorage` adapter (Tier 1) instead; do not point `S3HttpStorage` at GCS. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
-> **R2's `list` is eventually consistent — the commit path doesn't
-> depend on it.** Unlike AWS S3 (strongly consistent for list since Dec
-> 2020) and the local MinIO dev stack, Cloudflare R2's S3 `ListObjectsV2`
-> is *eventually* consistent: list-after-write and list-after-delete can
-> lag by a short window. Commits never list — a commit is a conditional
-> `log/<seq>` create — and tail discovery never lists: readers find the
-> tail by forward-probe `GET` ("first 404 = tail"), both strongly
-> consistent on R2. Index-routed reads do list, since they enumerate
-> index markers, so on R2's S3 API an index-routed query can briefly miss
-> a just-written row; a read that plans a full scan folds the log and
-> does not. Insert uniqueness does not depend on `list`: an insert's
-> duplicate check folds the log even when an index leads on `_id`.
-> Maintenance enumeration (compaction / GC) also lists, and is
-> idempotent and re-runs to convergence. The practical consequence is in
-> testing: the credential-gated `pnpm test:conformance` run against real R2
-> exercises `list`/read-back assertions through a bounded poll
-> (`eventuallyConsistentList` in `defineStorageConformanceSuite`) instead of
-> asserting a single immediate snapshot over the wire. AWS S3, MinIO, and
-> the native R2 binding assert immediately.
+> **R2 listing is strongly consistent; insert uniqueness still folds the
+> log.** R2 guarantees strongly consistent object listing through both the
+> S3 API and Worker bindings. Cloudflare's caching caveat applies to cached
+> custom-domain access, not those direct bucket operations (see
+> [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)).
+> Commits use conditional `log/<seq>` creates and tail discovery uses GET
+> probes; neither depends on LIST. Index-routed reads enumerate markers,
+> but a stale-marker DELETE racing a re-PUT can leave a live row without a
+> marker, and a commit between LIST and the tail probe can fall outside the
+> listed results. Therefore insert duplicate checks fold the log even when
+> an index leads on `_id`. The credential-gated R2 S3 conformance harness
+> currently polls LIST assertions (`eventuallyConsistentList`); that test
+> tolerance does not describe R2's consistency guarantee.
 
 ### S3 (over HTTP) from a Cloudflare Worker
 
