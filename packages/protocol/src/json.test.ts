@@ -287,6 +287,23 @@ describe("JSON Merge Patch (RFC 7386)", () => {
 });
 
 describe("jsonValueEqual", () => {
+  test.each(["object", "array"])(
+    "compares deeply nested %s values without stack overflow",
+    (kind) => {
+      // Built by a loop, not a JSON round-trip: V8's `JSON.stringify` recurses
+      // and overflows at depths a recursive comparator would survive.
+      const build = (leaf: number): JSONValue => {
+        let value: JSONValue = { leaf };
+        for (let i = 0; i < 100_000; i++) {
+          value = kind === "object" ? { nested: value } : [value];
+        }
+        return value;
+      };
+      expect(jsonValueEqual(build(1), build(1))).toBe(true);
+      expect(jsonValueEqual(build(1), build(2))).toBe(false);
+    },
+  );
+
   const eq: Array<[string, JSONValue, JSONValue]> = [
     ["permuted keys", { a: 1, b: 2 }, { b: 2, a: 1 }],
     [

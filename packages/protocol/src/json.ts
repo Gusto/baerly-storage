@@ -38,11 +38,8 @@ export type JSONValue = string | number | boolean | null | JSONObject | Array<JS
  * `-0` into `0`; that normalization is the caller's responsibility.
  * Raw inputs holding `undefined` or `-0` are outside the contract.
  *
- * Precondition: nesting depth is bounded. Comparison recurses, so a
- * pathologically deep value (~20k levels) throws a native `RangeError`.
- * The write path's `JSON.stringify` / `encodeJsonBytes` recurses the
- * same way, so any value that was writable is comparable. No depth cap
- * is enforced here.
+ * Uses an explicit work stack so comparison does not consume the
+ * JavaScript call stack with each nesting level. No depth cap is enforced.
  *
  * - Object key order is ignored; the key sets must match exactly.
  * - Arrays compare element-wise in order, and an array is never equal
@@ -53,35 +50,41 @@ export type JSONValue = string | number | boolean | null | JSONObject | Array<JS
  * from an index-keyed object.
  */
 export function jsonValueEqual(a: JSONValue, b: JSONValue): boolean {
-  if (a === b) {
-    return true;
-  }
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
-    return false;
-  }
-  if (Array.isArray(a)) {
-    if (!Array.isArray(b) || a.length !== b.length) {
+  const pending: Array<[JSONValue, JSONValue]> = [[a, b]];
+  while (pending.length > 0) {
+    const [left, right] = pending.pop()!;
+    if (left === right) {
+      continue;
+    }
+    if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
       return false;
     }
-    // Indexed loop, not `every`: `every` skips holes, which would make a
-    // sparse array compare asymmetrically.
-    for (let i = 0; i < a.length; i++) {
-      if (!jsonValueEqual(a[i]!, b[i]!)) {
+    if (Array.isArray(left)) {
+      if (!Array.isArray(right) || left.length !== right.length) {
         return false;
       }
+      // Indexed loop, not `every`: `every` skips holes, which would make a
+      // sparse array compare asymmetrically.
+      for (let i = 0; i < left.length; i++) {
+        pending.push([left[i]!, right[i]!]);
+      }
+      continue;
     }
-    return true;
+    if (Array.isArray(right)) {
+      return false;
+    }
+    const keys = Object.keys(left);
+    if (keys.length !== Object.keys(right).length) {
+      return false;
+    }
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(right, key)) {
+        return false;
+      }
+      pending.push([left[key]!, right[key]!]);
+    }
   }
-  if (Array.isArray(b)) {
-    return false;
-  }
-  const aKeys = Object.keys(a);
-  if (aKeys.length !== Object.keys(b).length) {
-    return false;
-  }
-  return aKeys.every(
-    (k) => Object.prototype.hasOwnProperty.call(b, k) && jsonValueEqual(a[k]!, b[k]!),
-  );
+  return true;
 }
 
 const isPlainObject = (value: DocumentValue | undefined): value is DocumentData =>

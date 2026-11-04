@@ -128,11 +128,9 @@ describe("conformance", () => {
         : (req: Request): Promise<Request> => signer.sign(req);
 
       const isMinio = ep.name === "node-minio";
-      // Real Cloudflare R2's S3 `ListObjectsV2` is eventually consistent
-      // (list-after-write / list-after-delete lag), unlike AWS S3 (strong
-      // since Dec 2020) and the local Minio dev stack. Flag it so the
-      // conformance harness polls list/read-back assertions instead of
-      // asserting a single immediate snapshot over the wire.
+      // R2 guarantees strongly consistent S3 LIST. The existing polling
+      // tolerance below is a harness setting, not a provider guarantee.
+      // See https://developers.cloudflare.com/r2/reference/consistency/.
       const isR2 = ep.name === "cloudflare";
       // aws / gcs / cloudflare are real remote HTTP endpoints where every
       // op is a network round-trip, so the fast-check property tests must

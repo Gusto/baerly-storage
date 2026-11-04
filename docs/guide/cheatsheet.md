@@ -110,8 +110,10 @@ boundaries), never `instanceof` chains.
 | `GET    /v1/healthz`                                 | —               | `200 {"ok":true}` (anonymous, pre-auth) |
 
 `POST` also takes an optional `"mintedId"`: an SDK that minted `doc._id` (a
-UUIDv7) sends it there too, and an identical resend replays as `201 {_id}`
-instead of `409`.
+UUIDv7) sends it there too. An identical retransmission returns `201 {_id}`
+when the current live row matches; a different current body yields
+`AlreadyExists`. Deletion permits reinsertion. Calling `insert(doc)` again
+is a new operation and mints a new auto-ID.
 
 Read modifiers are JSON-encoded query params on `GET /v1/c/:collection`,
 all optional and composable — always
