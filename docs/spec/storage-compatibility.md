@@ -281,15 +281,20 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 | **Unsupported**   | GCS via S3-interop, Azure Blob  | GCS's **S3-interop** endpoint scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so that path **cannot** linearize the commit log. Use the native `gcsStorage` adapter (Tier 1) instead; do not point `S3HttpStorage` at GCS. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
-> **R2's `list` is eventually consistent — and that's fine here.** Unlike
-> AWS S3 (strongly consistent for list since Dec 2020) and the local MinIO
-> dev stack, Cloudflare R2's S3 `ListObjectsV2` is *eventually* consistent:
-> list-after-write and list-after-delete can lag by a short window. This
-> does **not** weaken the protocol. The commit/read path never lists — a
-> commit is a conditional `log/<seq>` create, and readers discover the tail
-> by forward-probe `GET` ("first 404 = tail"), both strongly consistent on
-> R2; `list` is used only by idempotent maintenance enumeration (compaction
-> / GC), which re-runs to convergence. The practical consequence is in
+> **R2's `list` is eventually consistent — the commit path doesn't
+> depend on it.** Unlike AWS S3 (strongly consistent for list since Dec
+> 2020) and the local MinIO dev stack, Cloudflare R2's S3 `ListObjectsV2`
+> is *eventually* consistent: list-after-write and list-after-delete can
+> lag by a short window. Commits never list — a commit is a conditional
+> `log/<seq>` create — and tail discovery never lists: readers find the
+> tail by forward-probe `GET` ("first 404 = tail"), both strongly
+> consistent on R2. Index-routed reads do list, since they enumerate
+> index markers, so on R2's S3 API an index-routed query can briefly miss
+> a just-written row; a read that plans a full scan folds the log and
+> does not. Insert uniqueness does not depend on `list`: an insert's
+> duplicate check folds the log even when an index leads on `_id`.
+> Maintenance enumeration (compaction / GC) also lists, and is
+> idempotent and re-runs to convergence. The practical consequence is in
 > testing: the credential-gated `pnpm test:conformance` run against real R2
 > exercises `list`/read-back assertions through a bounded poll
 > (`eventuallyConsistentList` in `defineStorageConformanceSuite`) instead of

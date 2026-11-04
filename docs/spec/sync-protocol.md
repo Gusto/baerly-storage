@@ -233,9 +233,11 @@ For a single-document mutation:
    before the commit.** `I` / `U` post-images are serialized into the
    `LogEntry.after` field; current writers do not create a content side
    object. Additive **new** index keys are PUT (`If-None-Match: "*"`)
-   **before** the committing log create, so a committed row is _always_
-   index-findable — there is no window in which a committed doc is
-   observed unindexed. (Stale index keys are deleted _after_ the commit;
+   **before** the committing log create, so no crash can leave a
+   committed row unindexed. A concurrent same-doc write still can: a
+   stale-key DELETE (step 5) may land after a peer re-PUT the same marker,
+   so index completeness is not guaranteed and insert uniqueness does not
+   rely on it. (Stale index keys are deleted _after_ the commit;
    see step 5. Index completeness is its own invariant — see the index
    access-path notes under "[Read algorithm](#read-algorithm)".)
 4. **Create `log/<seq>.json` with `If-None-Match: "*"` — this create
@@ -291,9 +293,10 @@ The `AmbiguousCommit` contract below applies when readback cannot resolve it.
 ### Insert: the first `I` wins
 
 Of concurrent inserts of one `doc_id`, exactly one commits; the others fail
-with `BaerlyError{code:"AlreadyExists"}` and commit nothing. A row is live
-when the last entry for its `(collection, doc_id)` is an `I` or `U`, and an
-insert may commit only while the row is absent. The rule is enforced by
+with `BaerlyError{code:"AlreadyExists"}` and commit nothing, unless an
+identical `mintedId` resend replays the stored row (**SDK-minted replay**,
+below). A row is live when the last entry for its `(collection, doc_id)` is
+an `I` or `U`, and an insert may commit only while the row is absent. The rule is enforced by
 backward validation over the slice of the log the insert's own check could
 not see:
 
@@ -403,7 +406,7 @@ _committed_ doc silently **de-indexed** by a crash; the read path
 filters false positives but cannot recover missing candidates.
 
 The single-write order eliminates that failure: new keys are PUT
-_before_ the commit, so a committed doc is always index-findable, and
+_before_ the commit, so no crash leaves a committed doc unindexed, and
 stale-key DELETEs land only _after_ the commit, so an uncommitted write
 can never remove a key a committed value depends on. The residual is
 safe: an extra key is a false-positive. It can be healed by the doc's

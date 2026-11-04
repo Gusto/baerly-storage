@@ -32,9 +32,11 @@
  * post-image. A crash before the create leaves only orphan additive index
  * keys; a stray additive key only ever yields a false-POSITIVE candidate
  * that `matchesWire` (read path) drops. Emitting `newKeys` before the commit
- * means a committed row is ALWAYS index-findable; the stale-key DELETE
- * stays after the commit so a crash can never de-index a committed
- * doc. See `index-emit-order.test.ts` and ADR-004 Q4.
+ * and the stale-key DELETEs after it means no crash can de-index a
+ * committed doc. A concurrent same-doc write still can, through the
+ * delete-after-commit ABA described at `Writer#readPreImage`, so index
+ * completeness is not guaranteed. See `index-emit-order.test.ts` and
+ * ADR-004 Q4.
  *
  * **`LogEntry` shape.** Emitted entries follow the contract in
  * `packages/protocol/src/log.ts` (see {@link LogEntry}) and
@@ -105,8 +107,8 @@ export interface WriterOptions {
    * Optional. Indexes declared for the collection this writer
    * commits to. Each commit emits one zero-byte PUT per declared
    * index (when the indexed field is set on the doc) — the additive
-   * `newKeys` go down BEFORE the committing `log/<seq>` create, so a
-   * committed row is always index-findable. On U/D, the writer reads
+   * `newKeys` go down BEFORE the committing `log/<seq>` create, so no
+   * crash leaves a committed row unindexed. On U/D, the writer reads
    * the prior `LogEntry.after` post-image from the log (one back-walk per
    * indexed collection, NOT per index) to compute the stale-key set;
    * stale keys are DELETE'd AFTER the commit, computed from the
@@ -473,7 +475,8 @@ export class Writer {
    * `newKeys` are already present (so it's index-findable); the only residual
    * is a possibly-undeleted stale OLD-value key, dropped by `matchesWire` and
    * cleaned by a later write / `rebuild-index`. The inverse — de-indexing a
-   * committed doc — is never produced.
+   * committed doc — is never produced by a crash; only the concurrent
+   * delete-after-commit ABA at `#readPreImage` produces it.
    */
   async #singleAttemptCommit(
     input: CommitInput,
@@ -592,8 +595,9 @@ export class Writer {
     // ALSO go down here, before the committing create. `newKeys`
     // depend only on `body` + `docId` (NOT on `seq`), so they're
     // stable across the forward re-probe — emit them once. Emitting
-    // BEFORE the commit guarantees a committed row is ALWAYS index-
-    // findable (no false-negative). A crash after a `newKey` PUT but
+    // BEFORE the commit means no crash leaves a committed row unindexed
+    // (no crash-made false-negative; the concurrent delete-after-commit
+    // ABA at `#readPreImage` is the one exception). A crash after a `newKey` PUT but
     // before the commit leaves an orphan additive key for an
     // UNcommitted write — benign: the index read includes the
     // candidate docId, the fold finds no committed (or the prior)
@@ -768,7 +772,7 @@ export class Writer {
 
     // ── Step 5b. DELETE stale secondary-index keys (AFTER the commit). ─
     // The additive `newKeys` already went down in Step 4 (before the
-    // commit), so a committed row is always index-findable. This block
+    // commit), so no crash leaves a committed row unindexed. This block
     // handles only the OTHER half: deleting the OLD value's now-obsolete
     // markers. Keeping the stale-key DELETE AFTER the commit is the
     // load-bearing polarity (ADR-004 Q4): a crash here leaves the OLD
@@ -777,8 +781,10 @@ export class Writer {
     // `matchesWire` (query.ts) drops the false-positive; the lingering
     // key is cleaned by a later same-doc write or operator
     // `rebuild-index`. The inverse — de-indexing a committed doc with no
-    // log entry to drive repair — can NEVER happen, since the DELETE is
-    // strictly after the commit.
+    // log entry to drive repair — cannot come from a crash, since the
+    // DELETE is strictly after the commit. It can come from a race: this
+    // DELETE landing after a peer's same-doc write re-PUT the same marker
+    // (the delete-after-commit ABA, documented at `#readPreImage`).
     //
     // BOTH the fresh-win and the own-session-adoption break above reach
     // here with the resolved committing `seq`. Adoption correctness: an
