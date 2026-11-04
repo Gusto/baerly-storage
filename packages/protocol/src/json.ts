@@ -38,6 +38,12 @@ export type JSONValue = string | number | boolean | null | JSONObject | Array<JS
  * `-0` into `0`; that normalization is the caller's responsibility.
  * Raw inputs holding `undefined` or `-0` are outside the contract.
  *
+ * Precondition: nesting depth is bounded. Comparison recurses, so a
+ * pathologically deep value (~20k levels) throws a native `RangeError`.
+ * The write path's `JSON.stringify` / `encodeJsonBytes` recurses the
+ * same way, so any value that was writable is comparable. No depth cap
+ * is enforced here.
+ *
  * - Object key order is ignored; the key sets must match exactly.
  * - Arrays compare element-wise in order, and an array is never equal
  *   to an object (`[1]` vs `{"0":1}` is `false`).
@@ -53,22 +59,28 @@ export function jsonValueEqual(a: JSONValue, b: JSONValue): boolean {
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
     return false;
   }
-  const aIsArray = Array.isArray(a);
-  if (aIsArray !== Array.isArray(b)) {
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    // Indexed loop, not `every`: `every` skips holes, which would make a
+    // sparse array compare asymmetrically.
+    for (let i = 0; i < a.length; i++) {
+      if (!jsonValueEqual(a[i]!, b[i]!)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (Array.isArray(b)) {
     return false;
   }
-  if (aIsArray) {
-    const bArr = b as JSONValue[];
-    return a.length === bArr.length && a.every((v, i) => jsonValueEqual(v, bArr[i]!));
-  }
-  const aObj = a as JSONObject;
-  const bObj = b as JSONObject;
-  const aKeys = Object.keys(aObj);
-  if (aKeys.length !== Object.keys(bObj).length) {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) {
     return false;
   }
   return aKeys.every(
-    (k) => Object.prototype.hasOwnProperty.call(bObj, k) && jsonValueEqual(aObj[k]!, bObj[k]!),
+    (k) => Object.prototype.hasOwnProperty.call(b, k) && jsonValueEqual(a[k]!, b[k]!),
   );
 }
 

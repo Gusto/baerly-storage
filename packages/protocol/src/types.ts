@@ -77,7 +77,7 @@ const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
  * lowercase 8-4-4-4-12 hex, version nibble `7`, variant nibble in
  * `[89ab]`.
  */
-export const isUuidV7 = (s: string): boolean => UUID_V7_RE.test(s);
+export const isUuidV7 = (s: string): s is UUID => UUID_V7_RE.test(s);
 
 /**
  * Mint the trailing seq segment of an LSN (`<base32-time>_<sess>_<seq>`).
