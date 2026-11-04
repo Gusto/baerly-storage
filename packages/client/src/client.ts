@@ -15,6 +15,7 @@ import {
   type PredicateWire,
   type RowOf,
   type UnboundConfig,
+  uuidv7,
 } from "@baerly/protocol";
 import { CLIENT_CONTEXT } from "./internal/context.ts";
 import { type Fetcher, type RequestContext, request } from "./request.ts";
@@ -162,7 +163,16 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
   order(spec: OrderSpec<T>): ClientQuery<T>;
   /** Limit modifier; last call wins. */
   limit(n: number): ClientQuery<T>;
-  /** Insert a new document. Returns the server-assigned `_id`. */
+  /**
+   * Insert a new document. Returns its `_id`.
+   *
+   * A non-empty string `_id` is caller-chosen and sent as-is; a second
+   * insert of the same `_id` rejects with `AlreadyExists`. When `_id` is
+   * omitted (or `""`, or not a string), the client mints a UUIDv7 before the first attempt
+   * and flags it as minted, so the server treats an identical resend of
+   * the same request as the original success rather than a duplicate or
+   * a collision. The caller's `doc` is not modified.
+   */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
   /** JSON-merge-patch applied to one row by primary key. */
   update(
@@ -304,10 +314,22 @@ const makeClientCollection = <T extends DocumentData>(
       }
     },
     async insert(doc, opts): Promise<{ readonly _id: string }> {
+      // Same rule as the server's `runInsert`: only a non-empty string `_id`
+      // is caller-supplied; anything else is replaced by a minted id there,
+      // so it must be here too for a resend to carry a stable id.
+      const supplied: unknown = doc["_id"];
+      // Built once so every attempt at this insert carries the same minted id.
+      const body =
+        typeof supplied !== "string" || supplied.length === 0
+          ? (() => {
+              const minted = uuidv7();
+              return { doc: { ...doc, _id: minted }, mintedId: minted };
+            })()
+          : { doc };
       return request<{ _id: string }>(ctx, {
         method: "POST",
         path: `/v1/c/${encodeURIComponent(name)}`,
-        body: { doc },
+        body,
         signal: opts?.signal,
       });
     },

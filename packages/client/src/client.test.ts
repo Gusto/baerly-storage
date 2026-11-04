@@ -1,7 +1,7 @@
 /* eslint-disable no-underscore-dangle -- `_id` and `_meta` are the
    locked wire-shape field names mirrored from the server contract. */
 
-import type { Collection } from "@baerly/protocol";
+import { type Collection, type DocumentData, isUuidV7 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { type ClientCollection, createBaerlyClient } from "./client.ts";
 import type { HttpOkEnvelope } from "./contract.ts";
@@ -35,16 +35,75 @@ describe("createBaerlyClient", () => {
     expect(rows).toEqual([{ _id: "a", status: "open" }]);
   });
 
-  test("table().insert() issues POST /v1/c/<name> with { doc } and unwraps { _id }", async () => {
+  test("table().insert() issues POST /v1/c/<name> with { doc, mintedId } and unwraps { _id }", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", async (req) => {
       const body = (await req.json()) as { doc: unknown };
-      expect(body).toEqual({ doc: { title: "hello" } });
+      expect(body).toMatchObject({ doc: { title: "hello" } });
       return jsonResponse({ _id: "doc-1" }, 201);
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
     const { _id } = await client.collection("tickets").insert({ title: "hello" });
     expect(_id).toBe("doc-1");
+  });
+
+  describe("insert() auto-ID minting", () => {
+    const capture = () => {
+      const mock = new MockFetch();
+      const bodies: Array<Record<string, unknown>> = [];
+      mock.on("POST", "/v1/c/tickets", async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        bodies.push(body);
+        return jsonResponse({ _id: (body["doc"] as { _id: string })._id }, 201);
+      });
+      const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+      return { bodies, tickets: client.collection("tickets") };
+    };
+
+    test.each<[string, DocumentData]>([
+      ["omitted", { title: "a" }],
+      ["undefined", { _id: undefined as unknown as string, title: "a" }],
+      ["empty string", { _id: "", title: "a" }],
+    ])("mints a UUIDv7 _id and flags it with mintedId when _id is %s", async (_label, doc) => {
+      const { bodies, tickets } = capture();
+      const { _id } = await tickets.insert(doc);
+      const body = bodies[0] as { doc: { _id: string; title: string }; mintedId: string };
+      expect(isUuidV7(body.doc._id)).toBe(true);
+      expect(body.mintedId).toBe(body.doc._id);
+      expect(body.doc.title).toBe("a");
+      expect(_id).toBe(body.doc._id);
+    });
+
+    test("sends a caller-supplied _id unchanged, with no mintedId key", async () => {
+      const { bodies, tickets } = capture();
+      await tickets.insert({ _id: "t-1", title: "a" });
+      expect(bodies[0]).toEqual({ doc: { _id: "t-1", title: "a" } });
+      expect("mintedId" in (bodies[0] as object)).toBe(false);
+    });
+
+    test("treats a non-string _id like an omitted one, as the server does", async () => {
+      const { bodies, tickets } = capture();
+      await tickets.insert({ _id: 7 as unknown as string, title: "a" });
+      const body = bodies[0] as { doc: { _id: string }; mintedId: string };
+      expect(isUuidV7(body.doc._id)).toBe(true);
+      expect(body.mintedId).toBe(body.doc._id);
+    });
+
+    test("does not mutate the caller's document", async () => {
+      const { tickets } = capture();
+      const doc: { _id?: string; title: string } = { title: "a" };
+      await tickets.insert(doc);
+      expect(doc).toEqual({ title: "a" });
+      expect("_id" in doc).toBe(false);
+    });
+
+    test("two inserts mint different ids", async () => {
+      const { bodies, tickets } = capture();
+      await tickets.insert({ title: "a" });
+      await tickets.insert({ title: "a" });
+      const ids = bodies.map((b) => (b["doc"] as { _id: string })._id);
+      expect(new Set(ids).size).toBe(2);
+    });
   });
 
   test("get() issues GET /v1/c/<name>/<id> and returns undefined on 404", async () => {
