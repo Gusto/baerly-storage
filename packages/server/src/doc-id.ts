@@ -1,3 +1,4 @@
+import { BaerlyError, CODE_RESOLUTIONS } from "@baerly/protocol";
 import { assertPathSegment } from "./path-segment.ts";
 
 /**
@@ -11,3 +12,20 @@ import { assertPathSegment } from "./path-segment.ts";
 export const assertDocId = (id: string): void => {
   assertPathSegment(id, "_id");
 };
+
+/**
+ * The `AlreadyExists` an insert throws when a live row holds `docId`.
+ * Shared by `runInsert`'s check read (`./query.ts`) and the writer's
+ * insert guard (`./writer.ts`), so a caller sees one error whichever
+ * side caught the collision. Not retriable; `err._id` is `docId`.
+ */
+export const insertAlreadyExists = (collection: string, docId: string): BaerlyError =>
+  new BaerlyError(
+    "AlreadyExists",
+    `insert: _id ${JSON.stringify(docId)} already exists in collection ${JSON.stringify(collection)}`,
+    undefined,
+    undefined,
+    undefined,
+    CODE_RESOLUTIONS.AlreadyExists,
+    docId,
+  );

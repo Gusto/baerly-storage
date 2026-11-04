@@ -77,7 +77,7 @@ import {
   timestamp,
   uuid,
 } from "@baerly/protocol";
-import { assertDocId } from "./doc-id.ts";
+import { assertDocId, insertAlreadyExists } from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
@@ -1267,6 +1267,9 @@ export class Writer {
         "WriteConflict",
         `${errorPrefix}: insert window [${fromSeq}, ${logSeqStart}) on ${this.#currentJsonKey} ${detail}; nothing was committed`,
       );
+    // Backstop only. In practice the window holds just the entries a fold
+    // absorbed between two reads in one request, and the host's
+    // subrequest budget ends that request long before 100k GETs.
     if (logSeqStart - fromSeq > LOG_FORWARD_PROBE_CAP) {
       throw refuse(`exceeds ${LOG_FORWARD_PROBE_CAP} folded entries`);
     }
@@ -1403,15 +1406,7 @@ const assertInsertTargetAbsent = (window: readonly LogEntry[], input: CommitInpu
     if (e.op === "D") {
       return;
     }
-    throw new BaerlyError(
-      "AlreadyExists",
-      `insert: _id ${JSON.stringify(input.docId)} already exists in collection ${JSON.stringify(input.collection)}`,
-      undefined,
-      undefined,
-      undefined,
-      CODE_RESOLUTIONS.AlreadyExists,
-      input.docId,
-    );
+    throw insertAlreadyExists(input.collection, input.docId);
   }
 };
 

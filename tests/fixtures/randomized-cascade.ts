@@ -1044,7 +1044,9 @@ const FAULT_INSERT_CODES: ReadonlySet<string> = new Set([
  * - every rejection is `AlreadyExists`, or under `faultInjection` a
  *   retriable code or `AmbiguousCommit`; a definitively rejected body never
  *   reaches the log, and an ambiguous one is either the first `I` or absent;
- * - without `faultInjection`, exactly one insert fulfils per round.
+ * - without `faultInjection`, exactly one insert fulfils per round, and
+ *   across the run at least one loser is refused by the writer's insert
+ *   guard rather than the check read, so the race really contended.
  */
 export const runSameIdInsertRaceCascade = async (opts: {
   storages: Storage[];
@@ -1056,15 +1058,40 @@ export const runSameIdInsertRaceCascade = async (opts: {
   const collection = "ins";
   const id = "contested";
   const logPrefix = `app/${APP}/tenant/${tenant}/manifests/${collection}`;
-  const dbs = opts.storages.map((storage) => Db.create({ storage, app: APP, tenant }));
+  // Contention signal. An insert GETs `current.json` once for its
+  // pre-commit check read and once more only if it reaches
+  // `Writer.commit()`, and the writer is the only other source of
+  // `AlreadyExists`. So a loser that GOT `current.json` twice was refused
+  // by the writer's insert guard, not the check read.
+  const currentJsonKey = `${logPrefix}/current.json`;
+  const currentJsonGets = opts.storages.map(() => 0);
+  const counted = opts.storages.map((inner, writer): Storage => ({
+    get: (key, getOpts) => {
+      if (key === currentJsonKey) {
+        currentJsonGets[writer]!++;
+      }
+      return inner.get(key, getOpts);
+    },
+    put: (key, body, putOpts) => inner.put(key, body, putOpts),
+    delete: (key, deleteOpts) => inner.delete(key, deleteOpts),
+    list: (prefix, listOpts) => inner.list(prefix, listOpts),
+  }));
+  const dbs = counted.map((storage) => Db.create({ storage, app: APP, tenant }));
   const reader = dbs[0]!.collection(collection);
 
   type Outcome =
     | { readonly writer: number; readonly ok: true }
-    | { readonly writer: number; readonly ok: false; readonly code: string };
+    | {
+        readonly writer: number;
+        readonly ok: false;
+        readonly code: string;
+        /** The insert reached `Writer.commit()` (see `currentJsonGets`). */
+        readonly reachedWriter: boolean;
+      };
   const outcomes: Outcome[][] = [];
 
   for (let round = 0; round < rounds; round++) {
+    currentJsonGets.fill(0);
     const settled = await Promise.allSettled(
       dbs.map((db, writer) => db.collection(collection).insert({ _id: id, round, writer })),
     );
@@ -1077,7 +1104,12 @@ export const runSameIdInsertRaceCascade = async (opts: {
         if (!(reason instanceof BaerlyError)) {
           throw reason;
         }
-        return { writer, ok: false, code: reason.code };
+        return {
+          writer,
+          ok: false,
+          code: reason.code,
+          reachedWriter: currentJsonGets[writer]! > 1,
+        };
       }),
     );
     // End the incarnation. A delete may itself fail or be ambiguous under
@@ -1155,5 +1187,18 @@ export const runSameIdInsertRaceCascade = async (opts: {
         expect(inserted, `round ${round}: a rejected insert reached the log`).not.toContain(key);
       }
     }
+  }
+
+  // Without contention the oracle is vacuous: if scheduling serialized the
+  // inserts, the check read caught every loser and the writer's guard
+  // never ran. Require that at least one loser was refused by the guard.
+  if (!opts.faultInjection) {
+    const guarded = outcomes
+      .flat()
+      .filter((o) => !o.ok && o.code === "AlreadyExists" && o.reachedWriter).length;
+    expect(
+      guarded,
+      "no insert was refused by the writer's insert guard: the inserts never contended",
+    ).toBeGreaterThan(0);
   }
 };
