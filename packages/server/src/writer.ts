@@ -77,7 +77,7 @@ import {
   timestamp,
   uuid,
 } from "@baerly/protocol";
-import { assertDocId, insertAlreadyExists } from "./doc-id.ts";
+import { assertDocId, insertAlreadyExists, insertReplaysRow } from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
@@ -189,6 +189,11 @@ export interface CommitInput {
  * `(collection, doc_id)` in it is an `I` or `U`. So the first `I` for a
  * `doc_id` wins, and a concurrent later insert commits nothing.
  *
+ * With `replayIdentical`, a live last entry whose `after` equals the
+ * insert's body is not a collision but this insert's own earlier success
+ * (an SDK resending an auto-ID insert): the commit returns that entry and
+ * writes nothing.
+ *
  * Precondition: `absentBelowSeq` is a tail observed on this
  * collection's log by a read-path probe (the first empty slot it found).
  * A value above the true tail would make the writer create past a hole.
@@ -198,11 +203,24 @@ export interface CommitInput {
 export interface InsertGuard {
   /** The log tail the caller's absence check folded through. */
   readonly absentBelowSeq: number;
+  /**
+   * Treat a live `I` / `U` for the doc whose `after` equals the body
+   * (`insertReplaysRow`) as this insert's original success: return it
+   * as the commit result, with no index marker PUT, no create, no
+   * stale-marker cleanup and no maintenance tick. Set only for an
+   * SDK-minted `_id` (`runInsert`'s `mintedId`); a caller-chosen `_id`
+   * keeps strict `AlreadyExists`. Default `false`.
+   */
+  readonly replayIdentical?: boolean;
 }
 
 /** Return shape of {@link Writer.commit}. */
 export interface CommitResult {
-  /** The committed `LogEntry`. Caller can ack on `entry.lsn`. */
+  /**
+   * The committed `LogEntry`. Caller can ack on `entry.lsn`. For a
+   * guarded insert that replayed ({@link InsertGuard.replayIdentical}),
+   * the stored live entry it matched; this call wrote nothing.
+   */
   readonly entry: LogEntry;
 
   /**
@@ -351,7 +369,9 @@ export class Writer {
    *   `insertGuard` is set on a non-`I` op. Checked before any I/O.
    * @throws BaerlyError code="AlreadyExists" when `insertGuard` is set and
    *   the log window `[absentBelowSeq, seq)` holds a live `I` / `U` for
-   *   this doc. Nothing was committed; `err._id` is `input.docId`.
+   *   this doc (unless `replayIdentical` is set and its `after` equals the
+   *   body, which returns that entry instead). Nothing was committed;
+   *   `err._id` is `input.docId`.
    * @throws BaerlyError code="WriteConflict" when `insertGuard` is set and
    *   part of that window was folded and retired (or is longer than
    *   `LOG_FORWARD_PROBE_CAP`) before the writer could read it. Nothing
@@ -517,8 +537,12 @@ export class Writer {
       );
       insertWindow = [...folded, ...probe.entries];
       // ── Step 3c. Window decision, BEFORE Step 4's additive index
-      // markers, so a loser caught here writes nothing at all.
-      assertInsertTargetAbsent(insertWindow, input);
+      // markers, so a loser caught here writes nothing at all, and a
+      // replay of an identical live row returns it having written nothing.
+      const replayed = decideInsertTarget(insertWindow, input);
+      if (replayed !== undefined) {
+        return { entries: [replayed], currentEtag: baseEtag, classAOps: 0 };
+      }
       preCommitTail = probe.tail;
     }
     let seq = preCommitTail;
@@ -693,11 +717,16 @@ export class Writer {
         // send did not land there. The Step 4 markers already PUT stay as
         // orphans: benign false-positive candidates, like a crash before
         // the create. Deleting them could remove a marker a later writer
-        // re-PUT and de-index a committed row.
+        // re-PUT and de-index a committed row. A replay of an identical
+        // live row returns here for the same reason: nothing of this commit
+        // landed, and the markers it PUT stay as the same benign orphans.
         insertWindow.push(occupant);
         const probe = await probeTailFrom(this.#storage, logPrefix, seq + 1);
         insertWindow.push(...probe.entries);
-        assertInsertTargetAbsent(insertWindow, input);
+        const replayed = decideInsertTarget(insertWindow, input);
+        if (replayed !== undefined) {
+          return { entries: [replayed], currentEtag: baseEtag, classAOps: newKeysClassA };
+        }
         seq = probe.tail;
       }
       entry = mintEntry(seq);
@@ -1386,28 +1415,48 @@ const assertInsertGuardShape = (input: CommitInput): void => {
       `Writer: insertGuard.absentBelowSeq must be a non-negative safe integer; got ${String(seq)}`,
     );
   }
+  const replay = input.insertGuard?.replayIdentical;
+  if (replay !== undefined && typeof replay !== "boolean") {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `Writer: insertGuard.replayIdentical must be a boolean; got ${typeof replay}`,
+    );
+  }
 };
 
 /**
  * Window decision for a guarded insert. `window` holds the log entries
  * in `[absentBelowSeq, seq)` in seq order, unfiltered. The LAST entry for
- * this `(collection, doc_id)` decides: an `I` or `U` means a peer's row is
- * live, so this insert throws `AlreadyExists`; a `D`, or no entry, means
- * the row is absent and the insert may commit.
+ * this `(collection, doc_id)` decides: a `D`, or no entry, means the row
+ * is absent and the insert may commit (`undefined`). An `I` or `U` means a
+ * row is live: with `replayIdentical` set and that entry's `after` equal
+ * to the body, the insert is a replay of its own earlier success and the
+ * entry is returned; otherwise the insert throws `AlreadyExists`.
  *
  * @throws BaerlyError code="AlreadyExists"
  */
-const assertInsertTargetAbsent = (window: readonly LogEntry[], input: CommitInput): void => {
+const decideInsertTarget = (
+  window: readonly LogEntry[],
+  input: CommitInput,
+): LogEntry | undefined => {
   for (let i = window.length - 1; i >= 0; i--) {
     const e = window[i]!;
     if (e.collection !== input.collection || e.doc_id !== input.docId) {
       continue;
     }
     if (e.op === "D") {
-      return;
+      return undefined;
+    }
+    if (
+      input.insertGuard?.replayIdentical === true &&
+      input.body !== undefined &&
+      insertReplaysRow(input.body, e.after)
+    ) {
+      return e;
     }
     throw insertAlreadyExists(input.collection, input.docId);
   }
+  return undefined;
 };
 
 /** `true` when a decoded log occupant carries the identity adoption compares. */

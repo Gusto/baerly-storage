@@ -46,6 +46,24 @@ or change the stored row with `update` / `replace`. After a same-`_id` retry
 following `AmbiguousCommit`, the stored row may be your first attempt: re-read
 it instead (see below).
 
+### Resending an auto-ID insert over HTTP (`mintedId`)
+
+**Cause:** an HTTP client minted the insert's `_id` and resent the insert after
+losing the first response. Without a signal the resend is a caller-supplied
+duplicate and gets `409 AlreadyExists`, though the row is the client's own.
+**Fix:** send the minted id in both places,
+`{ "doc": { "_id": m, ... }, "mintedId": m }`. A resend that finds a live row
+for `m` holding the same document (key order ignored) returns the original
+`201 { "_id": m }` and commits nothing; a different body still gets `409`.
+`mintedId` must be a canonical UUIDv7 equal to `doc._id`, else
+`400 SchemaError`, so a human-chosen id like `"migration-x"` cannot opt in.
+Leave `mintedId` out whenever you chose the `_id`: an insert without it keeps
+strict `AlreadyExists` on any live row, even an identical one, which is what
+makes `insert({ _id: "migration-x", done: true })` a run-once guard with a
+single winner. A server that predates the field reads only `doc` and answers
+the resend `409`, never with a second row. In-process `Collection.insert` takes
+no such flag.
+
 ### AmbiguousCommit recovery
 
 `AmbiguousCommit` (HTTP 409) means a committing create may be durable, but its

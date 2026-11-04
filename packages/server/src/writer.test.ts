@@ -2043,6 +2043,104 @@ describe("Writer — insert guard (first insert wins)", () => {
     );
   });
 
+  describe("replayIdentical", () => {
+    const replayInsert = (writer: Writer, replayIdentical: boolean, title = "mine") =>
+      writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: DOC,
+        body: { title, _id: DOC },
+        insertGuard: { absentBelowSeq: 0, replayIdentical },
+      });
+
+    const seedLiveIdentical = async (storage: MemoryStorage): Promise<LogEntry> => {
+      await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+      // Key order differs from the replaying body on purpose.
+      return seedLogEntry(storage, MANIFEST, 0, {
+        collection: COLL,
+        doc_id: DOC,
+        session: "origss",
+        after: { _id: DOC, title: "mine" },
+      });
+    };
+
+    test("an identical live row in the window: returns it, no slot, no marker PUT", async () => {
+      const storage = new MemoryStorage();
+      const original = await seedLiveIdentical(storage);
+      const writer = new Writer({
+        storage,
+        currentJsonKey: CURRENT_KEY,
+        options: { indexes: [by_title] },
+      });
+      const putSpy = vi.spyOn(storage, "put");
+
+      const result = await replayInsert(writer, true);
+      expect(result.entry).toEqual(original);
+      expect(putSpy).not.toHaveBeenCalled();
+      await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+      await expect(titleMarkers(storage)).resolves.toEqual([]);
+    });
+
+    test("the same setup without replayIdentical throws AlreadyExists", async () => {
+      const storage = new MemoryStorage();
+      await seedLiveIdentical(storage);
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+      await expect(replayInsert(writer, false)).rejects.toMatchObject({
+        code: "AlreadyExists",
+        _id: DOC,
+      });
+      await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+    });
+
+    test("a different live body still throws AlreadyExists", async () => {
+      const storage = new MemoryStorage();
+      await seedLiveIdentical(storage);
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+      await expect(replayInsert(writer, true, "other")).rejects.toMatchObject({
+        code: "AlreadyExists",
+      });
+      await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+    });
+
+    test("an identical foreign occupant at the probed slot replays; the markers stay", async () => {
+      class PeerWinsSlot extends MemoryStorage {
+        armed = true;
+        override async put(
+          key: string,
+          body: Uint8Array,
+          opts?: StoragePutOptions,
+        ): Promise<StoragePutResult> {
+          if (this.armed && /\/log\/\d+\.json$/.test(key)) {
+            this.armed = false;
+            await seedLogEntry(this, MANIFEST, 0, {
+              collection: COLL,
+              doc_id: DOC,
+              session: "peerss",
+              after: { _id: DOC, title: "mine" },
+            });
+          }
+          return super.put(key, body, opts);
+        }
+      }
+      const storage = new PeerWinsSlot();
+      await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+      const writer = new Writer({
+        storage,
+        currentJsonKey: CURRENT_KEY,
+        options: { indexes: [by_title] },
+      });
+
+      const result = await replayInsert(writer, true);
+      expect(result.entry).toMatchObject({ seq: 0, session: "peerss" });
+      await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+      await expect(titleMarkers(storage)).resolves.toEqual(
+        allIndexKeysFor(MANIFEST, [by_title], { _id: DOC, title: "mine" }, DOC),
+      );
+    });
+  });
+
   test("an unguarded I over a live I in the window still commits (guard is opt-in)", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());

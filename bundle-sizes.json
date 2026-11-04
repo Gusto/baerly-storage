@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 305261,
-      "gz": 96437,
-      "minGz": 24327,
+      "raw": 310350,
+      "gz": 98177,
+      "minGz": 24642,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
@@ -37,30 +37,30 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 508816,
-      "gz": 154358,
-      "minGz": 49317,
+      "raw": 515283,
+      "gz": 156589,
+      "minGz": 49742,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 90457,
-      "gz": 29711,
-      "minGz": 11352,
+      "raw": 90765,
+      "gz": 29845,
+      "minGz": 11396,
       "note": "Worker-safe S3 entry, so consumer-facing. Demonstrated catch: fast-xml-parser is pinned at 5.8.0 because 5.9.3 inflated this closure ~25%."
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 85020,
-      "gz": 28340,
-      "minGz": 9545,
+      "raw": 85328,
+      "gz": 28473,
+      "minGz": 9585,
       "note": "Worker-safe GCS entry, so consumer-facing. Smaller than s3.js because the GOOG4 signer is lighter than aws4fetch."
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 435245,
-      "gz": 131223,
-      "minGz": 41260,
+      "raw": 441686,
+      "gz": 133454,
+      "minGz": 41665,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
@@ -102,12 +102,12 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 688141,
+      "raw": 694608,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 697034,
+      "raw": 703501,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }

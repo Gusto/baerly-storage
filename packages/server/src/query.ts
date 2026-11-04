@@ -53,7 +53,7 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
-import { assertDocId, insertAlreadyExists } from "./doc-id.ts";
+import { assertDocId, insertAlreadyExists, insertReplaysRow } from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
@@ -362,9 +362,24 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * The emitted `LogEntry` has `op:"I"` and `after === {...doc, _id}`
  * (today's per-doc-replace model).
  *
+ * **SDK-minted replay.** `opts.mintedId` marks `_id` as minted by an SDK
+ * client rather than chosen by the caller; only the HTTP insert route
+ * sets it (from the body's `mintedId`), and `Collection.insert` never
+ * does. With it set, a live row for `_id` equal to `{...doc, _id}`
+ * (`insertReplaysRow`: key order ignored) is this insert's own earlier
+ * success, resent after a lost response: the call returns `{ _id }` and
+ * commits nothing, whether the check read or the writer's insert guard
+ * finds the row. A live row with any other body still throws
+ * `AlreadyExists`. "Live" covers a `U`: a body equal to a later update's
+ * post-image also replays. A caller-chosen `_id` never replays, even onto
+ * an identical row, so a run-once guard like
+ * `insert({ _id: "migration-x", done: true })` has exactly one winner.
+ *
  * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
- *   committed before or concurrently with this call. `err._id` is the
- *   `_id`. Not retriable.
+ *   committed before or concurrently with this call (and, with
+ *   `mintedId`, its body differs). `err._id` is the `_id`. Not retriable.
+ * @throws BaerlyError code="InvalidConfig" — `opts.mintedId` is set and
+ *   is not the resolved `_id`.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
  *   `Writer.commit()` does not resolve, or log retention retired part of the
  *   window the insert guard had to read; nothing was committed. Retriable.
@@ -381,6 +396,8 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
 export const runInsert = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   doc: Partial<T> & DocumentData,
+  /** @internal — set only by the HTTP insert route. */
+  opts?: { readonly mintedId?: string },
 ): Promise<{ _id: string }> => {
   // Auto-id semantics: caller-supplied non-empty `_id` wins; otherwise
   // mint a UUIDv7. The locked contract
@@ -393,6 +410,13 @@ export const runInsert = async <T extends DocumentData>(
   // UUIDv7 always passes, so guarding unconditionally also documents
   // the invariant. The `_id` analogue of `assertKeySegment` (`db.ts`).
   assertDocId(_id);
+  const mintedId = opts?.mintedId;
+  if (mintedId !== undefined && mintedId !== _id) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `insert: mintedId ${JSON.stringify(mintedId)} is not the document _id ${JSON.stringify(_id)}`,
+    );
+  }
   // The locked input type `Partial<T> & DocumentData` is an
   // intersection of optional-keyed and required-keyed: at runtime the
   // DocumentData half is authoritative (Partial widens types
@@ -430,7 +454,11 @@ export const runInsert = async <T extends DocumentData>(
       limit: 1,
     },
   );
-  if (existing.rows.length > 0) {
+  const live = existing.rows[0];
+  if (live !== undefined) {
+    if (mintedId !== undefined && insertReplaysRow(body, live.doc)) {
+      return { _id };
+    }
     throw insertAlreadyExists(ctx.collectionName, _id);
   }
 
@@ -444,7 +472,7 @@ export const runInsert = async <T extends DocumentData>(
     collection: ctx.collectionName,
     docId: _id,
     body,
-    insertGuard: { absentBelowSeq: existing.tail },
+    insertGuard: { absentBelowSeq: existing.tail, replayIdentical: mintedId !== undefined },
   });
 
   return { _id };

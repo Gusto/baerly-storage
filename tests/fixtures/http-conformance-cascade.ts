@@ -31,6 +31,7 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
   type DocumentData,
+  uuidv7,
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
 } from "@baerly/protocol";
@@ -368,6 +369,38 @@ export const runHttpConformanceCascade = (opts: {
         expect(env.error?.retriable).toBe(false);
         expect(env.error?.message).toContain("user-chosen-id");
         expect(env.error?.resolution).toContain("different _id");
+      });
+
+      test("POST with mintedId replays an identical resend as 201 with the same _id", async () => {
+        // An SDK that minted `_id` sends it in `doc._id` and `mintedId`; a
+        // resend after a lost response must not 409 or duplicate. A server
+        // without the field answers the resend 409.
+        const table = await mintTable("rt-minted-replay");
+        const id = uuidv7();
+        const doc = { _id: id, title: "t", tags: ["a", "b"] };
+        const send = async (body: unknown): Promise<Response> =>
+          await doFetch(authedRequest("POST", `/v1/c/${table}`, body));
+
+        const first = await send({ doc, mintedId: id });
+        expect(first.status).toBe(201);
+        expect(((await first.json()) as { _id: string })._id).toBe(id);
+        const again = await send({ doc, mintedId: id });
+        expect(again.status).toBe(201);
+        expect(((await again.json()) as { _id: string })._id).toBe(id);
+        const permuted = await send({
+          doc: { tags: ["a", "b"], title: "t", _id: id },
+          mintedId: id,
+        });
+        expect(permuted.status).toBe(201);
+
+        const countRes = await doFetch(authedRequest("GET", `/v1/count?collection=${table}`));
+        expect(((await countRes.json()) as { data: { count: number } }).data.count).toBe(1);
+
+        // Without the flag the same identical body is a caller-supplied
+        // duplicate: terminal 409.
+        const unflagged = await send({ doc });
+        expect(unflagged.status).toBe(409);
+        expect(((await unflagged.json()) as ErrorEnvelope).error?.code).toBe("AlreadyExists");
       });
 
       test("PATCH of missing _id returns 404 with NotFound", async () => {

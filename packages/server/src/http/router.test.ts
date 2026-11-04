@@ -7,6 +7,7 @@ import {
   type BaerlyErrorCode,
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
+  uuidv7,
 } from "@baerly/protocol";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -538,6 +539,68 @@ describe("request-path 400s carry a resolution hint", () => {
     };
     expect(body.error.code).toBe("InvalidConfig");
     expect(body.error.message).toContain('Predicates may not key on "_id"');
+  });
+});
+
+describe("POST mintedId: SDK-minted insert replay", () => {
+  const post = async (app: ReturnType<typeof createRouter>, body: unknown): Promise<Response> =>
+    await app.request("/v1/c/notes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const expectBodyShape400 = async (res: Response): Promise<void> => {
+    expect(res.status).toBe(400);
+    const env = (await res.json()) as {
+      readonly error: { readonly code: string; readonly resolution?: string };
+    };
+    expect(env.error.code).toBe("SchemaError");
+    expect(env.error.resolution).toBe(WRITE_BODY_SHAPE_RESOLUTION);
+  };
+
+  test("a flagged identical resend returns 201 with the original _id", async () => {
+    const app = buildApp();
+    const id = uuidv7();
+    const first = await post(app, { doc: { _id: id, title: "t" }, mintedId: id });
+    expect(first.status).toBe(201);
+    const again = await post(app, { doc: { title: "t", _id: id }, mintedId: id });
+    expect(again.status).toBe(201);
+    await expect(again.json()).resolves.toEqual({ _id: id });
+  });
+
+  test("an unflagged identical resend stays 409", async () => {
+    const app = buildApp();
+    const id = uuidv7();
+    const flagged = await post(app, { doc: { _id: id, title: "t" }, mintedId: id });
+    expect(flagged.status).toBe(201);
+    const unflagged = await post(app, { doc: { _id: id, title: "t" } });
+    expect(unflagged.status).toBe(409);
+  });
+
+  test("mintedId different from doc._id is 400", async () => {
+    await expectBodyShape400(
+      await post(buildApp(), { doc: { _id: uuidv7(), title: "t" }, mintedId: uuidv7() }),
+    );
+  });
+
+  test("mintedId without a doc._id is 400", async () => {
+    await expectBodyShape400(await post(buildApp(), { doc: { title: "t" }, mintedId: uuidv7() }));
+  });
+
+  test("a human-chosen mintedId is 400", async () => {
+    await expectBodyShape400(
+      await post(buildApp(), { doc: { _id: "migration-x", done: true }, mintedId: "migration-x" }),
+    );
+  });
+
+  test.each([42, null, true, { id: "x" }])("a non-string mintedId (%j) is 400", async (bad) => {
+    await expectBodyShape400(await post(buildApp(), { doc: { _id: "x", t: 1 }, mintedId: bad }));
+  });
+
+  test("a UUIDv4 mintedId is 400", async () => {
+    const v4 = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
+    await expectBodyShape400(await post(buildApp(), { doc: { _id: v4 }, mintedId: v4 }));
   });
 });
 

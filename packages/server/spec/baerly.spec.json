@@ -320,7 +320,7 @@
       "method": "POST",
       "path": "/v1/c/:collection",
       "auth": "verified",
-      "summary": "Insert a document."
+      "summary": "Insert a document (body { doc, mintedId? })."
     },
     {
       "method": "PATCH",

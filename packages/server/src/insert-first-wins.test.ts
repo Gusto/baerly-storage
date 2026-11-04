@@ -21,6 +21,7 @@ import {
   readCurrentJson,
   type Storage,
   type StoragePutOptions,
+  uuidv7,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
@@ -28,6 +29,7 @@ import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { retireLogRange } from "./log-retention.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
+import { runInsert } from "./query.ts";
 
 const APP = "a";
 const TENANT = "t";
@@ -106,21 +108,21 @@ const nthCurrentJsonGet = (n: number): Match => {
 const logCreate: Match = (op, key, opts) =>
   op === "put" && /\/log\/\d+\.json$/.test(key) && opts?.ifNoneMatch === "*";
 
-/** Every log entry still on the bucket for `ID`, in seq order. */
-const entriesFor = async (storage: Storage): Promise<LogEntry[]> => {
+/** Every log entry still on the bucket for `docId`, in seq order. */
+const entriesFor = async (storage: Storage, docId: string = ID): Promise<LogEntry[]> => {
   const out: LogEntry[] = [];
   for await (const item of storage.list(`${PREFIX}/log/`)) {
     const got = await storage.get(item.key);
     const entry = decodeJsonBytes<LogEntry>(got!.body);
-    if (entry.doc_id === ID) {
+    if (entry.doc_id === docId) {
       out.push(entry);
     }
   }
   return out.toSorted((x, y) => x.seq - y.seq);
 };
 
-const opsFor = async (storage: Storage): Promise<string[]> => {
-  const entries = await entriesFor(storage);
+const opsFor = async (storage: Storage, docId: string = ID): Promise<string[]> => {
+  const entries = await entriesFor(storage, docId);
   return entries.map((e) => e.op);
 };
 
@@ -143,8 +145,14 @@ const setup = async (): Promise<{
 const insert = async (db: Db, body: DocumentData): Promise<{ _id: string }> =>
   await runWithContext(MAINTENANCE_OFF, () => db.collection(COLL).insert(body));
 
-const rowOf = (storage: Storage): Promise<DocumentData | undefined> =>
-  Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL).get(ID);
+/** An SDK-minted insert: `doc._id` is `mintedId`, as the HTTP route passes it. */
+const mintedInsert = async (db: Db, body: DocumentData & { _id: string }) =>
+  await runWithContext(MAINTENANCE_OFF, () =>
+    runInsert(db.collectionReadContext(COLL), body, { mintedId: body._id }),
+  );
+
+const rowOf = (storage: Storage, docId: string = ID): Promise<DocumentData | undefined> =>
+  Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL).get(docId);
 
 describe("insert: the first I for an _id wins", () => {
   test("(i) a create that loses its slot to a peer's insert of the same _id throws AlreadyExists", async () => {
@@ -196,6 +204,54 @@ describe("insert: the first I for an _id wins", () => {
     expect((results[1] as PromiseRejectedResult).reason).toMatchObject({ code: "AlreadyExists" });
     await expect(rowOf(inner)).resolves.toEqual(body);
     await expect(opsFor(inner)).resolves.toEqual(["I"]);
+  });
+
+  test("(ii) identical minted bodies: both fulfil with the same _id over one I", async () => {
+    const { inner, a, aGate, b } = await setup();
+    const held = aGate.hold(nthCurrentJsonGet(2));
+    const id = uuidv7();
+    const body = { _id: id, title: "same" };
+
+    const pending = mintedInsert(a, body);
+    await held.reached;
+    // A's check read ran before B committed, so only A's writer window can
+    // see B's row: the replay must come from the insert guard.
+    await expect(mintedInsert(b, body)).resolves.toEqual({ _id: id });
+    held.release();
+
+    await expect(pending).resolves.toEqual({ _id: id });
+    await expect(rowOf(inner, id)).resolves.toEqual(body);
+    await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
+  });
+
+  test("(i) an identical minted body losing its slot replays the peer's I", async () => {
+    const { inner, a, aGate, b } = await setup();
+    const held = aGate.hold(logCreate);
+    const id = uuidv7();
+    const body = { _id: id, title: "same" };
+
+    const pending = mintedInsert(a, body);
+    await held.reached;
+    await expect(mintedInsert(b, { title: "same", _id: id })).resolves.toEqual({ _id: id });
+    held.release();
+
+    await expect(pending).resolves.toEqual({ _id: id });
+    await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
+  });
+
+  test("(ii) different minted bodies: the later insert throws AlreadyExists", async () => {
+    const { inner, a, aGate, b } = await setup();
+    const held = aGate.hold(nthCurrentJsonGet(2));
+    const id = uuidv7();
+
+    const pending = mintedInsert(a, { _id: id, by: "A" });
+    await held.reached;
+    await mintedInsert(b, { _id: id, by: "B" });
+    held.release();
+
+    await expect(pending).rejects.toMatchObject({ code: "AlreadyExists", _id: id });
+    await expect(rowOf(inner, id)).resolves.toEqual({ _id: id, by: "B" });
+    await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
   });
 
   test("(iii) a fold that moved log_seq_start past the check read's tail does not hide the peer's insert", async () => {
