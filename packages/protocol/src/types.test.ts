@@ -16,7 +16,16 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 
 import { COUNT_BIT_WIDTH, TIMESTAMP_BIT_WIDTH } from "./constants.ts";
-import { countKey, str2uint, str2uintDesc, uint2str, uint2strDesc, uuid, uuidv7 } from "./types.ts";
+import {
+  countKey,
+  isUuidV7,
+  str2uint,
+  str2uintDesc,
+  uint2str,
+  uint2strDesc,
+  uuid,
+  uuidv7,
+} from "./types.ts";
 
 // Bit-widths used to exercise the raw codec. The `10` and `20` are
 // deliberately below COUNT_BIT_WIDTH (53) so `2 ** bits - 1` stays
@@ -193,5 +202,29 @@ describe("base-32 codecs — ordering", () => {
   test("uint2strDesc boundary values", () => {
     expect(uint2strDesc(0, 10)).toBe("vv");
     expect(uint2strDesc(1023, 10)).toBe("00");
+  });
+});
+
+describe("isUuidV7()", () => {
+  test("accepts freshly minted uuidv7() values", () => {
+    for (let i = 0; i < 50; i++) {
+      expect(isUuidV7(uuidv7())).toBe(true);
+    }
+  });
+
+  test.each([
+    ["v4 UUID", "3b241101-e2bb-4255-8caf-4136c566a962"],
+    ["non-UUID id", "migration-x"],
+    ["empty", ""],
+    ["uppercase v7", "01956CAD-4CC8-7ABC-9DEF-0123456789AB"],
+    ["wrong variant nibble", "01956cad-4cc8-7abc-cdef-0123456789ab"],
+    ["no hyphens", "01956cad4cc87abc9def0123456789ab"],
+    ["trailing junk", "01956cad-4cc8-7abc-9def-0123456789ab "],
+  ])("rejects %s", (_id, s) => {
+    expect(isUuidV7(s)).toBe(false);
+  });
+
+  test("accepts a canonical v7 literal", () => {
+    expect(isUuidV7("01956cad-4cc8-7abc-9def-0123456789ab")).toBe(true);
   });
 });

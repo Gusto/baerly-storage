@@ -70,6 +70,15 @@ export const uuidv7 = (): UUID => {
   return `${millisHex.slice(0, 8)}-${millisHex.slice(8, 12)}-${b.slice(0, 4)}-${b.slice(4, 8)}-${b.slice(8, 20)}` as UUID;
 };
 
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * True iff `s` has exactly the shape {@link uuidv7} produces: canonical
+ * lowercase 8-4-4-4-12 hex, version nibble `7`, variant nibble in
+ * `[89ab]`.
+ */
+export const isUuidV7 = (s: string): boolean => UUID_V7_RE.test(s);
+
 /**
  * Mint the trailing seq segment of an LSN (`<base32-time>_<sess>_<seq>`).
  * Uses `COUNT_BIT_WIDTH` (see `packages/protocol/src/constants.ts`) to
