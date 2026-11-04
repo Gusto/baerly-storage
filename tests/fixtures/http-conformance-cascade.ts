@@ -169,11 +169,13 @@ const PNG_FIXTURE = new Uint8Array([
   0x89,
 ]);
 
-/** Cheap UUID-ish suffix for table names. Avoids pulling in `@baerly/protocol`'s `uuid`. */
-const randSuffix = (): string =>
-  Math.floor(Math.random() * 0x1_0000_0000)
-    .toString(16)
-    .padStart(8, "0");
+/**
+ * Collision-free suffix for table names: 122 random bits, hyphens
+ * stripped. The randomized property mints ~10k tables in one shared
+ * bucket, where a 32-bit suffix collides (`WriteConflict` on
+ * `current.json` creation) in about 1% of runs.
+ */
+const randSuffix = (): string => crypto.randomUUID().replaceAll("-", "");
 
 const freshTable = (prefix: string): string => `${prefix}-${randSuffix()}`;
 
