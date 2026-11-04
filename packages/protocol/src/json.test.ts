@@ -1,6 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import { type DocumentValue, merge } from "./json.ts";
+import { type DocumentValue, type JSONValue, jsonValueEqual, merge } from "./json.ts";
 
 const documentValueArb = fc.letrec((tie) => ({
   doc: fc.oneof(
@@ -284,4 +284,43 @@ describe("JSON Merge Patch (RFC 7386)", () => {
       });
     }
   });
+});
+
+describe("jsonValueEqual", () => {
+  const eq: Array<[string, JSONValue, JSONValue]> = [
+    ["permuted keys", { a: 1, b: 2 }, { b: 2, a: 1 }],
+    [
+      "nested permuted keys",
+      { a: { x: 1, y: [{ p: 1, q: 2 }] }, b: null },
+      { b: null, a: { y: [{ q: 2, p: 1 }], x: 1 } },
+    ],
+    ["identical arrays", [1, "a", null, true], [1, "a", null, true]],
+    ["null", null, null],
+    ["empty object and array", { a: {}, b: [] }, { b: [], a: {} }],
+  ];
+  for (const [id, a, b] of eq) {
+    test(`equal: ${id}`, () => {
+      expect(jsonValueEqual(a, b)).toBe(true);
+      expect(jsonValueEqual(b, a)).toBe(true);
+    });
+  }
+
+  const ne: Array<[string, JSONValue, JSONValue]> = [
+    ["array vs index-keyed object", [1], { "0": 1 }],
+    ["array order", [1, 2], [2, 1]],
+    ["array length", [1], [1, 1]],
+    ["extra key", { a: 1 }, { a: 1, b: 2 }],
+    ["same size, different key", { a: 1 }, { b: 1 }],
+    ["null vs {}", null, {}],
+    ["null vs []", null, []],
+    ["string vs number", "1", 1],
+    ["nested value differs", { a: { b: 1 } }, { a: { b: 2 } }],
+    ["null-valued key vs absent key", { a: null }, { b: null }],
+  ];
+  for (const [id, a, b] of ne) {
+    test(`unequal: ${id}`, () => {
+      expect(jsonValueEqual(a, b)).toBe(false);
+      expect(jsonValueEqual(b, a)).toBe(false);
+    });
+  }
 });
