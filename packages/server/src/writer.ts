@@ -23,9 +23,9 @@
  * **First insert wins.** An `I` carrying {@link CommitInput.insertGuard}
  * reads the log window its caller's absence check could not see and
  * refuses to commit over a live row a peer's `I` put there
- * (`AlreadyExists`), so of concurrent inserts of one `doc_id` exactly one
- * commits. See {@link InsertGuard} and `docs/spec/sync-protocol.md`
- * §"Insert: the first `I` wins".
+ * (`AlreadyExists`), so of concurrent inserts of one `doc_id` at most one
+ * commits (exactly one, absent storage failures). See {@link InsertGuard}
+ * and `docs/spec/sync-protocol.md` §"Insert: the first `I` wins".
  *
  * **Crash safety.** Order is additive index `newKeys` → `log/<seq>`
  * create → stale index-key DELETEs. `LogEntry.after` is the authoritative

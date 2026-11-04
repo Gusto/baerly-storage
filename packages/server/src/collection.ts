@@ -84,7 +84,7 @@ export const makeCollection = <T extends DocumentData>(
      *
      * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
      *   committed before or concurrently with this call; of concurrent
-     *   inserts of one `_id`, exactly one commits. Nothing was committed.
+     *   inserts of one `_id`, at most one commits. Nothing was committed.
      *   Not retriable.
      * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
      *   the writer does not resolve; the write was not committed. The writer
