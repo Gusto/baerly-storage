@@ -48,10 +48,11 @@ export type BaerlyErrorCode =
    * succeed; `retriable` is `false`. `Collection.insert` raises it when a
    * live row already holds the `_id`, including one a concurrent insert
    * committed first: of concurrent inserts of one `_id`, exactly one
-   * commits and the others raise this. Insert under a different `_id`, omit `_id` to mint one,
-   * or change the stored row with `update` / `replace` — unless this follows
-   * a same-`_id` retry after `AmbiguousCommit`, where the stored row may be
-   * the first attempt: re-read it instead of inserting under a new `_id`.
+   * commits and the others raise this. Insert under a different `_id`,
+   * omit `_id` to mint one, or change the stored row with `update` /
+   * `replace` — unless this follows a same-`_id` retry after
+   * `AmbiguousCommit`, where the stored row may be the first attempt:
+   * re-read it instead of inserting under a new `_id`.
    * `baerly admin restore` raises it when the target collection already
    * exists and `--force` was not passed. HTTP maps this code to 409 and
    * keeps the message, which names the id and collection.
