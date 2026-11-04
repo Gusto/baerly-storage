@@ -169,10 +169,11 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
    * A non-empty string `_id` is caller-chosen and sent as-is; a second
    * insert of the same `_id` rejects with `AlreadyExists`. When `_id` is
    * omitted (or `""`, or not a string), the client mints a UUIDv7 before
-   * the request is sent and flags it as minted. An identical retransmission
-   * returns success when the current live row matches; a different current
-   * body yields `AlreadyExists`. Deletion permits reinsertion. Calling
-   * `insert(doc)` again mints a new auto-ID; it is a new operation.
+   * the request is sent and flags it as minted, so the server answers a
+   * retransmission of that same request with the original `{ _id }` while
+   * the stored row still matches, instead of a duplicate row. The client
+   * sends each insert once and does not retransmit it; calling
+   * `insert(doc)` again mints a new auto-ID and is a new insert.
    * The caller's `doc` is not modified.
    */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
@@ -318,9 +319,10 @@ const makeClientCollection = <T extends DocumentData>(
     async insert(doc, opts): Promise<{ readonly _id: string }> {
       // Same rule as the server's `runInsert`: only a non-empty string `_id`
       // is caller-supplied; anything else is replaced by a minted id there,
-      // so it must be here too for a resend to carry a stable id.
+      // so it must be here too for a retransmitted request to carry a stable
+      // id. The body is serialized once, so a `fetch` wrapper that resends
+      // the request resends the same minted id.
       const supplied: unknown = doc["_id"];
-      // Built once so every attempt at this insert carries the same minted id.
       const body =
         typeof supplied !== "string" || supplied.length === 0
           ? (() => {
