@@ -72,18 +72,20 @@ export const makeCollection = <T extends DocumentData>(
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
     /**
      * Insert one document. UUIDv7 auto-id when `_id` is absent or
-     * empty; otherwise the caller-supplied `_id` is honoured. A
-     * pre-commit existence check against the committed collection
-     * surfaces `AlreadyExists` on duplicate `_id` without round-tripping
-     * to the writer — matches the locked `Collection.insert` throws
-     * contract (`@baerly/protocol/src/collection-api.ts`).
+     * empty; otherwise the caller-supplied `_id` is honoured. The first
+     * insert of an `_id` wins: a pre-commit existence check surfaces
+     * `AlreadyExists` for a row already committed, and the writer's insert
+     * guard surfaces it for one a concurrent insert committed after that
+     * check — matches the locked `Collection.insert` throws contract
+     * (`@baerly/protocol/src/collection-api.ts`).
      *
      * Single-attempt per call: log-create contention is resolved inside
      * `Writer.commit()`, and its errors surface unchanged.
      *
-     * @throws BaerlyError code="AlreadyExists" — `_id` matches an
-     *   already-committed row (pre-commit check; concurrent uncommitted
-     *   inserts are not detected). Not retriable.
+     * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
+     *   committed before or concurrently with this call; of concurrent
+     *   inserts of one `_id`, exactly one commits. Nothing was committed.
+     *   Not retriable.
      * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
      *   the writer does not resolve; the write was not committed. The writer
      *   makes one attempt (log-create races are resolved inside it), so

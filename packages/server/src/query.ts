@@ -349,19 +349,26 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
 /**
  * `Collection.insert` implementation. Mints a UUIDv7 `_id`
  * when the caller omits it (or supplies an empty string); honours a
- * caller-supplied non-empty `_id`. On collision (the materialised
- * collection already carries that `_id`) throws non-retriable
- * `BaerlyError{code:"AlreadyExists"}` BEFORE issuing the writer round-trip
- * — matches the locked `Collection.insert` contract
- * (`packages/protocol/src/collection-api.ts:123–125`).
+ * caller-supplied non-empty `_id`. The first `I` for an `_id` wins:
+ * when a live row already holds the `_id`, the insert throws
+ * non-retriable `BaerlyError{code:"AlreadyExists"}` and commits nothing.
+ * A row committed before the pre-commit check read is caught there,
+ * without a writer round-trip; one committed concurrently, after that
+ * read, is caught by the writer's insert guard, which reads the log
+ * window the check could not see. So of concurrent inserts of one `_id`,
+ * exactly one commits and the others throw `AlreadyExists` — matches the
+ * locked `Collection.insert` contract
+ * (`packages/protocol/src/collection-api.ts`).
  *
  * The emitted `LogEntry` has `op:"I"` and `after === {...doc, _id}`
  * (today's per-doc-replace model).
  *
- * @throws BaerlyError code="AlreadyExists" — `_id` collision (pre-commit
- *   check). Not retriable.
+ * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
+ *   committed before or concurrently with this call. `err._id` is the
+ *   `_id`. Not retriable.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
- *   `Writer.commit()` does not resolve; nothing was committed. Retriable.
+ *   `Writer.commit()` does not resolve, or log retention retired part of the
+ *   window the insert guard had to read; nothing was committed. Retriable.
  * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
  *   durable, but its outcome could not be resolved. The row may or may not
  *   have been inserted. Not retriable-by-default; see `Writer.commit`.
@@ -404,20 +411,20 @@ export const runInsert = async <T extends DocumentData>(
     });
   }
 
-  // Pre-commit `_id`-collision check. Costs one log walk; matches the
-  // locked `Collection.insert` throws contract
-  // (`packages/protocol/src/collection-api.ts:123–125`). Without it a caller-
-  // supplied duplicate `_id` would land a second `I` entry that the
-  // read fold collapses silently — a contract violation. `Writer` does
-  // not surface this case (no slot conflict; both writes succeed at
-  // different seqs).
-  // The collision check defends against a doc ALREADY committed to
-  // the bucket.
-  const existing = await runRead<DocumentData>(ctx, {
-    wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
-    order: undefined,
-    limit: 1,
-  });
+  // Pre-commit `_id`-collision check: a live row at the check read's
+  // tail `T0` throws `AlreadyExists` with no writer round-trip. The read
+  // runs on the full-scan path even when an index covers `_id`: only
+  // that path folds every entry below `T0` for this doc (see
+  // `runReadRows`'s `tail`), and the writer's guard trusts the check for
+  // exactly that range.
+  const existing = await runReadRows<DocumentData>(
+    { ...ctx, indexes: [] },
+    {
+      wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
+      order: undefined,
+      limit: 1,
+    },
+  );
   if (existing.rows.length > 0) {
     throw new BaerlyError(
       "AlreadyExists",
@@ -426,16 +433,21 @@ export const runInsert = async <T extends DocumentData>(
       undefined,
       undefined,
       CODE_RESOLUTIONS.AlreadyExists,
+      _id,
     );
   }
 
   // Single-attempt at the verb level; log-create contention is resolved
-  // inside `Writer.commit()`, and its errors surface unchanged.
+  // inside `Writer.commit()`, and its errors surface unchanged. The
+  // insert guard makes the writer check the log window `[T0, seq)` this
+  // read could not see, so of concurrent inserts of one `_id` only the
+  // first `I` commits and the rest throw `AlreadyExists`.
   await writerFor(ctx).commit({
     op: "I",
     collection: ctx.collectionName,
     docId: _id,
     body,
+    insertGuard: { absentBelowSeq: existing.tail },
   });
 
   return { _id };
@@ -715,6 +727,15 @@ const runReadRows = async <T extends DocumentData>(
   readonly rows: StoredRow<T>[];
   readonly manifestPointer: string;
   readonly fresh: boolean;
+  /**
+   * The log tail this read folded through: the first empty slot its
+   * probe found, or `0` when the collection is not provisioned. On the
+   * full-scan path `rows` is the complete matching state at that tail. On
+   * the index-walk path the index LIST runs before the probe, so a row
+   * committed between the two can be missing from `rows` although its
+   * entry sits below `tail`.
+   */
+  readonly tail: number;
 }> => {
   // ── Step 1. Read current.json. ────────────────────────────────────
   // Every read GETs `current.json` fresh — mirrors the multi-instance
@@ -731,7 +752,7 @@ const runReadRows = async <T extends DocumentData>(
   // not-found head still emits a well-defined cursor so the wire shape
   // never carries `""`.
   if (head === null) {
-    return { rows: [], manifestPointer: "m1:0000000000000", fresh };
+    return { rows: [], manifestPointer: "m1:0000000000000", fresh, tail: 0 };
   }
 
   // ── Optional index-walk fast path. ──────────────────────────────
@@ -752,7 +773,12 @@ const runReadRows = async <T extends DocumentData>(
     if (state.limit !== undefined && state.limit < rows.length) {
       rows = rows.slice(0, state.limit);
     }
-    return { rows, manifestPointer: serializeManifestPointer(head.json, walk.tail), fresh };
+    return {
+      rows,
+      manifestPointer: serializeManifestPointer(head.json, walk.tail),
+      fresh,
+      tail: walk.tail,
+    };
   }
   // plan.kind === "full-scan" — fall through to the snapshot+log fold.
 
@@ -819,7 +845,7 @@ const runReadRows = async <T extends DocumentData>(
     rows = rows.slice(0, state.limit);
   }
 
-  return { rows, manifestPointer: serializeManifestPointer(head.json, tail), fresh };
+  return { rows, manifestPointer: serializeManifestPointer(head.json, tail), fresh, tail };
 };
 
 /**

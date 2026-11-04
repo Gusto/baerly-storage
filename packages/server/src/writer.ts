@@ -20,6 +20,13 @@
  * own lost-ack / crashed-but-durable commit → adopted (not retried), so
  * the write lands at EXACTLY `seq`, never duplicated.
  *
+ * **First insert wins.** An `I` carrying {@link CommitInput.insertGuard}
+ * reads the log window its caller's absence check could not see and
+ * refuses to commit over a live row a peer's `I` put there
+ * (`AlreadyExists`), so of concurrent inserts of one `doc_id` exactly one
+ * commits. See {@link InsertGuard} and `docs/spec/sync-protocol.md`
+ * §"Insert: the first `I` wins".
+ *
  * **Crash safety.** Order is additive index `newKeys` → `log/<seq>`
  * create → stale index-key DELETEs. `LogEntry.after` is the authoritative
  * post-image. A crash before the create leaves only orphan additive index
@@ -60,6 +67,7 @@ import {
   noopMetricsRecorder,
   type Storage,
   LOG_FORWARD_PROBE_CAP,
+  MAX_PARALLEL_LOG_READS,
   PREIMAGE_SCAN_MAX_GETS,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
@@ -73,7 +81,7 @@ import { assertDocId } from "./doc-id.ts";
 import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
-import { findLogTail } from "./log-tail.ts";
+import { findLogTail, probeTailFrom } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 import {
   dispatchInlineAwaited,
@@ -162,6 +170,34 @@ export interface CommitInput {
 
   /** Optional ISO-8601 origin marker; becomes {@link LogEntry.origin}. */
   readonly origin?: string;
+
+  /**
+   * First-insert-wins guard. Valid only with `op: "I"`; any other op
+   * throws `InvalidConfig` before I/O. See {@link InsertGuard}.
+   *
+   * @internal — set by `Collection.insert` (`runInsert` in `./query.ts`).
+   */
+  readonly insertGuard?: InsertGuard;
+}
+
+/**
+ * Backward validation for an `I` commit. The caller has already checked
+ * that the doc has no live row in the collection state folded through
+ * log tail `absentBelowSeq`. The writer then reads every log entry in
+ * `[absentBelowSeq, seq)` — the window that check could not see — and
+ * refuses the commit with `AlreadyExists` when the last entry for this
+ * `(collection, doc_id)` in it is an `I` or `U`. So the first `I` for a
+ * `doc_id` wins, and a concurrent later insert commits nothing.
+ *
+ * Precondition: `absentBelowSeq` is a tail observed on this
+ * collection's log by a read-path probe (the first empty slot it found).
+ * A value above the true tail would make the writer create past a hole.
+ *
+ * @internal
+ */
+export interface InsertGuard {
+  /** The log tail the caller's absence check folded through. */
+  readonly absentBelowSeq: number;
 }
 
 /** Return shape of {@link Writer.commit}. */
@@ -311,8 +347,23 @@ export class Writer {
    * @throws BaerlyError code="InvalidResponse" when a log-entry body
    *   isn't valid JSON.
    * @throws BaerlyError code="InvalidConfig" when an `I` / `U` body is
-   *   not a plain object whose own `_id` is the string `docId`. Checked
-   *   before any I/O.
+   *   not a plain object whose own `_id` is the string `docId`, or when
+   *   `insertGuard` is set on a non-`I` op. Checked before any I/O.
+   * @throws BaerlyError code="AlreadyExists" when `insertGuard` is set and
+   *   the log window `[absentBelowSeq, seq)` holds a live `I` / `U` for
+   *   this doc. Nothing was committed; `err._id` is `input.docId`.
+   * @throws BaerlyError code="WriteConflict" when `insertGuard` is set and
+   *   part of that window was folded and retired (or is longer than
+   *   `LOG_FORWARD_PROBE_CAP`) before the writer could read it. Nothing
+   *   was committed; re-read and retry.
+   *
+   * **Insert guard cost.** A guarded commit probes the tail linearly from
+   * `max(absentBelowSeq, log_seq_start)` with `probeTailFrom` instead of
+   * galloping from `max(log_seq_start, tail_hint)`. Uncontended,
+   * `absentBelowSeq` is the tail, so that is one 404 GET. Each entry a
+   * peer committed after the caller's check costs one more GET, and if a
+   * fold moved `log_seq_start` past `absentBelowSeq`, each folded slot in
+   * between costs one GET too.
    *
    * **Implicit provisioning.** When `current.json` does not exist at
    * `currentJsonKey` (fresh bucket, fresh collection), the writer
@@ -336,6 +387,9 @@ export class Writer {
     // `doc_id`, and later reads key that row by the wrong id.
     if (input.op !== "D") {
       assertPostImageIdentity(input.docId, input.body, "InvalidConfig");
+    }
+    if (input.insertGuard !== undefined) {
+      assertInsertGuardShape(input);
     }
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
@@ -423,12 +477,50 @@ export class Writer {
     // so a compactor that advanced `log_seq_start` past a stale
     // `tail_hint` doesn't make us re-walk folded-but-unswept entries.
     // Bind to a local (oxlint `no-await-expression-member`).
-    const probeFloor = Math.max(logSeqStartOf(current), current.tail_hint);
-    // `findLogTail`'s density precondition holds: the floor sits in the
-    // dense prefix because tail_hint advancers probe or derive known tails
-    // from committed entries, while ordinary writer commits never stamp
-    // `tail_hint`, so nothing advances the floor past a hole.
-    const preCommitTail = await findLogTail(this.#storage, logPrefix, probeFloor);
+    //
+    // A guarded insert (`input.insertGuard`) instead reads every entry in
+    // its unseen window `[absentBelowSeq, tail)`: Step 3a GETs the part a
+    // fold already moved below `log_seq_start`, and Step 3b probes the
+    // rest with `probeTailFrom`, which returns the entries it passes.
+    const guard = input.insertGuard;
+    const logSeqStart = logSeqStartOf(current);
+    let insertWindow: LogEntry[] | undefined;
+    let preCommitTail: number;
+    if (guard === undefined) {
+      const probeFloor = Math.max(logSeqStart, current.tail_hint);
+      // `findLogTail`'s density precondition holds: the floor sits in the
+      // dense prefix because tail_hint advancers probe or derive known tails
+      // from committed entries, while ordinary writer commits never stamp
+      // `tail_hint`, so nothing advances the floor past a hole.
+      preCommitTail = await findLogTail(this.#storage, logPrefix, probeFloor);
+    } else {
+      // ── Step 3a. Folded part of the window, `[absentBelowSeq, floor)`.
+      const folded = await this.#readFoldedInsertWindow(
+        logPrefix,
+        guard.absentBelowSeq,
+        logSeqStart,
+        errorPrefix,
+      );
+      // ── Step 3b. Live part, probed from `max(absentBelowSeq, floor)`.
+      // That start meets `probeTailFrom`'s retention precondition (it is
+      // at or above this manifest read's `log_seq_start`) and sits in the
+      // dense prefix: `absentBelowSeq` was the first empty slot a read
+      // probe found with every slot from its floor up occupied, creates
+      // only ever land at a first-empty slot, and retirement stays below
+      // `log_seq_start`. Starting below `tail_hint` re-reads the slots in
+      // `[absentBelowSeq, tail_hint)`; those are exactly the window
+      // entries the check could not see, so none of the GETs is wasted.
+      const probe = await probeTailFrom(
+        this.#storage,
+        logPrefix,
+        Math.max(guard.absentBelowSeq, logSeqStart),
+      );
+      insertWindow = [...folded, ...probe.entries];
+      // ── Step 3c. Window decision, BEFORE Step 4's additive index
+      // markers, so a loser caught here writes nothing at all.
+      assertInsertTargetAbsent(insertWindow, input);
+      preCommitTail = probe.tail;
+    }
     let seq = preCommitTail;
 
     // All entries share `session` (one session per logical commit) and
@@ -560,12 +652,11 @@ export class Writer {
           throw error;
         }
       }
+      let occupant: LogEntry;
       let decision: ReturnType<typeof tryAdoptOwnSessionLogEntry>;
       try {
-        decision = tryAdoptOwnSessionLogEntry({
-          self: entry,
-          existing: await this.#readLogOccupant(logEntryKey),
-        });
+        occupant = await this.#readLogOccupant(logEntryKey);
+        decision = tryAdoptOwnSessionLogEntry({ self: entry, existing: occupant });
       } catch (error) {
         throw ambiguous(
           new AggregateError(
@@ -592,7 +683,23 @@ export class Writer {
           `${errorPrefix}: log-tail forward-probe exceeded ${LOG_FORWARD_PROBE_CAP} on ${this.#currentJsonKey}`,
         );
       }
-      seq = await findLogTail(this.#storage, logPrefix, seq + 1);
+      if (insertWindow === undefined) {
+        seq = await findLogTail(this.#storage, logPrefix, seq + 1);
+      } else {
+        // Guarded insert: the occupant and every entry the forward probe
+        // passes join the window, and the window decision re-runs before
+        // the next create. A live row here throws `AlreadyExists`, which is
+        // sound because a foreign occupant at `seq` proves this commit's
+        // send did not land there. The Step 4 markers already PUT stay as
+        // orphans: benign false-positive candidates, like a crash before
+        // the create. Deleting them could remove a marker a later writer
+        // re-PUT and de-index a committed row.
+        insertWindow.push(occupant);
+        const probe = await probeTailFrom(this.#storage, logPrefix, seq + 1);
+        insertWindow.push(...probe.entries);
+        assertInsertTargetAbsent(insertWindow, input);
+        seq = probe.tail;
+      }
       entry = mintEntry(seq);
     }
 
@@ -1133,6 +1240,63 @@ export class Writer {
   }
 
   /**
+   * Read `[fromSeq, logSeqStart)` for a guarded insert whose window starts
+   * below the floor of this commit's manifest read: a fold absorbed those
+   * entries after the caller's absence check. Slots below the floor stay
+   * readable until log retirement deletes them, so a missing slot means
+   * this commit can no longer check its window: `WriteConflict`, nothing
+   * committed, and the caller's next read sees the folded state. A window
+   * longer than {@link LOG_FORWARD_PROBE_CAP} is refused the same way
+   * rather than spending an unbounded run of GETs on the write path.
+   *
+   * @throws BaerlyError code="WriteConflict" — a slot is missing, or the
+   *   range exceeds the cap.
+   * @throws BaerlyError code="InvalidResponse" — a slot's body is not JSON.
+   */
+  async #readFoldedInsertWindow(
+    logPrefix: string,
+    fromSeq: number,
+    logSeqStart: number,
+    errorPrefix: string,
+  ): Promise<LogEntry[]> {
+    if (fromSeq >= logSeqStart) {
+      return [];
+    }
+    const refuse = (detail: string): BaerlyError =>
+      new BaerlyError(
+        "WriteConflict",
+        `${errorPrefix}: insert window [${fromSeq}, ${logSeqStart}) on ${this.#currentJsonKey} ${detail}; nothing was committed`,
+      );
+    if (logSeqStart - fromSeq > LOG_FORWARD_PROBE_CAP) {
+      throw refuse(`exceeds ${LOG_FORWARD_PROBE_CAP} folded entries`);
+    }
+    const entries: LogEntry[] = [];
+    for (let chunk = fromSeq; chunk < logSeqStart; chunk += MAX_PARALLEL_LOG_READS) {
+      const end = Math.min(chunk + MAX_PARALLEL_LOG_READS, logSeqStart);
+      const keys = Array.from({ length: end - chunk }, (_, i) =>
+        logObjectKey(logPrefix, chunk + i),
+      );
+      const bodies = await Promise.all(keys.map((key) => this.#storage.get(key)));
+      for (let i = 0; i < bodies.length; i++) {
+        const got = bodies[i];
+        if (got === null || got === undefined) {
+          throw refuse(`was retired at seq ${chunk + i} before it could be checked`);
+        }
+        try {
+          entries.push(decodeJsonBytes<LogEntry>(got.body));
+        } catch (error) {
+          throw new BaerlyError(
+            "InvalidResponse",
+            `${errorPrefix}: malformed log entry at ${keys[i]!}`,
+            error,
+          );
+        }
+      }
+    }
+    return entries;
+  }
+
+  /**
    * Read the occupant of a slot whose committing create was rejected, with
    * one `Storage.get` (the adapter retries it; the Writer does not). A failed
    * read, an empty slot, or an occupant without a writer identity throws:
@@ -1200,6 +1364,56 @@ const isCreateNotApplied = (err: unknown): boolean =>
   err instanceof BaerlyError &&
   err.code === "NetworkError" &&
   ((err as BaerlyError).cause as { notApplied?: boolean } | undefined)?.notApplied === true;
+
+/**
+ * Reject an `insertGuard` on anything but an `I`, or with an
+ * `absentBelowSeq` that is not a log seq. Runs before any I/O.
+ */
+const assertInsertGuardShape = (input: CommitInput): void => {
+  if (input.op !== "I") {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `Writer: insertGuard is valid only with op "I"; got op ${JSON.stringify(input.op)}`,
+    );
+  }
+  const seq = input.insertGuard?.absentBelowSeq;
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `Writer: insertGuard.absentBelowSeq must be a non-negative safe integer; got ${String(seq)}`,
+    );
+  }
+};
+
+/**
+ * Window decision for a guarded insert. `window` holds the log entries
+ * in `[absentBelowSeq, seq)` in seq order, unfiltered. The LAST entry for
+ * this `(collection, doc_id)` decides: an `I` or `U` means a peer's row is
+ * live, so this insert throws `AlreadyExists`; a `D`, or no entry, means
+ * the row is absent and the insert may commit.
+ *
+ * @throws BaerlyError code="AlreadyExists"
+ */
+const assertInsertTargetAbsent = (window: readonly LogEntry[], input: CommitInput): void => {
+  for (let i = window.length - 1; i >= 0; i--) {
+    const e = window[i]!;
+    if (e.collection !== input.collection || e.doc_id !== input.docId) {
+      continue;
+    }
+    if (e.op === "D") {
+      return;
+    }
+    throw new BaerlyError(
+      "AlreadyExists",
+      `insert: _id ${JSON.stringify(input.docId)} already exists in collection ${JSON.stringify(input.collection)}`,
+      undefined,
+      undefined,
+      undefined,
+      CODE_RESOLUTIONS.AlreadyExists,
+      input.docId,
+    );
+  }
+};
 
 /** `true` when a decoded log occupant carries the identity adoption compares. */
 const hasWriterIdentity = (value: unknown): value is LogEntry => {

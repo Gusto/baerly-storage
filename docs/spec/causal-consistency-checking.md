@@ -263,7 +263,8 @@ The contradiction is now explicit. These three clauses cannot all be true:
 
 The `P1`/`P2`/`P3` clauses above check causal ordering of *observed*
 events. A document DB is also judged on three **session guarantees** that
-the randomized cascade now asserts directly. Each names the backend class
+the randomized cascade now asserts directly, plus one write-side
+guarantee for concurrent inserts. Each names the backend class
 it holds on and the assertion in `tests/fixtures/randomized-cascade.ts`
 that witnesses it.
 
@@ -287,6 +288,19 @@ that witnesses it.
   log is append-only and entries are immutable, so the freshest matching
   slot only grows. *Witness:* the per-client last-observed-slot check in
   the poll loop, gated on `strongConsistency`.
+
+- **SG-4 — First insert wins (all backends).** Of concurrent inserts of
+  one `_id`, at most one fulfils, and a fulfilled insert's body is the
+  first `I` of that incarnation in the log; no `I` for the doc follows a
+  live `I` / `U` without a `D` between. Without fault injection exactly one
+  fulfils and every other insert fails with `AlreadyExists`; under it a
+  rejection may also be a retriable code or `AmbiguousCommit`, a
+  definitively rejected body never reaches the log, and an ambiguous one is
+  either the first `I` or absent. *Witness:* `runSameIdInsertRaceCascade`,
+  which races N `Db`s on one `_id` in rounds separated by a `D` and checks
+  the outcomes against the log. The schedules that reach each part of the
+  writer's insert guard are pinned deterministically in
+  `packages/server/src/insert-first-wins.test.ts`.
 
 SG-2 and SG-3 are gated to strongly-consistent backends (memory,
 local-fs, in-process miniflare-R2) and are **not** asserted on the
