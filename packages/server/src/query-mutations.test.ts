@@ -35,10 +35,12 @@ import {
   CODE_RESOLUTIONS,
   type StoragePutOptions,
   type StoragePutResult,
+  uuidv7,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import { seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
+import { runInsert } from "./query.ts";
 
 const APP = "test";
 const TENANT = "t";
@@ -152,6 +154,88 @@ describe("Collection.insert", () => {
     // pre-image fields on any op.
     expect(entry.before).toBeUndefined();
     expect(entry.key_old).toBeUndefined();
+  });
+});
+
+describe("insert: SDK-minted replay (runInsert mintedId)", () => {
+  let storage: MemoryStorage;
+  let db: Db;
+
+  beforeEach(async () => {
+    storage = new MemoryStorage();
+    db = Db.create({ storage, app: APP, tenant: TENANT });
+    await provision(storage);
+  });
+
+  /** Seqs of every log object on the bucket for COLL. */
+  const logSeqs = async (): Promise<number[]> => {
+    const seqs: number[] = [];
+    for await (const item of storage.list(`app/${APP}/tenant/${TENANT}/manifests/${COLL}/log/`)) {
+      seqs.push(Number(/\/(\d+)\.json$/.exec(item.key)![1]));
+    }
+    return seqs.toSorted((a, b) => a - b);
+  };
+
+  test("an identical minted insert returns the original { _id } and commits nothing", async () => {
+    const ctx = db.collectionReadContext(COLL);
+    const id = uuidv7();
+    const doc = { _id: id, title: "t", status: "open" };
+    await expect(runInsert(ctx, doc, { mintedId: id })).resolves.toEqual({ _id: id });
+    await expect(runInsert(ctx, doc, { mintedId: id })).resolves.toEqual({ _id: id });
+    await expect(logSeqs()).resolves.toEqual([0]);
+    await expect(db.collection(COLL).get(id)).resolves.toEqual(doc);
+  });
+
+  test("a minted replay with permuted keys still matches the stored row", async () => {
+    const ctx = db.collectionReadContext(COLL);
+    const id = uuidv7();
+    await runInsert(ctx, { _id: id, title: "t", nested: { a: 1, b: [1, 2] } }, { mintedId: id });
+    await expect(
+      runInsert(ctx, { nested: { b: [1, 2], a: 1 }, title: "t", _id: id }, { mintedId: id }),
+    ).resolves.toEqual({ _id: id });
+    await expect(logSeqs()).resolves.toEqual([0]);
+  });
+
+  test("an identical caller-supplied insert stays AlreadyExists", async () => {
+    const ctx = db.collectionReadContext(COLL);
+    const id = uuidv7();
+    const doc = { _id: id, title: "t" };
+    await runInsert(ctx, doc, { mintedId: id });
+    await expect(runInsert(ctx, doc)).rejects.toMatchObject({ code: "AlreadyExists", _id: id });
+    await expect(db.collection(COLL).insert(doc)).rejects.toMatchObject({
+      code: "AlreadyExists",
+    });
+    await expect(logSeqs()).resolves.toEqual([0]);
+  });
+
+  test("a minted insert with a different body is AlreadyExists", async () => {
+    const ctx = db.collectionReadContext(COLL);
+    const id = uuidv7();
+    await runInsert(ctx, { _id: id, title: "t" }, { mintedId: id });
+    await expect(
+      runInsert(ctx, { _id: id, title: "other" }, { mintedId: id }),
+    ).rejects.toMatchObject({ code: "AlreadyExists", _id: id });
+    await expect(logSeqs()).resolves.toEqual([0]);
+  });
+
+  test("a minted replay after an update to a different body is AlreadyExists", async () => {
+    const ctx = db.collectionReadContext(COLL);
+    const id = uuidv7();
+    const doc = { _id: id, title: "t" };
+    await runInsert(ctx, doc, { mintedId: id });
+    await db.collection(COLL).update(id, { title: "edited" });
+    await expect(runInsert(ctx, doc, { mintedId: id })).rejects.toMatchObject({
+      code: "AlreadyExists",
+    });
+    await expect(logSeqs()).resolves.toEqual([0, 1]);
+  });
+
+  test("a mintedId that is not the doc _id throws InvalidConfig before I/O", async () => {
+    const ctx = db.collectionReadContext(COLL);
+    await expect(
+      runInsert(ctx, { _id: uuidv7(), title: "t" }, { mintedId: uuidv7() }),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+    await expect(logSeqs()).resolves.toEqual([]);
   });
 });
 

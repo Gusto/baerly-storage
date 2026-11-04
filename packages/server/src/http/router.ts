@@ -28,6 +28,7 @@ import {
   type DocumentData,
   type BaerlyErrorCode,
   EMPTY_PREDICATE_WIRE,
+  isUuidV7,
   type OrderSpec,
   type PredicateWire,
   validateWire,
@@ -45,7 +46,7 @@ import {
 } from "../contract.ts";
 import { serializeError } from "../observability/canonical.ts";
 import { CATEGORY, getCurrentContext, getLogger } from "../observability/index.ts";
-import { runAllWithMeta, runByIdWithMeta } from "../query.ts";
+import { runAllWithMeta, runByIdWithMeta, runInsert } from "../query.ts";
 import { longPollSince } from "./since.ts";
 
 /**
@@ -73,7 +74,7 @@ export interface CreateRouterOptions {
  *  - `GET    /v1/c/:collection/:id` → read one document.
  *  - `GET    /v1/c/:collection?where=<json>&order=<json>&limit=<n>` → list rows
  *    matching a predicate, optionally ordered and capped.
- *  - `POST   /v1/c/:collection` → insert. Body: `{ doc }`. → `201 { _id }`.
+ *  - `POST   /v1/c/:collection` → insert. Body: `{ doc, mintedId? }`. → `201 { _id }`.
  *  - `PATCH  /v1/c/:collection/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
  *  - `PUT    /v1/c/:collection/:id` → whole-doc replace. Body: `{ doc }`. → `200 { modified }`.
  *  - `DELETE /v1/c/:collection/:id` → delete row by id. → `204`.
@@ -148,14 +149,20 @@ export function createRouter(options: CreateRouterOptions): Hono {
     );
   });
 
-  // Insert — POST /v1/c/:collection  Body: { doc }  → 201 { _id }
+  // Insert — POST /v1/c/:collection  Body: { doc, mintedId? }  → 201 { _id }
+  // Drives `runInsert` directly (as the reads drive their runners) so the
+  // internal `mintedId` replay flag can reach it; `Collection.insert`
+  // carries no such option.
   app.post("/v1/c/:collection", async (c) => {
     const { collection } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
-    const { _id } = await db
-      .collection(collection)
-      .insert(doc as Partial<DocumentData> & DocumentData);
+    const mintedId = readMintedId(body, doc);
+    const { _id } = await runInsert(
+      db.collectionReadContext(collection),
+      doc as Partial<DocumentData> & DocumentData,
+      mintedId === undefined ? undefined : { mintedId },
+    );
     return c.json({ _id }, 201);
   });
 
@@ -315,6 +322,43 @@ const assertJsonBodyField = (body: unknown, field: string): Record<string, unkno
     );
   }
   return value as Record<string, unknown>;
+};
+
+/**
+ * Read the optional `mintedId` of a `POST /v1/c/:collection` body. An SDK
+ * that minted the doc's `_id` itself sends it in both `doc._id` and
+ * `mintedId`; the flag lets a resend of the same insert replay as the
+ * original `201 { _id }` (see `runInsert`). A server that predates the
+ * field reads only `doc`, so it treats the id as caller-supplied and a
+ * resend gets strict `409 AlreadyExists`, never a duplicate row.
+ *
+ * Validated before any I/O: `mintedId` must be a string with the
+ * canonical UUIDv7 shape (`isUuidV7`, which also satisfies the `_id`
+ * key-segment rule `assertDocId` applies) and must equal `doc._id`. The
+ * UUIDv7 rule keeps a human-chosen id such as `"migration-x"` from
+ * opting into replay. Absent → `undefined`.
+ *
+ * @throws BaerlyError code="SchemaError" — `mintedId` is present and
+ *   fails any of those checks.
+ *
+ * @internal
+ */
+const readMintedId = (body: unknown, doc: Record<string, unknown>): string | undefined => {
+  const raw = (body as Record<string, unknown>)["mintedId"];
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw !== "string" || !isUuidV7(raw) || doc["_id"] !== raw) {
+    throw new BaerlyError(
+      "SchemaError",
+      "Request body mintedId must be a UUIDv7 string equal to doc._id",
+      undefined,
+      undefined,
+      undefined,
+      WRITE_BODY_SHAPE_RESOLUTION,
+    );
+  }
+  return raw;
 };
 
 /**

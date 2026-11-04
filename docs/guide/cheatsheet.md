@@ -109,6 +109,10 @@ boundaries), never `instanceof` chains.
 | `GET    /v1/since?collection=<name>&cursor=<opaque>` | —               | `{ events, next_cursor }`               |
 | `GET    /v1/healthz`                                 | —               | `200 {"ok":true}` (anonymous, pre-auth) |
 
+`POST` also takes an optional `"mintedId"`: an SDK that minted `doc._id` (a
+UUIDv7) sends it there too, and an identical resend replays as `201 {_id}`
+instead of `409`.
+
 Read modifiers are JSON-encoded query params on `GET /v1/c/:collection`,
 all optional and composable — always
 `encodeURIComponent(JSON.stringify(spec))`:

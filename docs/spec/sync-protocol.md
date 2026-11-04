@@ -320,6 +320,17 @@ not see:
    drop (invariant 7); the writer never deletes them, since a DELETE could
    remove a marker a later writer re-PUT and de-index a committed row.
 
+**SDK-minted replay.** An HTTP insert whose body carries `mintedId` (a
+canonical UUIDv7 equal to `doc._id`) is a client resending an insert of an
+`_id` it minted. At step 1 and at every step-3 decision, a live last entry
+whose `after` equals the insert's post-image after a JSON round-trip (key
+order ignored) is that insert's own earlier success: the insert returns
+`{ _id }` and writes nothing further, with no create, no stale-marker
+cleanup and no maintenance tick (markers already PUT at step 4 stay as
+the same benign orphans). Any other live row still fails with
+`AlreadyExists`, and an insert without `mintedId` never replays, so a
+caller-chosen `_id` keeps exactly one winner.
+
 Own-entry adoption, `AmbiguousCommit` precedence (an unresolved create fate
 is reported as `AmbiguousCommit`, never as `AlreadyExists`), and reads are
 unchanged. The guard is part of the writer, so the rule holds once every

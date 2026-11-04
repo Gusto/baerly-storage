@@ -640,6 +640,8 @@ Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
 (no `doc` wrapper) returns
 `400 SchemaError "Request body must be { doc: object }"` — wording is
 locked by `assertJsonBodyField` in the kernel.
+`POST` also takes an optional `"mintedId"` (SDK-minted UUIDv7 `_id`, equal
+to `doc._id`): an identical resend replays as `201` (see RECIPES.md).
 
 ### Liveness probe (`GET /v1/healthz`)
 

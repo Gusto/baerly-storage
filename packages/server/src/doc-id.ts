@@ -1,4 +1,4 @@
-import { BaerlyError, CODE_RESOLUTIONS } from "@baerly/protocol";
+import { BaerlyError, CODE_RESOLUTIONS, type DocumentData, jsonValueEqual } from "@baerly/protocol";
 import { assertPathSegment } from "./path-segment.ts";
 
 /**
@@ -29,3 +29,17 @@ export const insertAlreadyExists = (collection: string, docId: string): BaerlyEr
     CODE_RESOLUTIONS.AlreadyExists,
     docId,
   );
+
+/**
+ * `true` when the stored live row `stored` is the row an insert of `body`
+ * would have written: structurally equal after the JSON round-trip the
+ * write path's encoder applies (key order ignored, `undefined` properties
+ * dropped). `body` is the insert's post-image `{ ...doc, _id }`; the
+ * stored row carries no other server-stamped field (log metadata lives on
+ * the `LogEntry`, not in `after`).
+ *
+ * Shared by `runInsert`'s check read and the writer's insert guard, so an
+ * SDK-minted insert replays on the same rule whichever side found the row.
+ */
+export const insertReplaysRow = (body: DocumentData, stored: DocumentData | undefined): boolean =>
+  stored !== undefined && jsonValueEqual(JSON.parse(JSON.stringify(body)), stored);

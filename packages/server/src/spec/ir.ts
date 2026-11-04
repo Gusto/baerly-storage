@@ -198,7 +198,12 @@ const HTTP_ROUTES: SpecIR["httpRoutes"] = [
     auth: "verified",
     summary: "Read one document by id (404 when absent).",
   },
-  { method: "POST", path: "/v1/c/:collection", auth: "verified", summary: "Insert a document." },
+  {
+    method: "POST",
+    path: "/v1/c/:collection",
+    auth: "verified",
+    summary: "Insert a document (body { doc, mintedId? }).",
+  },
   {
     method: "PATCH",
     path: "/v1/c/:collection/:id",
