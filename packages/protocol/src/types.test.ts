@@ -219,6 +219,7 @@ describe("isUuidV7()", () => {
     ["uppercase v7", "01956CAD-4CC8-7ABC-9DEF-0123456789AB"],
     ["wrong variant nibble", "01956cad-4cc8-7abc-cdef-0123456789ab"],
     ["no hyphens", "01956cad4cc87abc9def0123456789ab"],
+    ["leading junk", "x01956cad-4cc8-7abc-9def-0123456789ab"],
     ["trailing junk", "01956cad-4cc8-7abc-9def-0123456789ab "],
   ])("rejects %s", (_id, s) => {
     expect(isUuidV7(s)).toBe(false);

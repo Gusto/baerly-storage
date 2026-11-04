@@ -315,7 +315,7 @@ describe("jsonValueEqual", () => {
     ["null vs []", null, []],
     ["string vs number", "1", 1],
     ["nested value differs", { a: { b: 1 } }, { a: { b: 2 } }],
-    ["null-valued key vs absent key", { a: null }, { b: null }],
+    ["own __proto__ key vs other key", JSON.parse('{"__proto__":{}}') as JSONValue, { x: 1 }],
   ];
   for (const [id, a, b] of ne) {
     test(`unequal: ${id}`, () => {
@@ -323,4 +323,45 @@ describe("jsonValueEqual", () => {
       expect(jsonValueEqual(b, a)).toBe(false);
     });
   }
+});
+
+describe("jsonValueEqual — properties", () => {
+  // JSON round-trip normalizes -0 to 0 and drops undefined.
+  const jsonArb = fc.jsonValue().map((v) => JSON.parse(JSON.stringify(v)) as JSONValue);
+
+  const shuffleKeys = (v: JSONValue): JSONValue => {
+    if (Array.isArray(v)) {
+      return v.map(shuffleKeys);
+    }
+    if (v !== null && typeof v === "object") {
+      // fromEntries defines own properties, so an own `__proto__` key survives.
+      return Object.fromEntries(
+        Object.entries(v)
+          .toReversed()
+          .map(([k, x]) => [k, shuffleKeys(x)]),
+      );
+    }
+    return v;
+  };
+
+  const canonicalStringify = (v: JSONValue): string => {
+    if (Array.isArray(v)) {
+      return `[${v.map(canonicalStringify).join(",")}]`;
+    }
+    if (v !== null && typeof v === "object") {
+      const body = Object.keys(v)
+        .toSorted()
+        .map((k) => `${JSON.stringify(k)}:${canonicalStringify(v[k]!)}`);
+      return `{${body.join(",")}}`;
+    }
+    return JSON.stringify(v);
+  };
+
+  fcTest.prop([jsonArb])("equals a key-shuffled structural clone", (x) => {
+    expect(jsonValueEqual(x, shuffleKeys(structuredClone(x)))).toBe(true);
+  });
+
+  fcTest.prop([jsonArb, jsonArb])("agrees with canonical stringification", (x, y) => {
+    expect(jsonValueEqual(x, y)).toBe(canonicalStringify(x) === canonicalStringify(y));
+  });
 });
