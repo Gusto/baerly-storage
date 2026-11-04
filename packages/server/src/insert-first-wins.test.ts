@@ -39,7 +39,7 @@ const ID = "contested";
 /** Write-tick maintenance off: the tests fold and retire explicitly. */
 const MAINTENANCE_OFF = createObservabilityContext({ maintenance: { disabled: true } });
 
-type Match = (op: "get" | "put", key: string, opts?: StoragePutOptions) => boolean;
+type Match = (op: "get" | "put" | "delete", key: string, opts?: StoragePutOptions) => boolean;
 
 interface Hold {
   /** Resolves when the matched call arrives (and is parked). */
@@ -54,7 +54,11 @@ interface Hold {
  */
 const gatedStorage = (inner: Storage): { storage: Storage; hold: (match: Match) => Hold } => {
   const holds: Array<{ match: Match; arrive: () => void; released: Promise<void> }> = [];
-  const pass = async (op: "get" | "put", key: string, opts?: StoragePutOptions): Promise<void> => {
+  const pass = async (
+    op: "get" | "put" | "delete",
+    key: string,
+    opts?: StoragePutOptions,
+  ): Promise<void> => {
     const i = holds.findIndex((h) => h.match(op, key, opts));
     if (i < 0) {
       return;
@@ -72,7 +76,10 @@ const gatedStorage = (inner: Storage): { storage: Storage; hold: (match: Match) 
       await pass("put", key, opts);
       return inner.put(key, body, opts);
     },
-    delete: (key, opts) => inner.delete(key, opts),
+    async delete(key, opts) {
+      await pass("delete", key);
+      return inner.delete(key, opts);
+    },
     list: (prefix, opts) => inner.list(prefix, opts),
   };
   const hold = (match: Match): Hold => {
@@ -264,6 +271,40 @@ describe("insert: the first I for an _id wins", () => {
     await expect(pending).rejects.toMatchObject({ code: "AlreadyExists", _id: ID });
     await expect(rowOf(inner)).resolves.toEqual({ _id: ID, by: "B" });
     await expect(opsFor(inner)).resolves.toEqual(["I"]);
+  });
+
+  test("a live row whose _id marker a raced stale-marker DELETE removed still blocks an insert", async () => {
+    // Index completeness is not guaranteed: A's delete of the row DELETEs
+    // its `by_id` marker after committing, and that DELETE lands after B's
+    // re-insert re-PUT the same marker (swallowed as a 412, the marker
+    // still existed). The re-inserted row is live with no marker, so an
+    // index-routed check read would miss it and a third insert would
+    // commit a second live `I`. The check folds the log instead.
+    const inner = new MemoryStorage();
+    const config = { collections: { [COLL]: { indexes: [{ name: "by_id", on: "_id" }] } } };
+    const aGate = gatedStorage(inner);
+    const a = Db.create({ storage: aGate.storage, app: APP, tenant: TENANT, config });
+    const b = Db.create({ storage: inner, app: APP, tenant: TENANT, config });
+    await insert(b, { _id: ID, by: "B1" });
+    const held = aGate.hold((op, key) => op === "delete" && key.includes("/index/by_id/"));
+
+    const deleting = runWithContext(MAINTENANCE_OFF, () => a.collection(COLL).delete(ID));
+    await held.reached;
+    await insert(b, { _id: ID, by: "B2" });
+    held.release();
+    await deleting;
+    const markers: string[] = [];
+    for await (const item of inner.list(`${PREFIX}/index/by_id/`)) {
+      markers.push(item.key);
+    }
+    expect(markers).toEqual([]);
+    await expect(opsFor(inner)).resolves.toEqual(["I", "D", "I"]);
+
+    await expect(insert(b, { _id: ID, by: "B3" })).rejects.toMatchObject({
+      code: "AlreadyExists",
+      _id: ID,
+    });
+    await expect(opsFor(inner)).resolves.toEqual(["I", "D", "I"]);
   });
 
   test("an insert after a delete of the _id lands", async () => {
