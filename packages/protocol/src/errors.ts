@@ -45,10 +45,10 @@ export type BaerlyErrorCode =
   | "WriteConflict"
   /**
    * The thing being created already exists, so the same request can never
-   * succeed; `retriable` is `false`. `Collection.insert` raises it for a
-   * caller-supplied `_id` that an already-committed row holds (the check
-   * sees committed rows only, so two concurrent inserts of one `_id` can
-   * both succeed). Insert under a different `_id`, omit `_id` to mint one,
+   * succeed; `retriable` is `false`. `Collection.insert` raises it when a
+   * live row already holds the `_id`, including one a concurrent insert
+   * committed first: of concurrent inserts of one `_id`, exactly one
+   * commits and the others raise this. Insert under a different `_id`, omit `_id` to mint one,
    * or change the stored row with `update` / `replace` — unless this follows
    * a same-`_id` retry after `AmbiguousCommit`, where the stored row may be
    * the first attempt: re-read it instead of inserting under a new `_id`.
@@ -71,7 +71,7 @@ export type BaerlyErrorCode =
    * effect may have been superseded. Retrying is an explicit at-least-once
    * choice and may repeat logical work. Retry an insert with the same `_id`:
    * a second create then targets the same row instead of minting a second
-   * document, though it can still overwrite a concurrent change. An
+   * document, and commits only if no live row holds that `_id`. An
    * `AlreadyExists` on that retry means a row with that `_id` is committed:
    * re-read it and compare with the intended state rather than inserting
    * under a new `_id`. `retriable` is `false` so generic retry wrappers do

@@ -36,10 +36,11 @@ its own bounded backoff.
 
 ### `BaerlyError code="AlreadyExists"` (HTTP 409)
 
-**Cause:** a caller-supplied `_id` on `insert` matches an already-committed
-row (or `baerly admin restore` targeted an existing collection without
-`--force`). The check sees committed rows only, so two concurrent inserts of
-one `_id` can both succeed. `retriable` is `false`: never retry.
+**Cause:** a caller-supplied `_id` on `insert` is held by a live row (or
+`baerly admin restore` targeted an existing collection without `--force`).
+The first insert of an `_id` wins: of concurrent inserts of one `_id`,
+exactly one commits and the others throw `AlreadyExists`, committing nothing.
+`retriable` is `false`: never retry.
 **Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
 or change the stored row with `update` / `replace`. After a same-`_id` retry
 following `AmbiguousCommit`, the stored row may be your first attempt: re-read
@@ -76,8 +77,9 @@ try {
 ```
 
 Retrying is an explicit at-least-once choice and may repeat logical work: a
-same-`_id` retry targets one row, but it can still overwrite a concurrent
-change to it. For bulk mutations, rows before the ambiguous row are already
+same-`_id` insert retry targets one row and commits only while no live row
+holds that `_id`, but a retried `update` or `replace` can still overwrite a
+concurrent change to it. For bulk mutations, rows before the ambiguous row are already
 applied and `err._id` names the ambiguous one, but no partial-progress count is
 returned; inspect the affected rows before deciding whether to resume.
 

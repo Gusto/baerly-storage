@@ -1015,3 +1015,145 @@ export const runRangeWalkParityCascade = async (opts: {
     ).toEqual(expected.map((d) => d._id).toSorted());
   }
 };
+
+/**
+ * Rejection codes a same-`_id` insert may surface when the backend injects
+ * faults: the loser's `AlreadyExists`, a retriable failure that committed
+ * nothing, or `AmbiguousCommit` (the create's fate is unknown).
+ */
+const FAULT_INSERT_CODES: ReadonlySet<string> = new Set([
+  "AlreadyExists",
+  "NetworkError",
+  "WriteConflict",
+  "AmbiguousCommit",
+]);
+
+/**
+ * Concurrent same-`_id` inserts, oracled against the log: the first `I`
+ * for an `_id` wins.
+ *
+ * Every round, all N `Db`s insert one `_id` at once with distinct bodies
+ * (`{ round, writer }`), then the row is deleted so the next round starts
+ * a new incarnation. After all rounds the doc's committed log entries are
+ * read back (log objects outlive folds; nothing here retires them) and
+ * checked:
+ *
+ * - no `I` follows a live `I` / `U` without a `D` between;
+ * - per round, at most one insert fulfils, and a fulfilled insert's body is
+ *   that incarnation's first `I` `after`;
+ * - every rejection is `AlreadyExists`, or under `faultInjection` a
+ *   retriable code or `AmbiguousCommit`; a definitively rejected body never
+ *   reaches the log, and an ambiguous one is either the first `I` or absent;
+ * - without `faultInjection`, exactly one insert fulfils per round.
+ */
+export const runSameIdInsertRaceCascade = async (opts: {
+  storages: Storage[];
+  faultInjection: boolean;
+  rounds?: number;
+}): Promise<void> => {
+  const rounds = opts.rounds ?? 6;
+  const tenant = `insrace-${uuid().slice(0, 8)}`;
+  const collection = "ins";
+  const id = "contested";
+  const logPrefix = `app/${APP}/tenant/${tenant}/manifests/${collection}`;
+  const dbs = opts.storages.map((storage) => Db.create({ storage, app: APP, tenant }));
+  const reader = dbs[0]!.collection(collection);
+
+  type Outcome =
+    | { readonly writer: number; readonly ok: true }
+    | { readonly writer: number; readonly ok: false; readonly code: string };
+  const outcomes: Outcome[][] = [];
+
+  for (let round = 0; round < rounds; round++) {
+    const settled = await Promise.allSettled(
+      dbs.map((db, writer) => db.collection(collection).insert({ _id: id, round, writer })),
+    );
+    outcomes.push(
+      settled.map((r, writer): Outcome => {
+        if (r.status === "fulfilled") {
+          return { writer, ok: true };
+        }
+        const reason: unknown = r.reason;
+        if (!(reason instanceof BaerlyError)) {
+          throw reason;
+        }
+        return { writer, ok: false, code: reason.code };
+      }),
+    );
+    // End the incarnation. A delete may itself fail or be ambiguous under
+    // faults, so re-read until the row is gone.
+    for (let attempt = 0; ; attempt++) {
+      const row = await withNetworkRetry(() => reader.get(id));
+      if (row === undefined) {
+        break;
+      }
+      expect(attempt, `round ${round}: could not delete the row`).toBeLessThan(20);
+      await reader.delete(id).catch((error: unknown) => {
+        if (!(error instanceof BaerlyError)) {
+          throw error;
+        }
+      });
+    }
+  }
+
+  const entries = await withNetworkRetry(async () => {
+    const out: LogEntry[] = [];
+    for await (const listed of opts.storages[0]!.list(`${logPrefix}/log/`)) {
+      const got = await opts.storages[0]!.get(listed.key);
+      if (got === null) {
+        continue;
+      }
+      const entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+      if (entry.doc_id === id) {
+        out.push(entry);
+      }
+    }
+    return out.toSorted((x, y) => x.seq - y.seq);
+  });
+
+  let live = false;
+  for (const entry of entries) {
+    if (entry.op === "I") {
+      expect(live, `seq ${entry.seq}: an I follows a live row with no D between`).toBe(false);
+    }
+    live = entry.op !== "D";
+  }
+
+  const bodyKey = (round: number, writer: number): string => `${round}/${writer}`;
+  const inserted = entries
+    .filter((e) => e.op === "I")
+    .map((e) => bodyKey(Number(e.after?.["round"]), Number(e.after?.["writer"])));
+  for (let round = 0; round < rounds; round++) {
+    const results = outcomes[round]!;
+    const firstI = inserted.find((k) => k.startsWith(`${round}/`));
+    const winners = results.filter((o) => o.ok);
+    expect(winners.length, `round ${round}: more than one insert fulfilled`).toBeLessThanOrEqual(1);
+    if (!opts.faultInjection) {
+      expect(winners.length, `round ${round}: no insert fulfilled`).toBe(1);
+    }
+    for (const w of winners) {
+      expect(firstI, `round ${round}: the fulfilled insert is not the first I`).toBe(
+        bodyKey(round, w.writer),
+      );
+    }
+    for (const o of results) {
+      if (o.ok) {
+        continue;
+      }
+      const key = bodyKey(round, o.writer);
+      if (opts.faultInjection) {
+        expect(FAULT_INSERT_CODES.has(o.code), `round ${round}: unexpected ${o.code}`).toBe(true);
+      } else {
+        expect(o.code, `round ${round}: writer ${o.writer}`).toBe("AlreadyExists");
+      }
+      if (o.code === "AmbiguousCommit") {
+        expect(
+          !inserted.includes(key) || firstI === key,
+          `round ${round}: an ambiguous insert landed behind the first I`,
+        ).toBe(true);
+      } else {
+        expect(inserted, `round ${round}: a rejected insert reached the log`).not.toContain(key);
+      }
+    }
+  }
+};

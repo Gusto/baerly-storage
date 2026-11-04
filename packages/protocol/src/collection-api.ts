@@ -105,9 +105,11 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * supply `_id` and the server honours it. Returns the new id.
    *
    * @throws BaerlyError{code: "AlreadyExists"} — caller-supplied `_id`
-   *         matches an already-committed row (concurrent uncommitted
-   *         inserts are not detected). Not retriable: insert under
-   *         another `_id`, omit `_id`, or use `update` / `replace`.
+   *         is held by a live row, including one a concurrent insert
+   *         committed first: of concurrent inserts of one `_id`, exactly
+   *         one commits and the others throw this, committing nothing.
+   *         Not retriable: insert under another `_id`, omit `_id`, or use
+   *         `update` / `replace`.
    * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
    *         the CAS race and this commit did not land. Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing

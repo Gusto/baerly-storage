@@ -24,6 +24,7 @@ import { uuid, type Storage } from "@baerly/protocol";
 import {
   runCausalConsistencyCascade,
   runRangeWalkParityCascade,
+  runSameIdInsertRaceCascade,
 } from "../../../tests/fixtures/randomized-cascade.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 
@@ -62,6 +63,16 @@ describe("randomized (Db + Writer)", () => {
           // the cascade.
           injectFilteredIndex: true,
         });
+      },
+    );
+
+    test(
+      "concurrent same-_id inserts: the first I wins each incarnation (multi-instance)",
+      { timeout: 60 * 1000 },
+      async () => {
+        const binding = getBinding();
+        const storages: Storage[] = Array.from({ length: 3 }, () => r2BindingStorage(binding));
+        await runSameIdInsertRaceCascade({ storages, faultInjection: false });
       },
     );
 

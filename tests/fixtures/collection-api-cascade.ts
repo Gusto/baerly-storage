@@ -505,6 +505,45 @@ const runConcurrentWriteConflict = async (
 };
 
 /**
+ * Concurrent inserts of one caller-supplied `_id` with different bodies,
+ * from two `Db`s: the first `I` wins. Exactly one insert fulfils, the other
+ * throws `BaerlyError{code:"AlreadyExists"}`, and the stored row is the
+ * winner's body. Holds whether the backend interleaves the two commits or
+ * serialises them — the loser is caught either by its pre-commit check
+ * read or by the writer's insert guard over the log window that read
+ * could not see.
+ */
+const runConcurrentSameIdInsert = async (
+  db: Db,
+  rival: Db,
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("insert-race");
+  await provision(storage, app, tenant, t);
+  const bodies = [
+    { _id: "race", by: "A" },
+    { _id: "race", by: "B" },
+  ] as const;
+
+  const results = await Promise.allSettled([
+    db.collection(t).insert({ ...bodies[0] }),
+    rival.collection(t).insert({ ...bodies[1] }),
+  ]);
+  const winners = results.flatMap((r, i) => (r.status === "fulfilled" ? [bodies[i]!] : []));
+  expect(winners, "exactly one concurrent insert of an _id commits").toHaveLength(1);
+  for (const r of results) {
+    if (r.status === "rejected") {
+      const err = r.reason as BaerlyError;
+      expect(err).toBeInstanceOf(BaerlyError);
+      expect(err.code).toBe("AlreadyExists");
+    }
+  }
+  await expect(db.collection(t).get("race")).resolves.toEqual(winners[0]);
+};
+
+/**
  * [compaction] Find results unchanged across a compaction run. The
  * compactor (`@baerly/server`'s {@link compact}) folds the live log
  * prefix into a hashed snapshot and CAS-advances `current.json`. The
@@ -1068,6 +1107,8 @@ export const runCollectionApiCascade = async (opts: {
   if (opts.rivalStorage !== undefined) {
     const rival = Db.create({ storage: opts.rivalStorage, app: APP, tenant });
     await runConcurrentWriteConflict(db, rival, opts.storage, APP, tenant);
+    // 4b. Concurrent same-`_id` inserts: the first `I` wins.
+    await runConcurrentSameIdInsert(db, rival, opts.storage, APP, tenant);
   }
 
   // 5. Compaction — fold the log prefix into a snapshot and read

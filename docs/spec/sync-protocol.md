@@ -225,7 +225,10 @@ For a single-document mutation:
    becomes `seq`. The search is Class B (GET/read-class) only; the
    `If-None-Match: "*"` create happens later, at the discovered
    first-empty slot. The walk is capped by `LOG_FORWARD_PROBE_CAP`; cap
-   exhaustion is an `Internal` runaway alarm, not normal contention.
+   exhaustion is an `Internal` runaway alarm, not normal contention. An
+   insert instead probes linearly from its check read's tail and validates
+   the entries it passes; see
+   [Insert: the first `I` wins](#insert-the-first-i-wins).
 3. **Serialize `LogEntry.after` and PUT additive (new) index keys —
    before the commit.** `I` / `U` post-images are serialized into the
    `LogEntry.after` field; current writers do not create a content side
@@ -284,6 +287,45 @@ path. A failed committing-create call gets one readback because a
 storage adapter may report failure after an internal attempt became durable,
 unless the call was provably not applied.
 The `AmbiguousCommit` contract below applies when readback cannot resolve it.
+
+### Insert: the first `I` wins
+
+Of concurrent inserts of one `doc_id`, exactly one commits; the others fail
+with `BaerlyError{code:"AlreadyExists"}` and commit nothing. A row is live
+when the last entry for its `(collection, doc_id)` is an `I` or `U`, and an
+insert may commit only while the row is absent. The rule is enforced by
+backward validation over the slice of the log the insert's own check could
+not see:
+
+1. **Check read.** `Collection.insert` folds the collection through the
+   tail `T0` its forward-probe found, on the full-scan path. A live row
+   there fails the insert before the writer runs. Otherwise the doc is
+   absent at `T0`, and the insert commits with `T0` as its guard.
+2. **Window read, before any write.** After reading `current.json`, the
+   writer reads every entry in `[T0, seq)`, where `seq` is the slot it will
+   create. Slots in `[T0, log_seq_start)` that a fold moved below the floor
+   are read with point GETs. A missing one (retired by log retention) fails
+   the insert with retriable `WriteConflict`, because the window can no
+   longer be checked. The rest of the window is the tail probe itself,
+   started at `max(T0, log_seq_start)` and collecting every entry it passes;
+   uncontended, `T0` is the tail and the probe is one `404` GET.
+3. **Window decision.** If the last entry for this doc in the window is an
+   `I` or `U`, a peer's insert won: the insert fails with `AlreadyExists`
+   before it writes any index marker. A `D`, or no entry, lets it proceed.
+4. **Lost create race.** A foreign occupant at `seq`, and every entry the
+   forward probe from `seq + 1` passes, join the window, and step 3 runs
+   again before the next create. A live row there fails the insert with
+   `AlreadyExists`: the occupant proves this commit's send did not land at
+   `seq`. The index markers already written stay as orphans, which reads
+   drop (invariant 7); the writer never deletes them, since a DELETE could
+   remove a marker a later writer re-PUT and de-index a committed row.
+
+Own-entry adoption, `AmbiguousCommit` precedence (an unresolved create fate
+is reported as `AmbiguousCommit`, never as `AlreadyExists`), and reads are
+unchanged. The guard is part of the writer, so the rule holds once every
+writer on a collection runs a kernel that applies it; a writer on an older
+kernel does not read the window, and its insert can still land a second `I`
+over a concurrent one.
 
 ### Unresolved create fate
 

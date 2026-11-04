@@ -316,15 +316,23 @@ a committed log entry is replayed; index objects alone are ignored as
 rows. Index markers are zero-byte objects used to find candidate doc
 ids.
 
-1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`):
-   normalises the document, generates a UUIDv7 `_id` if absent,
-   constructs a `CommitInput{ op: "I", collection, docId, body }`,
-   and calls `Writer.commit(...)`.
+1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`,
+   `runInsert` in `packages/server/src/query.ts`): normalises the
+   document, generates a UUIDv7 `_id` if absent, and folds the collection
+   through the tail `T0` its read probe found. A live row with that `_id`
+   throws `AlreadyExists` here. Otherwise it constructs a
+   `CommitInput{ op: "I", collection, docId, body, insertGuard:
+   { absentBelowSeq: T0 } }` and calls `Writer.commit(...)`.
 
 2. **`Writer.commit(req)`** (`packages/server/src/writer.ts`):
    - reads `current.json` fresh for its snapshot pointer and `tail_hint`;
    - forward-probes from `max(log_seq_start, tail_hint)` to find the
-     first empty log slot and mint `seq`;
+     first empty log slot and mint `seq`. A guarded insert probes from
+     `max(T0, log_seq_start)` instead, first GETting any window slots in
+     `[T0, log_seq_start)` a fold moved below the floor, and throws
+     `AlreadyExists` if the last entry for its doc in `[T0, seq)` is a live
+     `I` / `U` — the first `I` for a `doc_id` wins
+     ([Insert: the first `I` wins](spec/sync-protocol.md#insert-the-first-i-wins));
    - serializes the `I` / `U` post-image into `LogEntry.after`, then
      PUTs additive (new) index artifacts under
      `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`
@@ -340,7 +348,8 @@ ids.
    `session`, same `seq`, and full-entry equality with the attempted
    entry. Any failed adoption check treats the occupant as a conflicting
    committed entry, so the writer re-probes until it finds the next empty
-   slot. A malformed log entry surfaces as corrupt storage state, not as
+   slot; a guarded insert re-runs its window check over the occupant and
+   the re-probed entries first. A malformed log entry surfaces as corrupt storage state, not as
    an ordinary conflict. That re-probe is bounded by
    `LOG_FORWARD_PROBE_CAP`; exhausting it surfaces
    `BaerlyError{code:"Internal"}`. There is no post-commit fence verify;

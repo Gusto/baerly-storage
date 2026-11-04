@@ -59,6 +59,7 @@ import {
   runCausalConsistencyCascade,
   runMultiDocCascade,
   runRangeWalkParityCascade,
+  runSameIdInsertRaceCascade,
 } from "../fixtures/randomized-cascade.ts";
 import {
   MINIO_ACCESS_KEY,
@@ -608,6 +609,20 @@ describe("randomized (Db + Writer)", () => {
             totalObserved,
             `Σ observed per-doc values (${totalObserved}) != committed slot count (${seqs.length})`,
           ).toBe(seqs.length);
+        },
+      );
+
+      test(
+        "concurrent same-_id inserts: the first I wins each incarnation (multi-instance)",
+        { timeout: 60 * 1000 },
+        async () => {
+          const bucket = `ins-${variant.label}-${uuid().slice(0, 8)}`;
+          const storages = await variant.makeStorages(bucket, 3);
+          await runSameIdInsertRaceCascade({
+            storages,
+            // Only Minio runs behind the Toxiproxy fault twiddler.
+            faultInjection: variant.label === "node-minio",
+          });
         },
       );
 
