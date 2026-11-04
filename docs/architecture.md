@@ -320,7 +320,9 @@ ids.
    `runInsert` in `packages/server/src/query.ts`): normalises the
    document, generates a UUIDv7 `_id` if absent, and folds the collection
    through the tail `T0` its read probe found. A live row with that `_id`
-   throws `AlreadyExists` here. Otherwise it constructs a
+   throws `AlreadyExists` here (an HTTP insert carrying `mintedId` whose
+   body equals the row returns `{ _id }` instead, committing nothing).
+   Otherwise it constructs a
    `CommitInput{ op: "I", collection, docId, body, insertGuard:
    { absentBelowSeq: T0 } }` and calls `Writer.commit(...)`.
 
@@ -332,7 +334,9 @@ ids.
      `[T0, log_seq_start)` a fold moved below the floor, and throws
      `AlreadyExists` if the last entry for its doc in `[T0, seq)` is a live
      `I` / `U` — the first `I` for a `doc_id` wins
-     ([Insert: the first `I` wins](spec/sync-protocol.md#insert-the-first-i-wins));
+     ([Insert: the first `I` wins](spec/sync-protocol.md#insert-the-first-i-wins)),
+     or, with `replayIdentical` and an equal `after`, returns that entry
+     without writing;
    - serializes the `I` / `U` post-image into `LogEntry.after`, then
      PUTs additive (new) index artifacts under
      `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`

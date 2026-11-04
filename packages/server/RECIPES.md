@@ -39,7 +39,8 @@ its own bounded backoff.
 **Cause:** a caller-supplied `_id` on `insert` is held by a live row (or
 `baerly admin restore` targeted an existing collection without `--force`).
 The first insert of an `_id` wins: of concurrent inserts of one `_id`,
-exactly one commits and the others throw `AlreadyExists`, committing nothing.
+exactly one commits and the others throw `AlreadyExists`, committing nothing
+(an identical `mintedId` resend replays instead; see the next section).
 `retriable` is `false`: never retry.
 **Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
 or change the stored row with `update` / `replace`. After a same-`_id` retry
@@ -62,7 +63,9 @@ strict `AlreadyExists` on any live row, even an identical one, which is what
 makes `insert({ _id: "migration-x", done: true })` a run-once guard with a
 single winner. A server that predates the field reads only `doc` and answers
 the resend `409`, never with a second row. In-process `Collection.insert` takes
-no such flag.
+no such flag. A minted replay is an equality oracle: anyone who can insert into
+the collection learns whether the row stored under an `_id` equals the body
+they sent (`201`) or not (`409`).
 
 ### AmbiguousCommit recovery
 

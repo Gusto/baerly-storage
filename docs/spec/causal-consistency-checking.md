@@ -290,10 +290,12 @@ that witnesses it.
   the poll loop, gated on `strongConsistency`.
 
 - **SG-4 — First insert wins (all backends).** Of concurrent inserts of
-  one `_id`, at most one fulfils, and a fulfilled insert's body is the
-  first `I` of that incarnation in the log; no `I` for the doc follows a
-  live `I` / `U` without a `D` between. Without fault injection exactly one
-  fulfils and every other insert fails with `AlreadyExists`; under it a
+  one `_id`, at most one commits: the log holds one `I` per incarnation,
+  and a fulfilled insert's body is that `I`; no `I` for the doc follows a
+  live `I` / `U` without a `D` between. An SDK-minted insert (`mintedId`)
+  whose body equals that `I` may also fulfil, as a replay of it that
+  commits nothing. Without fault injection and without `mintedId`, exactly
+  one fulfils and every other insert fails with `AlreadyExists`; under it a
   rejection may also be a retriable code or `AmbiguousCommit`, a
   definitively rejected body never reaches the log, and an ambiguous one is
   either the first `I` or absent. *Witness:* `runSameIdInsertRaceCascade`,
