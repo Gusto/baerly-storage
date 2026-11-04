@@ -254,6 +254,23 @@ describe("insert: the first I for an _id wins", () => {
     await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
   });
 
+  test("an identical minted resend of a row folded into the snapshot replays with no new entry", async () => {
+    const { inner, a } = await setup();
+    const id = uuidv7();
+    const body = { _id: id, title: "same" };
+    await mintedInsert(a, body);
+    await expect(
+      compact({ storage: inner, currentJsonKey: CURRENT_KEY }, { minEntriesToCompact: 1 }),
+    ).resolves.toMatchObject({ written: true, logSeqStartAfter: 2 });
+    // The row's I (seq 1) is now below log_seq_start: only the snapshot holds it.
+    await expect(entriesFor(inner, id)).resolves.toMatchObject([{ op: "I", seq: 1 }]);
+
+    await expect(mintedInsert(a, { title: "same", _id: id })).resolves.toEqual({ _id: id });
+    await expect(inner.get(logObjectKey(PREFIX, 2))).resolves.toBeNull();
+    await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
+    await expect(rowOf(inner, id)).resolves.toEqual(body);
+  });
+
   test("(iii) a fold that moved log_seq_start past the check read's tail does not hide the peer's insert", async () => {
     const { inner, a, aGate, b } = await setup();
     const held = aGate.hold(nthCurrentJsonGet(2));

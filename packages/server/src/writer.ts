@@ -219,15 +219,18 @@ export interface CommitResult {
   /**
    * The committed `LogEntry`. Caller can ack on `entry.lsn`. For a
    * guarded insert that replayed ({@link InsertGuard.replayIdentical}),
-   * the stored live entry it matched; this call wrote nothing.
+   * it is instead the stored live `I` / `U` in the guarded window whose
+   * `after` the body matched, written by an earlier commit, and this call
+   * committed nothing (it may have PUT orphan index markers before losing
+   * a create race).
    */
   readonly entry: LogEntry;
 
   /**
-   * ETag of `current.json` as read at the start of the commit. The
-   * commit path no longer writes `current.json` (the `log/<seq>`
-   * create IS the commit), so this is the manifest's pre-commit ETag,
-   * not a post-write one.
+   * ETag of `current.json` as read at the start of the commit (Step 1),
+   * on a replay as on a commit. The commit path never writes
+   * `current.json` (the `log/<seq>` create IS the commit), so this is the
+   * manifest's pre-commit ETag, not a post-write one.
    */
   readonly currentEtag: string;
 }
@@ -245,16 +248,26 @@ const EMPTY_BODY = new Uint8Array(0);
 
 /**
  * Successful outcome of one full {@link Writer.#singleAttemptCommit}
- * attempt. Rejected creates resolve by readback or throw non-retriable
+ * attempt: either it committed (`replayed: false`, with the commit's
+ * Class A op count), or a guarded insert replayed a stored identical row
+ * (`replayed: true`) and committed nothing, so it is not a logical write.
+ * Rejected creates resolve by readback or throw non-retriable
  * `AmbiguousCommit`; exceeding the foreign-occupant forward-probe budget
  * throws `Internal`. Failures before dispatching the create, and a
  * definitive rejection of the slot's only send, propagate.
  */
-interface SingleAttemptSuccess {
-  readonly entries: readonly LogEntry[];
-  readonly currentEtag: string;
-  readonly classAOps: number;
-}
+type SingleAttemptSuccess =
+  | {
+      readonly replayed: false;
+      readonly entries: readonly LogEntry[];
+      readonly currentEtag: string;
+      readonly classAOps: number;
+    }
+  | {
+      readonly replayed: true;
+      readonly entries: readonly LogEntry[];
+      readonly currentEtag: string;
+    };
 
 /**
  * Stateless write engine for the multi-instance core.
@@ -419,7 +432,11 @@ export class Writer {
     // may re-run it — a durable create re-run at a fresh tail would
     // duplicate the logical write.
     const success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
-    this.#emitWriteMetrics(input.collection, success.classAOps);
+    // A replay committed nothing, so it is not a logical write and records
+    // no write-amplification sample (its orphan marker PUTs included).
+    if (!success.replayed) {
+      this.#emitWriteMetrics(input.collection, success.classAOps);
+    }
     return {
       entry: success.entries[0]!,
       currentEtag: success.currentEtag,
@@ -541,7 +558,7 @@ export class Writer {
       // replay of an identical live row returns it having written nothing.
       const replayed = decideInsertTarget(insertWindow, input);
       if (replayed !== undefined) {
-        return { entries: [replayed], currentEtag: baseEtag, classAOps: 0 };
+        return { replayed: true, entries: [replayed], currentEtag: baseEtag };
       }
       preCommitTail = probe.tail;
     }
@@ -725,7 +742,7 @@ export class Writer {
         insertWindow.push(...probe.entries);
         const replayed = decideInsertTarget(insertWindow, input);
         if (replayed !== undefined) {
-          return { entries: [replayed], currentEtag: baseEtag, classAOps: newKeysClassA };
+          return { replayed: true, entries: [replayed], currentEtag: baseEtag };
         }
         seq = probe.tail;
       }
@@ -888,6 +905,7 @@ export class Writer {
     // slots a foreign writer won.
     const classAOps = 1 + indexClassA;
     return {
+      replayed: false,
       entries: committedEntries,
       // No current.json write on the commit path — return the manifest
       // etag read in Step 1 (still a valid etag of the current manifest).

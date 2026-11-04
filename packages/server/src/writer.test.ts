@@ -2073,10 +2073,13 @@ describe("Writer — insert guard (first insert wins)", () => {
         options: { indexes: [by_title] },
       });
       const putSpy = vi.spyOn(storage, "put");
+      const ctx = createObservabilityContext();
 
-      const result = await replayInsert(writer, true);
+      const result = await runWithContext(ctx, () => replayInsert(writer, true));
       expect(result.entry).toEqual(original);
       expect(putSpy).not.toHaveBeenCalled();
+      // A replay is not a logical write: no write-amplification sample.
+      expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([]);
       await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
       await expect(titleMarkers(storage)).resolves.toEqual([]);
     });
@@ -2132,8 +2135,11 @@ describe("Writer — insert guard (first insert wins)", () => {
         options: { indexes: [by_title] },
       });
 
-      const result = await replayInsert(writer, true);
+      const ctx = createObservabilityContext();
+      const result = await runWithContext(ctx, () => replayInsert(writer, true));
       expect(result.entry).toMatchObject({ seq: 0, session: "peerss" });
+      // The orphan marker PUT is not billed as a logical write either.
+      expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([]);
       await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
       await expect(titleMarkers(storage)).resolves.toEqual(
         allIndexKeysFor(MANIFEST, [by_title], { _id: DOC, title: "mine" }, DOC),
