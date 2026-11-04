@@ -355,7 +355,8 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * without a writer round-trip; one committed concurrently, after that
  * read, is caught by the writer's insert guard, which reads the log
  * window the check could not see. So of concurrent inserts of one `_id`,
- * exactly one commits and the others throw `AlreadyExists` — matches the
+ * at most one commits (exactly one, absent storage failures) and the
+ * others throw `AlreadyExists` — matches the
  * locked `Collection.insert` contract
  * (`packages/protocol/src/collection-api.ts`).
  *
@@ -373,7 +374,7 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * `AlreadyExists`. "Live" covers a `U`: a body equal to a later update's
  * post-image also replays. A caller-chosen `_id` never replays, even onto
  * an identical row, so a run-once guard like
- * `insert({ _id: "migration-x", done: true })` has exactly one winner.
+ * `insert({ _id: "migration-x", done: true })` has at most one winner.
  *
  * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
  *   committed before or concurrently with this call (and, with

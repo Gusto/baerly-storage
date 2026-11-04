@@ -292,8 +292,9 @@ The `AmbiguousCommit` contract below applies when readback cannot resolve it.
 
 ### Insert: the first `I` wins
 
-Of concurrent inserts of one `doc_id`, exactly one commits; the others fail
-with `BaerlyError{code:"AlreadyExists"}` and commit nothing, unless an
+Of concurrent inserts of one `doc_id`, at most one commits (exactly one,
+absent storage failures); the others fail with
+`BaerlyError{code:"AlreadyExists"}` and commit nothing, unless an
 identical `mintedId` resend replays the stored row (**SDK-minted replay**,
 below). A row is live when the last entry for its `(collection, doc_id)` is
 an `I` or `U`, and an insert may commit only while the row is absent. The rule is enforced by
@@ -332,7 +333,7 @@ order ignored) is treated as replay success: the insert returns
 cleanup and no maintenance tick (markers already PUT at step 4 stay as
 the same benign orphans). Any other live row still fails with
 `AlreadyExists`, and an insert without `mintedId` never replays, so a
-caller-chosen `_id` keeps exactly one winner. Equality is against the current
+caller-chosen `_id` keeps at most one winner. Equality is against the current
 live row, not a retained request result: deletion permits reinsertion, an
 update to a different body yields `AlreadyExists`, and updating back to the
 original body permits replay. Calling the client's `insert(doc)` again is a

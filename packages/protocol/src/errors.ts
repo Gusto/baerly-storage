@@ -47,7 +47,7 @@ export type BaerlyErrorCode =
    * The thing being created already exists, so the same request can never
    * succeed; `retriable` is `false`. `Collection.insert` raises it when a
    * live row already holds the `_id`, including one a concurrent insert
-   * committed first: of concurrent inserts of one `_id`, exactly one
+   * committed first: of concurrent inserts of one `_id`, at most one
    * commits and the others raise this. Insert under a different `_id`,
    * omit `_id` to mint one, or change the stored row with `update` /
    * `replace` — unless this follows a same-`_id` retry after

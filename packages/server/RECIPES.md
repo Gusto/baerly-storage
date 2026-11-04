@@ -39,7 +39,7 @@ its own bounded backoff.
 **Cause:** a caller-supplied `_id` on `insert` is held by a live row (or
 `baerly admin restore` targeted an existing collection without `--force`).
 The first insert of an `_id` wins: of concurrent inserts of one `_id`,
-exactly one commits and the others throw `AlreadyExists`, committing nothing
+at most one commits and the others throw `AlreadyExists`, committing nothing
 (an identical `mintedId` resend replays instead; see the next section).
 `retriable` is `false`: never retry.
 **Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
