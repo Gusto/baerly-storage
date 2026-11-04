@@ -28,6 +28,7 @@ export * from "./sha256.ts";
 export * from "./storage/index.ts";
 export * from "./time.ts";
 export * from "./types.ts";
+export * from "./uuid.ts";
 export * from "./verifier.ts";
 export * from "./hashing.ts";
 export * from "./cursor.ts";
