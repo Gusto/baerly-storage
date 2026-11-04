@@ -53,7 +53,12 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
-import { assertDocId, insertAlreadyExists, insertReplaysRow } from "./doc-id.ts";
+import {
+  assertDocId,
+  insertAlreadyExists,
+  insertReplaysRow,
+  recordInsertReplay,
+} from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
@@ -458,6 +463,7 @@ export const runInsert = async <T extends DocumentData>(
   const live = existing.rows[0];
   if (live !== undefined) {
     if (mintedId !== undefined && insertReplaysRow(body, live.doc)) {
+      recordInsertReplay(ctx.collectionName);
       return { _id };
     }
     throw insertAlreadyExists(ctx.collectionName, _id);

@@ -28,7 +28,11 @@ import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { retireLogRange } from "./log-retention.ts";
-import { createObservabilityContext, runWithContext } from "./observability/index.ts";
+import {
+  createObservabilityContext,
+  type ObservabilityContext,
+  runWithContext,
+} from "./observability/index.ts";
 import { runInsert } from "./query.ts";
 
 const APP = "a";
@@ -146,10 +150,24 @@ const insert = async (db: Db, body: DocumentData): Promise<{ _id: string }> =>
   await runWithContext(MAINTENANCE_OFF, () => db.collection(COLL).insert(body));
 
 /** An SDK-minted insert: `doc._id` is `mintedId`, as the HTTP route passes it. */
-const mintedInsert = async (db: Db, body: DocumentData & { _id: string }) =>
-  await runWithContext(MAINTENANCE_OFF, () =>
+const mintedInsert = async (
+  db: Db,
+  body: DocumentData & { _id: string },
+  obs: ObservabilityContext = MAINTENANCE_OFF,
+) =>
+  await runWithContext(obs, () =>
     runInsert(db.collectionReadContext(COLL), body, { mintedId: body._id }),
   );
+
+/** A fresh maintenance-off context, so a test can read its own counters. */
+const countingContext = (): ObservabilityContext =>
+  createObservabilityContext({ maintenance: { disabled: true } });
+
+const replays = (obs: ObservabilityContext): number =>
+  obs.recorder
+    .snapshot()
+    .counters.filter((c) => c.name === "db.write.insert_replayed_total")
+    .reduce((acc, c) => acc + c.value, 0);
 
 const rowOf = (storage: Storage, docId: string = ID): Promise<DocumentData | undefined> =>
   Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL).get(docId);
@@ -212,14 +230,17 @@ describe("insert: the first I for an _id wins", () => {
     const id = uuidv7();
     const body = { _id: id, title: "same" };
 
-    const pending = mintedInsert(a, body);
+    const aObs = countingContext();
+    const bObs = countingContext();
+    const pending = mintedInsert(a, body, aObs);
     await held.reached;
     // A's check read ran before B committed, so only A's writer window can
     // see B's row: the replay must come from the insert guard.
-    await expect(mintedInsert(b, body)).resolves.toEqual({ _id: id });
+    await expect(mintedInsert(b, body, bObs)).resolves.toEqual({ _id: id });
     held.release();
 
     await expect(pending).resolves.toEqual({ _id: id });
+    expect([replays(aObs), replays(bObs)]).toEqual([1, 0]);
     await expect(rowOf(inner, id)).resolves.toEqual(body);
     await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
   });
@@ -265,7 +286,9 @@ describe("insert: the first I for an _id wins", () => {
     // The row's I (seq 1) is now below log_seq_start: only the snapshot holds it.
     await expect(entriesFor(inner, id)).resolves.toMatchObject([{ op: "I", seq: 1 }]);
 
-    await expect(mintedInsert(a, { title: "same", _id: id })).resolves.toEqual({ _id: id });
+    const obs = countingContext();
+    await expect(mintedInsert(a, { title: "same", _id: id }, obs)).resolves.toEqual({ _id: id });
+    expect(replays(obs)).toBe(1);
     await expect(inner.get(logObjectKey(PREFIX, 2))).resolves.toBeNull();
     await expect(opsFor(inner, id)).resolves.toEqual(["I"]);
     await expect(rowOf(inner, id)).resolves.toEqual(body);

@@ -1,4 +1,5 @@
 import { BaerlyError, CODE_RESOLUTIONS, type DocumentData, jsonValueEqual } from "@baerly/protocol";
+import { getCurrentContext } from "./observability/context.ts";
 import { assertPathSegment } from "./path-segment.ts";
 
 /**
@@ -43,3 +44,14 @@ export const insertAlreadyExists = (collection: string, docId: string): BaerlyEr
  */
 export const insertReplaysRow = (body: DocumentData, stored: DocumentData | undefined): boolean =>
   stored !== undefined && jsonValueEqual(JSON.parse(JSON.stringify(body)), stored);
+
+/**
+ * Count an SDK-minted insert answered as a replay of its stored row on
+ * `db.write.insert_replayed_total` (labelled by `collection`). A replay
+ * commits nothing and records no write metric, so without this counter it
+ * is invisible on the canonical line. Shared by `runInsert`'s check read
+ * and the writer's insert guard, the two places a replay is decided.
+ */
+export const recordInsertReplay = (collection: string): void => {
+  getCurrentContext()?.recorder.counter("db.write.insert_replayed_total", 1, { collection });
+};
