@@ -44,7 +44,6 @@ import {
   normalizePredicateArg,
   validateWire,
   BaerlyError,
-  CODE_RESOLUTIONS,
   type OrderSpec,
   type PredicateWire,
   type Query,
@@ -54,7 +53,7 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
-import { assertDocId } from "./doc-id.ts";
+import { assertDocId, insertAlreadyExists } from "./doc-id.ts";
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
@@ -432,15 +431,7 @@ export const runInsert = async <T extends DocumentData>(
     },
   );
   if (existing.rows.length > 0) {
-    throw new BaerlyError(
-      "AlreadyExists",
-      `insert: _id ${JSON.stringify(_id)} already exists in collection ${JSON.stringify(ctx.collectionName)}`,
-      undefined,
-      undefined,
-      undefined,
-      CODE_RESOLUTIONS.AlreadyExists,
-      _id,
-    );
+    throw insertAlreadyExists(ctx.collectionName, _id);
   }
 
   // Single-attempt at the verb level; log-create contention is resolved
