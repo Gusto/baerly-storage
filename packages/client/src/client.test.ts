@@ -38,8 +38,11 @@ describe("createBaerlyClient", () => {
   test("table().insert() issues POST /v1/c/<name> with { doc, mintedId } and unwraps { _id }", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", async (req) => {
-      const body = (await req.json()) as { doc: unknown };
-      expect(body).toMatchObject({ doc: { title: "hello" } });
+      const body = (await req.json()) as { doc: { _id: string } };
+      expect(body).toEqual({
+        doc: { title: "hello", _id: expect.any(String) },
+        mintedId: body.doc._id,
+      });
       return jsonResponse({ _id: "doc-1" }, 201);
     });
     const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
@@ -69,8 +72,7 @@ describe("createBaerlyClient", () => {
       const { _id } = await tickets.insert(doc);
       const body = bodies[0] as { doc: { _id: string; title: string }; mintedId: string };
       expect(isUuidV7(body.doc._id)).toBe(true);
-      expect(body.mintedId).toBe(body.doc._id);
-      expect(body.doc.title).toBe("a");
+      expect(body).toEqual({ doc: { title: "a", _id: body.doc._id }, mintedId: body.doc._id });
       expect(_id).toBe(body.doc._id);
     });
 
@@ -86,7 +88,7 @@ describe("createBaerlyClient", () => {
       await tickets.insert({ _id: 7 as unknown as string, title: "a" });
       const body = bodies[0] as { doc: { _id: string }; mintedId: string };
       expect(isUuidV7(body.doc._id)).toBe(true);
-      expect(body.mintedId).toBe(body.doc._id);
+      expect(body).toEqual({ doc: { title: "a", _id: body.doc._id }, mintedId: body.doc._id });
     });
 
     test("does not mutate the caller's document", async () => {
