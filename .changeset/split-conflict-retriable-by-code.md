@@ -16,17 +16,17 @@ Migration:
 err.code === "Conflict" && err.retriable;   // CAS race
 err.code === "Conflict" && !err.retriable;  // duplicate _id
 throw new BaerlyError("Conflict", msg);     // custom Storage
-new BaerlyError(code, msg, cause, issues, status, resolution, retriable, _id);
-errorEnvelope(code, msg, issues, resolution, retriable, _id);
+new BaerlyError(code, msg, cause, issues, status, resolution, retriable);
+errorEnvelope(code, msg, issues, resolution, retriable);
 
 // after
 err.code === "WriteConflict";
 err.code === "AlreadyExists";
 throw new BaerlyError("WriteConflict", msg);
-new BaerlyError(code, msg, cause, issues, status, resolution, _id);
-errorEnvelope(code, msg, issues, resolution, _id);
+new BaerlyError(code, msg, { cause, issues, status, resolution, _id });
+errorEnvelope(code, msg, { issues, resolution, _id });
 ```
 
-Both `BaerlyError` and `errorEnvelope` (from `@gusto/baerly-storage/http`) lose their `retriable` slot, so `_id` moves up one position. TypeScript rejects an old call with an extra argument; untyped JavaScript does not, and would put the old `retriable` boolean in `_id`, so update those call sites by hand. A custom `Storage` must throw `WriteConflict`, never `AlreadyExists`, for a rejected precondition: the kernel treats any other code as a hard failure, and `AlreadyExists` is a public message that would expose the bucket key.
+Both `BaerlyError` and `errorEnvelope` (from `@gusto/baerly-storage/http`) lose their `retriable` argument; the optional fields now go in one options object. Untyped JavaScript that still passes a `retriable` boolean positionally gets no error, so update those call sites by hand. A custom `Storage` must throw `WriteConflict`, never `AlreadyExists`, for a rejected precondition: the kernel treats any other code as a hard failure, and `AlreadyExists` is a public message that would expose the bucket key.
 
 Splitting `Conflict` renames a capability rather than removing one: both of its meanings survive under the new codes. Under the [API surface lock](../docs/contributing/conventions/change-discipline.md#api-surface-lock) a rename needs a supersession record, and this changeset is that record. The constructor's `retriable` slot goes with it, because no instance can override its code's retry meaning any more.

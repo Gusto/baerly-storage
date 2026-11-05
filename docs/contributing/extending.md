@@ -103,7 +103,8 @@ public async collections(): Promise<string[]> {
   reads. Don't build a parallel cache layer.
 - **No new throw without `BaerlyError`.** If the method can fail,
   throw `new BaerlyError("Code", "context")` from
-  `packages/protocol/src/errors.ts`.
+  `packages/protocol/src/errors.ts`. Optional fields go in the third
+  argument: `{ cause, issues, status, resolution, _id }`.
 - **Internal helpers stay co-located.** Either a module-private
   function in `packages/server/src/db.ts` or a fresh sibling file
   exported as `@internal`.

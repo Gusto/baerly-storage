@@ -369,7 +369,8 @@ follows an attempt of unknown outcome as `NetworkError` instead. A
 `NetworkError` whose `cause.notApplied` is `true` reports that no attempt of
 that call was applied: the S3 and GCS adapters set it when every internal
 attempt was throttled (`429`, or S3's `503 SlowDown`); an R2-binding error
-never proves that. Such a `NetworkError` propagates as-is without
+never proves that. An adapter builds it as
+`new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`. Such a `NetworkError` propagates as-is without
 readback. This contract is scoped to failed committing-create calls;
 earlier read, configuration, and index-write errors keep their ordinary error behavior. The same code also covers the
 certified-delete-floor case described in invariant 5: a create may have
