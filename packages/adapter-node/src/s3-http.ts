@@ -100,7 +100,7 @@ export class S3HttpStorage implements Storage {
         throw error;
       }
       const msg = error instanceof Error ? error.message : String(error);
-      throw new BaerlyError("NetworkError", msg, error);
+      throw new BaerlyError("NetworkError", msg, { cause: error });
     }
   }
 
@@ -180,7 +180,7 @@ export class S3HttpStorage implements Storage {
         throw new BaerlyError(
           "NetworkError",
           `PUT ${key}: 409 ConditionalRequestConflict (contended conditional create; retryable)`,
-          { status: res.status, ...retryAfterCause(res) },
+          { cause: { status: res.status, ...retryAfterCause(res) } },
         );
       }
       // S3-compatible servers diverge on `If-Match` against a missing

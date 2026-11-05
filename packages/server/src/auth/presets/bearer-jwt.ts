@@ -132,35 +132,20 @@ const JWKS_KID_REFRESH_MIN_INTERVAL_MS = 60_000;
  */
 export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
   if (opts.issuer.length === 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      "bearerJwt: issuer must be non-empty",
-      undefined,
-      undefined,
-      undefined,
-      BEARER_JWT_CONFIG_RESOLUTION,
-    );
+    throw new BaerlyError("InvalidConfig", "bearerJwt: issuer must be non-empty", {
+      resolution: BEARER_JWT_CONFIG_RESOLUTION,
+    });
   }
   if (opts.audience.length === 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      "bearerJwt: audience must be non-empty",
-      undefined,
-      undefined,
-      undefined,
-      BEARER_JWT_CONFIG_RESOLUTION,
-    );
+    throw new BaerlyError("InvalidConfig", "bearerJwt: audience must be non-empty", {
+      resolution: BEARER_JWT_CONFIG_RESOLUTION,
+    });
   }
   const algorithms: readonly JwtAlgorithm[] = opts.algorithms ?? DEFAULT_ALGORITHMS;
   if (algorithms.length === 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      "bearerJwt: algorithms must be non-empty",
-      undefined,
-      undefined,
-      undefined,
-      BEARER_JWT_CONFIG_RESOLUTION,
-    );
+    throw new BaerlyError("InvalidConfig", "bearerJwt: algorithms must be non-empty", {
+      resolution: BEARER_JWT_CONFIG_RESOLUTION,
+    });
   }
 
   if (opts.tenantPrefix !== undefined) {
@@ -168,20 +153,14 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
       throw new BaerlyError(
         "InvalidConfig",
         "bearerJwt: tenantPrefix and tenantClaim are mutually exclusive",
-        undefined,
-        undefined,
-        undefined,
-        BEARER_JWT_CONFIG_RESOLUTION,
+        { resolution: BEARER_JWT_CONFIG_RESOLUTION },
       );
     }
     if (opts.tenantPrefix.length === 0 || opts.tenantPrefix.includes("/")) {
       throw new BaerlyError(
         "InvalidConfig",
         `bearerJwt: tenantPrefix must be non-empty and contain no "/" (got ${JSON.stringify(opts.tenantPrefix)})`,
-        undefined,
-        undefined,
-        undefined,
-        BEARER_JWT_CONFIG_RESOLUTION,
+        { resolution: BEARER_JWT_CONFIG_RESOLUTION },
       );
     }
   }
@@ -220,7 +199,7 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
       }));
     } catch (error) {
       if (isJwksFetchFailure(error)) {
-        throw new BaerlyError("NetworkError", "bearerJwt: JWKS fetch failed", error);
+        throw new BaerlyError("NetworkError", "bearerJwt: JWKS fetch failed", { cause: error });
       }
       return null;
     }

@@ -211,14 +211,9 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/count", async (c) => {
     const collection = c.req.query("collection");
     if (collection === undefined || collection.length === 0) {
-      throw new BaerlyError(
-        "SchemaError",
-        "GET /v1/count requires ?collection=<name>",
-        undefined,
-        undefined,
-        undefined,
-        "Add ?collection=<name> to the request URL.",
-      );
+      throw new BaerlyError("SchemaError", "GET /v1/count requires ?collection=<name>", {
+        resolution: "Add ?collection=<name> to the request URL.",
+      });
     }
     const wire = parseWhereParam(c);
     const { rows, manifestPointer, fresh } = await runAllWithMeta(
@@ -312,14 +307,9 @@ const assertJsonBodyField = (body: unknown, field: string): Record<string, unkno
       ? (body as Record<string, unknown>)[field]
       : undefined;
   if (value === undefined || typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new BaerlyError(
-      "SchemaError",
-      `Request body must be { ${field}: object }`,
-      undefined,
-      undefined,
-      undefined,
-      WRITE_BODY_SHAPE_RESOLUTION,
-    );
+    throw new BaerlyError("SchemaError", `Request body must be { ${field}: object }`, {
+      resolution: WRITE_BODY_SHAPE_RESOLUTION,
+    });
   }
   return value as Record<string, unknown>;
 };
@@ -352,10 +342,7 @@ const readMintedId = (body: unknown, doc: Record<string, unknown>): string | und
     throw new BaerlyError(
       "SchemaError",
       "Request body mintedId must be a UUIDv7 string equal to doc._id",
-      undefined,
-      undefined,
-      undefined,
-      WRITE_BODY_SHAPE_RESOLUTION,
+      { resolution: WRITE_BODY_SHAPE_RESOLUTION },
     );
   }
   return raw;
@@ -388,14 +375,9 @@ const parseWhereParam = (c: Context): PredicateWire => {
   try {
     parsed = JSON.parse(whereParam);
   } catch {
-    throw new BaerlyError(
-      "SchemaError",
-      "Invalid JSON in ?where=",
-      undefined,
-      undefined,
-      undefined,
-      WHERE_ORDER_JSON_RESOLUTION,
-    );
+    throw new BaerlyError("SchemaError", "Invalid JSON in ?where=", {
+      resolution: WHERE_ORDER_JSON_RESOLUTION,
+    });
   }
   try {
     return validateWire(parsed as PredicateWire);
@@ -441,24 +423,14 @@ function parseOrder(raw: string | undefined): OrderSpec<DocumentData> | undefine
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new BaerlyError(
-      "SchemaError",
-      "Invalid JSON in ?order=",
-      undefined,
-      undefined,
-      undefined,
-      WHERE_ORDER_JSON_RESOLUTION,
-    );
+    throw new BaerlyError("SchemaError", "Invalid JSON in ?order=", {
+      resolution: WHERE_ORDER_JSON_RESOLUTION,
+    });
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new BaerlyError(
-      "SchemaError",
-      "?order= must encode a JSON object",
-      undefined,
-      undefined,
-      undefined,
-      WHERE_ORDER_JSON_RESOLUTION,
-    );
+    throw new BaerlyError("SchemaError", "?order= must encode a JSON object", {
+      resolution: WHERE_ORDER_JSON_RESOLUTION,
+    });
   }
   return parsed as OrderSpec<DocumentData>;
 }
@@ -633,20 +605,20 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
       logScrubbedError(err, status);
       return {
         status,
-        envelope: errorEnvelope(
-          wireCode,
-          scrubbedMessageFor(wireCode),
-          undefined,
-          undefined,
+        envelope: errorEnvelope(wireCode, scrubbedMessageFor(wireCode), {
           // The row id is caller-owned data, not a storage diagnostic, so
           // it survives the message scrub.
-          wireCode === err.code ? err._id : undefined,
-        ),
+          _id: wireCode === err.code ? err._id : undefined,
+        }),
       };
     }
     return {
       status,
-      envelope: errorEnvelope(err.code, err.message, err.issues, err.resolution, err._id),
+      envelope: errorEnvelope(err.code, err.message, {
+        issues: err.issues,
+        resolution: err.resolution,
+        _id: err._id,
+      }),
     };
   }
   // Unknown thrown value: the message may carry internal detail
@@ -713,25 +685,15 @@ async function readJsonBody(c: Context, maxBytes: number): Promise<unknown> {
     );
   }
   if (raw.length === 0) {
-    throw new BaerlyError(
-      "SchemaError",
-      "Empty request body",
-      undefined,
-      undefined,
-      undefined,
-      WRITE_BODY_SHAPE_RESOLUTION,
-    );
+    throw new BaerlyError("SchemaError", "Empty request body", {
+      resolution: WRITE_BODY_SHAPE_RESOLUTION,
+    });
   }
   try {
     return JSON.parse(raw);
   } catch {
-    throw new BaerlyError(
-      "SchemaError",
-      "Invalid JSON in request body",
-      undefined,
-      undefined,
-      undefined,
-      WRITE_BODY_SHAPE_RESOLUTION,
-    );
+    throw new BaerlyError("SchemaError", "Invalid JSON in request body", {
+      resolution: WRITE_BODY_SHAPE_RESOLUTION,
+    });
   }
 }

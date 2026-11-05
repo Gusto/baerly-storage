@@ -668,11 +668,7 @@ export class Writer {
       return new BaerlyError(
         "AmbiguousCommit",
         `${errorPrefix}: the committing create at seq ${seq} on ${this.#currentJsonKey} was rejected and its fate could not be resolved; an earlier send may already have landed or may still land, so retrying may duplicate logical work`,
-        cause,
-        undefined,
-        undefined,
-        CODE_RESOLUTIONS.AmbiguousCommit,
-        entry.doc_id,
+        { cause, resolution: CODE_RESOLUTIONS.AmbiguousCommit, _id: entry.doc_id },
       );
     };
     for (;;) {
@@ -1272,11 +1268,7 @@ export class Writer {
     throw new BaerlyError(
       "AmbiguousCommit",
       `${errorPrefix}: the committing create at seq ${seq} on ${this.#currentJsonKey} landed below the certified delete floor ${deleteFloor}; that log object is beneath every reader's floor, and this mutation may or may not have been applied by an earlier attempt — retry is at-least-once`,
-      undefined,
-      undefined,
-      undefined,
-      CODE_RESOLUTIONS.AmbiguousCommit,
-      docId,
+      { resolution: CODE_RESOLUTIONS.AmbiguousCommit, _id: docId },
     );
   }
 
@@ -1352,7 +1344,7 @@ export class Writer {
           throw new BaerlyError(
             "InvalidResponse",
             `${errorPrefix}: malformed log entry at ${keys[i]!}`,
-            error,
+            { cause: error },
           );
         }
       }
@@ -1376,7 +1368,9 @@ export class Writer {
     try {
       existing = decodeJsonBytes(got.body);
     } catch (error) {
-      throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`, error);
+      throw new BaerlyError("InvalidResponse", `Writer: malformed log occupant at ${key}`, {
+        cause: error,
+      });
     }
     if (!hasWriterIdentity(existing)) {
       // Parsed JSON alone cannot establish a conflicting writer's identity.

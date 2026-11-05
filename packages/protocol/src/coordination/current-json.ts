@@ -284,11 +284,9 @@ export async function readCurrentJson(
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `current.json at ${key}: body is not valid JSON`,
-      error,
-    );
+    throw new BaerlyError("InvalidResponse", `current.json at ${key}: body is not valid JSON`, {
+      cause: error,
+    });
   }
   return { json: assertCurrentJson(parsed, key), etag: got.etag };
 }
@@ -790,10 +788,14 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
   if (isWriteConflict(e)) {
-    return new BaerlyError("WriteConflict", `current.json CAS lost at ${key}: ${e.message}`, e);
+    return new BaerlyError("WriteConflict", `current.json CAS lost at ${key}: ${e.message}`, {
+      cause: e,
+    });
   }
   if (e instanceof BaerlyError) {
     return e;
   }
-  return new BaerlyError("InvalidResponse", `current.json write at ${key} failed: ${String(e)}`, e);
+  return new BaerlyError("InvalidResponse", `current.json write at ${key} failed: ${String(e)}`, {
+    cause: e,
+  });
 };

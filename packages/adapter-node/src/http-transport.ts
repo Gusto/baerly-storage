@@ -84,9 +84,11 @@ export const mapStorageError = async (
   if (res.status === 429 || res.status >= 500) {
     const body = await res.text();
     return new BaerlyError("NetworkError", `${verb} ${key}: ${res.status} ${body}`, {
-      status: res.status,
-      ...retryAfterCause(res),
-      ...(isThrottle(res.status, body) && { throttled: true }),
+      cause: {
+        status: res.status,
+        ...retryAfterCause(res),
+        ...(isThrottle(res.status, body) && { throttled: true }),
+      },
     });
   }
   return new BaerlyError(

@@ -140,11 +140,9 @@ export const readGcPending = async (
   try {
     parsed = decodeJsonBytes(got.body);
   } catch (error) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `gc/pending.json at ${key}: body is not valid JSON`,
-      error,
-    );
+    throw new BaerlyError("InvalidResponse", `gc/pending.json at ${key}: body is not valid JSON`, {
+      cause: error,
+    });
   }
   return { json: assertGcPending(parsed, key), etag: got.etag };
 };
@@ -431,7 +429,9 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
  */
 const translateCasError = (e: unknown, key: string): BaerlyError => {
   if (isWriteConflict(e)) {
-    return new BaerlyError("WriteConflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, e);
+    return new BaerlyError("WriteConflict", `gc/pending.json CAS lost at ${key}: ${e.message}`, {
+      cause: e,
+    });
   }
   if (e instanceof BaerlyError) {
     return e;
@@ -439,6 +439,6 @@ const translateCasError = (e: unknown, key: string): BaerlyError => {
   return new BaerlyError(
     "InvalidResponse",
     `gc/pending.json write at ${key} failed: ${String(e)}`,
-    e,
+    { cause: e },
   );
 };

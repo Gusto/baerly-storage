@@ -37,9 +37,7 @@ const parseSuccessfulJson = async (
     throw new BaerlyError(
       "InvalidResponse",
       `Response to ${opts.method} ${opts.path} was not valid JSON`,
-      error,
-      undefined,
-      res.status,
+      { cause: error, status: res.status },
     );
   }
 };
@@ -121,23 +119,18 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     const wire = envelope?.error;
     const wireCode = wire?.code;
     if (wire !== undefined && isBaerlyErrorCode(wireCode)) {
-      throw new BaerlyError(
-        wireCode,
-        wire.message ?? `HTTP ${res.status}`,
-        undefined,
-        wire.issues,
-        res.status,
-        wire.resolution,
-        wire._id,
-      );
+      throw new BaerlyError(wireCode, wire.message ?? `HTTP ${res.status}`, {
+        issues: wire.issues,
+        status: res.status,
+        resolution: wire.resolution,
+        _id: wire._id,
+      });
     }
     const transient = res.status >= 500 || res.status === 408 || res.status === 429;
     throw new BaerlyError(
       transient ? "NetworkError" : "Internal",
       wire?.message ?? `HTTP ${res.status}`,
-      wire,
-      undefined,
-      res.status,
+      { cause: wire, status: res.status },
     );
   }
 
@@ -155,9 +148,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     throw new BaerlyError(
       "InvalidResponse",
       `Response to ${opts.method} ${opts.path} missing 'data' field`,
-      undefined,
-      undefined,
-      res.status,
+      { status: res.status },
     );
   }
   return (body as HttpOkEnvelope<T>).data;

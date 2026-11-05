@@ -195,7 +195,7 @@ const makeResolveAppTenant = (name: string): SubcommandContext["resolveAppTenant
         throw new BaerlyError(
           "InvalidConfig",
           `baerly ${name}: --app / --tenant not supplied and no baerly.config.{ts,js,mjs,json} in cwd (${inner})`,
-          error,
+          { cause: error },
         );
       }
       app = flagApp ?? cfg.app;

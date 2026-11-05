@@ -660,7 +660,9 @@ describe("Writer", () => {
         // Throttle the first additive index PUT only.
         if (!this.thrown && /\/index\//.test(key)) {
           this.thrown = true;
-          throw new BaerlyError("NetworkError", `S3: throttled on ${key}`, { status: 429 });
+          throw new BaerlyError("NetworkError", `S3: throttled on ${key}`, {
+            cause: { status: 429 },
+          });
         }
         return super.put(key, body, opts);
       }

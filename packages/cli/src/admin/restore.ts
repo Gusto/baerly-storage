@@ -145,10 +145,10 @@ const bundle = defineBaerlySubcommand({
       throw new BaerlyError(
         "AlreadyExists",
         `baerly admin restore: collection ${JSON.stringify(args.collection)} (app ${JSON.stringify(app)}, tenant ${JSON.stringify(tenant)}) already exists; pass --force to truncate it`,
-        undefined,
-        undefined,
-        undefined,
-        "Pass --force to truncate the existing collection, or restore into an empty target.",
+        {
+          resolution:
+            "Pass --force to truncate the existing collection, or restore into an empty target.",
+        },
       );
     }
     if (head !== null) {

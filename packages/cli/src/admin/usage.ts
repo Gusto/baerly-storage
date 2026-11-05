@@ -169,11 +169,9 @@ const readCommitTsMs = async (storage: Storage, key: string): Promise<number | n
   try {
     parsed = decodeJsonBytes<LogEntry>(got.body);
   } catch (error) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `usage scan: log entry at ${key} is not valid JSON`,
-      error,
-    );
+    throw new BaerlyError("InvalidResponse", `usage scan: log entry at ${key} is not valid JSON`, {
+      cause: error,
+    });
   }
   if (typeof parsed.commit_ts !== "string") {
     throw new BaerlyError("InvalidResponse", `usage scan: log entry at ${key} missing commit_ts`);
@@ -264,7 +262,7 @@ export const estimateWritesPerMin = async (
     throw new BaerlyError(
       "NetworkError",
       `usage scan: list ${logPrefix} failed: ${(error as Error).message}`,
-      error,
+      { cause: error },
     );
   }
   const sample = allKeys.slice(Math.max(0, allKeys.length - sampleSize));
@@ -357,7 +355,7 @@ export const discoverCollections = async (
     throw new BaerlyError(
       "NetworkError",
       `usage scan: list ${prefix} failed: ${(error as Error).message}`,
-      error,
+      { cause: error },
     );
   }
   return [...names].toSorted();

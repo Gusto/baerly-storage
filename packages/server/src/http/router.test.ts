@@ -124,10 +124,7 @@ describe("mapError", () => {
     const err = new BaerlyError(
       "WriteConflict",
       "Writer: CAS conflict on app/router-test/tenant/t1/manifests/notes/current.json",
-      undefined,
-      undefined,
-      undefined,
-      "Retry the PUT to app/router-test/tenant/t1/manifests/notes/current.json.",
+      { resolution: "Retry the PUT to app/router-test/tenant/t1/manifests/notes/current.json." },
     );
     expect(mapError(err).envelope.error.resolution).toBe(CODE_RESOLUTIONS.WriteConflict);
   });
@@ -195,11 +192,7 @@ describe("mapError", () => {
     const err = new BaerlyError(
       "AmbiguousCommit",
       "Writer: the committing create at seq 4 on app/router-test/tenant/t1/manifests/notes/current.json was rejected",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "row-7",
+      { _id: "row-7" },
     );
     const { status, envelope } = mapError(err);
     expect(status).toBe(409);

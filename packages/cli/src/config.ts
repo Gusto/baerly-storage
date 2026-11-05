@@ -103,7 +103,7 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
       throw new BaerlyError(
         "InvalidConfig",
         `baerly: failed to read ${cfgPath}: ${(error as Error).message}`,
-        error,
+        { cause: error },
       );
     }
     try {
@@ -112,7 +112,7 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
       throw new BaerlyError(
         "InvalidConfig",
         `baerly: failed to parse ${cfgPath}: ${(error as Error).message}`,
-        error,
+        { cause: error },
       );
     }
   } else {
@@ -126,7 +126,7 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
       throw new BaerlyError(
         "InvalidConfig",
         `baerly: failed to load ${cfgPath}: ${(error as Error).message}${hint}`,
-        error,
+        { cause: error },
       );
     }
     raw = mod.default;

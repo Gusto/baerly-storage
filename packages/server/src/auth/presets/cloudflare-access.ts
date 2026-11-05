@@ -75,14 +75,9 @@ export interface CloudflareAccessOptions {
  */
 export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
   if (opts.teamDomain.length === 0) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      "cloudflareAccess: teamDomain must be non-empty",
-      undefined,
-      undefined,
-      undefined,
-      CLOUDFLARE_ACCESS_CONFIG_RESOLUTION,
-    );
+    throw new BaerlyError("InvalidConfig", "cloudflareAccess: teamDomain must be non-empty", {
+      resolution: CLOUDFLARE_ACCESS_CONFIG_RESOLUTION,
+    });
   }
   if (!/^[0-9a-f]{64}$/.test(opts.audienceTag)) {
     throw new BaerlyError(
@@ -90,10 +85,7 @@ export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
       `cloudflareAccess: audienceTag must be 64 lowercase-hex chars (got ${JSON.stringify(
         opts.audienceTag,
       )})`,
-      undefined,
-      undefined,
-      undefined,
-      CLOUDFLARE_ACCESS_CONFIG_RESOLUTION,
+      { resolution: CLOUDFLARE_ACCESS_CONFIG_RESOLUTION },
     );
   }
   const issuer = `https://${opts.teamDomain}.cloudflareaccess.com`;

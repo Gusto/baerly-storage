@@ -322,11 +322,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     try {
       parsed = decodeJsonBytes(got.body);
     } catch (error) {
-      throw new BaerlyError(
-        "InvalidResponse",
-        `log entry at ${key}: body is not valid JSON`,
-        error,
-      );
+      throw new BaerlyError("InvalidResponse", `log entry at ${key}: body is not valid JSON`, {
+        cause: error,
+      });
     }
     return parsed as LogEntry;
   }

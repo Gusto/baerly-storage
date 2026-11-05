@@ -29,7 +29,7 @@ export type CodecFail = (code: CodecCode, message: string, cause?: unknown) => n
  */
 export function makeCodecFail(prefix: string): CodecFail {
   return (code, message, cause) => {
-    throw new BaerlyError(code, `${prefix}: ${message}`, cause);
+    throw new BaerlyError(code, `${prefix}: ${message}`, { cause });
   };
 }
 

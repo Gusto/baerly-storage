@@ -39,19 +39,37 @@ export interface HttpErrorEnvelope {
   };
 }
 
+/** Optional fields for {@link errorEnvelope}; the wire-bound subset of `BaerlyErrorOptions`. */
+export interface ErrorEnvelopeOptions {
+  /** Field-path issues; emitted only when non-empty. Meaningful for `code: "SchemaError"`. */
+  readonly issues?: ReadonlyArray<{
+    readonly path: ReadonlyArray<string | number>;
+    readonly message: string;
+  }>;
+  /** Corrective action; overrides the code's default resolution. */
+  readonly resolution?: string;
+  /** The affected row's `_id`; emitted only when `code === "AmbiguousCommit"`. */
+  readonly _id?: string;
+}
+
 /**
  * Single drift surface for the {@link HttpErrorEnvelope} shape. The
  * router and both adapters call this — adding or renaming a field on
  * the wire is a one-edit change here. `retriable` is always present and
  * derived from `code` alone; older clients ignore it.
+ *
+ * @example
+ * ```ts
+ * errorEnvelope("InvalidConfig", "bad request", { resolution: "Pass ?collection=<name>." });
+ * errorEnvelope("AmbiguousCommit", "unknown outcome", { _id: "t-1" });
+ * ```
  */
 export const errorEnvelope = (
   code: BaerlyErrorCode,
   message: string,
-  issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>,
-  resolution?: string,
-  _id?: string,
+  options?: ErrorEnvelopeOptions,
 ): HttpErrorEnvelope => {
+  const { issues, resolution, _id } = options ?? {};
   const resolved = resolution ?? CODE_RESOLUTIONS[code];
   return {
     error: {

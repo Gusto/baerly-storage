@@ -21,12 +21,12 @@ describe("BaerlyError", () => {
 
   test("threads cause through", () => {
     const cause = new Error("io");
-    expect(new BaerlyError("NetworkError", "boom", cause).cause).toBe(cause);
+    expect(new BaerlyError("NetworkError", "boom", { cause }).cause).toBe(cause);
   });
 
   test("sets issues when provided", () => {
     const issues = [{ path: ["a"] as const, message: "required" }];
-    const e = new BaerlyError("SchemaError", "bad", undefined, issues);
+    const e = new BaerlyError("SchemaError", "bad", { issues });
     expect(e.issues).toEqual(issues);
   });
 
@@ -36,7 +36,7 @@ describe("BaerlyError", () => {
   });
 
   test("sets status when provided", () => {
-    const e = new BaerlyError("NotFound", "x", undefined, undefined, 404);
+    const e = new BaerlyError("NotFound", "x", { status: 404 });
     expect(e.status).toBe(404);
   });
 
@@ -46,7 +46,7 @@ describe("BaerlyError", () => {
   });
 
   test("sets resolution when provided", () => {
-    const e = new BaerlyError("InvalidConfig", "bad", undefined, undefined, undefined, "do X");
+    const e = new BaerlyError("InvalidConfig", "bad", { resolution: "do X" });
     expect(e.resolution).toBe("do X");
   });
 
@@ -137,18 +137,12 @@ describe("retriable classification", () => {
   });
 
   test("BaerlyError has no per-instance way to set retriable", () => {
-    // Slot 7 is `_id`; there is no eighth slot for a retriable override.
-    const err = new BaerlyError(
-      "WriteConflict",
-      "lost race",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "row-1",
-      // @ts-expect-error -- the constructor takes at most seven arguments
-      false,
-    );
+    // `retriable` is not an option; the options object has no such field.
+    const err = new BaerlyError("WriteConflict", "lost race", {
+      _id: "row-1",
+      // @ts-expect-error -- `retriable` is not a BaerlyErrorOptions field
+      retriable: false,
+    });
     expect(err._id).toBe("row-1");
     expect(err.retriable).toBe(true);
     // `retriable` is a getter-only prototype accessor, not an own field.

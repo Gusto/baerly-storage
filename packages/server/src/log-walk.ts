@@ -85,7 +85,9 @@ const readLogEntryWithBytes = async (
   try {
     return { entry: decodeJsonBytes<LogEntry>(got.body), bytes: got.body.byteLength };
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, error);
+    throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, {
+      cause: error,
+    });
   }
 };
 
