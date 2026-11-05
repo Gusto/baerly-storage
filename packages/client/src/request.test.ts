@@ -69,6 +69,19 @@ describe("request GET retry", () => {
     expect(calls).toHaveLength(2);
   });
 
+  test.each([
+    { error: "upstream unavailable" },
+    { error: null },
+    { error: {} },
+    { error: { message: "upstream unavailable" } },
+    { error: { code: 503, message: "upstream unavailable" } },
+    { error: ["upstream unavailable"] },
+  ])("retries a proxy JSON error without an envelope: $error", async ({ error }) => {
+    const { ctx, calls } = scripted([Response.json({ error }, { status: 503 }), ok()]);
+    await expect(settle(get(ctx))).resolves.toEqual([1]);
+    expect(calls).toHaveLength(2);
+  });
+
   test("cap reached: throws the same NetworkError as a single attempt", async () => {
     const { ctx, calls } = scripted([bare(503)]);
     const err = await settle(get(ctx)).catch((error: unknown) => error);
