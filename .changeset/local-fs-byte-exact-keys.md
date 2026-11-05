@@ -11,8 +11,10 @@ NFC / NFD `é` landed on one file. Because index markers embed the raw `_id`
 and collection names are interpolated raw into key prefixes, an indexed
 `where` over such ids returned the wrong rows, a stale-marker delete for one
 id de-indexed its twin, and `Users` / `users` shared one collection. S3,
-Minio, R2, and `MemoryStorage` were never affected; Linux filesystems are
-byte-exact, so this only diverged on macOS dev machines.
+Minio, and `MemoryStorage` were never affected; Linux filesystems are
+byte-exact, so this only diverged on macOS dev machines. R2 folds Unicode
+normalization (not case) the same way; that is addressed by requiring NFC
+`_id`s.
 
 Keys are now byte-exact on every filesystem. Each key segment is escaped on
 disk into a case- and normalization-invariant alphabet (`A` is stored as

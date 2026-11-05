@@ -33,7 +33,8 @@ export interface ConformanceOptions {
    * objects" case is skipped. Defaults to `true`; every in-tree adapter
    * keeps keys byte-exact — `LocalFsStorage` included, which escapes
    * keys on disk so a case- or normalization-folding filesystem cannot
-   * merge them.
+   * merge them. Real R2 does not: it folds canonically-equivalent keys
+   * (see docs/spec/storage-compatibility.md "Key namespace").
    */
   readonly caseSensitiveKeys?: boolean;
   /** Override the default key arbitrary. Default: printable-ASCII non-slash, len 1..32. */

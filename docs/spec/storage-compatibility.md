@@ -60,11 +60,22 @@ Unicode normalization (NFC `é` / NFD `e` + U+0301). A backend MUST NOT
 fold either. This is load-bearing, not cosmetic: index marker keys embed
 the caller's raw `_id`, and collection, app, and tenant names are
 interpolated raw into key prefixes, so a folding store silently merges
-rows and collections. S3, Minio, and R2 are byte-exact natively.
+rows and collections. S3 and Minio are byte-exact natively.
 `LocalFsStorage` escapes each key segment into a fold-invariant alphabet
 on disk so it stays byte-exact on case- and normalization-folding
 filesystems such as default macOS APFS. (Conformance: _"keys differing
 only by case or Unicode normalization are distinct objects"_.)
+
+**R2 folds canonical equivalence.** Over the S3 API, R2 stores keys that
+are canonically equivalent (NFC `é` and NFD `e` + U+0301, `Å` U+00C5 and
+U+212B ANGSTROM SIGN) as one object: a second put overwrites the first,
+and `list` returns the most recently written spelling. It keeps case and
+compatibility variants (`A` / `a`, `ﬁ` / `fi`, `Ａ` / `A`) distinct. The
+kernel copes by requiring every written `_id` to be NFC
+(`packages/server/src/doc-id.ts`), so two `_id`s are canonically
+equivalent only if they are the same string. Collection, app, and tenant
+names have no NFC rule yet, so canonically-equivalent names share one
+prefix on R2.
 
 The dot-segment rule is a **portability invariant, not a vendor quirk.**
 RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant
