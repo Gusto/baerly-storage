@@ -7,7 +7,7 @@ import { assertPathSegment } from "./path-segment.ts";
  * release stays readable and deletable, so it is migrated by copy.
  */
 const DOC_ID_NFC_RESOLUTION =
-  'Pass id.normalize("NFC") as the _id. A row already stored under a non-NFC _id can still be read and deleted: insert a copy under the NFC id, then delete the original.';
+  'Pass id.normalize("NFC") for a new _id. To migrate a stored non-NFC row, insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit _id for a UUID), then delete the original. On R2, copying to the normalized original id before deleting it would remove the copy\'s index markers.';
 
 /**
  * Guard an `_id` a write is about to store a row under: an insert, a

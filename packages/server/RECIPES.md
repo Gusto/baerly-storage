@@ -55,7 +55,10 @@ canonically-equivalent keys as one object, so two such ids would share an
 index marker.
 **Fix:** pass `id.normalize("NFC")`. A row an earlier release stored under
 a non-NFC `_id` still reads and deletes; to keep it writable, insert a copy
-under the NFC id, then delete the original.
+under a fresh NFC id that is not canonically equivalent to the original
+(for example, omit `_id` for a UUID), then delete the original. On R2,
+copying to the normalized original id before deleting it would remove the
+copy's index markers.
 
 ### Resending an auto-ID insert over HTTP (`mintedId`)
 
