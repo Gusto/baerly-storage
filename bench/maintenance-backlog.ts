@@ -165,7 +165,7 @@ interface ProfileCase {
   readonly profile: MaintenanceProfile;
   /**
    * The phase policy this host runs in PRODUCTION for the in-band tick —
-   * CF-free is `"single"` (worker.ts: a CPU-killable free isolate does ONE
+   * CF-free is `"single"` (worker.ts: a CPU-limited free isolate does ONE
    * of fold/GC per request), Node is `"both"` (server.ts). The bench must
    * use each host's real policy or it measures a schedule that doesn't ship.
    */

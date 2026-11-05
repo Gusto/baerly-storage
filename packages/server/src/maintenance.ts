@@ -303,7 +303,7 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
 /**
  * Tuning profile for the 10,000-subrequest Cloudflare paid-tier budget,
  * derived from {@link MAINTENANCE_PROFILE_CF_PAID} (one source of truth).
- * Keeps the single-phase CPU-killable shape but affords Node-tier per-pass
+ * Keeps the single-phase CF-free shape but affords Node-tier per-pass
  * fold, GC classification, and sweep budgets — comfortably within the 10k
  * cap. Exact per-phase op counts live in {@link CLOUDFLARE_FREE_TIER}.
  *
@@ -331,9 +331,9 @@ export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = profileToScheduledOption
 // EXISTING `compact()` / `runGc()` primitives. The fold-viability
 // decision is made HERE (a pre-fold projection over `current.json`'s
 // `snapshot_bytes` / `snapshot_rows`) rather than inside `compact()`:
-// on a CPU-killable Cloudflare isolate the kill would land mid-rebuild,
-// before any post-rebuild size check could fire, so the only safe gate
-// is one that never starts an over-ceiling fold.
+// on a CPU-limited Cloudflare isolate an invocation terminated mid-rebuild
+// would never reach a post-rebuild size check, so the gate is one that
+// never starts an over-ceiling fold.
 // =====================================================================
 
 /**
@@ -354,7 +354,7 @@ export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: nu
  * pass the writer-observed tail and scheduled callers can pass a
  * probe-discovered true tail. Cold-start (no mean yet) falls back to
  * {@link MAINTENANCE_COLD_START_ENTRY_BYTES}, never 0 (see that constant).
- * TRIGGER-only — structurally barred from `foldViable` (the exact-bytes CPU-kill
+ * TRIGGER-only — structurally barred from `foldViable` (the exact-bytes fold
  * ceiling).
  */
 export const estimateTailBytes = (current: CurrentJson, observedTail: number): number =>
@@ -461,8 +461,8 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
     f.dimension === "bytes"
       ? `On Workers Paid set BAERLY_MAINTENANCE_PROFILE=cf-paid (C=${MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes}); ` +
         `on paid Cloudflare / Node you can also raise BAERLY_MAINTENANCE_MAX_FOLD_BYTES — but on ` +
-        `Cloudflare a cap above what a single isolate can fold makes folds get CPU-killed ` +
-        `mid-flight and silently not land. Otherwise, move to a database service (D1 / Postgres).`
+        `Cloudflare a cap above the configured default may exceed an invocation's CPU or ` +
+        `memory resources, so such folds may not land. Otherwise, move to a database service (D1 / Postgres).`
       : `E has no env override, and BAERLY_MAINTENANCE_MAX_FOLD_BYTES does not apply to rows. ` +
         `On Cloudflare, move to Workers Paid and set BAERLY_MAINTENANCE_PROFILE=cf-paid ` +
         `(E=${MAINTENANCE_PROFILE_CF_PAID.maxFoldRows}); on Node (E=${MAINTENANCE_PROFILE_NODE.maxFoldRows}) ` +
@@ -480,7 +480,7 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
 /**
  * The write-tick maintenance runner: a bounded, single-attempt
  * composition of {@link compact} and {@link runGc} for one collection,
- * sized to fit a CPU-killable Cloudflare free-tier isolate by default.
+ * sized by default to a conservative Cloudflare free-tier CPU budget.
  *
  * INVARIANT: a {@link MaintenanceProfile} changes only maintenance rate +
  * defer threshold — never data/API/query/wire/correctness; reads stay pure.
@@ -598,7 +598,7 @@ export const runBoundedMaintenance = async (
 
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
     const gate1 = ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact;
-    // SAFETY ceiling (CF CPU-kill guard) — EXACT snapshot_bytes/rows, NEVER the estimate.
+    // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
     // Conservative by design: the row arm gates on POTENTIAL post-fold rows
     // (`snapshotRows + maxFoldEntriesPerPass`), so an update/delete-only fold
     // that would actually land under E can be deferred near the ceiling. We

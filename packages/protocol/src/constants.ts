@@ -483,7 +483,7 @@ export const MAINTENANCE_COLD_START_ENTRY_BYTES: number = 128;
  * Per-tick GC budget — these are DEFAULTS (= the most-constrained tier, CF free, reusing
  * the TESTED `CLOUDFLARE_FREE_TIER` values in maintenance.ts / maintenance-budget.test.ts).
  * The adapter THREADS per-tier overrides into the context (§8.4); Node/CF-paid raise them.
- * NOT universal constants — a Node-sized value here would silently kill every CF-free fold
+ * NOT universal constants — a Node-sized value here would exceed the CF-free budget on every fold
  * (round-4 Tier-1). `gcMaxMarks` bounds each LIST classification window and the resulting
  * ledger growth; `gcMaxSweeps` bounds DELETEs. Cadence is BOUNDARY-CROSSING (§3.1), not
  * modulo.
@@ -606,8 +606,10 @@ export const NODE_MAINTENANCE_GC_MAX_SWEEPS: number = 100;
 export const NODE_MAINTENANCE_GC_INTERVAL: number = 2;
 
 /**
- * SNAPSHOT-rebuild ceiling `C` (the unsliceable axis — Decision 3a), memory. Default sized
- * ~5.5 ms under CF-free ~10 ms. Raise via BAERLY_MAINTENANCE_MAX_FOLD_BYTES on capable
+ * SNAPSHOT-rebuild ceiling `C` (the unsliceable axis — Decision 3a), memory. A
+ * conservative configured budget for the CF-free ~10 ms CPU limit; the ~5.5 ms
+ * rebuild-time figure behind it is a sizing estimate, not an observed platform
+ * limit. Raise via BAERLY_MAINTENANCE_MAX_FOLD_BYTES on capable
  * hosts. Auto-maintained snapshot ceiling S_max = C. NOT snapshot+tail (tail is sliced).
  *
  * @see docs/spec/scale-ceilings.md
@@ -621,15 +623,17 @@ export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
  * rebuild in ONE fold under the ~10 ms CPU budget. This is the WARN
  * THRESHOLD, not a runtime cap: an operator who raises
  * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` ABOVE this value on a free Worker
- * risks a snapshot rebuild that exceeds the ~10 ms CPU limit and gets
- * CPU-killed MID-REBUILD — the CAS never lands, so the fold silently
- * never advances `log_seq_start` and the tail grows unbounded.
+ * is past the conservative budget, and a larger snapshot rebuild may
+ * exceed an invocation's CPU or memory resources. If an invocation is
+ * terminated mid-rebuild the CAS does not land, so that fold does not
+ * advance `log_seq_start`. This value is a configured budget; no
+ * particular snapshot size is established to cause termination.
  *
- * Sized at 2× {@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT}. The default
- * (512 KiB) rebuilds in ~5.5 ms under the CF-free ~10 ms budget
- * (constants.ts default JSDoc); linear-extrapolating, ~1 MiB is the
- * point where one-shot rebuild fills the budget with little margin, so
- * anything strictly larger is no longer free-tier-safe. On CF **paid**
+ * Sized at 2× {@link MAINTENANCE_MAX_FOLD_BYTES_DEFAULT}. The ~5.5 ms
+ * rebuild estimate for the default (512 KiB) and the linear
+ * extrapolation to ~1 MiB are sizing estimates, not observed platform
+ * limits; anything strictly larger is simply outside the budget
+ * this constant documents. On CF **paid**
  * (raised CPU limits), Node, or once §11 chunked snapshots land, a
  * larger ceiling is fine — hence this is a one-time `console.warn` at
  * handler init, NOT a hard rejection.
@@ -649,8 +653,9 @@ export const CF_FREE_MAX_SAFE_FOLD_BYTES: number = 1024 * 1024;
  * This is the **cf-free** value and the shared default. `pnpm bench:fold-ceiling`
  * measures 2048 rows at ~1.5 ms against the ~10 ms free-tier budget (a ~6.6×
  * margin), and the row axis does not reach 10 ms until ~16,384 rows. The value
- * stays at 2048 because overrun on a free isolate is CPU-killed MID-REBUILD and
- * strands the `current.json` CAS — see {@link CF_FREE_MAX_SAFE_FOLD_BYTES}. The
+ * stays at 2048 as a conservative configured budget: a fold that overruns a free
+ * isolate's CPU may be terminated before the `current.json` CAS lands — see
+ * {@link CF_FREE_MAX_SAFE_FOLD_BYTES}. The
  * larger hosts no longer inherit it; see {@link CF_PAID_MAINTENANCE_MAX_FOLD_ROWS}
  * and {@link NODE_MAINTENANCE_MAX_FOLD_ROWS}.
  *
@@ -671,8 +676,8 @@ export const MAINTENANCE_MAX_FOLD_ROWS: number = 2048;
  * value.
  *
  * The margin is deliberately tight because overrun is NOT graceful here: an
- * isolate OOM mid-fold strands the `current.json` CAS exactly like a CF-free
- * CPU kill, so the fold silently never advances `log_seq_start`.
+ * isolate OOM mid-fold would leave the `current.json` CAS unpublished, so that
+ * fold would not advance `log_seq_start`.
  *
  * @see docs/spec/scale-ceilings.md
  * @see bench/measurement/fold-ceiling-probe.ts
@@ -764,7 +769,7 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
 
 /**
  * CF-paid profile — opt-in via `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A paid
- * isolate keeps the CPU-killable single-phase shape but has the 10,000-
+ * isolate keeps the CF-free single-phase shape (one phase per request) but has the 10,000-
  * subrequest budget (vs free's 50), so it reuses the `NODE_MAINTENANCE_*`
  * per-pass caps.
  *
@@ -800,7 +805,7 @@ export const MAINTENANCE_WARN_INTERVAL_WRITES: number = 1000;
 /**
  * Rate-limit for the maintenance tick's `tail_hint` advance on every
  * path where no fold published the hint (originally HR-2, the DEFER
- * path). When the fold defers (snapshot over the CF-CPU-kill ceiling),
+ * path). When the fold defers (snapshot over the configured fold ceiling),
  * when `BAERLY_MAINTENANCE_DISABLE` suppresses both phases, or when a
  * tick runs only GC, the compactor never stamps `tail_hint` via its
  * Step-7 fold CAS — so the gap `(true_tail − tail_hint)` would grow

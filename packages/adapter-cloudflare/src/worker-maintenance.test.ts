@@ -169,7 +169,7 @@ describe("cfMaintenanceDispatch", () => {
     expect(m.disabled).toBeUndefined();
     expect(m.maxFoldBytes).toBeUndefined();
 
-    // CF free-tier shape: single phase per tick (a CPU-killable isolate
+    // CF free-tier shape: single phase per tick (a CPU-limited isolate
     // does ONE of fold/GC per request), and the TESTED CF-free caps.
     expect(m.options?.phasesPerTick).toBe("single");
     expect(m.options?.profile?.maxFoldEntriesPerPass).toBe(WRITE_TICK_FOLD_ENTRIES_PER_PASS);
@@ -483,8 +483,8 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
     );
     expect(maintWarns).toHaveLength(1);
     const msg = String(maintWarns[0]![0]);
-    // Names the risk: a too-large fold gets CPU-killed mid-rebuild and
-    // silently never lands.
+    // Names the risk: a too-large fold may exceed the CPU limit and
+    // not land.
     expect(msg.toLowerCase()).toContain("cpu");
     // Names the remedies.
     expect(msg.toLowerCase()).toContain("paid");
