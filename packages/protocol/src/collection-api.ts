@@ -161,8 +161,11 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         (`null` included). A patch cannot re-key or strip a row;
    *         omit `_id`, or pass the row's own `_id`. Also thrown when
    *         the row's `_id` is not NFC (stored by an earlier release):
-   *         such a row can be read and deleted but not updated; insert a
-   *         copy under `id.normalize("NFC")`, then delete it.
+   *         such a row can be read and deleted but not updated. Insert a
+   *         copy under a fresh NFC id that is not canonically equivalent
+   *         to the original (for example, omit `_id` for a UUID), then
+   *         delete the original. On R2, using the normalized original id
+   *         would let that delete remove the copy's index markers.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id`. Repair it with
    *         `replace(id, doc)`.
