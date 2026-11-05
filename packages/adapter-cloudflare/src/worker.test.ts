@@ -16,6 +16,7 @@ import {
   SHARED_SECRET_MISSING_MESSAGE,
   type Verifier,
 } from "@baerly/protocol";
+import { getCurrentContext } from "@baerly/server/observability";
 import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
@@ -56,6 +57,30 @@ const makeScheduledEvent = (): ScheduledController => ({
 });
 
 const makeNoopCtx = (): ExecutionContext => mockExecutionContext();
+
+describe("baerlyWorker ambient context", () => {
+  test("the verifier runs inside the request's observability context", async () => {
+    const bucket = getBinding();
+    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    const seen: Array<ReturnType<typeof getCurrentContext>> = [];
+    const verifier: Verifier = async () => {
+      seen.push(getCurrentContext());
+      return null;
+    };
+    const handler = baerlyWorker(() => ({ verifier, config: testConfig }));
+    const res = await handler.fetch!(
+      new Request("https://x/v1/c/things", {
+        headers: { "x-request-id": "req-verifier-ctx" },
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      makeNoopCtx(),
+    );
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeDefined();
+    expect(seen[0]!.request_id).toBe("req-verifier-ctx");
+  });
+});
 
 describe("baerlyWorker scheduled", () => {
   test("no-ops when `options.scheduled` is unset", async () => {
@@ -328,9 +353,11 @@ describe("baerlyWorker observability", () => {
     expect(body.error?.code).toBe("Unauthorized");
     expect(body.error?.message).toBe("Missing or invalid Authorization header");
 
-    const line = findCanonical(records, "http");
-    expect(line).toBeDefined();
-    const props = line!.properties as Record<string, unknown>;
+    const lines = records.filter(
+      (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
+    );
+    expect(lines).toHaveLength(1);
+    const props = lines[0]!.properties as Record<string, unknown>;
     expect(props["status"]).toBe(401);
     expect(props["outcome"]).toBe("error");
     expect(props["method"]).toBe("GET");
