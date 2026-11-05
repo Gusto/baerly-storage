@@ -72,7 +72,7 @@ export const useMutation = <
             : new BaerlyError(
                 "MutationFailed",
                 error instanceof Error ? error.message : String(error),
-                error,
+                { cause: error },
               );
         if (mountedRef.current) {
           setLastError(be);

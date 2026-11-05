@@ -28,7 +28,7 @@ describe("errorEnvelope", () => {
   });
 
   test("resolution is included when provided", () => {
-    const env = errorEnvelope("InvalidConfig", "x", undefined, "do X");
+    const env = errorEnvelope("InvalidConfig", "x", { resolution: "do X" });
     expect(env.error.resolution).toBe("do X");
   });
 
@@ -44,7 +44,7 @@ describe("errorEnvelope", () => {
   });
 
   test("a site-provided resolution wins over the per-code default", () => {
-    expect(errorEnvelope("WriteConflict", "x", undefined, "custom fix").error.resolution).toBe(
+    expect(errorEnvelope("WriteConflict", "x", { resolution: "custom fix" }).error.resolution).toBe(
       "custom fix",
     );
   });
@@ -55,10 +55,9 @@ describe("errorEnvelope", () => {
   });
 
   test("_id is carried only for AmbiguousCommit", () => {
-    // issues, resolution, _id
-    const args = [undefined, undefined, "row-7"] as const;
-    expect(errorEnvelope("AmbiguousCommit", "x", ...args).error._id).toBe("row-7");
-    expect(errorEnvelope("WriteConflict", "x", ...args).error).not.toHaveProperty("_id");
+    const options = { _id: "row-7" };
+    expect(errorEnvelope("AmbiguousCommit", "x", options).error._id).toBe("row-7");
+    expect(errorEnvelope("WriteConflict", "x", options).error).not.toHaveProperty("_id");
     expect(errorEnvelope("AmbiguousCommit", "x").error).not.toHaveProperty("_id");
   });
 });

@@ -46,7 +46,7 @@ export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schem
  * published name); protocol is an implementation detail of this
  * package and the adapter packages.
  *
- * - {@link BaerlyError} / {@link BaerlyErrorCode}: every failure
+ * - {@link BaerlyError} / {@link BaerlyErrorCode} / {@link BaerlyErrorOptions}: every failure
  *   thrown through this surface is a `BaerlyError`; consumers
  *   branch on `error.code` rather than `instanceof` chains.
  * - {@link Query} / {@link Collection}: the locked predicate-AST
@@ -70,6 +70,7 @@ export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schem
 export {
   BaerlyError,
   type BaerlyErrorCode,
+  type BaerlyErrorOptions,
   type DocumentData,
   MemoryStorage,
   type Query,

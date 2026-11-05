@@ -51,7 +51,7 @@ export const assertStorageReachable = async (
       "NetworkError",
       "Storage readiness check failed: the backend could not be reached. Verify the bucket name, " +
         `region/endpoint, and credentials. Cause: ${error instanceof Error ? error.message : String(error)}`,
-      error,
+      { cause: error },
     );
   }
   if (!result.ok) {

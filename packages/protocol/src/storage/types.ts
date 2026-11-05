@@ -45,7 +45,9 @@ export interface Storage {
    * writer resolves `NetworkError` by reading the slot back. A create-only
    * put's `NetworkError` whose `cause.notApplied` is `true` must guarantee
    * that no attempt of that call was applied (for example, every attempt was
-   * throttled); the writer then skips the readback.
+   * throttled); the writer then skips the readback. Build it with
+   * `new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`:
+   * the detail object goes under `cause`, never as the options object.
    */
   put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult>;
 

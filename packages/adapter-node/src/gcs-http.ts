@@ -96,7 +96,7 @@ export class GcsHttpStorage implements Storage {
         throw error;
       }
       const msg = error instanceof Error ? error.message : String(error);
-      throw new BaerlyError("NetworkError", msg, error);
+      throw new BaerlyError("NetworkError", msg, { cause: error });
     }
   }
 

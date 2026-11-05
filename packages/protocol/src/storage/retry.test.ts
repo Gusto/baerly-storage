@@ -28,13 +28,16 @@ const recordingSleep = () => {
   };
 };
 
-const transient = () => new BaerlyError("NetworkError", "500", { status: 500 });
-const throttled = () => new BaerlyError("NetworkError", "429", { status: 429, throttled: true });
+const transient = () => new BaerlyError("NetworkError", "500", { cause: { status: 500 } });
+const throttled = () =>
+  new BaerlyError("NetworkError", "429", { cause: { status: 429, throttled: true } });
 const hinted = (seconds: number) =>
   new BaerlyError("NetworkError", "429", {
-    status: 429,
-    throttled: true,
-    retryAfterSeconds: seconds,
+    cause: {
+      status: 429,
+      throttled: true,
+      retryAfterSeconds: seconds,
+    },
   });
 
 // Just under 1, so full jitter lands at (almost) its ceiling.

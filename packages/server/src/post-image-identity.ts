@@ -2,7 +2,7 @@ import { BaerlyError, type DocumentData } from "@baerly/protocol";
 import type { CodecCode, CodecFail } from "./snapshot-codec.ts";
 
 const throwBaerlyError: CodecFail = (code, message, cause) => {
-  throw new BaerlyError(code, `post-image: ${message}`, cause);
+  throw new BaerlyError(code, `post-image: ${message}`, { cause });
 };
 
 /**

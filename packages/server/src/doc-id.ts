@@ -24,11 +24,7 @@ export const insertAlreadyExists = (collection: string, docId: string): BaerlyEr
   new BaerlyError(
     "AlreadyExists",
     `insert: _id ${JSON.stringify(docId)} already exists in collection ${JSON.stringify(collection)}`,
-    undefined,
-    undefined,
-    undefined,
-    CODE_RESOLUTIONS.AlreadyExists,
-    docId,
+    { resolution: CODE_RESOLUTIONS.AlreadyExists, _id: docId },
   );
 
 /**

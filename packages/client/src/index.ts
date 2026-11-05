@@ -10,6 +10,7 @@ export type { Fetcher } from "./request.ts";
 export { BaerlyError } from "@baerly/protocol";
 export type {
   BaerlyErrorCode,
+  BaerlyErrorOptions,
   DocumentData,
   LogEntry,
   OrderSpec,

@@ -155,11 +155,9 @@ export const loadSnapshotAsMap = async (
   try {
     parsed = decodeJsonBytes(got.body);
   } catch (error) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `compact: snapshot ${key} body is not valid JSON`,
-      error,
-    );
+    throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not valid JSON`, {
+      cause: error,
+    });
   }
   if (parsed === null || typeof parsed !== "object") {
     throw new BaerlyError("InvalidResponse", `compact: snapshot ${key} body is not an object`);

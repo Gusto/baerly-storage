@@ -132,7 +132,7 @@ export const retryStorageCall = async <T>(
           throw new BaerlyError(
             "NetworkError",
             `${error.message} (an earlier attempt of this conditional create may have landed)`,
-            error,
+            { cause: error },
           );
         }
         throw error;
@@ -145,8 +145,10 @@ export const retryStorageCall = async <T>(
       if (attempt >= retries) {
         if (opts.conditionalCreate === true && !uncertain && error instanceof BaerlyError) {
           throw new BaerlyError(error.code, error.message, {
-            ...(error.cause as object),
-            notApplied: true,
+            cause: {
+              ...(error.cause as object),
+              notApplied: true,
+            },
           });
         }
         throw error;

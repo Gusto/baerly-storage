@@ -190,12 +190,12 @@ class R2BindingStorageImpl implements Storage {
           }
           const msg = error instanceof Error ? error.message : String(error);
           if (/auth|permission|forbidden/i.test(msg)) {
-            throw new BaerlyError("AccessDenied", `${op}: ${msg}`, error);
+            throw new BaerlyError("AccessDenied", `${op}: ${msg}`, { cause: error });
           }
           if (/not.*found|no.*such.*bucket/i.test(msg)) {
-            throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, error);
+            throw new BaerlyError("InvalidConfig", `${op}: ${msg}`, { cause: error });
           }
-          throw new BaerlyError("NetworkError", `${op}: ${msg}`, error);
+          throw new BaerlyError("NetworkError", `${op}: ${msg}`, { cause: error });
         }
       },
       { conditionalCreate },

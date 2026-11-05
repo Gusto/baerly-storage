@@ -108,7 +108,7 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
         throw new BaerlyError(
           "SchemaError",
           `index ${def.name}.predicate is invalid: ${error.message}`,
-          error,
+          { cause: error },
         );
       }
       throw error;

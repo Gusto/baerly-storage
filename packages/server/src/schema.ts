@@ -69,7 +69,6 @@ export const validateOrThrow = async <TIn, TOut>(
   throw new BaerlyError(
     "SchemaError",
     `${context.collection}.${context.verb}: ${issues.length} field${issues.length === 1 ? "" : "s"} failed validation: ${summary}`,
-    undefined,
-    issues,
+    { issues },
   );
 };

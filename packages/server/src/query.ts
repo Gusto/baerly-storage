@@ -538,10 +538,7 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
       new BaerlyError(
         "InvalidConfig",
         `Query.update: a patch cannot change _id (row ${JSON.stringify(docId)}); omit _id from the patch`,
-        undefined,
-        undefined,
-        undefined,
-        PATCH_ID_RESOLUTION,
+        { resolution: PATCH_ID_RESOLUTION },
       ),
     );
   }

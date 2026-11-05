@@ -295,7 +295,9 @@ describe("Writer create fate", () => {
       ): Promise<StoragePutResult> {
         if (isLogCreate(key, opts)) {
           this.attempts.push(key);
-          throw new BaerlyError("NetworkError", "throttled", { status: 429, notApplied: true });
+          throw new BaerlyError("NetworkError", "throttled", {
+            cause: { status: 429, notApplied: true },
+          });
         }
         return super.put(key, body, opts);
       }

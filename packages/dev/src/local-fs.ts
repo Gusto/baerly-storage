@@ -194,7 +194,7 @@ export class LocalFsStorage implements Storage {
       throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage.get(${key}): ${(error as Error).message}`,
-        error,
+        { cause: error },
       );
     }
     const etag = etagOf(body);
@@ -252,7 +252,7 @@ export class LocalFsStorage implements Storage {
         throw new BaerlyError(
           "InvalidResponse",
           `LocalFsStorage.put(${key}): ${(error as Error).message}`,
-          error,
+          { cause: error },
         );
       } finally {
         // Best-effort cleanup — a failed write may leave a partial temp,
@@ -294,7 +294,7 @@ export class LocalFsStorage implements Storage {
       throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage.put(${key}): ${(error as Error).message}`,
-        error,
+        { cause: error },
       );
     } finally {
       // Best-effort cleanup, mirroring the create-if-absent branch. On
@@ -326,7 +326,7 @@ export class LocalFsStorage implements Storage {
         throw new BaerlyError(
           "InvalidResponse",
           `LocalFsStorage.delete(${key}): ${(error as Error).message}`,
-          error,
+          { cause: error },
         );
       }
     });
@@ -413,7 +413,7 @@ export class LocalFsStorage implements Storage {
       throw new BaerlyError(
         "InvalidResponse",
         `LocalFsStorage: cannot canonicalize root (${this.#root}): ${(error as Error).message}`,
-        error,
+        { cause: error },
       );
     }
   }
@@ -488,7 +488,7 @@ export class LocalFsStorage implements Storage {
         throw new BaerlyError(
           "InvalidResponse",
           `LocalFsStorage.list(${key}): ${(error as Error).message}`,
-          error,
+          { cause: error },
         );
       }
       yield { key, etag: etagOf(buf) };
@@ -526,11 +526,9 @@ export class LocalFsStorage implements Storage {
       ) {
         return null;
       }
-      throw new BaerlyError(
-        "InvalidResponse",
-        `LocalFsStorage.list: ${(error as Error).message}`,
-        error,
-      );
+      throw new BaerlyError("InvalidResponse", `LocalFsStorage.list: ${(error as Error).message}`, {
+        cause: error,
+      });
     }
   }
 
@@ -653,7 +651,7 @@ const readFormatMarker = async (marker: string): Promise<boolean> => {
     throw new BaerlyError(
       "InvalidResponse",
       `LocalFsStorage: cannot read ${marker}: ${(error as Error).message}`,
-      error,
+      { cause: error },
     );
   });
   if (body === null) {
@@ -664,7 +662,9 @@ const readFormatMarker = async (marker: string): Promise<boolean> => {
     encoding = (JSON.parse(new TextDecoder().decode(body)) as { key_encoding?: unknown })
       .key_encoding;
   } catch (error) {
-    throw new BaerlyError("InvalidResponse", `LocalFsStorage: ${marker} is not valid JSON`, error);
+    throw new BaerlyError("InvalidResponse", `LocalFsStorage: ${marker} is not valid JSON`, {
+      cause: error,
+    });
   }
   if (encoding !== KEY_ENCODING) {
     throw new BaerlyError(
@@ -693,7 +693,7 @@ const stampFormatMarker = async (marker: string): Promise<void> => {
     throw new BaerlyError(
       "InvalidResponse",
       `LocalFsStorage: cannot write ${marker}: ${(error as Error).message}`,
-      error,
+      { cause: error },
     );
   } finally {
     await rm(tmp, { force: true }).catch(() => {});

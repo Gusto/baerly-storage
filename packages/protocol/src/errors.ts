@@ -243,6 +243,37 @@ export const CLIENT_RUNTIME_CODES: ReadonlySet<BaerlyErrorCode> = new Set<Baerly
 ]);
 
 /**
+ * Optional fields for {@link BaerlyError}, the third constructor argument.
+ * Each field lands on the same-named property of the error; an omitted
+ * field leaves that property `undefined`.
+ */
+export interface BaerlyErrorOptions {
+  /**
+   * The underlying throwable, or a structured detail object. Kept on
+   * `error.cause`. A `Storage` adapter reports `cause.notApplied` /
+   * `cause.throttled` this way; see the `Storage.put` contract.
+   */
+  readonly cause?: unknown;
+  /** Field-path issues; set only with `code: "SchemaError"`. Lands on {@link BaerlyError.issues}. */
+  readonly issues?: ReadonlyArray<{
+    readonly path: ReadonlyArray<string | number>;
+    readonly message: string;
+  }>;
+  /** Raw HTTP status; set only by the client-side wire decoder. Lands on {@link BaerlyError.status}. */
+  readonly status?: number;
+  /** Canonical corrective action. Lands on {@link BaerlyError.resolution}. */
+  readonly resolution?: string;
+  /** The affected row's `_id`; set only with `code: "AmbiguousCommit"`. Lands on {@link BaerlyError._id}. */
+  readonly _id?: string;
+  /**
+   * Never set. This object is not an `Error`: `Error` requires `message`, so
+   * this field makes `new BaerlyError(code, msg, err)` fail to compile. To
+   * chain an error, pass `{ cause: err }`.
+   */
+  readonly message?: never;
+}
+
+/**
  * The single error class thrown by baerly-storage. Discriminate by `code`, not
  * `instanceof`: the code string survives `JSON.stringify` round-trips
  * across Worker / iframe / postMessage realm boundaries, where each
@@ -320,22 +351,24 @@ export class BaerlyError extends Error {
     return isRetriableCode(this.code);
   }
 
-  constructor(
-    code: BaerlyErrorCode,
-    message: string,
-    cause?: unknown,
-    issues?: ReadonlyArray<{
-      readonly path: ReadonlyArray<string | number>;
-      readonly message: string;
-    }>,
-    status?: number,
-    resolution?: string,
-    _id?: string,
-  ) {
+  /**
+   * `code` and `message` are positional; everything else goes in `options`,
+   * as with `new Error(message, { cause })`. Passing an `Error` (or any
+   * non-options value) as the third argument does not compile; the
+   * options object is where `cause` goes.
+   *
+   * @example
+   * ```ts
+   * throw new BaerlyError("NetworkError", "PUT failed", { cause: err });
+   * throw new BaerlyError("AmbiguousCommit", "commit outcome unknown", { _id: "t-1" });
+   * ```
+   */
+  constructor(code: BaerlyErrorCode, message: string, options?: BaerlyErrorOptions) {
     super(message);
     this.name = "BaerlyError";
     this.code = code;
-    this.cause = cause;
+    this.cause = options?.cause;
+    const { issues, status, resolution, _id } = options ?? {};
     // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (issues !== undefined) {
       this.issues = issues;
