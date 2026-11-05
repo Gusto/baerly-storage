@@ -31,7 +31,7 @@ import {
   WRITE_TICK_GC_MAX_MARKS,
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
-import { configureObservability } from "@baerly/server/observability";
+import { configureObservability, getCurrentContext } from "@baerly/server/observability";
 import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
@@ -71,6 +71,29 @@ describe("createFetchHandler observability opt-out", () => {
     createFetchHandler({ app: "t", storage: new MemoryStorage(), verifier });
     await drain();
     expect(getConfig()).not.toBeNull();
+  });
+});
+
+describe("createFetchHandler verifier context", () => {
+  test("the verifier runs inside the request's observability context", async () => {
+    const seen: Array<ReturnType<typeof getCurrentContext>> = [];
+    const verifier: Verifier = async () => {
+      seen.push(getCurrentContext());
+      return null;
+    };
+    const handler = createFetchHandler({
+      app: "t",
+      storage: new MemoryStorage(),
+      verifier,
+      observability: false,
+    });
+    const res = await handler(
+      new Request("http://x/v1/c/things", { headers: { "x-request-id": "req-verifier-ctx" } }),
+    );
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeDefined();
+    expect(seen[0]!.request_id).toBe("req-verifier-ctx");
   });
 });
 
@@ -521,11 +544,11 @@ describe("createFetchHandler", () => {
     expect(body.error?.code).toBe("Unauthorized");
     expect(body.error?.message).toBe("Missing or invalid Authorization header");
 
-    const line = records.find(
+    const lines = records.filter(
       (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
     );
-    expect(line).toBeDefined();
-    const props = line!.properties as Record<string, unknown>;
+    expect(lines).toHaveLength(1);
+    const props = lines[0]!.properties as Record<string, unknown>;
     expect(props["status"]).toBe(401);
     expect(props["outcome"]).toBe("error");
     expect(props["method"]).toBe("GET");
