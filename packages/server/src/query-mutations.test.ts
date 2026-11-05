@@ -39,6 +39,7 @@ import {
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
 import { seedLogEntry } from "../../../tests/fixtures/log-state.ts";
+import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { runInsert } from "./query.ts";
 
@@ -506,6 +507,19 @@ for (const [label, after] of corruptStoredRows) {
       await expect(t.where({}).all()).resolves.toEqual([{ _id: "a", k: 11 }]);
       await expect(t.delete("a")).resolves.toEqual({ deleted: 1 });
       await expect(t.where({}).all()).resolves.toEqual([]);
+    });
+
+    test("a fold over the corrupt entry and its repair publishes the repaired row", async () => {
+      const t = db.collection(COLL) as Collection<DocumentData>;
+      await t.replace("a", { k: 10 });
+      await t.update("a", { k: 11 });
+      const res = await compact(
+        { storage, currentJsonKey: currentJsonKey() },
+        { minEntriesToCompact: 1 },
+      );
+      expect(res.written).toBe(true);
+      await expect(t.where({}).all()).resolves.toEqual([{ _id: "a", k: 11 }]);
+      await expect(t.update("a", { k: 12 })).resolves.toEqual({ modified: 1 });
     });
   });
 }
