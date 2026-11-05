@@ -487,6 +487,9 @@ describe("randomized (Db + Writer)", () => {
   for (const variant of variants) {
     describe(variant.label, () => {
       let networkTwiddler: ReturnType<typeof setInterval> | undefined;
+      // The twiddler's latest Toxiproxy toggle, so healing can wait for an
+      // in-flight "offline" POST before re-enabling the proxy.
+      let lastToggle: Promise<void> = Promise.resolve();
 
       beforeEach(async () => {
         await setOnline(true);
@@ -494,16 +497,32 @@ describe("randomized (Db + Writer)", () => {
         // injectable network shim, so the twiddler is a no-op for them.
         if (variant.label === "node-minio") {
           networkTwiddler = setInterval(() => {
-            void setOnline(Math.random() > 0.5);
+            lastToggle = setOnline(Math.random() > 0.5);
           }, 100);
         }
       });
 
+      /**
+       * Heal the network before a cascade's final verification (the Jepsen
+       * shape: faults during the workload, verification on a healed
+       * network). A multi-request verification read cannot reliably fit a
+       * retry budget under unbounded dead windows; once healed, it reads
+       * durable storage directly, so every write that ran under faults is
+       * still checked. No-op for variants without the twiddler.
+       */
+      const healNetwork = async (): Promise<void> => {
+        if (networkTwiddler === undefined) {
+          return;
+        }
+        clearInterval(networkTwiddler);
+        networkTwiddler = undefined;
+        await lastToggle;
+        await setOnline(true);
+      };
+
       afterEach(
         async () => {
-          if (networkTwiddler) {
-            clearInterval(networkTwiddler);
-          }
+          await healNetwork();
           await setOnline(true);
           if (variant.cleanup) {
             await variant.cleanup();
@@ -533,6 +552,7 @@ describe("randomized (Db + Writer)", () => {
             // additional check verifies the on-storage key set
             // tracks the live doc set under the filter.
             injectFilteredIndex: true,
+            healNetwork,
           });
         },
       );
@@ -549,6 +569,7 @@ describe("randomized (Db + Writer)", () => {
             storages,
             pollTickMs: variant.pollTickMs,
             docIds,
+            healNetwork,
           });
 
           // (a) Per-doc consistency: for each docId, the observed
@@ -622,6 +643,7 @@ describe("randomized (Db + Writer)", () => {
             storages,
             // Only Minio runs behind the Toxiproxy fault twiddler.
             faultInjection: variant.label === "node-minio",
+            healNetwork,
           });
         },
       );
@@ -667,7 +689,7 @@ describe("randomized (Db + Writer)", () => {
           // planner-routed result matches the in-memory full-scan.
           const bucket = `rwp-${variant.label}-${uuid().slice(0, 8)}`;
           const [storage] = await variant.makeStorages(bucket, 1);
-          await runRangeWalkParityCascade({ storage: storage! });
+          await runRangeWalkParityCascade({ storage: storage!, healNetwork });
         },
       );
     });

@@ -4,6 +4,7 @@ import {
   isMonotonicRead,
   isReadYourWrite,
   isTransientReadError,
+  isUnacknowledgedCommitError,
   missingAckedSlots,
 } from "../fixtures/session-guarantees.ts";
 
@@ -78,5 +79,23 @@ describe("isTransientReadError (poll-loop read-error policy)", () => {
 
   test("a non-error throw is fatal", () => {
     expect(isTransientReadError("boom")).toBe(false);
+  });
+});
+
+describe("isUnacknowledgedCommitError (commit-loop error policy)", () => {
+  test.each(["WriteConflict", "NetworkError", "AmbiguousCommit"] as const)(
+    "%s leaves the write unacknowledged",
+    (code) => {
+      expect(isUnacknowledgedCommitError(new BaerlyError(code, "x"))).toBe(true);
+    },
+  );
+
+  test("any other BaerlyError code is fatal", () => {
+    expect(isUnacknowledgedCommitError(new BaerlyError("Internal", "x"))).toBe(false);
+    expect(isUnacknowledgedCommitError(new BaerlyError("InvalidConfig", "x"))).toBe(false);
+  });
+
+  test("a failed assertion (plain Error) is fatal", () => {
+    expect(isUnacknowledgedCommitError(new Error("read-your-writes violated"))).toBe(false);
   });
 });
