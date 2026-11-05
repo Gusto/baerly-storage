@@ -220,12 +220,14 @@ export function createFetchHandler(
       maintenance,
     });
 
-    const result = await opts.verifier(request);
-    if (result === null) {
-      return await runWithContext(obsCtx, async () => flushUnauthorizedAndRespond(obsCtx, request));
-    }
-
+    // The verifier runs inside the request context so work it does (e.g. a
+    // JWKS fetch) sees `getCurrentContext()`.
     return await runWithContext(obsCtx, async () => {
+      const result = await opts.verifier(request);
+      if (result === null) {
+        return flushUnauthorizedAndRespond(obsCtx, request);
+      }
+
       let outboundStatus = 500;
       let caughtError: unknown;
       let response: Response;
