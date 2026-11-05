@@ -223,7 +223,23 @@ export function createFetchHandler(
     // The verifier runs inside the request context so work it does (e.g. a
     // JWKS fetch) sees `getCurrentContext()`.
     return await runWithContext(obsCtx, async () => {
-      const result = await opts.verifier(request);
+      let result: Awaited<ReturnType<Verifier>>;
+      try {
+        result = await opts.verifier(request);
+      } catch (error) {
+        // A throwing verifier is an enveloped, mapped error with its own
+        // canonical line — never a 401 (that would tell OAuth clients to
+        // discard credentials during an IdP outage).
+        const { status, response } = mappedErrorResponse(error);
+        flushCanonicalLine(obsCtx, obsCtx.recorder, {
+          unit: "http",
+          status,
+          outcome: deriveOutcome(request.method, status, error),
+          error,
+          extra: { method: request.method, path },
+        });
+        return response;
+      }
       if (result === null) {
         return flushUnauthorizedAndRespond(obsCtx, request);
       }

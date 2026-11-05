@@ -13,7 +13,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { Db, resolveVerifier } from "@baerly/server";
-import { createRouter } from "@baerly/server/http";
+import { createRouter, mapError } from "@baerly/server/http";
 import { handleSpecRequest } from "@baerly/server/spec";
 import { type MaintenanceDispatch, parseMaintenanceEnv } from "@baerly/server/maintenance";
 import {
@@ -546,7 +546,26 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
         // Tenant resolution: the Verifier owns it unconditionally.
-        const result = await verifier(req);
+        let result: Awaited<ReturnType<Verifier>>;
+        try {
+          result = await verifier(req);
+        } catch (error) {
+          // A throwing verifier is an enveloped, mapped error with its own
+          // canonical line — never a 401 (that would tell OAuth clients to
+          // discard credentials during an IdP outage).
+          const { status, envelope } = mapError(error);
+          flushCanonicalLine(obsCtx, obsCtx.recorder, {
+            unit: "http",
+            status,
+            outcome: deriveOutcome(req.method, status, error),
+            error,
+            extra: { method: req.method, path: url.pathname },
+          });
+          return new Response(JSON.stringify(envelope), {
+            status,
+            headers: { "content-type": "application/json" },
+          });
+        }
         if (result === null) {
           return flushUnauthorizedAndRespond(obsCtx, req);
         }

@@ -48,15 +48,17 @@ export interface VerifierResult {
  * cast: `await verifier(req as unknown as Request)`. The runtime
  * shape is identical; the cast is purely a generic-narrowing nudge.
  *
- * **Errors.** A `Verifier` SHOULD return `null` for any
- * unauthenticated outcome — missing header, bad signature, expired
- * token, IP outside allowlist. It MAY throw an `BaerlyError` for
- * configuration problems (the IdP's JWKS endpoint is unreachable,
- * the shared-secret env var is missing). Throws propagate to the
- * dispatcher, which maps them to 500 + `code:"Internal"`. The
- * dispatcher distinguishes "auth said no" (null → 401) from "auth
- * is broken" (throw → 500) on purpose: the first is a client
- * problem, the second is an operator problem.
+ * **Errors.** Return `null` to reject (401) for any unauthenticated
+ * outcome — missing header, bad signature, expired token, IP outside
+ * allowlist. Throw a `BaerlyError` for a specific status (e.g.
+ * `NetworkError` → 502 for a transient dependency failure such as an
+ * unreachable JWKS endpoint); the adapter maps it through the standard
+ * error envelope. Any other throw is a 500 `Internal`. An outage-style
+ * throw is never turned into a 401 — that would tell clients to discard
+ * valid credentials during an IdP outage — so return `null`, not
+ * `BaerlyError("Unauthorized")`, to reject. Each request through the
+ * cascade emits exactly one canonical log line (`GET /v1/spec` degrades
+ * to the anonymous contract instead).
  *
  * **Idempotence.** A `Verifier` MUST be safe to call multiple times
  * for the same `Request`. Preset factories that decode JWTs cache
