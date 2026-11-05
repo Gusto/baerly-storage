@@ -31,11 +31,18 @@ The earlier scratch version carried a `policy-switch.patch` and two prepared sou
 3. From `bench/cpu-factor-worker/`: `npx wrangler@4 deploy`. The Worker gets a public `*.workers.dev` URL that serves only synthetic data. A run sends about 12,000 requests, within Free's 100,000 per day. Delete the Worker promptly.
 4. Terminal 1: `npx wrangler@4 tail baerly-cpu-factor-bench --format json > tail.json`.
 5. Terminal 2: `./run-cells.sh https://baerly-cpu-factor-bench.<subdomain>.workers.dev 200` (about 20 minutes; S1 probe cells send 5 requests each). A `503` or error 1102 under a cell means the platform killed it for exceeding CPU; that is expected for large cells.
-6. Wait about 10 seconds, stop the tail, and check `grep -c '"cpuTime"' tail.json`. If 0, export per-invocation CPU from the dashboard (Observability) as JSON with URL, outcome and `$workers.cpuTimeMs`; the analyzer reads that shape too.
-7. Strip the capture to synthetic fields only (tail events also carry request headers and connection metadata):
+6. Wait about 10 seconds, stop the tail, and check `grep -c '"cpuTime"' tail.json`. If 0, export per-invocation CPU from the dashboard (Observability) as JSON with URL, outcome and `$workers.cpuTimeMs`, and save it as `observability.json`.
+7. Strip the chosen capture to synthetic fields only (tail events also carry request headers and connection metadata). This normalizes both tail and Observability fields:
 
    ```sh
-   jq -c '{outcome, cpuTime, wallTime, url: .event.request.url, logs: [.logs[]? | {message}]}' tail.json > cpu-factor-events.jsonl
+   capture=tail.json # use observability.json for the dashboard export
+   jq -c '{
+     outcome: (.outcome // ."$workers".outcome // "ok"),
+     cpuTime: (.cpuTime // .cpuTimeMs // ."$workers".cpuTimeMs // ."$metadata".cpuTimeMs),
+     url: (.event.request.url // .request.url // ."$workers".event.request.url // .url),
+     cell,
+     logs: [.logs[]? | {message}]
+   } | with_entries(select(.value != null))' "$capture" > cpu-factor-events.jsonl
    ```
 
 8. Analyze locally: `pnpm bench:cpu-factor:analyze cpu-factor-events.jsonl`.
@@ -49,7 +56,7 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 - All CPU numbers (fold, subject and tree cells) are warm-isolate: JIT-hot, with the first request per isolate dropped. Uniform `x` padding is a best case for JSON. Do not read p50 as a cold fold cost.
 - Deployed `cpuTime` is authoritative; the in-isolate timer is a cross-check, since workerd clocks advance only across I/O.
 - `Cold` invocations (first request in an isolate) and `&warmup=1` requests are dropped.
-- A cell with 1% or more kills, or fewer than 50 ok samples, does not fit and is excluded from factors.
+- A cell with 1% or more kills, or fewer than 50 ok samples, does not fit and is excluded from factors. Only fitting cells with measured deployed p99 at or below 8 ms can pass the C/E gate or establish a passing size; Node-derived estimates are diagnostic only.
 - Probe lines show `completed`, the first failing call and the error text per run.
 
 ## Not covered yet

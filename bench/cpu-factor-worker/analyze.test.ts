@@ -20,12 +20,12 @@ const makeBaseline = (load: NodeBaseline["load"]): NodeBaseline => ({
 });
 
 /** Deployed events whose CPU is exactly FACTOR x the Node p50. */
-const makeEvents = (perCell = 60) =>
+const makeEvents = (perCell = 60, factor = FACTOR) =>
   CELLS.flatMap((c, i) => {
     if (c.kind === "probe") {
       return [];
     }
-    const cpu = FACTOR * nodeP50(i);
+    const cpu = factor * nodeP50(i);
     return Array.from({ length: perCell }, () => ({
       outcome: "ok",
       cpuTime: cpu,
@@ -99,6 +99,47 @@ describe("analyze", () => {
     for (const m of a.tree.maxLeaves) {
       expect(m.underFree).toBe(8);
     }
+  });
+
+  test.each(["killed", "missing", "insufficient"] as const)(
+    "%s deployed measurements cannot establish passing gates or sizes",
+    (condition) => {
+      const baseline = makeBaseline(QUIET);
+      // Keep all estimates below PASS_MS, so only deployed evidence can
+      // distinguish a valid pass from these failed or incomplete captures.
+      const events = makeEvents(60, 1);
+      const gateNames = new Set(CELLS.filter((c) => c.gate !== undefined).map((c) => c.name));
+      const captured = events.filter((e) => {
+        const name = new URL(e.url).searchParams.get("cell")!;
+        return !gateNames.has(name);
+      });
+      for (const name of gateNames) {
+        const n = { killed: 200, insufficient: 49, missing: 0 }[condition];
+        for (let i = 0; i < n; i++) {
+          captured.push({
+            outcome: condition === "killed" ? "exceededCpu" : "ok",
+            cpuTime: 1,
+            url: `https://x.workers.dev/?cell=${name}`,
+            logs: [],
+          });
+        }
+      }
+      const a = analyze(captured, baseline);
+      expect(a.gate).toHaveLength(2);
+      for (const gate of a.gate) {
+        expect(gate.ms).toBeLessThan(8);
+        expect(gate.pass).toBe(false);
+      }
+      expect(a.largestPassing).toEqual({ c: 256, e: 1024 });
+      expect(formatReport(a)).toContain("=> FAIL");
+    },
+  );
+
+  test("sufficient deployed measurements can establish passing gates and sizes", () => {
+    const a = analyze(makeEvents(60, 1), makeBaseline(QUIET));
+    expect(a.gate.every((g) => g.pass)).toBe(true);
+    expect(a.largestPassing).toEqual({ c: 512, e: 2028 });
+    expect(formatReport(a)).toContain("=> PASS");
   });
 
   test("summarizes S1 probe results from log lines", () => {

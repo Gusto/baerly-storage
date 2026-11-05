@@ -290,7 +290,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       : [{ cell: name as string, measured: r.fP50, published: published as number }];
   });
 
-  // A cell's deployed p99: measured when it fits, else Node p99 x the kind's
+  // A cell's diagnostic deployed p99: measured when it fits, else Node p99 x the kind's
   // p50-basis factor (the overall one when fewer than 2 of the kind's cells
   // fit), marked estimated. The p50 basis is used because the p99/p99 ratio
   // is noisy and the cells that fit under 10 ms are a size-selected sample.
@@ -313,7 +313,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       return [];
     }
     const p = deployedP99(r);
-    return [{ g, ms: p.ms, how: p.how, pass: p.ms <= PASS_MS }];
+    return [{ g, ms: p.ms, how: p.how, pass: r.fits && r.d.p99 <= PASS_MS }];
   });
 
   const largest = (key: "ladder" | "rowsLadder"): number | undefined => {
@@ -322,7 +322,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       .filter((r) => r.cell.kind === "fold" && r.cell[key] !== undefined)
       .toSorted((a, b) => a.cell[key]! - b.cell[key]!);
     for (const r of ladder) {
-      if (!(deployedP99(r).ms <= PASS_MS)) {
+      if (!(r.fits && r.d.p99 <= PASS_MS)) {
         break;
       }
       best = r.cell[key];
@@ -440,10 +440,10 @@ export const formatReport = (a: Analysis): string => {
       (s) => `  ${s.cell}: measured ${f2(s.measured)}x (p50) vs published ${s.published}x`,
     ),
     "",
-    `Gate (compactor-11 Task 1): pass iff deployed p99 <= ${PASS_MS} ms at both C and E; Free limit ${FREE_LIMIT_MS} ms.${a.exploratory ? " Estimated rows use the exploratory factor." : ""}`,
+    `Gate (compactor-11 Task 1): pass iff both C and E fit (>= ${MIN_OK_SAMPLES} ok samples, < 1% kills) and measured deployed p99 <= ${PASS_MS} ms; Free limit ${FREE_LIMIT_MS} ms. Estimates are diagnostic only.${a.exploratory ? " Estimated rows use the exploratory factor." : ""}`,
     `  main: ${a.gate.map((v) => `${v.g} p99 ${f2(v.ms)} ms ${v.how}`).join("; ")} => ${a.gate.every((v) => v.pass) ? "PASS" : "FAIL"}`,
     "",
-    `Largest passing size (deployed p99 <= ${PASS_MS} ms, every smaller size passing too):`,
+    `Largest passing size (fitting cells with measured deployed p99 <= ${PASS_MS} ms, every smaller size passing too):`,
     `  main: C ${a.largestPassing.c === undefined ? "none (fails at 16 KiB)" : `${a.largestPassing.c} KiB (2 KiB docs)`}; E ${a.largestPassing.e === undefined ? "none (fails at 256 rows)" : `${a.largestPassing.e} rows (~240 B docs)`}`,
     "",
     "Tree fold step (direct deployed CPU, WARM-ISOLATE: JIT-hot, cold invocations dropped, uniform `x` padding is a best case for JSON; not a cold fold cost; one shared path, so the best case for d path nodes):",
