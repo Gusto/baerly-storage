@@ -121,8 +121,9 @@ describe("baerlyWorker scheduled", () => {
  * Per-request observability suite. Verifies that the
  * `observability:` option lazy-configures LogTape, the per-request
  * canonical line carries kernel-emitted metrics (class-A ops,
- * cas_attempts, outcome), and the `scheduled()` handler emits its
- * own maintenance canonical line.
+ * cas_attempts, outcome). `scheduled()` emits no canonical line of
+ * its own; maintenance outside an HTTP scope falls through to the
+ * no-op recorder.
  *
  * The collecting sink pattern mirrors Dispatch 2/3: feed a
  * `Sink` capture into the adapter, drive a request, inspect
