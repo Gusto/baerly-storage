@@ -32,6 +32,9 @@ export const pollSinceOnce = async (
     method: "GET",
     path: `/v1/since?${params.toString()}`,
     signal,
+    // The subscription pool owns this call's backoff; a second retry
+    // layer here would multiply requests per failure.
+    retry: false,
   });
   if (
     typeof response !== "object" ||
