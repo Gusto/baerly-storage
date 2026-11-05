@@ -216,6 +216,7 @@ dependencies, check the gate first:
 | MinIO, S3, `:9102`, or Toxiproxy | Start `pnpm dev:storage`, then run `pnpm test:minio` or the narrower MinIO-backed script. |
 | `export-smoke.test.ts` or Postgres | Start `pnpm dev:storage`, then run `pnpm test:export-smoke`. |
 | `conformance.test.ts` credentials | Add `credentials/{aws,gcs,cloudflare}.json`, then run `pnpm test:conformance`. |
+| `wrangler.sh` or `deploy.mjs` says credentials are missing | Add `credentials/cloudflare-deploy-free.json` (Workers Free) or `credentials/cloudflare-deploy.json` (Paid), each `{ "api_token", "account_id" }`. `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` (`CF_API_TOKEN` / `CF_ACCOUNT_ID` for `deploy.mjs`) override the file. Used by `bench/workload-ceiling-worker/deploy.mjs` (`WORKLOAD_CEILING_TIER=free` selects the Free file) and `bench/cpu-factor-worker/wrangler.sh` (`CPU_FACTOR_TIER=paid` selects the Paid file). |
 | Anything else | Treat it as an ungated failure in the current branch. |
 
 The full gate list lives in
