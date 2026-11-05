@@ -65,7 +65,7 @@ export const probeTailChunk = async (
       throw new BaerlyError(
         "InvalidResponse",
         `probeTailChunk: malformed log entry at ${key}: ${(error as Error).message}`,
-        { cause: { cause: error } },
+        { cause: error },
       );
     }
   }
