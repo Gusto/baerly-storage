@@ -6,7 +6,8 @@
 (`id === id.normalize("NFC")`). `insert` with a caller-supplied `_id`,
 `replace`, their HTTP routes (`POST`, `PUT`), and `baerly admin restore`
 refuse any other `_id` with `InvalidConfig` (HTTP 400) before writing
-anything. SDK-minted UUIDv7 ids are ASCII and always
+that row. Restore commits row by row, so rows before a rejected line are
+already written. SDK-minted UUIDv7 ids are ASCII and always
 pass. Ids that differ only by case (`A` / `a`) or by compatibility form
 (`ﬁ` / `fi`) are still distinct.
 
