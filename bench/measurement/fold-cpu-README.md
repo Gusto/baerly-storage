@@ -53,12 +53,11 @@ These observations do not establish Worker isolate memory or deployed CPU.
 The console reports observed maxima per cell and the JSON retains raw samples.
 Optional CPU/latency budgets produce arithmetic headroom (budget minus observed
 maximum), globally in JSON and per cell in the console. CPU headroom subtracts
-calling-thread CPU, which omits off-thread hashing and GC, so it is the
-optimistic side of a Node-to-Worker comparison; compare budgets against the
-retained process CPU samples too. Neither bounds deployed Worker CPU. The
-harness chooses no budget or acceptance rule. Eleven samples cannot establish a reliable p99,
-sustained-load capacity or kill rate. No alternate layout or append-splice oracle
-is included.
+calling-thread CPU, which omits off-thread hashing and GC helper work, so it is
+the optimistic side of a Node-to-Worker comparison; compare budgets against the
+retained process CPU samples too. The harness chooses no budget or acceptance
+rule. Eleven samples cannot establish a reliable p99, sustained-load capacity
+or kill rate. No alternate layout or append-splice oracle is included.
 
 Select operations with `--operations=get,all,fold` and runtime arms with
 `--arms=unprimed,warmed`. Adding `--profile-dir=bench/results/...` runs the same
