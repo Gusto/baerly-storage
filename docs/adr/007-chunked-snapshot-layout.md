@@ -96,7 +96,9 @@ length.
 
 Document IDs are Unicode scalar-value strings satisfying the current path
 rules. `utf8-scalar-v1` compares their UTF-8 bytes lexicographically, with a
-proper prefix first. NFC and NFD remain distinct. Descriptors and documents are
+proper prefix first. NFC and NFD remain distinct: writes admit only NFC ids,
+but the format reads and orders a non-NFC id an earlier release stored.
+Descriptors and documents are
 strictly increasing under that one comparator. Each document is an object
 whose own top-level `_id` is its sole identity; an insert/update post-image
 requires `after._id === doc_id`. Stored `DocumentData` follows the existing
