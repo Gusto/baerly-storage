@@ -647,6 +647,26 @@ describe("baerly admin restore", () => {
     expect(head?.json.tail_hint).toBe(0);
   });
 
+  test("non-NFC _id rejected by Writer.commit → InvalidConfig (exit 1)", async () => {
+    // An `_id` must be NFC. Restore does not rewrite ids, so an export
+    // holding a row stored before that rule must be normalized first.
+    await writeFile(stdinPath, `${JSON.stringify({ _id: "cafe\u0301", title: "nfd" })}\n`, "utf8");
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runRestore(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("InvalidConfig");
+    const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
+    expect(head?.json.tail_hint).toBe(0);
+  });
+
   test("traversal-shaped --collection rejected at the CLI chokepoint → InvalidConfig (exit 1), writes nothing", async () => {
     // `..` would build a traversal `current.json` key one level up from
     // the manifests prefix. The shared `assertPathSegment` guard must

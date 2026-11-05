@@ -3,14 +3,48 @@ import { getCurrentContext } from "./observability/context.ts";
 import { assertPathSegment } from "./path-segment.ts";
 
 /**
- * Guard a caller-supplied `_id` before it becomes a written key segment
- * (index keys, log `doc_id`) or filesystem path (`LocalFsStorage`). The
- * `_id` analogue of `assertKeySegment` (`db.ts`). Routes through the
- * single shared {@link assertPathSegment} rule (empty / `"/"` /
- * `"."`|`".."` / C0-C1 control chars / leading `"_"` (ADR-003) / overlong,
- * all as `BaerlyError{code:"InvalidConfig"}`).
+ * Resolution for a non-NFC `_id`. A row stored under one by an earlier
+ * release stays readable and deletable, so it is migrated by copy.
+ */
+const DOC_ID_NFC_RESOLUTION =
+  'Pass id.normalize("NFC") as the _id. A row already stored under a non-NFC _id can still be read and deleted: insert a copy under the NFC id, then delete the original.';
+
+/**
+ * Guard an `_id` a write is about to store a row under: an insert, a
+ * replace, an update, or any `I` / `U` commit. The `_id` analogue of
+ * `assertKeySegment` (`db.ts`).
+ *
+ * Applies {@link assertStoredDocId}, then requires the id to be in Unicode
+ * Normalization Form C (`id === id.normalize("NFC")`). Index marker keys
+ * embed the raw `_id`, and R2 stores canonically-equivalent keys (NFC `é`
+ * and NFD `e` + U+0301) as one object, so two rows whose ids differ only
+ * by normalization would share a marker. NFC gives each equivalence class
+ * one spelling. Case and compatibility variants (`A` / `a`, `ﬁ` / `fi`)
+ * are distinct NFC strings and stay distinct ids.
+ *
+ * @throws BaerlyError code="InvalidConfig" — the id breaks the key-segment
+ *   rule or is not NFC.
  */
 export const assertDocId = (id: string): void => {
+  assertStoredDocId(id);
+  if (id !== id.normalize("NFC")) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `_id must be in Unicode Normalization Form C: ${JSON.stringify(id)}`,
+      { resolution: DOC_ID_NFC_RESOLUTION },
+    );
+  }
+};
+
+/**
+ * Guard an `_id` that names an existing row: the `doc_id` of a delete.
+ * Only the key-segment rule applies (the single shared
+ * {@link assertPathSegment}: empty / `"/"` / `"."`|`".."` / C0-C1 control
+ * chars / leading `"_"` (ADR-003) / overlong, all as
+ * `BaerlyError{code:"InvalidConfig"}`), so a row stored under a non-NFC id
+ * before {@link assertDocId} required NFC can still be deleted.
+ */
+export const assertStoredDocId = (id: string): void => {
   assertPathSegment(id, "_id");
 };
 

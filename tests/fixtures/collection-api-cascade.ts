@@ -307,21 +307,22 @@ const runDocIdBoundary = async (
 };
 
 /**
- * Byte-exact names at the `Db` level: `_id`s and collection names that
- * differ only by case or Unicode normalization are distinct. Index markers
- * embed the raw `_id` and the query walk decodes it from the listed key,
- * so a backend that folds keys (local-fs on a folding filesystem, before
- * its key escaping) returns the wrong rows and lets a stale-marker delete
- * for one twin de-index the other.
+ * `_id` identity at the `Db` level. An `_id` must be NFC, so two ids that
+ * differ only by Unicode normalization cannot both be written: R2 folds
+ * canonically-equivalent keys onto one object, and index markers embed the
+ * raw `_id`, so such twins would share one marker. Ids that differ only by
+ * case stay distinct, as do collection names. A stale-marker delete for one
+ * twin must not de-index the other.
  */
 const runCaseAndNormalizationTwins = async (
   storage: Storage,
   app: string,
   tenant: string,
 ): Promise<void> => {
-  const NFC = "é";
-  const NFD = "é";
-  const ids = [NFC, NFD, "A", "a"];
+  const NFC = "\u00e9";
+  const NFD = "e\u0301";
+  expect(NFC.normalize("NFD")).toBe(NFD);
+  const ids = [NFC, "A", "a"];
 
   // Indexed `_id` twins.
   const t = freshTableName("twins");
@@ -336,6 +337,14 @@ const runCaseAndNormalizationTwins = async (
   for (const id of ids) {
     await twins.insert({ _id: id, kind: "twin", label: `label:${id}` });
   }
+  // The NFD spelling of a live NFC id is refused before any I/O, on
+  // insert and on replace, so the aliasing pair cannot be constructed.
+  await expect(
+    twins.insert({ _id: NFD, kind: "twin", label: `label:${NFD}` }),
+  ).rejects.toMatchObject({ code: "InvalidConfig" });
+  await expect(twins.replace(NFD, { kind: "twin" } as never)).rejects.toMatchObject({
+    code: "InvalidConfig",
+  });
   const sortIds = (rows: ReadonlyArray<DocumentData>): string[] =>
     rows.map((r) => r["_id"] as string).toSorted();
   const all = await twins.where({ kind: "twin" }).all();
@@ -343,7 +352,6 @@ const runCaseAndNormalizationTwins = async (
   for (const row of all) {
     expect(row["label"]).toBe(`label:${row["_id"] as string}`);
   }
-  await twins.delete(NFD);
   await twins.delete("a");
   const survivors = await twins.where({ kind: "twin" }).all();
   expect(sortIds(survivors), "survivors keep their index markers").toEqual([NFC, "A"].toSorted());
@@ -371,6 +379,78 @@ const runCaseAndNormalizationTwins = async (
   const lowerRow = await plain.collection(lower).get("u1");
   expect(upperRow?.["who"]).toBe("upper");
   expect(lowerRow?.["who"]).toBe("lower");
+};
+
+/**
+ * A row whose `_id` is not NFC, written by a release that accepted such
+ * ids. Seeded by committing a placeholder id and rewriting every object
+ * that names it (the log entry body and its index marker key) to the NFD
+ * id, which is byte-for-byte what the older writer produced. The row stays
+ * readable by `get`, `where`, and an indexed `where`, and stays deletable;
+ * `update` and `replace` refuse it, because they would write new markers
+ * under the non-NFC id.
+ */
+const runLegacyNonNfcRow = async (storage: Storage, app: string, tenant: string): Promise<void> => {
+  const LEGACY = "legacy-n\u0303"; // NFD "legacy-ñ"
+  expect(LEGACY).not.toBe(LEGACY.normalize("NFC"));
+  const PLACEHOLDER = "legacy-placeholder";
+  const t = freshTableName("legacy");
+  await provision(storage, app, tenant, t);
+  const db = Db.create({
+    storage,
+    app,
+    tenant,
+    config: { collections: { [t]: { indexes: [{ name: "by_kind", on: "kind" }] } } },
+  });
+  const rows = db.collection(t);
+  await rows.insert({ _id: "keep", kind: "legacy" });
+  await rows.insert({ _id: PLACEHOLDER, kind: "legacy", label: "old" });
+  const prefix = `app/${app}/tenant/${tenant}/manifests/${t}/`;
+  const listed: string[] = [];
+  for await (const entry of storage.list(prefix)) {
+    listed.push(entry.key);
+  }
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  let rewritten = 0;
+  for (const key of listed) {
+    const got = await storage.get(key);
+    const text = got === null ? "" : dec.decode(got.body);
+    if (!key.includes(PLACEHOLDER) && !text.includes(PLACEHOLDER)) {
+      continue;
+    }
+    rewritten++;
+    const legacyKey = key.replaceAll(PLACEHOLDER, LEGACY);
+    await storage.put(legacyKey, enc.encode(text.replaceAll(PLACEHOLDER, LEGACY)));
+    if (legacyKey !== key) {
+      await storage.delete(key);
+    }
+  }
+  expect(rewritten, "the log entry and its index marker").toBe(2);
+
+  const legacyRow = { _id: LEGACY, kind: "legacy", label: "old" };
+  await expect(rows.get(LEGACY)).resolves.toEqual(legacyRow);
+  await expect(rows.get(LEGACY.normalize("NFC"))).resolves.toBeUndefined();
+  const indexed = await rows.where({ kind: "legacy" }).all();
+  expect(indexed.map((r) => r["_id"]).toSorted()).toEqual(["keep", LEGACY].toSorted());
+  await expect(rows.update(LEGACY, { label: "new" })).rejects.toMatchObject({
+    code: "InvalidConfig",
+  });
+  await expect(rows.replace(LEGACY, { kind: "legacy" } as never)).rejects.toMatchObject({
+    code: "InvalidConfig",
+  });
+  await expect(rows.get(LEGACY)).resolves.toEqual(legacyRow);
+
+  await expect(rows.delete(LEGACY)).resolves.toEqual({ deleted: 1 });
+  await expect(rows.get(LEGACY)).resolves.toBeUndefined();
+  await expect(rows.where({ kind: "legacy" }).all()).resolves.toEqual([
+    { _id: "keep", kind: "legacy" },
+  ]);
+  const markers: string[] = [];
+  for await (const entry of storage.list(`${prefix}index/by_kind/`)) {
+    markers.push(entry.key);
+  }
+  expect(markers, "the legacy row's marker is gone, its neighbour's is not").toHaveLength(1);
 };
 
 /** Update contract: RFC 7386 — multiple matches, `null` strips key. */
@@ -1099,6 +1179,7 @@ export const runCollectionApiCascade = async (opts: {
   await runInsertContract(db, opts.storage, APP, tenant);
   await runDocIdBoundary(db, opts.storage, APP, tenant);
   await runCaseAndNormalizationTwins(opts.storage, APP, tenant);
+  await runLegacyNonNfcRow(opts.storage, APP, tenant);
   await runUpdateContract(db, opts.storage, APP, tenant);
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);

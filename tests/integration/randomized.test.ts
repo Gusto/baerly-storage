@@ -345,7 +345,8 @@ const allVariants: Variant[] = [
 
 /**
  * Fold-versus-commit protocol ordering. Two writers own disjoint scalar IDs
- * (an NFC/NFD pair split across them, plus an astral ID) and commit while
+ * (a case pair split across them, plus a non-ASCII and an astral ID; ids
+ * must be NFC, so a normalization pair cannot be written) and commit while
  * up to two compactors fold the same collection concurrently. After every
  * round:
  *
@@ -361,7 +362,7 @@ const allVariants: Variant[] = [
  */
 const WRITER_IDS: readonly (readonly [string, string])[] = [
   ["a", "\u00e9"],
-  ["e\u0301", "\u{10000}"],
+  ["A", "\u{10000}"],
 ];
 const ORDERING_APP = "ordering";
 const ORDERING_COLLECTION = "rows";

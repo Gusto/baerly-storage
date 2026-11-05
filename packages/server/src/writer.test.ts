@@ -1631,6 +1631,31 @@ describe("Writer — post-image identity", () => {
     await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
   });
 
+  for (const op of ["I", "U"] as const) {
+    test(`${op} under a non-NFC docId throws InvalidConfig before any storage operation`, async () => {
+      const storage = new OpCountingStorage();
+      await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+      storage.ops = 0;
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+      const docId = "cafe\u0301";
+
+      await expect(
+        writer.commit({ op, collection: COLL, docId, body: { _id: docId } }),
+      ).rejects.toMatchObject({ code: "InvalidConfig" });
+      expect(storage.ops).toBe(0);
+      await expect(durableLogSeqs(storage)).resolves.toEqual([]);
+    });
+  }
+
+  test("a D under a non-NFC docId commits, so a row stored before the NFC rule stays deletable", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    await writer.commit({ op: "D", collection: COLL, docId: "cafe\u0301" });
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+  });
+
   test("a D carries no post-image and is not identity-checked", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());

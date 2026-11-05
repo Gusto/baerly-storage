@@ -81,6 +81,7 @@ import {
 } from "@baerly/protocol";
 import {
   assertDocId,
+  assertStoredDocId,
   insertAlreadyExists,
   insertReplaysRow,
   recordInsertReplay,
@@ -166,7 +167,11 @@ export interface CommitInput {
   /** The collection (table) name. Becomes {@link LogEntry.collection}. */
   readonly collection: string;
 
-  /** The document primary key. Becomes {@link LogEntry.doc_id}. */
+  /**
+   * The document primary key. Becomes {@link LogEntry.doc_id}. Must be
+   * NFC for `I` / `U`; a `D` accepts any key-safe id, so a row stored
+   * under a non-NFC id by an earlier release stays deletable.
+   */
   readonly docId: string;
 
   /**
@@ -384,9 +389,11 @@ export class Writer {
    *   (compactor bug or stale `current.json`).
    * @throws BaerlyError code="InvalidResponse" when a log-entry body
    *   isn't valid JSON.
-   * @throws BaerlyError code="InvalidConfig" when an `I` / `U` body is
-   *   not a plain object whose own `_id` is the string `docId`, or when
-   *   `insertGuard` is set on a non-`I` op. Checked before any I/O.
+   * @throws BaerlyError code="InvalidConfig" when `docId` breaks the
+   *   key-segment rule, when an `I` / `U` `docId` is not NFC, when an
+   *   `I` / `U` body is not a plain object whose own `_id` is the string
+   *   `docId`, or when `insertGuard` is set on a non-`I` op. Checked
+   *   before any I/O.
    * @throws BaerlyError code="AlreadyExists" when `insertGuard` is set and
    *   the log window `[absentBelowSeq, seq)` holds a live `I` / `U` for
    *   this doc (unless `replayIdentical` is set and its `after` equals the
@@ -420,7 +427,14 @@ export class Writer {
     // Rejects empty / `"/"` / `"."`|`".."` / control / leading `"_"` /
     // overlong `docId` as `BaerlyError{code:"InvalidConfig"}`, so a
     // traversal-shaped `_id` can never become a written key segment.
-    assertDocId(input.docId);
+    // An `I` / `U` writes index markers under `docId`, so it must also be
+    // NFC; a `D` only names an existing row, which an earlier release may
+    // have stored under a non-NFC id.
+    if (input.op === "D") {
+      assertStoredDocId(input.docId);
+    } else {
+      assertDocId(input.docId);
+    }
     // An `I` / `U` post-image must name the document it is stored under:
     // a plain object whose own `_id` is the string `docId`. Without this,
     // `log/<seq>` would record a row whose `after._id` disagrees with its

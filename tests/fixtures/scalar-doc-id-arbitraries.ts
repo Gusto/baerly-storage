@@ -146,6 +146,34 @@ export const makeValidDocIdArb = ({
  */
 export const validDocIdArb: fc.Arbitrary<string> = makeValidDocIdArb();
 
+/**
+ * Rewrite a domain-valid ID into the writable domain: NFC, as the write path
+ * requires (`assertDocId`). NFC can lengthen a value, so it is re-truncated
+ * to the byte ceiling by whole code points until it is stable.
+ */
+const toWritableDocId = (id: string): string => {
+  let current = id;
+  for (;;) {
+    const nfc = current.normalize("NFC");
+    const fitted = finish(
+      Array.from(nfc, (char) => char.codePointAt(0)!),
+      DOC_ID_MAX_UTF8_BYTES,
+    );
+    if (fitted === current) {
+      return fitted;
+    }
+    current = fitted;
+  }
+};
+
+/**
+ * Writable document IDs: {@link validDocIdArb} values in NFC, the domain
+ * `insert` / `replace` / `update` and `Writer.commit` (`I` / `U`) admit.
+ * `validDocIdArb` stays the wider stored-data domain the snapshot format
+ * reads, which includes ids written before the NFC rule.
+ */
+export const writableDocIdArb: fc.Arbitrary<string> = validDocIdArb.map(toWritableDocId);
+
 const shortValid = makeValidDocIdArb({ maxCodePoints: 8, longBand: false });
 const shortBody = fc
   .array(bodyCodePoint, { maxLength: 8 })
