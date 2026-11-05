@@ -149,6 +149,21 @@ describe("probeTailFrom", () => {
     });
   });
 
+  test("a malformed bounded entry keeps the SyntaxError as the cause", async () => {
+    const malformed: Storage = {
+      get: async () => ({ body: new TextEncoder().encode("{"), etag: "x" }),
+      put: async () => ({ etag: "x" }),
+      delete: async () => {},
+      list: () => {
+        throw new Error("list not used by probeTailChunk");
+      },
+    };
+
+    const error = await probeTailChunk(malformed, PREFIX, 0).catch((error_: unknown) => error_);
+    expect(error).toBeInstanceOf(BaerlyError);
+    expect((error as BaerlyError).cause).toBeInstanceOf(SyntaxError);
+  });
+
   test("tolerant bounded mode records malformed occupancy as incomplete and keeps probing", async () => {
     const storage = new MemoryStorage();
     await seedLogEntries(storage, PREFIX, 5, 8);
