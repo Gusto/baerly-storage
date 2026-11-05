@@ -116,9 +116,9 @@ export interface InternalCompactOptions extends CompactOptions {
    * (NOT snapshot + tail) must be `<= ceilingBytes` or the fold is
    * DEFERRED before the PUT. `undefined ⇒ no ceiling` (`Infinity`).
    * The write-tick runner threads its pre-fold-projection `C` here as
-   * a Node-side belt-and-suspenders; on a CPU-killable CF isolate the
-   * kill lands during walk+encode (before this check), so the decisive
-   * CF guard is the runner's pre-fold projection, not this.
+   * a Node-side belt-and-suspenders; on a CPU-limited CF isolate an
+   * invocation terminated during walk+encode never reaches this check, so
+   * the decisive CF guard is the runner's pre-fold projection, not this.
    */
   readonly ceilingBytes?: number;
 
@@ -473,9 +473,9 @@ export const compact = async (
   // The ceiling is on the SNAPSHOT being rebuilt (`bodyBytes.byteLength`
   // / `base.size`), NOT snapshot + tail — the tail is bounded
   // separately by `maxEntriesPerRun`. This is a Node-side
-  // belt-and-suspenders: on a CPU-killable CF isolate the kill lands
-  // during the walk + encode above, BEFORE this check, so the decisive
-  // CF guard is the runner's pre-fold projection (see maintenance.ts
+  // belt-and-suspenders: on a CPU-limited CF isolate an invocation
+  // terminated during the walk + encode above never reaches this check, so
+  // the decisive CF guard is the runner's pre-fold projection (see maintenance.ts
   // `runBoundedMaintenance`). When over ceiling we DEFER: no PUT, no
   // CAS, no current.json mutation.
   //

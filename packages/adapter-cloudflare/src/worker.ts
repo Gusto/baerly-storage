@@ -72,11 +72,12 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *
  *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` — override the snapshot-rebuild
  *     ceiling `C` that the resolved profile carries. The `cf-free` value
- *     (512 KiB) is sized to rebuild in ~5.5 ms under the CF-free ~10 ms
- *     CPU budget; `cf-paid` carries 8 MiB. This var wins over either. On
+ *     (512 KiB) is a conservative budget for the CF-free ~10 ms CPU
+ *     limit (its ~5.5 ms rebuild figure is a sizing estimate, not an
+ *     observed limit); `cf-paid` carries 8 MiB. This var wins over either. On
  *     the free profile a value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES}
- *     warns LOUDLY once at init — on a free isolate that fold risks a
- *     mid-rebuild CPU kill. Zero or negative throws
+ *     warns LOUDLY once at init — a fold that large may exceed a free
+ *     isolate's CPU or memory resources and not land. Zero or negative throws
  *     `BaerlyError{code:"InvalidConfig"}` when the binding is read.
  *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Closed, case-insensitive
  *     vocabulary: unset / `""` / `"0"` / `"false"` → not disabled;
@@ -130,7 +131,7 @@ export interface BaerlyEnv {
 
 /**
  * Resolve the maintenance profile from the opt-in operator env var.
- * Default (unset / unknown) is the CPU-killable CF-free profile, so
+ * Default (unset / unknown) is the CPU-limited CF-free profile, so
  * zero-config behavior is unchanged. `cf-paid` raises the per-pass caps
  * to exploit the paid 10,000-subrequest budget AND the snapshot ceilings
  * to `C` = 8 MiB / `E` = 32,768, measured against the paid isolate's own
@@ -158,7 +159,7 @@ export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | u
  * AND FORGET off the response ack, so the commit never blocks on it. The
  * isolate stays alive long enough to drain the continuation; the
  * per-pass caps default to the TESTED CF-free `WRITE_TICK_*` values
- * (`phasesPerTick: "single"` — a CPU-killable free isolate does ONE of
+ * (`phasesPerTick: "single"` — a CPU-limited free isolate does ONE of
  * fold/GC per request, never both), sized so a single pass stays well
  * under the free-tier 50-subrequest budget. Free stays at 50 external /
  * 1,000 internal-service subrequests. An operator on CF **paid** opts
@@ -201,7 +202,7 @@ export const cfMaintenanceDispatch = (
     // counter) is what reaches `wrangler tail` / Workers Logs.
     warn: logMaintenanceWarning,
     options: {
-      // A CPU-killable free isolate does ONE phase per request.
+      // A CPU-limited free isolate does ONE phase per request.
       phasesPerTick: "single",
       // Write-tick profile. The cron path (user-supplied `scheduled` callback)
       // resolves the profile via the SAME `resolveCfMaintenanceProfile` export
@@ -423,11 +424,11 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       }
     }
     // Ops-plane guardrail, init-scoped: if the operator raised the
-    // snapshot-rebuild ceiling above what a CF FREE isolate can rebuild
-    // under its ~10 ms CPU budget, warn LOUDLY exactly once. A fold over
-    // this size on a free isolate gets CPU-killed mid-rebuild — the CAS
-    // never lands, so the fold silently never advances `log_seq_start`
-    // and the tail grows unbounded. `console.warn` (not LogTape) so the
+    // snapshot-rebuild ceiling above the conservative budget for a CF FREE
+    // isolate's ~10 ms CPU limit, warn LOUDLY exactly once. A fold over this
+    // size may exceed the invocation's CPU or memory resources; if it is
+    // terminated mid-rebuild the CAS does not land and that fold does not
+    // advance `log_seq_start`, so the tail can grow. `console.warn` (not LogTape) so the
     // signal survives even when observability is unconfigured.
     //
     // Scoped to the FREE profile. `CF_FREE_MAX_SAFE_FOLD_BYTES` is free's
@@ -460,9 +461,9 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         console.warn(
           `[baerly] BAERLY_MAINTENANCE_MAX_FOLD_BYTES=${rawFoldBytes} exceeds the ` +
             `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
-            `Worker a fold this large risks a mid-rebuild CPU kill (the ~10 ms limit): the ` +
-            `current.json CAS never lands, so the fold silently does NOT advance and the tail ` +
-            `grows unbounded. Safe remedies: run on CF PAID (raised CPU limits), self-host on ` +
+            `Worker a fold this large may exceed the invocation's CPU or memory resources (the ~10 ms ` +
+            `CPU limit); if it is terminated mid-rebuild the current.json CAS does not land, so ` +
+            `that fold does not advance and the tail can grow. Remedies: run on CF PAID (raised CPU limits), self-host on ` +
             `NODE, or wait for §11 chunked snapshots. Leave this var unset on free CF.`,
         );
       }

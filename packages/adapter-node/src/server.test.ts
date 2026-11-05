@@ -111,7 +111,7 @@ describe("nodeMaintenanceDispatch", () => {
     expect(m.options?.phasesPerTick).toBe("both");
 
     // Node-tier caps are STRICTLY LARGER than the CF-free defaults — a
-    // serverful host folds/sweeps more per pass than a CPU-killable
+    // serverful host folds/sweeps more per pass than a CPU-limited
     // free-tier isolate.
     expect(m.options?.profile?.maxFoldEntriesPerPass).toBeGreaterThan(
       WRITE_TICK_FOLD_ENTRIES_PER_PASS,
