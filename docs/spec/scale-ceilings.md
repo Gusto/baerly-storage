@@ -3,7 +3,7 @@ title: Scale ceilings
 audience: spec
 doc_type: verification
 summary: Where every published scale limit comes from — the fold cost model, the measured per-host snapshot ceilings C and E, and the storage-side throughput walls.
-last-reviewed: 2026-08-27
+last-reviewed: 2026-11-05
 tags: [capacity, verification, fold, ceilings]
 related: ["../about/graduation.md", "../about/workload-fit.md", "../about/cost-model.md"]
 ---
@@ -81,14 +81,17 @@ graduation snapshot sizes in documents (they assume 1-5 KB/doc), and
 node's 32 MiB, which is the top of the measured grid rather than a
 measured wall.
 
-**Ceilings are sized for cold invocations.** Every read reloads and
-hash-verifies its snapshot, and isolate reuse is not guaranteed, so an
-in-process cache can lower only warm cost and never enters ceiling math.
-A Node experiment with a parsed-snapshot memo that cloned rows to isolate
-callers made cold and evicted reads more expensive, worst on many small
-documents, because cloning scales with object count. That rejects the
-clone-on-fill shape, not caching in general; caching verified bytes and
-re-decoding on a hit avoids the clone but is unmeasured.
+**Ceilings are sized for cold invocations.** Every read that needs the
+snapshot fetches and hash-verifies it again; nothing is kept between
+requests, and instance reuse (a warm isolate or process) is not
+guaranteed. An in-process cache can therefore lower only warm cost and
+never enters ceiling math. In exploratory Node runs, not reproducible
+from this repo, a parsed-snapshot memo that cloned rows so callers could
+not mutate the cached copy made cache misses more expensive than no
+memo, worst on many small documents, because cloning scales with object
+count. That rejects the clone-on-fill shape, not caching in general;
+caching verified bytes and re-decoding on a hit avoids the clone but is
+unmeasured.
 
 ## What costs CPU: compaction
 
