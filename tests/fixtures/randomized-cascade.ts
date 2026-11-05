@@ -48,6 +48,7 @@ import {
   isMonotonicRead,
   isReadYourWrite,
   isTransientReadError,
+  isUnacknowledgedCommitError,
   missingAckedSlots,
 } from "./session-guarantees.ts";
 
@@ -146,19 +147,22 @@ const seedCurrent = (): CurrentJson => logStateCurrentJson();
  * others see `WriteConflict` (which the protocol translates from
  * `PreconditionFailed`). The losers adopt the existing record.
  */
-const ensureCurrent = async (storage: Storage, key: string): Promise<void> => {
-  try {
-    await createCurrentJson(storage, key, seedCurrent());
-  } catch (error) {
-    if (error instanceof BaerlyError && error.code === "WriteConflict") {
-      const got = await readCurrentJson(storage, key);
-      if (got !== null) {
-        return;
+const ensureCurrent = (storage: Storage, key: string): Promise<void> =>
+  // Idempotent: a create that landed before its `NetworkError` re-runs as
+  // a `WriteConflict` and resolves by readback.
+  withNetworkRetry(async () => {
+    try {
+      await createCurrentJson(storage, key, seedCurrent());
+    } catch (error) {
+      if (error instanceof BaerlyError && error.code === "WriteConflict") {
+        const got = await readCurrentJson(storage, key);
+        if (got !== null) {
+          return;
+        }
       }
+      throw error;
     }
-    throw error;
-  }
-};
+  });
 
 /**
  * Resolve the latest committed value for `(collection, docId)` by
@@ -300,28 +304,49 @@ const buildInstances = async (
 };
 
 /**
- * Run a storage-touching read under bounded retry on transient
- * `NetworkError`. The node-minio variant flips its Toxiproxy proxy every
- * 100 ms, so a read landing in a dead window rejects with a
- * {@link BaerlyError} whose `code` is `"NetworkError"`; Minio / S3 are
- * strongly consistent, so once a window opens the value is complete and
- * the retry only rides out the dead window. Non-`NetworkError` failures
- * (and genuine assertion failures) propagate immediately. The whole `op`
- * re-runs per attempt, so consumers that accumulate (e.g. draining an
- * async list into a set) must build their result fresh inside `op`.
+ * Run a storage-touching op that executes WHILE faults are injected
+ * under bounded retry on transient `NetworkError`. The node-minio variant
+ * flips its Toxiproxy proxy every 100 ms with probability 0.5, so a dead
+ * window lasts a geometric number of ticks — often several hundred ms —
+ * while the adapter's own `STORAGE_RETRY_MAX_ATTEMPTS` attempts span only
+ * ~100 ms of jittered backoff. An op landing in such a window rejects with
+ * a {@link BaerlyError} whose `code` is `"NetworkError"`; the retry rides
+ * out the window. The linear backoff below spans ~6 s, so the op gets 16
+ * tries across many independent windows. Sized from measurement: over ~2.9k
+ * calls under the twiddler, about one in 30 needed a retry, the tail
+ * roughly halved per extra retry, and the longest needed 9. A budget of 10
+ * would leave a few-percent chance per file run of exhausting one; 15
+ * makes that negligible at no cost on the common path. Only short ops (one
+ * commit, one point read) belong here; post-workload verification instead
+ * runs after `healNetwork`, since a long multi-request read cannot reliably
+ * fit any whole-op budget under unbounded windows. Non-matching failures (and
+ * genuine assertion failures) propagate immediately. The whole `op` re-runs
+ * per attempt, so it must be idempotent.
+ *
+ * @param opts.retryOn Which errors to retry. Defaults to `NetworkError`;
+ *                     a caller re-issuing an idempotent commit passes
+ *                     {@link isUnacknowledgedCommitError}.
+ * @param opts.sleep   Backoff sleep. Test seam; defaults to `setTimeout`.
  */
-export const MAX_NETWORK_RETRIES = 5;
-export const withNetworkRetry = async <T>(op: () => Promise<T>): Promise<T> => {
+export const MAX_NETWORK_RETRIES = 15;
+export const NETWORK_RETRY_BASE_MS = 50;
+const isNetworkError = (error: unknown): boolean =>
+  error instanceof BaerlyError && error.code === "NetworkError";
+export const withNetworkRetry = async <T>(
+  op: () => Promise<T>,
+  opts: {
+    retryOn?: (error: unknown) => boolean;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<T> => {
+  const retryOn = opts.retryOn ?? isNetworkError;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   for (let attempt = 0; ; attempt++) {
     try {
       return await op();
     } catch (error) {
-      if (
-        error instanceof BaerlyError &&
-        error.code === "NetworkError" &&
-        attempt < MAX_NETWORK_RETRIES
-      ) {
-        await new Promise<void>((r) => setTimeout(r, 10 * (attempt + 1)));
+      if (retryOn(error) && attempt < MAX_NETWORK_RETRIES) {
+        await sleep(NETWORK_RETRY_BASE_MS * (attempt + 1));
         continue;
       }
       throw error;
@@ -332,21 +357,19 @@ export const withNetworkRetry = async <T>(op: () => Promise<T>): Promise<T> => {
 /**
  * Collect the set of committed `log/<seq>.json` slot numbers under a
  * collection's log prefix. Matches ONLY `<logPrefix>/log/<digits>.json`
- * slot keys — ignoring `current.json`, index subdirs, etc. — and rides
- * out transient network windows via {@link withNetworkRetry}.
+ * slot keys — ignoring `current.json`, index subdirs, etc. Verification
+ * only: callers run it after `healNetwork`.
  */
 const collectCommittedSlots = async (inst: Instance): Promise<Set<number>> => {
   const slotKeyPattern = new RegExp(`^${escapeRegExp(`${inst.logPrefix}/log/`)}(\\d+)\\.json$`);
-  return withNetworkRetry(async () => {
-    const slots = new Set<number>();
-    for await (const listed of inst.storage.list(`${inst.logPrefix}/log/`)) {
-      const m = slotKeyPattern.exec(listed.key);
-      if (m !== null) {
-        slots.add(Number.parseInt(m[1]!, 10));
-      }
+  const slots = new Set<number>();
+  for await (const listed of inst.storage.list(`${inst.logPrefix}/log/`)) {
+    const m = slotKeyPattern.exec(listed.key);
+    if (m !== null) {
+      slots.add(Number.parseInt(m[1]!, 10));
     }
-    return slots;
-  });
+  }
+  return slots;
 };
 
 /**
@@ -395,6 +418,13 @@ export const runCausalConsistencyCascade = (opts: {
    * Toxiproxy fault injection deliberately induces stale reads.
    */
   strongConsistency?: boolean;
+  /**
+   * Heals injected network faults (node-minio's Toxiproxy twiddler). Called
+   * once the workload has drained and before final verification, so the
+   * verification reads see durable storage without racing dead windows.
+   * Omit for variants without fault injection.
+   */
+  healNetwork?: () => Promise<void>;
 }): Promise<void> =>
   new Promise<void>((done, reject) => {
     void (async () => {
@@ -537,12 +567,33 @@ export const runCausalConsistencyCascade = (opts: {
                 await new Promise<void>((r) => setTimeout(r, delayMs));
               }
               try {
-                const result = await instances[client_id]!.writer.commit({
-                  op: "U",
-                  collection: COLLECTION,
-                  docId: COLLECTION,
-                  body: { ...message, _id: COLLECTION },
-                });
+                let result: Awaited<ReturnType<Writer["commit"]>>;
+                try {
+                  result = await instances[client_id]!.writer.commit({
+                    op: "U",
+                    collection: COLLECTION,
+                    docId: COLLECTION,
+                    body: { ...message, _id: COLLECTION },
+                  });
+                } catch (error) {
+                  // An unacknowledged commit is a legal outcome: it is not
+                  // added to `ackedSeqs`, and if it landed the poll loop
+                  // observes it like any peer write.
+                  if (isUnacknowledgedCommitError(error)) {
+                    // A lost race means a peer's write landed, which every
+                    // client observes and answers. A fault (a Toxiproxy dead
+                    // window outlasting the adapter's retries) can instead
+                    // swallow every client's broadcast at once, leaving no
+                    // change to observe, so the client broadcasts afresh
+                    // (new `send_time`; the per-client queue keeps it after
+                    // this one) rather than stall the cascade.
+                    if ((error as BaerlyError).code !== "WriteConflict" && !finished) {
+                      handle(client_id, undefined);
+                    }
+                    return;
+                  }
+                  throw error;
+                }
                 ackedSeqs.add(result.entry.seq);
                 // Read-your-writes (SG-2): a self-read right after a
                 // successful commit must resolve a slot >= the one we won
@@ -555,12 +606,6 @@ export const runCausalConsistencyCascade = (opts: {
                   ).toBe(true);
                 }
               } catch (error) {
-                // Transient WriteConflict under contention is fine — the
-                // peer will re-broadcast on its next observe. Other
-                // errors propagate.
-                if (error instanceof BaerlyError && error.code === "WriteConflict") {
-                  return;
-                }
                 finished = true;
                 reject(error);
               }
@@ -573,6 +618,9 @@ export const runCausalConsistencyCascade = (opts: {
             void (async () => {
               try {
                 await Promise.allSettled(commitQueues);
+                // Heal before verifying: every commit has settled, and the
+                // checks below read durable storage.
+                await opts.healNetwork?.();
                 // No-lost-writes (SG-1): every acked commit's slot is durable.
                 const committed = await collectCommittedSlots(instances[0]!);
                 const missing = missingAckedSlots(ackedSeqs, committed);
@@ -729,6 +777,13 @@ export const runMultiDocCascade = async (opts: {
   pollTickMs: number;
   docIds?: readonly string[];
   commitsPerDoc?: number;
+  /**
+   * Heals injected network faults (node-minio's Toxiproxy twiddler). Called
+   * once the workload has drained and before final verification, so the
+   * verification reads see durable storage without racing dead windows.
+   * Omit for variants without fault injection.
+   */
+  healNetwork?: () => Promise<void>;
 }): Promise<MultiDocCascadeResult> => {
   void opts.pollTickMs;
   const docIds = opts.docIds ?? [COLLECTION];
@@ -776,11 +831,14 @@ export const runMultiDocCascade = async (opts: {
           body: { ...message, token, _id: docId },
         });
       } catch (error) {
-        // Transient WriteConflict under contention is expected — the value is
-        // simply not committed (and won't appear in `observedPerDoc`),
-        // which keeps the subsequence property intact. Other errors
-        // propagate.
-        if (error instanceof BaerlyError && error.code === "WriteConflict") {
+        // An unacknowledged commit (lost race, `NetworkError`, or
+        // `AmbiguousCommit` from a Toxiproxy dead window outlasting the
+        // adapter's retries) is a legal outcome. The assertions never
+        // assume its fate: `observedPerDoc` and `committedSeqs` come from
+        // the durable log, so a write that landed anyway is counted and one
+        // that didn't is absent — both keep the subsequence and
+        // total-order properties checkable. Other errors propagate.
+        if (isUnacknowledgedCommitError(error)) {
           return;
         }
         throw error;
@@ -789,16 +847,18 @@ export const runMultiDocCascade = async (opts: {
   }
 
   await Promise.all(Object.values(docQueues));
+  // Heal before verifying: every commit has settled, and the projection
+  // below reads the durable log.
+  await opts.healNetwork?.();
 
   // Derive `committedSeqs` from the ACTUAL occupied log-slot KEYS, not
   // from an array index — otherwise the "contiguous / gap-free / no-dup"
   // assertions on it are tautological (a forward probe is dense by
   // construction, so synthesizing `start + i` can NEVER witness a gap or
   // duplicate the storage might actually hold). `collectCommittedSlots`
-  // enumerates the live `log/<N>.json` slots — and rides out the
-  // node-minio Toxiproxy flips this cascade also runs under — so the
-  // resulting set is the real committed range the collection-total-order
-  // property exists to witness.
+  // enumerates the live `log/<N>.json` slots, so the resulting set is the
+  // real committed range the collection-total-order property exists to
+  // witness.
   const inst = instances[0]!;
   const read = await readCurrentJson(inst.storage, inst.currentJsonKey);
   const start = read === null ? 0 : read.json.log_seq_start;
@@ -870,12 +930,17 @@ const seedParityDocs = async (
     const priority = priorityAlphabet[i % priorityAlphabet.length]!;
     const doc: ParityDoc = { _id: `d-${i}`, priority };
     docs.push(doc);
-    await writer.commit({
-      op: "I",
-      collection,
-      docId: doc._id,
-      body: doc,
-    });
+    // The parity baseline assumes every seeded doc is durable, so an
+    // unacknowledged commit (a Toxiproxy dead window outlasting the
+    // adapter's retries on node-minio) is re-issued until one is acked.
+    // Re-issuing is safe even when the earlier attempt landed: the body is
+    // identical, so a second `I` entry folds to the same row and the same
+    // index marker. The parity check itself then proves all `count` docs
+    // are visible.
+    await withNetworkRetry(
+      () => writer.commit({ op: "I", collection, docId: doc._id, body: doc }),
+      { retryOn: isUnacknowledgedCommitError },
+    );
   }
   return docs;
 };
@@ -908,6 +973,13 @@ export const runRangeWalkParityCascade = async (opts: {
   tenant?: string;
   collection?: string;
   iterations?: number;
+  /**
+   * Heals injected network faults (node-minio's Toxiproxy twiddler). Called
+   * once the workload has drained and before final verification, so the
+   * verification reads see durable storage without racing dead windows.
+   * Omit for variants without fault injection.
+   */
+  healNetwork?: () => Promise<void>;
 }): Promise<void> => {
   const app = opts.app ?? "rwparity";
   const tenant = opts.tenant ?? `t-${uuid().slice(0, 8)}`;
@@ -927,6 +999,9 @@ export const runRangeWalkParityCascade = async (opts: {
     72,
     priorityAlphabet,
   );
+  // Seeding runs under faults; the planner-vs-full-scan reads run healed.
+  // Every seed was acked, and the reads below prove all of them durable.
+  await opts.healNetwork?.();
 
   const db = Db.create({
     storage: opts.storage,
@@ -1003,12 +1078,7 @@ export const runRangeWalkParityCascade = async (opts: {
     const wire = normalizePredicateArg<ParityDoc>(predicate);
     const expected = seeded.filter((d) => matchesWire(wire, d));
 
-    // Bounded retry on transient I/O — under Toxiproxy the network flips
-    // every 100ms during the node-minio variant, and a `.all()` that lands
-    // in a dead window rejects with a NetworkError. The parity assertion
-    // is unaffected: it only runs after a successful read, and genuine
-    // parity mismatches (a plain assertion failure) propagate immediately.
-    const actual = await withNetworkRetry(() => table.where(predicate).all());
+    const actual = await table.where(predicate).all();
     expect(
       actual.map((r) => r._id).toSorted(),
       `range-walk parity mismatch for wire ${JSON.stringify(wire)}`,
@@ -1052,6 +1122,13 @@ export const runSameIdInsertRaceCascade = async (opts: {
   storages: Storage[];
   faultInjection: boolean;
   rounds?: number;
+  /**
+   * Heals injected network faults (node-minio's Toxiproxy twiddler). Called
+   * after the last round and before the log is read back, so the oracle
+   * reads durable storage without racing dead windows. Omit for variants
+   * without fault injection.
+   */
+  healNetwork?: () => Promise<void>;
 }): Promise<void> => {
   const rounds = opts.rounds ?? 6;
   const tenant = `insrace-${uuid().slice(0, 8)}`;
@@ -1128,20 +1205,20 @@ export const runSameIdInsertRaceCascade = async (opts: {
     }
   }
 
-  const entries = await withNetworkRetry(async () => {
-    const out: LogEntry[] = [];
-    for await (const listed of opts.storages[0]!.list(`${logPrefix}/log/`)) {
-      const got = await opts.storages[0]!.get(listed.key);
-      if (got === null) {
-        continue;
-      }
-      const entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
-      if (entry.doc_id === id) {
-        out.push(entry);
-      }
+  // Every round has settled; read the oracle on a healed network.
+  await opts.healNetwork?.();
+  const found: LogEntry[] = [];
+  for await (const listed of opts.storages[0]!.list(`${logPrefix}/log/`)) {
+    const got = await opts.storages[0]!.get(listed.key);
+    if (got === null) {
+      continue;
     }
-    return out.toSorted((x, y) => x.seq - y.seq);
-  });
+    const entry = JSON.parse(new TextDecoder().decode(got.body)) as LogEntry;
+    if (entry.doc_id === id) {
+      found.push(entry);
+    }
+  }
+  const entries = found.toSorted((x, y) => x.seq - y.seq);
 
   let live = false;
   for (const entry of entries) {

@@ -59,7 +59,30 @@ export const isMonotonicRead = (observedSeq: number, lastObservedSeq: number): b
  * which throws a plain `Error`) is FATAL and must abort the cascade so it
  * surfaces as a rejection instead of hanging until the test timeout.
  *
- * This is the read-side policy only; the write-side commit serializer has
- * its own, stricter policy (only `WriteConflict` is transient there).
+ * This is the read-side policy only; the write-side policy is
+ * {@link isUnacknowledgedCommitError}.
  */
 export const isTransientReadError = (error: unknown): boolean => error instanceof BaerlyError;
+
+/**
+ * Commit-error policy for the cascades' write loops: the codes a
+ * `Writer.commit()` may legally reject with under contention and fault
+ * injection, where the cascade records the write as UNACKNOWLEDGED and
+ * carries on.
+ *
+ * - `WriteConflict`: lost a race; not committed.
+ * - `NetworkError`: the commit failed before a create of unknown fate
+ *   (the Writer converts an unresolved create into `AmbiguousCommit`).
+ * - `AmbiguousCommit`: the create may or may not be durable.
+ *
+ * The cascades never infer state from an unacknowledged commit: SG-1
+ * asserts only acked slots, and every model read (the causal poll loop,
+ * the multi-doc log walk) learns writes from storage. A write that
+ * landed despite the error is observed like any other; one that didn't
+ * is never claimed. Any other code (or a plain `Error`) is fatal.
+ */
+export const isUnacknowledgedCommitError = (error: unknown): boolean =>
+  error instanceof BaerlyError &&
+  (error.code === "WriteConflict" ||
+    error.code === "NetworkError" ||
+    error.code === "AmbiguousCommit");
