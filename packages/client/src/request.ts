@@ -107,7 +107,11 @@ const decodeFailure = async (
   }
   const transient = res.status >= 500 || res.status === 408 || res.status === 429;
   return {
-    enveloped: wire !== undefined,
+    enveloped:
+      typeof wire === "object" &&
+      wire !== null &&
+      !Array.isArray(wire) &&
+      typeof wireCode === "string",
     error: new BaerlyError(
       transient ? "NetworkError" : "Internal",
       wire?.message ?? `HTTP ${res.status}`,
