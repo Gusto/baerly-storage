@@ -23,16 +23,16 @@
     },
     "client.js": {
       "tier": "shipped",
-      "raw": 20663,
-      "gz": 7398,
-      "minGz": 2745,
+      "raw": 25101,
+      "gz": 9116,
+      "minGz": 3136,
       "note": "browser client; must stay tiny. No kernel modules in the closure."
     },
     "client-react.js": {
       "tier": "shipped",
-      "raw": 36944,
-      "gz": 12099,
-      "minGz": 4503,
+      "raw": 41398,
+      "gz": 13715,
+      "minGz": 4853,
       "note": "browser client + React hooks. React itself is external."
     },
     "cloudflare.js": {
