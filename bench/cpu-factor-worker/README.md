@@ -6,6 +6,9 @@ An owner-deployed Cloudflare Worker that measures, on a real Workers account, pe
 - **Tree fold-step cells (`tree-k<k>-b<B>-d<d>`):** a synthetic step on a content-addressed tree: re-encode `k` leaves (JSON) of about `B` KiB, SHA-256 each with `crypto.subtle.digest`, then re-encode and hash `d` path nodes. Grid: k in {1,2,4,8}, B in {4,16,64} KiB, d in {1,2,3}. The `d` nodes are one shared path (best case); leaves on distinct paths touch up to `k*d` nodes. The report says how many leaves fit under Free's ~10 ms, measured directly with no factor involved.
 - **S1 probe cells (`probe-r2-head`, `probe-fetch`, `probe-cache-match`):** 60 sequential calls per request, recording the call index at which each first fails and the exact error. `probe-r2-head` is `env.BUCKET.head` on a missing key; `probe-fetch` is the control (`HEAD https://example.com/`, no data sent); `probe-cache-match` is `caches.default.match`. This answers whether R2 binding calls on Free count against the 50-subrequest cap.
 
+  - **Free account only.** The S1 probes are valid only on a Workers Free account. On Paid the 50 cap does not apply and every probe reads clean.
+  - **Cache probe caveat.** The Cache API is documented as a no-op on `*.workers.dev`, so a clean `probe-cache-match` result there is inconclusive for "Cache API calls count against 50". It is meaningful only on a custom-domain route. The R2 and fetch probes are unaffected.
+
 ## Data, bindings, secrets
 
 All data is synthetic (`d000123` ids, counter plus `x` padding), generated at build time by the tree's own code and bundled into `dist/worker.js`. `wrangler.jsonc` has no `account_id`, routes, vars or secrets. Its only binding is an **optional synthetic R2 bucket** `BUCKET` (`baerly-cpu-factor-synthetic`), used only by `probe-r2-head`: an empty bucket created for the run, never written to, deleted afterwards. Without it `probe-r2-head` reports `skipped` and the other cells are unaffected. The Worker makes outbound requests only for the `probe-fetch` control.
@@ -43,6 +46,7 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 
 ## Reading the output
 
+- All CPU numbers (fold, subject and tree cells) are warm-isolate: JIT-hot, with the first request per isolate dropped. Uniform `x` padding is a best case for JSON. Do not read p50 as a cold fold cost.
 - Deployed `cpuTime` is authoritative; the in-isolate timer is a cross-check, since workerd clocks advance only across I/O.
 - `Cold` invocations (first request in an isolate) and `&warmup=1` requests are dropped.
 - A cell with 1% or more kills, or fewer than 50 ok samples, does not fit and is excluded from factors.
