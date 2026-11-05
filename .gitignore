@@ -88,3 +88,6 @@ docs/whisper/
 
 # Agent worktrees
 .worktrees/
+
+# CPU-factor bench Worker: generated fixtures, Node baseline, run outputs
+bench/cpu-factor-worker/out/

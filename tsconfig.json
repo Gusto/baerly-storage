@@ -81,6 +81,12 @@
     // not be able to turn `pnpm verify` red on a base that never had it.
     "bench/results",
 
+    // Workers-typed Worker sources; `cells.ts` and `common.ts` come back via
+    // the Node-side analyzer and build script that import them.
+    "bench/cpu-factor-worker/src/probes.ts",
+    "bench/cpu-factor-worker/src/worker.ts",
+    "bench/cpu-factor-worker/src/fixtures.d.ts",
+
     "packages/adapter-cloudflare/src",
     "bench/workload-ceiling-worker/src",
     "tests/fixtures/mock-execution-context.ts",

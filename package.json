@@ -239,6 +239,9 @@
     "bench:workload-ceiling:aggregate": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-aggregate.ts",
     "bench:workload-ceiling:validate-smoke": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-validate-smoke.ts",
     "bench:workload-ceiling:win-model": "node --import ./bench/measurement/workload-ceiling-win-model-hooks.mjs bench/measurement/workload-ceiling-win-model-run.ts",
+    "bench:cpu-factor:build": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/build.ts",
+    "bench:cpu-factor:node-baseline": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/node-baseline.ts",
+    "bench:cpu-factor:analyze": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/analyze-run.ts",
     "bench:workload-ceiling:arm-symmetry": "node --import ./bench/register-hooks.mjs bench/measurement/workload-ceiling-arm-symmetry-run.ts"
   },
   "dependencies": {

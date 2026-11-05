@@ -1,0 +1,24 @@
+// Bench Worker for the deployed workerd CPU factor, the tree fold-step cells
+// and the S1 subrequest probe. Synthetic data only, generated at build time
+// and replayed into in-isolate memory. No secrets, no vars, no routes, no
+// account_id: wrangler deploys to the account you are logged in to, on a
+// workers.dev URL.
+//
+// The one binding is an OPTIONAL synthetic R2 bucket, used only by the S1
+// probe (`env.BUCKET.head` on a key that does not exist). It must be an
+// empty bucket created for this run (`wrangler r2 bucket create
+// baerly-cpu-factor-synthetic`) and deleted afterwards. Nothing is ever
+// written to it. Without it the `probe-r2-head` cell reports "skipped" and
+// every other cell is unaffected. See README.md.
+{
+  "name": "baerly-cpu-factor-bench",
+  "main": "./dist/worker.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "upload_source_maps": false,
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "baerly-cpu-factor-synthetic" }],
+  "observability": { "enabled": true },
+}
