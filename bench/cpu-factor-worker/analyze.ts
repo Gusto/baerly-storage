@@ -421,6 +421,7 @@ export const formatReport = (a: Analysis): string => {
     `Node baseline: ${a.baselineHost}, ${a.baselineSamples} samples per cell`,
     `Events parsed: ${a.events}; unmatched: ${a.unmatched}; missing cpuTime: ${a.missingCpu}`,
     "",
+    "Cell CPU below is warm-isolate (cold invocations dropped), not a cold-start cost.",
     "cell | n ok | killed | other | deployed p50 / p90 / p99 ms | node p50 / p99 ms | factor p50 | factor p99 | factor p50 net of noop",
   );
   for (const r of a.rows) {
@@ -445,7 +446,7 @@ export const formatReport = (a: Analysis): string => {
     `Largest passing size (deployed p99 <= ${PASS_MS} ms, every smaller size passing too):`,
     `  main: C ${a.largestPassing.c === undefined ? "none (fails at 16 KiB)" : `${a.largestPassing.c} KiB (2 KiB docs)`}; E ${a.largestPassing.e === undefined ? "none (fails at 256 rows)" : `${a.largestPassing.e} rows (~240 B docs)`}`,
     "",
-    "Tree fold step (direct deployed CPU; one shared path, so the best case for d path nodes):",
+    "Tree fold step (direct deployed CPU, WARM-ISOLATE: JIT-hot, cold invocations dropped, uniform `x` padding is a best case for JSON; not a cold fold cost; one shared path, so the best case for d path nodes):",
     "k | leaf KiB | d | n ok | killed | deployed p50 / p90 / p99 ms",
     ...a.tree.rows.map(
       (t) =>
@@ -457,7 +458,8 @@ export const formatReport = (a: Analysis): string => {
         `  leaf ${m.bKiB} KiB, d=${m.d}: <= ${PASS_MS} ms: ${m.underPass}; <= ${FREE_LIMIT_MS} ms: ${m.underFree}`,
     ),
     "",
-    "S1 probe (calls before failure; 60 sequential calls per run):",
+    "S1 probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):",
+    "  probe-cache-match is INCONCLUSIVE on *.workers.dev (the Cache API is a no-op there); only a custom-domain route can show whether Cache API calls count against 50.",
     ...Object.entries(a.probes).map(([name, p]) => probeLine(name, p)),
   );
   return `${out.join("\n")}\n`;
