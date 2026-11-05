@@ -24,7 +24,7 @@ import {
   NODE_MAINTENANCE_GC_INTERVAL,
   NODE_MAINTENANCE_GC_MAX_MARKS,
   NODE_MAINTENANCE_GC_MAX_SWEEPS,
-  type BaerlyError,
+  BaerlyError,
   type Verifier,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_INTERVAL,
@@ -559,6 +559,49 @@ describe("createFetchHandler", () => {
     );
     expect(warn).toBeDefined();
     expect(warn!.level).toBe("warning");
+  });
+
+  test.each([
+    {
+      name: "a thrown BaerlyError NetworkError maps to its own 502 envelope",
+      thrown: new BaerlyError("NetworkError", "jwks fetch failed"),
+      status: 502,
+      code: "NetworkError",
+    },
+    {
+      name: "an untyped verifier throw maps to an Internal 500 envelope",
+      thrown: new Error("boom"),
+      status: 500,
+      code: "Internal",
+    },
+  ])("$name and emits exactly one canonical line", async ({ thrown, status, code }) => {
+    const records: LogRecord[] = [];
+    const sink: Sink = (r) => records.push(r);
+    await configureObservability({ level: "debug", sink });
+    const handler = createFetchHandler({
+      app: "t",
+      storage: new MemoryStorage(),
+      verifier: async () => {
+        throw thrown;
+      },
+      observability: { level: "debug", sink },
+    });
+    const res = await handler(new Request("http://x/v1/c/c", { method: "GET" }));
+    expect(res.status).toBe(status);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe(code);
+
+    const lines = records.filter(
+      (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
+    );
+    expect(lines).toHaveLength(1);
+    const props = lines[0]!.properties as Record<string, unknown>;
+    expect(props["status"]).toBe(status);
+    expect(props["outcome"]).toBe("error");
+    expect(props["method"]).toBe("GET");
+    expect(props["error"]).toBeDefined();
+    expect(props["path"]).toBe("/v1/c/c");
   });
 
   test("returns 200 for an authed GET when the verifier accepts", async () => {

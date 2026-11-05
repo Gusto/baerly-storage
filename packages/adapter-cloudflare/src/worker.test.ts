@@ -11,6 +11,7 @@
 
 import {
   type BaerlyAppConfig,
+  BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   SHARED_SECRET_MISSING_MESSAGE,
@@ -369,6 +370,56 @@ describe("baerlyWorker observability", () => {
     );
     expect(warn).toBeDefined();
     expect(warn!.level).toBe("warning");
+  });
+
+  test.each([
+    {
+      name: "a thrown BaerlyError NetworkError maps to its own 502 envelope",
+      thrown: new BaerlyError("NetworkError", "jwks fetch failed"),
+      status: 502,
+      code: "NetworkError",
+    },
+    {
+      name: "an untyped verifier throw maps to an Internal 500 envelope",
+      thrown: new Error("boom"),
+      status: 500,
+      code: "Internal",
+    },
+  ])("$name and emits exactly one canonical line", async ({ thrown, status, code }) => {
+    const { records, sink } = collectingSink();
+    const throwingVerifier: Verifier = async () => {
+      throw thrown;
+    };
+    const handler = baerlyWorker(() => ({
+      config: testConfig,
+      verifier: throwingVerifier,
+      observability: { level: "debug", sink },
+    }));
+    const env: BaerlyEnv = { BUCKET: getBinding(), APP: "t" };
+
+    const res = await handler.fetch!(
+      new Request("https://x/v1/c/c", { method: "GET" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
+      env,
+      makeNoopCtx(),
+    );
+    expect(res.status).toBe(status);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe(code);
+
+    const lines = records.filter(
+      (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
+    );
+    expect(lines).toHaveLength(1);
+    const props = lines[0]!.properties as Record<string, unknown>;
+    expect(props["status"]).toBe(status);
+    expect(props["outcome"]).toBe("error");
+    expect(props["method"]).toBe("GET");
+    expect(props["error"]).toBeDefined();
+    expect(props["path"]).toBe("/v1/c/c");
   });
 });
 
