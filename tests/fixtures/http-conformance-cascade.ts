@@ -478,6 +478,29 @@ export const runHttpConformanceCascade = (opts: {
         expect(same.status).toBe(200);
       });
 
+      test("POST and PUT with a non-NFC _id return 400 InvalidConfig and write nothing", async () => {
+        const table = await mintTable("nfc-id");
+        const nfc = "caf\u00e9";
+        const nfd = nfc.normalize("NFD");
+        const ins = await postDoc(table, { _id: nfc, title: "nfc" });
+        expect(ins.status).toBe(201);
+        expect(ins.id).toBe(nfc);
+        const bad = await postDoc(table, { _id: nfd, title: "nfd" });
+        expect(bad.status).toBe(400);
+        expect((bad.body as ErrorEnvelope).error?.code).toBe("InvalidConfig");
+        const put = await doFetch(
+          authedRequest("PUT", `/v1/c/${table}/${encodeURIComponent(nfd)}`, {
+            doc: { title: "nfd" },
+          }),
+        );
+        expect(put.status).toBe(400);
+        expect(((await put.json()) as ErrorEnvelope).error?.code).toBe("InvalidConfig");
+        const list = await doFetch(authedRequest("GET", `/v1/c/${table}`));
+        expect(list.status).toBe(200);
+        const { data } = (await list.json()) as { readonly data: readonly DocumentData[] };
+        expect(data).toEqual([{ _id: nfc, title: "nfc" }]);
+      });
+
       test("POST > 1 MiB body returns 413 PayloadTooLarge", async () => {
         const table = await mintTable("rt-big");
         // 1 MiB + 1 bytes — exactly one byte over the cap so we

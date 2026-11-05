@@ -47,6 +47,16 @@ or change the stored row with `update` / `replace`. After a same-`_id` retry
 following `AmbiguousCommit`, the stored row may be your first attempt: re-read
 it instead (see below).
 
+### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
+
+**Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC,
+such as `"cafe\u0301"` (NFD) instead of `"caf\u00e9"`. R2 stores
+canonically-equivalent keys as one object, so two such ids would share an
+index marker.
+**Fix:** pass `id.normalize("NFC")`. A row an earlier release stored under
+a non-NFC `_id` still reads and deletes; to keep it writable, insert a copy
+under the NFC id, then delete the original.
+
 ### Resending an auto-ID insert over HTTP (`mintedId`)
 
 **Cause:** an HTTP client minted the insert's `_id` and resent the insert after

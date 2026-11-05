@@ -44,9 +44,10 @@ export type Doc = DocumentData & { _id: string; v: number };
 
 /**
  * The `I`/`U`/`D` op arbitrary over an id arbitrary, with a 100-value
- * payload space. A suite that widens the id domain (scalar IDs, NFC/NFD
+ * payload space. A suite that widens the id domain (scalar IDs, case
  * pairs) passes a small id pool here and keeps the op mix and payloads every
- * other suite explores.
+ * other suite explores. Ids must be NFC: the writer refuses an `I` / `U`
+ * under any other `_id`.
  */
 export const opArbOver = (idArb: fc.Arbitrary<string>): fc.Arbitrary<Op> =>
   fc.oneof(

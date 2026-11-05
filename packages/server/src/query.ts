@@ -384,8 +384,9 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
  *   committed before or concurrently with this call (and, with
  *   `mintedId`, its body differs). `err._id` is the `_id`. Not retriable.
- * @throws BaerlyError code="InvalidConfig" — `opts.mintedId` is set and
- *   is not the resolved `_id`.
+ * @throws BaerlyError code="InvalidConfig" — the resolved `_id` fails
+ *   {@link assertDocId} (key-segment rule or not NFC), or `opts.mintedId`
+ *   is set and is not the resolved `_id`.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
  *   `Writer.commit()` does not resolve, or log retention retired part of the
  *   window the insert guard had to read; nothing was committed. Retriable.
@@ -574,8 +575,9 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
  *   root in the type system).
  * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
- *   other than the row's (see {@link assertPatchKeepsId}). Checked per
- *   row, before that row's schema validation and commit.
+ *   other than the row's (see {@link assertPatchKeepsId}), or the row's
+ *   `_id` is not NFC (see {@link assertDocId}). Checked per row, before
+ *   that row's schema validation and commit.
  * @throws BaerlyError code="InvalidResponse" — a matched stored row's
  *   `_id` is not the string it is stored under.
  */
@@ -590,6 +592,10 @@ const runUpdate = async <T extends DocumentData>(
     const doc = row.doc;
     const docId = storedRowId(row, "update");
     assertPatchKeepsId(patch, docId);
+    // The commit re-writes index markers under `docId`, so a row an
+    // earlier release stored under a non-NFC id is refused here, before
+    // schema validation; it stays readable and deletable.
+    assertDocId(docId);
     const merged = merge(doc as DocumentData, patch as Partial<DocumentData>);
     if (merged === undefined) {
       // `merge(target, patch)` returns undefined only when patch is
@@ -633,6 +639,8 @@ const runUpdate = async <T extends DocumentData>(
  * replaces even if the supplied `doc._id` differs.
  *
  * @throws BaerlyError code="NotFound" — no row exists at `id`.
+ * @throws BaerlyError code="InvalidConfig" — `id` fails
+ *   {@link assertDocId} (key-segment rule or not NFC). Checked before I/O.
  * @throws BaerlyError code="SchemaError" — post-image rejected by
  *   the collection's bound validator.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition

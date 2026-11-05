@@ -104,6 +104,15 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Insert a new document. UUIDv7 auto-id on `_id`; caller can
    * supply `_id` and the server honours it. Returns the new id.
    *
+   * A supplied `_id` must be a non-empty string of at most 256 UTF-8
+   * bytes with no `/`, no control characters, no leading `_`, not `.` or
+   * `..`, and in Unicode Normalization Form C
+   * (`id === id.normalize("NFC")`). Ids that differ only by case are
+   * distinct.
+   *
+   * @throws BaerlyError{code: "InvalidConfig"} — the supplied `_id`
+   *         breaks one of those rules; nothing was written. Pass
+   *         `id.normalize("NFC")` for a non-NFC id.
    * @throws BaerlyError{code: "AlreadyExists"} — caller-supplied `_id`
    *         is held by a live row, including one a concurrent insert
    *         committed first: of concurrent inserts of one `_id`, exactly
@@ -150,7 +159,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
    *         top-level `_id` is present and is not the row's `_id`
    *         (`null` included). A patch cannot re-key or strip a row;
-   *         omit `_id`, or pass the row's own `_id`.
+   *         omit `_id`, or pass the row's own `_id`. Also thrown when
+   *         the row's `_id` is not NFC (stored by an earlier release):
+   *         such a row can be read and deleted but not updated; insert a
+   *         copy under `id.normalize("NFC")`, then delete it.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id`. Repair it with
    *         `replace(id, doc)`.
@@ -174,6 +186,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         resolved, so the replace may or may not have been applied.
    *         Re-read by `id` (also `err._id`); absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
+   * @throws BaerlyError{code: "InvalidConfig"} — `id` breaks the `_id`
+   *         rules on {@link Collection.insert}, including NFC; nothing
+   *         was written.
    *
    * @example
    * ```ts
@@ -186,7 +201,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
   /**
    * Delete one row by primary key. Returns `{ deleted: 0 }` when the
    * id is unknown rather than throwing. For predicate-aware bulk
-   * delete, use `.where(predicate).delete()` on {@link Query}.
+   * delete, use `.where(predicate).delete()` on {@link Query}. `id`
+   * need not be NFC, so a row stored under a non-NFC id by an earlier
+   * release can still be deleted.
    *
    * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
    *         the CAS race and this commit did not land. Retriable.
@@ -448,9 +465,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
    *         top-level `_id` is present and is not a matched row's
-   *         `_id` (`null` included). Checked per row before that row
-   *         commits, so rows earlier in the batch may already be
-   *         applied.
+   *         `_id` (`null` included), or a matched row's `_id` is not
+   *         NFC (see {@link Collection.update}). Checked per row before
+   *         that row commits, so rows earlier in the batch may already
+   *         be applied.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked per row before that row

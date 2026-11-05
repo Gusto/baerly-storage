@@ -18,7 +18,10 @@ import {
   MemoryStorage,
 } from "@baerly/protocol";
 import { describe, expect } from "vitest";
-import { validDocIdArb } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
+import {
+  validDocIdArb,
+  writableDocIdArb,
+} from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 import { Db } from "./db.ts";
 
 const APP = "test";
@@ -34,13 +37,13 @@ type PatchId =
   | { readonly kind: "value"; readonly value: unknown };
 
 /**
- * Row ids, biased toward ids with a canonically- or compatibility-
- * equivalent spelling so the `normalized` patch kind often produces an
- * `_id` that looks equal but is not `===`.
+ * Writable (NFC) row ids, biased toward ids with a canonically- or
+ * compatibility-equivalent spelling so the `normalized` patch kind often
+ * produces an `_id` that looks equal but is not `===`.
  */
 const rowIdArb: fc.Arbitrary<string> = fc.oneof(
-  validDocIdArb,
-  fc.constantFrom("caf\u00e9", "cafe\u0301", "\u212b", "\u00c5", "\ufb01le"),
+  writableDocIdArb,
+  fc.constantFrom("caf\u00e9", "\u00c5", "\ufb01le", "\uff21", "\u1e69"),
 );
 
 const patchIdArb: fc.Arbitrary<PatchId> = fc.oneof(

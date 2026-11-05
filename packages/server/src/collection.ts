@@ -96,6 +96,8 @@ export const makeCollection = <T extends DocumentData>(
      *   of failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — from the per-collection
      *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
+     * @throws BaerlyError code="InvalidConfig" — the supplied `_id` breaks
+     *   the key-segment rule or is not NFC. Nothing was written.
      */
     insert: (doc) => runInsert<T>(ctx, doc),
     /**
@@ -115,7 +117,7 @@ export const makeCollection = <T extends DocumentData>(
      *   collection's bound validator, or `merge(prev, patch)` produced
      *   `undefined`.
      * @throws BaerlyError code="InvalidConfig" — the patch's top-level `_id`
-     *   is present and is not `id` (`null` included).
+     *   is present and is not `id` (`null` included), or `id` is not NFC.
      * @throws BaerlyError code="InvalidResponse" — the stored row's `_id` is
      *   not the string `id`; repair it with `replace(id, doc)`.
      */
@@ -134,12 +136,15 @@ export const makeCollection = <T extends DocumentData>(
      *   failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — post-image rejected by the
      *   collection's bound validator.
+     * @throws BaerlyError code="InvalidConfig" — `id` breaks the key-segment
+     *   rule or is not NFC. Nothing was written.
      */
     replace: (id, doc) => runReplaceById<T>(ctx, id, doc),
     /**
      * Tombstone the row at `id`. Forwards to the predicate-form `runDelete`
      * through a `byId` wire, so at most one row is matched. A missing row is
-     * not an error — `deleted` is `0`.
+     * not an error — `deleted` is `0`. `id` need not be NFC, so a row an
+     * earlier release stored under a non-NFC id stays deletable.
      *
      * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
      *   the writer does not resolve; the write was not committed. The writer

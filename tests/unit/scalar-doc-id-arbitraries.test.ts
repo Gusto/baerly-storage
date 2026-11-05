@@ -1,5 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
+import { assertDocId } from "../../packages/server/src/doc-id.ts";
 import { assertSnapshotDocId, compareDocIds } from "../../packages/server/src/snapshot-doc-id.ts";
 import {
   DOC_ID_MAX_UTF8_BYTES,
@@ -7,6 +8,7 @@ import {
   invalidDocIdArb,
   makeValidDocIdArb,
   validDocIdArb,
+  writableDocIdArb,
 } from "../fixtures/scalar-doc-id-arbitraries.ts";
 
 const byteLength = (value: string): number => Buffer.byteLength(value, "utf8");
@@ -79,6 +81,22 @@ describe("validDocIdArb", () => {
     expect([...points].some((point) => point >= 0x300 && point <= 0x36f)).toBe(true);
     expect(sample.some((id) => byteLength(id) >= 250)).toBe(true);
     expect(sample.some((id) => byteLength(id) === DOC_ID_MAX_UTF8_BYTES)).toBe(true);
+  });
+});
+
+describe("writableDocIdArb", () => {
+  fcTest.prop({ id: writableDocIdArb })("generates only NFC, in-domain IDs", ({ id }) => {
+    expect(brokenRules(id)).toEqual([]);
+    expect(id).toBe(id.normalize("NFC"));
+    expect(() => assertDocId(id)).not.toThrow();
+  });
+
+  test("still covers combining marks, astral, and the 250–256-byte band", () => {
+    const sample = fc.sample(writableDocIdArb, { seed: 1, numRuns: 2000 });
+    const points = new Set(sample.flatMap(codePoints));
+    expect([...points].some((point) => point >= 0x300 && point <= 0x36f)).toBe(true);
+    expect([...points].some((point) => point > 0xffff)).toBe(true);
+    expect(sample.some((id) => byteLength(id) >= 250)).toBe(true);
   });
 });
 
