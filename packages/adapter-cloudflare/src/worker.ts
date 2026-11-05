@@ -320,9 +320,10 @@ export interface BaerlyWorkerOptions {
  * don't pay for a Db construction; an auth challenge stops a bad
  * request before any Storage I/O; the router catches everything else.
  *
- * Observability: every HTTP request that flows past the verifier
- * runs inside a single `runWithContext` scope created up front in
- * this adapter — including the read-cache wrapper. The canonical
+ * Observability: every HTTP request that passes healthz — the
+ * verifier included — runs inside a single `runWithContext` scope
+ * created up front in this adapter, including the read-cache
+ * wrapper. The canonical
  * line emitted at end-of-request carries a top-level
  * `cache_status: "hit" | "miss" | "bypass"` field so operators can
  * split hit/miss/bypass directly from the log stream without
@@ -516,12 +517,12 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         });
       }
 
-      // Construct the per-request observability context up front so
-      // EVERYTHING downstream — verifier rejection, `Db.create`, and
-      // the read-cache wrapper — runs inside the same
-      // `runWithContext` scope. Without this lift, a verifier
-      // rejection (or a cache-hit short-circuit) would bypass
-      // canonical-line emission entirely.
+      // Construct the per-request observability context up front. The
+      // verifier, `Db.create`, the router, and the read-cache wrapper all
+      // run inside one `runWithContext` scope below, so work done by any
+      // of them (e.g. a verifier's JWKS fetch) sees `getCurrentContext()`.
+      // A verifier rejection (or a cache-hit short-circuit) still emits
+      // its canonical line from inside that scope.
       //
       // The router's observability middleware (see `router.ts`
       // "Mode A") detects the ambient context and passes through —
@@ -542,14 +543,14 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         }),
       });
 
-      // Tenant resolution: the Verifier owns it unconditionally.
-      const result = await verifier(req);
-      if (result === null) {
-        return runWithContext(obsCtx, async () => flushUnauthorizedAndRespond(obsCtx, req));
-      }
-      const tenantPrefix = result.tenantPrefix;
-
       return runWithContext(obsCtx, async (): Promise<Response> => {
+        // Tenant resolution: the Verifier owns it unconditionally.
+        const result = await verifier(req);
+        if (result === null) {
+          return flushUnauthorizedAndRespond(obsCtx, req);
+        }
+        const tenantPrefix = result.tenantPrefix;
+
         // Storage is wrapped with `observableStorage(...)` so the
         // per-call class A/B counts and per-op duration histograms
         // land in the active per-request bag. Writer / compactor / GC
