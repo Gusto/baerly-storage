@@ -60,4 +60,11 @@ describe("errorEnvelope", () => {
     expect(errorEnvelope("WriteConflict", "x", options).error).not.toHaveProperty("_id");
     expect(errorEnvelope("AmbiguousCommit", "x").error).not.toHaveProperty("_id");
   });
+
+  test("takes an options object, not positional slots", () => {
+    // @ts-expect-error -- the old positional `issues` slot is gone
+    void errorEnvelope("SchemaError", "x", []);
+    // @ts-expect-error -- the old positional `resolution` slot is gone
+    void errorEnvelope("InvalidConfig", "x", undefined, "do X");
+  });
 });
