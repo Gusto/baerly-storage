@@ -139,16 +139,82 @@ describe("retriable classification", () => {
   test("BaerlyError has no per-instance way to set retriable", () => {
     // `retriable` is not an option; the options object has no such field.
     const err = new BaerlyError("WriteConflict", "lost race", {
-      _id: "row-1",
       // @ts-expect-error -- `retriable` is not a BaerlyErrorOptions field
       retriable: false,
     });
-    expect(err._id).toBe("row-1");
     expect(err.retriable).toBe(true);
     // `retriable` is a getter-only prototype accessor, not an own field.
     expect(
       Object.getOwnPropertyDescriptor(BaerlyError.prototype, "retriable")?.set,
     ).toBeUndefined();
     expect(Object.hasOwn(err, "retriable")).toBe(false);
+  });
+
+  test("options land on the same-named properties; omitted ones are undefined", () => {
+    const cause = new Error("root");
+    const issues = [{ path: ["a", 0], message: "bad" }];
+    const full = new BaerlyError("SchemaError", "m", {
+      cause,
+      issues,
+      status: 400,
+      resolution: "fix it",
+      _id: "r1",
+    });
+    expect(full.cause).toBe(cause);
+    expect(full.issues).toBe(issues);
+    expect(full.status).toBe(400);
+    expect(full.resolution).toBe("fix it");
+    expect(full._id).toBe("r1");
+
+    for (const bare of [
+      new BaerlyError("Internal", "m"),
+      new BaerlyError("Internal", "m", {}),
+      new BaerlyError("Internal", "m", { issues: undefined, status: undefined }),
+    ]) {
+      expect(bare.cause).toBeUndefined();
+      expect(bare.issues).toBeUndefined();
+      expect(bare.status).toBeUndefined();
+      expect(bare.resolution).toBeUndefined();
+      expect(bare._id).toBeUndefined();
+    }
+  });
+
+  test("the third argument is an options object, not a cause", () => {
+    // @ts-expect-error -- an Error is not BaerlyErrorOptions; pass `{ cause: err }`
+    void new BaerlyError("NetworkError", "m", new Error("root"));
+    const typed: Error = new Error("root");
+    // @ts-expect-error -- same for a variable typed Error
+    void new BaerlyError("NetworkError", "m", typed);
+    try {
+      throw new Error("boom");
+    } catch (error) {
+      // @ts-expect-error -- a caught `unknown` is not BaerlyErrorOptions
+      void new BaerlyError("NetworkError", "m", error);
+    }
+    // Untyped JavaScript still reaches the runtime: an Error in the options
+    // slot is read as options, so only its own `.cause` is picked up, as with
+    // native `new Error(msg, err)`.
+    const inner = new Error("inner");
+    const wrapped = new Error("root", { cause: inner });
+    expect(new BaerlyError("NetworkError", "m", wrapped as never).cause).toBe(inner);
+    expect(new BaerlyError("NetworkError", "m", typed as never).cause).toBeUndefined();
+    expect(new BaerlyError("NetworkError", "m", { cause: typed }).cause).toBe(typed);
+    // @ts-expect-error -- a string is not BaerlyErrorOptions
+    void new BaerlyError("NetworkError", "m", "oops");
+    // @ts-expect-error -- the old positional `issues` slot is gone
+    void new BaerlyError("SchemaError", "m", undefined, []);
+    // @ts-expect-error -- the old positional `_id` slot is gone
+    void new BaerlyError("AmbiguousCommit", "m", undefined, undefined, undefined, undefined, "r");
+  });
+
+  test("a plain object in the options slot is read as options, not as a cause", () => {
+    // A variable avoids the excess-property check, so this compiles: the
+    // object shares `status` with the options. That is why a plain-object
+    // cause must be wrapped as `{ cause: { ... } }`.
+    const detail = { status: 503, notApplied: true };
+    const misread = new BaerlyError("NetworkError", "m", detail);
+    expect(misread.status).toBe(503);
+    expect(misread.cause).toBeUndefined();
+    expect(new BaerlyError("NetworkError", "m", { cause: detail }).cause).toBe(detail);
   });
 });
