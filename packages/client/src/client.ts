@@ -172,8 +172,9 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
    * the request is sent and flags it as minted, so the server answers a
    * retransmission of that same request with the original `{ _id }` while
    * the stored row still matches, instead of a duplicate row. The client
-   * sends each insert once and does not retransmit it; calling
-   * `insert(doc)` again mints a new auto-ID and is a new insert.
+   * resends an insert only after a `MaintenancePending` refusal, with the
+   * same body and so the same minted `_id`; calling `insert(doc)` again
+   * mints a new auto-ID and is a new insert.
    * The caller's `doc` is not modified.
    */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
