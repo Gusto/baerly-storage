@@ -16,12 +16,18 @@ import {
   logObjectKey,
   MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   MAINTENANCE_MAX_FOLD_ROWS,
+  MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_NODE,
   MemoryStorage,
 } from "@baerly/protocol";
 import { compact, type InternalCompactOptions } from "../../../packages/server/src/compactor.ts";
 import { foldChunkedSnapshotReference } from "../../../packages/server/src/chunked-snapshot-reference.ts";
 import { Db } from "../../../packages/server/src/db.ts";
 import { CLOUDFLARE_FREE_TIER } from "../../../packages/server/src/maintenance.ts";
+import {
+  createObservabilityContext,
+  runWithContext,
+} from "../../../packages/server/src/observability/context.ts";
 import { loadSnapshotAsMap } from "../../../packages/server/src/snapshot.ts";
 import type { FixtureSpec } from "./cells.ts";
 
@@ -60,8 +66,29 @@ const drain = async (storage: MemoryStorage) => {
 const readHead = async (storage: MemoryStorage) =>
   decodeJsonBytes<CurrentJson>((await storage.get(KEY))!.body);
 
+/**
+ * The seeding host's profile: Free's write-tick cadence and per-pass caps, but
+ * the Node fold ceilings. The "C" and "E" fixtures sit AT Free's ceilings (the
+ * Worker measures folds on those exact bytes), so seeding them under Free's own
+ * ceilings would make the capacity refusal reject the inserts that build them.
+ * The build step is a harness, not the system under test.
+ */
+const SEEDING_PROFILE = {
+  ...MAINTENANCE_PROFILE_CF_FREE,
+  maxFoldBytes: MAINTENANCE_PROFILE_NODE.maxFoldBytes,
+  maxFoldRows: MAINTENANCE_PROFILE_NODE.maxFoldRows,
+};
+
 /** Build-time only (Node): seed, fold to quiescence, then leave a 15-entry tail. */
-export const buildFixture = async (spec: FixtureSpec): Promise<Fixture> => {
+export const buildFixture = (spec: FixtureSpec): Promise<Fixture> =>
+  Promise.resolve(
+    runWithContext(
+      createObservabilityContext({ maintenance: { options: { profile: SEEDING_PROFILE } } }),
+      () => buildFixtureInner(spec),
+    ),
+  );
+
+const buildFixtureInner = async (spec: FixtureSpec): Promise<Fixture> => {
   const rand = makeRand();
   const storage = new MemoryStorage();
   const notes = Db.create({ storage, app: "g", tenant: "t" }).collection("notes");
