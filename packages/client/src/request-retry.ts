@@ -30,6 +30,33 @@ export const REQUEST_RETRY_BASE_MILLIS: number = 250;
 export const REQUEST_RETRY_MAX_DELAY_MILLIS: number = 10_000;
 
 /**
+ * Total attempts (first try included) the client makes for one request
+ * answered with an enveloped `MaintenancePending` before it surfaces that
+ * error (main-7 slice 3, S6b), on every verb. Every refused write has
+ * already dispatched one bounded fold, so the third attempt lands behind
+ * two fold passes; a backlog that needs more keeps draining on the
+ * caller's later writes. The same 3-attempt cap as
+ * {@link REQUEST_RETRY_MAX_ATTEMPTS} and `STORAGE_RETRY_MAX_ATTEMPTS`, so
+ * the client has one retry budget, not one per failure class.
+ *
+ * Lives here rather than in `@baerly/protocol`'s `constants.ts`, like the
+ * values above: importing that module adds its whole chunk (~17 KB raw,
+ * ~0.7 KB min-gz) to the browser client for two numbers. The server's
+ * hint is `MAINTENANCE_PENDING_RETRY_AFTER_SECONDS` there.
+ */
+export const MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS: number = 3;
+
+/**
+ * Longest wait, in milliseconds, the client honours for one
+ * `MaintenancePending` retry hint (`Retry-After`, or `error.retryAfter`).
+ * As with {@link REQUEST_RETRY_MAX_DELAY_MILLIS}, a larger hint ends the
+ * retries rather than being clamped, so a hostile or misconfigured server
+ * cannot park a caller. The React subscription pool, which never gives
+ * up, clamps its wait to this instead.
+ */
+export const MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS: number = 10_000;
+
+/**
  * Parse a `Retry-After` header (RFC 9110 §10.2.3: delta-seconds or an
  * HTTP-date) into milliseconds to wait. `undefined` when absent or
  * unparseable; a past date or `0` is `0`.

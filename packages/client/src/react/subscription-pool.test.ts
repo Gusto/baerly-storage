@@ -885,4 +885,106 @@ describe("subscription-pool", () => {
       vi.useRealTimers();
     }
   });
+
+  const pendingPoll = (opts: { header?: string; retryAfter?: number }): Response =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: "MaintenancePending",
+          message: "waiting on maintenance",
+          retriable: true,
+          ...(opts.retryAfter !== undefined && { retryAfter: opts.retryAfter }),
+        },
+      }),
+      {
+        status: 503,
+        headers: {
+          "content-type": "application/json",
+          ...(opts.header !== undefined && { "retry-after": opts.header }),
+        },
+      },
+    );
+
+  test.each([
+    ["the envelope's retryAfter", { retryAfter: 2 }],
+    ["the Retry-After header", { header: "2" }],
+  ])("MaintenancePending waits for %s, not the shorter backoff", async (_label, hint) => {
+    const callTimes: number[] = [];
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", () => {
+      callTimes.push(Date.now());
+      return callTimes.length === 1 ? Promise.resolve(pendingPoll(hint)) : sinceForever();
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    // Backoff alone would re-poll at 125 ms.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribe = pool.attach(
+        "pending",
+        ["notes"],
+        new Set(["notes"]),
+        vi.fn<() => Promise<unknown>>().mockResolvedValue([{ _id: "kept" }]),
+        vi.fn<() => void>(),
+      );
+      await waitMicrotasks(12);
+      expect(callTimes).toEqual([0]);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(callTimes).toEqual([0]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callTimes).toEqual([0, 2_000]);
+      expect(pool.getSnapshot("pending")).toMatchObject({ status: "ok", data: [{ _id: "kept" }] });
+      unsubscribe();
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  test("CapacityExceeded parks the poll as terminal until refetch", async () => {
+    let sinceCalls = 0;
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", () => {
+      sinceCalls += 1;
+      return sinceCalls === 1
+        ? Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: { code: "CapacityExceeded", message: "full", retriable: false },
+              }),
+              { status: 409, headers: { "content-type": "application/json" } },
+            ),
+          )
+        : sinceForever();
+    });
+    vi.useFakeTimers();
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribe = pool.attach(
+        "capacity",
+        ["notes"],
+        new Set(["notes"]),
+        vi.fn<() => Promise<unknown>>().mockResolvedValue([{ _id: "kept" }]),
+        vi.fn<() => void>(),
+      );
+      await waitMicrotasks(12);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sinceCalls).toBe(1);
+      expect(pool.getSnapshot("capacity")).toMatchObject({
+        status: "error",
+        data: [{ _id: "kept" }],
+        error: { code: "CapacityExceeded", retriable: false },
+      });
+
+      pool.refetch("capacity");
+      await waitMicrotasks(16);
+      expect(sinceCalls).toBe(2);
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
