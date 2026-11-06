@@ -1,6 +1,7 @@
 import { type BaerlyConfig, BaerlyError, type UnboundConfig } from "@baerly/protocol";
 import { useCallback, useReducer, useRef, useSyncExternalStore } from "react";
 import type { BaerlyClient } from "../client.ts";
+import { withSignal } from "../internal/context.ts";
 import { useBaerlyClient } from "./provider.ts";
 import { stableKey } from "./stable-key.ts";
 import { type CachedSnapshot, LOADING_SNAPSHOT, poolFor } from "./subscription-pool.ts";
@@ -342,9 +343,11 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
   const collectionsJoin =
     discovery.kind === "ok" ? discovery.collections.join("\x00") : "__non_ok__";
 
-  const fetcherRef = useRef<() => Promise<unknown>>(() => Promise.resolve(undefined));
-  fetcherRef.current = (): Promise<unknown> => {
-    const out = callbackRef.current(client) as Promise<unknown> | typeof SKIP;
+  const fetcherRef = useRef<(signal: AbortSignal) => Promise<unknown>>(() =>
+    Promise.resolve(undefined),
+  );
+  fetcherRef.current = (signal): Promise<unknown> => {
+    const out = callbackRef.current(withSignal(client, signal)) as Promise<unknown> | typeof SKIP;
     if (out === SKIP) {
       return Promise.resolve(undefined);
     }
@@ -373,7 +376,7 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
         signatureBase,
         live ? discovery.collections : [],
         chainCollectionsRef.current,
-        () => fetcherRef.current(),
+        (signal) => fetcherRef.current(signal),
         notify,
       );
     },

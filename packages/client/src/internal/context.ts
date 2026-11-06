@@ -33,3 +33,15 @@ export const getClientContext = (client: BaerlyClient): RequestContext => {
   }
   return ctx;
 };
+
+/** Slot holding the factory behind {@link withSignal}. */
+export const CLIENT_SCOPE: unique symbol = Symbol("baerly.client.scope");
+
+/**
+ * A view of `client` whose every request is also cancelled by `signal`.
+ * The React subscription pool runs a query's callback against this view
+ * so superseding or unmounting the query aborts its in-flight GET and
+ * any retry wait, without the callback threading a signal itself.
+ */
+export const withSignal = <C extends BaerlyClient<never>>(client: C, signal: AbortSignal): C =>
+  (client as unknown as { [CLIENT_SCOPE]: (signal: AbortSignal) => C })[CLIENT_SCOPE](signal);
