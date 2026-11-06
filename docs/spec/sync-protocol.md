@@ -225,10 +225,11 @@ For a single-document mutation:
    becomes `seq`. The search is Class B (GET/read-class) only; the
    `If-None-Match: "*"` create happens later, at the discovered
    first-empty slot. The walk is capped by `LOG_FORWARD_PROBE_CAP`; cap
-   exhaustion is an `Internal` runaway alarm, not normal contention. An
-   insert instead probes linearly from its check read's tail and validates
-   the entries it passes; see
-   [Insert: the first `I` wins](#insert-the-first-i-wins).
+   exhaustion is an `Internal` runaway alarm, not normal contention. The
+   write verbs instead probe linearly from their pre-commit read's tail
+   and validate the entries they pass; see
+   [Insert: the first `I` wins](#insert-the-first-i-wins) and
+   [Capacity: the commit-time re-check](#capacity-the-commit-time-re-check).
 3. **Serialize `LogEntry.after` and PUT additive (new) index keys —
    before the commit.** `I` / `U` post-images are serialized into the
    `LogEntry.after` field; current writers do not create a content side
@@ -345,6 +346,32 @@ unchanged. The guard is part of the writer, so the rule holds once every
 writer on a collection runs a kernel that applies it; a writer on an older
 kernel does not read the window, and its insert can still land a second `I`
 over a concurrent one.
+
+### Capacity: the commit-time re-check
+
+The write verbs refuse growth past the serving host's fold ceiling
+(`CapacityExceeded`, `MaintenancePending`) from the state their pre-commit
+read folded through tail `T0`. Two concurrent growth writes can each pass
+that check and together pass the ceiling, so the decision runs again at
+commit time over the entries the read could not see:
+
+1. The writer reads the window `[T0, seq)` exactly as an insert does
+   (steps 2 and 4 above, shared with the insert guard on an insert). For an
+   update or delete this replaces the galloping tail search; uncontended it
+   is the same single `404` GET.
+2. An empty window means nothing intervened: the pre-commit decision
+   stands and nothing is recomputed. Otherwise the decision re-runs over
+   the read's tail plus the window, for this write and the batch rows
+   after it, before any index marker is written, and again after each lost
+   create race before the next create. A refusal commits nothing; markers
+   already PUT after a lost race stay as the same benign orphans.
+3. In a batch, each row's window starts one past the previous row's
+   committed seq, so no entry is read twice. A refusal there stops the
+   batch with the earlier rows applied.
+
+The insert decision runs first, so a peer's live row is `AlreadyExists`
+whatever the capacity re-check says. Direct `Writer` commits are not
+checked.
 
 ### Unresolved create fate
 

@@ -81,8 +81,10 @@ export type BaerlyErrorCode =
   | "AmbiguousCommit"
   /**
    * The collection is at the fold ceiling of the host serving this request,
-   * so this write was refused and nothing was committed; `retriable` is
-   * `false`. The refusal is decided per request from the collection's
+   * so this write was refused and not committed; `retriable` is
+   * `false`. A batch refused part-way (a concurrent write filled the room
+   * between its check and a row's commit) keeps the rows it already
+   * committed. The refusal is decided per request from the collection's
    * current state and clears by itself once that state changes.
    *
    * Two cases. Near the ceiling, only growth is refused (an insert, or an
@@ -100,7 +102,8 @@ export type BaerlyErrorCode =
   | "CapacityExceeded"
   /**
    * Background maintenance is behind on this collection, so this write was
-   * refused and nothing was committed; `retriable` is `true`. The refusal
+   * refused and not committed (a batch refused part-way keeps the rows it
+   * already committed); `retriable` is `true`. The refusal
    * clears by itself once maintenance catches up. {@link BaerlyError.retryAfter}
    * carries the suggested delay in seconds; wait that long, then repeat the
    * call. HTTP maps this code to 503 with a `Retry-After` header and keeps

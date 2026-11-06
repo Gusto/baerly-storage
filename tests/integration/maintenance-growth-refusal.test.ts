@@ -183,6 +183,8 @@ const GROW_PAD = "x".repeat(3 * M);
 const GROWN_ROW_PAD = "x".repeat(5 * M);
 /** Small growth: M/4 of pad stays inside C - M from "near". */
 const SMALL_PAD = "x".repeat(M / 4);
+/** A 2M row grown by ~1.2M: two such updates pass the 2M of headroom in "near", one does not. */
+const GROWN_BY_1_2M = "x".repeat(Math.round(3.2 * M));
 const doc = (i: number, pad = ROW_PAD): Doc => ({ _id: id(i), n: 0, pad });
 
 type Write = (c: Collection<Doc>) => Promise<unknown>;
@@ -276,6 +278,100 @@ const expectRefusedAndInert = async (storage: Storage, host: Host, write: Write)
   await expect(readIdsOn(storage, host)).resolves.toEqual(before.ids);
   await expect(keys(storage)).resolves.toEqual(before.keys);
   await expect(head(storage)).resolves.toEqual(before.head);
+};
+
+/**
+ * `inner`, except that the first operation `pauses` matches waits until
+ * `release()`; `paused` resolves once it is waiting. Pins one writer
+ * between two of its storage calls while another request runs.
+ */
+const pauseAt = (
+  inner: Storage,
+  pauses: (op: "get" | "put", key: string) => boolean,
+): { storage: Storage; paused: Promise<void>; release: () => void } => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reached!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  let armed = true;
+  const hold = async (op: "get" | "put", key: string): Promise<void> => {
+    if (armed && pauses(op, key)) {
+      armed = false;
+      reached();
+      await gate;
+    }
+  };
+  const storage: Storage = {
+    get: async (key, opts) => {
+      await hold("get", key);
+      return await inner.get(key, opts);
+    },
+    put: async (key, body, opts) => {
+      await hold("put", key);
+      return await inner.put(key, body, opts);
+    },
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+  return { storage, paused, release };
+};
+
+/**
+ * `inner`, running `before(n)` ahead of its `n`th (1-based) log create, so
+ * a peer request can commit between a writer's window probe and its create.
+ */
+const beforeLogCreates = (inner: Storage, before: (n: number) => Promise<void>): Storage => {
+  let creates = 0;
+  return {
+    get: (key, opts) => inner.get(key, opts),
+    put: async (key, body, opts) => {
+      if (isLogKey(key)) {
+        await before(++creates);
+      }
+      return await inner.put(key, body, opts);
+    },
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+};
+
+/** `inner`, recording every `get` / `put` key in call order. */
+const recording = (inner: Storage): { storage: Storage; ops: string[] } => {
+  const ops: string[] = [];
+  const storage: Storage = {
+    get: (key, opts) => {
+      ops.push(`get ${key}`);
+      return inner.get(key, opts);
+    },
+    put: (key, body, opts) => {
+      ops.push(`put ${key}`);
+      return inner.put(key, body, opts);
+    },
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+  return { storage, ops };
+};
+
+const LOG_KEY_PREFIX = `${CURRENT_JSON_KEY.slice(0, CURRENT_JSON_KEY.lastIndexOf("/"))}/log/`;
+const isLogKey = (key: string): boolean => key.startsWith(LOG_KEY_PREFIX);
+
+/**
+ * Log GETs a write's commit issued: those between the writer's own
+ * `current.json` read (the verb's read comes first) and its committing
+ * log create.
+ */
+const commitLogGets = (ops: readonly string[]): number => {
+  const manifestReads = ops.flatMap((op, i) => (op === `get ${CURRENT_JSON_KEY}` ? [i] : []));
+  const from = manifestReads[1]!;
+  const to = ops.findIndex((op, i) => i > from && op.startsWith("put ") && isLogKey(op.slice(4)));
+  expect(from, "the writer read current.json").toBeDefined();
+  expect(to, "the write committed").toBeGreaterThan(from);
+  return ops.slice(from, to).filter((op) => op.startsWith("get ") && isLogKey(op.slice(4))).length;
 };
 
 const VARIANTS = makeVariants("baerly-growth-refusal-");
@@ -975,6 +1071,215 @@ describe("main-10: growth refusal (target behavior)", () => {
             expect(view?.size).toBe(live);
           });
         }
+      });
+
+      // ── G5-race: commit-time re-check ───────────────────────────────
+      describe("G5-race commit-time re-check", () => {
+        /**
+         * Writer A passes its pre-commit check, then pauses at `pauses`
+         * while writer B's whole request runs; then A resumes.
+         */
+        const race = async (
+          storage: Storage,
+          host: Host,
+          a: Write,
+          b: Write,
+          pauses: (op: "get" | "put", key: string) => boolean,
+        ): Promise<{ a: unknown; b: unknown }> => {
+          const gated = pauseAt(storage, pauses);
+          const pendingA = outcome(onHost(gated.storage, host, a));
+          await gated.paused;
+          const resultB = await outcome(onHost(storage, host, b));
+          gated.release();
+          return { a: await pendingA, b: resultB };
+        };
+        /** A's writer reads `current.json` (its 2nd read): before its window probe. */
+        const atWriterManifestRead = (): ((op: "get" | "put", key: string) => boolean) => {
+          let reads = 0;
+          return (op, key) => op === "get" && key === CURRENT_JSON_KEY && ++reads === 2;
+        };
+        /** A's committing log create: after its window probe found the slot empty. */
+        const atLogCreate = (op: "get" | "put", key: string): boolean =>
+          op === "put" && isLogKey(key);
+
+        for (const [label, pauses] of [
+          ["B lands before A's window read", atWriterManifestRead],
+          ["B wins A's create slot", () => atLogCreate],
+        ] as const) {
+          test(`two inserts each projecting E - 1 (${label}): the second is refused and commits nothing`, async () => {
+            const storage = await folded(E - 2, SMALL);
+            // Alone, each insert projects E - 1 and is accepted.
+            const probe = await folded(E - 2, SMALL);
+            await expect(outcome(onHost(probe, SMALL_HOST, insertW(E - 2)))).resolves.toBe(
+              "accepted",
+            );
+            const before = await state(storage);
+
+            const result = await race(
+              storage,
+              SMALL_HOST,
+              insertW(E - 2),
+              insertW(E - 1),
+              pauses(),
+            );
+            expect(result).toEqual({ a: "capacity", b: "accepted" });
+            await expect(state(storage)).resolves.toMatchObject({ tail: before.tail + 1 });
+            const ids = await readIdsOn(storage, SMALL_HOST);
+            expect(ids).toHaveLength(E - 1);
+            expect(ids).toContain(id(E - 1));
+            expect(ids).not.toContain(id(E - 2));
+          });
+        }
+
+        test("two byte-growing updates each within C - margin: the second is refused and commits nothing", async () => {
+          const { storage, host } = await bytesState("near");
+          // Each grows a 2M row by ~1.2M: alone within the 2M of headroom, together past it.
+          const grow =
+            (i: number): Write =>
+            (c) =>
+              c.update(id(i), { pad: GROWN_BY_1_2M });
+          const before = await state(storage);
+          const result = await race(storage, host, grow(0), grow(1), atWriterManifestRead());
+          expect(result).toEqual({ a: "capacity", b: "accepted" });
+          await expect(state(storage)).resolves.toMatchObject({ tail: before.tail + 1 });
+          const rows = await onHost(storage, host, (c) => c.all());
+          const pads = new Map(rows.map((r) => [r._id, r.pad.length]));
+          expect(pads.get(id(0))).toBe(BYTE_ROW_PAD.length);
+          expect(pads.get(id(1))).toBe(GROWN_BY_1_2M.length);
+        });
+
+        test("same-row race: an update merged onto a row a peer shrank is judged against the live row", async () => {
+          const { storage, host } = await bytesState("near");
+          // A shrinks row 0 (frees 2M), then D grows row 1 by 3M into that
+          // room. B read row 0 before A: its same-size update re-grows row 0
+          // by 2M against the live row, past C.
+          const result = await race(
+            storage,
+            host,
+            sameSizeW(0),
+            async (c) => {
+              await shrinkW(0)(c);
+              await c.update(id(1), { pad: GROWN_ROW_PAD });
+            },
+            atWriterManifestRead(),
+          );
+          expect(result).toEqual({ a: "capacity", b: "accepted" });
+          const rows = await onHost(storage, host, (c) => c.all());
+          const row0 = rows.find((r) => r._id === id(0))!;
+          expect(row0).toMatchObject({ n: 0, pad: "" });
+        });
+
+        test("contended batch: a row's re-check counts every entry that landed during the batch", async () => {
+          const { storage, host } = await bytesState("near");
+          // Of the 2M of headroom: the batch grows rows 0 and 1 by 0.5M each,
+          // peers grow rows 2 and 3 by 0.6M each. Peer P lands before row 0's
+          // create (0.6 + 1.0 fits); peer Q before row 1's (P + row 0 + Q + row 1
+          // = 2.2 does not, while Q itself fit at 1.7).
+          // Mark the batch's rows (a same-size update each).
+          await commit(storage, [
+            { op: "U", i: 0, n: 7, pad: BYTE_ROW_PAD },
+            { op: "U", i: 1, n: 7, pad: BYTE_ROW_PAD },
+          ]);
+          const pad = (units: number): string => "x".repeat(Math.round(units * M));
+          const peer = (i: number) => () =>
+            expect(
+              outcome(onHost(storage, host, (c) => c.update(id(i), { pad: pad(2.6) }))),
+            ).resolves.toBe("accepted");
+          // Creates: 1 = row 0 (loses to P), 2 = row 0 again, 3 = row 1 (loses to Q).
+          const hooked = beforeLogCreates(storage, async (n) => {
+            if (n === 1) {
+              await peer(2)();
+            } else if (n === 3) {
+              await peer(3)();
+            }
+          });
+          const batch = outcome(
+            onHost(hooked, host, (c) => c.where({ n: 7 }).update({ pad: pad(2.5) })),
+          );
+          await expect(batch).resolves.toBe("capacity");
+          const rows = await onHost(storage, host, (c) => c.all());
+          const pads = new Map(rows.map((r) => [r._id, r.pad.length]));
+          // Row 0 committed before the refusal; row 1 did not.
+          expect([0, 1, 2, 3].map((i) => pads.get(id(i)))).toEqual([
+            pad(2.5).length,
+            BYTE_ROW_PAD.length,
+            pad(2.6).length,
+            pad(2.6).length,
+          ]);
+        });
+
+        test("intervening writes bring a full pass due: the re-check forces the committing write's tick", async () => {
+          const storage = await atEMinus1();
+          const before = await state(storage);
+          // Alone at E - 1 with an empty tail, a same-size update's tick is not
+          // forced (less than a pass pending). Four peers' updates land between
+          // A's read and its commit, so A's commit completes a pass.
+          const gated = pauseAt(storage, atWriterManifestRead());
+          const pendingA = outcome(onHost(gated.storage, SMALL_HOST, sameSizeW(0)));
+          await gated.paused;
+          for (const i of [1, 2, 3, 4]) {
+            await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(i)))).resolves.toBe(
+              "accepted",
+            );
+          }
+          await expect(state(storage)).resolves.toMatchObject({
+            start: before.start,
+            tail: before.tail + PASS - 1,
+          });
+          gated.release();
+          await expect(pendingA).resolves.toBe("accepted");
+          const after = await state(storage);
+          expect(after.tail).toBe(before.tail + PASS);
+          expect(after.start).toBeGreaterThan(before.start);
+        });
+
+        test("six concurrent inserts with room for three: exactly three commit, and growth stays below E", async () => {
+          const storage = await sixteen();
+          const results = await Promise.all(
+            Array.from({ length: 6 }, (_, k) =>
+              outcome(onHost(storage, SMALL_HOST, insertW(16 + k))),
+            ),
+          );
+          expect(results.filter((r) => r === "accepted")).toHaveLength(E - 1 - 16);
+          expect(results.filter((r) => r !== "accepted")).toEqual([
+            "capacity",
+            "capacity",
+            "capacity",
+          ]);
+          await expect(readIdsOn(storage, SMALL_HOST)).resolves.toHaveLength(E - 1);
+          // Not a no-progress state: a delete is still accepted.
+          await expect(outcome(onHost(storage, SMALL_HOST, deleteW(0)))).resolves.toBe("accepted");
+        });
+
+        const uncontended: Array<[string, Write]> = [
+          ["an insert", insertW(16)],
+          ["a same-size update", sameSizeW(3)],
+          ["a delete", deleteW(3)],
+        ];
+        for (const [what, write] of uncontended) {
+          test(`nothing intervened: ${what}'s commit reads one log slot, the empty one it creates`, async () => {
+            const storage = await sixteen();
+            const rec = recording(storage);
+            await expect(outcome(onHost(rec.storage, SMALL_HOST, write))).resolves.toBe("accepted");
+            expect(commitLogGets(rec.ops)).toBe(1);
+          });
+        }
+
+        test("something intervened: the commit reads each intervening entry once, plus the empty slot", async () => {
+          const storage = await sixteen();
+          const rec = recording(storage);
+          const gated = pauseAt(rec.storage, atWriterManifestRead());
+          const pendingA = outcome(onHost(gated.storage, SMALL_HOST, sameSizeW(3)));
+          await gated.paused;
+          for (const i of [4, 5]) {
+            await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(i)))).resolves.toBe(
+              "accepted",
+            );
+          }
+          gated.release();
+          await expect(pendingA).resolves.toBe("accepted");
+          expect(commitLogGets(rec.ops)).toBe(2 + 1);
+        });
       });
     });
   }

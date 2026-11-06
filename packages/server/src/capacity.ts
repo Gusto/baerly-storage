@@ -8,8 +8,11 @@
  * at the first entry that would add a row to an `E`-row snapshot. Past
  * that point nothing folds, and every read pays one GET per pending tail
  * entry.
- * The write verbs call {@link capacityRefusal} after their pre-commit read
- * and before any commit, so a refused write commits nothing.
+ * The write verbs call {@link capacityDecision} after their pre-commit read
+ * and before any commit, so a refused write commits nothing, and again
+ * inside each commit, before its `log/<seq>` create, whenever another
+ * write landed since that read, so concurrent growth writes that each
+ * passed cannot together pass the ceiling (G5-race).
  *
  * The decision is a pure function of the state that read already loaded
  * (`current.json`, the snapshot rows, the pending tail) plus the planned
@@ -211,7 +214,7 @@ export const maintenancePending = (collection: string): BaerlyError =>
     "MaintenancePending",
     `collection ${JSON.stringify(collection)} is waiting on maintenance: this write would grow ` +
       `it past what this host can fold until the pending changes fold, so it was refused and ` +
-      `nothing was committed. Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
+      `not committed (rows a batch committed before it are kept). Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
     {
       resolution: CODE_RESOLUTIONS.MaintenancePending,
       retryAfter: MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
@@ -262,7 +265,10 @@ export type CapacityDecision =
  *   `E` rows included: the fold drains them in place. `pressure` reports
  *   whether the commit forces its write tick (see `forcesTick` inside).
  *
- * A batch is decided whole, before its first row commits.
+ * A batch is decided whole, before its first row commits. The verbs
+ * re-run the decision at each commit over the entries that landed since
+ * (G5-race, `admitWrites` in `./query.ts`), for the writes not yet
+ * committed.
  *
  * @param head `current.json` as the pre-commit read saw it.
  * @param base The snapshot rows that read loaded (`docId → body`).
@@ -365,8 +371,8 @@ export const capacityDecision = (args: {
     : `${peakBytes} bytes would pass the ${maxBytes}-byte ceiling`;
   const refusal = refuse(
     `collection ${JSON.stringify(collection)} is full on this host: ${detail}, so this ` +
-      `${refused.op === "I" ? "insert" : "growing update"} was refused and nothing was ` +
-      `committed. Deletes and same-size or shrinking updates still commit; delete or shrink ` +
+      `${refused.op === "I" ? "insert" : "growing update"} was refused and not ` +
+      `committed (rows a batch committed before it are kept). Deletes and same-size or shrinking updates still commit; delete or shrink ` +
       `rows to make room. If the collection must keep growing, it needs a larger host or graduation.`,
   );
   if (own.length === 0) {

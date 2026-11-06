@@ -2189,3 +2189,187 @@ describe("Writer — insert guard (first insert wins)", () => {
     expect(result.entry.seq).toBe(1);
   });
 });
+
+describe("Writer — admission (commit-time re-check)", () => {
+  const MANIFEST = `app/test/tenant/t/manifests/${COLL}`;
+  const DOC = "admitted";
+  const by_title: IndexDefinition = { name: "by_title", on: "title" };
+  const refusal = new BaerlyError("CapacityExceeded", "refused by the test admission");
+
+  /** An admission recording each `check` call; it refuses when `refuse` says so. */
+  const recordingAdmission = (
+    fromSeq: number,
+    refuse: (window: readonly LogEntry[]) => boolean = () => false,
+  ) => {
+    const calls: Array<{ seqs: number[]; tail: number }> = [];
+    return {
+      calls,
+      admission: {
+        fromSeq,
+        check: (window: readonly LogEntry[], tail: number): undefined => {
+          calls.push({ seqs: window.map((e) => e.seq), tail });
+          if (refuse(window)) {
+            throw refusal;
+          }
+          return undefined;
+        },
+      },
+    };
+  };
+
+  const titleMarkers = async (storage: MemoryStorage): Promise<string[]> => {
+    const keys: string[] = [];
+    for await (const entry of storage.list(`${MANIFEST}/index/${by_title.name}/`)) {
+      keys.push(entry.key);
+    }
+    return keys;
+  };
+
+  test("uncontended: check sees an empty window, and the commit GETs only the empty slot", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    await seedLogEntry(storage, MANIFEST, 0, { collection: COLL, doc_id: "other" });
+    const getSpy = vi.spyOn(storage, "get");
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { calls, admission } = recordingAdmission(1);
+
+    const result = await writer.commit({ op: "D", collection: COLL, docId: DOC, admission });
+    expect(result.entry.seq).toBe(1);
+    expect(calls).toEqual([{ seqs: [], tail: 1 }]);
+    const logGets = getSpy.mock.calls.filter(([key]) => key.startsWith(`${LOG_PREFIX}/`));
+    expect(logGets.map(([key]) => key)).toEqual([`${LOG_PREFIX}/1.json`]);
+  });
+
+  test("check sees [fromSeq, tail), the folded part included", async () => {
+    const storage = new MemoryStorage();
+    // A fold moved the floor to 2 after the caller read the tail at 1.
+    await createCurrentJson(
+      storage,
+      CURRENT_KEY,
+      logStateCurrentJson({ tail_hint: 2, log_seq_start: 2 }),
+    );
+    for (const seq of [0, 1, 2]) {
+      await seedLogEntry(storage, MANIFEST, seq, { collection: COLL, doc_id: `peer-${seq}` });
+    }
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { calls, admission } = recordingAdmission(1);
+
+    const result = await writer.commit({ op: "D", collection: COLL, docId: DOC, admission });
+    expect(result.entry.seq).toBe(3);
+    expect(calls).toEqual([{ seqs: [1, 2], tail: 3 }]);
+  });
+
+  test("a refusal before the create commits nothing and PUTs no marker", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    await seedLogEntry(storage, MANIFEST, 0, { collection: COLL, doc_id: "peer" });
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { indexes: [by_title] },
+    });
+    const { admission } = recordingAdmission(0, (window) => window.length > 0);
+
+    await expect(
+      writer.commit({
+        op: "U",
+        collection: COLL,
+        docId: DOC,
+        body: { _id: DOC, title: "mine" },
+        admission,
+      }),
+    ).rejects.toBe(refusal);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+    await expect(titleMarkers(storage)).resolves.toEqual([]);
+  });
+
+  test("a peer wins the probed slot: check re-runs with the occupant, a refusal commits nothing and leaves the markers", async () => {
+    class PeerWinsSlot extends MemoryStorage {
+      armed = true;
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (this.armed && /\/log\/\d+\.json$/.test(key)) {
+          this.armed = false;
+          await seedLogEntry(this, MANIFEST, 0, {
+            collection: COLL,
+            doc_id: "peer",
+            session: "peerss",
+          });
+        }
+        return super.put(key, body, opts);
+      }
+    }
+    const storage = new PeerWinsSlot();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { indexes: [by_title] },
+    });
+    const { calls, admission } = recordingAdmission(0, (window) => window.length > 0);
+
+    await expect(
+      writer.commit({
+        op: "U",
+        collection: COLL,
+        docId: DOC,
+        body: { _id: DOC, title: "mine" },
+        admission,
+      }),
+    ).rejects.toBe(refusal);
+    expect(calls).toEqual([
+      { seqs: [], tail: 0 },
+      { seqs: [0], tail: 1 },
+    ]);
+    await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
+    // The Step 4 marker is an orphan the read path drops, as for a lost insert.
+    await expect(titleMarkers(storage)).resolves.toEqual(
+      allIndexKeysFor(MANIFEST, [by_title], { _id: DOC, title: "mine" }, DOC),
+    );
+  });
+
+  test("with an insert guard, a peer's live row is AlreadyExists before check runs", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    await seedLogEntry(storage, MANIFEST, 0, { collection: COLL, doc_id: DOC });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    const { calls, admission } = recordingAdmission(0, () => true);
+
+    await expect(
+      writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: DOC,
+        body: { _id: DOC },
+        insertGuard: { absentBelowSeq: 0 },
+        admission,
+      }),
+    ).rejects.toMatchObject({ code: "AlreadyExists" });
+    expect(calls).toEqual([]);
+  });
+
+  test.each([
+    ["a negative fromSeq", { fromSeq: -1 }, undefined],
+    ["a fractional fromSeq", { fromSeq: 1.5 }, undefined],
+    ["a fromSeq other than the insert guard's", { fromSeq: 1 }, { absentBelowSeq: 0 }],
+  ] as const)("%s throws InvalidConfig before I/O", async (_label, shape, insertGuard) => {
+    const storage = new MemoryStorage();
+    const getSpy = vi.spyOn(storage, "get");
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+    await expect(
+      writer.commit({
+        op: "I",
+        collection: COLL,
+        docId: DOC,
+        body: { _id: DOC },
+        admission: { ...shape, check: () => undefined },
+        ...(insertGuard !== undefined && { insertGuard }),
+      }),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+});
