@@ -1208,6 +1208,31 @@ describe("main-10: growth refusal (target behavior)", () => {
           ]);
         });
 
+        test("intervening writes bring a full pass due: the re-check forces the committing write's tick", async () => {
+          const storage = await atEMinus1();
+          const before = await state(storage);
+          // Alone at E - 1 with an empty tail, a same-size update's tick is not
+          // forced (less than a pass pending). Four peers' updates land between
+          // A's read and its commit, so A's commit completes a pass.
+          const gated = pauseAt(storage, atWriterManifestRead());
+          const pendingA = outcome(onHost(gated.storage, SMALL_HOST, sameSizeW(0)));
+          await gated.paused;
+          for (const i of [1, 2, 3, 4]) {
+            await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(i)))).resolves.toBe(
+              "accepted",
+            );
+          }
+          await expect(state(storage)).resolves.toMatchObject({
+            start: before.start,
+            tail: before.tail + PASS - 1,
+          });
+          gated.release();
+          await expect(pendingA).resolves.toBe("accepted");
+          const after = await state(storage);
+          expect(after.tail).toBe(before.tail + PASS);
+          expect(after.start).toBeGreaterThan(before.start);
+        });
+
         test("six concurrent inserts with room for three: exactly three commit, and growth stays below E", async () => {
           const storage = await sixteen();
           const results = await Promise.all(
