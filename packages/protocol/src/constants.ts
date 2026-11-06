@@ -751,6 +751,18 @@ export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
  */
 export const CAPACITY_BYTES_MARGIN: number = 64;
 
+/**
+ * `retryAfter` (seconds) on a `MaintenancePending` refusal (main-10 G6).
+ * The refused write dispatches one bounded fold before it refuses, and
+ * that fold finishes within the same invocation: inline before the
+ * response, or in the Cloudflare `ctx.waitUntil` continuation right after
+ * it. A retry needs only to land after that, so the value is the smallest
+ * non-zero `Retry-After` (RFC 9110 §10.2.3 delay-seconds is a whole
+ * number). Each retry runs its own fold pass, so a longer backlog drains
+ * across retries rather than within one delay.
+ */
+export const MAINTENANCE_PENDING_RETRY_AFTER_SECONDS: number = 1;
+
 // Declared here (not the nominal server `MaintenanceProfile`) to avoid a server→protocol cycle; keep field-identical to it.
 type MaintenanceProfileShape = Readonly<{
   gcInterval: number;

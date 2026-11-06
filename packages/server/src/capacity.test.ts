@@ -21,7 +21,12 @@ import {
 } from "@baerly/protocol";
 import { fc, test as propTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import { capacityRefusal, type PlannedWrite, projectSnapshot } from "./capacity.ts";
+import {
+  capacityDecision,
+  capacityRefusal,
+  type PlannedWrite,
+  projectSnapshot,
+} from "./capacity.ts";
 import { compact } from "./compactor.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
@@ -239,6 +244,97 @@ describe("capacityRefusal", () => {
     const s = stored(9);
     const tail = [entry(9, "I", "p")];
     expect(decide(s, tail, [{ op: "U", docId: "d0", after: body("d0") }])).toBe("CapacityExceeded");
+  });
+});
+
+describe("capacityDecision near the ceiling (G6)", () => {
+  const insert: PlannedWrite = { op: "I", docId: "n", after: body("n") };
+  const decision = (
+    state: ReturnType<typeof stored>,
+    tail: LogEntry[],
+    writes: PlannedWrite[],
+    limits: Parameters<typeof capacityDecision>[0]["ceilings"] = ceilings,
+  ) =>
+    capacityDecision({
+      collection: COLLECTION,
+      head: state.head,
+      base: state.base,
+      tail,
+      writes,
+      ceilings: limits,
+    });
+
+  test("pressure: an accepted write leaves the collection where one more insert is refused", () => {
+    // 8 + 1 = 9 rows: a further insert makes E.
+    expect(decision(stored(8), [], [insert])).toEqual({ refusal: undefined, pressure: true });
+    expect(decision(stored(7), [], [insert])).toEqual({ refusal: undefined, pressure: false });
+    // A delete at E - 1 makes room for one insert, so no pressure.
+    expect(decision(stored(9), [], [{ op: "D", docId: "d0" }])).toMatchObject({ pressure: false });
+    // At E nothing more fits.
+    expect(decision(stored(10), [], [{ op: "D", docId: "d0" }])).toMatchObject({ pressure: true });
+  });
+
+  test("pressure: bytes at the margin count as the refusal point", () => {
+    const s = stored(2, "x".repeat(50));
+    const p = projectSnapshot(s.head, s.base, COLLECTION);
+    const atLimit = { maxFoldRows: 100, maxFoldBytes: p.bytes + CAPACITY_BYTES_MARGIN };
+    const sameSize: PlannedWrite = {
+      op: "U",
+      docId: "d0",
+      after: body("d0", "x".repeat(50)),
+      before: body("d0", "x".repeat(50)),
+    };
+    expect(decision(s, [], [sameSize], atLimit)).toMatchObject({ pressure: true });
+    expect(
+      decision(s, [], [sameSize], { ...atLimit, maxFoldBytes: atLimit.maxFoldBytes + 1 }),
+    ).toMatchObject({ pressure: false });
+  });
+
+  test("foldFreesRoom: set when the tail's peak, not its final state, refuses the write", () => {
+    const tail = [
+      entry(7, "I", "a"),
+      entry(8, "I", "b"),
+      entry(9, "I", "c"),
+      entry(10, "D", "a"),
+      entry(11, "D", "b"),
+      entry(12, "D", "c"),
+    ];
+    const d = decision(stored(7), tail, [insert]);
+    expect(d.refusal?.code).toBe("CapacityExceeded");
+    expect(d).toMatchObject({ foldFreesRoom: true });
+  });
+
+  test("foldFreesRoom: unset with an empty tail, an insert-only tail, or in the no-progress state", () => {
+    expect(decision(stored(9), [], [insert])).toMatchObject({ foldFreesRoom: false });
+    expect(decision(stored(8), [entry(8, "I", "p")], [insert])).toMatchObject({
+      foldFreesRoom: false,
+    });
+    expect(decision(stored(10), [entry(10, "I", "p")], [insert])).toMatchObject({
+      foldFreesRoom: false,
+    });
+    expect(decision(stored(11), [entry(11, "D", "d0")], [insert])).toMatchObject({
+      foldFreesRoom: false,
+    });
+  });
+
+  test("foldFreesRoom: unset when the first pass would rebuild past C", () => {
+    const s = stored(2);
+    const big = "x".repeat(200);
+    // [big insert, 2 same-size updates, its delete]; C fits the final state, not the pass.
+    const tail = [
+      entry(2, "I", "big", big),
+      entry(3, "U", "d0"),
+      entry(4, "U", "d1"),
+      entry(5, "D", "big"),
+    ];
+    const p = projectSnapshot(s.head, s.base, COLLECTION);
+    const limits = { maxFoldRows: 100, maxFoldBytes: p.bytes + 100 + CAPACITY_BYTES_MARGIN };
+    expect(decision(s, tail, [insert], { ...limits, maxFoldEntriesPerPass: 3 })).toMatchObject({
+      foldFreesRoom: false,
+    });
+    expect(decision(s, tail, [insert], { ...limits, maxFoldEntriesPerPass: 4 })).toMatchObject({
+      foldFreesRoom: true,
+    });
   });
 });
 

@@ -91,11 +91,7 @@ import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
 import { findLogTail, probeTailFrom } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
-import {
-  dispatchInlineAwaited,
-  runBoundedMaintenance,
-  shouldFireMaintenance,
-} from "./maintenance.ts";
+import { dispatchWriteTick, shouldFireMaintenance } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 
@@ -190,6 +186,16 @@ export interface CommitInput {
    * @internal — set by `Collection.insert` (`runInsert` in `./query.ts`).
    */
   readonly insertGuard?: InsertGuard;
+
+  /**
+   * Force the post-commit maintenance tick (main-10 G6): dispatch it even
+   * when the ratio-OR-boundary gate is closed, and let it bypass Gate 1
+   * inside the runner. Ignored under `BAERLY_MAINTENANCE_DISABLE`.
+   *
+   * @internal — set by the write verbs in `./query.ts` while a growth
+   * write would be refused (`capacityDecision`'s `pressure`).
+   */
+  readonly forceMaintenance?: boolean;
 }
 
 /**
@@ -876,51 +882,22 @@ export class Writer {
     // profile) so the pre-fire cadence can't diverge from the fold's.
     const gcInterval =
       maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
+    // A forced tick (main-10 G6) skips the ratio-OR-boundary gate: the
+    // verb found the collection at its growth-refusal point.
+    const forceFold = input.forceMaintenance === true && maint?.disabled !== true;
     const maintenanceDue =
       maint?.disabled === true
         ? observedTail - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES
-        : shouldFireMaintenance(current, prevSeq, gcInterval, observedTail);
+        : forceFold || shouldFireMaintenance(current, prevSeq, gcInterval, observedTail);
     if (maintenanceDue) {
-      const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
-      // `await dispatch(...)`: `dispatchInlineAwaited` returns the
-      // task's promise (awaited inline — deterministic for tests +
-      // correct for serverful Node). A `ctx.waitUntil`-style dispatch
-      // returns void (fire-and-forget off the ack); `await void` is a
-      // no-op. The `.then(() => {}, () => {})` is belt-and-suspenders:
-      // `runBoundedMaintenance` already swallows internally, but this
-      // guarantees a dispatched task can NEVER reject the commit even
-      // if a future change makes it throw.
-      try {
-        await dispatch(() =>
-          runBoundedMaintenance(
-            {
-              storage: this.#storage,
-              currentJsonKey: this.#currentJsonKey,
-              prevSeq,
-              // Thread the in-memory observed tail so the runner's Gate-1
-              // ratio + GC cadence key off the true tail without an
-              // O(gap) re-probe (the stored `tail_hint` is only a lower
-              // bound under single-write commit).
-              observedTail,
-              // `disabled` disables fold/GC phases inside the runner but
-              // still permits the bounded tail_hint refresh that prevents a
-              // maintenance-off collection from drifting past the probe cap.
-              ...(maint?.disabled === true && { disabled: true }),
-              ...(maint?.maxFoldBytes !== undefined && { maxFoldBytes: maint.maxFoldBytes }),
-            },
-            maint?.options,
-          ).then(
-            () => {},
-            () => {},
-          ),
-        );
-      } catch {
-        // Dispatch is optional post-commit work too. Its own failure must
-        // not make a durable mutation appear safely retriable.
-        ctxMetrics().counter("db.write.maintenance_dispatch_failed_total", 1, {
-          collection: input.collection,
-        });
-      }
+      await dispatchWriteTick({
+        storage: this.#storage,
+        currentJsonKey: this.#currentJsonKey,
+        collection: input.collection,
+        prevSeq,
+        observedTail,
+        ...(forceFold && { forceFold: true }),
+      });
     }
 
     // Class-A op count for this commit: the committing log create +
