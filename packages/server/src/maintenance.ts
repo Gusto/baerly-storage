@@ -363,6 +363,28 @@ export const isFoldViable = (
   ceilings: Pick<MaintenanceProfile, "maxFoldBytes" | "maxFoldRows">,
 ): boolean => snapshotBytes <= ceilings.maxFoldBytes && snapshotRows <= ceilings.maxFoldRows;
 
+/** The fold ceilings `C` (`maxFoldBytes`) and `E` (`maxFoldRows`) a host folds within. */
+export type FoldCeilings = Pick<MaintenanceProfile, "maxFoldBytes" | "maxFoldRows">;
+
+/**
+ * Resolve the serving host's fold ceilings: `profile` (absent ⇒
+ * {@link MAINTENANCE_PROFILE_CF_FREE}) with `C` overridden by
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` (`maxFoldBytes`). `E` has no
+ * override. The write-tick runner and growth refusal (`capacity.ts`) both
+ * resolve through here, so a refusal and a fold never see different
+ * ceilings.
+ */
+export const resolveFoldCeilings = (
+  profile: MaintenanceProfile | undefined,
+  maxFoldBytes: number | undefined,
+): FoldCeilings => {
+  const resolved = profile ?? MAINTENANCE_PROFILE_CF_FREE;
+  return {
+    maxFoldBytes: maxFoldBytes ?? resolved.maxFoldBytes,
+    maxFoldRows: resolved.maxFoldRows,
+  };
+};
+
 /**
  * Derived live-tail byte size — the ratio TRIGGER input that replaces the
  * formerly-stored exact byte count. `(observedTail − log_seq_start) ×
@@ -558,8 +580,9 @@ export const runBoundedMaintenance = async (
   const phasesPerTick = options?.phasesPerTick ?? "single";
   const signal = options?.signal;
   // `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` (args.maxFoldBytes) overrides `C`.
-  const C = args.maxFoldBytes ?? profile.maxFoldBytes;
-  const E = profile.maxFoldRows;
+  const ceilings = resolveFoldCeilings(profile, args.maxFoldBytes);
+  const C = ceilings.maxFoldBytes;
+  const E = ceilings.maxFoldRows;
 
   // Derive the collection label the same way compact()/runGc() do.
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
@@ -618,10 +641,7 @@ export const runBoundedMaintenance = async (
     // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
     // The pass is not projected: compact() stops at the first entry that
     // would add a row past E, against the current.json it folds from.
-    const foldViable = isFoldViable(snapshotBytes, snapshotRows, {
-      maxFoldBytes: C,
-      maxFoldRows: E,
-    });
+    const foldViable = isFoldViable(snapshotBytes, snapshotRows, ceilings);
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
     // ONE `tail_hint` publication per tick, whoever performs it: this

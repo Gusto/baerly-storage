@@ -20,13 +20,14 @@
 import {
   BaerlyError,
   CAPACITY_BYTES_MARGIN,
+  CODE_RESOLUTIONS,
   type CurrentJson,
   type DocumentData,
   encodeJsonBytes,
   type LogEntry,
-  MAINTENANCE_PROFILE_CF_FREE,
   SNAPSHOT_SCHEMA_VERSION,
 } from "@baerly/protocol";
+import { type FoldCeilings, isFoldViable, resolveFoldCeilings } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { encodeSnapshotBody } from "./snapshot.ts";
 
@@ -40,28 +41,27 @@ export interface PlannedWrite {
   readonly before?: DocumentData;
 }
 
-/** The serving host's fold ceilings. */
-export interface FoldCeilings {
-  /** `E`: rows a fold may rebuild. */
-  readonly maxRows: number;
-  /** `C`: snapshot bytes a fold may rebuild. */
-  readonly maxBytes: number;
-}
-
 /**
- * The fold ceilings of the host serving this request. Resolved exactly as
- * the write-tick runner resolves them (`runBoundedMaintenance`: the
- * context's profile, defaulting to CF-free, with `C` overridden by
- * `maintenance.maxFoldBytes`), so refusal and folding always agree.
+ * The fold ceilings of the host serving this request, resolved through
+ * the write-tick runner's own {@link resolveFoldCeilings} so refusal and
+ * folding always agree.
  */
 export const currentFoldCeilings = (): FoldCeilings => {
   const maint = getCurrentContext()?.maintenance;
-  const profile = maint?.options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
-  return {
-    maxRows: profile.maxFoldRows,
-    maxBytes: maint?.maxFoldBytes ?? profile.maxFoldBytes,
-  };
+  return resolveFoldCeilings(maint?.options?.profile, maint?.maxFoldBytes);
 };
+
+/**
+ * The refusal message names the state and the app-side remedy only. The
+ * host-side route (a larger maintenance profile) is an operator decision:
+ * it reaches operators through the `fold_deferred` log line and
+ * `graduation.md`, never the app-authoring surface, so an agent reading
+ * this error is not invited to retune a host setting.
+ */
+const refuse = (message: string): BaerlyError =>
+  new BaerlyError("CapacityExceeded", message, {
+    resolution: CODE_RESOLUTIONS.CapacityExceeded,
+  });
 
 /**
  * Bytes one row adds to an encoded snapshot body: the `{ _id, body }`
@@ -208,16 +208,15 @@ export const capacityRefusal = (args: {
   if (writes.length === 0) {
     return undefined;
   }
-  const { maxRows, maxBytes } = ceilings;
+  const { maxFoldRows: maxRows, maxFoldBytes: maxBytes } = ceilings;
   const noProgress = (why: string): BaerlyError =>
-    new BaerlyError(
-      "CapacityExceeded",
-      `collection ${JSON.stringify(collection)} is past this host's fold ceiling (${why}), ` +
-        `so no fold can make progress here and every write is refused. Serve it from a larger ` +
-        `host profile (BAERLY_MAINTENANCE_PROFILE=cf-paid or node) or export it with baerly admin dump.`,
+    refuse(
+      `collection ${JSON.stringify(collection)} has outgrown this host (${why}): no fold can ` +
+        `make progress here, so every write is refused and reads keep working. The collection ` +
+        `needs a larger host or graduation; export it with baerly admin dump.`,
     );
-  // Written so a NaN ceiling fails closed, as the fold's own gate does.
-  if (!(head.snapshot_rows <= maxRows) || !(head.snapshot_bytes <= maxBytes)) {
+  // The runner's own pre-fold gate; it fails closed on a NaN ceiling.
+  if (!isFoldViable(head.snapshot_bytes, head.snapshot_rows, ceilings)) {
     return noProgress(
       `${head.snapshot_rows} rows of ${maxRows}, ${head.snapshot_bytes} bytes of ${maxBytes}`,
     );
@@ -245,12 +244,11 @@ export const capacityRefusal = (args: {
       const detail = !(peakRows < maxRows)
         ? `${peakRows} rows would reach the ${maxRows}-row ceiling`
         : `${peakBytes} bytes would pass the ${maxBytes}-byte ceiling`;
-      return new BaerlyError(
-        "CapacityExceeded",
-        `collection ${JSON.stringify(collection)} is at this host's fold ceiling: ${detail}, ` +
-          `so this ${write.op === "I" ? "insert" : "growing update"} was refused. Deletes and ` +
-          `same-size or shrinking updates still commit; delete or shrink rows to make room, or ` +
-          `serve the collection from a larger host profile (BAERLY_MAINTENANCE_PROFILE=cf-paid or node).`,
+      return refuse(
+        `collection ${JSON.stringify(collection)} is full on this host: ${detail}, so this ` +
+          `${write.op === "I" ? "insert" : "growing update"} was refused and nothing was ` +
+          `committed. Deletes and same-size or shrinking updates still commit; delete or shrink ` +
+          `rows to make room. If the collection must keep growing, it needs a larger host or graduation.`,
       );
     }
   }

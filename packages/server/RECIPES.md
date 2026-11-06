@@ -61,9 +61,9 @@ refusal is recomputed on every request; nothing is stored. A batch
   write-tick maintenance folds them, growth is accepted again.
 - **Every write refused** ("no fold can make progress here"): the stored
   snapshot is already past this host's ceiling, typically after a larger host
-  folded it, or a pending insert cannot fold onto an `E`-row snapshot. Serve
-  the collection from a larger profile (`BAERLY_MAINTENANCE_PROFILE=cf-paid`
-  or `node`), or export it with `baerly admin dump`. Reads keep working either way.
+  folded it, or a pending insert cannot fold onto an `E`-row snapshot. The
+  collection has outgrown this host: export it with `baerly admin dump`, or
+  have the operator move it to a larger host. Reads keep working either way.
 
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 

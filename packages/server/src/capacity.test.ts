@@ -11,6 +11,7 @@
 
 import {
   CAPACITY_BYTES_MARGIN,
+  CODE_RESOLUTIONS,
   createCurrentJson,
   CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
@@ -26,7 +27,7 @@ import { loadSnapshotAsMap } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
 const COLLECTION = "c";
-const ceilings = { maxRows: 10, maxBytes: 100_000 };
+const ceilings = { maxFoldRows: 10, maxFoldBytes: 100_000 };
 const body = (id: string, pad = ""): DocumentData => ({ _id: id, pad });
 
 /** `n` stored rows `d0…d(n-1)` with their exact projected byte total. */
@@ -117,8 +118,8 @@ describe("capacityRefusal", () => {
     const s = stored(3, "x".repeat(100));
     expect(
       decide(s, [], [{ op: "D", docId: "d0" }], {
-        maxRows: 10,
-        maxBytes: s.head.snapshot_bytes - 1,
+        maxFoldRows: 10,
+        maxFoldBytes: s.head.snapshot_bytes - 1,
       }),
     ).toBe("CapacityExceeded");
   });
@@ -171,7 +172,7 @@ describe("capacityRefusal", () => {
     const insert = (pad: string): PlannedWrite => ({ op: "I", docId: "n", after: body("n", pad) });
     const p = projectSnapshot(s.head, s.base, COLLECTION);
     p.apply("I", "n", body("n", "x".repeat(40)));
-    const fits = { maxRows: 100, maxBytes: p.bytes + CAPACITY_BYTES_MARGIN };
+    const fits = { maxFoldRows: 100, maxFoldBytes: p.bytes + CAPACITY_BYTES_MARGIN };
     expect(decide(s, [], [insert("x".repeat(40))], fits)).toBeUndefined();
     expect(decide(s, [], [insert("x".repeat(41))], fits)).toBe("CapacityExceeded");
   });
@@ -195,14 +196,43 @@ describe("capacityRefusal", () => {
     expect(decide(s, [foreign, bodyless], [insert])).toBe("CapacityExceeded");
     expect(decide(s, [foreign, bodyless], [{ op: "D", docId: "d0" }])).toBeUndefined();
     // With E one higher, the insert fits: the foreign insert was not counted.
-    expect(decide(s, [foreign], [insert], { maxRows: 11, maxBytes: 100_000 })).toBeUndefined();
+    expect(
+      decide(s, [foreign], [insert], { maxFoldRows: 11, maxFoldBytes: 100_000 }),
+    ).toBeUndefined();
   });
 
   test("a NaN ceiling fails closed, as the fold gate does", () => {
     const s = stored(1);
     expect(
-      decide(s, [], [{ op: "D", docId: "d0" }], { maxRows: Number.NaN, maxBytes: 100_000 }),
+      decide(s, [], [{ op: "D", docId: "d0" }], { maxFoldRows: Number.NaN, maxFoldBytes: 100_000 }),
     ).toBe("CapacityExceeded");
+  });
+
+  test("both refusals carry the canonical resolution and name no host setting", () => {
+    const refusals = [
+      // Growth refused at E.
+      capacityRefusal({
+        collection: COLLECTION,
+        ...stored(9),
+        tail: [],
+        writes: [{ op: "I", docId: "n", after: body("n") }],
+        ceilings,
+      }),
+      // No progress: stored rows > E.
+      capacityRefusal({
+        collection: COLLECTION,
+        ...stored(11),
+        tail: [],
+        writes: [{ op: "D", docId: "d0" }],
+        ceilings,
+      }),
+    ];
+    for (const err of refusals) {
+      expect(err?.code).toBe("CapacityExceeded");
+      expect(err?.resolution).toBe(CODE_RESOLUTIONS.CapacityExceeded);
+      // The host profile is an operator decision, kept off the authoring surface.
+      expect(`${err?.message} ${err?.resolution}`).not.toMatch(/BAERLY_|cf-paid|cf-free/);
+    }
   });
 
   test("an update with no known current row counts as growth (fails closed)", () => {
