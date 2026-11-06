@@ -57,6 +57,7 @@ import {
   capacityDecision,
   currentFoldCeilings,
   maintenancePending,
+  noteCapacityWarning,
   type PlannedWrite,
 } from "./capacity.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
@@ -407,6 +408,9 @@ const admitWrites = async (
     ceilings: currentFoldCeilings(),
   });
   if (decision.refusal === undefined) {
+    if (decision.warning !== undefined) {
+      noteCapacityWarning(decision.warning);
+    }
     return decision.pressure;
   }
   if (decision.foldFreesRoom && getCurrentContext()?.maintenance?.disabled !== true) {

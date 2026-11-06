@@ -25,6 +25,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   type BaerlyConfig,
   BaerlyError,
+  CAPACITY_WARNING_HEADER,
   type DocumentData,
   type BaerlyErrorCode,
   EMPTY_PREDICATE_WIRE,
@@ -35,6 +36,7 @@ import {
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
 } from "@baerly/protocol";
+import { CAPACITY_WARNING_FIELD } from "../capacity.ts";
 import { isCallerFacing, markCallerFacing } from "../caller-facing-error.ts";
 import type { Db } from "../db.ts";
 import {
@@ -163,6 +165,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
       doc as Partial<DocumentData> & DocumentData,
       mintedId === undefined ? undefined : { mintedId },
     );
+    stampCapacityWarning(c);
     return c.json({ _id }, 201);
   });
 
@@ -175,6 +178,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     if (modified === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
+    stampCapacityWarning(c);
     return c.json({ modified }, 200);
   });
 
@@ -188,6 +192,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const doc = assertJsonBodyField(body, "doc");
     await db.collection(collection).replace(id, doc as DocumentData);
+    stampCapacityWarning(c);
     return c.json({ modified: 1 }, 200);
   });
 
@@ -198,7 +203,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
     if (deleted === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }
-    return new Response(null, { status: 204 });
+    stampCapacityWarning(c);
+    return c.body(null, 204);
   });
 
   // Count — GET /v1/count?collection=<name>&where=<json>
@@ -638,6 +644,17 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
   // NOT change here.
   getLogger(CATEGORY.http).error("unhandled_error", { error: serializeError(err) });
   return { status: 500, envelope: errorEnvelope("Internal", "internal error") };
+}
+
+// Early capacity warning (main-10 G7): a write the capacity check admitted
+// near the host's refusal point stamped its text on the request's
+// canonical-line fields; surface it as a response header on the success
+// path. A refusal already carries its own envelope.
+function stampCapacityWarning(c: Context): void {
+  const warning = getCurrentContext()?.fields.get(CAPACITY_WARNING_FIELD);
+  if (typeof warning === "string") {
+    c.header(CAPACITY_WARNING_HEADER, warning);
+  }
 }
 
 // Hono-context shortcut used by every handler's catch block.

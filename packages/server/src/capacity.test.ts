@@ -275,7 +275,7 @@ describe("capacityDecision near the ceiling (G6)", () => {
 
   test("pressure: only at the refusal point, where one more insert would be refused", () => {
     // 8 + 1 = 9 rows: a further insert makes E.
-    expect(decision(stored(8), [], [insert], pass1)).toEqual({
+    expect(decision(stored(8), [], [insert], pass1)).toMatchObject({
       refusal: undefined,
       pressure: true,
     });
@@ -389,6 +389,89 @@ const opArb = fc.record({
   kind: fc.constantFrom("I" as const, "U" as const, "D" as const),
   id: fc.integer({ min: 0, max: 11 }),
   pad: fc.string({ unit: fc.constantFrom("x", "é", "\u{1F600}", '"', "\\"), maxLength: 40 }),
+});
+
+describe("capacityDecision early warning (G7)", () => {
+  const warn = (
+    state: ReturnType<typeof stored>,
+    tail: LogEntry[],
+    writes: PlannedWrite[],
+    limits: { maxFoldRows: number; maxFoldBytes: number } = { maxFoldRows: 20, maxFoldBytes: 1e9 },
+  ) => {
+    const d = capacityDecision({
+      collection: COLLECTION,
+      head: state.head,
+      base: state.base,
+      tail,
+      writes,
+      ceilings: limits,
+    });
+    return d.refusal === undefined ? d.warning : "refused";
+  };
+  const ins = (id: string): PlannedWrite => ({ op: "I", docId: id, after: body(id) });
+
+  test("rows: silent below 90% of E, present from 90% up to the refusal point", () => {
+    // E = 20: 17 rows after the write is 85%, 18 is 90%, 19 is the last admitted.
+    expect(warn(stored(16), [], [ins("n")])).toBeUndefined();
+    expect(warn(stored(17), [], [ins("n")])).toMatchObject({
+      dimension: "rows",
+      used: 18,
+      limit: 20,
+    });
+    expect(warn(stored(18), [], [ins("n")])).toMatchObject({ used: 19 });
+    expect(warn(stored(19), [], [ins("n")])).toBe("refused");
+  });
+
+  test("the peak over the pending tail counts, not just the final projection", () => {
+    // 15 stored + 4 pending inserts peak at 19, then 4 deletes bring it to 15.
+    const tail = [
+      ...[0, 1, 2, 3].map((i) => entry(15 + i, "I", `p${i}`)),
+      ...[0, 1, 2, 3].map((i) => entry(19 + i, "D", `p${i}`)),
+    ];
+    expect(warn(stored(15), tail, [{ op: "D", docId: "d0" }])).toMatchObject({ used: 19 });
+  });
+
+  test("bytes: warns against C - margin and reports the more-used dimension", () => {
+    const s = stored(2, "x".repeat(100));
+    const limit = s.head.snapshot_bytes + 10 + CAPACITY_BYTES_MARGIN;
+    const w = warn(s, [], [{ op: "D", docId: "d0" }], { maxFoldRows: 1000, maxFoldBytes: limit });
+    expect(w).toMatchObject({ dimension: "bytes", limit: limit - CAPACITY_BYTES_MARGIN });
+  });
+
+  test("the text names the state and the app-side remedy, never a host setting", () => {
+    const w = warn(stored(18), [], [ins("n")]);
+    expect(w).toBeTypeOf("object");
+    const text = (w as { text: string }).text;
+    expect(text).toContain("19 of 20 rows");
+    expect(text).toContain("baerly admin dump");
+    expect(text).not.toMatch(/BAERLY_MAINTENANCE|PROFILE|profile|cf-paid|Paid/);
+  });
+
+  test("clears with no state of its own: a shrink or a larger host drops the warning", () => {
+    expect(warn(stored(18), [], [ins("n")])).toBeDefined();
+    // Shrink: the same collection after rows were deleted and folded.
+    expect(warn(stored(12), [], [ins("n")])).toBeUndefined();
+    // Host change: identical head and tail under a larger E.
+    expect(
+      warn(stored(18), [], [ins("n")], { maxFoldRows: 65_536, maxFoldBytes: 1e9 }),
+    ).toBeUndefined();
+    // Back on the small host the warning returns; nothing was remembered or lost.
+    expect(warn(stored(18), [], [ins("n")])).toBeDefined();
+  });
+
+  test("a refusal carries no warning, and the decision does not read or write any state", () => {
+    const s = stored(19);
+    const d = capacityDecision({
+      collection: COLLECTION,
+      head: s.head,
+      base: s.base,
+      tail: [],
+      writes: [ins("n")],
+      ceilings: { maxFoldRows: 20, maxFoldBytes: 1e9 },
+    });
+    expect(d.refusal?.code).toBe("CapacityExceeded");
+    expect("warning" in d).toBe(false);
+  });
 });
 
 describe("projectSnapshot matches the compactor's encoding", () => {
