@@ -21,10 +21,9 @@
  * - R6 the decision is a pure function of head + tail; a refused write may
  *   change only `last_warned_seq`, `tail_hint` and real fold progress.
  *
- * `test.fails` cases encode the target and pass today only because their
- * target assertion fails; each names the rule whose landing flips it to
- * `test()`. Their preconditions are re-checked in-body with assertions that
- * hold today, and plain `test` cases pin them plus what must stay served.
+ * Each case names the rule it pins. Preconditions are re-checked in-body,
+ * and the "preconditions" and "availability" groups pin what must stay
+ * served.
  *
  * The host is what an adapter puts on the request's observability context:
  * `maintenance.options.profile`, plus `maintenance.maxFoldBytes` when
@@ -36,9 +35,11 @@
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  CODE_RESOLUTIONS,
   type Collection,
   type CurrentJson,
   MAINTENANCE_MIN_LIVE_BYTES,
+  MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
   MAINTENANCE_PROFILE_NODE,
   readCurrentJson,
   type Storage,
@@ -69,6 +70,7 @@ import {
   makeVariants,
   TENANT,
 } from "../fixtures/maintenance-harness.ts";
+import { loadMaterialisedView } from "../../packages/cli/src/export/index.ts";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
@@ -98,10 +100,13 @@ const outcome = (p: Promise<unknown>): Promise<unknown> =>
     },
   );
 
-/** A serving host: its profile, plus the `C` override the adapters read from the env. */
+/** A serving host: its profile, plus the `C` override and disable switch the adapters read from the env. */
 interface Host {
   profile: MaintenanceProfile;
   maxFoldBytes?: number;
+  disabled?: boolean;
+  /** The adapter's maintenance dispatcher; absent ⇒ inline and awaited. */
+  dispatch?: (task: () => Promise<void>) => void | Promise<void>;
 }
 const SMALL_HOST: Host = { profile: SMALL };
 const NODE_HOST: Host = { profile: MAINTENANCE_PROFILE_NODE };
@@ -117,6 +122,8 @@ const onHost = async <R>(
       maintenance: {
         options: { profile: host.profile },
         ...(host.maxFoldBytes !== undefined && { maxFoldBytes: host.maxFoldBytes }),
+        ...(host.disabled !== undefined && { disabled: host.disabled }),
+        ...(host.dispatch !== undefined && { dispatch: host.dispatch }),
       },
     }),
     () =>
@@ -713,8 +720,8 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 21, tail: 21, rows: 11 });
         });
 
-        // flip to test() when main-10 Task 5 lands — forced tick (R5)
-        test.fails("in-band only: at E - 1, same-size updates fold through forced write ticks and the backlog stays bounded", async () => {
+        // Forced tick (R5, main-10 Task 4).
+        test("in-band only: at E - 1, same-size updates fold through forced write ticks and the backlog stays bounded", async () => {
           const storage = await atEMinus1();
           const WRITES = 10;
           for (let k = 0; k < WRITES; k++) {
@@ -732,11 +739,12 @@ describe("main-10: growth refusal (target behavior)", () => {
           expect(s.rows).toBe(E - 1);
         });
 
-        // flip to test() when main-10 Task 5 lands — forced tick (R5) within the per-pass budget (R1)
-        test.fails("per-pass budget: with k = PASS available, each forced write tick folds at most PASS entries, and some fold lands", async () => {
+        // Forced tick (R5, main-10 Task 4) within the per-pass budget (R1).
+        test("per-pass budget: with more than PASS entries pending, each forced write tick folds at most PASS entries, and some fold lands", async () => {
           const storage = await folded(10, SMALL);
-          // 9 pending inserts: projected E - 1, so the refusal condition holds
-          // and k = min(PASS, E - 10) = PASS.
+          // 9 pending inserts: projected E - 1, so the refusal condition holds.
+          // They all fit within E, so the row-exact fold stops only at the
+          // pass boundary: PASS entries per tick.
           await commit(storage, inserts(10, E - 1, ROW_PAD));
           await expect(state(storage)).resolves.toMatchObject({ start: 10, tail: 19, rows: 10 });
           let progressed = 0;
@@ -776,6 +784,169 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(outcome(onHost(storage, SMALL_HOST, deleteW(0)))).resolves.toBe("capacity");
           await expect(readIdsOn(storage, SMALL_HOST)).resolves.toHaveLength(E + 2);
         });
+      });
+
+      // ── G6: forced tick and backpressure (main-10 Task 4) ──────────
+      describe("G6 forced tick and backpressure", () => {
+        /** The refusal error itself, or `"accepted"`. */
+        const errorOf = (storage: Storage, host: Host, write: Write) =>
+          onHost(storage, host, write).then(
+            () => "accepted" as const,
+            (error: unknown) =>
+              error as {
+                code?: string;
+                retryAfter?: number;
+                resolution?: string;
+                message?: string;
+              },
+          );
+
+        /** 14 stored rows, pending tail [6 inserts, 6 deletes]: peak E, final 14. */
+        const peakTail = async (): Promise<Storage> => {
+          const storage = await folded(14, SMALL);
+          await commit(storage, inserts(14, 20, ROW_PAD));
+          await commit(
+            storage,
+            Array.from({ length: 6 }, (_, i) => ({ op: "D" as const, i: 14 + i })),
+          );
+          await expect(state(storage)).resolves.toMatchObject({ start: 14, tail: 26, rows: 14 });
+          return storage;
+        };
+
+        test("away from the refusal point the tick is not forced: same-size updates at 10 rows fold nothing", async () => {
+          const storage = await folded(10, SMALL);
+          for (let k = 0; k < PASS; k++) {
+            await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(k)))).resolves.toBe(
+              "accepted",
+            );
+          }
+          await expect(state(storage)).resolves.toMatchObject({ start: 10, tail: 10 + PASS });
+        });
+
+        test("the force tracks the refusal point: a delete at E - 1 lifts it and folds nothing; the insert it made room for forces a fold", async () => {
+          const storage = await atEMinus1();
+          await expect(outcome(onHost(storage, SMALL_HOST, insertW(E - 1)))).resolves.toBe(
+            "capacity",
+          );
+          // After the delete a one-row insert is admitted, so no forced tick.
+          await expect(outcome(onHost(storage, SMALL_HOST, deleteW(0)))).resolves.toBe("accepted");
+          await expect(state(storage)).resolves.toMatchObject({ start: E - 1, tail: E });
+          // Its prerequisite read folds the pending delete; the insert brings
+          // the projection back to E - 1, so its own tick is forced and drains
+          // the tail in-band, with no operator action and no explicit drain.
+          await expect(outcome(onHost(storage, SMALL_HOST, insertW(E - 1)))).resolves.toBe(
+            "accepted",
+          );
+          await expect(state(storage)).resolves.toMatchObject({
+            start: E + 1,
+            tail: E + 1,
+            rows: E - 1,
+          });
+        });
+
+        test("backpressure: when the pending tail frees room, a refused insert runs one bounded fold and gets MaintenancePending; retries drain the tail and the insert commits", async () => {
+          const storage = await peakTail();
+          const seen: string[] = [];
+          for (let k = 0; k < 10; k++) {
+            const before = await state(storage);
+            const result = await errorOf(storage, SMALL_HOST, insertW(E));
+            if (result === "accepted") {
+              seen.push("accepted");
+              break;
+            }
+            expect(result.code).toBe("MaintenancePending");
+            expect(result.retryAfter).toBe(MAINTENANCE_PENDING_RETRY_AFTER_SECONDS);
+            expect(result.resolution).toBe(CODE_RESOLUTIONS.MaintenancePending);
+            expect(`${result.message} ${result.resolution}`).not.toMatch(/BAERLY_|cf-paid|cf-free/);
+            const after = await state(storage);
+            // One fold pass, within the per-pass budget; nothing committed.
+            expect(after.start - before.start).toBeGreaterThan(0);
+            expect(after.start - before.start).toBeLessThanOrEqual(PASS);
+            expect(after.tail).toBe(before.tail);
+            seen.push("backpressure");
+          }
+          // 12 pending entries at PASS = 5: the tail's peak is gone after the
+          // first pass folds the inserts and the second folds the deletes.
+          expect(seen).toEqual(["backpressure", "backpressure", "accepted"]);
+          await expect(readIdsOn(storage, SMALL_HOST)).resolves.toHaveLength(15);
+        });
+
+        test("folding frees no room behind an insert-only tail, so the capacity code, and nothing folds", async () => {
+          const storage = await sixteen();
+          await commit(storage, inserts(16, E - 1, ROW_PAD));
+          await expectRefusedAndInert(storage, SMALL_HOST, insertW(E - 1));
+        });
+
+        test("bytes: the capacity code when the next pass would rebuild past C, backpressure when it lands", async () => {
+          // [3M insert, 4 same-size updates, its delete]: the final projection
+          // fits, but the first PASS entries rebuild past C, so that pass defers.
+          const split = await bytesState("near");
+          await commit(split.storage, [
+            { op: "I", i: 10, pad: GROW_PAD },
+            ...Array.from({ length: PASS - 1 }, (_, i) => ({
+              op: "U" as const,
+              i,
+              n: 1,
+              pad: BYTE_ROW_PAD,
+            })),
+            { op: "D", i: 10 },
+          ]);
+          await expectRefusedAndInert(split.storage, split.host, insertW(11, SMALL_PAD));
+
+          // [3M insert, its delete] in one pass: that pass lands.
+          const joined = await bytesState("near");
+          await commit(joined.storage, [
+            { op: "I", i: 10, pad: GROW_PAD },
+            { op: "D", i: 10 },
+          ]);
+          const result = await errorOf(joined.storage, joined.host, insertW(11, SMALL_PAD));
+          expect(result).toMatchObject({ code: "MaintenancePending" });
+          await expect(state(joined.storage)).resolves.toMatchObject({ start: 12, tail: 12 });
+          await expect(
+            outcome(onHost(joined.storage, joined.host, insertW(11, SMALL_PAD))),
+          ).resolves.toBe("accepted");
+        });
+
+        test("with maintenance disabled nothing can fold, so a refusal the tail would lift keeps the capacity code", async () => {
+          const storage = await peakTail();
+          await expectRefusedAndInert(storage, { ...SMALL_HOST, disabled: true }, insertW(E));
+        });
+
+        test("the refused write's fold goes through the adapter's dispatcher, as Cloudflare's ctx.waitUntil runs it after the response", async () => {
+          const storage = await peakTail();
+          const deferred: Array<() => Promise<void>> = [];
+          const host: Host = { ...SMALL_HOST, dispatch: (task) => void deferred.push(task) };
+          await expect(outcome(onHost(storage, host, insertW(E)))).resolves.toBe("backpressure");
+          // The refusal returned before the fold ran.
+          expect(deferred).toHaveLength(1);
+          await expect(state(storage)).resolves.toMatchObject({ start: 14, tail: 26 });
+          await deferred[0]!();
+          await expect(state(storage)).resolves.toMatchObject({ start: 14 + PASS, tail: 26 });
+        });
+
+        const noProgressStates: Array<[string, () => Promise<{ storage: Storage; live: number }>]> =
+          [
+            ["stalled at E", async () => ({ storage: await stalledAtE(), live: E + 1 })],
+            ["round trip", async () => ({ storage: await roundTrip(), live: 26 })],
+            [
+              "bytes over C",
+              async () => {
+                const { storage } = await bytesState("over");
+                return { storage, live: 10 };
+              },
+            ],
+          ];
+        for (const [label, build] of noProgressStates) {
+          test(`export (${label}): the baerly admin dump view materialises every live row`, async () => {
+            const { storage, live } = await build();
+            const view = await loadMaterialisedView({
+              storage,
+              currentJsonKey: CURRENT_JSON_KEY,
+              collection: COLLECTION,
+            });
+            expect(view?.size).toBe(live);
+          });
+        }
       });
     });
   }
