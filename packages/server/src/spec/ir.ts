@@ -77,9 +77,9 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   AmbiguousCommit:
     "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry.",
   CapacityExceeded:
-    "The collection is at this host's fold ceiling; the write was refused and nothing was committed.",
+    "The collection is at this host's fold ceiling; the write was refused and not committed (a batch refused part-way keeps its committed rows).",
   MaintenancePending:
-    "Maintenance is behind on this collection; the write was refused and nothing was committed. Retry after the Retry-After delay.",
+    "Maintenance is behind on this collection; the write was refused and not committed. Retry after the Retry-After delay.",
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",

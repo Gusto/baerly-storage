@@ -473,10 +473,10 @@ const admitWrites = async (
   let pending = 0;
   // The window of the latest `check` call: on commit, `[fromSeq, seq)`.
   let lastWindow: readonly LogEntry[] = [];
-  const check = async (window: readonly LogEntry[], tail: number): Promise<void> => {
+  const check = async (window: readonly LogEntry[], tail: number): Promise<boolean> => {
     lastWindow = window;
     if (window.length === 0) {
-      return;
+      return false;
     }
     const tailNow = [...seen, ...window];
     const decision = capacityDecision({
@@ -490,8 +490,11 @@ const admitWrites = async (
       ceilings: currentFoldCeilings(),
     });
     if (decision.refusal !== undefined) {
-      await throwRefusal(ctx, decision, tail);
+      return await throwRefusal(ctx, decision, tail);
     }
+    // Re-derive the forced tick (G6) from the state the commit lands on.
+    // It rides the batch's last commit only, as the pre-commit flag does.
+    return decision.pressure && pending === writes.length - 1;
   };
   return {
     forceMaintenance,
