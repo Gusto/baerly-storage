@@ -53,7 +53,12 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
-import { capacityRefusal, currentFoldCeilings, type PlannedWrite } from "./capacity.ts";
+import {
+  capacityDecision,
+  currentFoldCeilings,
+  maintenancePending,
+  type PlannedWrite,
+} from "./capacity.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
 import {
   assertDocId,
@@ -64,6 +69,8 @@ import {
 import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
+import { dispatchWriteTick } from "./maintenance.ts";
+import { getCurrentContext } from "./observability/context.ts";
 import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { Writer } from "./writer.ts";
@@ -356,7 +363,7 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
  * The collection state a pre-commit read folded: `current.json`, the
  * snapshot rows and every tail entry on top of them. Present whenever the
  * read loaded the snapshot; the write verbs pass it to
- * {@link refuseOverCapacity}.
+ * {@link admitWrites}.
  */
 interface FoldedState {
   readonly head: CurrentJson;
@@ -365,20 +372,33 @@ interface FoldedState {
 }
 
 /**
- * Throw `CapacityExceeded` before any commit when `writes` would grow the
- * collection past the serving host's fold ceiling (see `./capacity.ts`).
- * With no folded state (an unprovisioned collection, or an index walk that
- * matched nothing), the collection is empty or nothing is written.
+ * Admit `writes` against the serving host's fold ceiling before any commit
+ * (see `./capacity.ts`). Throws `CapacityExceeded` when they would grow the
+ * collection past it, or `MaintenancePending` when the pending tail would
+ * make room once it folds: that refusal first dispatches one forced fold
+ * pass (G6, fold-then-refuse) through the request's maintenance dispatch,
+ * so on Cloudflare it runs in `ctx.waitUntil` like any write tick. Under
+ * `BAERLY_MAINTENANCE_DISABLE` nothing can fold, so the refusal stays
+ * `CapacityExceeded`.
+ *
+ * Returns whether the verb's commit should force its write tick: the
+ * writes leave the collection at its growth-refusal point. With no folded
+ * state (an unprovisioned collection, or an index walk that matched
+ * nothing), the collection is empty or nothing is written.
+ *
+ * @param read The pre-commit read: its folded state, and `tail`, the
+ *   first empty log slot it folded through.
  */
-const refuseOverCapacity = (
+const admitWrites = async (
   ctx: CollectionReadContext,
-  folded: FoldedState | undefined,
+  read: { readonly folded?: FoldedState; readonly tail: number },
   writes: readonly PlannedWrite[],
-): void => {
+): Promise<boolean> => {
+  const { folded } = read;
   if (folded === undefined) {
-    return;
+    return false;
   }
-  const refusal = capacityRefusal({
+  const decision = capacityDecision({
     collection: ctx.collectionName,
     head: folded.head,
     base: folded.base,
@@ -386,9 +406,23 @@ const refuseOverCapacity = (
     writes,
     ceilings: currentFoldCeilings(),
   });
-  if (refusal !== undefined) {
-    throw refusal;
+  if (decision.refusal === undefined) {
+    return decision.pressure;
   }
+  if (decision.foldFreesRoom && getCurrentContext()?.maintenance?.disabled !== true) {
+    // Nothing committed, so the tick's GC cadence window is empty and the
+    // forced fold is its only phase.
+    await dispatchWriteTick({
+      storage: ctx.storage,
+      currentJsonKey: `${ctx.collectionPrefix}/current.json`,
+      collection: ctx.collectionName,
+      prevSeq: read.tail,
+      observedTail: read.tail,
+      forceFold: true,
+    });
+    throw maintenancePending(ctx.collectionName);
+  }
+  throw decision.refusal;
 };
 
 /**
@@ -510,7 +544,7 @@ export const runInsert = async <T extends DocumentData>(
     }
     throw insertAlreadyExists(ctx.collectionName, _id);
   }
-  refuseOverCapacity(ctx, existing.folded, [{ op: "I", docId: _id, after: body }]);
+  const forceMaintenance = await admitWrites(ctx, existing, [{ op: "I", docId: _id, after: body }]);
 
   // Single-attempt at the verb level; log-create contention is resolved
   // inside `Writer.commit()`, and its errors surface unchanged. The
@@ -523,6 +557,7 @@ export const runInsert = async <T extends DocumentData>(
     docId: _id,
     body,
     insertGuard: { absentBelowSeq: existing.tail, replayIdentical: mintedId !== undefined },
+    ...(forceMaintenance && { forceMaintenance }),
   });
 
   return { _id };
@@ -631,7 +666,8 @@ const runUpdate = async <T extends DocumentData>(
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
-  const { rows, folded } = await runReadRows<T>(ctx, state);
+  const read = await runReadRows<T>(ctx, state);
+  const { rows } = read;
   // Merge and validate every row first, so the per-row checks and the
   // capacity check decide the batch whole, before its first row commits.
   const planned: Array<{ docId: string; before: DocumentData; merged: DocumentData }> = [];
@@ -666,20 +702,22 @@ const runUpdate = async <T extends DocumentData>(
     }
     planned.push({ docId, before: doc as DocumentData, merged });
   }
-  refuseOverCapacity(
+  const forceMaintenance = await admitWrites(
     ctx,
-    folded,
+    read,
     planned.map((p) => ({ op: "U", docId: p.docId, after: p.merged, before: p.before })),
   );
   let modified = 0;
   // Atomicity stays per row: a commit failure on row N leaves rows
-  // 0..N-1 applied.
-  for (const { docId, merged } of planned) {
+  // 0..N-1 applied. A forced tick rides the batch's last commit only, so
+  // the batch runs one forced fold, not one per row.
+  for (const [i, { docId, merged }] of planned.entries()) {
     await writerFor(ctx).commit({
       op: "U",
       collection: ctx.collectionName,
       docId,
       body: merged,
+      ...(forceMaintenance && i === planned.length - 1 && { forceMaintenance }),
     });
     modified++;
   }
@@ -723,8 +761,8 @@ export const runReplaceById = async <T extends DocumentData>(
     order: undefined,
     limit: undefined,
   };
-  const { rows, folded } = await runReadRows<T>(ctx, state);
-  const current = rows[0];
+  const read = await runReadRows<T>(ctx, state);
+  const current = read.rows[0];
   if (current === undefined) {
     throw new BaerlyError("NotFound", `No such row: ${id}`);
   }
@@ -737,7 +775,7 @@ export const runReplaceById = async <T extends DocumentData>(
       verb: "replace",
     });
   }
-  refuseOverCapacity(ctx, folded, [
+  const forceMaintenance = await admitWrites(ctx, read, [
     { op: "U", docId: id, after: body, before: current.doc as DocumentData },
   ]);
   await writerFor(ctx).commit({
@@ -745,6 +783,7 @@ export const runReplaceById = async <T extends DocumentData>(
     collection: ctx.collectionName,
     docId: id,
     body,
+    ...(forceMaintenance && { forceMaintenance }),
   });
 };
 
@@ -776,19 +815,21 @@ const runDelete = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
-  const { rows, folded } = await runReadRows<T>(ctx, state);
-  const docIds = rows.map((row) => storedRowId(row, "delete"));
-  refuseOverCapacity(
+  const read = await runReadRows<T>(ctx, state);
+  const docIds = read.rows.map((row) => storedRowId(row, "delete"));
+  const forceMaintenance = await admitWrites(
     ctx,
-    folded,
+    read,
     docIds.map((docId) => ({ op: "D", docId })),
   );
   let deleted = 0;
-  for (const docId of docIds) {
+  // As in `runUpdate`, a forced tick rides the batch's last commit only.
+  for (const [i, docId] of docIds.entries()) {
     await writerFor(ctx).commit({
       op: "D",
       collection: ctx.collectionName,
       docId,
+      ...(forceMaintenance && i === docIds.length - 1 && { forceMaintenance }),
     });
     deleted++;
   }

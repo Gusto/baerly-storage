@@ -358,25 +358,23 @@ try {
 | `AlreadyExists`          | 409  | `insert` `_id` taken, or `restore` target exists |
 | `AmbiguousCommit`        | 409  | Commit may be durable; outcome unresolved        |
 | `CapacityExceeded`       | 409  | Write refused at the host's fold ceiling         |
+| `MaintenancePending`     | 503  | Maintenance behind; wait `retryAfter` seconds    |
 | `Unauthorized`           | 401  | Verifier returned no identity                    |
 | `NotFound`               | 404  | Row by id not found                              |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |
 | `UnsatisfiablePredicate` | 400  | Predicate contradicts itself (empty `in`, …)     |
 
-Only `NetworkError` and `WriteConflict` are `retriable`. Recovery:
+Only `NetworkError`, `WriteConflict` and `MaintenancePending` are `retriable`. Recovery:
 [RECIPES.md](RECIPES.md#ambiguouscommit-recovery).
 
 ### Mapping errors to HTTP yourself
 
-`baerlyWorker` and `baerlyNode` already translate `BaerlyError` →
-HTTP status + wire envelope; the table above is what they implement.
-If you mount the kernel's router directly (`createRouter` from
-`@gusto/baerly-storage/http`), you get the same translation for free
-under `/v1/*`.
-
-For an **embed-by-hand** router (your own Hono / Express / Fastify
-app calling `Db` directly), use `mapError` from the same subpath — it
-applies the table above and returns the envelope and status code:
+`baerlyWorker`, `baerlyNode`, and `createRouter` (from
+`@gusto/baerly-storage/http`) already translate `BaerlyError` → HTTP
+status + wire envelope per the table above. For an **embed-by-hand**
+router (your own Hono / Express / Fastify app calling `Db` directly),
+use `mapError` from the same subpath; it returns the envelope and
+status (set `Retry-After` from `envelope.error.retryAfter` yourself):
 
 ```ts
 import { mapError } from "@gusto/baerly-storage/http";

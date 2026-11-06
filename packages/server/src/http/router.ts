@@ -452,6 +452,7 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["AlreadyExists", 409],
   ["AmbiguousCommit", 409],
   ["CapacityExceeded", 409],
+  ["MaintenancePending", 503],
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
@@ -493,6 +494,9 @@ const ERROR_CODE_POLICY = {
     messagePolicy: "public",
   },
   CapacityExceeded: {
+    messagePolicy: "public",
+  },
+  MaintenancePending: {
     messagePolicy: "public",
   },
   AmbiguousCommit: {
@@ -622,6 +626,7 @@ export function mapError(err: unknown): { status: HttpStatus; envelope: HttpErro
         issues: err.issues,
         resolution: err.resolution,
         _id: err._id,
+        retryAfter: err.retryAfter,
       }),
     };
   }
@@ -642,6 +647,10 @@ function mapToResponse(c: Context, err: unknown): Response {
   // `ContentfulStatusCode`. The cast bridges the locked `HttpStatus`
   // union (which also includes 204/304 for the wider contract) to
   // Hono's narrower body-bearing subset.
+  const { retryAfter } = envelope.error;
+  if (retryAfter !== undefined) {
+    c.header("Retry-After", String(Math.ceil(retryAfter)));
+  }
   return c.json(envelope, status as ContentfulStatusCode);
 }
 

@@ -65,6 +65,11 @@ refusal is recomputed on every request; nothing is stored. A batch
   collection has outgrown this host: export it with `baerly admin dump`, or
   have the operator move it to a larger host. Reads keep working either way.
 
+### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
+
+**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (for example, deletes behind a burst of inserts). The write ran one bounded fold, was refused, and committed nothing. `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
+**Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working.
+
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
 **Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC,
