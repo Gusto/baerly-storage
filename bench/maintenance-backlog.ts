@@ -125,6 +125,7 @@ import {
 } from "@baerly/protocol";
 import {
   type BoundedMaintenanceOptions,
+  isFoldViable,
   type MaintenanceProfile,
   runScheduledMaintenance,
 } from "@baerly/server/maintenance";
@@ -269,9 +270,7 @@ const sampleBacklog = async (
   profile: MaintenanceProfile,
 ): Promise<MinuteSample> => {
   const cur = (await readCurrentJson(storage, CURRENT_JSON_KEY))!.json;
-  const overCeiling =
-    cur.snapshot_bytes > profile.maxFoldBytes ||
-    cur.snapshot_rows + profile.maxFoldEntriesPerPass > profile.maxFoldRows;
+  const overCeiling = !isFoldViable(cur.snapshot_bytes, cur.snapshot_rows, profile);
   return {
     minute,
     cumulative_writes: cumulativeWrites,
