@@ -482,13 +482,15 @@ export const compact = async (
   // No metric here: the caller that threaded the ceilings (the write-tick
   // runner) owns the one deferral signal for both gates, so a deferral
   // counts once. `deferral` carries the rebuilt figures it reports.
-  if (bodyBytes.byteLength > ceilingBytes || base.size > ceilingEntries) {
+  // Written as `!(<=)` so a NaN ceiling defers (fails closed).
+  const bytesFit = bodyBytes.byteLength <= ceilingBytes;
+  if (!(bytesFit && base.size <= ceilingEntries)) {
     return {
       written: false,
       skippedReason: "deferred",
       deferred: true,
       deferral: {
-        dimension: bodyBytes.byteLength > ceilingBytes ? "bytes" : "rows",
+        dimension: bytesFit ? "rows" : "bytes",
         snapshotBytes: bodyBytes.byteLength,
         snapshotRows: base.size,
       },

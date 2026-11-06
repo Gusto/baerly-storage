@@ -676,6 +676,34 @@ describe("compact", () => {
     expect(snap.counters.filter((c) => c.name.startsWith("db.compaction.deferred"))).toEqual([]);
   });
 
+  test.each([
+    { ceiling: "ceilingEntries", dimension: "rows" },
+    { ceiling: "ceilingBytes", dimension: "bytes" },
+  ] as const)(
+    "a NaN $ceiling defers without a PUT (fails closed)",
+    async ({ ceiling, dimension }) => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      const writer = new Writer({ storage: s, currentJsonKey: KEY });
+      for (let i = 0; i < 3; i++) {
+        await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
+      }
+      const beforeRaw = await s.get(KEY);
+      const res = await compact({ storage: s, currentJsonKey: KEY }, {
+        minEntriesToCompact: 1,
+        maxEntriesPerRun: 20,
+        [ceiling]: Number.NaN,
+      } as InternalCompactOptions);
+      expect(res).toMatchObject({
+        written: false,
+        skippedReason: "deferred",
+        entriesFolded: 0,
+        deferral: { dimension },
+      });
+      expect((await s.get(KEY))!.body).toEqual(beforeRaw!.body);
+    },
+  );
+
   test("both ceilings undefined rebuild an arbitrarily large snapshot (unbounded reconcile)", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
