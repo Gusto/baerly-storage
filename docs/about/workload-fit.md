@@ -173,11 +173,11 @@ grades each collection against.
 or not you are paying.** Every host runs the same protocol; a bigger host
 buys a bigger snapshot per fold, nothing else.
 
-Past the ceiling the log stops collapsing into the snapshot. Reads and
-writes keep working, but the live tail, read cost, and bucket grow
-without bound and log retention stops: a stall that needs action, not a
-slow erosion. See
-[graduation.md § The symptom](graduation.md#the-symptom-a-silent-stall-not-data-loss).
+At the ceiling, growth is refused with `CapacityExceeded`: reads,
+deletes and shrinking updates keep working, and the refusal clears once
+they fold. A collection already past the ceiling on its host refuses
+every write until it moves to a larger host or is exported. See
+[graduation.md § The symptom](graduation.md#the-symptom-writes-are-refused-not-data-loss).
 
 **Stored bytes are not on this table because they are not a fit limit.**
 Nothing in baerly-storage measures or enforces per-tenant storage; a

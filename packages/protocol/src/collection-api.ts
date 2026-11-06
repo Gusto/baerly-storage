@@ -128,6 +128,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         (absence is not proof of failure), and retry with that same
    *         `_id` so a retry cannot mint a second document.
    *         Not retriable-by-default; handle the code explicitly.
+   * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
+   *         at the serving host's fold ceiling and this write would
+   *         grow it (or no fold can make progress on this host); nothing
+   *         was committed. Not retriable unchanged; see RECIPES.md.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
    *         schema-validation failure (when a schema is declared
    *         for the collection via `Db.create({ collections })`).
@@ -154,6 +158,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         resolved, so the update may or may not have been applied.
    *         Re-read by `id` (also `err._id`); absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
+   * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
+   *         at the serving host's fold ceiling and this write would
+   *         grow it (or no fold can make progress on this host); nothing
+   *         was committed. Not retriable unchanged; see RECIPES.md.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
@@ -189,6 +197,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         resolved, so the replace may or may not have been applied.
    *         Re-read by `id` (also `err._id`); absence is not proof of failure.
    *         Not retriable-by-default; handle the code explicitly.
+   * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
+   *         at the serving host's fold ceiling and this write would
+   *         grow it (or no fold can make progress on this host); nothing
+   *         was committed. Not retriable unchanged; see RECIPES.md.
    * @throws BaerlyError{code: "InvalidConfig"} — `id` breaks the `_id`
    *         rules on {@link Collection.insert}, including NFC; nothing
    *         was written.
@@ -216,6 +228,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         applied. Re-read by `id` (also `err._id`); absence is not
    *         proof of failure. Not retriable-by-default; handle the code
    *         explicitly.
+   * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
+   *         at the serving host's fold ceiling and this write would
+   *         grow it (or no fold can make progress on this host); nothing
+   *         was committed. Not retriable unchanged; see RECIPES.md.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id` (left by an older release
    *         that let a patch strip or re-key `_id`). Repair it with
@@ -464,18 +480,22 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         not be resolved. Rows before it are already applied; the
    *         partial-progress `modified` count is NOT returned. `err._id`
    *         names that row; absence is not proof of failure.
+   * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
+   *         at the serving host's fold ceiling and the batch would grow
+   *         it (or no fold can make progress on this host). Decided for the
+   *         whole batch before any row commits. Not retriable unchanged;
+   *         see RECIPES.md.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
    *         top-level `_id` is present and is not a matched row's
    *         `_id` (`null` included), or a matched row's `_id` is not
-   *         NFC (see {@link Collection.update}). Checked per row before
-   *         that row commits, so rows earlier in the batch may already
-   *         be applied.
+   *         NFC (see {@link Collection.update}). Checked for every
+   *         matched row before any row commits.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
-   *         an older release). Checked per row before that row
-   *         commits. Repair it with `replace(id, doc)`.
+   *         an older release). Checked for every matched row before any
+   *         row commits. Repair it with `replace(id, doc)`.
    *
    * @example
    * ```ts
@@ -500,10 +520,15 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         the partial-progress `deleted` count is NOT returned.
    *         `err._id` names that row; re-read before deciding whether
    *         to resume.
+   * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
+   *         at the serving host's fold ceiling and the batch would grow
+   *         it (or no fold can make progress on this host). Decided for the
+   *         whole batch before any row commits. Not retriable unchanged;
+   *         see RECIPES.md.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
-   *         an older release). Checked per row before that row
-   *         commits. Repair it with `replace(id, doc)`.
+   *         an older release). Checked for every matched row before any
+   *         row commits. Repair it with `replace(id, doc)`.
    *
    * @example
    * ```ts

@@ -76,6 +76,8 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   AlreadyExists: "The create target already exists (duplicate _id); never retriable.",
   AmbiguousCommit:
     "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry.",
+  CapacityExceeded:
+    "The collection is at this host's fold ceiling; the write was refused and nothing was committed.",
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",
@@ -111,25 +113,31 @@ const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
     name: "insert",
     params: "doc: Partial<T> & DocumentData",
     returns: "Promise<{ _id: string }>",
-    throws: ["SchemaError", "AlreadyExists", "WriteConflict", "AmbiguousCommit"],
+    throws: [
+      "SchemaError",
+      "AlreadyExists",
+      "WriteConflict",
+      "AmbiguousCommit",
+      "CapacityExceeded",
+    ],
   },
   {
     name: "update",
     params: "id: string, patch: Partial<T>",
     returns: "Promise<{ modified: number }>",
-    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit"],
+    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"],
   },
   {
     name: "replace",
     params: "id: string, doc: T",
     returns: "Promise<void>",
-    throws: ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit"],
+    throws: ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit", "CapacityExceeded"],
   },
   {
     name: "delete",
     params: "id: string",
     returns: "Promise<{ deleted: number }>",
-    throws: ["WriteConflict", "AmbiguousCommit"],
+    throws: ["WriteConflict", "AmbiguousCommit", "CapacityExceeded"],
   },
 ];
 
@@ -144,13 +152,13 @@ const QUERY_METHODS: ReadonlyArray<SpecMethod> = [
     name: "update",
     params: "patch: Partial<T>",
     returns: "Promise<{ modified: number }>",
-    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit"],
+    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"],
   },
   {
     name: "delete",
     params: "",
     returns: "Promise<{ deleted: number }>",
-    throws: ["WriteConflict", "AmbiguousCommit"],
+    throws: ["WriteConflict", "AmbiguousCommit", "CapacityExceeded"],
   },
 ];
 

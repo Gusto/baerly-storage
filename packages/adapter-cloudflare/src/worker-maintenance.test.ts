@@ -400,13 +400,10 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
     const storage = r2BindingStorage(bucket);
     await provision(storage, tenant);
     await seedTail(storage, KEY(tenant), 60);
-    // Close the cf-free rows arm on the stored snapshot.
-    const got = (await storage.get(KEY(tenant)))!;
-    const cur = JSON.parse(new TextDecoder().decode(got.body)) as Record<string, unknown>;
-    cur["snapshot_rows"] = MAINTENANCE_PROFILE_CF_FREE.maxFoldRows + 1;
-    await storage.put(KEY(tenant), new TextEncoder().encode(JSON.stringify(cur)), {
-      contentType: "application/json",
-    });
+    // The stored snapshot is empty, so the write is not refused; a 4 KiB `C`
+    // from the env binding is far below the 60 padded rows' rebuilt snapshot,
+    // so the tick's fold defers at the rebuild gate.
+    const maxFoldBytes = 4096;
 
     const records: LogRecord[] = [];
     const sink: Sink = (r) => records.push(r);
@@ -417,19 +414,23 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
       verifier,
       observability: { level: "info", sink },
     }));
-    const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
+    const env: BaerlyEnv = {
+      BUCKET: bucket,
+      APP: "t",
+      BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(maxFoldBytes),
+    };
     const { ctx, drain } = makeCollectingCtx();
 
+    // A delete is not growth, so it commits and queues its write tick.
     const res = await handler.fetch!(
-      new Request("https://x/v1/c/c", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ doc: { _id: "trigger", n: 1 } }),
-      }) as Request<unknown, IncomingRequestCfProperties>,
+      new Request("https://x/v1/c/c/d0", { method: "DELETE" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
       env,
       ctx,
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(204);
     const deferLogs = (): LogRecord[] =>
       records.filter((r) => r.category.join(".") === "baerly.maintenance");
     // Queued, not yet run.
@@ -440,9 +441,9 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
     expect(deferLogs()).toHaveLength(1);
     expect(deferLogs()[0]!.properties).toMatchObject({
       collection: "c",
-      dimension: "rows",
-      gate: "pre-fold",
-      ceiling_bytes: MAINTENANCE_PROFILE_CF_FREE.maxFoldBytes,
+      dimension: "bytes",
+      gate: "rebuild",
+      ceiling_bytes: maxFoldBytes,
       ceiling_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
       log_seq_start: 0,
     });

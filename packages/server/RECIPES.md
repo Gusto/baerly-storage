@@ -47,6 +47,24 @@ or change the stored row with `update` / `replace`. After a same-`_id` retry
 following `AmbiguousCommit`, the stored row may be your first attempt: re-read
 it instead (see below).
 
+### `BaerlyError code="CapacityExceeded"` (HTTP 409)
+
+**Cause:** the collection has reached the fold ceiling of the host serving the
+request (`E` rows or `C` snapshot bytes for its maintenance profile), so the
+write was refused and nothing was committed. `retriable` is `false`. The
+refusal is recomputed on every request; nothing is stored. A batch
+`.where(...).update()` / `.delete()` is refused before its first row commits.
+**Fix:** depends on the message.
+
+- **Growth refused** (an insert, or an update that makes a row larger): deletes
+  and same-size or shrinking updates still commit. Delete or shrink rows; once
+  write-tick maintenance folds them, growth is accepted again.
+- **Every write refused** ("no fold can make progress here"): the stored
+  snapshot is already past this host's ceiling, typically after a larger host
+  folded it, or a pending insert cannot fold onto an `E`-row snapshot. Serve
+  the collection from a larger profile (`BAERLY_MAINTENANCE_PROFILE=cf-paid`
+  or `node`), or export it with `baerly admin dump`. Reads keep working either way.
+
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
 **Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC,

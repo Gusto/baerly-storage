@@ -451,6 +451,7 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["WriteConflict", 409],
   ["AlreadyExists", 409],
   ["AmbiguousCommit", 409],
+  ["CapacityExceeded", 409],
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
@@ -489,6 +490,9 @@ const ERROR_CODE_POLICY = {
     scrubbedMessage: "access denied",
   },
   AlreadyExists: {
+    messagePolicy: "public",
+  },
+  CapacityExceeded: {
     messagePolicy: "public",
   },
   AmbiguousCommit: {

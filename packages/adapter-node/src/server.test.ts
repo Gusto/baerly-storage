@@ -643,17 +643,18 @@ describe("createFetchHandler", () => {
     await configureObservability({ level: "info", sink });
     const storage = new MemoryStorage();
     const key = "app/t/tenant/acme/manifests/c/current.json";
-    // Close the node rows arm on the stored snapshot, with a foldable-length
-    // tail and a mean that trips the ratio gate.
+    // An empty stored snapshot (so the write is not refused) under a
+    // foldable-length tail of 60 rows, with a mean that trips the ratio
+    // gate. A 512-byte `C` from the env is far below those 60 rows' rebuilt
+    // snapshot, so the tick's fold defers at the rebuild gate.
     await createCurrentJson(
       storage,
       key,
-      logStateCurrentJson({
-        snapshot_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows + 1,
-        mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
-      }),
+      logStateCurrentJson({ mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES }),
     );
     await seedLogEntries(storage, "app/t/tenant/acme/manifests/c", 0, 60);
+    const maxFoldBytes = 512;
+    vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", String(maxFoldBytes));
     vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const handler = createFetchHandler({
@@ -662,25 +663,21 @@ describe("createFetchHandler", () => {
         verifier: okVerifier,
         observability: { level: "info", sink },
       });
-      const res = await handler(
-        new Request("http://x/v1/c/c", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ doc: { _id: "trigger", n: 1 } }),
-        }),
-      );
-      expect(res.status).toBe(201);
+      // A delete is not growth, so it commits and its write tick runs.
+      const res = await handler(new Request("http://x/v1/c/c/d0", { method: "DELETE" }));
+      expect(res.status).toBe(204);
     } finally {
       vi.restoreAllMocks();
+      vi.unstubAllEnvs();
     }
 
     const deferLogs = records.filter((r) => r.category.join(".") === "baerly.maintenance");
     expect(deferLogs).toHaveLength(1);
     expect(deferLogs[0]!.properties).toMatchObject({
       collection: "c",
-      dimension: "rows",
-      gate: "pre-fold",
-      ceiling_bytes: MAINTENANCE_PROFILE_NODE.maxFoldBytes,
+      dimension: "bytes",
+      gate: "rebuild",
+      ceiling_bytes: maxFoldBytes,
       ceiling_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows,
       log_seq_start: 0,
     });

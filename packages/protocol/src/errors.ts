@@ -80,6 +80,25 @@ export type BaerlyErrorCode =
    */
   | "AmbiguousCommit"
   /**
+   * The collection is at the fold ceiling of the host serving this request,
+   * so this write was refused and nothing was committed; `retriable` is
+   * `false`. The refusal is decided per request from the collection's
+   * current state and clears by itself once that state changes.
+   *
+   * Two cases. Near the ceiling, only growth is refused (an insert, or an
+   * update that makes a row larger): deletes and same-size or shrinking
+   * updates still commit, and once the in-band fold drains them, growth is
+   * accepted again. When the stored snapshot is already past the ceiling
+   * (for example a collection folded on a larger host and now served by a
+   * smaller one), or a pending insert cannot fold onto an `E`-row
+   * snapshot, no fold can make progress on this host, so every write is
+   * refused; serve the collection from a larger host profile
+   * (`BAERLY_MAINTENANCE_PROFILE=cf-paid` or `node`) or export it with
+   * `baerly admin dump`. Reads stay served. HTTP maps this code to 409 and
+   * keeps the message, which names the collection and the route.
+   */
+  | "CapacityExceeded"
+  /**
    * `Verifier` returned no identity. HTTP server maps to 401.
    * Code is reserved here so the union locks.
    */
@@ -173,6 +192,7 @@ export const ERROR_CODES = [
   "WriteConflict",
   "AlreadyExists",
   "AmbiguousCommit",
+  "CapacityExceeded",
   "Unauthorized",
   "NotFound",
   "PayloadTooLarge",

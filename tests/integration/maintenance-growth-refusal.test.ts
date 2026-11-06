@@ -13,7 +13,8 @@
  *   updates and deletes are not growth.
  * - R3 refuse growth iff the projected rows after folding the whole tail
  *   plus this write reach E.
- * - R4 no-progress state (`stored >= E`, or `stored_bytes > C`): refuse every
+ * - R4 no-progress state (`stored > E`, `stored_bytes > C`, or a pending
+ *   row-adding entry the fold stops at with E rows): refuse every
  *   tail-appending write with the capacity code; reads stay served.
  * - R5 while the refusal condition holds, the in-band write tick bypasses
  *   the ratio trigger and the min-entries floor.
@@ -72,13 +73,12 @@ import {
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 /**
- * Neither code is in `errors.ts` yet (names open in main-7); rename here.
  * The capacity code is never auto-retried. A refused write that advanced a
  * fold in that request may get the backpressure code instead (R5); with
  * nothing to fold, the capacity code is required.
  */
 const CAPACITY_CODE = "CapacityExceeded";
-const BACKPRESSURE_CODE = "Backpressure";
+const BACKPRESSURE_CODE = "MaintenancePending";
 const isCapacityRefusal = (err: unknown): boolean => {
   const e = err as { code?: unknown; retriable?: unknown } | null;
   return e?.code === CAPACITY_CODE && e.retriable === false;
@@ -306,8 +306,15 @@ describe("main-10: growth refusal (target behavior)", () => {
 
       // ── Scenario builders ──────────────────────────────────────────
 
-      /** No progress (R4): stored rows = E, reached with a 4-entry pass. */
+      /** Stored rows = E, reached with a 4-entry pass. Deletes still fold. */
       const atE = () => folded(E, { ...SMALL, maxFoldEntriesPerPass: 4 });
+      /** No progress (R4): stored rows = E with a pending insert at the tail head. */
+      const stalledAtE = async () => {
+        const storage = await atE();
+        await commit(storage, inserts(E, E + 1, ROW_PAD));
+        await expect(state(storage)).resolves.toMatchObject({ start: E, tail: E + 1, rows: E });
+        return storage;
+      };
       /** No progress (R4): 26 rows folded on Node, served by SMALL. */
       const roundTrip = () => folded(26, MAINTENANCE_PROFILE_NODE);
       /** Refusal but progressable: stored 19 = E - 1, empty tail, so projected = E - 1. */
@@ -397,7 +404,10 @@ describe("main-10: growth refusal (target behavior)", () => {
         const noProgress: Array<
           [string, () => Promise<{ storage: Storage; host: Host; live: number }>]
         > = [
-          ["at E", async () => ({ storage: await atE(), host: SMALL_HOST, live: E })],
+          [
+            "stalled at E",
+            async () => ({ storage: await stalledAtE(), host: SMALL_HOST, live: E + 1 }),
+          ],
           ["round trip", async () => ({ storage: await roundTrip(), host: SMALL_HOST, live: 26 })],
           ["bytes over C", async () => ({ ...(await bytesState("over")), live: 10 })],
         ];
@@ -468,29 +478,25 @@ describe("main-10: growth refusal (target behavior)", () => {
 
       // ── R3: growth refusal (projected >= E) ────────────────────────
       describe("R3 growth refusal", () => {
-        // flip to test() when main-10 Task 2 lands — growth refusal (projected >= E)
-        test.fails("E - 1: an insert is refused and commits nothing", async () => {
+        test("E - 1: an insert is refused and commits nothing", async () => {
           await expectRefusedAndInert(await atEMinus1(), SMALL_HOST, insertW(E - 1));
         });
 
         for (const via of ["profile", "env"] as const) {
-          // flip to test() when main-10 Task 2 lands — growth refusal (projected bytes past C)
-          test.fails(`bytes near C (via ${via}): an insert is refused and commits nothing`, async () => {
+          test(`bytes near C (via ${via}): an insert is refused and commits nothing`, async () => {
             const { storage, host } = await bytesState("near", via);
             await expectRefusedAndInert(storage, host, insertW(10, GROW_PAD));
           });
         }
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (projected bytes past C)
-        test.fails("bytes near C: a byte-growing update is refused and commits nothing", async () => {
+        test("bytes near C: a byte-growing update is refused and commits nothing", async () => {
           const { storage, host } = await bytesState("near");
           await expectRefusedAndInert(storage, host, (c) =>
             c.update(id(0), { pad: GROWN_ROW_PAD }),
           );
         });
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (projected >= E, pending tail counted)
-        test.fails("pending tail: consecutive inserts from 16 rows, no drain, refuse exactly the one making projected = E", async () => {
+        test("pending tail: consecutive inserts from 16 rows, no drain, refuse exactly the one making projected = E", async () => {
           const storage = await sixteen();
           let accepted = 0;
           let refused = false;
@@ -506,8 +512,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(readIdsOn(storage, SMALL_HOST)).resolves.toHaveLength(E - 1);
         });
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (projected >= E)
-        test.fails("reads stay bounded at the refusal point: 10 insert attempts from 16 rows add at most E - 1 - 16 read GETs", async () => {
+        test("reads stay bounded at the refusal point: 10 insert attempts from 16 rows add at most E - 1 - 16 read GETs", async () => {
           const storage = await sixteen();
           // A read GETs the snapshot plus one object per pending tail entry;
           // refusal caps pending growth at the 3 inserts that keep projected <= E - 1.
@@ -518,8 +523,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(readGets(storage)).resolves.toBeLessThanOrEqual(atEntry + (E - 1 - 16));
         });
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (projected >= E)
-        test.fails("peak: from 14 rows, the insert making projected = E is refused; deletes then reopen growth", async () => {
+        test("peak: from 14 rows, the insert making projected = E is refused; deletes then reopen growth", async () => {
           const storage = await folded(14, SMALL);
           for (let i = 14; i < E - 1; i++) {
             await expect(outcome(onHost(storage, SMALL_HOST, insertW(i)))).resolves.toBe(
@@ -539,8 +543,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(readIdsOn(storage, SMALL_HOST)).resolves.toHaveLength(E - 1 - 6 + 1);
         });
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (peak over tail prefixes)
-        test.fails("peak over prefixes: a pending tail [6 inserts, 6 deletes] at 14 rows peaks at E, so growth is refused though the final projection is 15", async () => {
+        test("peak over prefixes: a pending tail [6 inserts, 6 deletes] at 14 rows peaks at E, so growth is refused though the final projection is 15", async () => {
           const storage = await folded(14, SMALL);
           // Seeded without enforcement, as a larger host could have written it.
           await commit(storage, inserts(14, 20, ROW_PAD));
@@ -553,8 +556,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(attempt(storage, SMALL_HOST, insertW(E))).resolves.toBe("refused");
         });
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (bytes peak over tail prefixes)
-        test.fails("bytes peak over prefixes: near C, a pending tail [3M insert, its delete] peaks past C, so a small insert is refused though the final projection fits", async () => {
+        test("bytes peak over prefixes: near C, a pending tail [3M insert, its delete] peaks past C, so a small insert is refused though the final projection fits", async () => {
           const { storage, host } = await bytesState("near");
           // Seeded without enforcement, as a larger host could have written it.
           await commit(storage, [
@@ -570,20 +572,20 @@ describe("main-10: growth refusal (target behavior)", () => {
 
       // ── R4: no progress refuses every tail-appending write ─────────
       describe("R4 no-progress refusal", () => {
+        // The next unused id in each state.
         const rowCases: Array<[string, () => Promise<Storage>, number]> = [
-          ["at E", atE, E],
+          ["stalled at E", stalledAtE, E + 1],
           ["round trip", roundTrip, 26],
         ];
-        for (const [label, build, live] of rowCases) {
+        for (const [label, build, next] of rowCases) {
           const writes: Array<[string, Write]> = [
-            ["an insert", insertW(live)],
+            ["an insert", insertW(next)],
             ["a delete", deleteW(0)],
             ["a shrinking update", shrinkW(0)],
             ["a same-size update", sameSizeW(0)],
           ];
           for (const [what, write] of writes) {
-            // flip to test() when main-10 Task 2 lands — no-progress refusal (stored >= E)
-            test.fails(`${label}: ${what} gets the capacity code and commits nothing`, async () => {
+            test(`${label}: ${what} gets the capacity code and commits nothing`, async () => {
               await expectRefusedAndInert(await build(), SMALL_HOST, write);
             });
           }
@@ -595,12 +597,27 @@ describe("main-10: growth refusal (target behavior)", () => {
           ["a shrinking update", shrinkW(0)],
           ["a same-size update", sameSizeW(0)],
         ] as const) {
-          // flip to test() when main-10 Task 2 lands — no-progress refusal (stored_bytes > C)
-          test.fails(`bytes over C: ${what} gets the capacity code and commits nothing`, async () => {
+          test(`bytes over C: ${what} gets the capacity code and commits nothing`, async () => {
             const { storage, host } = await bytesState("over");
             await expectRefusedAndInert(storage, host, write);
           });
         }
+      });
+
+      describe("at E with nothing pending (not R4)", () => {
+        test("an insert gets the capacity code; deletes and same-size updates are accepted and fold in place", async () => {
+          const storage = await atE();
+          await expectRefusedAndInert(storage, SMALL_HOST, insertW(E));
+          for (const w of [deleteW(0), sameSizeW(1), shrinkW(2)]) {
+            await expect(outcome(onHost(storage, SMALL_HOST, w))).resolves.toBe("accepted");
+          }
+          await drain(storage, SMALL);
+          await expect(state(storage)).resolves.toMatchObject({
+            start: E + 3,
+            tail: E + 3,
+            rows: E - 1,
+          });
+        });
       });
 
       // ── R1: row-exact fold ─────────────────────────────────────────
@@ -639,8 +656,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: E, tail: E, rows: E - 1 });
         });
 
-        // flip to test() when main-10 Task 2 lands — headroom (refuse exactly at projected = E; the row-exact fold drains the rest)
-        test.fails("headroom: inserts one at a time on SMALL each drain fully; the first refused is the one making projected = E", async () => {
+        test("headroom: inserts one at a time on SMALL each drain fully; the first refused is the one making projected = E", async () => {
           const storage = await fresh();
           let refusedAt: number | undefined;
           for (let i = 0; i < 2 * E; i++) {
@@ -661,8 +677,7 @@ describe("main-10: growth refusal (target behavior)", () => {
 
       // ── Clearing: refusal lifts with no operator action ────────────
       describe("clearing", () => {
-        // flip to test() when main-10 Task 2 lands with the adaptive pass — growth refusal (projected >= E) + R1
-        test.fails("E - 1: insert refused; deletes are accepted and fold with the adaptive pass; inserts are accepted again", async () => {
+        test("E - 1: insert refused; deletes are accepted and fold; inserts are accepted again", async () => {
           const storage = await atEMinus1();
           await expect(outcome(onHost(storage, SMALL_HOST, insertW(E - 1)))).resolves.toBe(
             "capacity",
@@ -681,8 +696,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 23, tail: 23, rows: 17 });
         });
 
-        // flip to test() when main-10 Task 2 lands — growth refusal (projected bytes past C)
-        test.fails("bytes near C: insert refused; shrinking updates drain on the same host; growth is accepted again", async () => {
+        test("bytes near C: insert refused; shrinking updates drain on the same host; growth is accepted again", async () => {
           const { storage, host } = await bytesState("near");
           await expect(outcome(onHost(storage, host, insertW(10, GROW_PAD)))).resolves.toBe(
             "capacity",
@@ -740,8 +754,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           expect(progressed).toBeGreaterThan(0);
         });
 
-        // flip to test() when main-10 Task 2 lands — no-progress refusal (stored >= E) + R6 statelessness
-        test.fails("host change: at E refused on SMALL; accepted under a larger E and on Node; back on SMALL every write is refused again, reads served", async () => {
+        test("host change: at E refused on SMALL; accepted under a larger E and on Node; back on SMALL every write is refused again, reads served", async () => {
           const storage = await atE();
           const keysBefore = await keys(storage);
           const headBefore = await head(storage);

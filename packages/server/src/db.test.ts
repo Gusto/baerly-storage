@@ -153,6 +153,33 @@ describe("Db.create config derivation", () => {
     await expect(db.collection("tickets").insert({ title: "ok" })).resolves.toBeDefined();
   });
 
+  test("a bulk update whose later row fails the schema commits no row", async () => {
+    // Rejects a locked row that loses its "keep" title.
+    const lockedKeepsTitle: SchemaValidator = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) => {
+          const v = value as { locked?: boolean; title?: string };
+          return v.locked === true && v.title !== "keep"
+            ? { issues: [{ path: ["title"], message: "locked rows keep their title" }] }
+            : { value };
+        },
+      },
+    };
+    const config: BaerlyConfig = { collections: { tickets: { schema: lockedKeepsTitle } } };
+    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
+    const tickets = db.collection("tickets");
+    await tickets.insert({ _id: "a", locked: false, title: "keep" });
+    await tickets.insert({ _id: "b", locked: true, title: "keep" });
+
+    await expect(tickets.where({}).update({ title: "changed" })).rejects.toMatchObject({
+      code: "SchemaError",
+    });
+    // Every row is validated before any commits, so row "a" is untouched.
+    await expect(tickets.get("a")).resolves.toMatchObject({ title: "keep" });
+  });
+
   test("derives indexes from config — visible on the collectionReadContext", () => {
     const config: BaerlyConfig = {
       collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
