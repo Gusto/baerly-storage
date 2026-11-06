@@ -4,12 +4,13 @@
 // account_id: wrangler deploys to the account you are logged in to, on a
 // workers.dev URL.
 //
-// The one binding is an OPTIONAL synthetic R2 bucket, used only by the S1
-// probe (`env.BUCKET.head` on a key that does not exist). It must be an
-// empty bucket created for this run (`wrangler r2 bucket create
-// baerly-cpu-factor-synthetic`) and deleted afterwards. Nothing is ever
-// written to it. Without it the `probe-r2-head` cell reports "skipped" and
-// every other cell is unaffected. See README.md.
+// The one binding is a synthetic R2 bucket, used only by the S1 probe
+// (`env.BUCKET.head` on a key that does not exist). `deploy` fails unless the
+// bucket exists, so create it empty for this run (`wrangler r2 bucket create
+// baerly-cpu-factor-synthetic`) and delete it afterwards. Nothing is ever
+// written to it. To run without R2, remove `r2_buckets` below: the
+// `probe-r2-head` cell then reports "skipped" and every other cell is
+// unaffected. See README.md.
 {
   "name": "baerly-cpu-factor-bench",
   "main": "./dist/worker.js",

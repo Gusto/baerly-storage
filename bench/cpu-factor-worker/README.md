@@ -26,7 +26,13 @@ The earlier scratch version carried a `policy-switch.patch` and two prepared sou
 
 ## Owner: deploy, run, collect, delete
 
-0. Auth: `./wrangler.sh` (in this directory) wraps `npx wrangler@4` and takes the token from `credentials/cloudflare-deploy-free.json` (`{ "api_token", "account_id" }`, gitignored; `CPU_FACTOR_TIER=paid` reads `cloudflare-deploy.json`), or from `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` if already set. No `wrangler login`. Mint a scoped, short-TTL token on one account with Account-level Workers Scripts Edit, Workers R2 Storage Edit, Workers Tail Read and Account Settings Read, and revoke it after the run.
+0. Auth: `./wrangler.sh` (in this directory) wraps `npx wrangler@4` and takes the token from `credentials/cloudflare-deploy-free.json` (`{ "api_token", "account_id" }`, gitignored; `CPU_FACTOR_TIER=paid` reads `cloudflare-deploy.json`), or from `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` if already set. No `wrangler login`. Mint a short-TTL account-owned token (Manage Account > API Tokens) on the one test account with:
+   - **Workers Scripts: Edit**: `deploy` and `delete` the Worker (steps 3 and 9).
+   - **Workers Tail: Read**: `tail` (step 4).
+   - **Workers R2 Storage: Edit**: `r2 bucket create` / `delete` (steps 2 and 9). Workers roles do not cover R2. Required: `wrangler.jsonc` binds the bucket, so `deploy` fails without it.
+   - **Account Settings: Read**: `whoami` (step 1).
+
+   No zone permissions (no routes, workers.dev only). Revoke the token after step 9.
 1. `./wrangler.sh whoami` and confirm the account is an **owner-approved test account on the Workers Free plan**. This bench uses synthetic data only; no company data goes to the account. The S1 probes are valid only on Free.
 2. Create the empty synthetic bucket: `./wrangler.sh r2 bucket create baerly-cpu-factor-synthetic`.
 3. From `bench/cpu-factor-worker/`: `./wrangler.sh deploy`. The Worker gets a public `*.workers.dev` URL that serves only synthetic data. A run sends about 12,000 requests, within Free's 100,000 per day. Delete the Worker promptly.
