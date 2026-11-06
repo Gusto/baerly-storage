@@ -140,6 +140,7 @@ describe("mapError", () => {
       WriteConflict: { status: 409, retriable: true },
       AlreadyExists: { status: 409, retriable: false },
       AmbiguousCommit: { status: 409, retriable: false },
+      CapacityExceeded: { status: 409, retriable: false },
       Unauthorized: { status: 401, retriable: false },
       NotFound: { status: 404, retriable: false },
       PayloadTooLarge: { status: 413, retriable: false },

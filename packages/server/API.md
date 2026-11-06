@@ -357,6 +357,7 @@ try {
 | `WriteConflict`          | 409  | Lost a write race; re-read, then retry           |
 | `AlreadyExists`          | 409  | `insert` `_id` taken, or `restore` target exists |
 | `AmbiguousCommit`        | 409  | Commit may be durable; outcome unresolved        |
+| `CapacityExceeded`       | 409  | Write refused at the host's fold ceiling         |
 | `Unauthorized`           | 401  | Verifier returned no identity                    |
 | `NotFound`               | 404  | Row by id not found                              |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |
@@ -391,16 +392,14 @@ app.post("/notes", async (c) => {
 });
 ```
 
-`mapError` accepts any thrown value. Caller-facing errors such as
-`SchemaError`, `NotFound`, `PayloadTooLarge`, predicate `InvalidConfig`,
-and `AlreadyExists` keep their actionable message.
-Storage/server diagnostics such as `Internal`, `NetworkError`,
-`InvalidResponse`, storage `AccessDenied`, storage `InvalidConfig`, and
-`WriteConflict` keep their code/status/`retriable` shape but use a
-generic wire message; the full thrown error is logged via the
-observability channel. Non-`BaerlyError` throws fall through to
-`500 Internal` with the message redacted. The HTTP status / envelope shape
-is locked.
+`mapError` accepts any thrown value. Caller-facing codes (`SchemaError`,
+`NotFound`, `PayloadTooLarge`, `CapacityExceeded`, `AlreadyExists`,
+predicate `InvalidConfig`) keep their message. Diagnostics (`Internal`,
+`NetworkError`, `InvalidResponse`, storage `AccessDenied` /
+`InvalidConfig`, `WriteConflict`) keep code/status/`retriable` with a
+generic wire message; the full error goes to observability. Other throws
+become `500 Internal`, message redacted. The status/envelope shape is
+locked.
 
 ## `defineConfig({ app, tenant, target, collections })`
 

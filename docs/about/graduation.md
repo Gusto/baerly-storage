@@ -120,15 +120,28 @@ and [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds).
 A persistently deferring fold means different things on different hosts.
 Disambiguate before you act.
 
-### The symptom: a silent stall, not data loss
+### The symptom: writes are refused, not data loss
 
-When a collection persistently defers its fold, no data is lost and
-writes keep succeeding, but compaction has stopped. Snapshot bytes and
-rows never shrink across folds, so once a ceiling trips the fold does not
-run again on that host profile. `log_seq_start` freezes, log retention
-freezes with it (it only deletes below `log_seq_start` minus a window),
-and the live tail and the bucket grow without bound. Nothing recovers on
-its own; the remedies below do. The symptoms are:
+A collection approaching its host's ceiling starts refusing growth. An
+insert, or an update that makes a row larger, fails with
+`BaerlyError{code:"CapacityExceeded"}` (HTTP 409, not retriable) once
+the projected snapshot would reach `E` rows or pass `C` bytes. Nothing is
+committed. Reads, deletes, and same-size or shrinking updates keep
+working, and once the write-tick fold drains them, growth is accepted
+again. If the stored snapshot is already past the ceiling (for example
+after a larger host folded it), or a pending insert cannot fold onto an
+`E`-row snapshot, no fold can make progress on this host, so every write
+is refused until you move it to a larger host or export
+it. The refusal is recomputed on every request; nothing is stored, so it
+clears on its own when the state or the host changes.
+
+A collection can still end up past the ceiling through writes that skip
+the check: `baerly admin restore`, a release that predates it, or
+concurrent writers racing past the same projection. Its fold then defers.
+No data is lost, but compaction has stopped: `log_seq_start` freezes,
+log retention freezes with it (it only deletes below `log_seq_start`
+minus a window), and the live tail and the bucket grow. The remedies
+below apply. The symptoms are:
 
 - **Reads get gradually slower.** Each read replays an ever-growing log
   tail on top of the stale snapshot: N extra GETs, with N climbing by
@@ -250,8 +263,9 @@ trips first —
 `snapshot_bytes > C`, or `snapshot_rows` at `E` with a row-adding entry
 next in the log.
 
-**What you'll observe:** slower reads, a growing bucket, and a
-`console.warn` naming bytes vs. rows.
+**What you'll observe:** inserts and growing updates fail with
+`CapacityExceeded`; if the fold has already deferred, a `console.warn`
+naming bytes vs. rows.
 
 **What to do:** upgrade to Cloudflare Workers Paid (about $5/mo; 30 s
 CPU vs. free's ~10 ms), then set `BAERLY_MAINTENANCE_PROFILE=cf-paid`.

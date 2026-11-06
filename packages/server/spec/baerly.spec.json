@@ -67,6 +67,13 @@
       "summary": "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry."
     },
     {
+      "code": "CapacityExceeded",
+      "httpStatus": 409,
+      "retriable": false,
+      "messagePolicy": "public",
+      "summary": "The collection is at this host's fold ceiling; the write was refused and nothing was committed."
+    },
+    {
       "code": "Unauthorized",
       "httpStatus": 401,
       "retriable": false,
@@ -188,25 +195,31 @@
       "name": "insert",
       "params": "doc: Partial<T> & DocumentData",
       "returns": "Promise<{ _id: string }>",
-      "throws": ["SchemaError", "AlreadyExists", "WriteConflict", "AmbiguousCommit"]
+      "throws": [
+        "SchemaError",
+        "AlreadyExists",
+        "WriteConflict",
+        "AmbiguousCommit",
+        "CapacityExceeded"
+      ]
     },
     {
       "name": "update",
       "params": "id: string, patch: Partial<T>",
       "returns": "Promise<{ modified: number }>",
-      "throws": ["SchemaError", "WriteConflict", "AmbiguousCommit"]
+      "throws": ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
     },
     {
       "name": "replace",
       "params": "id: string, doc: T",
       "returns": "Promise<void>",
-      "throws": ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit"]
+      "throws": ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit", "CapacityExceeded"]
     },
     {
       "name": "delete",
       "params": "id: string",
       "returns": "Promise<{ deleted: number }>",
-      "throws": ["WriteConflict", "AmbiguousCommit"]
+      "throws": ["WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
     }
   ],
   "queryMethods": [
@@ -244,13 +257,13 @@
       "name": "update",
       "params": "patch: Partial<T>",
       "returns": "Promise<{ modified: number }>",
-      "throws": ["SchemaError", "WriteConflict", "AmbiguousCommit"]
+      "throws": ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
     },
     {
       "name": "delete",
       "params": "",
       "returns": "Promise<{ deleted: number }>",
-      "throws": ["WriteConflict", "AmbiguousCommit"]
+      "throws": ["WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
     }
   ],
   "storageInterface": [

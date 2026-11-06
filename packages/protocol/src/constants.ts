@@ -737,6 +737,20 @@ export const NODE_MAINTENANCE_MAX_FOLD_BYTES: number = 32 * 1024 * 1024;
  */
 export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
 
+/**
+ * Byte slack the growth refusal keeps under `C` (main-10 G4). A growth write
+ * is refused when its projected snapshot bytes would exceed
+ * `C - CAPACITY_BYTES_MARGIN`. The projection sizes each row exactly as
+ * the compactor encodes it (`{"_id":…,"body":…}` plus one separator), so
+ * its only error is the snapshot header: `max_seq` gains digits as the
+ * log grows (at most 16 for a safe integer) and the first row carries no
+ * separator. 64 bytes covers that with room to spare;
+ * `capacity.test.ts` measures the projection against real folds.
+ *
+ * @see docs/spec/scale-ceilings.md
+ */
+export const CAPACITY_BYTES_MARGIN: number = 64;
+
 // Declared here (not the nominal server `MaintenanceProfile`) to avoid a server→protocol cycle; keep field-identical to it.
 type MaintenanceProfileShape = Readonly<{
   gcInterval: number;

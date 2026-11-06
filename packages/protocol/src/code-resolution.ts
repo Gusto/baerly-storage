@@ -8,6 +8,8 @@ export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
     "Do not retry. A row with this _id is already committed: insert with a different _id or omit _id to auto-generate one, or use update or replace to change the existing row; after an AmbiguousCommit retry, re-read that row instead.",
   AmbiguousCommit:
     "Do not retry automatically. Re-read the row named by the error's _id; absence does not prove the write failed. A deliberate retry may repeat logical work; retry an insert with the same _id, and treat AlreadyExists on that retry as a committed row to re-read.",
+  CapacityExceeded:
+    "Do not retry unchanged. Delete or shrink rows to make room, or serve this collection from a larger host profile (cf-paid or node); if every write is refused, use a larger host or export with baerly admin dump.",
   PayloadTooLarge: "Reduce the request body below the server's body-size cap (1 MiB default).",
   Unauthorized: "Send a valid Authorization header for the server's configured auth method.",
   AccessDenied: "These credentials are denied for this tenant prefix or bucket policy.",

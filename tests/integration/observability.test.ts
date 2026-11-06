@@ -50,6 +50,7 @@ import {
   type StoragePutResult,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
+import { Writer } from "@baerly/server/_internal/testing";
 import {
   configureObservability,
   createObservabilityContext,
@@ -327,7 +328,9 @@ describe("observability integration — canonical line vs physical reality", () 
     // fold. On Node the tick runs inline inside the write's request scope,
     // so the deferral must be readable off that one canonical line — which
     // keys counters by name and drops labels, hence the distinct
-    // `deferred_rows_total` name.
+    // `deferred_rows_total` name. The public write verbs refuse writes in
+    // this state (`CapacityExceeded`), so the writes go through `Writer`
+    // directly, as `baerly admin restore` or an older release would.
     const memory = new MemoryStorage();
     await createCurrentJson(memory, CURRENT_JSON_KEY, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
@@ -340,7 +343,14 @@ describe("observability integration — canonical line vs physical reality", () 
       // Ratio trigger trips on any tail, so only the 50-entry floor gates the fold.
       mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
     });
-    const db = Db.create({ storage: memory, app: APP, tenant: TENANT });
+    const writer = new Writer({ storage: memory, currentJsonKey: CURRENT_JSON_KEY });
+    const insert = (id: string, priority: number) =>
+      writer.commit({
+        op: "I",
+        collection: COLLECTION,
+        docId: id,
+        body: { _id: id, status: "open", priority },
+      });
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       // Reach the write-tick fold floor, with the LogTape-backed `warn`
@@ -350,7 +360,7 @@ describe("observability integration — canonical line vs physical reality", () 
       const seedCtx = createObservabilityContext({ maintenance: { warn: logMaintenanceWarning } });
       await runWithContext(seedCtx, async () => {
         for (let i = 0; i < WRITE_TICK_MIN_ENTRIES_TO_COMPACT + 1; i++) {
-          await db.collection(COLLECTION).insert({ _id: `seed-${i}`, status: "open", priority: i });
+          await insert(`seed-${i}`, i);
         }
       });
       const deferLogs = records.filter((r) => r.category.join(".") === "baerly.maintenance");
@@ -368,7 +378,7 @@ describe("observability integration — canonical line vs physical reality", () 
 
       const ctx = createObservabilityContext();
       await runWithContext(ctx, async () => {
-        await db.collection(COLLECTION).insert({ _id: "t-wall", status: "open", priority: 1 });
+        await insert("t-wall", 1);
       });
       flushCanonicalLine(ctx, ctx.recorder, { unit: "http", outcome: "ok", status: 200 });
 

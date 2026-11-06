@@ -36,6 +36,7 @@ import {
   type CurrentJson,
   type DocumentValue,
   type DocumentData,
+  type LogEntry,
   logSeqStartOf,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
   matchesWire,
@@ -52,6 +53,7 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
+import { capacityRefusal, currentFoldCeilings, type PlannedWrite } from "./capacity.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
 import {
   assertDocId,
@@ -351,6 +353,45 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
   });
 
 /**
+ * The collection state a pre-commit read folded: `current.json`, the
+ * snapshot rows and every tail entry on top of them. Present whenever the
+ * read loaded the snapshot; the write verbs pass it to
+ * {@link refuseOverCapacity}.
+ */
+interface FoldedState {
+  readonly head: CurrentJson;
+  readonly base: ReadonlyMap<string, DocumentData>;
+  readonly tail: readonly LogEntry[];
+}
+
+/**
+ * Throw `CapacityExceeded` before any commit when `writes` would grow the
+ * collection past the serving host's fold ceiling (see `./capacity.ts`).
+ * With no folded state (an unprovisioned collection, or an index walk that
+ * matched nothing), the collection is empty or nothing is written.
+ */
+const refuseOverCapacity = (
+  ctx: CollectionReadContext,
+  folded: FoldedState | undefined,
+  writes: readonly PlannedWrite[],
+): void => {
+  if (folded === undefined) {
+    return;
+  }
+  const refusal = capacityRefusal({
+    collection: ctx.collectionName,
+    head: folded.head,
+    base: folded.base,
+    tail: folded.tail,
+    writes,
+    ceilings: currentFoldCeilings(),
+  });
+  if (refusal !== undefined) {
+    throw refusal;
+  }
+};
+
+/**
  * `Collection.insert` implementation. Mints a UUIDv7 `_id`
  * when the caller omits it (or supplies an empty string); honours a
  * caller-supplied non-empty `_id`. The first `I` for an `_id` wins:
@@ -469,6 +510,7 @@ export const runInsert = async <T extends DocumentData>(
     }
     throw insertAlreadyExists(ctx.collectionName, _id);
   }
+  refuseOverCapacity(ctx, existing.folded, [{ op: "I", docId: _id, after: body }]);
 
   // Single-attempt at the verb level; log-create contention is resolved
   // inside `Writer.commit()`, and its errors surface unchanged. The
@@ -576,8 +618,11 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  *   root in the type system).
  * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
  *   other than the row's (see {@link assertPatchKeepsId}), or the row's
- *   `_id` is not NFC (see {@link assertDocId}). Checked per row, before
- *   that row's schema validation and commit.
+ *   `_id` is not NFC (see {@link assertDocId}). Checked for every matched
+ *   row, with schema validation, before any row commits.
+ * @throws BaerlyError code="CapacityExceeded" — the batch would grow the
+ *   collection past the serving host's fold ceiling (see `./capacity.ts`);
+ *   decided before any row commits.
  * @throws BaerlyError code="InvalidResponse" — a matched stored row's
  *   `_id` is not the string it is stored under.
  */
@@ -586,8 +631,10 @@ const runUpdate = async <T extends DocumentData>(
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
-  const { rows } = await runReadRows<T>(ctx, state);
-  let modified = 0;
+  const { rows, folded } = await runReadRows<T>(ctx, state);
+  // Merge and validate every row first, so the per-row checks and the
+  // capacity check decide the batch whole, before its first row commits.
+  const planned: Array<{ docId: string; before: DocumentData; merged: DocumentData }> = [];
   for (const row of rows) {
     const doc = row.doc;
     const docId = storedRowId(row, "update");
@@ -610,14 +657,24 @@ const runUpdate = async <T extends DocumentData>(
     // Patches are partial by design — validating the patch itself
     // would reject valid updates against schemas that require fields
     // the patch doesn't touch. The post-image is what the schema
-    // actually models. Atomicity stays per-row: a violation on row
-    // N aborts the loop without rolling back rows 0..N-1.
+    // actually models.
     if (ctx.schema !== undefined) {
       await validateOrThrow(ctx.schema, merged, {
         collection: ctx.collectionName,
         verb: "update",
       });
     }
+    planned.push({ docId, before: doc as DocumentData, merged });
+  }
+  refuseOverCapacity(
+    ctx,
+    folded,
+    planned.map((p) => ({ op: "U", docId: p.docId, after: p.merged, before: p.before })),
+  );
+  let modified = 0;
+  // Atomicity stays per row: a commit failure on row N leaves rows
+  // 0..N-1 applied.
+  for (const { docId, merged } of planned) {
     await writerFor(ctx).commit({
       op: "U",
       collection: ctx.collectionName,
@@ -666,8 +723,9 @@ export const runReplaceById = async <T extends DocumentData>(
     order: undefined,
     limit: undefined,
   };
-  const { rows } = await runRead<T>(ctx, state);
-  if (rows.length === 0) {
+  const { rows, folded } = await runReadRows<T>(ctx, state);
+  const current = rows[0];
+  if (current === undefined) {
     throw new BaerlyError("NotFound", `No such row: ${id}`);
   }
   const body: DocumentData = { ...(doc as DocumentData), _id: id };
@@ -679,6 +737,9 @@ export const runReplaceById = async <T extends DocumentData>(
       verb: "replace",
     });
   }
+  refuseOverCapacity(ctx, folded, [
+    { op: "U", docId: id, after: body, before: current.doc as DocumentData },
+  ]);
   await writerFor(ctx).commit({
     op: "U",
     collection: ctx.collectionName,
@@ -715,13 +776,19 @@ const runDelete = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
 ): Promise<{ deleted: number }> => {
-  const { rows } = await runReadRows<T>(ctx, state);
+  const { rows, folded } = await runReadRows<T>(ctx, state);
+  const docIds = rows.map((row) => storedRowId(row, "delete"));
+  refuseOverCapacity(
+    ctx,
+    folded,
+    docIds.map((docId) => ({ op: "D", docId })),
+  );
   let deleted = 0;
-  for (const row of rows) {
+  for (const docId of docIds) {
     await writerFor(ctx).commit({
       op: "D",
       collection: ctx.collectionName,
-      docId: storedRowId(row, "delete"),
+      docId,
     });
     deleted++;
   }
@@ -776,6 +843,8 @@ const runReadRows = async <T extends DocumentData>(
    * on the full fold (`indexes: []`), as `runInsert` does.
    */
   readonly tail: number;
+  /** The folded state, for the write verbs' capacity check. */
+  readonly folded?: FoldedState;
 }> => {
   // ── Step 1. Read current.json. ────────────────────────────────────
   // Every read GETs `current.json` fresh — mirrors the multi-instance
@@ -818,6 +887,7 @@ const runReadRows = async <T extends DocumentData>(
       manifestPointer: serializeManifestPointer(head.json, walk.tail),
       fresh,
       tail: walk.tail,
+      ...(walk.folded !== undefined && { folded: { head: head.json, ...walk.folded } }),
     };
   }
   // plan.kind === "full-scan" — fall through to the snapshot+log fold.
@@ -885,7 +955,13 @@ const runReadRows = async <T extends DocumentData>(
     rows = rows.slice(0, state.limit);
   }
 
-  return { rows, manifestPointer: serializeManifestPointer(head.json, tail), fresh, tail };
+  return {
+    rows,
+    manifestPointer: serializeManifestPointer(head.json, tail),
+    fresh,
+    tail,
+    folded: { head: head.json, base: baseDocs, tail: [...entries, ...probe.entries] },
+  };
 };
 
 /**
@@ -966,7 +1042,11 @@ const runIndexWalkPlan = async <T extends DocumentData>(
   head: CurrentJson,
   state: QueryState<T>,
   plan: IndexWalkPlan,
-): Promise<{ rows: StoredRow<T>[]; tail: number }> => {
+): Promise<{
+  rows: StoredRow<T>[];
+  tail: number;
+  folded?: { base: ReadonlyMap<string, DocumentData>; tail: readonly LogEntry[] };
+}> => {
   const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
   const eqPrefix =
     encodedSegments.length === 0
@@ -1142,7 +1222,7 @@ const runIndexWalkPlan = async <T extends DocumentData>(
       rows.push({ docId, doc });
     }
   }
-  return { rows, tail };
+  return { rows, tail, folded: { base: baseDocs, tail: [...entries, ...probe.entries] } };
 };
 
 /**
