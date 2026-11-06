@@ -492,11 +492,13 @@ export interface Query<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
    *         at the serving host's fold ceiling and the batch would grow
    *         it (or no fold can make progress on this host). Decided for the
-   *         whole batch before any row commits. Not retriable unchanged;
-   *         see RECIPES.md.
+   *         whole batch before any row commits, and again at a row's commit
+   *         if a concurrent write landed since; rows before that one are
+   *         then already applied. Not retriable unchanged; see RECIPES.md.
    * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
-   *         on this collection; nothing was committed. Retriable: wait
-   *         `err.retryAfter` seconds, then repeat the call.
+   *         on this collection; the refused row and the rows after it were
+   *         not committed. Retriable: wait `err.retryAfter` seconds, then
+   *         repeat the call.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
@@ -535,8 +537,9 @@ export interface Query<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "CapacityExceeded"} — the collection is
    *         at the serving host's fold ceiling and the batch would grow
    *         it (or no fold can make progress on this host). Decided for the
-   *         whole batch before any row commits. Not retriable unchanged;
-   *         see RECIPES.md.
+   *         whole batch before any row commits, and again at a row's commit
+   *         if a concurrent write landed since; rows before that one are
+   *         then already applied. Not retriable unchanged; see RECIPES.md.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked for every matched row before any
