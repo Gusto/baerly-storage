@@ -17,7 +17,7 @@ import {
   type UnboundConfig,
   uuidv7,
 } from "@baerly/protocol";
-import { CLIENT_CONTEXT } from "./internal/context.ts";
+import { CLIENT_CONTEXT, CLIENT_SCOPE } from "./internal/context.ts";
 import { type Fetcher, type RequestContext, request } from "./request.ts";
 
 /**
@@ -264,13 +264,16 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     fetch: options.fetch ?? ((req) => globalThis.fetch(req)),
     headers: new Headers(options.headers ?? {}),
   };
-  const client = {
-    [CLIENT_CONTEXT]: ctx,
-    collection<T extends DocumentData = DocumentData>(name: string): ClientCollection<T> {
-      return makeClientCollection<T>(ctx, name);
-    },
-  };
-  return client as BaerlyClient<TConfig>;
+  const build = (scope: RequestContext): BaerlyClient<TConfig> =>
+    ({
+      [CLIENT_CONTEXT]: scope,
+      // A view whose every request is also cancelled by `signal`; see `withSignal`.
+      [CLIENT_SCOPE]: (signal: AbortSignal) => build({ ...scope, signal }),
+      collection<T extends DocumentData = DocumentData>(name: string): ClientCollection<T> {
+        return makeClientCollection<T>(scope, name);
+      },
+    }) as unknown as BaerlyClient<TConfig>;
+  return build(ctx);
 };
 
 /** Query-state carried across the chainable modifiers. */

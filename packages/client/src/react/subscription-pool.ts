@@ -75,7 +75,7 @@ interface SubscriptionPool {
     signature: string,
     tables: ReadonlyArray<string>,
     chainTables: ReadonlySet<string>,
-    fetcher: () => Promise<unknown>,
+    fetcher: (signal: AbortSignal) => Promise<unknown>,
     notify: () => void,
   ): () => void;
   /** Read the cached snapshot for `signature` (or the canonical loading sentinel). */
@@ -121,7 +121,10 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     return undefined;
   };
 
-  const dispatchFetch = (signature: string, fetcher: () => Promise<unknown>): void => {
+  const dispatchFetch = (
+    signature: string,
+    fetcher: (signal: AbortSignal) => Promise<unknown>,
+  ): void => {
     const entry = cache.get(signature);
     if (entry === undefined) {
       return;
@@ -152,7 +155,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
     }
     void (async () => {
       try {
-        const data = await fetcher();
+        const data = await fetcher(controller.signal);
         if (controller.signal.aborted) {
           return;
         }
@@ -233,7 +236,7 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
   };
 
   /** Per-signature fetcher; last writer wins (all fetchers for a signature are equivalent). */
-  const signatureFetchers = new Map<string, () => Promise<unknown>>();
+  const signatureFetchers = new Map<string, (signal: AbortSignal) => Promise<unknown>>();
 
   const startTablePoll = (table: string, initialRefcount = 1): void => {
     if (tablePolls.has(table)) {

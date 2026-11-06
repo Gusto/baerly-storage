@@ -36,6 +36,12 @@ export interface RequestContext {
   readonly baseUrl: string;
   readonly fetch: Fetcher;
   readonly headers: Headers;
+  /**
+   * Aborts every request made through this context, alongside any
+   * per-call `signal`. Set only on the scoped client a `useQuery`
+   * fetch runs against.
+   */
+  readonly signal?: AbortSignal;
 }
 
 const parseSuccessfulJson = async (
@@ -182,6 +188,10 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     headers.set("content-type", "application/json");
   }
   const body = opts.body === undefined ? undefined : JSON.stringify(opts.body);
+  const signal =
+    opts.signal !== undefined && ctx.signal !== undefined
+      ? AbortSignal.any([opts.signal, ctx.signal])
+      : (opts.signal ?? ctx.signal);
   const retry = opts.retry !== false;
   const transportAttempts = opts.method === "GET" && retry ? REQUEST_RETRY_MAX_ATTEMPTS : 1;
   const pendingAttempts = retry ? MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS : 1;
@@ -195,14 +205,14 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
           method: opts.method,
           headers,
           body,
-          signal: opts.signal,
+          signal,
         }),
       );
     } catch (error) {
-      if (attempt >= transportAttempts || opts.signal?.aborted === true || isAbortError(error)) {
+      if (attempt >= transportAttempts || signal?.aborted === true || isAbortError(error)) {
         throw error;
       }
-      await sleep(backoffMillis(attempt - 1), opts.signal);
+      await sleep(backoffMillis(attempt - 1), signal);
       continue;
     }
 
@@ -239,7 +249,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
       if (waitMillis !== undefined && waitMillis > ceiling) {
         throw error;
       }
-      await sleep(waitMillis ?? backoffMillis(attempt - 1), opts.signal);
+      await sleep(waitMillis ?? backoffMillis(attempt - 1), signal);
       continue;
     }
 
