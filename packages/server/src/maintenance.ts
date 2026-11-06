@@ -866,9 +866,11 @@ export const runBoundedMaintenance = async (
             tailHintPublished = true;
           }
           // REBUILD-GATE DEFER: the stored snapshot passed the projection but
-          // the rebuilt one is over `C` / `E` — the realistic way bytes first
-          // cross `C`, since the stored `snapshot_bytes` never catches up.
-          // Same signal as the pre-fold defer below.
+          // the rebuilt one is over `C` / `E`. The capacity check refuses
+          // every write whose fold pass would rebuild past the ceiling, so a
+          // write tick lands here only on log entries that check never saw
+          // (another host's writes); scheduled runs also reach it on a
+          // partial last pass. Same signal as the pre-fold defer below.
           if (foldRes.deferral !== undefined) {
             await signalFoldDeferred({
               gate: "rebuild",
