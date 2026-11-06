@@ -349,18 +349,19 @@ export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: nu
 
 /**
  * The write-tick runner's pre-fold projection off STORED figures: the
- * snapshot it would load is within `C` bytes, and its rows plus one full
- * pass are within `E`. The runner, `baerly inspect` and the backlog bench
+ * snapshot it would load is within `C` bytes and `E` rows. It does not
+ * project the pass: `compact()` counts real rows as it applies the range
+ * and folds the longest prefix that stays within `E`, so an update/delete
+ * tail keeps folding at the ceiling and only an entry that would add a row
+ * past `E` stops it. The runner, `baerly inspect` and the backlog bench
  * share this predicate. Both comparisons are written so a NaN ceiling
  * fails closed.
  */
 export const isFoldViable = (
   snapshotBytes: number,
   snapshotRows: number,
-  ceilings: Pick<MaintenanceProfile, "maxFoldBytes" | "maxFoldRows" | "maxFoldEntriesPerPass">,
-): boolean =>
-  snapshotBytes <= ceilings.maxFoldBytes &&
-  snapshotRows + ceilings.maxFoldEntriesPerPass <= ceilings.maxFoldRows;
+  ceilings: Pick<MaintenanceProfile, "maxFoldBytes" | "maxFoldRows">,
+): boolean => snapshotBytes <= ceilings.maxFoldBytes && snapshotRows <= ceilings.maxFoldRows;
 
 /**
  * Derived live-tail byte size — the ratio TRIGGER input that replaces the
@@ -455,7 +456,6 @@ type FoldDeferredFields = {
   readonly ceiling_bytes: number;
   /** `E` — per host profile, no env override. */
   readonly ceiling_rows: number;
-  readonly max_fold_entries_per_pass: number;
   readonly live_log_tail: number;
   readonly log_seq_start: number;
 };
@@ -468,10 +468,12 @@ type FoldDeferredFields = {
  */
 const foldDeferredWarning = (f: FoldDeferredFields): string => {
   const which = f.gate === "rebuild" ? "rebuilt" : "stored";
+  const rowsTripped =
+    f.gate === "rebuild"
+      ? `the rows arm tripped (the next log entry adds a row past E, or the rebuilt snapshot is over E)`
+      : `the rows arm tripped (snapshot_rows > E)`;
   const tripped =
-    f.dimension === "bytes"
-      ? `the bytes arm tripped (snapshot_bytes > C)`
-      : `the rows arm tripped (snapshot_rows + ${f.max_fold_entries_per_pass} per-pass entries > E)`;
+    f.dimension === "bytes" ? `the bytes arm tripped (snapshot_bytes > C)` : rowsTripped;
   const remedy =
     f.dimension === "bytes"
       ? `On Workers Paid set BAERLY_MAINTENANCE_PROFILE=cf-paid (C=${MAINTENANCE_PROFILE_CF_PAID.maxFoldBytes}); ` +
@@ -614,16 +616,11 @@ export const runBoundedMaintenance = async (
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
     const gate1 = ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact;
     // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
-    // Conservative by design: the row arm gates on POTENTIAL post-fold rows
-    // (`snapshotRows + maxFoldEntriesPerPass`), so an update/delete-only fold
-    // that would actually land under E can be deferred near the ceiling. We
-    // can't know the insert-vs-update/delete mix without pre-scanning the
-    // range, so we fail closed. Cost is a liveness edge for large near-E
-    // collections, not a correctness bug.
+    // The pass is not projected: compact() stops at the first entry that
+    // would add a row past E, against the current.json it folds from.
     const foldViable = isFoldViable(snapshotBytes, snapshotRows, {
       maxFoldBytes: C,
       maxFoldRows: E,
-      maxFoldEntriesPerPass,
     });
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
@@ -735,7 +732,6 @@ export const runBoundedMaintenance = async (
           snapshot_rows: d.snapshotRows,
           ceiling_bytes: C,
           ceiling_rows: E,
-          max_fold_entries_per_pass: maxFoldEntriesPerPass,
           live_log_tail: nextSeq - logSeqStart,
           log_seq_start: logSeqStart,
         };

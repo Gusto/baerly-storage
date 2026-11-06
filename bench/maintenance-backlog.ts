@@ -53,10 +53,11 @@
  *   - `object_count` = total bucket objects under the collection prefix.
  *   - `snapshot_bytes` / `snapshot_rows` (the fold ceiling axes).
  *   - `snapshot_over_ceiling` = whether the live snapshot is over the
- *     fold ceiling (`snapshot_bytes > C || snapshot_rows + slice > E`) —
- *     the same predicate the write-tick runner uses to DEFER a fold. A
- *     run that flips this true is folding into a snapshot the profile can
- *     no longer rebuild in one pass (the graduation signal).
+ *     fold ceiling (`!isFoldViable`: `snapshot_bytes > C` or
+ *     `snapshot_rows > E`) — the predicate the write-tick runner uses to
+ *     DEFER a fold. A run that flips this true is folding into a snapshot
+ *     the profile can no longer rebuild in one pass (the graduation
+ *     signal).
  * The verdict per (trigger, rate, profile) is whether the backlog
  * converges to a BOUNDED steady state or GROWS without bound — judged
  * PER AXIS (`tail` and `objects`) and then combined. A cell is `bounded`
@@ -247,9 +248,8 @@ interface MinuteSample {
   readonly snapshot_rows: number;
   /**
    * Whether the live snapshot is currently OVER the fold ceiling — the
-   * same `snapshot_bytes > C || snapshot_rows + slice > E` predicate the
-   * write-tick runner uses to DEFER a fold (`runBoundedMaintenance` Step
-   * 3). A run that ever flips this true is folding into a snapshot the
+   * same `!isFoldViable` predicate the write-tick runner uses to DEFER a
+   * fold (`runBoundedMaintenance` Step 3). A run that ever flips this true is folding into a snapshot the
    * profile can no longer rebuild in one pass — the graduation signal.
    */
   readonly snapshot_over_ceiling: boolean;

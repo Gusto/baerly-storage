@@ -6,8 +6,9 @@
  * cannot fold, on `memory` + `local-fs`. Rules (rows; bytes is the analogue
  * with C):
  *
- * - R1 adaptive pass: a pass of k entries runs iff `stored + k <= E`, with
- *   `k = min(PASS, E - stored)`, so progress is possible iff `stored <= E - 1`.
+ * - R1 row-exact fold: compact() folds the longest prefix whose rebuilt rows
+ *   stay within E, so updates/deletes fold at E and only a row-adding entry
+ *   at E stops it.
  * - R2 growth = insert or byte-growing update. Same-size and shrinking
  *   updates and deletes are not growth.
  * - R3 refuse growth iff the projected rows after folding the whole tail
@@ -311,7 +312,7 @@ describe("main-10: growth refusal (target behavior)", () => {
       const roundTrip = () => folded(26, MAINTENANCE_PROFILE_NODE);
       /** Refusal but progressable: stored 19 = E - 1, empty tail, so projected = E - 1. */
       const atEMinus1 = () => folded(E - 1, MAINTENANCE_PROFILE_NODE);
-      /** Progressable, `16 + PASS > E`: room for E - 1 - 16 = 3 more rows. */
+      /** Progressable, room for E - 1 - 16 = 3 more rows before projected = E. */
       const sixteen = () => folded(16, SMALL);
 
       /**
@@ -602,10 +603,9 @@ describe("main-10: growth refusal (target behavior)", () => {
         }
       });
 
-      // ── R1: adaptive pass ──────────────────────────────────────────
-      describe("R1 adaptive pass", () => {
-        // flip to test() when main-10 lands the adaptive pass (k = min(PASS, E - stored))
-        test.fails("G2: byte-growing updates at 16 rows are accepted and their fold lands on SMALL", async () => {
+      // ── R1: row-exact fold ─────────────────────────────────────────
+      describe("R1 row-exact fold", () => {
+        test("G2: byte-growing updates at 16 rows are accepted and their fold lands on SMALL", async () => {
           const storage = await sixteen();
           for (let i = 0; i < PASS; i++) {
             await expect(
@@ -619,8 +619,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 21, tail: 21, rows: 16 });
         });
 
-        // flip to test() when main-10 lands the adaptive pass (k = min(PASS, E - stored))
-        test.fails("E - 2: a 5-entry delete-only tail folds fully on SMALL (k = 2, then the rest)", async () => {
+        test("E - 2: a 5-entry delete-only tail folds fully on SMALL", async () => {
           const storage = await folded(E - 2, MAINTENANCE_PROFILE_NODE);
           await commit(
             storage,
@@ -631,8 +630,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 23, tail: 23, rows: 13 });
         });
 
-        // flip to test() when main-10 lands the adaptive pass (k = min(PASS, E - stored))
-        test.fails("E - 1: a same-size update is accepted and folds on SMALL", async () => {
+        test("E - 1: a same-size update is accepted and folds on SMALL", async () => {
           const storage = await atEMinus1();
           await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(0)))).resolves.toBe(
             "accepted",
@@ -641,7 +639,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: E, tail: E, rows: E - 1 });
         });
 
-        // flip to test() when main-10 Task 3 lands — headroom (refuse exactly at projected = E; adaptive pass drains the rest)
+        // flip to test() when main-10 Task 2 lands — headroom (refuse exactly at projected = E; the row-exact fold drains the rest)
         test.fails("headroom: inserts one at a time on SMALL each drain fully; the first refused is the one making projected = E", async () => {
           const storage = await fresh();
           let refusedAt: number | undefined;

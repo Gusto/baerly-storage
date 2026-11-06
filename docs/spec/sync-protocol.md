@@ -541,8 +541,10 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   `WRITE_TICK_FOLD_ENTRIES_PER_PASS`; the Node adapter threads the
   larger `NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS`.
 - The fold starts only while the snapshot is under both ceilings:
-  bytes `C` (`snapshot_bytes <= C`) and rows `E` (checked with a
-  look-ahead term, `snapshot_rows + maxFoldEntriesPerPass <= E`).
+  bytes `C` (`snapshot_bytes <= C`) and rows `E` (`snapshot_rows <= E`).
+  The fold applies the longest prefix of the slice whose rebuilt row
+  count stays within `E`, stopping before the first entry that would add
+  a row past it.
   Only the byte ceiling is operator-overridable:
   `C` defaults to `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT` and can be
   raised via `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, whereas `E`

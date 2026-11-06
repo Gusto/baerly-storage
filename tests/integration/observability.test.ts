@@ -336,7 +336,7 @@ describe("observability integration — canonical line vs physical reality", () 
       log_seq_start: 0,
       writer_fence: { epoch: 0, owner: "phase9-observability", claimed_at: "" },
       snapshot_bytes: 0,
-      snapshot_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows, // rows arm closed
+      snapshot_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows + 1, // rows arm closed (stored > E)
       // Ratio trigger trips on any tail, so only the 50-entry floor gates the fold.
       mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
     });

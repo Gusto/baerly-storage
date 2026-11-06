@@ -153,8 +153,10 @@ The fold has two costs, and only one is sliced:
 
 So the ceiling is on the snapshot, not on `snapshot + tail`:
 
-> A fold defers when `snapshot_bytes > C` **or**
-> `snapshot_rows + maxFoldEntriesPerPass > E`.
+> A fold defers when `snapshot_bytes > C` **or** its first log entry
+> would add a row to a snapshot already holding `E` rows. Otherwise it
+> folds the longest prefix of the slice whose rebuilt snapshot stays
+> within `E` rows.
 
 Using order-of-magnitude engine assumptions, JSON parse/stringify at
 roughly 300 MB/s and SHA-256 at roughly 2 GB/s, snapshot rebuild cost is:
@@ -253,9 +255,16 @@ pure and never trigger maintenance. For folding, three gates matter:
   node. Operators can raise it out-of-band with
   `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; see
   [Operations plane](../about/graduation.md#operations-plane-env-vars).
-- **Static row ceiling (`E`).** The rebuild also defers if
-  `snapshot_rows + maxFoldEntriesPerPass > E`. `E` is likewise per host
-  profile: 2048 on cf-free, 32,768 on cf-paid, 65,536 on node.
+- **Static row ceiling (`E`).** The runner dispatches the fold while
+  stored `snapshot_rows <= E`. `compact()` then counts real rows as it
+  applies the slice and stops before the first entry that would add a
+  row past `E`, against the `current.json` it folds from, so no rebuild
+  exceeds `E` rows. Updates and deletes add no rows, so they fold a full
+  slice at the ceiling and a delete tail drains in place; a row-adding
+  entry at the head of the tail is the stall. A stalled tick still loads
+  the snapshot and slice before deferring, the same bounded cost as a
+  bytes rebuild-gate defer. `E` is likewise per host profile: 2048 on
+  cf-free, 32,768 on cf-paid, 65,536 on node.
 
 `C` is conservative *on cf-free* because a fold that overruns cannot back
 off in-band — there is no adaptive retry, and the fold runs on a user's
@@ -271,8 +280,7 @@ enforced at any measured duty cycle
 
 Because the tail is sliced and the snapshot rebuild is the unsliced work:
 
-> **`S_max = C`** (subject to
-> `snapshot_rows + maxFoldEntriesPerPass <= E`).
+> **`S_max = C`** (subject to `snapshot_rows <= E`).
 
 `S_max` is therefore whatever `C` is on the host you are running, and
 that differs per profile:

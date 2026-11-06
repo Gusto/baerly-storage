@@ -3,7 +3,7 @@
 ---
 
 A collection whose snapshot has passed the fold ceiling (`C` bytes, or
-`snapshot_rows + maxFoldEntriesPerPass > E` rows) now says so loudly. Past that
+a row-adding entry at `E` rows) now says so loudly. Past that
 wall compaction stops for good on that host profile: `log_seq_start` freezes,
 log retention freezes with it, and the live tail and the bucket grow without
 bound while writes keep succeeding. Previously the only signals were an

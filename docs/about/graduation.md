@@ -64,7 +64,7 @@ baerly admin usage \
 
 | Symptom | Check | Threshold | Action |
 | --- | --- | --- | --- |
-| `fold_deferred` warning or `db.compaction.deferred_total` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `fold_gate (cf-free): closed:bytes` or `closed:rows` | `snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E` (cf-free: `C = 512 KiB`, `E = 2048`) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to 32,768. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
+| `fold_deferred` warning or `db.compaction.deferred_total` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `fold_gate (cf-free): closed:bytes` or `closed:rows` | `snapshot_bytes > C`, or `snapshot_rows` at `E` with the next log entry adding a row (cf-free: `C = 512 KiB`, `E = 2048`) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to 32,768. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
 | Same defer on Node | Warning text plus `fold_gate (node)` from `baerly inspect` | Node ships `C = 32 MiB`, `E = 65,536`; check the host has RAM for old snapshot + new snapshot + tail | If bytes tripped, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above 32 MiB, sized by `C ≈ heap / 10`; expect one inline write-latency spike. If rows tripped, Node already has the largest shipped `E` and there is no env override — split or graduate the collection. |
 | GC-managed object count grows while writes are steady | Prefix inventory + logs + `admin fsck` | Stale-log/orphan-snapshot sweep throughput no longer keeps up with their production | Reduce contention, split the hot collection, or graduate the workload. Growth under `content/` is diagnosed separately: stop legacy writers, then dispose of the inert prefix manually. |
 | Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
@@ -93,7 +93,8 @@ whatever the verdict.
 For compaction, compare the **snapshot**, not the tail:
 
 - `snapshot_bytes` against `C`;
-- `snapshot_rows + maxFoldEntriesPerPass` against `E`; and
+- `snapshot_rows` against `E` (the fold counts real rows, so updates and
+  deletes keep folding at `E`; only a row-adding entry stops it); and
 - the `fold_deferred` warning and `db.compaction.deferred_*` counters
   for the portable operator signal.
 
@@ -246,7 +247,8 @@ A deferred fold alone does not mean "move to Postgres."
 **Threshold:** the auto-maintained snapshot ceiling at the cf-free
 values: ~512 KiB snapshot / ~100-500 docs, or `E = 2048` rows, whichever
 trips first —
-`snapshot_bytes > C` or `snapshot_rows + maxFoldEntriesPerPass > E`.
+`snapshot_bytes > C`, or `snapshot_rows` at `E` with a row-adding entry
+next in the log.
 
 **What you'll observe:** slower reads, a growing bucket, and a
 `console.warn` naming bytes vs. rows.

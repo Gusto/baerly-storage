@@ -454,7 +454,9 @@ The bounded pass splits that work across three primitives:
   replay less log. The slice size is `maxFoldEntriesPerPass`, passed to
   `compact()` as `maxEntriesPerRun`. The unsliceable snapshot rebuild is
   gated by a **static two-way ceiling** (`snapshot_bytes <= C` AND
-  `snapshot_rows + maxFoldEntriesPerPass <= E`). The byte ceiling is
+  `snapshot_rows <= E`); `compact()` counts real rows as it applies the
+  slice and stops before the first entry that would add a row past `E`,
+  so update and delete tails keep folding at the ceiling. The byte ceiling is
   overridable by `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the row ceiling is
   a kernel constant.
 - `retireLogRange()` (`packages/server/src/log-retention.ts`) reclaims

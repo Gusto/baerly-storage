@@ -20,7 +20,7 @@
  *     are compared against; see graduation.md).
  *   - fold_gate, per host profile: `open`, `closed:bytes`, or
  *     `closed:rows` — the write-tick runner's pre-fold projection
- *     (`snapshot_bytes <= C && snapshot_rows + maxFoldEntriesPerPass <= E`)
+ *     (`snapshot_bytes <= C && snapshot_rows <= E`)
  *     against that profile's ceilings, with `C` overridden by
  *     `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from the CLI's environment. Plus
  *     `retention_stalled`: the gate is closed and the live tail has
@@ -146,7 +146,6 @@ const foldGateVerdict = (
     !isFoldViable(cur.snapshot_bytes, cur.snapshot_rows, {
       maxFoldBytes: ceilingBytes,
       maxFoldRows: ceilingRows,
-      maxFoldEntriesPerPass: profile.maxFoldEntriesPerPass,
     })
   ) {
     verdict = cur.snapshot_bytes <= ceilingBytes ? "closed:rows" : "closed:bytes";

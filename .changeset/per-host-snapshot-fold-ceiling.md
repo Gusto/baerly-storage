@@ -7,7 +7,7 @@ Give each host profile its own snapshot fold ceiling.
 All three maintenance profiles shared `C = 512 KiB` (`maxFoldBytes`) and
 `E = 2048` (`maxFoldRows`), both calibrated for a Cloudflare free isolate's
 ~10 ms CPU budget. Serverful Node and Cloudflare paid inherited them. Because
-the fold gate is `snapshot_rows + maxFoldEntriesPerPass <= E`, and those two
+the fold gate was `snapshot_rows + maxFoldEntriesPerPass <= E`, and those two
 profiles fold a 200-entry slice against free's 20, the bigger host capped
 *lower*: ~1,848 live documents against free's ~2,028.
 

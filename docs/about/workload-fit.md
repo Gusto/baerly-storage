@@ -153,8 +153,8 @@ Node adapter selects its profile automatically.
 ² At 1–5 KB per document. Each host caps how large a snapshot one fold
 may rebuild — in bytes (`C`) and in rows (`E`). Bytes bind at documents
 this size. Rows bind first for small documents: under ~256 B on
-Cloudflare, where the fold stops at ~2,028 documents (free) or ~32,568
-(paid), and under ~512 B on Node, where it stops at ~65,336. Neither row
+Cloudflare, where the fold stops at 2,048 documents (free) or 32,768
+(paid), and under ~512 B on Node, where it stops at 65,536. Neither row
 ceiling has an env override. On Node the cap
 scales with available heap, and the column gives the measured floor on a
 512 MB container. Per-host caps and their derivation:

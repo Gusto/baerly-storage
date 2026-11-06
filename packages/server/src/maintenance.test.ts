@@ -1396,8 +1396,8 @@ describe("dispatchInlineAwaited", () => {
 });
 
 /**
- * The fold wall: once `snapshot_bytes > C` or `snapshot_rows +
- * maxFoldEntriesPerPass > E`, `compact()` never lands again, so
+ * The fold wall: once `snapshot_bytes > C` or stored `snapshot_rows > E`,
+ * `compact()` never lands again, so
  * `log_seq_start` freezes and log retention (which only deletes below
  * `log_seq_start - window`) freezes with it. Writes keep succeeding, so the
  * stall must be LOUD: one structured record through the adapter's
