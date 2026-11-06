@@ -92,10 +92,10 @@ export type BaerlyErrorCode =
    * (for example a collection folded on a larger host and now served by a
    * smaller one), or a pending insert cannot fold onto an `E`-row
    * snapshot, no fold can make progress on this host, so every write is
-   * refused; serve the collection from a larger host profile
-   * (`BAERLY_MAINTENANCE_PROFILE=cf-paid` or `node`) or export it with
-   * `baerly admin dump`. Reads stay served. HTTP maps this code to 409 and
-   * keeps the message, which names the collection and the route.
+   * refused until the collection moves to a larger host or is exported
+   * with `baerly admin dump`. Moving hosts is a deployment decision, not
+   * an app setting. Reads stay served. HTTP maps this code to 409 and
+   * keeps the message, which names the collection and the case.
    */
   | "CapacityExceeded"
   /**
