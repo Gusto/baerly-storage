@@ -245,7 +245,7 @@ export const maintenancePending = (collection: string): BaerlyError =>
     "MaintenancePending",
     `collection ${JSON.stringify(collection)} is waiting on maintenance: this write would grow ` +
       `it past what this host can fold until the pending changes fold, so it was refused and ` +
-      `nothing was committed. Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
+      `not committed (rows a batch committed before it are kept). Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
     {
       resolution: CODE_RESOLUTIONS.MaintenancePending,
       retryAfter: MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
@@ -429,8 +429,8 @@ export const capacityDecision = (args: {
     : `${peakBytes} bytes would pass the ${maxBytes}-byte ceiling`;
   const refusal = refuse(
     `collection ${JSON.stringify(collection)} is full on this host: ${detail}, so this ` +
-      `${refused.op === "I" ? "insert" : "growing update"} was refused and nothing was ` +
-      `committed. Deletes and same-size or shrinking updates still commit; delete or shrink ` +
+      `${refused.op === "I" ? "insert" : "growing update"} was refused and not ` +
+      `committed (rows a batch committed before it are kept). Deletes and same-size or shrinking updates still commit; delete or shrink ` +
       `rows to make room. If the collection must keep growing, it needs a larger host or graduation.`,
   );
   // `MaintenancePending` promises that folds alone admit these writes, so

@@ -11,7 +11,7 @@ export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
   CapacityExceeded:
     "Do not retry unchanged. Delete or shrink rows to make room; if every write is refused, the collection has outgrown this host: export it with baerly admin dump, or move it to a larger host.",
   MaintenancePending:
-    "Retry after the delay in retryAfter (Retry-After header, seconds): maintenance is catching up on this collection and nothing was committed.",
+    "Retry after the delay in retryAfter (Retry-After header, seconds): maintenance is catching up on this collection and this write was not committed.",
   PayloadTooLarge: "Reduce the request body below the server's body-size cap (1 MiB default).",
   Unauthorized: "Send a valid Authorization header for the server's configured auth method.",
   AccessDenied: "These credentials are denied for this tenant prefix or bucket policy.",
