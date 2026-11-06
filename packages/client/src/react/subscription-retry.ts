@@ -1,3 +1,6 @@
+import { BaerlyError } from "@baerly/protocol";
+import { MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS } from "../request-retry.ts";
+
 /**
  * Initial upper bound, in milliseconds, for the React client's
  * `/v1/since` retry delay. Equal jitter selects a delay from half this
@@ -41,4 +44,27 @@ export const retryDelay = (attempt: number): number => {
     SUBSCRIPTION_RETRY_INITIAL_MILLIS * 2 ** attempt,
   );
   return Math.floor(upperBound / 2 + Math.random() * (upperBound / 2));
+};
+
+/**
+ * The wait, in milliseconds, before re-polling after `error` on the
+ * `attempt`-th consecutive retriable failure: {@link retryDelay}, or the
+ * server's hint when `error` is `MaintenancePending` and asks for longer.
+ * The hint (`error.retryAfter`, which already folds in the `Retry-After`
+ * header) is clamped to `MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS`: the
+ * poll never gives up, so a hostile hint must not park it.
+ */
+export const pollRetryDelay = (attempt: number, error: unknown): number => {
+  const backoff = retryDelay(attempt);
+  if (
+    !(error instanceof BaerlyError) ||
+    error.code !== "MaintenancePending" ||
+    error.retryAfter === undefined
+  ) {
+    return backoff;
+  }
+  return Math.max(
+    backoff,
+    Math.min(error.retryAfter * 1000, MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS),
+  );
 };

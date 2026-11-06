@@ -236,3 +236,171 @@ describe("request non-GET is never retried", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+/** The server's backpressure refusal: 503, enveloped, `Retry-After` + `retryAfter`. */
+const pending = (opts: { header?: string; retryAfter?: number } = {}): Response =>
+  new Response(
+    JSON.stringify({
+      error: {
+        code: "MaintenancePending",
+        message: "waiting on maintenance",
+        retriable: true,
+        ...(opts.retryAfter !== undefined && { retryAfter: opts.retryAfter }),
+      },
+    }),
+    {
+      status: 503,
+      headers: {
+        "content-type": "application/json",
+        ...(opts.header !== undefined && { "retry-after": opts.header }),
+      },
+    },
+  );
+
+/** The success each verb's route answers with. */
+const served = (method: string): Response => {
+  if (method === "GET") {
+    return ok();
+  }
+  if (method === "POST") {
+    return new Response(JSON.stringify({ _id: "a" }), { status: 201 });
+  }
+  if (method === "DELETE") {
+    return new Response(null, { status: 204 });
+  }
+  return new Response(JSON.stringify({ modified: 1 }), { status: 200 });
+};
+
+describe("request MaintenancePending retry", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  test.each(["GET", "POST", "PATCH", "PUT", "DELETE"] as const)(
+    "%s is resent after Retry-After with the identical body",
+    async (method) => {
+      const { ctx, calls } = scripted([pending({ header: "2", retryAfter: 2 }), served(method)]);
+      const body = method === "GET" || method === "DELETE" ? undefined : { doc: { _id: "a" } };
+      const outcome = request(ctx, { method, path: "/v1/c/t/a", body }).then(
+        () => "resolved",
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(outcome).resolves.toBe("resolved");
+      expect(calls).toHaveLength(2);
+      expect(calls[1]!.method).toBe(method);
+      const first = await calls[0]!.text();
+      await expect(calls[1]!.text()).resolves.toBe(first);
+    },
+  );
+
+  test("the envelope's retryAfter is honoured without a header", async () => {
+    const { ctx, calls } = scripted([pending({ retryAfter: 3 }), served("POST")]);
+    const p = request(ctx, { method: "POST", path: "/v1/c/t", body: { doc: {} } });
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(p).resolves.toEqual({ _id: "a" });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("the longer of header and envelope hint wins", async () => {
+    const { ctx, calls } = scripted([pending({ header: "4", retryAfter: 1 }), served("PATCH")]);
+    const p = request(ctx, { method: "PATCH", path: "/v1/c/t/a", body: { patch: {} } });
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(p).resolves.toEqual({ modified: 1 });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("with no hint at all it falls back to jittered backoff", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { ctx, calls } = scripted([pending(), served("PUT")]);
+    await settle(request(ctx, { method: "PUT", path: "/v1/c/t/a", body: { doc: {} } }));
+    expect(calls).toHaveLength(2);
+  });
+
+  test("the attempt cap is reached, then the MaintenancePending error surfaces", async () => {
+    const { ctx, calls } = scripted([pending({ header: "1", retryAfter: 1 })]);
+    await expect(
+      settle(request(ctx, { method: "POST", path: "/v1/c/t", body: { doc: {} } })),
+    ).rejects.toMatchObject({ code: "MaintenancePending", status: 503, retryAfter: 1 });
+    expect(calls).toHaveLength(3);
+  });
+
+  test("a hint above the wait ceiling surfaces the error without waiting", async () => {
+    const { ctx, calls } = scripted([pending({ header: "60", retryAfter: 60 }), served("POST")]);
+    await expect(
+      request(ctx, { method: "POST", path: "/v1/c/t", body: { doc: {} } }),
+    ).rejects.toMatchObject({ code: "MaintenancePending", retryAfter: 60 });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("retry: false surfaces the first MaintenancePending", async () => {
+    const { ctx, calls } = scripted([pending({ retryAfter: 1 }), ok()]);
+    await expect(
+      request(ctx, { method: "GET", path: "/v1/since", retry: false }),
+    ).rejects.toMatchObject({ code: "MaintenancePending", retryAfter: 1 });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("an abort during the wait stops at once", async () => {
+    const ac = new AbortController();
+    const reason = new Error("stop");
+    const { ctx, calls } = scripted([pending({ retryAfter: 1 }), served("POST")]);
+    const p = request(ctx, {
+      method: "POST",
+      path: "/v1/c/t",
+      body: { doc: {} },
+      signal: ac.signal,
+    });
+    const outcome = p.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(500);
+    ac.abort(reason);
+    await expect(outcome).resolves.toBe(reason);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("a non-GET resent after MaintenancePending still sends an envelope-less 503 once", async () => {
+    const { ctx, calls } = scripted([pending({ retryAfter: 1 }), bare(503), served("POST")]);
+    await expect(
+      settle(request(ctx, { method: "POST", path: "/v1/c/t", body: { doc: {} } })),
+    ).rejects.toMatchObject({ code: "NetworkError", status: 503 });
+    expect(calls).toHaveLength(2);
+  });
+
+  test.each(["GET", "POST", "PATCH", "PUT", "DELETE"] as const)(
+    "%s is never resent after CapacityExceeded or an enveloped NetworkError",
+    async (method) => {
+      for (const [status, code] of [
+        [409, "CapacityExceeded"],
+        [502, "NetworkError"],
+      ] as const) {
+        const { ctx, calls } = scripted([envelope(status, code), served(method)]);
+        await expect(
+          settle(
+            request(ctx, { method, path: "/v1/c/t/a", body: method === "GET" ? undefined : {} }),
+          ),
+        ).rejects.toMatchObject({ code, status });
+        expect(calls).toHaveLength(1);
+      }
+    },
+  );
+
+  test("retryAfter stays off a code other than MaintenancePending", async () => {
+    const { ctx } = scripted([bare(503, { "retry-after": "1" })]);
+    const error = await request(ctx, { method: "POST", path: "/v1/c/t", body: {} }).then(
+      () => undefined,
+      (error_: unknown) => error_ as { code?: string; retryAfter?: number },
+    );
+    expect(error?.code).toBe("NetworkError");
+    expect(error?.retryAfter).toBeUndefined();
+  });
+});

@@ -2,7 +2,7 @@
    locked wire-shape field names mirrored from the server contract. */
 
 import { type Collection, type DocumentData, isUuidV7 } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { type ClientCollection, createBaerlyClient } from "./client.ts";
 import type { HttpOkEnvelope } from "./contract.ts";
 import { MockFetch } from "./testing/index.ts";
@@ -74,6 +74,45 @@ describe("createBaerlyClient", () => {
       expect(isUuidV7(body.doc._id)).toBe(true);
       expect(body).toEqual({ doc: { title: "a", _id: body.doc._id }, mintedId: body.doc._id });
       expect(_id).toBe(body.doc._id);
+    });
+
+    // The server answers `MaintenancePending` only for an insert that
+    // committed nothing; the resend must carry the same minted id so that
+    // even a commit the client did not see replays instead of duplicating.
+    const pendingThenCreated = () => {
+      const mock = new MockFetch();
+      const bodies: Array<Record<string, unknown>> = [];
+      mock.on("POST", "/v1/c/tickets", async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        bodies.push(body);
+        return bodies.length === 1
+          ? new Response(
+              JSON.stringify({
+                error: { code: "MaintenancePending", message: "m", retriable: true, retryAfter: 0 },
+              }),
+              { status: 503, headers: { "content-type": "application/json", "retry-after": "0" } },
+            )
+          : jsonResponse({ _id: (body["doc"] as { _id: string })._id }, 201);
+      });
+      const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+      return { bodies, tickets: client.collection("tickets") };
+    };
+
+    test("a MaintenancePending resend reuses the minted _id and mintedId", async () => {
+      const { bodies, tickets } = pendingThenCreated();
+      const { _id } = await tickets.insert({ title: "a" });
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1]).toEqual(bodies[0]);
+      expect(bodies[1]).toEqual({ doc: { title: "a", _id }, mintedId: _id });
+    });
+
+    test("a MaintenancePending resend keeps a caller-supplied _id and adds no mintedId", async () => {
+      const { bodies, tickets } = pendingThenCreated();
+      await tickets.insert({ _id: "t-1", title: "a" });
+      expect(bodies).toEqual([
+        { doc: { _id: "t-1", title: "a" } },
+        { doc: { _id: "t-1", title: "a" } },
+      ]);
     });
 
     test("sends a caller-supplied _id unchanged, with no mintedId key", async () => {
@@ -320,10 +359,12 @@ describe("createBaerlyClient", () => {
     });
   });
 
-  test("client round-trips retryAfter on MaintenancePending", async () => {
+  test("client round-trips retryAfter on MaintenancePending once its retries run out", async () => {
+    let calls = 0;
     const mock = new MockFetch();
-    mock.on("POST", "/v1/c/tickets", () =>
-      jsonResponse(
+    mock.on("POST", "/v1/c/tickets", () => {
+      calls += 1;
+      return jsonResponse(
         {
           error: {
             code: "MaintenancePending",
@@ -333,16 +374,27 @@ describe("createBaerlyClient", () => {
           },
         },
         503,
-      ),
-    );
-    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
-    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
-      name: "BaerlyError",
-      code: "MaintenancePending",
-      status: 503,
-      retriable: true,
-      retryAfter: 3,
+      );
     });
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    vi.useFakeTimers();
+    try {
+      const outcome = client
+        .collection("tickets")
+        .insert({ x: 1 })
+        .catch((error: unknown) => error);
+      await vi.runAllTimersAsync();
+      await expect(outcome).resolves.toMatchObject({
+        name: "BaerlyError",
+        code: "MaintenancePending",
+        status: 503,
+        retriable: true,
+        retryAfter: 3,
+      });
+      expect(calls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("client surfaces retriable:false on AlreadyExists", async () => {

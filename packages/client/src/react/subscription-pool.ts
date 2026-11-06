@@ -2,7 +2,7 @@ import { BaerlyError } from "@baerly/protocol";
 import type { BaerlyClient } from "../client.ts";
 import { getClientContext } from "../internal/context.ts";
 import { pollSinceOnce } from "../poll-since-once.ts";
-import { retryDelay } from "./subscription-retry.ts";
+import { pollRetryDelay } from "./subscription-retry.ts";
 
 /**
  * Discriminated snapshot a hook hands back from `getSnapshot`. The
@@ -313,12 +313,16 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
             invalidateForTable(table);
             recoveredDeadCursor = true;
           }
+          // A non-retriable code parks the poll until `refetch`:
+          // `CapacityExceeded` included, since it clears only once the
+          // app deletes or shrinks rows. A retriable `MaintenancePending`
+          // waits at least the server's `retryAfter`.
           if (!recoveredDeadCursor && error instanceof BaerlyError && !error.retriable) {
             poll.terminalError = error;
             failForTable(table, error);
             return;
           }
-          const delay = retryDelay(retryAttempt);
+          const delay = pollRetryDelay(retryAttempt, error);
           retryAttempt += 1;
           await waitForRetry(delay, controller.signal);
         }
