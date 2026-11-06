@@ -15,19 +15,32 @@
  * (`current.json`, the snapshot rows, the pending tail) plus the planned
  * writes. Nothing is persisted, so the refusal clears as soon as that
  * state changes.
+ *
+ * Near the ceiling the verbs also drive the fold (G6): an accepted write
+ * that leaves the collection at its growth-refusal point forces its
+ * write tick, and a refused growth write whose room the pending tail
+ * would free dispatches one forced fold and refuses with
+ * `MaintenancePending` instead of `CapacityExceeded`.
  */
 
 import {
   BaerlyError,
   CAPACITY_BYTES_MARGIN,
   CODE_RESOLUTIONS,
+  MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+  MAINTENANCE_PROFILE_CF_FREE,
   type CurrentJson,
   type DocumentData,
   encodeJsonBytes,
   type LogEntry,
   SNAPSHOT_SCHEMA_VERSION,
 } from "@baerly/protocol";
-import { type FoldCeilings, isFoldViable, resolveFoldCeilings } from "./maintenance.ts";
+import {
+  type FoldCeilings,
+  isFoldViable,
+  type MaintenanceProfile,
+  resolveFoldCeilings,
+} from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { encodeSnapshotBody } from "./snapshot.ts";
 
@@ -41,14 +54,23 @@ export interface PlannedWrite {
   readonly before?: DocumentData;
 }
 
+/** A host's fold ceilings plus the entries one fold pass applies. */
+export type HostFoldLimits = FoldCeilings & Pick<MaintenanceProfile, "maxFoldEntriesPerPass">;
+
 /**
- * The fold ceilings of the host serving this request, resolved through
- * the write-tick runner's own {@link resolveFoldCeilings} so refusal and
+ * The fold ceilings and pass size of the host serving this request,
+ * resolved as the write-tick runner resolves them
+ * ({@link resolveFoldCeilings}, absent profile ⇒ cf-free) so refusal and
  * folding always agree.
  */
-export const currentFoldCeilings = (): FoldCeilings => {
+export const currentFoldCeilings = (): HostFoldLimits => {
   const maint = getCurrentContext()?.maintenance;
-  return resolveFoldCeilings(maint?.options?.profile, maint?.maxFoldBytes);
+  const profile = maint?.options?.profile;
+  return {
+    ...resolveFoldCeilings(profile, maint?.maxFoldBytes),
+    // The runner's own default when no profile is threaded.
+    maxFoldEntriesPerPass: (profile ?? MAINTENANCE_PROFILE_CF_FREE).maxFoldEntriesPerPass,
+  };
 };
 
 /**
@@ -109,6 +131,8 @@ export interface SnapshotProjection {
   /** Largest `rows` / `bytes` seen at any prefix, the starting state included. */
   readonly peakRows: number;
   readonly peakBytes: number;
+  /** Restart the peaks at the current state, as once everything applied so far has folded. */
+  settle(): void;
 }
 
 /**
@@ -169,13 +193,56 @@ export const projectSnapshot = (
       state.peakRows = Math.max(state.peakRows, state.rows);
       state.peakBytes = Math.max(state.peakBytes, state.bytes);
     },
+    settle(): void {
+      state.peakRows = state.rows;
+      state.peakBytes = state.bytes;
+    },
   };
   return state;
 };
 
 /**
+ * Backpressure for a refused growth write whose room the pending tail
+ * frees once it folds (G6). Like `CapacityExceeded`, it names the state
+ * and the app-side remedy only.
+ */
+export const maintenancePending = (collection: string): BaerlyError =>
+  new BaerlyError(
+    "MaintenancePending",
+    `collection ${JSON.stringify(collection)} is waiting on maintenance: this write would grow ` +
+      `it past what this host can fold until the pending changes fold, so it was refused and ` +
+      `nothing was committed. Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
+    {
+      resolution: CODE_RESOLUTIONS.MaintenancePending,
+      retryAfter: MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+    },
+  );
+
+/** What {@link capacityDecision} decided for one batch of planned writes. */
+export type CapacityDecision =
+  | {
+      readonly refusal: undefined;
+      /**
+       * The collection sits at its growth-refusal point once these writes
+       * commit: one more inserted row, or one more byte of growth, would
+       * be refused. The verb forces its write tick (G6).
+       */
+      readonly pressure: boolean;
+    }
+  | {
+      /** The `CapacityExceeded` refusal to throw. */
+      readonly refusal: BaerlyError;
+      /**
+       * A growth refusal (never the no-progress state) that the pending
+       * tail would lift once it folds, where the next fold pass can land.
+       * The verb may dispatch that fold and refuse with
+       * {@link maintenancePending} instead.
+       */
+      readonly foldFreesRoom: boolean;
+    };
+
+/**
  * Decide whether `writes` must be refused on the host with `ceilings`.
- * Returns the `CapacityExceeded` error to throw, or `undefined` to commit.
  *
  * - **No progress** (G5): the stored snapshot is over `E` rows or `C`
  *   bytes, or the pending tail holds an entry the fold stops at (one that
@@ -186,9 +253,15 @@ export const projectSnapshot = (
  *   projected snapshot, at its peak over every prefix of the pending tail
  *   followed by the planned writes up to this one, would reach `E` rows or
  *   exceed `C - CAPACITY_BYTES_MARGIN` bytes (G4). The peak counts because
- *   a fold can land at any prefix.
+ *   a fold can land at any prefix. `foldFreesRoom` (G6) is set when the
+ *   same writes would be admitted onto the snapshot the whole pending tail
+ *   folds to, and the first pass of `maxFoldEntriesPerPass` tail entries
+ *   rebuilds within `C - CAPACITY_BYTES_MARGIN`, so the fold that pass
+ *   dispatches lands.
  * - Anything else (deletes, same-size and shrinking updates) commits, at
- *   `E` rows included: the fold drains them in place.
+ *   `E` rows included: the fold drains them in place. `pressure` reports
+ *   whether the collection then sits where a one-row insert, or a
+ *   one-byte growth, would be refused.
  *
  * A batch is decided whole, before its first row commits.
  *
@@ -196,25 +269,28 @@ export const projectSnapshot = (
  * @param base The snapshot rows that read loaded (`docId → body`).
  * @param tail Every log entry that read folded on top of `base`, in order.
  */
-export const capacityRefusal = (args: {
+export const capacityDecision = (args: {
   readonly collection: string;
   readonly head: Pick<CurrentJson, "snapshot_rows" | "snapshot_bytes">;
   readonly base: ReadonlyMap<string, DocumentData>;
   readonly tail: readonly LogEntry[];
   readonly writes: readonly PlannedWrite[];
-  readonly ceilings: FoldCeilings;
-}): BaerlyError | undefined => {
+  readonly ceilings: FoldCeilings & Partial<Pick<MaintenanceProfile, "maxFoldEntriesPerPass">>;
+}): CapacityDecision => {
   const { collection, head, base, tail, writes, ceilings } = args;
   if (writes.length === 0) {
-    return undefined;
+    return { refusal: undefined, pressure: false };
   }
   const { maxFoldRows: maxRows, maxFoldBytes: maxBytes } = ceilings;
-  const noProgress = (why: string): BaerlyError =>
-    refuse(
+  const byteLimit = maxBytes - CAPACITY_BYTES_MARGIN;
+  const noProgress = (why: string): CapacityDecision => ({
+    refusal: refuse(
       `collection ${JSON.stringify(collection)} has outgrown this host (${why}): no fold can ` +
         `make progress here, so every write is refused and reads keep working. The collection ` +
         `needs a larger host or graduation; export it with baerly admin dump.`,
-    );
+    ),
+    foldFreesRoom: false,
+  });
   // The runner's own pre-fold gate; it fails closed on a NaN ceiling.
   if (!isFoldViable(head.snapshot_bytes, head.snapshot_rows, ceilings)) {
     return noProgress(
@@ -222,12 +298,10 @@ export const capacityRefusal = (args: {
     );
   }
 
+  // Skip what the fold skips (`foldLogEntriesOnto`): another collection's entries.
+  const own = tail.filter((entry) => entry.collection === collection);
   const projection = projectSnapshot(head, base, collection);
-  for (const entry of tail) {
-    // Skip what the fold skips (`foldLogEntriesOnto`): another collection's entries.
-    if (entry.collection !== collection) {
-      continue;
-    }
+  for (const entry of own) {
     // Where `compact()` stops: a row-adding entry at `E` rows.
     if (projection.addsRow(entry.op, entry.doc_id, entry.after) && !(projection.rows < maxRows)) {
       return noProgress(`a pending insert cannot fold onto ${projection.rows} rows of ${maxRows}`);
@@ -235,22 +309,64 @@ export const capacityRefusal = (args: {
     projection.apply(entry.op, entry.doc_id, entry.after);
   }
 
-  const byteLimit = maxBytes - CAPACITY_BYTES_MARGIN;
-  for (const write of writes) {
-    const growth = isGrowth(write);
-    projection.apply(write.op, write.docId, write.after);
-    const { peakRows, peakBytes } = projection;
-    if (growth && (!(peakRows < maxRows) || !(peakBytes <= byteLimit))) {
-      const detail = !(peakRows < maxRows)
-        ? `${peakRows} rows would reach the ${maxRows}-row ceiling`
-        : `${peakBytes} bytes would pass the ${maxBytes}-byte ceiling`;
-      return refuse(
-        `collection ${JSON.stringify(collection)} is full on this host: ${detail}, so this ` +
-          `${write.op === "I" ? "insert" : "growing update"} was refused and nothing was ` +
-          `committed. Deletes and same-size or shrinking updates still commit; delete or shrink ` +
-          `rows to make room. If the collection must keep growing, it needs a larger host or graduation.`,
-      );
+  /** The first growth write `p` refuses, applying every write onto `p`. */
+  const firstRefusedGrowth = (p: SnapshotProjection): PlannedWrite | undefined => {
+    for (const write of writes) {
+      const growth = isGrowth(write);
+      p.apply(write.op, write.docId, write.after);
+      if (growth && (!(p.peakRows < maxRows) || !(p.peakBytes <= byteLimit))) {
+        return write;
+      }
+    }
+    return undefined;
+  };
+
+  const refused = firstRefusedGrowth(projection);
+  if (refused === undefined) {
+    const { peakRows, rows, peakBytes } = projection;
+    return {
+      refusal: undefined,
+      pressure: !(Math.max(peakRows, rows + 1) < maxRows) || !(peakBytes < byteLimit),
+    };
+  }
+  const { peakRows, peakBytes } = projection;
+  const detail = !(peakRows < maxRows)
+    ? `${peakRows} rows would reach the ${maxRows}-row ceiling`
+    : `${peakBytes} bytes would pass the ${maxBytes}-byte ceiling`;
+  const refusal = refuse(
+    `collection ${JSON.stringify(collection)} is full on this host: ${detail}, so this ` +
+      `${refused.op === "I" ? "insert" : "growing update"} was refused and nothing was ` +
+      `committed. Deletes and same-size or shrinking updates still commit; delete or shrink ` +
+      `rows to make room. If the collection must keep growing, it needs a larger host or graduation.`,
+  );
+  if (own.length === 0) {
+    return { refusal, foldFreesRoom: false };
+  }
+  // Would the writes fit once the pending tail folds, and does the next
+  // pass land? The tail's own prefix peaks no longer count after it folds,
+  // so the projection restarts at the snapshot the whole tail rebuilds.
+  const settled = projectSnapshot(head, base, collection);
+  const passEnd = Math.min(ceilings.maxFoldEntriesPerPass ?? tail.length, tail.length);
+  let passLands = true;
+  for (const [i, entry] of tail.entries()) {
+    if (entry.collection === collection) {
+      settled.apply(entry.op, entry.doc_id, entry.after);
+    }
+    // `compact()` checks bytes on the whole rebuilt pass, whose length
+    // counts every seq in it.
+    if (i + 1 === passEnd) {
+      passLands = settled.bytes <= byteLimit;
     }
   }
-  return undefined;
+  settled.settle();
+  return { refusal, foldFreesRoom: passLands && firstRefusedGrowth(settled) === undefined };
 };
+
+/**
+ * Decide whether `writes` must be refused on the host with `ceilings`:
+ * the `CapacityExceeded` error {@link capacityDecision} would throw, or
+ * `undefined` to commit.
+ */
+export const capacityRefusal = (
+  args: Parameters<typeof capacityDecision>[0],
+): BaerlyError | undefined => capacityDecision(args).refusal;

@@ -135,6 +135,15 @@ is refused until you move it to a larger host or export
 it. The refusal is recomputed on every request; nothing is stored, so it
 clears on its own when the state or the host changes.
 
+Near the ceiling, writes drive the fold themselves. While growth would be
+refused, every accepted write folds the pending tail in its own write tick
+(bypassing the usual ratio trigger and entry floor, within the per-pass
+budget). A growth write refused only because pending changes have not
+folded yet, where folding them makes room, runs one bounded fold and fails
+with `BaerlyError{code:"MaintenancePending"}` (HTTP 503, `Retry-After`,
+retriable) instead; retrying drains the backlog. Neither path needs a
+setting or a scheduler.
+
 A collection can still end up past the ceiling through writes that skip
 the check: `baerly admin restore`, a release that predates it, or
 concurrent writers racing past the same projection. Its fold then defers.

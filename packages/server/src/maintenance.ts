@@ -537,7 +537,7 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
  *      tail_hint refresh that bounds read/write forward-probes.
  *   1. Read `current.json` once.
  *   2. Hard-GC starvation boundary (`"single"` only) → GC slice, skip fold.
- *   3. Gate 1 (ratio AND entry floor) trips → fold if the pre-fold
+ *   3. Gate 1 (ratio AND entry floor, or a forced tick) trips → fold if the pre-fold
  *      projection is viable, else defer and signal. On `"single"` a fold
  *      attempt is this tick's one phase — including one that compact()
  *      deferred after rebuilding, which signals the same way and ends the
@@ -568,6 +568,14 @@ export const runBoundedMaintenance = async (
     maxFoldBytes?: number;
     /** From `BAERLY_MAINTENANCE_DISABLE`: disable fold/GC phases, not tail_hint refresh. */
     disabled?: boolean;
+    /**
+     * Forced tick (main-10 G6): the writing verb found the collection at
+     * its growth-refusal point, so Gate 1's ratio trigger and entry floor
+     * are bypassed and any pending tail folds. Every other step is
+     * unchanged: the pre-fold ceiling check, the hard-GC guard, and the
+     * per-pass budget (`maxFoldEntriesPerPass`).
+     */
+    forceFold?: boolean;
   },
   options?: BoundedMaintenanceOptions,
 ): Promise<void> => {
@@ -576,7 +584,11 @@ export const runBoundedMaintenance = async (
   // preserving the bare-`Db.create()` promise); all phase budgets read off it.
   const profile = options?.profile ?? MAINTENANCE_PROFILE_CF_FREE;
   const { maxFoldEntriesPerPass, gcMaxMarks, gcMaxSweeps, gcInterval } = profile;
-  const minEntriesToCompact = options?.minEntriesToCompact ?? WRITE_TICK_MIN_ENTRIES_TO_COMPACT;
+  const forceFold = args.forceFold === true;
+  // A forced tick folds whatever is pending: one entry clears the floor.
+  const minEntriesToCompact = forceFold
+    ? 1
+    : (options?.minEntriesToCompact ?? WRITE_TICK_MIN_ENTRIES_TO_COMPACT);
   const phasesPerTick = options?.phasesPerTick ?? "single";
   const signal = options?.signal;
   // `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` (args.maxFoldBytes) overrides `C`.
@@ -637,7 +649,9 @@ export const runBoundedMaintenance = async (
     const tailBytesEst = estimateTailBytes(current, nextSeq);
 
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
-    const gate1 = ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact;
+    const gate1 =
+      forceFold ||
+      (ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact);
     // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
     // The pass is not projected: compact() stops at the first entry that
     // would add a row past E, against the current.json it folds from.
@@ -918,6 +932,67 @@ export const runBoundedMaintenance = async (
     // operators, since the write-tick caller swallows the throw and emits no
     // canonical line for a post-response (waitUntil) maintenance pass.
     console.error(error);
+  }
+};
+
+/**
+ * Dispatch one write-tick {@link runBoundedMaintenance} through the
+ * request's {@link MaintenanceDispatch}: inline and awaited by default,
+ * `ctx.waitUntil` on Cloudflare. Never throws: the tick swallows its own
+ * failures, and a failing dispatcher bumps
+ * `db.write.maintenance_dispatch_failed_total`. The writer calls it after
+ * a commit; a write refused with `MaintenancePending` calls it with
+ * `forceFold` and nothing committed (`prevSeq === observedTail`).
+ */
+export const dispatchWriteTick = async (args: {
+  storage: Storage;
+  currentJsonKey: string;
+  collection: string;
+  prevSeq: number;
+  observedTail: number;
+  forceFold?: boolean;
+}): Promise<void> => {
+  const maint = getCurrentContext()?.maintenance;
+  const dispatch = maint?.dispatch ?? dispatchInlineAwaited;
+  // `await dispatch(...)`: `dispatchInlineAwaited` returns the task's
+  // promise (awaited inline — deterministic for tests + correct for
+  // serverful Node). A `ctx.waitUntil`-style dispatch returns void
+  // (fire-and-forget off the ack); `await void` is a no-op. The
+  // `.then(() => {}, () => {})` is belt-and-suspenders:
+  // `runBoundedMaintenance` already swallows internally, but this
+  // guarantees a dispatched task can NEVER reject the caller even if a
+  // future change makes it throw.
+  try {
+    await dispatch(() =>
+      runBoundedMaintenance(
+        {
+          storage: args.storage,
+          currentJsonKey: args.currentJsonKey,
+          prevSeq: args.prevSeq,
+          // The in-memory observed tail keys the runner's Gate-1 ratio +
+          // GC cadence off the true tail without an O(gap) re-probe (the
+          // stored `tail_hint` is only a lower bound).
+          observedTail: args.observedTail,
+          // `disabled` disables fold/GC phases inside the runner but still
+          // permits the bounded tail_hint refresh that prevents a
+          // maintenance-off collection from drifting past the probe cap.
+          ...(maint?.disabled === true && { disabled: true }),
+          ...(maint?.maxFoldBytes !== undefined && { maxFoldBytes: maint.maxFoldBytes }),
+          ...(args.forceFold === true && { forceFold: true }),
+        },
+        maint?.options,
+      ).then(
+        () => {},
+        () => {},
+      ),
+    );
+  } catch {
+    // Dispatch is optional work. Its own failure must not surface: after
+    // a commit it would make a durable mutation appear safely retriable,
+    // and a refused write's refusal stands either way.
+    ctxMetrics().counter("db.write.maintenance_dispatch_failed_total", 1, {
+      collection: args.collection,
+    });
   }
 };
 
