@@ -351,7 +351,10 @@ said" attribution inside prose that's just describing current behavior.
 A tried-and-abandoned approach or a changed plan gets **one line**
 (under a PR's "Key points", or as a decision sentence in the doc/comment
 it constrains) and appears nowhere else — never a "Revision history"
-section. Deferred work is an issue link, not an inventory. The full
+section. Deferred work is not inventoried in the PR body or doc; it
+goes to the maintainer's tracker (`CLAUDE.local.md` names it when
+present), and becomes a GitHub issue only once it is ready to be a PR.
+The full
 version of this rule, with concrete before/after examples, lives in
 [change-discipline.md](docs/contributing/conventions/change-discipline.md#comments-pr-bodies-and-planning-docs-describe-now-not-how-you-got-there).
 

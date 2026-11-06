@@ -4,6 +4,8 @@
 // separate build step here would just re-bundle. ~10-30s on a warm cache.
 
 import { execSync } from "node:child_process";
+import { existsSync, lstatSync, symlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 const run = (cmd) => {
   console.log(`\n$ ${cmd}`);
@@ -15,6 +17,26 @@ const run = (cmd) => {
 delete process.env.BAERLY_SKIP_BUILD;
 
 run("pnpm install --frozen-lockfile");
+
+// `credentials/` is gitignored, so a new worktree has none and the
+// credentialed suites skip. Link the main checkout's copy when one exists.
+const mainCheckout = dirname(
+  resolve(execSync("git rev-parse --path-format=absolute --git-common-dir").toString().trim()),
+);
+const shared = join(mainCheckout, "credentials");
+const local = resolve("credentials");
+const hasLocal = (() => {
+  try {
+    lstatSync(local);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+if (local !== shared && existsSync(shared) && !hasLocal) {
+  symlinkSync(shared, local, "dir");
+  console.log(`\n✓ Linked credentials/ -> ${shared}`);
+}
 
 console.log("\n✓ Worktree ready. Next:");
 console.log("    pnpm verify:agent    # typecheck + lint");

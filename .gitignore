@@ -3,6 +3,7 @@
 .claude/research/
 .claude/worktrees/
 .claude/settings.local.json
+CLAUDE.local.md
 
 # Planning artifacts (untracked; not shipped, not doc-validated)
 .plans/
@@ -60,7 +61,7 @@ yarn-error.log*
 !.env.example
 .dev.vars
 !.dev.vars.example
-/credentials/
+/credentials
 
 # Per-example local dev artifacts. The example dirs themselves
 # ship `_gitignore` (template form that survives `npm pack`) rather
