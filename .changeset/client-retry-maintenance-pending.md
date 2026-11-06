@@ -7,3 +7,5 @@ The HTTP client now retries a request the server refused with `MaintenancePendin
 The React subscription poll now waits at least `retryAfter` (capped at 10 s) before re-polling after `MaintenancePending`, and a `CapacityExceeded` poll error parks the table like any other non-retriable error until `refetch`.
 
 `BaerlyError.retryAfter` on a client-side `MaintenancePending` is now the longer of the envelope's `retryAfter` and the `Retry-After` header. Envelope-less failures on writes are still sent once; enveloped `NetworkError` is still never retried.
+
+`retry: false` on a request now also turns off the `MaintenancePending` retry, not just transport retries.
