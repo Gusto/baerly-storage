@@ -26,166 +26,31 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   casUpdateCurrentJson,
-  type Collection,
-  type DocumentData,
   MAINTENANCE_MIN_LIVE_BYTES,
-  MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
-  readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { Db, probeTailFrom } from "@baerly/server";
-import { type MaintenanceProfile, runBoundedMaintenance } from "@baerly/server/maintenance";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
-import { Writer } from "@baerly/server/_internal/testing";
-import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
+import type { MaintenanceProfile } from "@baerly/server/maintenance";
 import {
-  APP,
+  BIG_C,
+  commit,
+  drain,
+  E,
+  inserts,
+  PASS,
+  readGets,
+  readIds,
+  type Signals,
+  SMALL,
+  state,
+  tick,
+} from "../fixtures/fold-stall-harness.ts";
+import {
   bootstrap as bootstrapCurrentJson,
-  COLLECTION,
   CURRENT_JSON_KEY,
   makeVariants,
-  TABLE_PREFIX,
-  TENANT,
 } from "../fixtures/maintenance-harness.ts";
-
-const E = 20;
-const PASS = 5;
-const BIG_C = 64 * 1024 * 1024;
-
-/** A tiny-E "free-like" host: 20 rows, 5 entries per pass, effectively unbounded bytes. */
-const SMALL: MaintenanceProfile = {
-  ...MAINTENANCE_PROFILE_CF_FREE,
-  maxFoldEntriesPerPass: PASS,
-  maxFoldRows: E,
-  maxFoldBytes: BIG_C,
-};
-
-interface Doc extends DocumentData {
-  _id: string;
-  n: number;
-  pad: string;
-}
-const id = (i: number): string => `d${i.toString().padStart(3, "0")}`;
-
-/** Commit with in-band maintenance DISABLED so the seed is inert; ticks are explicit. */
-const commit = async (
-  storage: Storage,
-  ops: readonly ({ op: "I" | "U"; i: number; n?: number; pad?: string } | { op: "D"; i: number })[],
-): Promise<void> => {
-  const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
-  await runWithContext(
-    createObservabilityContext({ maintenance: { disabled: true } }),
-    async () => {
-      for (const o of ops) {
-        if (o.op === "D") {
-          await writer.commit({ op: "D", collection: COLLECTION, docId: id(o.i) });
-        } else {
-          const body: Doc = {
-            _id: id(o.i),
-            n: o.n ?? 0,
-            pad: o.pad ?? "",
-          };
-          await writer.commit({ op: o.op, collection: COLLECTION, docId: id(o.i), body });
-        }
-      }
-    },
-  );
-};
-
-const inserts = (from: number, to: number, pad?: string) =>
-  Array.from({ length: to - from }, (_, k) => ({
-    op: "I" as const,
-    i: from + k,
-    ...(pad !== undefined && { pad }),
-  }));
-
-interface State {
-  start: number;
-  tail: number;
-  rows: number;
-  bytes: number;
-  snapshot: string | null;
-}
-const state = async (storage: Storage): Promise<State> => {
-  const cur = (await readCurrentJson(storage, CURRENT_JSON_KEY))!.json;
-  const { tail } = await probeTailFrom(
-    storage,
-    TABLE_PREFIX,
-    Math.max(cur.log_seq_start, cur.tail_hint),
-  );
-  return {
-    start: cur.log_seq_start,
-    tail,
-    rows: cur.snapshot_rows,
-    bytes: cur.snapshot_bytes,
-    snapshot: cur.snapshot,
-  };
-};
-
-interface Signals {
-  records: Record<string, unknown>[];
-}
-
-/** One explicit write-tick (single phase, no GC boundary crossed), with the warn sink + recorder an adapter would carry. */
-const tick = async (
-  storage: Storage,
-  profile: MaintenanceProfile,
-  signals?: Signals,
-  maxFoldBytes?: number,
-): Promise<void> => {
-  const before = await state(storage);
-  await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
-    ...c,
-    mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
-  }));
-  const ctx = createObservabilityContext({
-    maintenance: {
-      warn: (event, props) => {
-        if (event === "fold_deferred") {
-          signals?.records.push({ ...props });
-        }
-      },
-    },
-  });
-  await runWithContext(ctx, () =>
-    runBoundedMaintenance(
-      {
-        storage,
-        currentJsonKey: CURRENT_JSON_KEY,
-        prevSeq: before.tail,
-        ...(maxFoldBytes !== undefined && { maxFoldBytes }),
-      },
-      { profile, minEntriesToCompact: 1, phasesPerTick: "single" },
-    ),
-  );
-};
-
-/** Tick until `log_seq_start` stops moving; returns the number of ticks that advanced it. */
-const drain = async (
-  storage: Storage,
-  profile: MaintenanceProfile,
-  maxFoldBytes?: number,
-): Promise<number> => {
-  let advancing = 0;
-  for (let k = 0; k < 40; k++) {
-    const { start: before } = await state(storage);
-    await tick(storage, profile, undefined, maxFoldBytes);
-    const { start: after } = await state(storage);
-    if (after === before) {
-      return advancing;
-    }
-    advancing++;
-  }
-  throw new Error("drain did not quiesce");
-};
-
-const readIds = async (storage: Storage): Promise<string[]> => {
-  const db = Db.create({ storage, app: APP, tenant: TENANT });
-  const rows = await (db.collection(COLLECTION) as Collection<Doc>).where({}).all();
-  return rows.map((r) => r._id).toSorted();
-};
 
 const VARIANTS = makeVariants("baerly-fold-stall-");
 
@@ -228,7 +93,7 @@ describe("main-10: fold stall (current behavior)", () => {
           // (26) are now past E (20).
           await commit(storage, inserts(16, 26));
           for (let k = 0; k < 4; k++) {
-            await tick(storage, SMALL, signals);
+            await tick(storage, SMALL, { signals });
           }
 
           await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 26, rows: 16 });
@@ -247,7 +112,7 @@ describe("main-10: fold stall (current behavior)", () => {
 
           // And it stays stalled as the tail keeps growing.
           await commit(storage, inserts(26, 40));
-          await tick(storage, SMALL, signals);
+          await tick(storage, SMALL, { signals });
           await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 40, rows: 16 });
         });
 
@@ -262,9 +127,9 @@ describe("main-10: fold stall (current behavior)", () => {
           const tight: MaintenanceProfile = { ...SMALL, maxFoldBytes: folded.bytes - 1 };
           const signals: Signals = { records: [] };
           await commit(storage, inserts(10, 15, "x".repeat(200)));
-          await tick(storage, tight, signals);
+          await tick(storage, tight, { signals });
           await commit(storage, inserts(15, 18, "x".repeat(200)));
-          await tick(storage, tight, signals);
+          await tick(storage, tight, { signals });
 
           await expect(state(storage)).resolves.toMatchObject({ start: 10, tail: 18 });
           expect(signals.records).toHaveLength(1);
@@ -286,7 +151,7 @@ describe("main-10: fold stall (current behavior)", () => {
           const nearC: MaintenanceProfile = { ...SMALL, maxFoldBytes: folded.bytes + 10 };
           const signals: Signals = { records: [] };
           await commit(storage, inserts(10, 15, "x".repeat(200)));
-          await tick(storage, nearC, signals);
+          await tick(storage, nearC, { signals });
 
           await expect(state(storage)).resolves.toMatchObject({
             start: 10,
@@ -306,7 +171,7 @@ describe("main-10: fold stall (current behavior)", () => {
           }));
           await commit(storage, inserts(16, 21));
           const signals: Signals = { records: [] };
-          await tick(storage, SMALL, signals);
+          await tick(storage, SMALL, { signals });
 
           await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21 });
           expect(signals.records[0]).toMatchObject({ gate: "rebuild", dimension: "rows" });
@@ -322,7 +187,7 @@ describe("main-10: fold stall (current behavior)", () => {
             Array.from({ length: PASS }, (_, i) => ({ op: "U" as const, i, n: 99 })),
           );
           const signals: Signals = { records: [] };
-          await tick(storage, SMALL, signals);
+          await tick(storage, SMALL, { signals });
           await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21, rows: 16 });
           expect(signals.records[0]).toMatchObject({ gate: "pre-fold", dimension: "rows" });
 
@@ -338,7 +203,7 @@ describe("main-10: fold stall (current behavior)", () => {
             Array.from({ length: PASS }, (_, i) => ({ op: "D" as const, i })),
           );
           const signals: Signals = { records: [] };
-          await tick(storage, SMALL, signals);
+          await tick(storage, SMALL, { signals });
           await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21, rows: 16 });
           expect(signals.records).toHaveLength(1);
 
@@ -387,23 +252,17 @@ describe("main-10: fold stall (current behavior)", () => {
           await commit(storage, inserts(16, 26));
           await tick(storage, SMALL);
 
-          const readGets = async (): Promise<number> => {
-            const counted = wrapCountingStorage(storage);
-            const db = Db.create({ storage: counted.storage, app: APP, tenant: TENANT });
-            await (db.collection(COLLECTION) as Collection<Doc>).where({}).all();
-            return counted.gets;
-          };
-          const stalled = await readGets();
+          const stalled = await readGets(storage);
           await commit(storage, inserts(26, 40));
           await tick(storage, SMALL);
-          const grown = await readGets();
+          const grown = await readGets(storage);
           expect(grown - stalled).toBeGreaterThanOrEqual(14);
 
           // The same bucket under a bigger host drains the whole tail; the
           // same read is then flat.
           await drain(storage, MAINTENANCE_PROFILE_NODE);
           await expect(state(storage)).resolves.toMatchObject({ start: 40, tail: 40, rows: 40 });
-          await expect(readGets()).resolves.toBeLessThan(stalled);
+          await expect(readGets(storage)).resolves.toBeLessThan(stalled);
         });
 
         test("deletes plus a host change: the drain folds the deletes and rows shrink to the live set", async () => {
@@ -470,7 +329,7 @@ describe("main-10: fold stall (current behavior)", () => {
           await expect(drain(storage, tight)).resolves.toBe(0);
 
           // Env-style override, as the adapters thread it.
-          await expect(drain(storage, tight, BIG_C)).resolves.toBe(2);
+          await expect(drain(storage, tight, { maxFoldBytes: BIG_C })).resolves.toBe(2);
           await expect(state(storage)).resolves.toMatchObject({ start: 18, tail: 18, rows: 18 });
         });
 
