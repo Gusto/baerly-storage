@@ -68,7 +68,11 @@ import {
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
 import { probeTailFrom } from "@baerly/server";
-import { type MaintenanceProfile, parseMaintenanceEnv } from "@baerly/server/maintenance";
+import {
+  isFoldViable,
+  type MaintenanceProfile,
+  parseMaintenanceEnv,
+} from "@baerly/server/maintenance";
 import { loadMaterialisedView } from "./export/index.ts";
 import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
@@ -125,9 +129,9 @@ interface FoldGateVerdict {
 }
 
 /**
- * The write-tick runner's pre-fold projection, evaluated off stored
- * figures for one profile. Bytes is checked first, matching the runner's
- * `dimension` label.
+ * The write-tick runner's pre-fold projection (`isFoldViable`), evaluated
+ * off stored figures for one profile. Bytes is labelled first, matching
+ * the runner's `dimension` label.
  */
 const foldGateVerdict = (
   cur: CurrentJson,
@@ -138,10 +142,14 @@ const foldGateVerdict = (
   const ceilingBytes = maxFoldBytes ?? profile.maxFoldBytes;
   const ceilingRows = profile.maxFoldRows;
   let verdict: FoldGateVerdict["verdict"] = "open";
-  if (cur.snapshot_bytes > ceilingBytes) {
-    verdict = "closed:bytes";
-  } else if (cur.snapshot_rows + profile.maxFoldEntriesPerPass > ceilingRows) {
-    verdict = "closed:rows";
+  if (
+    !isFoldViable(cur.snapshot_bytes, cur.snapshot_rows, {
+      maxFoldBytes: ceilingBytes,
+      maxFoldRows: ceilingRows,
+      maxFoldEntriesPerPass: profile.maxFoldEntriesPerPass,
+    })
+  ) {
+    verdict = cur.snapshot_bytes <= ceilingBytes ? "closed:rows" : "closed:bytes";
   }
   return {
     verdict,

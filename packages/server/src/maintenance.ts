@@ -348,6 +348,21 @@ export const crossesGcBoundary = (prevSeq: number, nextSeq: number, interval: nu
   Math.floor(prevSeq / interval) !== Math.floor(nextSeq / interval);
 
 /**
+ * The write-tick runner's pre-fold projection off STORED figures: the
+ * snapshot it would load is within `C` bytes, and its rows plus one full
+ * pass are within `E`. The runner, `baerly inspect` and the backlog bench
+ * share this predicate. Both comparisons are written so a NaN ceiling
+ * fails closed.
+ */
+export const isFoldViable = (
+  snapshotBytes: number,
+  snapshotRows: number,
+  ceilings: Pick<MaintenanceProfile, "maxFoldBytes" | "maxFoldRows" | "maxFoldEntriesPerPass">,
+): boolean =>
+  snapshotBytes <= ceilings.maxFoldBytes &&
+  snapshotRows + ceilings.maxFoldEntriesPerPass <= ceilings.maxFoldRows;
+
+/**
  * Derived live-tail byte size — the ratio TRIGGER input that replaces the
  * formerly-stored exact byte count. `(observedTail − log_seq_start) ×
  * mean_entry_bytes`. `observedTail` is a param so write-tick callers can
@@ -605,7 +620,11 @@ export const runBoundedMaintenance = async (
     // can't know the insert-vs-update/delete mix without pre-scanning the
     // range, so we fail closed. Cost is a liveness edge for large near-E
     // collections, not a correctness bug.
-    const foldViable = snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E;
+    const foldViable = isFoldViable(snapshotBytes, snapshotRows, {
+      maxFoldBytes: C,
+      maxFoldRows: E,
+      maxFoldEntriesPerPass,
+    });
     const gcDue = crossesGcBoundary(prevSeq, nextSeq, gcInterval);
 
     // ONE `tail_hint` publication per tick, whoever performs it: this
