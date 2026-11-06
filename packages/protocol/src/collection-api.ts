@@ -132,6 +132,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         at the serving host's fold ceiling and this write would
    *         grow it (or no fold can make progress on this host); nothing
    *         was committed. Not retriable unchanged; see RECIPES.md.
+   * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
+   *         on this collection; nothing was committed. Retriable: wait
+   *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "SchemaError"} — malformed JSON, or
    *         schema-validation failure (when a schema is declared
    *         for the collection via `Db.create({ collections })`).
@@ -162,6 +165,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         at the serving host's fold ceiling and this write would
    *         grow it (or no fold can make progress on this host); nothing
    *         was committed. Not retriable unchanged; see RECIPES.md.
+   * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
+   *         on this collection; nothing was committed. Retriable: wait
+   *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
@@ -201,6 +207,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         at the serving host's fold ceiling and this write would
    *         grow it (or no fold can make progress on this host); nothing
    *         was committed. Not retriable unchanged; see RECIPES.md.
+   * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
+   *         on this collection; nothing was committed. Retriable: wait
+   *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "InvalidConfig"} — `id` breaks the `_id`
    *         rules on {@link Collection.insert}, including NFC; nothing
    *         was written.
@@ -232,6 +241,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         at the serving host's fold ceiling and this write would
    *         grow it (or no fold can make progress on this host); nothing
    *         was committed. Not retriable unchanged; see RECIPES.md.
+   * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
+   *         on this collection; nothing was committed. Retriable: wait
+   *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id` (left by an older release
    *         that let a patch strip or re-key `_id`). Repair it with
@@ -485,6 +497,9 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         it (or no fold can make progress on this host). Decided for the
    *         whole batch before any row commits. Not retriable unchanged;
    *         see RECIPES.md.
+   * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
+   *         on this collection; nothing was committed. Retriable: wait
+   *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
@@ -525,6 +540,9 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         it (or no fold can make progress on this host). Decided for the
    *         whole batch before any row commits. Not retriable unchanged;
    *         see RECIPES.md.
+   * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
+   *         on this collection; nothing was committed. Retriable: wait
+   *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked for every matched row before any

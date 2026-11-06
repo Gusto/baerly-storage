@@ -36,6 +36,8 @@ export interface HttpErrorEnvelope {
     readonly resolution?: string;
     /** The affected row's `_id`, present only when `code === "AmbiguousCommit"`. Additive. */
     readonly _id?: string;
+    /** Suggested delay in seconds before retrying, present only when `code === "MaintenancePending"`. Mirrored by the `Retry-After` header. Additive. */
+    readonly retryAfter?: number;
   };
 }
 
@@ -50,6 +52,8 @@ export interface ErrorEnvelopeOptions {
   readonly resolution?: string;
   /** The affected row's `_id`; emitted only when `code === "AmbiguousCommit"`. */
   readonly _id?: string;
+  /** Suggested retry delay in seconds; emitted only when `code === "MaintenancePending"`. */
+  readonly retryAfter?: number;
 }
 
 /**
@@ -69,7 +73,7 @@ export const errorEnvelope = (
   message: string,
   options?: ErrorEnvelopeOptions,
 ): HttpErrorEnvelope => {
-  const { issues, resolution, _id } = options ?? {};
+  const { issues, resolution, _id, retryAfter } = options ?? {};
   const resolved = resolution ?? CODE_RESOLUTIONS[code];
   return {
     error: {
@@ -79,6 +83,7 @@ export const errorEnvelope = (
       ...(issues !== undefined && issues.length > 0 ? { issues } : {}),
       ...(resolved !== undefined ? { resolution: resolved } : {}),
       ...(_id !== undefined && code === "AmbiguousCommit" ? { _id } : {}),
+      ...(retryAfter !== undefined && code === "MaintenancePending" ? { retryAfter } : {}),
     },
   };
 };
@@ -146,7 +151,21 @@ export interface SinceResponse {
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | Lost race → `code:"WriteConflict"` (retriable, generic message). Create target exists → `code:"AlreadyExists"` (not retriable, message kept). Unresolved commit → `code:"AmbiguousCommit"` (not retriable, carries `_id`). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
+ * | 503    | Maintenance is behind → `code:"MaintenancePending"` (retriable, message kept, `Retry-After` header and `retryAfter` seconds). |
  * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"` with a generic message. |
  * | 500    | Anything else → `code:"Internal"` with a generic message.         |
  */
-export type HttpStatus = 200 | 201 | 204 | 304 | 400 | 401 | 403 | 404 | 409 | 413 | 500 | 502;
+export type HttpStatus =
+  | 200
+  | 201
+  | 204
+  | 304
+  | 400
+  | 401
+  | 403
+  | 404
+  | 409
+  | 413
+  | 500
+  | 502
+  | 503;

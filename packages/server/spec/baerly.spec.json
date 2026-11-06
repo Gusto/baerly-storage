@@ -74,6 +74,13 @@
       "summary": "The collection is at this host's fold ceiling; the write was refused and nothing was committed."
     },
     {
+      "code": "MaintenancePending",
+      "httpStatus": 503,
+      "retriable": true,
+      "messagePolicy": "public",
+      "summary": "Maintenance is behind on this collection; the write was refused and nothing was committed. Retry after the Retry-After delay."
+    },
+    {
       "code": "Unauthorized",
       "httpStatus": 401,
       "retriable": false,
@@ -200,26 +207,40 @@
         "AlreadyExists",
         "WriteConflict",
         "AmbiguousCommit",
-        "CapacityExceeded"
+        "CapacityExceeded",
+        "MaintenancePending"
       ]
     },
     {
       "name": "update",
       "params": "id: string, patch: Partial<T>",
       "returns": "Promise<{ modified: number }>",
-      "throws": ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
+      "throws": [
+        "SchemaError",
+        "WriteConflict",
+        "AmbiguousCommit",
+        "CapacityExceeded",
+        "MaintenancePending"
+      ]
     },
     {
       "name": "replace",
       "params": "id: string, doc: T",
       "returns": "Promise<void>",
-      "throws": ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit", "CapacityExceeded"]
+      "throws": [
+        "SchemaError",
+        "WriteConflict",
+        "NotFound",
+        "AmbiguousCommit",
+        "CapacityExceeded",
+        "MaintenancePending"
+      ]
     },
     {
       "name": "delete",
       "params": "id: string",
       "returns": "Promise<{ deleted: number }>",
-      "throws": ["WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
+      "throws": ["WriteConflict", "AmbiguousCommit", "CapacityExceeded", "MaintenancePending"]
     }
   ],
   "queryMethods": [
@@ -257,13 +278,19 @@
       "name": "update",
       "params": "patch: Partial<T>",
       "returns": "Promise<{ modified: number }>",
-      "throws": ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
+      "throws": [
+        "SchemaError",
+        "WriteConflict",
+        "AmbiguousCommit",
+        "CapacityExceeded",
+        "MaintenancePending"
+      ]
     },
     {
       "name": "delete",
       "params": "",
       "returns": "Promise<{ deleted: number }>",
-      "throws": ["WriteConflict", "AmbiguousCommit", "CapacityExceeded"]
+      "throws": ["WriteConflict", "AmbiguousCommit", "CapacityExceeded", "MaintenancePending"]
     }
   ],
   "storageInterface": [

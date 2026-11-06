@@ -66,6 +66,11 @@ export interface HttpErrorEnvelope {
      * servers omit this field.
      */
     readonly _id?: string;
+    /**
+     * Suggested retry delay in seconds, present only when
+     * `code === "MaintenancePending"`. Mirrors the server contract.
+     */
+    readonly retryAfter?: number;
   };
 }
 

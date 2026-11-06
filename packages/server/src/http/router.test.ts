@@ -141,6 +141,7 @@ describe("mapError", () => {
       AlreadyExists: { status: 409, retriable: false },
       AmbiguousCommit: { status: 409, retriable: false },
       CapacityExceeded: { status: 409, retriable: false },
+      MaintenancePending: { status: 503, retriable: true },
       Unauthorized: { status: 401, retriable: false },
       NotFound: { status: 404, retriable: false },
       PayloadTooLarge: { status: 413, retriable: false },
@@ -153,6 +154,41 @@ describe("mapError", () => {
       }),
     );
     expect(actual).toEqual(expected);
+  });
+
+  test("MaintenancePending maps to 503 and carries retryAfter on the envelope", () => {
+    const err = new BaerlyError("MaintenancePending", "maintenance is catching up on notes", {
+      retryAfter: 4,
+    });
+    const { status, envelope } = mapError(err);
+    expect(status).toBe(503);
+    expect(envelope.error).toEqual({
+      code: "MaintenancePending",
+      message: "maintenance is catching up on notes",
+      retriable: true,
+      resolution: CODE_RESOLUTIONS.MaintenancePending,
+      retryAfter: 4,
+    });
+  });
+
+  test("retryAfter is dropped for other codes", () => {
+    const { envelope } = mapError(new BaerlyError("NotFound", "x", { retryAfter: 4 }));
+    expect(envelope.error.retryAfter).toBeUndefined();
+  });
+
+  test("the router emits 503 and a Retry-After header for MaintenancePending", async () => {
+    const app = buildApp();
+    app.get("/v1/throw-pending", () => {
+      throw new BaerlyError("MaintenancePending", "maintenance is catching up", {
+        retryAfter: 2.2,
+      });
+    });
+    const res = await app.fetch(new Request("http://localhost/v1/throw-pending"));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("3");
+    const body = (await res.json()) as { error: { code: string; retryAfter: number } };
+    expect(body.error.code).toBe("MaintenancePending");
+    expect(body.error.retryAfter).toBe(2.2);
   });
 
   test("WriteConflict is scrubbed and carries the canonical resolution", () => {

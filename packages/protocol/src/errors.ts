@@ -99,6 +99,15 @@ export type BaerlyErrorCode =
    */
   | "CapacityExceeded"
   /**
+   * Background maintenance is behind on this collection, so this write was
+   * refused and nothing was committed; `retriable` is `true`. The refusal
+   * clears by itself once maintenance catches up. {@link BaerlyError.retryAfter}
+   * carries the suggested delay in seconds; wait that long, then repeat the
+   * call. HTTP maps this code to 503 with a `Retry-After` header and keeps
+   * the message.
+   */
+  | "MaintenancePending"
+  /**
    * `Verifier` returned no identity. HTTP server maps to 401.
    * Code is reserved here so the union locks.
    */
@@ -193,6 +202,7 @@ export const ERROR_CODES = [
   "AlreadyExists",
   "AmbiguousCommit",
   "CapacityExceeded",
+  "MaintenancePending",
   "Unauthorized",
   "NotFound",
   "PayloadTooLarge",
@@ -219,6 +229,7 @@ void _errorCodesExhaustive;
 export const RETRIABLE_CODES: ReadonlySet<BaerlyErrorCode> = new Set<BaerlyErrorCode>([
   "NetworkError",
   "WriteConflict",
+  "MaintenancePending",
 ]);
 
 /**
@@ -285,6 +296,8 @@ export interface BaerlyErrorOptions {
   readonly resolution?: string;
   /** The affected row's `_id`; set only with `code: "AmbiguousCommit"`. Lands on {@link BaerlyError._id}. */
   readonly _id?: string;
+  /** Suggested delay in seconds before retrying; set only with `code: "MaintenancePending"`. Lands on {@link BaerlyError.retryAfter}. */
+  readonly retryAfter?: number;
   /**
    * Never set. This object is not an `Error`: `Error` requires `message`, so
    * this field makes `new BaerlyError(code, msg, err)` fail to compile. To
@@ -356,6 +369,8 @@ export class BaerlyError extends Error {
   readonly status?: number;
   /** Canonical corrective action; crosses the wire via `HttpErrorEnvelope.error.resolution`. */
   readonly resolution?: string;
+  /** Suggested delay in seconds before retrying; set only for `MaintenancePending`. Crosses the wire via `HttpErrorEnvelope.error.retryAfter` and the `Retry-After` header. */
+  readonly retryAfter?: number;
 
   /**
    * `true` iff re-running the operation from its read step can succeed:
@@ -388,7 +403,7 @@ export class BaerlyError extends Error {
     this.name = "BaerlyError";
     this.code = code;
     this.cause = options?.cause;
-    const { issues, status, resolution, _id } = options ?? {};
+    const { issues, status, resolution, _id, retryAfter } = options ?? {};
     // Stryker disable next-line ConditionalExpression: field declaration creates property with undefined value; mutation to true is equivalent
     if (issues !== undefined) {
       this.issues = issues;
@@ -404,6 +419,10 @@ export class BaerlyError extends Error {
     // Stryker disable next-line ConditionalExpression: same rationale as `issues` above
     if (_id !== undefined) {
       this._id = _id;
+    }
+    // Stryker disable next-line ConditionalExpression: same rationale as `issues` above
+    if (retryAfter !== undefined) {
+      this.retryAfter = retryAfter;
     }
   }
 }
