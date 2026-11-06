@@ -320,6 +320,31 @@ describe("createBaerlyClient", () => {
     });
   });
 
+  test("client round-trips retryAfter on MaintenancePending", async () => {
+    const mock = new MockFetch();
+    mock.on("POST", "/v1/c/tickets", () =>
+      jsonResponse(
+        {
+          error: {
+            code: "MaintenancePending",
+            message: "maintenance is catching up",
+            retriable: true,
+            retryAfter: 3,
+          },
+        },
+        503,
+      ),
+    );
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });
+    await expect(client.collection("tickets").insert({ x: 1 })).rejects.toMatchObject({
+      name: "BaerlyError",
+      code: "MaintenancePending",
+      status: 503,
+      retriable: true,
+      retryAfter: 3,
+    });
+  });
+
   test("client surfaces retriable:false on AlreadyExists", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", () =>

@@ -78,6 +78,8 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
     "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry.",
   CapacityExceeded:
     "The collection is at this host's fold ceiling; the write was refused and nothing was committed.",
+  MaintenancePending:
+    "Maintenance is behind on this collection; the write was refused and nothing was committed. Retry after the Retry-After delay.",
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",
@@ -119,19 +121,33 @@ const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
       "WriteConflict",
       "AmbiguousCommit",
       "CapacityExceeded",
+      "MaintenancePending",
     ],
   },
   {
     name: "update",
     params: "id: string, patch: Partial<T>",
     returns: "Promise<{ modified: number }>",
-    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"],
+    throws: [
+      "SchemaError",
+      "WriteConflict",
+      "AmbiguousCommit",
+      "CapacityExceeded",
+      "MaintenancePending",
+    ],
   },
   {
     name: "replace",
     params: "id: string, doc: T",
     returns: "Promise<void>",
-    throws: ["SchemaError", "WriteConflict", "NotFound", "AmbiguousCommit", "CapacityExceeded"],
+    throws: [
+      "SchemaError",
+      "WriteConflict",
+      "NotFound",
+      "AmbiguousCommit",
+      "CapacityExceeded",
+      "MaintenancePending",
+    ],
   },
   {
     name: "delete",
@@ -152,7 +168,13 @@ const QUERY_METHODS: ReadonlyArray<SpecMethod> = [
     name: "update",
     params: "patch: Partial<T>",
     returns: "Promise<{ modified: number }>",
-    throws: ["SchemaError", "WriteConflict", "AmbiguousCommit", "CapacityExceeded"],
+    throws: [
+      "SchemaError",
+      "WriteConflict",
+      "AmbiguousCommit",
+      "CapacityExceeded",
+      "MaintenancePending",
+    ],
   },
   {
     name: "delete",

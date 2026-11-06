@@ -102,6 +102,7 @@ const decodeFailure = async (
         status: res.status,
         resolution: wire.resolution,
         _id: wire._id,
+        retryAfter: wire.retryAfter,
       }),
     };
   }

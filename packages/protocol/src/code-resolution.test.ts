@@ -21,6 +21,12 @@ describe("CODE_RESOLUTIONS", () => {
     }
   });
 
+  test("MaintenancePending names the state and the app-side remedy, no host settings", () => {
+    const text = CODE_RESOLUTIONS.MaintenancePending!;
+    expect(text).toMatch(/retry/i);
+    expect(text).not.toMatch(/BAERLY_|PROFILE|env|cf-paid|wrangler/i);
+  });
+
   test("omits transient/opaque and context-dependent codes", () => {
     for (const code of [
       "NetworkError",
