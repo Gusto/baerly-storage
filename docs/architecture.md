@@ -322,9 +322,10 @@ ids.
    through the tail `T0` its read probe found. A live row with that `_id`
    throws `AlreadyExists` here (an HTTP insert carrying `mintedId` whose
    body equals the row returns `{ _id }` instead, committing nothing).
-   Otherwise it constructs a
+   Otherwise it checks capacity (`admitWrites`, `capacity.ts`), constructs a
    `CommitInput{ op: "I", collection, docId, body, insertGuard:
-   { absentBelowSeq: T0 } }` and calls `Writer.commit(...)`.
+   { absentBelowSeq: T0 }, admission: { fromSeq: T0, check } }` and calls
+   `Writer.commit(...)`.
 
 2. **`Writer.commit(req)`** (`packages/server/src/writer.ts`):
    - reads `current.json` fresh for its snapshot pointer and `tail_hint`;
@@ -336,7 +337,9 @@ ids.
      `I` / `U` — the first `I` for a `doc_id` wins
      ([Insert: the first `I` wins](spec/sync-protocol.md#insert-the-first-i-wins)),
      or, with `replayIdentical` and an equal `after`, returns that entry
-     without writing;
+     without writing. It then hands that window to `admission.check`, which
+     re-runs the capacity decision when the window is non-empty
+     ([Capacity: the commit-time re-check](spec/sync-protocol.md#capacity-the-commit-time-re-check));
    - serializes the `I` / `U` post-image into `LogEntry.after`, then
      PUTs additive (new) index artifacts under
      `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`

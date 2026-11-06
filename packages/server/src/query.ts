@@ -54,6 +54,7 @@ import {
 } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import {
+  type CapacityDecision,
   capacityDecision,
   currentFoldCeilings,
   maintenancePending,
@@ -73,7 +74,7 @@ import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
-import { Writer } from "./writer.ts";
+import { type CommitAdmission, Writer } from "./writer.ts";
 
 const PATCH_ID_RESOLUTION = "Omit `_id` from the patch, or pass the row's own `_id`.";
 
@@ -372,19 +373,73 @@ interface FoldedState {
 }
 
 /**
- * Admit `writes` against the serving host's fold ceiling before any commit
- * (see `./capacity.ts`). Throws `CapacityExceeded` when they would grow the
- * collection past it, or `MaintenancePending` when the pending tail would
- * make room once it folds: that refusal first dispatches one forced fold
- * pass (G6, fold-then-refuse) through the request's maintenance dispatch,
- * so on Cloudflare it runs in `ctx.waitUntil` like any write tick. Under
- * `BAERLY_MAINTENANCE_DISABLE` nothing can fold, so the refusal stays
- * `CapacityExceeded`.
+ * Throw the refusal `decision` carries: `MaintenancePending` when the
+ * pending tail would make room once it folds, after dispatching one forced
+ * fold pass (G6, fold-then-refuse) through the request's maintenance
+ * dispatch, so on Cloudflare it runs in `ctx.waitUntil` like any write
+ * tick; otherwise `CapacityExceeded`. Under `BAERLY_MAINTENANCE_DISABLE`
+ * nothing can fold, so the refusal stays `CapacityExceeded`.
  *
- * Returns whether the verb's commit should force its write tick: the
- * writes leave the collection at its growth-refusal point. With no folded
- * state (an unprovisioned collection, or an index walk that matched
- * nothing), the collection is empty or nothing is written.
+ * @param tail The log tail the decision folded through.
+ */
+const throwRefusal = async (
+  ctx: CollectionReadContext,
+  decision: Extract<CapacityDecision, { refusal: BaerlyError }>,
+  tail: number,
+): Promise<never> => {
+  if (decision.foldFreesRoom && getCurrentContext()?.maintenance?.disabled !== true) {
+    // Nothing committed, so the tick's GC cadence window is empty and the
+    // forced fold is its only phase.
+    await dispatchWriteTick({
+      storage: ctx.storage,
+      currentJsonKey: `${ctx.collectionPrefix}/current.json`,
+      collection: ctx.collectionName,
+      prevSeq: tail,
+      observedTail: tail,
+      forceFold: true,
+    });
+    throw maintenancePending(ctx.collectionName);
+  }
+  throw decision.refusal;
+};
+
+/** What {@link admitWrites} hands a verb for its commits, in plan order. */
+interface Admission {
+  /**
+   * Whether the batch's last commit forces its write tick: the writes
+   * leave the collection at its growth-refusal point.
+   */
+  readonly forceMaintenance: boolean;
+  /** The commit-time re-check for the next planned write's commit. */
+  next(): CommitAdmission;
+  /** Record that the next planned write committed as `entry`. */
+  committed(entry: LogEntry): void;
+}
+
+/** A never-provisioned collection: no snapshot, nothing folded. */
+const EMPTY_HEAD = { snapshot_rows: 0, snapshot_bytes: 0, log_seq_start: 0 } as const;
+
+/**
+ * Admit `writes` against the serving host's fold ceiling before any commit
+ * (see `./capacity.ts`), throwing as {@link throwRefusal} does when they
+ * would grow the collection past it.
+ *
+ * The returned admission re-runs the same decision at commit time
+ * (main-10 G5-race). Each commit passes `next()` to `Writer.commit`, which
+ * hands back every log entry in `[fromSeq, seq)`: the entries this
+ * decision has not seen. Empty means nothing intervened, so the decision
+ * stands as made and nothing is recomputed. Otherwise the decision re-runs
+ * over the read's tail plus those entries, for the planned writes not yet
+ * committed, and a refusal throws before the committing create, so
+ * concurrent growth writes that each passed this check cannot together
+ * pass the ceiling. Each `committed(entry)` moves `fromSeq` past this
+ * batch's own commit, so the writer reads only entries this decision has
+ * not seen.
+ *
+ * With no folded state (an unprovisioned collection, or an index walk
+ * that matched nothing), the collection is empty or nothing is written,
+ * so the pre-commit check is skipped; a re-check starts from an empty
+ * collection.
  *
  * @param read The pre-commit read: its folded state, and `tail`, the
  *   first empty log slot it folded through.
@@ -393,36 +448,90 @@ const admitWrites = async (
   ctx: CollectionReadContext,
   read: { readonly folded?: FoldedState; readonly tail: number },
   writes: readonly PlannedWrite[],
-): Promise<boolean> => {
+): Promise<Admission> => {
   const { folded } = read;
-  if (folded === undefined) {
-    return false;
-  }
-  const decision = capacityDecision({
-    collection: ctx.collectionName,
-    head: folded.head,
-    base: folded.base,
-    tail: folded.tail,
-    writes,
-    ceilings: currentFoldCeilings(),
-  });
-  if (decision.refusal === undefined) {
-    return decision.pressure;
-  }
-  if (decision.foldFreesRoom && getCurrentContext()?.maintenance?.disabled !== true) {
-    // Nothing committed, so the tick's GC cadence window is empty and the
-    // forced fold is its only phase.
-    await dispatchWriteTick({
-      storage: ctx.storage,
-      currentJsonKey: `${ctx.collectionPrefix}/current.json`,
+  let forceMaintenance = false;
+  if (folded !== undefined) {
+    const decision = capacityDecision({
       collection: ctx.collectionName,
-      prevSeq: read.tail,
-      observedTail: read.tail,
-      forceFold: true,
+      head: folded.head,
+      base: folded.base,
+      tail: folded.tail,
+      writes,
+      ceilings: currentFoldCeilings(),
     });
-    throw maintenancePending(ctx.collectionName);
+    if (decision.refusal !== undefined) {
+      return await throwRefusal(ctx, decision, read.tail);
+    }
+    forceMaintenance = decision.pressure;
   }
-  throw decision.refusal;
+  const head = folded?.head ?? EMPTY_HEAD;
+  const base = folded?.base ?? new Map<string, DocumentData>();
+  // Every entry the decision has seen so far, in seq order.
+  const seen: LogEntry[] = [...(folded?.tail ?? [])];
+  let fromSeq = read.tail;
+  let pending = 0;
+  // The window of the latest `check` call: on commit, `[fromSeq, seq)`.
+  let lastWindow: readonly LogEntry[] = [];
+  const check = async (window: readonly LogEntry[], tail: number): Promise<void> => {
+    lastWindow = window;
+    if (window.length === 0) {
+      return;
+    }
+    const tailNow = [...seen, ...window];
+    const decision = capacityDecision({
+      collection: ctx.collectionName,
+      head,
+      base,
+      tail: tailNow,
+      writes: writes
+        .slice(pending)
+        .map((write) => withLiveBefore(write, ctx.collectionName, tailNow)),
+      ceilings: currentFoldCeilings(),
+    });
+    if (decision.refusal !== undefined) {
+      await throwRefusal(ctx, decision, tail);
+    }
+  };
+  return {
+    forceMaintenance,
+    next: () => {
+      lastWindow = [];
+      return { fromSeq, check };
+    },
+    committed: (entry) => {
+      seen.push(...lastWindow, entry);
+      fromSeq = entry.seq + 1;
+      pending++;
+    },
+  };
+};
+
+/**
+ * `write` with `before` re-read from the latest entry for its row in
+ * `tail`, when there is one: an intervening commit may have changed the
+ * row, so growth (G3) is judged against the row as it now stands. A row an
+ * intervening `D` removed has no `before`, which counts as growth (fails
+ * closed).
+ */
+const withLiveBefore = (
+  write: PlannedWrite,
+  collection: string,
+  tail: readonly LogEntry[],
+): PlannedWrite => {
+  if (write.op !== "U") {
+    return write;
+  }
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const entry = tail[i]!;
+    if (entry.collection === collection && entry.doc_id === write.docId) {
+      const { before: _stale, ...rest } = write;
+      return entry.op === "D" || entry.after === undefined
+        ? rest
+        : { ...rest, before: entry.after };
+    }
+  }
+  return write;
 };
 
 /**
@@ -544,7 +653,7 @@ export const runInsert = async <T extends DocumentData>(
     }
     throw insertAlreadyExists(ctx.collectionName, _id);
   }
-  const forceMaintenance = await admitWrites(ctx, existing, [{ op: "I", docId: _id, after: body }]);
+  const admission = await admitWrites(ctx, existing, [{ op: "I", docId: _id, after: body }]);
 
   // Single-attempt at the verb level; log-create contention is resolved
   // inside `Writer.commit()`, and its errors surface unchanged. The
@@ -557,7 +666,8 @@ export const runInsert = async <T extends DocumentData>(
     docId: _id,
     body,
     insertGuard: { absentBelowSeq: existing.tail, replayIdentical: mintedId !== undefined },
-    ...(forceMaintenance && { forceMaintenance }),
+    admission: admission.next(),
+    ...(admission.forceMaintenance && { forceMaintenance: true }),
   });
 
   return { _id };
@@ -657,7 +767,9 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  *   row, with schema validation, before any row commits.
  * @throws BaerlyError code="CapacityExceeded" — the batch would grow the
  *   collection past the serving host's fold ceiling (see `./capacity.ts`);
- *   decided before any row commits.
+ *   decided before any row commits, and re-checked at each row's commit
+ *   when a concurrent write landed since (see {@link admitWrites}), in
+ *   which case rows before it are already applied.
  * @throws BaerlyError code="InvalidResponse" — a matched stored row's
  *   `_id` is not the string it is stored under.
  */
@@ -670,6 +782,7 @@ const runUpdate = async <T extends DocumentData>(
   const { rows } = read;
   // Merge and validate every row first, so the per-row checks and the
   // capacity check decide the batch whole, before its first row commits.
+  // Only the commit-time capacity re-check can stop the batch part-way.
   const planned: Array<{ docId: string; before: DocumentData; merged: DocumentData }> = [];
   for (const row of rows) {
     const doc = row.doc;
@@ -702,7 +815,7 @@ const runUpdate = async <T extends DocumentData>(
     }
     planned.push({ docId, before: doc as DocumentData, merged });
   }
-  const forceMaintenance = await admitWrites(
+  const admission = await admitWrites(
     ctx,
     read,
     planned.map((p) => ({ op: "U", docId: p.docId, after: p.merged, before: p.before })),
@@ -712,13 +825,15 @@ const runUpdate = async <T extends DocumentData>(
   // 0..N-1 applied. A forced tick rides the batch's last commit only, so
   // the batch runs one forced fold, not one per row.
   for (const [i, { docId, merged }] of planned.entries()) {
-    await writerFor(ctx).commit({
+    const { entry } = await writerFor(ctx).commit({
       op: "U",
       collection: ctx.collectionName,
       docId,
       body: merged,
-      ...(forceMaintenance && i === planned.length - 1 && { forceMaintenance }),
+      admission: admission.next(),
+      ...(admission.forceMaintenance && i === planned.length - 1 && { forceMaintenance: true }),
     });
+    admission.committed(entry);
     modified++;
   }
   return { modified };
@@ -775,7 +890,7 @@ export const runReplaceById = async <T extends DocumentData>(
       verb: "replace",
     });
   }
-  const forceMaintenance = await admitWrites(ctx, read, [
+  const admission = await admitWrites(ctx, read, [
     { op: "U", docId: id, after: body, before: current.doc as DocumentData },
   ]);
   await writerFor(ctx).commit({
@@ -783,7 +898,8 @@ export const runReplaceById = async <T extends DocumentData>(
     collection: ctx.collectionName,
     docId: id,
     body,
-    ...(forceMaintenance && { forceMaintenance }),
+    admission: admission.next(),
+    ...(admission.forceMaintenance && { forceMaintenance: true }),
   });
 };
 
@@ -817,7 +933,7 @@ const runDelete = async <T extends DocumentData>(
 ): Promise<{ deleted: number }> => {
   const read = await runReadRows<T>(ctx, state);
   const docIds = read.rows.map((row) => storedRowId(row, "delete"));
-  const forceMaintenance = await admitWrites(
+  const admission = await admitWrites(
     ctx,
     read,
     docIds.map((docId) => ({ op: "D", docId })),
@@ -825,12 +941,14 @@ const runDelete = async <T extends DocumentData>(
   let deleted = 0;
   // As in `runUpdate`, a forced tick rides the batch's last commit only.
   for (const [i, docId] of docIds.entries()) {
-    await writerFor(ctx).commit({
+    const { entry } = await writerFor(ctx).commit({
       op: "D",
       collection: ctx.collectionName,
       docId,
-      ...(forceMaintenance && i === docIds.length - 1 && { forceMaintenance }),
+      admission: admission.next(),
+      ...(admission.forceMaintenance && i === docIds.length - 1 && { forceMaintenance: true }),
     });
+    admission.committed(entry);
     deleted++;
   }
   return { deleted };
