@@ -823,7 +823,7 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 10, tail: 10 + PASS });
         });
 
-        test("the force tracks the refusal point: a delete at E - 1 lifts it and folds nothing; the insert it made room for forces a fold", async () => {
+        test("the force tracks the refusal point: a delete at E - 1 lifts it and folds nothing; back at E - 1 the tick is forced once a full pass is pending", async () => {
           const storage = await atEMinus1();
           await expect(outcome(onHost(storage, SMALL_HOST, insertW(E - 1)))).resolves.toBe(
             "capacity",
@@ -831,17 +831,45 @@ describe("main-10: growth refusal (target behavior)", () => {
           // After the delete a one-row insert is admitted, so no forced tick.
           await expect(outcome(onHost(storage, SMALL_HOST, deleteW(0)))).resolves.toBe("accepted");
           await expect(state(storage)).resolves.toMatchObject({ start: E - 1, tail: E });
-          // Its prerequisite read folds the pending delete; the insert brings
-          // the projection back to E - 1, so its own tick is forced and drains
-          // the tail in-band, with no operator action and no explicit drain.
+          // The insert it made room for is admitted and brings the projection
+          // back to E - 1; folding [delete, insert] frees nothing, so the tick
+          // waits for a full pass, then drains it in-band with no operator
+          // action and no explicit drain.
           await expect(outcome(onHost(storage, SMALL_HOST, insertW(E - 1)))).resolves.toBe(
             "accepted",
           );
+          await expect(state(storage)).resolves.toMatchObject({ start: E - 1, tail: E + 1 });
+          for (let k = 0; k < PASS - 2; k++) {
+            await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(1 + k)))).resolves.toBe(
+              "accepted",
+            );
+          }
           await expect(state(storage)).resolves.toMatchObject({
-            start: E + 1,
-            tail: E + 1,
+            start: E - 1 + PASS,
+            tail: E - 1 + PASS,
             rows: E - 1,
           });
+        });
+
+        test("at a full collection the forced tick folds at most once per pass: N same-size updates rebuild the snapshot at most ceil(N / PASS) times", async () => {
+          const storage = await atE();
+          const N = 4 * PASS;
+          let rebuilds = 0;
+          for (let k = 0; k < N; k++) {
+            const before = await state(storage);
+            await expect(outcome(onHost(storage, SMALL_HOST, sameSizeW(k % E)))).resolves.toBe(
+              "accepted",
+            );
+            const after = await state(storage);
+            if (after.snapshot !== before.snapshot) {
+              rebuilds++;
+            }
+          }
+          expect(rebuilds).toBeLessThanOrEqual(Math.ceil(N / PASS));
+          // The backlog stays bounded: under a pass pending at the end.
+          const s = await state(storage);
+          expect(s.tail - s.start).toBeLessThan(PASS);
+          expect(s.rows).toBe(E);
         });
 
         test("backpressure: when the pending tail frees room, a refused insert runs one bounded fold and gets MaintenancePending; retries drain the tail and the insert commits", async () => {

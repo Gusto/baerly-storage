@@ -223,9 +223,9 @@ export type CapacityDecision =
   | {
       readonly refusal: undefined;
       /**
-       * The collection sits at its growth-refusal point once these writes
-       * commit: one more inserted row, or one more byte of growth, would
-       * be refused. The verb forces its write tick (G6).
+       * The verb forces its write tick (G6): the collection sits at its
+       * growth-refusal point once these writes commit, and folding the
+       * pending tail frees room or the tail holds a full fold pass.
        */
       readonly pressure: boolean;
     }
@@ -260,8 +260,7 @@ export type CapacityDecision =
  *   dispatches lands.
  * - Anything else (deletes, same-size and shrinking updates) commits, at
  *   `E` rows included: the fold drains them in place. `pressure` reports
- *   whether the collection then sits where a one-row insert, or a
- *   one-byte growth, would be refused.
+ *   whether the commit forces its write tick (see `forcesTick` inside).
  *
  * A batch is decided whole, before its first row commits.
  *
@@ -309,6 +308,41 @@ export const capacityDecision = (args: {
     projection.apply(entry.op, entry.doc_id, entry.after);
   }
 
+  /**
+   * Whether an accepted batch forces its write tick (G6), given `p` with
+   * the tail and the writes applied. Only at the refusal point (one more
+   * inserted row, or one more byte of growth, would be refused), and then
+   * only when that fold is worth its full snapshot rebuild:
+   *
+   * - folding the pending tail frees room for growth (the snapshot it
+   *   rebuilds to admits one more row and byte), or
+   * - the pending tail, these writes included, holds a full pass
+   *   (`maxFoldEntriesPerPass`).
+   *
+   * Otherwise the runner's ratio trigger and entry floor apply as usual.
+   * The pass floor is the cheapest cadence that keeps the tail bounded at
+   * the ceiling: every pending entry costs each read one GET, and on
+   * Workers Free the ratio trigger alone would let a collection held at
+   * `E - 1` by same-size updates queue ~300 entries. One forced fold per
+   * pass also bounds the rebuild cost to one full snapshot per
+   * `maxFoldEntriesPerPass` writes, rather than one per write, and with it
+   * the snapshots each rebuild orphans: on cf-free that is under one
+   * orphan (20-entry pass) per hard-GC interval of 16 writes, against that
+   * slice's sweep budget of 10, so GC keeps up even though a forced fold
+   * is the tick's only phase.
+   */
+  const forcesTick = (p: SnapshotProjection): boolean => {
+    const atRefusalPoint =
+      !(Math.max(p.peakRows, p.rows + 1) < maxRows) || !(p.peakBytes < byteLimit);
+    if (!atRefusalPoint) {
+      return false;
+    }
+    const pass =
+      ceilings.maxFoldEntriesPerPass ?? MAINTENANCE_PROFILE_CF_FREE.maxFoldEntriesPerPass;
+    const foldFreesRoom = p.rows + 1 < maxRows && p.bytes < byteLimit;
+    return foldFreesRoom || tail.length + writes.length >= pass;
+  };
+
   /** The first growth write `p` refuses, applying every write onto `p`. */
   const firstRefusedGrowth = (p: SnapshotProjection): PlannedWrite | undefined => {
     for (const write of writes) {
@@ -323,11 +357,7 @@ export const capacityDecision = (args: {
 
   const refused = firstRefusedGrowth(projection);
   if (refused === undefined) {
-    const { peakRows, rows, peakBytes } = projection;
-    return {
-      refusal: undefined,
-      pressure: !(Math.max(peakRows, rows + 1) < maxRows) || !(peakBytes < byteLimit),
-    };
+    return { refusal: undefined, pressure: forcesTick(projection) };
   }
   const { peakRows, peakBytes } = projection;
   const detail = !(peakRows < maxRows)

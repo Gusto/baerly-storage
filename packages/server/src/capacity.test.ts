@@ -264,20 +264,43 @@ describe("capacityDecision near the ceiling (G6)", () => {
       ceilings: limits,
     });
 
-  test("pressure: an accepted write leaves the collection where one more insert is refused", () => {
+  const same = (id: string): PlannedWrite => ({
+    op: "U",
+    docId: id,
+    after: body(id),
+    before: body(id),
+  });
+  /** A one-entry pass: the pass floor is always met, so only the refusal point decides. */
+  const pass1 = { ...ceilings, maxFoldEntriesPerPass: 1 };
+
+  test("pressure: only at the refusal point, where one more insert would be refused", () => {
     // 8 + 1 = 9 rows: a further insert makes E.
-    expect(decision(stored(8), [], [insert])).toEqual({ refusal: undefined, pressure: true });
-    expect(decision(stored(7), [], [insert])).toEqual({ refusal: undefined, pressure: false });
+    expect(decision(stored(8), [], [insert], pass1)).toEqual({
+      refusal: undefined,
+      pressure: true,
+    });
+    expect(decision(stored(7), [], [insert], pass1)).toEqual({
+      refusal: undefined,
+      pressure: false,
+    });
     // A delete at E - 1 makes room for one insert, so no pressure.
-    expect(decision(stored(9), [], [{ op: "D", docId: "d0" }])).toMatchObject({ pressure: false });
+    expect(decision(stored(9), [], [{ op: "D", docId: "d0" }], pass1)).toMatchObject({
+      pressure: false,
+    });
     // At E nothing more fits.
-    expect(decision(stored(10), [], [{ op: "D", docId: "d0" }])).toMatchObject({ pressure: true });
+    expect(decision(stored(10), [], [{ op: "D", docId: "d0" }], pass1)).toMatchObject({
+      pressure: true,
+    });
   });
 
   test("pressure: bytes at the margin count as the refusal point", () => {
     const s = stored(2, "x".repeat(50));
     const p = projectSnapshot(s.head, s.base, COLLECTION);
-    const atLimit = { maxFoldRows: 100, maxFoldBytes: p.bytes + CAPACITY_BYTES_MARGIN };
+    const atLimit = {
+      maxFoldRows: 100,
+      maxFoldBytes: p.bytes + CAPACITY_BYTES_MARGIN,
+      maxFoldEntriesPerPass: 1,
+    };
     const sameSize: PlannedWrite = {
       op: "U",
       docId: "d0",
@@ -288,6 +311,28 @@ describe("capacityDecision near the ceiling (G6)", () => {
     expect(
       decision(s, [], [sameSize], { ...atLimit, maxFoldBytes: atLimit.maxFoldBytes + 1 }),
     ).toMatchObject({ pressure: false });
+  });
+
+  test("pressure at a full collection waits for a full pass of pending entries", () => {
+    const pass5 = { ...ceilings, maxFoldEntriesPerPass: 5 };
+    const pending = (n: number) => Array.from({ length: n }, (_, i) => entry(10 + i, "U", "d1"));
+    // Folding same-size updates at E frees no room: only the pass floor forces.
+    expect(decision(stored(10), pending(3), [same("d0")], pass5)).toMatchObject({
+      pressure: false,
+    });
+    expect(decision(stored(10), pending(4), [same("d0")], pass5)).toMatchObject({
+      pressure: true,
+    });
+  });
+
+  test("pressure below a full pass when folding the tail frees room", () => {
+    // [insert a, delete a] peaks at E; after the fold, a delete leaves room.
+    const tail = [entry(9, "I", "a"), entry(10, "D", "a")];
+    const pass10 = { ...ceilings, maxFoldEntriesPerPass: 10 };
+    expect(decision(stored(9), tail, [{ op: "D", docId: "d0" }], pass10)).toMatchObject({
+      pressure: true,
+    });
+    expect(decision(stored(9), tail, [same("d0")], pass10)).toMatchObject({ pressure: false });
   });
 
   test("foldFreesRoom: set when the tail's peak, not its final state, refuses the write", () => {
