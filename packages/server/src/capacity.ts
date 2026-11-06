@@ -8,8 +8,11 @@
  * at the first entry that would add a row to an `E`-row snapshot. Past
  * that point nothing folds, and every read pays one GET per pending tail
  * entry.
- * The write verbs call {@link capacityRefusal} after their pre-commit read
- * and before any commit, so a refused write commits nothing.
+ * The write verbs call {@link capacityDecision} after their pre-commit read
+ * and before any commit, so a refused write commits nothing, and again
+ * inside each commit, before its `log/<seq>` create, whenever another
+ * write landed since that read, so concurrent growth writes that each
+ * passed cannot together pass the ceiling (G5-race).
  *
  * The decision is a pure function of the state that read already loaded
  * (`current.json`, the snapshot rows, the pending tail) plus the planned
@@ -262,7 +265,10 @@ export type CapacityDecision =
  *   `E` rows included: the fold drains them in place. `pressure` reports
  *   whether the commit forces its write tick (see `forcesTick` inside).
  *
- * A batch is decided whole, before its first row commits.
+ * A batch is decided whole, before its first row commits. The verbs
+ * re-run the decision at each commit over the entries that landed since
+ * (G5-race, `admitWrites` in `./query.ts`), for the writes not yet
+ * committed.
  *
  * @param head `current.json` as the pre-commit read saw it.
  * @param base The snapshot rows that read loaded (`docId → body`).

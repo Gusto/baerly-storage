@@ -196,6 +196,42 @@ export interface CommitInput {
    * write would be refused (`capacityDecision`'s `pressure`).
    */
   readonly forceMaintenance?: boolean;
+
+  /**
+   * Commit-time re-check of a decision the caller made at a log tail it
+   * read (main-10 G5-race). See {@link CommitAdmission}.
+   *
+   * @internal — set by the write verbs in `./query.ts` for the capacity
+   * re-check (`capacityDecision`).
+   */
+  readonly admission?: CommitAdmission;
+}
+
+/**
+ * Backward validation of a caller's decision, like {@link InsertGuard}
+ * but with the decision supplied by the caller. The caller decided to
+ * commit from the collection state folded through log tail `fromSeq`.
+ * The writer reads every log entry in `[fromSeq, seq)` (the same window
+ * read as the insert guard, shared with it when both are set) and passes
+ * it to `check` before the Step 4 index markers, and again with the
+ * longer window after each lost create race, before the next create.
+ * `check` throws to refuse; nothing is committed.
+ *
+ * Precondition: `fromSeq` is a tail a read-path probe observed on this
+ * collection's log, or one past a seq the caller's own commit landed at.
+ * With an `insertGuard`, it must equal `absentBelowSeq`.
+ *
+ * @internal
+ */
+export interface CommitAdmission {
+  /** The log tail the caller's decision folded through. */
+  readonly fromSeq: number;
+  /**
+   * Re-decide over `window`, every entry in `[fromSeq, tail)` in seq
+   * order, where `tail` is the slot the next create targets. Throw to
+   * refuse the commit.
+   */
+  readonly check: (window: readonly LogEntry[], tail: number) => void | Promise<void>;
 }
 
 /**
@@ -405,18 +441,20 @@ export class Writer {
    *   this doc (unless `replayIdentical` is set and its `after` equals the
    *   body, which returns that entry instead). Nothing was committed;
    *   `err._id` is `input.docId`.
-   * @throws BaerlyError code="WriteConflict" when `insertGuard` is set and
-   *   part of that window was folded and retired (or is longer than
-   *   `LOG_FORWARD_PROBE_CAP`) before the writer could read it. Nothing
-   *   was committed; re-read and retry.
+   * @throws BaerlyError code="WriteConflict" when `insertGuard` or
+   *   `admission` is set and part of its window was folded and retired (or
+   *   is longer than `LOG_FORWARD_PROBE_CAP`) before the writer could read
+   *   it. Nothing was committed; re-read and retry.
+   * @throws whatever `admission.check` throws (the write verbs throw
+   *   `CapacityExceeded` or `MaintenancePending`). Nothing was committed.
    *
-   * **Insert guard cost.** A guarded commit probes the tail linearly from
-   * `max(absentBelowSeq, log_seq_start)` with `probeTailFrom` instead of
-   * galloping from `max(log_seq_start, tail_hint)`. Uncontended,
-   * `absentBelowSeq` is the tail, so that is one 404 GET. Each entry a
-   * peer committed after the caller's check costs one more GET, and if a
-   * fold moved `log_seq_start` past `absentBelowSeq`, each folded slot in
-   * between costs one GET too.
+   * **Window cost.** A commit with `insertGuard` or `admission` probes the
+   * tail linearly from `max(windowFrom, log_seq_start)` with
+   * `probeTailFrom` instead of galloping from
+   * `max(log_seq_start, tail_hint)`. Uncontended, `windowFrom` is the
+   * tail, so that is one 404 GET. Each entry a peer committed after the
+   * caller's read costs one more GET, and if a fold moved `log_seq_start`
+   * past `windowFrom`, each folded slot in between costs one GET too.
    *
    * **Implicit provisioning.** When `current.json` does not exist at
    * `currentJsonKey` (fresh bucket, fresh collection), the writer
@@ -450,6 +488,9 @@ export class Writer {
     }
     if (input.insertGuard !== undefined) {
       assertInsertGuardShape(input);
+    }
+    if (input.admission !== undefined) {
+      assertAdmissionShape(input);
     }
     const session = uuid().slice(0, SESSION_ID_LENGTH);
     const logPrefix = this.#currentJsonKey.slice(0, this.#currentJsonKey.lastIndexOf("/"));
@@ -546,15 +587,18 @@ export class Writer {
     // `tail_hint` doesn't make us re-walk folded-but-unswept entries.
     // Bind to a local (oxlint `no-await-expression-member`).
     //
-    // A guarded insert (`input.insertGuard`) instead reads every entry in
-    // its unseen window `[absentBelowSeq, tail)`: Step 3a GETs the part a
-    // fold already moved below `log_seq_start`, and Step 3b probes the
-    // rest with `probeTailFrom`, which returns the entries it passes.
+    // A guarded insert (`input.insertGuard`) or an admission re-check
+    // (`input.admission`) instead reads every entry in its unseen window
+    // `[windowFrom, tail)`: Step 3a GETs the part a fold already moved
+    // below `log_seq_start`, and Step 3b probes the rest with
+    // `probeTailFrom`, which returns the entries it passes.
     const guard = input.insertGuard;
+    const admission = input.admission;
+    const windowFrom = guard?.absentBelowSeq ?? admission?.fromSeq;
     const logSeqStart = logSeqStartOf(current);
-    let insertWindow: LogEntry[] | undefined;
+    let commitWindow: LogEntry[] | undefined;
     let preCommitTail: number;
-    if (guard === undefined) {
+    if (windowFrom === undefined) {
       const probeFloor = Math.max(logSeqStart, current.tail_hint);
       // `findLogTail`'s density precondition holds: the floor sits in the
       // dense prefix because tail_hint advancers probe or derive known tails
@@ -562,35 +606,38 @@ export class Writer {
       // `tail_hint`, so nothing advances the floor past a hole.
       preCommitTail = await findLogTail(this.#storage, logPrefix, probeFloor);
     } else {
-      // ── Step 3a. Folded part of the window, `[absentBelowSeq, floor)`.
-      const folded = await this.#readFoldedInsertWindow(
-        logPrefix,
-        guard.absentBelowSeq,
-        logSeqStart,
-        errorPrefix,
-      );
-      // ── Step 3b. Live part, probed from `max(absentBelowSeq, floor)`.
+      // ── Step 3a. Folded part of the window, `[windowFrom, floor)`.
+      const folded = await this.#readFoldedWindow(logPrefix, windowFrom, logSeqStart, errorPrefix);
+      // ── Step 3b. Live part, probed from `max(windowFrom, floor)`.
       // That start meets `probeTailFrom`'s retention precondition (it is
       // at or above this manifest read's `log_seq_start`) and sits in the
-      // dense prefix: `absentBelowSeq` was the first empty slot a read
-      // probe found with every slot from its floor up occupied, creates
-      // only ever land at a first-empty slot, and retirement stays below
-      // `log_seq_start`. Starting below `tail_hint` re-reads the slots in
-      // `[absentBelowSeq, tail_hint)`; those are exactly the window
-      // entries the check could not see, so none of the GETs is wasted.
+      // dense prefix: `windowFrom` was the first empty slot a read probe
+      // found with every slot from its floor up occupied (or one past a
+      // slot the caller's own create won), creates only ever land at a
+      // first-empty slot, and retirement stays below `log_seq_start`.
+      // Starting below `tail_hint` re-reads the slots in
+      // `[windowFrom, tail_hint)`; those are exactly the window entries the
+      // caller's decision could not see, so none of the GETs is wasted.
+      // Uncontended, `windowFrom` is the tail: one 404 GET, never more
+      // than the gallop above.
       const probe = await probeTailFrom(
         this.#storage,
         logPrefix,
-        Math.max(guard.absentBelowSeq, logSeqStart),
+        Math.max(windowFrom, logSeqStart),
       );
-      insertWindow = [...folded, ...probe.entries];
-      // ── Step 3c. Window decision, BEFORE Step 4's additive index
+      commitWindow = [...folded, ...probe.entries];
+      // ── Step 3c. Window decisions, BEFORE Step 4's additive index
       // markers, so a loser caught here writes nothing at all, and a
       // replay of an identical live row returns it having written nothing.
-      const replayed = decideInsertTarget(insertWindow, input);
-      if (replayed !== undefined) {
-        return { replayed: true, entries: [replayed], currentEtag: baseEtag };
+      // The insert decision runs first: a peer's live row is
+      // `AlreadyExists` whatever the capacity re-check would say.
+      if (guard !== undefined) {
+        const replayed = decideInsertTarget(commitWindow, input);
+        if (replayed !== undefined) {
+          return { replayed: true, entries: [replayed], currentEtag: baseEtag };
+        }
       }
+      await admission?.check(commitWindow, probe.tail);
       preCommitTail = probe.tail;
     }
     let seq = preCommitTail;
@@ -752,26 +799,30 @@ export class Writer {
           `${errorPrefix}: log-tail forward-probe exceeded ${LOG_FORWARD_PROBE_CAP} on ${this.#currentJsonKey}`,
         );
       }
-      if (insertWindow === undefined) {
+      if (commitWindow === undefined) {
         seq = await findLogTail(this.#storage, logPrefix, seq + 1);
       } else {
-        // Guarded insert: the occupant and every entry the forward probe
-        // passes join the window, and the window decision re-runs before
-        // the next create. A live row here throws `AlreadyExists`, which is
-        // sound because a foreign occupant at `seq` proves this commit's
-        // send did not land there. The Step 4 markers already PUT stay as
-        // orphans: benign false-positive candidates, like a crash before
-        // the create. Deleting them could remove a marker a later writer
-        // re-PUT and de-index a committed row. A replay of an identical
-        // live row returns here for the same reason: nothing of this commit
-        // landed, and the markers it PUT stay as the same benign orphans.
-        insertWindow.push(occupant);
+        // Windowed commit: the occupant and every entry the forward probe
+        // passes join the window, and the window decisions re-run before
+        // the next create. A refusal here (`AlreadyExists`, or the
+        // admission's own error) is sound because a foreign occupant at
+        // `seq` proves this commit's send did not land there. The Step 4
+        // markers already PUT stay as orphans: benign false-positive
+        // candidates, like a crash before the create. Deleting them could
+        // remove a marker a later writer re-PUT and de-index a committed
+        // row. A replay of an identical live row returns here for the same
+        // reason: nothing of this commit landed, and the markers it PUT
+        // stay as the same benign orphans.
+        commitWindow.push(occupant);
         const probe = await probeTailFrom(this.#storage, logPrefix, seq + 1);
-        insertWindow.push(...probe.entries);
-        const replayed = decideInsertTarget(insertWindow, input);
-        if (replayed !== undefined) {
-          return { replayed: true, entries: [replayed], currentEtag: baseEtag };
+        commitWindow.push(...probe.entries);
+        if (guard !== undefined) {
+          const replayed = decideInsertTarget(commitWindow, input);
+          if (replayed !== undefined) {
+            return { replayed: true, entries: [replayed], currentEtag: baseEtag };
+          }
         }
+        await admission?.check(commitWindow, probe.tail);
         seq = probe.tail;
       }
       entry = mintEntry(seq);
@@ -1284,9 +1335,9 @@ export class Writer {
   }
 
   /**
-   * Read `[fromSeq, logSeqStart)` for a guarded insert whose window starts
-   * below the floor of this commit's manifest read: a fold absorbed those
-   * entries after the caller's absence check. Slots below the floor stay
+   * Read `[fromSeq, logSeqStart)` for a windowed commit (insert guard or
+   * admission) whose window starts below the floor of this commit's
+   * manifest read: a fold absorbed those entries after the caller's read. Slots below the floor stay
    * readable until log retirement deletes them, so a missing slot means
    * this commit can no longer check its window: `WriteConflict`, nothing
    * committed, and the caller's next read sees the folded state. A window
@@ -1297,7 +1348,7 @@ export class Writer {
    *   range exceeds the cap.
    * @throws BaerlyError code="InvalidResponse" — a slot's body is not JSON.
    */
-  async #readFoldedInsertWindow(
+  async #readFoldedWindow(
     logPrefix: string,
     fromSeq: number,
     logSeqStart: number,
@@ -1309,7 +1360,7 @@ export class Writer {
     const refuse = (detail: string): BaerlyError =>
       new BaerlyError(
         "WriteConflict",
-        `${errorPrefix}: insert window [${fromSeq}, ${logSeqStart}) on ${this.#currentJsonKey} ${detail}; nothing was committed`,
+        `${errorPrefix}: commit window [${fromSeq}, ${logSeqStart}) on ${this.#currentJsonKey} ${detail}; nothing was committed`,
       );
     // Backstop only. In practice the window holds just the entries a fold
     // absorbed between two reads in one request, and the host's
@@ -1437,6 +1488,30 @@ const assertInsertGuardShape = (input: CommitInput): void => {
     throw new BaerlyError(
       "InvalidConfig",
       `Writer: insertGuard.replayIdentical must be a boolean; got ${typeof replay}`,
+    );
+  }
+};
+
+/**
+ * Reject an `admission` whose `fromSeq` is not a log seq, or differs from
+ * the insert guard's window start. Runs before any I/O.
+ */
+const assertAdmissionShape = (input: CommitInput): void => {
+  const seq = input.admission?.fromSeq;
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `Writer: admission.fromSeq must be a non-negative safe integer; got ${String(seq)}`,
+    );
+  }
+  if (typeof input.admission?.check !== "function") {
+    throw new BaerlyError("InvalidConfig", "Writer: admission.check must be a function");
+  }
+  const guarded = input.insertGuard?.absentBelowSeq;
+  if (guarded !== undefined && guarded !== seq) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `Writer: admission.fromSeq ${seq} must equal insertGuard.absentBelowSeq ${guarded}`,
     );
   }
 };
