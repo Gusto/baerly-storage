@@ -61,13 +61,14 @@ refusal is recomputed on every request; nothing is stored. A batch
   write-tick maintenance folds them, growth is accepted again.
 - **Every write refused** ("no fold can make progress here"): the stored
   snapshot is already past this host's ceiling, typically after a larger host
-  folded it, or a pending insert cannot fold onto an `E`-row snapshot. The
+  folded it, a pending insert cannot fold onto an `E`-row snapshot, or a
+  pending fold pass would rebuild past the byte ceiling. The
   collection has outgrown this host: export it with `baerly admin dump`, or
   have the operator move it to a larger host. Reads keep working either way.
 
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
-**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (for example, deletes behind a burst of inserts). The write ran one bounded fold, was refused, and committed nothing. `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
+**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (typically after the collection moved from a host with a larger ceiling, with deletes still pending). The write ran one bounded fold, was refused, and committed nothing. `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
 **Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working.
 
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)

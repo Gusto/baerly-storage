@@ -129,20 +129,26 @@ the projected snapshot would reach `E` rows or pass `C` bytes. Nothing is
 committed. Reads, deletes, and same-size or shrinking updates keep
 working, and once the write-tick fold drains them, growth is accepted
 again. If the stored snapshot is already past the ceiling (for example
-after a larger host folded it), or a pending insert cannot fold onto an
-`E`-row snapshot, no fold can make progress on this host, so every write
+after a larger host folded it), a pending insert cannot fold onto an
+`E`-row snapshot, or a full fold pass of the pending tail would rebuild
+past `C`, no fold can make progress on this host, so every write
 is refused until you move it to a larger host or export
 it. The refusal is recomputed on every request; nothing is stored, so it
 clears on its own when the state or the host changes.
 
 Near the ceiling, writes drive the fold themselves. While growth would be
-refused, every accepted write folds the pending tail in its own write tick
-(bypassing the usual ratio trigger and entry floor, within the per-pass
-budget). A growth write refused only because pending changes have not
-folded yet, where folding them makes room, runs one bounded fold and fails
-with `BaerlyError{code:"MaintenancePending"}` (HTTP 503, `Retry-After`,
-retriable) instead; retrying drains the backlog. Neither path needs a
-setting or a scheduler.
+refused, an accepted write runs its write tick's fold without waiting for
+the usual ratio trigger and entry floor, once a full fold pass is pending
+or as soon as folding the pending tail frees room, still within the
+per-pass budget. A growth write refused only because pending changes have
+not folded yet, where folding them makes room and every pending pass
+lands within `C`, runs one bounded fold and
+fails with `BaerlyError{code:"MaintenancePending"}` (HTTP 503,
+`Retry-After`, retriable) instead; each retry folds one more pass. On a
+single host the check never admits the growth that leads there, so this
+follows a host or ceiling change: a collection written under a larger `E`
+or `C` whose pending deletes have not folded on this one. Neither path
+needs a setting or a scheduler.
 
 A collection can still end up past the ceiling through writes that skip
 the check: `baerly admin restore`, a release that predates it, or

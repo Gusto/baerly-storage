@@ -740,12 +740,13 @@ export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
 /**
  * Byte slack the growth refusal keeps under `C` (main-10 G4). A growth write
  * is refused when its projected snapshot bytes would exceed
- * `C - CAPACITY_BYTES_MARGIN`. The projection sizes each row exactly as
- * the compactor encodes it (`{"_id":…,"body":…}` plus one separator), so
- * its only error is the snapshot header: `max_seq` gains digits as the
- * log grows (at most 16 for a safe integer) and the first row carries no
- * separator. 64 bytes covers that with room to spare;
- * `capacity.test.ts` measures the projection against real folds.
+ * `C - CAPACITY_BYTES_MARGIN`. The projection sizes the snapshot exactly as
+ * the compactor encodes it (rows, separators, header) for a known fold end,
+ * which is how fold passes are judged against `C` itself. A growth check
+ * does not know when its write will fold, so the header's `max_seq` may
+ * gain digits by then (at most 16 for a safe integer). 64 bytes covers that
+ * with room to spare; `capacity.test.ts` checks the projection against real
+ * folds byte for byte.
  *
  * @see docs/spec/scale-ceilings.md
  */

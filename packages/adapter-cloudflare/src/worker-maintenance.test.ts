@@ -34,6 +34,8 @@ import {
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
+  MemoryStorage,
+  readCurrentJson,
   type Storage,
   type Verifier,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
@@ -41,7 +43,7 @@ import {
   WRITE_TICK_GC_MAX_MARKS,
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
-import { runBoundedMaintenance } from "@baerly/server/maintenance";
+import { compact, runBoundedMaintenance } from "@baerly/server/maintenance";
 import {
   createObservabilityContext,
   getCurrentContext,
@@ -399,11 +401,60 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
     const tenant = tenantId("wall");
     const storage = r2BindingStorage(bucket);
     await provision(storage, tenant);
-    await seedTail(storage, KEY(tenant), 60);
-    // The stored snapshot is empty, so the write is not refused; a 4 KiB `C`
-    // from the env binding is far below the 60 padded rows' rebuilt snapshot,
-    // so the tick's fold defers at the rebuild gate.
-    const maxFoldBytes = 4096;
+    // A host move: this Worker serves the bucket on Free while a peer on a
+    // larger host also writes and folds it. `C` from the env binding is the
+    // rebuilt size of the 40 seeded rows, so both fold passes land and the
+    // delete is admitted at its refusal point, which forces its tick. Between
+    // the delete's commit and that tick, the peer grows the collection and
+    // folds it past `C`, so the tick defers at the pre-fold gate. (On one
+    // host, a tick cannot defer after a write the capacity check admitted.)
+    const PASS = MAINTENANCE_PROFILE_CF_FREE.maxFoldEntriesPerPass;
+    await seedTail(storage, KEY(tenant), 2 * PASS);
+    const foldAll = (s: Storage) =>
+      compact({ storage: s, currentJsonKey: KEY(tenant) }, { minEntriesToCompact: 1 });
+    const probe = new MemoryStorage();
+    await provision(probe, tenant);
+    await seedTail(probe, KEY(tenant), 2 * PASS);
+    await foldAll(probe);
+    const maxFoldBytes = (await readCurrentJson(probe, KEY(tenant)))!.json.snapshot_bytes;
+    const peer = async (): Promise<void> => {
+      const writer = new Writer({ storage, currentJsonKey: KEY(tenant) });
+      const larger = createObservabilityContext({ maintenance: { disabled: true } });
+      await runWithContext(larger, async () => {
+        for (let i = 1; i <= 5; i++) {
+          await writer.commit({
+            op: "U",
+            collection: "c",
+            docId: `d${i}`,
+            body: { _id: `d${i}`, n: i, pad: "x".repeat(5000) },
+          });
+        }
+      });
+      await foldAll(storage);
+    };
+    // The bucket as the Worker sees it: once the delete's `log/<seq>` create
+    // lands, the next `current.json` read (the tick's) waits for the peer.
+    let committed = false;
+    let raced = false;
+    const racedBucket = new Proxy(bucket, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target) as unknown;
+        if (typeof value !== "function") {
+          return value;
+        }
+        return async (key: string, ...rest: unknown[]) => {
+          if (prop === "get" && committed && !raced && key.endsWith("/current.json")) {
+            raced = true;
+            await peer();
+          }
+          const result = await (value as (...a: unknown[]) => unknown).call(target, key, ...rest);
+          if (prop === "put" && key.includes("/log/")) {
+            committed = true;
+          }
+          return result;
+        };
+      },
+    });
 
     const records: LogRecord[] = [];
     const sink: Sink = (r) => records.push(r);
@@ -415,7 +466,7 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
       observability: { level: "info", sink },
     }));
     const env: BaerlyEnv = {
-      BUCKET: bucket,
+      BUCKET: racedBucket,
       APP: "t",
       BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(maxFoldBytes),
     };
@@ -438,14 +489,18 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
 
     await drain();
 
+    expect(raced).toBe(true);
+    const folded = (await readCurrentJson(storage, KEY(tenant)))!.json;
+    expect(folded.log_seq_start).toBe(2 * PASS + 6);
+    expect(folded.snapshot_bytes).toBeGreaterThan(maxFoldBytes);
     expect(deferLogs()).toHaveLength(1);
     expect(deferLogs()[0]!.properties).toMatchObject({
       collection: "c",
       dimension: "bytes",
-      gate: "rebuild",
+      gate: "pre-fold",
       ceiling_bytes: maxFoldBytes,
       ceiling_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
-      log_seq_start: 0,
+      log_seq_start: 2 * PASS + 6,
     });
   });
 });

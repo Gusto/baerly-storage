@@ -8,8 +8,9 @@
  * at the first entry that would add a row to an `E`-row snapshot. Past
  * that point nothing folds, and every read pays one GET per pending tail
  * entry.
- * The write verbs call {@link capacityRefusal} after their pre-commit read
- * and before any commit, so a refused write commits nothing.
+ * The write verbs call {@link capacityDecision} (through `admitWrites` in
+ * `query.ts`) after their pre-commit read and before any commit, so a
+ * refused write commits nothing.
  *
  * The decision is a pure function of the state that read already loaded
  * (`current.json`, the snapshot rows, the pending tail) plus the planned
@@ -85,19 +86,23 @@ const refuse = (message: string): BaerlyError =>
     resolution: CODE_RESOLUTIONS.CapacityExceeded,
   });
 
-/**
- * Bytes one row adds to an encoded snapshot body: the `{ _id, body }`
- * element the compactor writes, plus one array separator.
- */
+/** Encoded size of one snapshot row: the `{ _id, body }` element the compactor writes. */
 const rowBytes = (docId: string, body: DocumentData): number =>
-  encodeJsonBytes({ _id: docId, body }).byteLength + 1;
+  encodeJsonBytes({ _id: docId, body }).byteLength;
 
-/** Encoded size of an empty snapshot body for `collection`. */
-const emptySnapshotBytes = (collection: string): number =>
+/** Separators between `rows` elements of the snapshot's `docs` array. */
+const separators = (rows: number): number => Math.max(rows - 1, 0);
+
+/**
+ * Encoded size of an empty snapshot body for `collection` whose header
+ * records `max_seq`. Rows add their own bytes plus one separator between
+ * each pair, inside the `docs` array.
+ */
+const headerBytes = (collection: string, maxSeq: number): number =>
   encodeSnapshotBody({
     schema_version: SNAPSHOT_SCHEMA_VERSION,
     min_seq: 0,
-    max_seq: 0,
+    max_seq: maxSeq,
     collection,
     docs: [],
   }).byteLength;
@@ -127,26 +132,36 @@ export interface SnapshotProjection {
   /** Whether folding this entry would add a row (an `I` / `U` with a post-image for an absent row). */
   addsRow(op: "I" | "U" | "D", docId: string, after: DocumentData | undefined): boolean;
   readonly rows: number;
+  /** Encoded size with the header the projection currently carries. */
   readonly bytes: number;
+  /** Encoded size of the snapshot a fold ending at `maxSeq` writes: exact. */
+  bytesAt(maxSeq: number): number;
   /** Largest `rows` / `bytes` seen at any prefix, the starting state included. */
   readonly peakRows: number;
   readonly peakBytes: number;
-  /** Restart the peaks at the current state, as once everything applied so far has folded. */
-  settle(): void;
+  /**
+   * Restart the peaks at the current state, as once everything applied so
+   * far has folded through `maxSeq`, which the header then records.
+   */
+  settle(maxSeq: number): void;
 }
 
 /**
  * Project the snapshot a fold would build from `head`'s stored figures and
- * its rows (`base`), one entry at a time. Rows are sized as the compactor
- * encodes them. A never-folded collection (`snapshot_bytes === 0`; every
- * written snapshot has a non-empty header) starts from an empty snapshot's
- * encoded header; later header growth (`max_seq` digits) is what
- * `CAPACITY_BYTES_MARGIN` covers.
+ * its rows (`base`), one entry at a time, byte for byte as the compactor
+ * encodes it: each row, one separator between rows, and the header, whose
+ * `max_seq` is the fold's end. A stored snapshot's `max_seq` is
+ * `log_seq_start` (the compactor writes both from the same fold end); a
+ * never-folded collection (`snapshot_bytes === 0`) starts empty at 0.
+ *
+ * `bytes` keeps the stored header, so a growth check made now does not
+ * know the `max_seq` its fold will record; `CAPACITY_BYTES_MARGIN` covers
+ * that header growth. `bytesAt` is exact for a fold whose end is known.
  *
  * @internal — exported for `capacity.test.ts`.
  */
 export const projectSnapshot = (
-  head: Pick<CurrentJson, "snapshot_rows" | "snapshot_bytes">,
+  head: Pick<CurrentJson, "snapshot_rows" | "snapshot_bytes" | "log_seq_start">,
   base: ReadonlyMap<string, DocumentData>,
   collection: string,
 ): SnapshotProjection => {
@@ -160,13 +175,30 @@ export const projectSnapshot = (
     const body = base.get(docId);
     return body === undefined ? undefined : rowBytes(docId, body);
   };
-  const startBytes =
-    head.snapshot_bytes === 0 ? emptySnapshotBytes(collection) : head.snapshot_bytes;
-  const state = {
-    rows: head.snapshot_rows,
-    bytes: startBytes,
-    peakRows: head.snapshot_rows,
-    peakBytes: startBytes,
+  const folded = head.snapshot_bytes !== 0;
+  let header = headerBytes(collection, folded ? head.log_seq_start : 0);
+  let rows = head.snapshot_rows;
+  // Encoded rows without separators.
+  let rowSum = folded ? head.snapshot_bytes - header - separators(rows) : 0;
+  const sizeNow = (): number => header + rowSum + separators(rows);
+  let peakRows = rows;
+  let peakBytes = sizeNow();
+  return {
+    get rows() {
+      return rows;
+    },
+    get bytes() {
+      return sizeNow();
+    },
+    get peakRows() {
+      return peakRows;
+    },
+    get peakBytes() {
+      return peakBytes;
+    },
+    bytesAt(maxSeq: number): number {
+      return headerBytes(collection, maxSeq) + rowSum + separators(rows);
+    },
     addsRow(op: "I" | "U" | "D", docId: string, after: DocumentData | undefined): boolean {
       return op !== "D" && after !== undefined && sizeOf(docId) === undefined;
     },
@@ -178,27 +210,27 @@ export const projectSnapshot = (
       const before = sizeOf(docId);
       if (op === "D" || after === undefined) {
         if (before !== undefined) {
-          state.rows -= 1;
-          state.bytes -= before;
+          rows -= 1;
+          rowSum -= before;
         }
         overlay.set(docId, null);
         return;
       }
       const next = rowBytes(docId, after);
       if (before === undefined) {
-        state.rows += 1;
+        rows += 1;
       }
-      state.bytes += next - (before ?? 0);
+      rowSum += next - (before ?? 0);
       overlay.set(docId, next);
-      state.peakRows = Math.max(state.peakRows, state.rows);
-      state.peakBytes = Math.max(state.peakBytes, state.bytes);
+      peakRows = Math.max(peakRows, rows);
+      peakBytes = Math.max(peakBytes, sizeNow());
     },
-    settle(): void {
-      state.peakRows = state.rows;
-      state.peakBytes = state.bytes;
+    settle(maxSeq: number): void {
+      header = headerBytes(collection, maxSeq);
+      peakRows = rows;
+      peakBytes = sizeNow();
     },
   };
-  return state;
 };
 
 /**
@@ -223,9 +255,9 @@ export type CapacityDecision =
   | {
       readonly refusal: undefined;
       /**
-       * The collection sits at its growth-refusal point once these writes
-       * commit: one more inserted row, or one more byte of growth, would
-       * be refused. The verb forces its write tick (G6).
+       * The verb forces its write tick (G6): the collection sits at its
+       * growth-refusal point once these writes commit, and folding the
+       * pending tail frees room or the tail holds a full fold pass.
        */
       readonly pressure: boolean;
     }
@@ -246,22 +278,20 @@ export type CapacityDecision =
  *
  * - **No progress** (G5): the stored snapshot is over `E` rows or `C`
  *   bytes, or the pending tail holds an entry the fold stops at (one that
- *   adds a row while the projected snapshot holds `E` rows). Every write
- *   is refused, since anything appended behind that entry never folds on
- *   this host.
+ *   adds a row while the projected snapshot holds `E` rows), or a full
+ *   fold pass of the tail that rebuilds past `C`. Every write is refused,
+ *   since anything appended behind that point never folds on this host.
  * - **Growth** (an insert or a byte-growing update, G3): refused when the
  *   projected snapshot, at its peak over every prefix of the pending tail
  *   followed by the planned writes up to this one, would reach `E` rows or
  *   exceed `C - CAPACITY_BYTES_MARGIN` bytes (G4). The peak counts because
  *   a fold can land at any prefix. `foldFreesRoom` (G6) is set when the
  *   same writes would be admitted onto the snapshot the whole pending tail
- *   folds to, and the first pass of `maxFoldEntriesPerPass` tail entries
- *   rebuilds within `C - CAPACITY_BYTES_MARGIN`, so the fold that pass
- *   dispatches lands.
+ *   folds to, and every fold pass of the tail rebuilds within `C`, so folds
+ *   alone admit the writes.
  * - Anything else (deletes, same-size and shrinking updates) commits, at
  *   `E` rows included: the fold drains them in place. `pressure` reports
- *   whether the collection then sits where a one-row insert, or a
- *   one-byte growth, would be refused.
+ *   whether the commit forces its write tick (see `forcesTick` inside).
  *
  * A batch is decided whole, before its first row commits.
  *
@@ -271,11 +301,11 @@ export type CapacityDecision =
  */
 export const capacityDecision = (args: {
   readonly collection: string;
-  readonly head: Pick<CurrentJson, "snapshot_rows" | "snapshot_bytes">;
+  readonly head: Pick<CurrentJson, "snapshot_rows" | "snapshot_bytes" | "log_seq_start">;
   readonly base: ReadonlyMap<string, DocumentData>;
   readonly tail: readonly LogEntry[];
   readonly writes: readonly PlannedWrite[];
-  readonly ceilings: FoldCeilings & Partial<Pick<MaintenanceProfile, "maxFoldEntriesPerPass">>;
+  readonly ceilings: HostFoldLimits;
 }): CapacityDecision => {
   const { collection, head, base, tail, writes, ceilings } = args;
   if (writes.length === 0) {
@@ -301,13 +331,76 @@ export const capacityDecision = (args: {
   // Skip what the fold skips (`foldLogEntriesOnto`): another collection's entries.
   const own = tail.filter((entry) => entry.collection === collection);
   const projection = projectSnapshot(head, base, collection);
-  for (const entry of own) {
-    // Where `compact()` stops: a row-adding entry at `E` rows.
-    if (projection.addsRow(entry.op, entry.doc_id, entry.after) && !(projection.rows < maxRows)) {
-      return noProgress(`a pending insert cannot fold onto ${projection.rows} rows of ${maxRows}`);
+  // With no new writes, `compact()` folds the tail in passes of
+  // `maxFoldEntriesPerPass` seqs from `log_seq_start` (other collections'
+  // entries count toward a pass's length), the last one partial, and
+  // rebuilds each pass whole: a pass whose snapshot passes `C` defers.
+  const pass = ceilings.maxFoldEntriesPerPass;
+  let tailLands = true;
+  for (const [i, entry] of tail.entries()) {
+    if (entry.collection === collection) {
+      // Where `compact()` stops: a row-adding entry at `E` rows.
+      if (projection.addsRow(entry.op, entry.doc_id, entry.after) && !(projection.rows < maxRows)) {
+        return noProgress(
+          `a pending insert cannot fold onto ${projection.rows} rows of ${maxRows}`,
+        );
+      }
+      projection.apply(entry.op, entry.doc_id, entry.after);
     }
-    projection.apply(entry.op, entry.doc_id, entry.after);
+    const fullPass = (i + 1) % pass === 0;
+    if (fullPass || i + 1 === tail.length) {
+      // The pass's rebuilt body, exactly as compact() sizes it against `C`.
+      // A full pass's seqs are fixed and the log is immutable, so one past
+      // `C` and everything behind it never fold here (G5). The partial last
+      // pass is not fixed: later entries lengthen it.
+      const rebuilt = projection.bytesAt(head.log_seq_start + i + 1);
+      if (fullPass && !(rebuilt <= maxBytes)) {
+        return noProgress(`a pending fold pass would rebuild to ${rebuilt} bytes of ${maxBytes}`);
+      }
+      tailLands &&= rebuilt <= maxBytes;
+    }
   }
+
+  /**
+   * Whether an accepted batch forces its write tick (G6), given `p` with
+   * the tail and the writes applied. Only at the refusal point (one more
+   * inserted row, or one more byte of growth, would be refused), and then
+   * only when that fold is worth its full snapshot rebuild:
+   *
+   * - folding the pending tail frees room for growth (the snapshot it
+   *   rebuilds to admits one more row and byte), or
+   * - the pending tail, these writes included, holds a full pass
+   *   (`maxFoldEntriesPerPass`).
+   *
+   * Otherwise the runner's ratio trigger and entry floor apply as usual.
+   * The pass floor is the cheapest cadence that keeps the tail bounded at
+   * the ceiling: every pending entry costs each read one GET, and on
+   * Workers Free the ratio trigger alone would let a collection held at
+   * `E - 1` by same-size updates queue ~300 entries. One forced fold per
+   * pass also bounds the rebuild cost to one full snapshot per
+   * `maxFoldEntriesPerPass` writes, rather than one per write, and with it
+   * the snapshots each rebuild orphans: on cf-free that is under one
+   * orphan (20-entry pass) per hard-GC interval of 16 writes, against that
+   * slice's sweep budget of 10, so GC keeps up even though a forced fold
+   * is the tick's only phase.
+   */
+  const forcesTick = (p: SnapshotProjection): boolean => {
+    const atRefusalPoint =
+      !(Math.max(p.peakRows, p.rows + 1) < maxRows) || !(p.peakBytes < byteLimit);
+    if (!atRefusalPoint) {
+      return false;
+    }
+    // A forced fold that defers rebuilds the snapshot for nothing. Every
+    // pass through the batch lands when the tail does: an admitted growth
+    // write keeps every prefix within `C - margin` (the margin covers the
+    // header's later `max_seq` digits), and the other writes never grow
+    // the snapshot.
+    if (!tailLands) {
+      return false;
+    }
+    const foldFreesRoom = p.rows + 1 < maxRows && p.bytes < byteLimit;
+    return foldFreesRoom || tail.length + writes.length >= pass;
+  };
 
   /** The first growth write `p` refuses, applying every write onto `p`. */
   const firstRefusedGrowth = (p: SnapshotProjection): PlannedWrite | undefined => {
@@ -323,11 +416,7 @@ export const capacityDecision = (args: {
 
   const refused = firstRefusedGrowth(projection);
   if (refused === undefined) {
-    const { peakRows, rows, peakBytes } = projection;
-    return {
-      refusal: undefined,
-      pressure: !(Math.max(peakRows, rows + 1) < maxRows) || !(peakBytes < byteLimit),
-    };
+    return { refusal: undefined, pressure: forcesTick(projection) };
   }
   const { peakRows, peakBytes } = projection;
   const detail = !(peakRows < maxRows)
@@ -339,34 +428,19 @@ export const capacityDecision = (args: {
       `committed. Deletes and same-size or shrinking updates still commit; delete or shrink ` +
       `rows to make room. If the collection must keep growing, it needs a larger host or graduation.`,
   );
-  if (own.length === 0) {
+  // `MaintenancePending` promises that folds alone admit these writes, so
+  // every pass of the tail must land.
+  if (own.length === 0 || !tailLands) {
     return { refusal, foldFreesRoom: false };
   }
-  // Would the writes fit once the pending tail folds, and does the next
-  // pass land? The tail's own prefix peaks no longer count after it folds,
-  // so the projection restarts at the snapshot the whole tail rebuilds.
+  // Would the writes fit once the pending tail folds? The tail's own prefix
+  // peaks no longer count after it folds, so the projection restarts at the
+  // snapshot the whole tail rebuilds, byte for byte what the retry projects
+  // from, so the retry admits what this promises.
   const settled = projectSnapshot(head, base, collection);
-  const passEnd = Math.min(ceilings.maxFoldEntriesPerPass ?? tail.length, tail.length);
-  let passLands = true;
-  for (const [i, entry] of tail.entries()) {
-    if (entry.collection === collection) {
-      settled.apply(entry.op, entry.doc_id, entry.after);
-    }
-    // `compact()` checks bytes on the whole rebuilt pass, whose length
-    // counts every seq in it.
-    if (i + 1 === passEnd) {
-      passLands = settled.bytes <= byteLimit;
-    }
+  for (const entry of own) {
+    settled.apply(entry.op, entry.doc_id, entry.after);
   }
-  settled.settle();
-  return { refusal, foldFreesRoom: passLands && firstRefusedGrowth(settled) === undefined };
+  settled.settle(head.log_seq_start + tail.length);
+  return { refusal, foldFreesRoom: firstRefusedGrowth(settled) === undefined };
 };
-
-/**
- * Decide whether `writes` must be refused on the host with `ceilings`:
- * the `CapacityExceeded` error {@link capacityDecision} would throw, or
- * `undefined` to commit.
- */
-export const capacityRefusal = (
-  args: Parameters<typeof capacityDecision>[0],
-): BaerlyError | undefined => capacityDecision(args).refusal;
