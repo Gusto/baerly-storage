@@ -71,14 +71,14 @@
       "httpStatus": 409,
       "retriable": false,
       "messagePolicy": "public",
-      "summary": "The collection is at this host's fold ceiling; the write was refused and nothing was committed."
+      "summary": "The collection is at this host's fold ceiling; the write was refused and not committed (a batch refused part-way keeps its committed rows)."
     },
     {
       "code": "MaintenancePending",
       "httpStatus": 503,
       "retriable": true,
       "messagePolicy": "public",
-      "summary": "Maintenance is behind on this collection; the write was refused and nothing was committed. Retry after the Retry-After delay."
+      "summary": "Maintenance is behind on this collection; the write was refused and not committed. Retry after the Retry-After delay."
     },
     {
       "code": "Unauthorized",

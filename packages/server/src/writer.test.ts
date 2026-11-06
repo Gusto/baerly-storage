@@ -2206,11 +2206,12 @@ describe("Writer — admission (commit-time re-check)", () => {
       calls,
       admission: {
         fromSeq,
-        check: (window: readonly LogEntry[], tail: number) => {
+        check: (window: readonly LogEntry[], tail: number): undefined => {
           calls.push({ seqs: window.map((e) => e.seq), tail });
           if (refuse(window)) {
             throw refusal;
           }
+          return undefined;
         },
       },
     };

@@ -320,6 +320,25 @@ const pauseAt = (
   return { storage, paused, release };
 };
 
+/**
+ * `inner`, running `before(n)` ahead of its `n`th (1-based) log create, so
+ * a peer request can commit between a writer's window probe and its create.
+ */
+const beforeLogCreates = (inner: Storage, before: (n: number) => Promise<void>): Storage => {
+  let creates = 0;
+  return {
+    get: (key, opts) => inner.get(key, opts),
+    put: async (key, body, opts) => {
+      if (isLogKey(key)) {
+        await before(++creates);
+      }
+      return await inner.put(key, body, opts);
+    },
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+};
+
 /** `inner`, recording every `get` / `put` key in call order. */
 const recording = (inner: Storage): { storage: Storage; ops: string[] } => {
   const ops: string[] = [];
@@ -1127,6 +1146,66 @@ describe("main-10: growth refusal (target behavior)", () => {
           const pads = new Map(rows.map((r) => [r._id, r.pad.length]));
           expect(pads.get(id(0))).toBe(BYTE_ROW_PAD.length);
           expect(pads.get(id(1))).toBe(GROWN_BY_1_2M.length);
+        });
+
+        test("same-row race: an update merged onto a row a peer shrank is judged against the live row", async () => {
+          const { storage, host } = await bytesState("near");
+          // A shrinks row 0 (frees 2M), then D grows row 1 by 3M into that
+          // room. B read row 0 before A: its same-size update re-grows row 0
+          // by 2M against the live row, past C.
+          const result = await race(
+            storage,
+            host,
+            sameSizeW(0),
+            async (c) => {
+              await shrinkW(0)(c);
+              await c.update(id(1), { pad: GROWN_ROW_PAD });
+            },
+            atWriterManifestRead(),
+          );
+          expect(result).toEqual({ a: "capacity", b: "accepted" });
+          const rows = await onHost(storage, host, (c) => c.all());
+          const row0 = rows.find((r) => r._id === id(0))!;
+          expect(row0).toMatchObject({ n: 0, pad: "" });
+        });
+
+        test("contended batch: a row's re-check counts every entry that landed during the batch", async () => {
+          const { storage, host } = await bytesState("near");
+          // Of the 2M of headroom: the batch grows rows 0 and 1 by 0.5M each,
+          // peers grow rows 2 and 3 by 0.6M each. Peer P lands before row 0's
+          // create (0.6 + 1.0 fits); peer Q before row 1's (P + row 0 + Q + row 1
+          // = 2.2 does not, while Q itself fit at 1.7).
+          // Mark the batch's rows (a same-size update each).
+          await commit(storage, [
+            { op: "U", i: 0, n: 7, pad: BYTE_ROW_PAD },
+            { op: "U", i: 1, n: 7, pad: BYTE_ROW_PAD },
+          ]);
+          const pad = (units: number): string => "x".repeat(Math.round(units * M));
+          const peer = (i: number) => () =>
+            expect(
+              outcome(onHost(storage, host, (c) => c.update(id(i), { pad: pad(2.6) }))),
+            ).resolves.toBe("accepted");
+          // Creates: 1 = row 0 (loses to P), 2 = row 0 again, 3 = row 1 (loses to Q).
+          const hooked = beforeLogCreates(storage, async (n) => {
+            if (n === 1) {
+              await peer(2)();
+            } else if (n === 3) {
+              await peer(3)();
+            }
+          });
+          const batch = outcome(
+            onHost(hooked, host, (c) => c.where({ n: 7 }).update({ pad: pad(2.5) })),
+          );
+          await expect(batch).resolves.toBe("capacity");
+          const rows = await onHost(storage, host, (c) => c.all());
+          const pads = new Map(rows.map((r) => [r._id, r.pad.length]));
+          // Row 0 committed before the refusal; row 1 did not.
+          expect([0, 1, 2, 3].map((i) => pads.get(id(i)))).toEqual([
+            pad(2.5).length,
+            BYTE_ROW_PAD.length,
+            pad(2.6).length,
+            pad(2.6).length,
+          ]);
         });
 
         test("six concurrent inserts with room for three: exactly three commit, and growth stays below E", async () => {

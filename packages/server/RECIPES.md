@@ -51,9 +51,11 @@ it instead (see below).
 
 **Cause:** the collection has reached the fold ceiling of the host serving the
 request (`E` rows or `C` snapshot bytes for its maintenance profile), so the
-write was refused and nothing was committed. `retriable` is `false`. The
-refusal is recomputed on every request; nothing is stored. A batch
-`.where(...).update()` / `.delete()` is refused before its first row commits.
+write was refused and not committed. `retriable` is `false`. The refusal is
+recomputed on every request; nothing is stored. A batch
+`.where(...).update()` / `.delete()` is checked before its first row commits,
+and again at a row's commit if a concurrent write landed since; refused
+part-way, it keeps the rows it already committed.
 **Fix:** depends on the message.
 
 - **Growth refused** (an insert, or an update that makes a row larger): deletes
@@ -67,7 +69,7 @@ refusal is recomputed on every request; nothing is stored. A batch
 
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
-**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (for example, deletes behind a burst of inserts). The write ran one bounded fold, was refused, and committed nothing. `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
+**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (for example, deletes behind a burst of inserts). The write ran one bounded fold and was refused without committing (a batch refused part-way keeps the rows it already committed). `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
 **Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working.
 
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)

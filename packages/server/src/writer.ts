@@ -229,9 +229,14 @@ export interface CommitAdmission {
   /**
    * Re-decide over `window`, every entry in `[fromSeq, tail)` in seq
    * order, where `tail` is the slot the next create targets. Throw to
-   * refuse the commit.
+   * refuse the commit. Return `true` to force the post-commit maintenance
+   * tick, as {@link CommitInput.forceMaintenance} does; the last call
+   * before the winning create decides.
    */
-  readonly check: (window: readonly LogEntry[], tail: number) => void | Promise<void>;
+  readonly check: (
+    window: readonly LogEntry[],
+    tail: number,
+  ) => boolean | undefined | Promise<boolean | undefined>;
 }
 
 /**
@@ -597,6 +602,8 @@ export class Writer {
     const windowFrom = guard?.absentBelowSeq ?? admission?.fromSeq;
     const logSeqStart = logSeqStartOf(current);
     let commitWindow: LogEntry[] | undefined;
+    // Whether the latest `admission.check` asked to force the write tick.
+    let admissionForces = false;
     let preCommitTail: number;
     if (windowFrom === undefined) {
       const probeFloor = Math.max(logSeqStart, current.tail_hint);
@@ -637,7 +644,7 @@ export class Writer {
           return { replayed: true, entries: [replayed], currentEtag: baseEtag };
         }
       }
-      await admission?.check(commitWindow, probe.tail);
+      admissionForces = (await admission?.check(commitWindow, probe.tail)) === true;
       preCommitTail = probe.tail;
     }
     let seq = preCommitTail;
@@ -822,7 +829,7 @@ export class Writer {
             return { replayed: true, entries: [replayed], currentEtag: baseEtag };
           }
         }
-        await admission?.check(commitWindow, probe.tail);
+        admissionForces = (await admission?.check(commitWindow, probe.tail)) === true;
         seq = probe.tail;
       }
       entry = mintEntry(seq);
@@ -935,7 +942,8 @@ export class Writer {
       maint?.options?.profile?.gcInterval ?? MAINTENANCE_PROFILE_CF_FREE.gcInterval;
     // A forced tick (main-10 G6) skips the ratio-OR-boundary gate: the
     // verb found the collection at its growth-refusal point.
-    const forceFold = input.forceMaintenance === true && maint?.disabled !== true;
+    const forceFold =
+      (input.forceMaintenance === true || admissionForces) && maint?.disabled !== true;
     const maintenanceDue =
       maint?.disabled === true
         ? observedTail - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES
