@@ -38,9 +38,9 @@ dispatched on the write path after a commit** — never on a schedule
 required for correctness or default operation, never from a long-lived
 process. **Reads are pure — they never tick.** The
 unsliceable snapshot rebuild is bounded by a **static two-way ceiling**
-(`snapshot_bytes ≤ C` **and**
-`snapshot_rows + maxFoldEntriesPerPass <= E`); see the spec for the exact
-formula. Tail slices drain across later write-ticks. An over-ceiling
+(`snapshot_bytes ≤ C` **and** a rebuilt `snapshot_rows ≤ E`, with the
+fold stopping before the first entry that would add a row past `E`); see
+the spec for the exact formula. Tail slices drain across later write-ticks. An over-ceiling
 snapshot rebuild defers until the collection shrinks, the profile changes,
 or the workload graduates. The fold's pointer advance is a full-fence CAS;
 a lost CAS abandons the fold and its orphan snapshot is GC-swept. **No

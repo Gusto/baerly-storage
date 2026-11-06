@@ -325,21 +325,18 @@ describe("baerly inspect", () => {
       });
     });
 
-    test("the rows arm closes at E - maxFoldEntriesPerPass + 1 stored rows, per profile", async () => {
+    test("the rows arm closes past E stored rows, per profile", async () => {
       const free = MAINTENANCE_PROFILE_CF_FREE;
-      await provisionAt({
-        snapshot_bytes: 0,
-        snapshot_rows: free.maxFoldRows - free.maxFoldEntriesPerPass + 1,
-      });
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: free.maxFoldRows + 1 });
       const gate = await inspectGate();
       expect(gate["cf-free"]?.verdict).toBe("closed:rows");
       expect(gate["cf-paid"]?.verdict).toBe("open");
       expect(gate.node?.verdict).toBe("open");
     });
 
-    // The runner's projection is `snapshot_bytes <= C` and
-    // `snapshot_rows + maxFoldEntriesPerPass <= E`, so a snapshot sitting
-    // exactly on either ceiling still folds.
+    // The runner's projection is `snapshot_bytes <= C && snapshot_rows <= E`
+    // (compact() then folds the longest prefix that stays within E), so a
+    // snapshot sitting exactly on either ceiling still folds.
     test("exactly C stored bytes is still open", async () => {
       const free = MAINTENANCE_PROFILE_CF_FREE;
       await provisionAt({ snapshot_bytes: free.maxFoldBytes, snapshot_rows: 0 });
@@ -347,12 +344,9 @@ describe("baerly inspect", () => {
       expect(gate["cf-free"]?.verdict).toBe("open");
     });
 
-    test("exactly E - maxFoldEntriesPerPass stored rows is still open", async () => {
+    test("exactly E stored rows is still open", async () => {
       const free = MAINTENANCE_PROFILE_CF_FREE;
-      await provisionAt({
-        snapshot_bytes: 0,
-        snapshot_rows: free.maxFoldRows - free.maxFoldEntriesPerPass,
-      });
+      await provisionAt({ snapshot_bytes: 0, snapshot_rows: free.maxFoldRows });
       const gate = await inspectGate("--profile=cf-free");
       expect(gate["cf-free"]?.verdict).toBe("open");
     });
@@ -485,7 +479,7 @@ describe("baerly inspect", () => {
     test("text mode prints one verdict line per profile", async () => {
       await provisionAt({
         snapshot_bytes: 0,
-        snapshot_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows,
+        snapshot_rows: MAINTENANCE_PROFILE_CF_FREE.maxFoldRows + 1,
       });
       const stdout = captureStream(process.stdout);
       try {

@@ -123,9 +123,13 @@ export interface InternalCompactOptions extends CompactOptions {
   readonly ceilingBytes?: number;
 
   /**
-   * @internal SNAPSHOT-axis row ceiling. The rebuilt snapshot row count
-   * (`base.size`, NOT including the tail) must be `<= ceilingEntries`
-   * or the fold is DEFERRED before the PUT. `undefined ⇒ no ceiling`
+   * @internal SNAPSHOT-axis row ceiling. The fold applies the longest
+   * prefix of the range whose rebuilt row count stays `<= ceilingEntries`:
+   * it stops before the first entry that would add a row once the
+   * snapshot holds `ceilingEntries` rows, so updates and deletes keep
+   * folding at the ceiling. A prefix that folds nothing, or a rebuilt
+   * snapshot still over the ceiling (the stored snapshot was already
+   * larger), is DEFERRED before the PUT. `undefined ⇒ no ceiling`
    * (`Infinity`). Catches the tiny-doc case where bytes stay small but
    * row count balloons.
    */
@@ -389,7 +393,7 @@ export const compact = async (
   // so it calls `assertCurrentJsonTransition` directly before its PUT —
   // that check is what enforces monotonicity here; the construction
   // above is why it never fires.
-  const foldEnd = Math.min(nextSeq, logSeqStartBefore + maxPerRun);
+  let foldEnd = Math.min(nextSeq, logSeqStartBefore + maxPerRun);
 
   // ── Step 2. Load the previous snapshot (if any) as the fold base.
   const base =
@@ -409,19 +413,31 @@ export const compact = async (
     { signal: options.signal },
   );
 
-  // Sum the STORED body bytes over ALL fetched objects in
-  // `[logSeqStartBefore, foldEnd)` — NOT only the entries the fold loop
-  // keeps. This sum / entry count gives `mean_entry_bytes`, the
-  // compactor-stamped basis for the derived live-tail estimate the
-  // maintenance trigger reads. The byte sum is independent of the
-  // fold-apply filter below.
-  const foldedSliceBytes = fetched.reduce((sum, f) => sum + f.bytes, 0);
-
   // ── Step 4. Apply the fold onto `base`. ─────────────────────────
   // I / U overwrite with the post-image (today's per-doc-replace
   // model: writer emits `entry.after` as the full post-image, see
   // packages/protocol/src/log.ts). D tombstones.
+  //
+  // Row ceiling: stop before the first entry that would add a row to a
+  // snapshot already holding `ceilingEntries` rows, and fold only the
+  // prefix before it. Counting real rows (not entries) lets an
+  // update/delete tail fold a full pass at the ceiling, and the count is
+  // taken against the `current.json` this run read, so no caller's stale
+  // estimate can push the rebuild past the ceiling.
+  let applied = 0;
   for (const { entry } of fetched) {
+    if (
+      entry.collection === collectionName &&
+      entry.doc_id !== undefined &&
+      entry.op !== "D" &&
+      entry.after !== undefined &&
+      !base.has(entry.doc_id) &&
+      // `!(<)`, not `>=`: a NaN ceiling stops the fold (fails closed).
+      !(base.size < ceilingEntries)
+    ) {
+      break;
+    }
+    applied++;
     if (entry.collection !== collectionName) {
       continue;
     }
@@ -444,6 +460,32 @@ export const compact = async (
         break;
       }
     }
+  }
+  foldEnd = logSeqStartBefore + applied;
+  // Sum the STORED body bytes over every fetched object in the folded
+  // prefix `[logSeqStartBefore, foldEnd)`, including entries the loop
+  // skipped (other collections, no `doc_id`). This sum / entry count gives
+  // `mean_entry_bytes`, the compactor-stamped basis for the derived
+  // live-tail estimate the maintenance trigger reads.
+  const foldedSliceBytes = fetched.slice(0, applied).reduce((sum, f) => sum + f.bytes, 0);
+
+  // Nothing fits: the first entry adds a row at the ceiling. Defer before
+  // spending the sort + encode; the rebuilt snapshot would be the stored one.
+  if (applied === 0 && fetched.length > 0) {
+    return {
+      written: false,
+      skippedReason: "deferred",
+      deferred: true,
+      deferral: {
+        dimension: "rows",
+        snapshotBytes: current.snapshot_bytes,
+        snapshotRows: base.size,
+      },
+      previousSnapshotKey: current.snapshot,
+      logSeqStartBefore,
+      logSeqStartAfter: logSeqStartBefore,
+      entriesFolded: 0,
+    };
   }
 
   // ── Step 5. Build the canonical snapshot body. ──────────────────
@@ -472,10 +514,13 @@ export const compact = async (
   // ── Step 5b. SNAPSHOT-axis ceiling — check BEFORE the PUT. ───────
   // The ceiling is on the SNAPSHOT being rebuilt (`bodyBytes.byteLength`
   // / `base.size`), NOT snapshot + tail — the tail is bounded
-  // separately by `maxEntriesPerRun`. This is a Node-side
-  // belt-and-suspenders: on a CPU-limited CF isolate an invocation
-  // terminated during the walk + encode above never reaches this check, so
-  // the decisive CF guard is the runner's pre-fold projection (see maintenance.ts
+  // separately by `maxEntriesPerRun`. Step 4 already stopped the fold at
+  // the row ceiling, so the rows arm here only trips when the STORED
+  // snapshot was over it (folded on a larger host) and the prefix did not
+  // shrink it back. The bytes arm is a Node-side belt-and-suspenders: on a
+  // CPU-limited CF isolate an invocation terminated during the walk +
+  // encode above never reaches this check, so the decisive CF bytes guard
+  // is the runner's pre-fold projection (see maintenance.ts
   // `runBoundedMaintenance`). When over ceiling we DEFER: no PUT, no
   // CAS, no current.json mutation.
   //

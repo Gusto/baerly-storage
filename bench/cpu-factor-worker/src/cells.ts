@@ -41,7 +41,11 @@ export interface Cell {
   readonly samples?: number;
 }
 
-/** Fixtures for the fold cells. C = 512 KiB of 2 KiB docs; E = 2,028 rows (the largest foldable under E = 2,048). */
+/**
+ * Fixtures for the fold cells. C = 512 KiB of 2 KiB docs; E = 2,028 rows. A
+ * fold can rebuild up to E = 2,048 rows, so the E cell sits 20 rows (~1%)
+ * under the worst case.
+ */
 export const FIXTURES: Readonly<Record<string, FixtureSpec>> = {
   r256: { rows: 256, payload: 200 },
   r512: { rows: 512, payload: 200 },

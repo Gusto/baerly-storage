@@ -5,15 +5,18 @@
  * main-10 Task 1: reproduce today's SILENT fold stall and its recovery
  * cases on `memory` + `local-fs`.
  *
- * Every test here pins CURRENT behavior and passes on main. The fold gate
- * (`snapshotBytes <= C && snapshotRows + maxFoldEntriesPerPass <= E`, then
- * compact()'s rebuild gate) is evaluated against the STORED
- * `snapshot_bytes` / `snapshot_rows`, which only a landed fold updates. So a
- * stalled collection cannot be un-stalled by deleting or shrinking rows:
- * those land in the tail, which the gate never looks at. Main-10 Task 2
+ * Every test here pins CURRENT behavior. The runner's gate
+ * (`snapshotBytes <= C && snapshotRows <= E`) reads the STORED
+ * `snapshot_bytes` / `snapshot_rows`, which only a landed fold updates;
+ * compact() then folds the longest prefix of the tail that keeps the
+ * rebuilt snapshot within E rows, stopping before the first entry that
+ * would add a row past E. Update and delete tails therefore fold right up
+ * to E, and a delete tail drains in place at E. The stall is an entry that
+ * adds a row at E (or stored bytes > C): the fold is a prefix, so deletes
+ * and shrinks queued behind that entry cannot drain. Main-10 Task 2
  * (growth-only refusal, executable recovery) flips the "stays stalled" /
- * "silent" assertions below; the host-change and per-pass recoveries are the
- * routes that already work and must keep working.
+ * "silent" assertions below; the host-change recoveries are the routes that
+ * already work and must keep working.
  *
  * Fixtures are tiny: a custom `MaintenanceProfile` with E=20 rows, a
  * 5-entry pass and a large C, so no test writes more than a few dozen rows.
@@ -74,14 +77,17 @@ describe("main-10: fold stall (current behavior)", () => {
         return made.storage;
       };
 
-      /** 16 live rows folded: `snapshotRows + PASS` = 21 > E, so the gate is closed. */
-      const stallAtRows = async (): Promise<Storage> => {
+      /** `n` live rows folded on SMALL, empty tail. */
+      const foldedRows = async (n: number): Promise<Storage> => {
         const storage = await fresh();
-        await commit(storage, inserts(0, 16));
+        await commit(storage, inserts(0, n));
         await drain(storage, SMALL);
-        await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 16, rows: 16 });
+        await expect(state(storage)).resolves.toMatchObject({ start: n, tail: n, rows: n });
         return storage;
       };
+
+      /** E live rows folded, empty tail: the next insert cannot fold. */
+      const stallAtRows = () => foldedRows(E);
 
       // ── 1. Stall ───────────────────────────────────────────────────
       describe("stall (Task 2 flips: growing writes get CapacityExceeded instead of succeeding)", () => {
@@ -90,30 +96,31 @@ describe("main-10: fold stall (current behavior)", () => {
           const signals: Signals = { records: [] };
 
           // 10 more inserts: every one is accepted (no refusal), live rows
-          // (26) are now past E (20).
-          await commit(storage, inserts(16, 26));
+          // (30) are now past E (20).
+          await commit(storage, inserts(20, 30));
           for (let k = 0; k < 4; k++) {
             await tick(storage, SMALL, { signals });
           }
 
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 26, rows: 16 });
-          await expect(readIds(storage)).resolves.toHaveLength(26);
+          await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 30, rows: 20 });
+          await expect(readIds(storage)).resolves.toHaveLength(30);
           // Silent: four deferred ticks, one structured record (rate-limited
           // by MAINTENANCE_WARN_INTERVAL_WRITES via `last_warned_seq`).
           expect(signals.records).toHaveLength(1);
+          // compact() runs (stored rows = E is admitted) and stops before
+          // the first insert, so the deferral comes from the rebuild gate.
           expect(signals.records[0]).toMatchObject({
-            gate: "pre-fold",
+            gate: "rebuild",
             dimension: "rows",
-            snapshot_rows: 16,
+            snapshot_rows: 20,
             ceiling_rows: E,
-            max_fold_entries_per_pass: PASS,
-            log_seq_start: 16,
+            log_seq_start: 20,
           });
 
           // And it stays stalled as the tail keeps growing.
-          await commit(storage, inserts(26, 40));
+          await commit(storage, inserts(30, 44));
           await tick(storage, SMALL, { signals });
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 40, rows: 16 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 44, rows: 20 });
         });
 
         test("bytes arm: stored snapshot_bytes > C closes the gate and the tail grows", async () => {
@@ -164,68 +171,106 @@ describe("main-10: fold stall (current behavior)", () => {
 
         test("rebuild gate (rows): an under-reported snapshot_rows passes the pre-fold gate and compact() defers on the rebuilt row count", async () => {
           const storage = await stallAtRows();
-          // Simulate stale accounting: stored rows say 0, the snapshot holds 16.
+          // Simulate stale accounting: stored rows say 0, the snapshot holds 20.
           await casUpdateCurrentJson(storage, CURRENT_JSON_KEY, (c) => ({
             ...c,
             snapshot_rows: 0,
           }));
-          await commit(storage, inserts(16, 21));
+          await commit(storage, inserts(20, 25));
           const signals: Signals = { records: [] };
           await tick(storage, SMALL, { signals });
 
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 25 });
           expect(signals.records[0]).toMatchObject({ gate: "rebuild", dimension: "rows" });
         });
       });
 
-      // ── 2. Conservative gate (G2) ──────────────────────────────────
-      describe("conservative gate G2 (Task 2 flips: an update/delete fold whose output fits must be allowed)", () => {
-        test("an update-only tail whose output (16 rows) fits E is still deferred; a larger E folds it with rows unchanged", async () => {
-          const storage = await stallAtRows();
+      // ── 2. Row-exact fold (G4) ─────────────────────────────────────
+      describe("row-exact fold G4: compact() folds the longest prefix within E", () => {
+        test("at 16 rows an update-only full pass folds in one tick, with rows unchanged", async () => {
+          const storage = await foldedRows(16);
           await commit(
             storage,
             Array.from({ length: PASS }, (_, i) => ({ op: "U" as const, i, n: 99 })),
           );
           const signals: Signals = { records: [] };
           await tick(storage, SMALL, { signals });
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21, rows: 16 });
-          expect(signals.records[0]).toMatchObject({ gate: "pre-fold", dimension: "rows" });
-
-          // Same tail, E = 21: gate opens and the fold lands with 16 rows.
-          await tick(storage, { ...SMALL, maxFoldRows: 21 });
-          await expect(state(storage)).resolves.toMatchObject({ start: 21, rows: 16 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 21, tail: 21, rows: 16 });
+          expect(signals.records).toHaveLength(0);
         });
 
-        test("a delete-only tail (output 11 rows) is deferred; a larger E folds it and rows shrink", async () => {
-          const storage = await stallAtRows();
+        test("at E - 1 an update-only tail folds in one tick: no per-entry rebuilds near E", async () => {
+          const storage = await foldedRows(E - 1);
+          await commit(
+            storage,
+            Array.from({ length: 3 }, (_, i) => ({ op: "U" as const, i, n: 99 })),
+          );
+          await tick(storage, SMALL);
+          await expect(state(storage)).resolves.toMatchObject({
+            start: E + 2,
+            tail: E + 2,
+            rows: E - 1,
+          });
+        });
+
+        test("at E a delete-only tail drains in place and rows shrink", async () => {
+          const storage = await foldedRows(E);
           await commit(
             storage,
             Array.from({ length: PASS }, (_, i) => ({ op: "D" as const, i })),
           );
-          const signals: Signals = { records: [] };
-          await tick(storage, SMALL, { signals });
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 21, rows: 16 });
-          expect(signals.records).toHaveLength(1);
+          await expect(drain(storage, SMALL)).resolves.toBe(1);
+          await expect(state(storage)).resolves.toMatchObject({
+            start: E + PASS,
+            tail: E + PASS,
+            rows: E - PASS,
+          });
+        });
 
-          await tick(storage, { ...SMALL, maxFoldRows: 21 });
-          await expect(state(storage)).resolves.toMatchObject({ start: 21, rows: 11 });
+        test("a mixed pass at E - 1 folds up to the insert that would pass E", async () => {
+          const storage = await foldedRows(E - 1);
+          // U (rows hold), I (rows reach E), I (would be E + 1: stop), D.
+          await commit(storage, [
+            { op: "U" as const, i: 0, n: 99 },
+            ...inserts(E - 1, E + 1),
+            { op: "D" as const, i: 1 },
+          ]);
+          await tick(storage, SMALL);
+          await expect(state(storage)).resolves.toMatchObject({
+            start: E + 1,
+            tail: E + 3,
+            rows: E,
+          });
+        });
+
+        test("inserts fold exactly up to E, then stop; a 1-entry pass cannot go further", async () => {
+          const storage = await foldedRows(16);
+          await commit(storage, inserts(16, 40));
+
+          await tick(storage, SMALL);
+          await expect(state(storage)).resolves.toMatchObject({ start: 20, rows: 20 });
+
+          // rows 20 and an insert at the head of the tail: no pass size helps.
+          const pass1: MaintenanceProfile = { ...SMALL, maxFoldEntriesPerPass: 1 };
+          await expect(drain(storage, pass1)).resolves.toBe(0);
+          await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 40, rows: 20 });
         });
       });
 
       // ── 3. Recovery attempts ───────────────────────────────────────
       describe("recovery (which routes work today)", () => {
-        test("deleting rows after a rows stall does NOT resume the fold: stored snapshot_rows only moves when a fold lands", async () => {
+        test("deleting rows behind an insert stalled at E does NOT resume the fold: the fold is a prefix", async () => {
           const storage = await stallAtRows();
-          await commit(storage, inserts(16, 26));
+          await commit(storage, inserts(20, 30));
           await tick(storage, SMALL);
-          // Delete 20 of the 26 live rows. Live rows (6) are far under E.
+          // Delete 20 of the 30 live rows. Live rows (10) are far under E.
           await commit(
             storage,
             Array.from({ length: 20 }, (_, i) => ({ op: "D" as const, i })),
           );
-          await expect(readIds(storage)).resolves.toHaveLength(6);
+          await expect(readIds(storage)).resolves.toHaveLength(10);
           await expect(drain(storage, SMALL)).resolves.toBe(0);
-          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 46, rows: 16 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 50, rows: 20 });
         });
 
         test("shrinking updates after a bytes stall do NOT resume the fold", async () => {
@@ -249,11 +294,11 @@ describe("main-10: fold stall (current behavior)", () => {
 
         test("the prerequisite read costs O(stalled tail) GETs and only grows with writes; a host-change drain resets it", async () => {
           const storage = await stallAtRows();
-          await commit(storage, inserts(16, 26));
+          await commit(storage, inserts(20, 30));
           await tick(storage, SMALL);
 
           const stalled = await readGets(storage);
-          await commit(storage, inserts(26, 40));
+          await commit(storage, inserts(30, 44));
           await tick(storage, SMALL);
           const grown = await readGets(storage);
           expect(grown - stalled).toBeGreaterThanOrEqual(14);
@@ -261,13 +306,13 @@ describe("main-10: fold stall (current behavior)", () => {
           // The same bucket under a bigger host drains the whole tail; the
           // same read is then flat.
           await drain(storage, MAINTENANCE_PROFILE_NODE);
-          await expect(state(storage)).resolves.toMatchObject({ start: 40, tail: 40, rows: 40 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 44, tail: 44, rows: 44 });
           await expect(readGets(storage)).resolves.toBeLessThan(stalled);
         });
 
         test("deletes plus a host change: the drain folds the deletes and rows shrink to the live set", async () => {
           const storage = await stallAtRows();
-          await commit(storage, inserts(16, 26));
+          await commit(storage, inserts(20, 30));
           await commit(
             storage,
             Array.from({ length: 20 }, (_, i) => ({ op: "D" as const, i })),
@@ -278,10 +323,10 @@ describe("main-10: fold stall (current behavior)", () => {
             maxFoldEntriesPerPass: PASS,
           };
           await expect(drain(storage, paidish)).resolves.toBe(6);
-          await expect(state(storage)).resolves.toMatchObject({ start: 46, tail: 46, rows: 6 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 50, tail: 50, rows: 10 });
         });
 
-        test("an oversized intermediate prefix blocks the shrink behind it; a larger E drains through to the shrunk result", async () => {
+        test("an oversized intermediate prefix blocks the shrink behind it; E at the peak drains through to the shrunk result", async () => {
           const storage = await fresh();
           await commit(storage, inserts(0, 10));
           await drain(storage, SMALL);
@@ -292,31 +337,13 @@ describe("main-10: fold stall (current behavior)", () => {
             Array.from({ length: 15 }, (_, i) => ({ op: "D" as const, i: 10 + i })),
           );
           await drain(storage, SMALL);
-          // Folds land at rows 15 and 20, then rows 20 + PASS > E closes the
-          // gate while the 15 shrinking deletes (and 5 inserts) wait behind it.
+          // Folds stop at rows = E; the 21st insert heads the tail, so the 15
+          // shrinking deletes (and 4 more inserts) wait behind it.
           await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 40, rows: 20 });
 
-          // E equal to the peak (25) is not enough: the gate wants peak + PASS
-          // of headroom, so the fold lands the 25-row prefix and stops again.
+          // E equal to the peak (25) is enough: every prefix stays within it.
           await drain(storage, { ...SMALL, maxFoldRows: 25 });
-          await expect(state(storage)).resolves.toMatchObject({ start: 25, tail: 40, rows: 25 });
-
-          await drain(storage, { ...SMALL, maxFoldRows: 30 });
           await expect(state(storage)).resolves.toMatchObject({ start: 40, tail: 40, rows: 10 });
-        });
-
-        test("a smaller per-pass setting reopens the gate only up to E, then stalls again", async () => {
-          const storage = await stallAtRows(); // rows 16: 16 + 5 > 20
-          await commit(storage, inserts(16, 40));
-
-          const pass4: MaintenanceProfile = { ...SMALL, maxFoldEntriesPerPass: 4 };
-          await tick(storage, pass4);
-          await expect(state(storage)).resolves.toMatchObject({ start: 20, rows: 20 });
-
-          // rows 20: even a 1-entry pass is over E, so the fold is stuck for good.
-          const pass1: MaintenanceProfile = { ...SMALL, maxFoldEntriesPerPass: 1 };
-          await expect(drain(storage, pass1)).resolves.toBe(0);
-          await expect(state(storage)).resolves.toMatchObject({ start: 20, tail: 40, rows: 20 });
         });
 
         test("a bytes stall clears when C is raised (profile or BAERLY_MAINTENANCE_MAX_FOLD_BYTES arg) and the tail drains", async () => {
@@ -335,9 +362,9 @@ describe("main-10: fold stall (current behavior)", () => {
 
         test("a rows stall clears under a larger host profile (node), which drains the tail in one pass", async () => {
           const storage = await stallAtRows();
-          await commit(storage, inserts(16, 40));
+          await commit(storage, inserts(20, 40));
           await tick(storage, SMALL);
-          await expect(state(storage)).resolves.toMatchObject({ start: 16 });
+          await expect(state(storage)).resolves.toMatchObject({ start: 20 });
 
           await expect(drain(storage, MAINTENANCE_PROFILE_NODE)).resolves.toBe(1);
           await expect(state(storage)).resolves.toMatchObject({ start: 40, rows: 40 });
@@ -346,7 +373,7 @@ describe("main-10: fold stall (current behavior)", () => {
 
         test("returning to the small host after a larger host folded past E leaves the bucket stalled (stored rows > E)", async () => {
           const storage = await stallAtRows();
-          await commit(storage, inserts(16, 40));
+          await commit(storage, inserts(20, 40));
           await drain(storage, MAINTENANCE_PROFILE_NODE);
           await commit(storage, inserts(40, 45));
           await expect(drain(storage, SMALL)).resolves.toBe(0);

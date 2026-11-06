@@ -403,7 +403,7 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
     // Close the cf-free rows arm on the stored snapshot.
     const got = (await storage.get(KEY(tenant)))!;
     const cur = JSON.parse(new TextDecoder().decode(got.body)) as Record<string, unknown>;
-    cur["snapshot_rows"] = MAINTENANCE_PROFILE_CF_FREE.maxFoldRows;
+    cur["snapshot_rows"] = MAINTENANCE_PROFILE_CF_FREE.maxFoldRows + 1;
     await storage.put(KEY(tenant), new TextEncoder().encode(JSON.stringify(cur)), {
       contentType: "application/json",
     });

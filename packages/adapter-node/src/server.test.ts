@@ -649,7 +649,7 @@ describe("createFetchHandler", () => {
       storage,
       key,
       logStateCurrentJson({
-        snapshot_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows,
+        snapshot_rows: MAINTENANCE_PROFILE_NODE.maxFoldRows + 1,
         mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES,
       }),
     );

@@ -628,7 +628,7 @@ describe("compact", () => {
     expect(afterRaw!.body).toEqual(beforeRaw!.body);
   });
 
-  test("defers on the tiny-doc case when snapshot rows exceed ceilingEntries", async () => {
+  test("folds the longest prefix within ceilingEntries on the tiny-doc case", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new Writer({ storage: s, currentJsonKey: KEY });
@@ -640,40 +640,66 @@ describe("compact", () => {
         body: { _id: `d${i}` }, // tiny docs — bytes are small, rows are many
       });
     }
-    const beforeRaw = await s.get(KEY);
     const res = await compact({ storage: s, currentJsonKey: KEY }, {
       minEntriesToCompact: 5,
       maxEntriesPerRun: 20,
       ceilingBytes: 1_000_000, // bytes fit
-      ceilingEntries: 5, // 20 rows > 5 → defer on the rows axis
+      ceilingEntries: 5, // the 6th insert would make 6 rows → stop before it
     } as InternalCompactOptions);
-    expect(res).toMatchObject({ written: false, deferred: true });
-    const afterRaw = await s.get(KEY);
-    expect(afterRaw!.body).toEqual(beforeRaw!.body);
+    expect(res).toMatchObject({ written: true, entriesFolded: 5, logSeqStartAfter: 5 });
+    const cur = (await readCurrentJson(s, KEY))!.json;
+    expect(cur).toMatchObject({ log_seq_start: 5, snapshot_rows: 5 });
+    const map = await loadSnapshotAsMap(s, res.newSnapshotKey!, COLL);
+    expect(map.size).toBe(5);
   });
 
-  test("a rebuild defer reports the tripped dimension and rebuilt size, and leaves the metric to the caller", async () => {
+  test("at ceilingEntries, updates and deletes fold and only a row-adding entry stops the prefix", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new Writer({ storage: s, currentJsonKey: KEY });
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 5; i++) {
       await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
     }
-    const ctx = createObservabilityContext();
-    const res = await runWithContext(ctx, () =>
-      compact({ storage: s, currentJsonKey: KEY }, {
-        minEntriesToCompact: 5,
-        maxEntriesPerRun: 20,
-        ceilingBytes: 1,
-      } as InternalCompactOptions),
-    );
-    expect(res.skippedReason).toBe("deferred");
-    expect(res.deferral).toMatchObject({ dimension: "bytes", snapshotRows: 20 });
-    expect(res.deferral!.snapshotBytes).toBeGreaterThan(1);
-    // The write-tick runner owns the one deferral signal for both gates
-    // (maintenance.test.ts), so compact() itself counts nothing.
-    const snap = ctx.recorder.snapshot();
-    expect(snap.counters.filter((c) => c.name.startsWith("db.compaction.deferred"))).toEqual([]);
+    const opts = {
+      minEntriesToCompact: 1,
+      maxEntriesPerRun: 20,
+      ceilingEntries: 5,
+    } as InternalCompactOptions;
+    await compact({ storage: s, currentJsonKey: KEY }, opts);
+    // At 5 = ceiling: U holds, D frees a row, I refills it, then I would be 6.
+    await writer.commit({ op: "U", collection: COLL, docId: "d0", body: { _id: "d0", n: 1 } });
+    await writer.commit({ op: "D", collection: COLL, docId: "d1" });
+    await writer.commit({ op: "I", collection: COLL, docId: "d5", body: { _id: "d5" } });
+    await writer.commit({ op: "I", collection: COLL, docId: "d6", body: { _id: "d6" } });
+    await writer.commit({ op: "D", collection: COLL, docId: "d2" });
+    const res = await compact({ storage: s, currentJsonKey: KEY }, opts);
+    expect(res).toMatchObject({ written: true, entriesFolded: 3, logSeqStartAfter: 8 });
+    expect((await readCurrentJson(s, KEY))!.json).toMatchObject({ snapshot_rows: 5 });
+  });
+
+  test("defers without a PUT when the first entry would add a row at ceilingEntries", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 6; i++) {
+      await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
+    }
+    const opts = {
+      minEntriesToCompact: 1,
+      maxEntriesPerRun: 20,
+      ceilingEntries: 5,
+    } as InternalCompactOptions;
+    await compact({ storage: s, currentJsonKey: KEY }, opts);
+    const beforeRaw = await s.get(KEY);
+    const stored = (await readCurrentJson(s, KEY))!.json;
+    const res = await compact({ storage: s, currentJsonKey: KEY }, opts);
+    expect(res).toMatchObject({
+      written: false,
+      skippedReason: "deferred",
+      entriesFolded: 0,
+      deferral: { dimension: "rows", snapshotRows: 5, snapshotBytes: stored.snapshot_bytes },
+    });
+    expect((await s.get(KEY))!.body).toEqual(beforeRaw!.body);
   });
 
   test.each([
@@ -703,6 +729,56 @@ describe("compact", () => {
       expect((await s.get(KEY))!.body).toEqual(beforeRaw!.body);
     },
   );
+
+  test("a stored snapshot over ceilingEntries folds once its deletes bring it back within", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 8; i++) {
+      await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
+    }
+    // Folded on a "larger host": no row ceiling.
+    await compact({ storage: s, currentJsonKey: KEY }, {
+      minEntriesToCompact: 1,
+    } as InternalCompactOptions);
+    const small = { minEntriesToCompact: 1, ceilingEntries: 5 } as InternalCompactOptions;
+    await writer.commit({ op: "D", collection: COLL, docId: "d0" });
+    await expect(compact({ storage: s, currentJsonKey: KEY }, small)).resolves.toMatchObject({
+      skippedReason: "deferred",
+      deferral: { dimension: "rows", snapshotRows: 7 },
+    });
+    await writer.commit({ op: "D", collection: COLL, docId: "d1" });
+    await writer.commit({ op: "D", collection: COLL, docId: "d2" });
+    await expect(compact({ storage: s, currentJsonKey: KEY }, small)).resolves.toMatchObject({
+      written: true,
+      entriesFolded: 3,
+    });
+    expect((await readCurrentJson(s, KEY))!.json).toMatchObject({ snapshot_rows: 5 });
+  });
+
+  test("a rebuild defer reports the tripped dimension and rebuilt size, and leaves the metric to the caller", async () => {
+    const s = new MemoryStorage();
+    await bootstrap(s, KEY);
+    const writer = new Writer({ storage: s, currentJsonKey: KEY });
+    for (let i = 0; i < 20; i++) {
+      await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
+    }
+    const ctx = createObservabilityContext();
+    const res = await runWithContext(ctx, () =>
+      compact({ storage: s, currentJsonKey: KEY }, {
+        minEntriesToCompact: 5,
+        maxEntriesPerRun: 20,
+        ceilingBytes: 1,
+      } as InternalCompactOptions),
+    );
+    expect(res.skippedReason).toBe("deferred");
+    expect(res.deferral).toMatchObject({ dimension: "bytes", snapshotRows: 20 });
+    expect(res.deferral!.snapshotBytes).toBeGreaterThan(1);
+    // The write-tick runner owns the one deferral signal for both gates
+    // (maintenance.test.ts), so compact() itself counts nothing.
+    const snap = ctx.recorder.snapshot();
+    expect(snap.counters.filter((c) => c.name.startsWith("db.compaction.deferred"))).toEqual([]);
+  });
 
   test("both ceilings undefined rebuild an arbitrarily large snapshot (unbounded reconcile)", async () => {
     const s = new MemoryStorage();
