@@ -50,6 +50,13 @@ describe("BaerlyError", () => {
     expect(e.resolution).toBe("do X");
   });
 
+  test("sets retryAfter when provided", () => {
+    const e = new BaerlyError("MaintenancePending", "behind", { retryAfter: 5 });
+    expect(e.retryAfter).toBe(5);
+    expect(e.retriable).toBe(true);
+    expect(new BaerlyError("MaintenancePending", "behind").retryAfter).toBeUndefined();
+  });
+
   test("leaves resolution undefined when not provided", () => {
     expect(new BaerlyError("InvalidConfig", "bad").resolution).toBeUndefined();
   });
@@ -86,8 +93,12 @@ describe("isWriteConflict", () => {
 });
 
 describe("retriable classification", () => {
-  test("RETRIABLE_CODES is exactly {NetworkError, WriteConflict}", () => {
-    expect([...RETRIABLE_CODES].toSorted()).toEqual(["NetworkError", "WriteConflict"]);
+  test("RETRIABLE_CODES is exactly {MaintenancePending, NetworkError, WriteConflict}", () => {
+    expect([...RETRIABLE_CODES].toSorted()).toEqual([
+      "MaintenancePending",
+      "NetworkError",
+      "WriteConflict",
+    ]);
   });
 
   test("every code's default retriable value", () => {
@@ -102,6 +113,7 @@ describe("retriable classification", () => {
       AlreadyExists: false,
       AmbiguousCommit: false,
       CapacityExceeded: false,
+      MaintenancePending: true,
       Unauthorized: false,
       NotFound: false,
       PayloadTooLarge: false,

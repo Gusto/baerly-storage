@@ -15,6 +15,7 @@ describe("errorToExitCode", () => {
       AlreadyExists: 3,
       AmbiguousCommit: 3,
       CapacityExceeded: 2,
+      MaintenancePending: 2,
       Unauthorized: 2,
       NotFound: 2,
       PayloadTooLarge: 2,
