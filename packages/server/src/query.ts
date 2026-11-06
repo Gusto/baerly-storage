@@ -372,6 +372,12 @@ interface FoldedState {
   readonly tail: readonly LogEntry[];
 }
 
+/** What {@link admitWrites} hands back to the verb. */
+interface Admission {
+  readonly force: boolean;
+  readonly warn: () => void;
+}
+
 /**
  * Admit `writes` against the serving host's fold ceiling before any commit
  * (see `./capacity.ts`). Throws `CapacityExceeded` when they would grow the
@@ -382,10 +388,12 @@ interface FoldedState {
  * `BAERLY_MAINTENANCE_DISABLE` nothing can fold, so the refusal stays
  * `CapacityExceeded`.
  *
- * Returns whether the verb's commit should force its write tick: the
- * writes leave the collection at its growth-refusal point. With no folded
- * state (an unprovisioned collection, or an index walk that matched
- * nothing), the collection is empty or nothing is written.
+ * Returns `force`, whether the verb's commit should force its write tick
+ * (the writes leave the collection at its growth-refusal point), and
+ * `warn`, which the verb calls once its commits have landed to stamp the
+ * early capacity warning (G7) on the canonical line. With no folded state
+ * (an unprovisioned collection, or an index walk that matched nothing),
+ * the collection is empty or nothing is written.
  *
  * @param read The pre-commit read: its folded state, and `tail`, the
  *   first empty log slot it folded through.
@@ -394,10 +402,10 @@ const admitWrites = async (
   ctx: CollectionReadContext,
   read: { readonly folded?: FoldedState; readonly tail: number },
   writes: readonly PlannedWrite[],
-): Promise<boolean> => {
+): Promise<Admission> => {
   const { folded } = read;
   if (folded === undefined) {
-    return false;
+    return { force: false, warn: () => {} };
   }
   const decision = capacityDecision({
     collection: ctx.collectionName,
@@ -408,10 +416,16 @@ const admitWrites = async (
     ceilings: currentFoldCeilings(),
   });
   if (decision.refusal === undefined) {
-    if (decision.warning !== undefined) {
-      noteCapacityWarning(decision.warning);
-    }
-    return decision.pressure;
+    // Stamped by the verb once its commit lands, not here: a write that
+    // throws carries no warning.
+    return {
+      force: decision.pressure,
+      warn: () => {
+        if (decision.warning !== undefined && writes.length > 0) {
+          noteCapacityWarning(decision.warning);
+        }
+      },
+    };
   }
   if (decision.foldFreesRoom && getCurrentContext()?.maintenance?.disabled !== true) {
     // Nothing committed, so the tick's GC cadence window is empty and the
@@ -548,7 +562,9 @@ export const runInsert = async <T extends DocumentData>(
     }
     throw insertAlreadyExists(ctx.collectionName, _id);
   }
-  const forceMaintenance = await admitWrites(ctx, existing, [{ op: "I", docId: _id, after: body }]);
+  const { force: forceMaintenance, warn } = await admitWrites(ctx, existing, [
+    { op: "I", docId: _id, after: body },
+  ]);
 
   // Single-attempt at the verb level; log-create contention is resolved
   // inside `Writer.commit()`, and its errors surface unchanged. The
@@ -563,6 +579,7 @@ export const runInsert = async <T extends DocumentData>(
     insertGuard: { absentBelowSeq: existing.tail, replayIdentical: mintedId !== undefined },
     ...(forceMaintenance && { forceMaintenance }),
   });
+  warn();
 
   return { _id };
 };
@@ -706,7 +723,7 @@ const runUpdate = async <T extends DocumentData>(
     }
     planned.push({ docId, before: doc as DocumentData, merged });
   }
-  const forceMaintenance = await admitWrites(
+  const { force: forceMaintenance, warn } = await admitWrites(
     ctx,
     read,
     planned.map((p) => ({ op: "U", docId: p.docId, after: p.merged, before: p.before })),
@@ -725,6 +742,7 @@ const runUpdate = async <T extends DocumentData>(
     });
     modified++;
   }
+  warn();
   return { modified };
 };
 
@@ -779,7 +797,7 @@ export const runReplaceById = async <T extends DocumentData>(
       verb: "replace",
     });
   }
-  const forceMaintenance = await admitWrites(ctx, read, [
+  const { force: forceMaintenance, warn } = await admitWrites(ctx, read, [
     { op: "U", docId: id, after: body, before: current.doc as DocumentData },
   ]);
   await writerFor(ctx).commit({
@@ -789,6 +807,7 @@ export const runReplaceById = async <T extends DocumentData>(
     body,
     ...(forceMaintenance && { forceMaintenance }),
   });
+  warn();
 };
 
 /**
@@ -821,7 +840,7 @@ const runDelete = async <T extends DocumentData>(
 ): Promise<{ deleted: number }> => {
   const read = await runReadRows<T>(ctx, state);
   const docIds = read.rows.map((row) => storedRowId(row, "delete"));
-  const forceMaintenance = await admitWrites(
+  const { force: forceMaintenance, warn } = await admitWrites(
     ctx,
     read,
     docIds.map((docId) => ({ op: "D", docId })),
@@ -837,6 +856,7 @@ const runDelete = async <T extends DocumentData>(
     });
     deleted++;
   }
+  warn();
   return { deleted };
 };
 

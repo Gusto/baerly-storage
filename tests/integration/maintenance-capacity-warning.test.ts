@@ -341,6 +341,42 @@ describe("main-10 Task 5: early capacity warning and its state (G7)", () => {
         }
       });
 
+      test("W6: a write whose commit throws carries no warning", async () => {
+        const storage = await folded(17);
+        const failing: Storage = {
+          get: (k, o) => storage.get(k, o),
+          put: (k, b, o) => {
+            if (k.includes("/log/")) {
+              throw new Error("injected commit failure");
+            }
+            return storage.put(k, b, o);
+          },
+          delete: (k, o) => storage.delete(k, o),
+          list: (p, o) => storage.list(p, o),
+        } as Storage;
+        const seen = await run(failing, {}, insertDoc(17));
+        expect(seen.outcome).not.toBe("accepted");
+        expect(seen.warning).toBeUndefined();
+        // The same write on a healthy bucket does warn.
+        const ok = await run(storage, {}, insertDoc(17));
+        expect(ok.warning).toContain("18 of 20 rows");
+      });
+
+      test("W7: an update or delete that matches no rows writes nothing and does not warn", async () => {
+        const storage = await folded(19);
+        await expect(run(storage, {}, (c) => c.update(id(99), { n: 1 }))).resolves.toMatchObject({
+          outcome: "accepted",
+          warning: undefined,
+        });
+        await expect(run(storage, {}, del(99))).resolves.toMatchObject({
+          outcome: "accepted",
+          warning: undefined,
+        });
+        await expect(
+          run(storage, {}, (c) => c.where({ n: 12345 }).update({ n: 2 })),
+        ).resolves.toMatchObject({ outcome: "accepted", warning: undefined });
+      });
+
       test("W5: a fold landing between the request's current.json read and its decision changes no verdict or text", async () => {
         const baseline = await run(await withTail(16, 2), {}, touch(0));
         expect(baseline.warning).toContain("18 of 20 rows");
@@ -364,16 +400,10 @@ describe("main-10 Task 5: early capacity warning and its state (G7)", () => {
         } as Storage;
         const seen = await run(racing, {}, touch(0));
         expect(fired).toBe(true);
-        if (seen.outcome === "accepted") {
-          expect(seen.warning).toBe(baseline.warning);
-        } else {
-          // A read that straddles a fold may fail retriably; it must never mis-decide.
-          expect((seen.error as { retriable?: boolean }).retriable).toBe(true);
-          await expect(run(storage, {}, touch(0))).resolves.toMatchObject({
-            outcome: "accepted",
-            warning: baseline.warning,
-          });
-        }
+        // The fold only moves the logical rows' home from tail to snapshot: the
+        // request is admitted and carries the same text, never a retriable error.
+        expect(seen.outcome).toBe("accepted");
+        expect(seen.warning).toBe(baseline.warning);
       });
     });
   }
