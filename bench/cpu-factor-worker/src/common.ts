@@ -16,12 +16,19 @@ import {
   logObjectKey,
   MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
   MAINTENANCE_MAX_FOLD_ROWS,
+  MAINTENANCE_PROFILE_NODE,
   MemoryStorage,
 } from "@baerly/protocol";
 import { compact, type InternalCompactOptions } from "../../../packages/server/src/compactor.ts";
 import { foldChunkedSnapshotReference } from "../../../packages/server/src/chunked-snapshot-reference.ts";
 import { Db } from "../../../packages/server/src/db.ts";
 import { CLOUDFLARE_FREE_TIER } from "../../../packages/server/src/maintenance.ts";
+// The same source module `db.ts` imports, so the seeding context reaches the
+// writer; `@baerly/server/observability` could resolve to another instance.
+import {
+  createObservabilityContext,
+  runWithContext,
+} from "../../../packages/server/src/observability/context.ts";
 import { loadSnapshotAsMap } from "../../../packages/server/src/snapshot.ts";
 import type { FixtureSpec } from "./cells.ts";
 
@@ -60,8 +67,26 @@ const drain = async (storage: MemoryStorage) => {
 const readHead = async (storage: MemoryStorage) =>
   decodeJsonBytes<CurrentJson>((await storage.get(KEY))!.body);
 
+/**
+ * The seeding request's maintenance context: Workers Free's profile with the
+ * Node byte ceiling `C`. The subject fixtures (0.5 MiB and 1 MiB) are larger
+ * than Free's 512 KiB `C`, so under Free's own ceiling the capacity refusal
+ * would reject the inserts that build them. The Worker measures reads and folds
+ * on those bytes; the build step is a harness, not the system under test. The
+ * rows ceiling `E` stays Free's, so a fixture that outgrows it still fails here.
+ *
+ * The same `C` also lets the seeding inserts' write ticks fold the subject
+ * snapshots inline, which Free's ceiling would defer to `drain()`. The built
+ * fixture is the same either way: `drain()` folds to quiescence before the
+ * tail is added.
+ */
+const SEEDING_CONTEXT = { maintenance: { maxFoldBytes: MAINTENANCE_PROFILE_NODE.maxFoldBytes } };
+
 /** Build-time only (Node): seed, fold to quiescence, then leave a 15-entry tail. */
-export const buildFixture = async (spec: FixtureSpec): Promise<Fixture> => {
+export const buildFixture = async (spec: FixtureSpec): Promise<Fixture> =>
+  runWithContext(createObservabilityContext(SEEDING_CONTEXT), () => seedFixture(spec));
+
+const seedFixture = async (spec: FixtureSpec): Promise<Fixture> => {
   const rand = makeRand();
   const storage = new MemoryStorage();
   const notes = Db.create({ storage, app: "g", tenant: "t" }).collection("notes");
