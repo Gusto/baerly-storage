@@ -1,5 +1,8 @@
+import { BaerlyError } from "@baerly/protocol";
 import { afterEach, expect, test, vi } from "vitest";
+import { MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS } from "../request-retry.ts";
 import {
+  pollRetryDelay,
   retryDelay,
   SUBSCRIPTION_RETRY_INITIAL_MILLIS,
   SUBSCRIPTION_RETRY_MAX_MILLIS,
@@ -52,4 +55,20 @@ test("every unstubbed draw lands in the top half of its bound", () => {
       expect(delay, `attempt ${attempt}`).toBeLessThanOrEqual(bound);
     }
   }
+});
+
+test("pollRetryDelay waits the longer of backoff and a MaintenancePending hint, clamped", () => {
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const pending = (retryAfter: number | undefined) =>
+    new BaerlyError("MaintenancePending", "m", { retryAfter });
+  expect(pollRetryDelay(0, pending(2))).toBe(2_000);
+  // Attempt 5's backoff floor (4 000 ms) already exceeds a 1 s hint.
+  expect(pollRetryDelay(5, pending(1))).toBe(retryDelay(5));
+  expect(pollRetryDelay(0, pending(3_600))).toBe(MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS);
+  expect(pollRetryDelay(0, pending(undefined))).toBe(retryDelay(0));
+  // Only MaintenancePending carries a hint worth honouring.
+  expect(pollRetryDelay(0, new BaerlyError("NetworkError", "n", { retryAfter: 9 }))).toBe(
+    retryDelay(0),
+  );
+  expect(pollRetryDelay(0, new TypeError("fetch failed"))).toBe(retryDelay(0));
 });

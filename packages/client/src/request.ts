@@ -2,6 +2,8 @@ import { BaerlyError, isBaerlyErrorCode } from "@baerly/protocol";
 import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract.ts";
 import {
   backoffMillis,
+  MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS,
+  MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS,
   parseRetryAfterMillis,
   REQUEST_RETRY_MAX_ATTEMPTS,
   REQUEST_RETRY_MAX_DELAY_MILLIS,
@@ -19,7 +21,7 @@ export interface RequestOptions {
   readonly path: string;
   readonly body?: unknown;
   readonly signal?: AbortSignal;
-  /** `false` makes a `GET` single-attempt, for callers that own their own retry loop. */
+  /** `false` makes the request single-attempt, for callers that own their own retry loop. */
   readonly retry?: false;
 }
 
@@ -80,9 +82,15 @@ const isAbortError = (error: unknown): boolean =>
  * message carries over: `resolution`, `issues` and `_id` belong to the
  * undecoded code and would contradict the synthesized one, so the
  * whole wire error rides on `cause` instead.
+ *
+ * A `MaintenancePending` error's `retryAfter` is the longer of the
+ * envelope's `retryAfter` and the `Retry-After` header (`hintMillis`), in
+ * seconds, so a caller that sees only the error (the React subscription
+ * pool) still honours the header.
  */
 const decodeFailure = async (
   res: Response,
+  hintMillis: number | undefined,
 ): Promise<{ readonly error: BaerlyError; readonly enveloped: boolean }> => {
   let envelope: HttpErrorEnvelope | undefined;
   try {
@@ -95,6 +103,11 @@ const decodeFailure = async (
   const wire = envelope?.error;
   const wireCode = wire?.code;
   if (wire !== undefined && isBaerlyErrorCode(wireCode)) {
+    const wireAfter = wire.retryAfter;
+    const hints = [
+      ...(typeof wireAfter === "number" && wireAfter >= 0 ? [wireAfter] : []),
+      ...(hintMillis === undefined ? [] : [hintMillis / 1000]),
+    ];
     return {
       enveloped: true,
       error: new BaerlyError(wireCode, wire.message ?? `HTTP ${res.status}`, {
@@ -102,7 +115,8 @@ const decodeFailure = async (
         status: res.status,
         resolution: wire.resolution,
         _id: wire._id,
-        retryAfter: wire.retryAfter,
+        retryAfter:
+          wireCode === "MaintenancePending" && hints.length > 0 ? Math.max(...hints) : undefined,
       }),
     };
   }
@@ -138,13 +152,29 @@ const decodeFailure = async (
  * - 200 on `GET /v1/since` → raw `SinceResponse` as T (no `data` unwrap).
  * - 200 on any other `GET` → `HttpOkEnvelope<T>.data`.
  *
- * `GET` alone is retried: up to `REQUEST_RETRY_MAX_ATTEMPTS` attempts
- * after a thrown `fetch` or an envelope-less transient failure (5xx, 408,
- * 429), with jittered backoff or the server's `Retry-After` (a hint above
- * `REQUEST_RETRY_MAX_DELAY_MILLIS` ends the retries instead). An enveloped
- * error is never retried — the server adapter already retried it — and an
- * abort stops at once. The final failure is thrown unchanged. Non-`GET`
- * requests make exactly one attempt.
+ * Two failure classes are retried, each up to its attempt cap, after a
+ * wait of the server's `Retry-After` or else a jittered backoff. A hint
+ * above the class's ceiling ends the retries instead of being clamped.
+ * An abort stops at once, and the final failure is thrown unchanged.
+ * `retry: false` disables both.
+ *
+ * - **Transport, `GET` only** (`REQUEST_RETRY_MAX_ATTEMPTS`): a thrown
+ *   `fetch` or an envelope-less 5xx, 408 or 429. A non-`GET` is sent once
+ *   for these (E3). An enveloped `NetworkError` is never retried: the
+ *   server adapter already retried it. No other enveloped code is
+ *   retried, bar `MaintenancePending` below.
+ * - **`MaintenancePending`, every verb**
+ *   (`MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS`): the server's backpressure
+ *   code, waited out for `error.retryAfter`. The server refuses with it
+ *   only before the write's `log/<seq>` create, so nothing committed, and
+ *   each client write is one row, so the resend cannot apply anything
+ *   twice. The resend carries the same serialized body, so an auto-ID
+ *   insert keeps its minted `_id` and `mintedId`: even if the first
+ *   attempt had committed, the resend would replay its `201`, never add a
+ *   row. A caller-chosen `_id` gets `AlreadyExists` in that case, also
+ *   never a second row. `update` is an RFC 7386 merge patch, which is
+ *   idempotent on the row it lands on; `replace` and `delete` are
+ *   idempotent outright.
  */
 export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Promise<T> => {
   const headers = new Headers(ctx.headers);
@@ -152,11 +182,11 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
     headers.set("content-type", "application/json");
   }
   const body = opts.body === undefined ? undefined : JSON.stringify(opts.body);
-  const maxAttempts =
-    opts.method === "GET" && opts.retry !== false ? REQUEST_RETRY_MAX_ATTEMPTS : 1;
+  const retry = opts.retry !== false;
+  const transportAttempts = opts.method === "GET" && retry ? REQUEST_RETRY_MAX_ATTEMPTS : 1;
+  const pendingAttempts = retry ? MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS : 1;
 
   for (let attempt = 1; ; attempt++) {
-    const retriesLeft = attempt < maxAttempts;
     let res: Response;
     try {
       // A fresh `Request` per attempt: a `Request` is single-use.
@@ -169,7 +199,7 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
         }),
       );
     } catch (error) {
-      if (!retriesLeft || opts.signal?.aborted === true || isAbortError(error)) {
+      if (attempt >= transportAttempts || opts.signal?.aborted === true || isAbortError(error)) {
         throw error;
       }
       await sleep(backoffMillis(attempt - 1), opts.signal);
@@ -189,17 +219,27 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
       return (await parseSuccessfulJson(res, opts)) as T;
     }
 
-    // 4xx / 5xx — `HttpErrorEnvelope`. Parse + throw, or retry a GET.
+    // 4xx / 5xx — `HttpErrorEnvelope`. Parse + throw, or retry.
     if (!res.ok) {
       const hintMillis = parseRetryAfterMillis(res.headers.get("retry-after"));
-      const { error, enveloped } = await decodeFailure(res);
-      if (!retriesLeft || enveloped || error.code !== "NetworkError") {
+      const { error, enveloped } = await decodeFailure(res, hintMillis);
+      const pending = enveloped && error.code === "MaintenancePending";
+      const retriable = pending
+        ? attempt < pendingAttempts
+        : !enveloped && error.code === "NetworkError" && attempt < transportAttempts;
+      if (!retriable) {
         throw error;
       }
-      if (hintMillis !== undefined && hintMillis > REQUEST_RETRY_MAX_DELAY_MILLIS) {
+      // A pending error's `retryAfter` already folds in the header.
+      const pendingMillis = error.retryAfter === undefined ? undefined : error.retryAfter * 1000;
+      const waitMillis = pending ? pendingMillis : hintMillis;
+      const ceiling = pending
+        ? MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS
+        : REQUEST_RETRY_MAX_DELAY_MILLIS;
+      if (waitMillis !== undefined && waitMillis > ceiling) {
         throw error;
       }
-      await sleep(hintMillis ?? backoffMillis(attempt - 1), opts.signal);
+      await sleep(waitMillis ?? backoffMillis(attempt - 1), opts.signal);
       continue;
     }
 

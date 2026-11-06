@@ -785,7 +785,10 @@ export const CAPACITY_WARNING_HEADER: string = "Baerly-Capacity-Warning";
  * it. A retry needs only to land after that, so the value is the smallest
  * non-zero `Retry-After` (RFC 9110 §10.2.3 delay-seconds is a whole
  * number). Each retry runs its own fold pass, so a longer backlog drains
- * across retries rather than within one delay.
+ * across retries rather than within one delay. The HTTP client's caps on
+ * those retries are `MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS` and
+ * `MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS` in
+ * `packages/client/src/request-retry.ts`.
  */
 export const MAINTENANCE_PENDING_RETRY_AFTER_SECONDS: number = 1;
 
