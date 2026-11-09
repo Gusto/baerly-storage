@@ -20,7 +20,7 @@
 # replace the tag with `@sha256:...`.
 
 # ---- Build stage ----
-FROM node:24-bookworm-slim AS build
+FROM 981889560161.dkr.ecr.us-west-2.amazonaws.com/library/node:24-bookworm-slim AS build
 WORKDIR /app
 
 RUN corepack enable
@@ -39,7 +39,7 @@ RUN pnpm build
 RUN pnpm install --prod --frozen-lockfile
 
 # ---- Runtime stage ----
-FROM gcr.io/distroless/nodejs24-debian12 AS runtime
+FROM 981889560161.dkr.ecr.us-west-2.amazonaws.com/distroless/nodejs24-debian12 AS runtime
 WORKDIR /app
 
 # Distroless's `nonroot` user is UID 65532. We run as that.

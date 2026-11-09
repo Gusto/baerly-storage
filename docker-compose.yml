@@ -2,7 +2,7 @@ name: baerly-storage
 
 services:
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: 981889560161.dkr.ecr.us-west-2.amazonaws.com/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data/minio --console-address :9090
     ports:
       - ${BAERLY_MINIO_HOST_PORT:-9102}:9000
@@ -17,7 +17,7 @@ services:
       retries: 30
 
   toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.12.0
+    image: 981889560161.dkr.ecr.us-west-2.amazonaws.com/shopify/toxiproxy:2.12.0
     command: ["-host=0.0.0.0", "-config=/etc/toxiproxy/config.json"]
     ports:
       - ${BAERLY_TOXIPROXY_HOST_PORT:-9104}:9104
@@ -36,7 +36,7 @@ services:
       retries: 20
 
   postgres:
-    image: postgres:16.13-alpine
+    image: 981889560161.dkr.ecr.us-west-2.amazonaws.com/library/postgres:16.13-alpine
     # Host port 5433 to avoid clashing with a local dev Postgres on 5432.
     ports:
       - ${BAERLY_POSTGRES_HOST_PORT:-5433}:5432
