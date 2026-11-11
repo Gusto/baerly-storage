@@ -55,9 +55,11 @@ import {
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import {
   type CapacityDecision,
+  type CapacityWarning,
   capacityDecision,
   currentFoldCeilings,
   maintenancePending,
+  noteCapacityWarning,
   type PlannedWrite,
 } from "./capacity.ts";
 import { markCallerFacing } from "./caller-facing-error.ts";
@@ -414,6 +416,13 @@ interface Admission {
   next(): CommitAdmission;
   /** Record that the next planned write committed as `entry`. */
   committed(entry: LogEntry): void;
+  /**
+   * Stamp the early capacity warning (G7) on the canonical line, from the
+   * latest decision: the pre-commit one, or the last commit-time re-check.
+   * The verb calls it once its commits have landed, so a write that
+   * throws carries no warning.
+   */
+  warn(): void;
 }
 
 /** A never-provisioned collection: no snapshot, nothing folded. */
@@ -451,6 +460,7 @@ const admitWrites = async (
 ): Promise<Admission> => {
   const { folded } = read;
   let forceMaintenance = false;
+  let warning: CapacityWarning | undefined;
   if (folded !== undefined) {
     const decision = capacityDecision({
       collection: ctx.collectionName,
@@ -464,6 +474,7 @@ const admitWrites = async (
       return await throwRefusal(ctx, decision, read.tail);
     }
     forceMaintenance = decision.pressure;
+    warning = decision.warning;
   }
   const head = folded?.head ?? EMPTY_HEAD;
   const base = folded?.base ?? new Map<string, DocumentData>();
@@ -494,6 +505,7 @@ const admitWrites = async (
     }
     // Re-derive the forced tick (G6) from the state the commit lands on.
     // It rides the batch's last commit only, as the pre-commit flag does.
+    warning = decision.warning;
     return decision.pressure && pending === writes.length - 1;
   };
   return {
@@ -506,6 +518,11 @@ const admitWrites = async (
       seen.push(...lastWindow, entry);
       fromSeq = entry.seq + 1;
       pending++;
+    },
+    warn: () => {
+      if (warning !== undefined && writes.length > 0) {
+        noteCapacityWarning(warning);
+      }
     },
   };
 };
@@ -672,6 +689,7 @@ export const runInsert = async <T extends DocumentData>(
     admission: admission.next(),
     ...(admission.forceMaintenance && { forceMaintenance: true }),
   });
+  admission.warn();
 
   return { _id };
 };
@@ -839,6 +857,7 @@ const runUpdate = async <T extends DocumentData>(
     admission.committed(entry);
     modified++;
   }
+  admission.warn();
   return { modified };
 };
 
@@ -904,6 +923,7 @@ export const runReplaceById = async <T extends DocumentData>(
     admission: admission.next(),
     ...(admission.forceMaintenance && { forceMaintenance: true }),
   });
+  admission.warn();
 };
 
 /**
@@ -954,6 +974,7 @@ const runDelete = async <T extends DocumentData>(
     admission.committed(entry);
     deleted++;
   }
+  admission.warn();
   return { deleted };
 };
 

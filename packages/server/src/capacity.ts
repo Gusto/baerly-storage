@@ -19,6 +19,10 @@
  * writes. Nothing is persisted, so the refusal clears as soon as that
  * state changes.
  *
+ * An admitted write that leaves the collection within
+ * `CAPACITY_WARN_FRACTION` of that point carries a warning (G7), computed
+ * from the same state, so it too needs no persisted flag.
+ *
  * Near the ceiling the verbs also drive the fold (G6): an accepted write
  * that leaves the collection at its growth-refusal point forces its
  * write tick, and a refused growth write whose room the pending tail
@@ -29,6 +33,7 @@
 import {
   BaerlyError,
   CAPACITY_BYTES_MARGIN,
+  CAPACITY_WARN_FRACTION,
   CODE_RESOLUTIONS,
   MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
   MAINTENANCE_PROFILE_CF_FREE,
@@ -252,10 +257,75 @@ export const maintenancePending = (collection: string): BaerlyError =>
     },
   );
 
+/**
+ * An admitted write is approaching the growth-refusal point (G7). `used`
+ * and `limit` are in the named dimension: rows against `E`, or projected
+ * bytes against `C - CAPACITY_BYTES_MARGIN`.
+ */
+export interface CapacityWarning {
+  readonly dimension: "rows" | "bytes";
+  readonly used: number;
+  readonly limit: number;
+  /** The human text: the state and the app-side remedy, no host settings. */
+  readonly text: string;
+}
+
+/** Canonical-line field carrying {@link CapacityWarning.text}. */
+export const CAPACITY_WARNING_FIELD = "capacity_warning";
+
+/**
+ * The warning for a projection peaking at `peakRows` / `peakBytes`, or
+ * `undefined` while both dimensions sit under `CAPACITY_WARN_FRACTION` of
+ * their limits. The more-used dimension is reported. The text names the
+ * state and the app-side remedy only, like the refusal it precedes.
+ */
+const warningFor = (
+  peakRows: number,
+  peakBytes: number,
+  maxRows: number,
+  byteLimit: number,
+): CapacityWarning | undefined => {
+  const rowFraction = peakRows / maxRows;
+  const byteFraction = peakBytes / byteLimit;
+  const rows = rowFraction >= byteFraction;
+  const fraction = rows ? rowFraction : byteFraction;
+  // `!(x >= y)` rather than `x < y`: a NaN ceiling must not read as "room".
+  if (!(fraction >= CAPACITY_WARN_FRACTION) || !Number.isFinite(fraction)) {
+    return undefined;
+  }
+  const used = rows ? peakRows : peakBytes;
+  const limit = rows ? maxRows : byteLimit;
+  const percent = Math.floor(fraction * 100);
+  return {
+    dimension: rows ? "rows" : "bytes",
+    used,
+    limit,
+    text:
+      `this collection is at ${percent}% of what this host can hold (${used} of ${limit} ` +
+      `${rows ? "rows" : "bytes"}); inserts and growing updates will be refused at the limit. ` +
+      `Delete rows or shrink documents to make room, or export with baerly admin dump.`,
+  };
+};
+
+/**
+ * Stamp `warning` on the request's canonical line (and so the log record)
+ * under {@link CAPACITY_WARNING_FIELD}. The HTTP router copies the same
+ * text onto the write response. A no-op without a request context, as for
+ * any field setter.
+ */
+export const noteCapacityWarning = (warning: CapacityWarning): void => {
+  getCurrentContext()?.fields.set(CAPACITY_WARNING_FIELD, warning.text);
+};
+
 /** What {@link capacityDecision} decided for one batch of planned writes. */
 export type CapacityDecision =
   | {
       readonly refusal: undefined;
+      /**
+       * Set when the admitted writes leave the collection within
+       * `CAPACITY_WARN_FRACTION` of its refusal point (G7).
+       */
+      readonly warning?: CapacityWarning;
       /**
        * The verb forces its write tick (G6): the collection sits at its
        * growth-refusal point once these writes commit, and folding the
@@ -421,7 +491,12 @@ export const capacityDecision = (args: {
 
   const refused = firstRefusedGrowth(projection);
   if (refused === undefined) {
-    return { refusal: undefined, pressure: forcesTick(projection) };
+    const warning = warningFor(projection.peakRows, projection.peakBytes, maxRows, byteLimit);
+    return {
+      refusal: undefined,
+      pressure: forcesTick(projection),
+      ...(warning !== undefined && { warning }),
+    };
   }
   const { peakRows, peakBytes } = projection;
   const detail = !(peakRows < maxRows)

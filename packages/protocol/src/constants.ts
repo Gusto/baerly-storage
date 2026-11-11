@@ -753,6 +753,31 @@ export const NODE_MAINTENANCE_MAX_FOLD_ROWS: number = 65_536;
 export const CAPACITY_BYTES_MARGIN: number = 64;
 
 /**
+ * Fraction of a fold ceiling at which an admitted write starts carrying a
+ * capacity warning (main-10 G7). The warning fires when the projected
+ * snapshot, at its peak over the pending tail and the writes just
+ * admitted, holds at least this share of `E` rows or of the `C - margin`
+ * bytes the growth refusal compares against. It is a policy choice, not a
+ * measurement: 90% leaves roughly 200 rows of runway on Workers Free's
+ * 2,048-row `E`, enough for an app to react before the first
+ * `CapacityExceeded`, and about 10% of `C` in bytes. The warning is a
+ * pure function of `current.json` and the tail, so it clears the moment
+ * that state drops back under the threshold.
+ *
+ * @see packages/server/src/capacity.ts
+ */
+export const CAPACITY_WARN_FRACTION: number = 0.9;
+
+/**
+ * Response header an admitted write carries when it leaves the collection
+ * within {@link CAPACITY_WARN_FRACTION} of its host's growth-refusal point.
+ * The value is the warning text: it names the state and the app-side
+ * remedy only. The same text rides the canonical log line as
+ * `capacity_warning`. Absent when the collection has room.
+ */
+export const CAPACITY_WARNING_HEADER: string = "Baerly-Capacity-Warning";
+
+/**
  * `retryAfter` (seconds) on a `MaintenancePending` refusal (main-10 G6).
  * The refused write dispatches one bounded fold before it refuses, and
  * that fold finishes within the same invocation: inline before the
