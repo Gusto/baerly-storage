@@ -154,6 +154,12 @@ export interface SinceResponse {
  * | 503    | Maintenance is behind → `code:"MaintenancePending"` (retriable, message kept, `Retry-After` header and `retryAfter` seconds). |
  * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"` with a generic message. |
  * | 500    | Anything else → `code:"Internal"` with a generic message.         |
+ *
+ * A successful write (`POST` / `PATCH` / `PUT` / `DELETE`) that leaves its
+ * collection within 90% of the host's growth-refusal point also carries a
+ * `Baerly-Capacity-Warning` header whose value names the state and the
+ * app-side remedy. The body is unchanged; the header is absent while the
+ * collection has room.
  */
 export type HttpStatus =
   | 200
