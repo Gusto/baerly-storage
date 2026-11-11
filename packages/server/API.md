@@ -810,7 +810,7 @@ options.
   "path": "/v1/c/tickets",
   "status": 200,
   "duration_ms": 14.207,
-  "outcome": "ok",
+  "outcome": "committed",
   "db.storage.class_a_ops_total": 3,
   "db.storage.class_b_ops_total": 1,
   "db.write.class_a_ops_per_logical_write_sum": 3
@@ -825,7 +825,7 @@ options.
 | `method` / `path` / `status`                   | HTTP request line + response code.                                                   |
 | `cache_status`                                 | `"hit" \| "miss" \| "bypass"` — Cloudflare adapter only. Node adapter omits.         |
 | `duration_ms`                                  | `performance.now()` delta, monotonic wall-clock.                                     |
-| `outcome`                                      | `"read"` (GET <400), `"committed"` (non-GET <400), `"conflict"` (409), or `"error"`. |
+| `outcome`                                      | `"read"`/`"committed"` (<400), `"conflict"` (409), `"refused"` (capacity), `"error"`. |
 | `db.storage.class_a_ops_total`                 | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant.                       |
 | `db.storage.class_b_ops_total`                 | GET count. S3-pricing Class B.                                                       |
 | `db.storage.<op>.calls_total`                  | Per-op breakdown for `get` / `put` / `delete` / `list`.                              |

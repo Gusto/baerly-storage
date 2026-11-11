@@ -7,6 +7,10 @@
  *
  * Classification rules (evaluated in order):
  *
+ *  0. `error.code` is `CapacityExceeded` (409) or `MaintenancePending`
+ *     (503) → `"refused"`: the capacity check refused the write before
+ *     any commit. Neither is a server fault nor a write conflict, so
+ *     they stay out of the `"error"` and `"conflict"` rates.
  *  1. `error !== undefined && status >= 500` → `"error"`. The
  *     handler threw and the wire status surfaced as 5xx; the
  *     canonical line carries the diagnostic at error level.
@@ -29,9 +33,23 @@
  *                 any). Optional — pass `undefined` on the
  *                 happy path.
  */
-export type Outcome = "read" | "committed" | "conflict" | "error";
+export type Outcome = "read" | "committed" | "conflict" | "refused" | "error";
+
+/**
+ * Whether `error` is a capacity refusal (`CapacityExceeded` or
+ * `MaintenancePending`): the write was refused before any commit because
+ * the collection is at its host's fold ceiling. Read by the canonical
+ * line's level, which logs these at `warn` even on a 503.
+ */
+export const isCapacityRefusal = (error: unknown): boolean => {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return code === "CapacityExceeded" || code === "MaintenancePending";
+};
 
 export const deriveOutcome = (method: string, status: number, error?: unknown): Outcome => {
+  if (isCapacityRefusal(error)) {
+    return "refused";
+  }
   if (error !== undefined && status >= 500) {
     return "error";
   }
