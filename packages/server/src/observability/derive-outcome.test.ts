@@ -18,6 +18,14 @@ describe("deriveOutcome", () => {
     expect(deriveOutcome("POST", 409)).toBe("conflict");
   });
 
+  test("capacity refusals → refused, ahead of the 409 and 5xx rules", () => {
+    const refusal = (code: string) => Object.assign(new Error(code), { code });
+    expect(deriveOutcome("POST", 409, refusal("CapacityExceeded"))).toBe("refused");
+    expect(deriveOutcome("PATCH", 503, refusal("MaintenancePending"))).toBe("refused");
+    expect(deriveOutcome("POST", 409, refusal("AlreadyExists"))).toBe("conflict");
+    expect(deriveOutcome("POST", 503, refusal("Unavailable"))).toBe("error");
+  });
+
   test("other 4xx → error", () => {
     expect(deriveOutcome("GET", 400)).toBe("error");
     expect(deriveOutcome("GET", 401)).toBe("error");

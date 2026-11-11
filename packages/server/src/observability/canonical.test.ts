@@ -136,6 +136,16 @@ describe("flushCanonicalLine", () => {
       expect(records[0]!.level).toBe("warning");
     });
 
+    test("503 MaintenancePending → warning: a capacity refusal, not a server fault", () => {
+      flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
+        unit: "http",
+        outcome: "refused",
+        status: 503,
+        error: new BaerlyError("MaintenancePending", "maintenance is catching up"),
+      });
+      expect(records[0]!.level).toBe("warning");
+    });
+
     test("error present on a 2xx status → error level (anomalous)", () => {
       flushCanonicalLine(createObservabilityContext(), new RequestScopedMetricsRecorder(), {
         unit: "http",

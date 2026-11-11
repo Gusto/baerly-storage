@@ -30,7 +30,7 @@ import {
   runWithContext,
   type ObservabilityContext,
 } from "./context.ts";
-import { deriveOutcome } from "./derive-outcome.ts";
+import { deriveOutcome, isCapacityRefusal } from "./derive-outcome.ts";
 import type { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 /** Options accepted by {@link flushCanonicalLine}. */
@@ -41,7 +41,7 @@ export interface FlushCanonicalLineOptions {
   /**
    * Short outcome tag. In production all callsites route through
    * {@link deriveOutcome} which yields one of `"read"` /
-   * `"committed"` / `"conflict"` / `"error"`; the field is typed
+   * `"committed"` / `"conflict"` / `"refused"` / `"error"`; the field is typed
    * `string` so test fixtures and future units can pass a
    * unit-specific tag without type gymnastics.
    */
@@ -223,7 +223,12 @@ const pickLevel = (opts: FlushCanonicalLineOptions): Level => {
   // 409, while ordinary contention is absorbed internally. 401/404/400 are
   // likewise the caller's fault. Escalating any of them to `error` would
   // burn error budget and page on-call for normal operation. `error` is
-  // reserved for genuine server faults.
+  // reserved for genuine server faults. A capacity refusal is `warn` on
+  // either status: `MaintenancePending` is a 503 only so HTTP clients
+  // honour `Retry-After`, and nothing failed.
+  if (isCapacityRefusal(opts.error)) {
+    return "warn";
+  }
   if (opts.status !== undefined) {
     if (opts.status >= 500) {
       return "error";
