@@ -169,9 +169,42 @@ grades each collection against.
 ⁴ Derivation:
 [scale-ceilings.md § Collection fan-out](../spec/scale-ceilings.md#collection-fan-out).
 
-**Cloudflare free is the floor, and on Workers it is the default whether
-or not you are paying.** Every host runs the same protocol; a bigger host
-buys a bigger snapshot per fold, nothing else.
+**Every host runs the same protocol; a bigger host buys a bigger snapshot
+per fold.** On Workers the free-tier profile is the default whether or
+not you are paying. Hosts fall into three support tiers:
+
+| Host | Support |
+| --- | --- |
+| Workers Paid, S3 or R2 | First guaranteed tier |
+| Workers Free + R2 binding | Supported floor; CPU is best effort |
+| Workers Free + S3 over HTTP | Best effort, with a low ceiling (below) |
+| Serverful Node | First-class; bounded by host memory and CPU |
+
+Both Free hosts share the same data ceiling (the Cloudflare free column
+above). The R2 binding buys request headroom — a longer pending tail,
+more indexes per write, a larger `$in`, room for retries — not a bigger
+collection. Free CPU is best effort: a CPU kill hasn't been observed,
+but the ~10 ms budget is not a guarantee
+([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)).
+
+**Workers Free + S3 over HTTP (best effort).** Every storage call is a
+`fetch`, and the free plan allows 50 per request, so this host gets a
+lower request envelope than the R2 binding. It is not first-class: no
+zero-config guarantee and no tuning work. The envelope is collections up
+to ~500 documents (512 KiB) with light writes (~30/min); the request
+limits are:
+
+| Bound | Free + S3 limit |
+| --- | --- |
+| Indexes per collection | To be measured |
+| Largest `$in` | To be measured |
+| Pending tail length | To be measured |
+
+A read that must replay a long pending tail, such as one racing a write
+burst, can exceed the 50-call limit and fail. Past the envelope, expect
+more `CapacityExceeded` and `MaintenancePending`, because a fold may not
+fit in the write that triggers it; data is never lost. For more request headroom use the R2 binding; for guaranteed CPU,
+use Paid.
 
 At the ceiling, growth is refused with `CapacityExceeded`: reads,
 deletes and shrinking updates keep working, and the refusal clears once

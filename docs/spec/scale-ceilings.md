@@ -345,20 +345,27 @@ measured wall rather than inherited from cf-free, so the shipped ceiling
 is already near the hardware wall on every tier; raising `C` further is
 an override, not the normal path.
 
-Cloudflare free has one hard per-invocation wall and one economic
+Cloudflare free has a per-invocation request limit and one economic
 ceiling. Isolate memory (~128 MB) is a third hard limit, but at
 `C = 512 KB` it is nowhere near binding; it is what binds cf-paid and
 Node.
 
-- **Subrequests: 50/request — hard.** Defended by the
-  `maxFoldEntriesPerPass ≈ 20` tail slice. A fold pass is about
-  `slice + 3` subrequests. GC's mark cap bounds LIST classification and
-  ledger growth, while its sweep cap bounds DELETEs; one phase per tick
-  stays under 50. Exact GC accounting is maintained in the
-  `CLOUDFLARE_FREE_TIER` JSDoc and
+- **Subrequests: 50 `fetch` calls/request — hard, but only on the
+  `fetch` path.** S3 over HTTP and the Cache API count against it; R2
+  binding calls do not (Cloudflare documents a separate 1,000-call limit
+  for its own services). So the 50 does not set `C`, `E`, or the snapshot
+  format: the supported floor is Free + R2 binding, and Free + S3 over
+  HTTP is a best-effort host with a lower request envelope
+  ([workload-fit.md § Scale at a glance](../about/workload-fit.md#scale-at-a-glance)).
+  Per pass, the `maxFoldEntriesPerPass ≈ 20` tail slice keeps a fold at
+  about `slice + 3` storage calls; GC's mark cap bounds LIST
+  classification and ledger growth, and its sweep cap bounds DELETEs.
+  Exact accounting is in the `CLOUDFLARE_FREE_TIER` JSDoc and
   `packages/server/src/maintenance-budget.test.ts`.
-- **CPU: ~10 ms/request — economic.** `C` and `E` are sized against it as
-  a cost and latency budget line, not as a guard against termination.
+- **CPU: ~10 ms/request — economic, and best effort.** `C` and `E` are
+  sized against it as a cost and latency budget line, not as a guard
+  against termination. Free CPU is not guaranteed: Paid is the first tier
+  with a guaranteed CPU budget.
 
 #### Is the free CPU limit a wall?
 
@@ -393,13 +400,15 @@ Two consequences:
 
 | Tier | Hardware walls | Binds on | What can actually fold |
 | --- | --- | --- | --- |
-| **Cloudflare free** | ~10 ms CPU/request (economic) and 50 subrequests/request (hard) | CPU cost + subrequests | profile `C = 512 KB` ⇒ ~512 KB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
+| **Cloudflare free** | ~10 ms CPU/request (economic, best effort); 50 `fetch` subrequests/request (hard; R2 binding calls exempt) | CPU cost | profile `C = 512 KB` ⇒ ~512 KB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
 | **Cloudflare paid** | 30 s CPU default (up to 5 min); ~128 MB Worker memory; 10,000 subrequests/request default, raisable to 10M, changed 2026-02-11; free wall stays 50 | memory | `C = 8 MiB` (`CF_PAID_MAINTENANCE_MAX_FOLD_BYTES`), `E = 32,768` rows (`CF_PAID_MAINTENANCE_MAX_FOLD_ROWS`), selected by `BAERLY_MAINTENANCE_PROFILE=cf-paid` — no `C` override needed to get there. CPU is not the wall; memory is: 8 MiB peaks at ~19.5 MB, which fits the 4x margin under ~128 MB; the next grid cell (16 MiB ⇒ 37.3 MB) does not. That margin is why the ceiling is not "tens of MB" |
 | **Serverful Node** | no per-request cap; process RAM; a fold blocks the event loop | host memory | `C = 32 MiB` (`NODE_MAINTENANCE_MAX_FOLD_BYTES`), `E = 65,536` rows (`NODE_MAINTENANCE_MAX_FOLD_ROWS`), selected automatically by the Node adapter. 32 MiB is the top of the measured grid, **not** the measured wall — the probe reports `grid-exhausted` for this profile at every margin and every heap from 704 MB up. Past the grid, scale by `C ≈ heap / 10`. Per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted) |
 
 Implications: on Cloudflare free, a ~1 MB snapshot is near the ~10 ms
-CPU budget, and the 50-subrequest wall makes a large tail drain over many
-write ticks. On Cloudflare paid, CPU could rebuild a multi-GB snapshot,
+CPU budget, and the per-pass slice makes a large tail drain over many
+write ticks. The fold ceiling is the same with an R2 binding or S3 over
+HTTP; the binding buys request headroom (tail length, indexes per write,
+`$in` size, retries), not data size. On Cloudflare paid, CPU could rebuild a multi-GB snapshot,
 but Worker memory (~128 MB) is the wall because a fold holds the old
 snapshot, new snapshot, and log tail at once — measured at ~2.4x the
 snapshot in peak heap. On Node, process RAM and event-loop blocking

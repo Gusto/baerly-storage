@@ -97,9 +97,9 @@ scheduler. After a successful commit, the writer may dispatch one
 bounded `runBoundedMaintenance` pass if the ratio or GC-boundary gate is
 due; otherwise leftover work waits for later writes. See
 [the maintenance subsection](#after-the-write--the-in-band-maintenance-tick)
-below. The default profile fits the tightest platform target,
-Cloudflare Workers' 50-subrequest limit, so larger backlogs drain across
-many write-ticks instead of a long-lived process. The opt-in
+below. The default profile caps the storage calls in each pass, so
+larger backlogs drain across many write-ticks instead of a long-lived
+process. The opt-in
 [`runScheduledMaintenance`](../packages/server/src/maintenance.ts)
 SDK can still be driven from a cron trigger; it is not the default or
 required. The rationale is in
@@ -438,9 +438,8 @@ After the commit lands, the writer reads a per-request
 (`getCurrentContext()?.maintenance`, set by the adapter) and calls
 `runBoundedMaintenance` (`packages/server/src/maintenance.ts`) when the
 write-tick gate is due. **Reads are pure — they never tick.** A bare
-`Db.create(...)` dispatches inline with the default profile sized for
-Cloudflare Workers' free-tier subrequest budget once enough writes
-accrue; no `setInterval`, cron, or operator scheduler is required.
+`Db.create(...)` dispatches inline with the bounded default profile
+once enough writes accrue; no `setInterval`, cron, or operator scheduler is required.
 
 The bounded pass splits that work across three primitives:
 

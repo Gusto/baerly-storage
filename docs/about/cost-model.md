@@ -196,10 +196,9 @@ counting proxy and gates on `expect(classAOps).toBeLessThan(1)` after
 1800 polls (one hour at 2 s cadence).
 `packages/server/src/maintenance.ts` carries the `CLOUDFLARE_FREE_TIER`
 bounded-tick arithmetic. Engine defaults are unbounded, so a Node caller
-just passes `{}`. `maintenance-budget.test.ts` proves each Cloudflare
-free-tier compact or GC phase sits under the 50-subrequest cap; the
-scheduled handler alternates phases rather than running both in one
-free-tier tick.
+just passes `{}`. `maintenance-budget.test.ts` pins the storage calls each Cloudflare
+free-tier compact or GC phase issues; the scheduled handler alternates
+phases rather than running both in one free-tier tick.
 
 Per-collection commit scope (see
 [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md)) is what makes

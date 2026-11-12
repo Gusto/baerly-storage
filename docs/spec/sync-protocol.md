@@ -608,7 +608,7 @@ defaults, deliberately:
 | In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
 | Scheduled (`runScheduledMaintenance`, no `options.compact`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
 | Cloudflare Paid scheduled (`runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The library-provided scheduled profile exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
-| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and the 50-subrequest envelope stay. Do not pass this object to `runScheduledMaintenance`. |
+| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. Do not pass this object to `runScheduledMaintenance`. |
 | Direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; direct callers should pass a threshold sized to their trigger. |
 
 The scheduled floor drains the tail to zero so reads stay O(snapshot),
@@ -757,7 +757,7 @@ These are the load-bearing rules.
    key) dropped by `matchesWire`. It self-heals on the doc's next write
    only when that write can still read the doc's prior post-image: the
    backwards pre-image walk is capped at `PREIMAGE_SCAN_MAX_GETS` log
-   GETs to stay inside the Cloudflare free-tier subrequest wall, so a
+   GETs, because the walk is sequential and runs on the write path, so a
    doc not rewritten within that many log entries keeps its stale key.
    `rebuildIndex` / `baerly admin fsck --indexes` is the authoritative
    backstop, not merely an operator convenience.
