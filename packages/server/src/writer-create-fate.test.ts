@@ -283,7 +283,7 @@ describe("Writer create fate", () => {
     },
   );
 
-  test("a create refused unapplied propagates its retriable NetworkError with no resend or readback", async () => {
+  test("a create refused unapplied into an empty slot propagates its retriable NetworkError after one readback, with no resend", async () => {
     class ThrottledCreateStorage extends MemoryStorage {
       readonly attempts: string[] = [];
       slotReads = 0;
@@ -321,8 +321,90 @@ describe("Writer create fate", () => {
       retriable: true,
       cause: { notApplied: true },
     });
-    // The one log read is the tail probe; there is no occupant readback.
-    expect(storage.slotReads - readsBeforeCreate).toBe(1);
+    // The tail probe, then the one occupant readback that finds the slot empty.
+    expect(storage.slotReads - readsBeforeCreate).toBe(2);
+    expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
+    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
+  });
+
+  test("a create refused unapplied because a peer took the slot forward-probes to the next slot", async () => {
+    // Models R2's same-key write limit: the race loser sees a throttle
+    // (every attempt refused unapplied) instead of a 412.
+    class ThrottledRaceLoserStorage extends MemoryStorage {
+      readonly attempts: string[] = [];
+
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (!isLogCreate(key, opts)) {
+          return super.put(key, body, opts);
+        }
+        this.attempts.push(key);
+        if (key === `${LOG_PREFIX}0.json`) {
+          const ours = JSON.parse(new TextDecoder().decode(body)) as LogEntry;
+          await super.put(
+            key,
+            new TextEncoder().encode(JSON.stringify({ ...ours, session: "INTRUDR0" })),
+            opts,
+          );
+          throw new BaerlyError("NetworkError", "throttled", {
+            cause: { status: 429, throttled: true, notApplied: true },
+          });
+        }
+        return super.put(key, body, opts);
+      }
+    }
+    const storage = new ThrottledRaceLoserStorage();
+    await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+
+    await expect(insert(makeWriter(storage))).resolves.toMatchObject({
+      entry: { seq: 1, doc_id: "one" },
+    });
+    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}1.json`]);
+  });
+
+  test("a create refused unapplied whose readback fails propagates the retriable NetworkError, not AmbiguousCommit", async () => {
+    class ThrottledUnreadableStorage extends MemoryStorage {
+      readonly attempts: string[] = [];
+      failedReadbacks = 0;
+      #refused = false;
+
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (isLogCreate(key, opts)) {
+          this.attempts.push(key);
+          this.#refused = true;
+          throw new BaerlyError("NetworkError", "throttled", {
+            cause: { status: 429, throttled: true, notApplied: true },
+          });
+        }
+        return super.put(key, body, opts);
+      }
+
+      override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+        if (this.#refused && key.startsWith(LOG_PREFIX)) {
+          this.failedReadbacks++;
+          throw new BaerlyError("NetworkError", "occupant read unavailable");
+        }
+        return super.get(key, opts);
+      }
+    }
+    const storage = new ThrottledUnreadableStorage();
+    await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+    const ctx = createObservabilityContext();
+
+    // No attempt landed, so an unreadable slot leaves nothing to resolve.
+    await expect(runWithContext(ctx, () => insert(makeWriter(storage)))).rejects.toMatchObject({
+      code: "NetworkError",
+      retriable: true,
+      cause: { notApplied: true },
+    });
+    expect(storage.failedReadbacks).toBe(1);
     expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
   });

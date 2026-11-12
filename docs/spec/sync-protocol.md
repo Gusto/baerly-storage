@@ -289,7 +289,8 @@ runaway alarm, not a normal high-contention conflict. Failures before the
 committing create is dispatched surface through the ordinary `BaerlyError`
 path. A failed committing-create call gets one readback because a
 storage adapter may report failure after an internal attempt became durable,
-unless the call was provably not applied.
+or, when the call was provably not applied, because a throttle may hide a
+lost race.
 The `AmbiguousCommit` contract below applies when readback cannot resolve it.
 
 ### Insert: the first `I` wins
@@ -443,11 +444,16 @@ and propagate as-is. The `Storage.put` contract makes them definitive for a
 create-only put: an adapter that retries internally reports a rejection that
 follows an attempt of unknown outcome as `NetworkError` instead. A
 `NetworkError` whose `cause.notApplied` is `true` reports that no attempt of
-that call was applied: the S3 and GCS adapters set it when every internal
-attempt was throttled (`429`, or S3's `503 SlowDown`); an R2-binding error
-never proves that. An adapter builds it as
-`new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`. Such a `NetworkError` propagates as-is without
-readback. This contract is scoped to failed committing-create calls;
+that call was applied: the adapters set it when every internal attempt was
+throttled (`429`, S3's `503 SlowDown`, or R2 error `10058`, its
+one-write-per-second-per-key limit) or refused before issue (the Workers
+subrequest limit, which the R2 adapter does not retry). An adapter builds it as
+`new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`.
+The writer still reads the slot back once, because on R2 a same-key create
+race can lose with a `429` instead of a `412`: an identified foreign occupant
+advances the writer to the next slot, as above, and a missing or unreadable
+occupant propagates the `NetworkError` as-is, since nothing of the call can
+land. This contract is scoped to failed committing-create calls;
 earlier read, configuration, and index-write errors keep their ordinary error behavior. The same code also covers the
 certified-delete-floor case described in invariant 5: a create may have
 landed beneath every reader's floor, and durable state cannot establish

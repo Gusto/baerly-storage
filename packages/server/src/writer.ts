@@ -564,11 +564,13 @@ export class Writer {
    * / own seq ⇒ our crashed-or-lost-ack commit is already durable ⇒
    * adopt; foreign session ⇒ re-probe forward and create at the next
    * empty slot. Each slot gets one `Storage.put` and never a same-slot
-   * resend, because the adapter already retried it. When that call reports
-   * every attempt refused unapplied (`cause.notApplied`), the `NetworkError`
-   * propagates without a readback; a definitive `AccessDenied` /
-   * `InvalidConfig` propagates as-is. A 412 or an uncertain failure resolves
-   * by one occupant readback, because adapters can hide earlier sends.
+   * resend, because the adapter already retried it. A definitive
+   * `AccessDenied` / `InvalidConfig` propagates as-is. A 412 or an uncertain
+   * failure resolves by one occupant readback, because adapters can hide
+   * earlier sends. When the call reports every attempt refused unapplied
+   * (`cause.notApplied`), the same readback runs because a throttle can hide
+   * a lost race: a foreign occupant forward-probes, and an empty or
+   * unreadable slot propagates the retriable `NetworkError`.
    * Unresolved creates throw non-retriable `AmbiguousCommit`; failures
    * before the create propagate.
    *
@@ -778,8 +780,10 @@ export class Writer {
     // multiply that policy's attempts (retry at one layer). The outcome of
     // that one call decides the next step:
     //   - success ⇒ committed at `seq`;
-    //   - `cause.notApplied` (every attempt throttled) ⇒ nothing of ours
-    //     can be at `seq`; the retriable `NetworkError` propagates;
+    //   - `cause.notApplied` (every attempt throttled or refused) ⇒ nothing
+    //     of ours can be at `seq`, but a throttle may hide a lost race, so
+    //     one occupant readback: foreign ⇒ forward-probe; absent or
+    //     unreadable ⇒ the retriable `NetworkError` propagates;
     //   - `AccessDenied` / `InvalidConfig` ⇒ definitive under the
     //     `Storage.put` contract; propagates as-is;
     //   - a 412, or any other failure (an uncertain send — e.g. a dropped
@@ -808,6 +812,7 @@ export class Writer {
       // error, and no send was made that a readback would need to resolve.
       const entryBody = encodeJsonBytes(entry);
       let createFailure: unknown;
+      let notApplied = false;
       try {
         await this.#storage.put(logEntryKey, entryBody, {
           ifNoneMatch: "*",
@@ -825,10 +830,15 @@ export class Writer {
           });
           // Even a visible 412 can be our entry: the adapter may have
           // retried a landed send internally.
-        } else if (isDefinitiveCreateRejection(error) || isCreateNotApplied(error)) {
+        } else if (isDefinitiveCreateRejection(error)) {
           // `Storage.put` contract: no attempt of this call was applied, and
           // this is the slot's only send, so nothing of ours is at `seq`.
           throw error;
+        } else if (isCreateNotApplied(error)) {
+          // Nothing of ours is at `seq` either, but a throttle can hide a
+          // lost race (R2 answers a same-key create race with a 429, not a
+          // 412), so the readback still tells a peer's slot from an empty one.
+          notApplied = true;
         }
       }
       let occupant: LogEntry;
@@ -837,6 +847,11 @@ export class Writer {
         occupant = await this.#readLogOccupant(logEntryKey);
         decision = tryAdoptOwnSessionLogEntry({ self: entry, existing: occupant });
       } catch (error) {
+        if (notApplied) {
+          // An empty or unreadable slot leaves nothing to resolve: the
+          // retriable refusal stands.
+          throw createFailure;
+        }
         throw ambiguous(
           new AggregateError(
             [createFailure, error],

@@ -11,8 +11,8 @@
  * - each `Storage` call makes at most `1 + retries` HTTP attempts
  *   (adapter default `STORAGE_RETRY_MAX_ATTEMPTS`, 3, in total);
  * - `Writer` issues one `Storage.put` per log slot, never a same-slot
- *   resend, and resolves an uncertain create with one `Storage.get`
- *   readback, never a re-read.
+ *   resend, and resolves a failed create (uncertain or throttled) with one
+ *   `Storage.get` readback, never a re-read.
  *
  * So a failing create costs `1 + retries` HTTP PUTs at the slot, plus at
  * most `1 + retries` readback GETs, while the outer meter sees one put
@@ -232,7 +232,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"]);
   });
 
-  test("retries: 2, every log PUT 429 — outer 1 log put, transport 1 + 2 = 3, NetworkError + notApplied, no readback", async () => {
+  test("retries: 2, every log PUT 429 — outer 1 log put, transport 1 + 2 = 3, one readback GET (404); NetworkError + notApplied", async () => {
     const retries = 2;
     const { counted, issued, commit } = await setup({ retries, fault: throttle429 });
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
@@ -241,11 +241,11 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(err.cause).toMatchObject({ notApplied: true });
     expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
     expect(issued.get("PUT log")).toBe(1 + retries);
-    // A notApplied rejection needs no occupant readback.
-    expect(issued.get("GET log")).toBe(HOT_PATH["GET log"]);
+    // The one occupant readback tells a lost race from an empty slot.
+    expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
   });
 
-  test("defaults, every log PUT SlowDown — outer 1 log put, transport STORAGE_RETRY_MAX_ATTEMPTS = 3, NetworkError + notApplied, no readback", async () => {
+  test("defaults, every log PUT SlowDown — outer 1 log put, transport STORAGE_RETRY_MAX_ATTEMPTS = 3, one readback GET (404); NetworkError + notApplied", async () => {
     const { counted, issued, commit } = await setup({ fault: slowDown503 });
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(NETWORK_ERROR);
@@ -254,8 +254,8 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
     expect(issued.get("PUT log")).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
     expect(issued.get("PUT log")).toBe(3);
-    expect(issued.get("GET log")).toBe(HOT_PATH["GET log"]);
-    expect(counted.gets).toBe(2);
+    expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
+    expect(counted.gets).toBe(3);
   });
 
   test("defaults, every log PUT 500 (not a throttle) — 3 PUTs, then 1 readback GET (404); AmbiguousCommit", async () => {
