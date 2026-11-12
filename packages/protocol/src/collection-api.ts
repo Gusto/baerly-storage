@@ -154,8 +154,22 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * For predicate-aware bulk mutation, use
    * `.where(predicate).update(patch)` on {@link Query}.
    *
-   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
-   *         the CAS race and this commit did not land. Retriable.
+   * Returns `{ modified: 0 }` when no row exists at `id` (over HTTP,
+   * `404 NotFound`).
+   *
+   * **Concurrent writes to the row.** The patch is applied to the row's
+   * newest committed version, not to the version this call read: if
+   * another write to `id` commits between the read and this commit, the
+   * patch is re-applied on top of it, so neither write's fields are lost.
+   * If the row was deleted in between, nothing is committed and the call
+   * returns `{ modified: 0 }` (even if the `_id` was inserted again
+   * since: that is a new row this call never read). No error is thrown
+   * for either race (PostgreSQL READ COMMITTED semantics).
+   *
+   * @throws BaerlyError{code: "WriteConflict"} — part of the log this
+   *         commit had to check was retired by maintenance before it
+   *         could be read, or a storage precondition was rejected;
+   *         nothing was committed. Retriable: re-run the call.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the update may or may not have been applied.
@@ -196,8 +210,18 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Whole-document replace on one row by primary key. Throws
    * `BaerlyError{code:"NotFound"}` when no row exists at `id`.
    *
-   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
-   *         the CAS race and this commit did not land. Retriable.
+   * **Concurrent writes to the row.** Last writer wins: an update that
+   * commits between this call's read and its commit is overwritten by
+   * `doc`. A delete that commits there is not undone: nothing is
+   * committed and the call throws `NotFound`.
+   *
+   * @throws BaerlyError{code: "NotFound"} — no row exists at `id`,
+   *         including one a concurrent delete removed after this call
+   *         read it. Nothing was committed.
+   * @throws BaerlyError{code: "WriteConflict"} — part of the log this
+   *         commit had to check was retired by maintenance before it
+   *         could be read, or a storage precondition was rejected;
+   *         nothing was committed. Retriable: re-run the call.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the replace may or may not have been applied.
@@ -476,14 +500,30 @@ export interface Query<T extends DocumentData = DocumentData> {
 
   /**
    * Predicate-aware bulk mutation: JSON-merge-patch (RFC 7386)
-   * applied to every matching doc. Atomic per row. `null` at any
-   * field deletes it. For the single-row case prefer
-   * {@link Collection.update}(id, patch).
+   * applied to every matching doc. `null` at any field deletes it. For
+   * the single-row case prefer {@link Collection.update}(id, patch).
    *
-   * @throws BaerlyError{code: "WriteConflict"} — one row's commit lost
-   *         a CAS race and did not land. Rows before it may already
-   *         be applied; re-issuing the call is safe (it re-reads and
-   *         re-matches). Retriable.
+   * Each row commits on its own (there is no multi-row transaction): a
+   * failure part-way leaves the rows before it applied. `modified`
+   * counts the rows this call committed.
+   *
+   * **Concurrent writes to a matched row.** Each row's patch is applied
+   * to its newest committed version, not to the version this call read.
+   * If another write to the row commits between the read and the row's
+   * commit, the predicate is evaluated again on that newest version
+   * (`order` and `limit` are not): if it still matches, the patch is
+   * re-applied on top of it, so neither write's fields are lost; if not,
+   * the row is skipped. A row deleted in between is skipped too (even if
+   * its `_id` was inserted again since). Skipped rows are not counted in
+   * `modified`, and no error is thrown (PostgreSQL READ COMMITTED
+   * semantics).
+   *
+   * @throws BaerlyError{code: "WriteConflict"} — part of the log one
+   *         row's commit had to check was retired by maintenance before
+   *         it could be read, or a storage precondition was rejected; that
+   *         row did not commit. Rows before it may already be applied;
+   *         re-issuing the call is safe (it re-reads and re-matches).
+   *         Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
    *         committing create may be durable, but its outcome could
    *         not be resolved. Rows before it are already applied; the
@@ -500,7 +540,8 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         not committed. Retriable: wait `err.retryAfter` seconds, then
    *         repeat the call.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
-   *         invalid doc.
+   *         invalid doc, including when re-applied to a row's newest
+   *         version at its commit (rows before it are then applied).
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
    *         top-level `_id` is present and is not a matched row's
    *         `_id` (`null` included), or a matched row's `_id` is not
