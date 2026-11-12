@@ -2,9 +2,9 @@
    field on document shapes; tests reference it by name. */
 
 /**
- * `update` / `replace` racing a concurrent same-`_id` write
- * (EvalPlanQual semantics, `docs/spec/sync-protocol.md` §"Update: re-applied
- * to the newest row version").
+ * `update` / `replace` / `delete` racing a concurrent same-`_id` write
+ * (EvalPlanQual semantics, `docs/spec/sync-protocol.md` §"Update and delete:
+ * decided on the newest row version").
  *
  * Each test pauses one verb after its read, lets a peer commit to the same
  * `_id`, then releases it, so the peer's entry lands in the verb's commit
@@ -95,7 +95,7 @@ const quiet = async <T>(fn: () => Promise<T>): Promise<T> =>
   await runWithContext(createObservabilityContext({ maintenance: { disabled: true } }), fn);
 
 for (const variant of makeVariants("baerly-update-race-")) {
-  describe(`update vs a concurrent same-_id write [${variant.label}]`, () => {
+  describe(`update / replace / delete vs a concurrent same-_id write [${variant.label}]`, () => {
     const setup = async (indexed = false) => {
       const { storage } = await variant.build();
       await bootstrap(storage, "update-race");
@@ -304,6 +304,78 @@ for (const variant of makeVariants("baerly-update-race-")) {
         gated.release();
         await expect(rep).resolves.toEqual({ ok: undefined });
         await expect(coll(storage).get("r1")).resolves.toEqual({ _id: "r1", replaced: true });
+      });
+    });
+
+    for (const [label, pause] of [
+      ["before its window read", atCommitStart],
+      ["on the lost create race", atLogCreate],
+    ] as const) {
+      test(`two racing deletes of one row: one reports deleted 1, the other 0 (${label})`, async () => {
+        await quiet(async () => {
+          const { storage, coll } = await setup();
+          const gated = pause(storage);
+          const del = settle(coll(gated.storage).delete("r1"));
+          await gated.paused;
+          await expect(coll(storage).delete("r1")).resolves.toEqual({ deleted: 1 });
+          gated.release();
+          await expect(del).resolves.toEqual({ ok: { deleted: 0 } });
+          await expect(ids(coll(storage))).resolves.toEqual(["r0", "r2", "r3"]);
+        });
+      });
+    }
+
+    test("delete(id) after a concurrent delete and re-insert leaves the new row alone", async () => {
+      await quiet(async () => {
+        const { storage, coll } = await setup();
+        const gated = atCommitStart(storage);
+        const del = settle(coll(gated.storage).delete("r1"));
+        await gated.paused;
+        await coll(storage).delete("r1");
+        await coll(storage).insert({ _id: "r1", fresh: true });
+        gated.release();
+        await expect(del).resolves.toEqual({ ok: { deleted: 0 } });
+        await expect(coll(storage).get("r1")).resolves.toEqual({ _id: "r1", fresh: true });
+      });
+    });
+
+    test("delete(id) racing an update still deletes the row", async () => {
+      await quiet(async () => {
+        const { storage, coll } = await setup();
+        const gated = atCommitStart(storage);
+        const del = settle(coll(gated.storage).delete("r1"));
+        await gated.paused;
+        await coll(storage).update("r1", { b: 2 });
+        gated.release();
+        await expect(del).resolves.toEqual({ ok: { deleted: 1 } });
+        await expect(coll(storage).get("r1")).resolves.toBeUndefined();
+      });
+    });
+
+    test("where(p).delete() re-evaluates p on the newest version and skips a row that no longer matches", async () => {
+      await quiet(async () => {
+        const { storage, coll } = await setup();
+        const gated = atCommitStart(storage);
+        const del = settle(coll(gated.storage).where({ status: "open" }).delete());
+        await gated.paused;
+        await coll(storage).update("r1", { status: "closed" });
+        gated.release();
+        await expect(del).resolves.toEqual({ ok: { deleted: 3 } });
+        await expect(coll(storage).all()).resolves.toEqual([{ _id: "r1", n: 0, status: "closed" }]);
+      });
+    });
+
+    test("where(p).delete() deletes a row whose newest version still matches p", async () => {
+      await quiet(async () => {
+        const { storage, coll } = await setup();
+        const gated = atLogCreate(storage);
+        const del = settle(coll(gated.storage).where({ status: "open" }).delete());
+        await gated.paused;
+        // The peer wins the slot the batch's first delete targets.
+        await coll(storage).update("r0", { n: 9 });
+        gated.release();
+        await expect(del).resolves.toEqual({ ok: { deleted: 4 } });
+        await expect(coll(storage).all()).resolves.toEqual([]);
       });
     });
 

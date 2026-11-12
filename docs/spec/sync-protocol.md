@@ -230,7 +230,7 @@ For a single-document mutation:
    and validate the entries they pass; see
    [Insert: the first `I` wins](#insert-the-first-i-wins),
    [Capacity: the commit-time re-check](#capacity-the-commit-time-re-check),
-   and [Update: re-applied to the newest row version](#update-re-applied-to-the-newest-row-version).
+   and [Update and delete: decided on the newest row version](#update-and-delete-decided-on-the-newest-row-version).
 3. **Serialize `LogEntry.after` and PUT additive (new) index keys —
    before the commit.** `I` / `U` post-images are serialized into the
    `LogEntry.after` field; current writers do not create a content side
@@ -374,12 +374,14 @@ The insert decision runs first, so a peer's live row is `AlreadyExists`
 whatever the capacity re-check says. Direct `Writer` commits are not
 checked.
 
-### Update: re-applied to the newest row version
+### Update and delete: decided on the newest row version
 
 An update reads the row, merges its patch, and commits the full post-image
 as `LogEntry.after`. Committing the post-image built from the read would
 undo a write to the same `_id` that committed after the read: a delete
-would be resurrected, a change to another field lost. The write verbs
+would be resurrected, a change to another field lost. A delete built from
+the read would tombstone a row that a peer had already deleted and
+re-inserted, or one that no longer matches its predicate. The write verbs
 instead follow PostgreSQL READ COMMITTED's EvalPlanQual, decided in the
 same commit window as the capacity re-check:
 
@@ -393,13 +395,16 @@ same commit window as the capacity re-check:
    is gone, so the row commits nothing, even if a later `I` re-created the
    `_id` (a different row). `update(id, patch)` returns `{ modified: 0 }`
    (`404 NotFound` over HTTP); `.where(p).update()` skips the row and does
-   not count it; `replace(id, doc)` throws `NotFound`.
-3. **Rewritten there: re-apply.** For an update, `p` is evaluated again on
-   the newest post-image (`order` and `limit` are not). If it no longer
-   matches, the row is skipped as in step 2. Otherwise the patch is merged
-   onto the newest post-image, schema-validated, and that becomes the
-   commit's post-image. A `replace` keeps its document: it is
-   last-writer-wins against updates.
+   not count it; `replace(id, doc)` throws `NotFound`; `delete` skips the
+   row and does not count it, so of two racing deletes one reports
+   `deleted: 1` and the other `0`.
+3. **Rewritten there: re-decide.** For an update or a delete, `p` is
+   evaluated again on the newest post-image (`order` and `limit` are not).
+   If it no longer matches, the row is skipped as in step 2. Otherwise an
+   update's patch is merged onto the newest post-image, schema-validated,
+   and that becomes the commit's post-image, and a delete tombstones the
+   row. A `replace` keeps its document: it is last-writer-wins against
+   updates.
 4. **Index markers.** A re-applied post-image gets its own additive index
    markers before its create, so the hybrid polarity holds: new markers
    before the committing `log/<seq>` create, stale-marker DELETEs (computed
@@ -409,8 +414,13 @@ same commit window as the capacity re-check:
 
 The result is that every committed `U` from an update is its patch merged
 onto the entry immediately before it for that `_id`, and no `U` follows a
-`D` of its row. No new error is thrown. A delete is not re-checked: a
-`delete` racing another write to the row still tombstones it.
+`D` of its row, and every committed `D` follows a live version of its row.
+No new error is thrown.
+
+A batch's forced maintenance tick rides its last planned row's commit;
+when that row is skipped, the verb dispatches the forced tick itself
+after its last commit, so rows committed under pressure still drive the
+fold.
 
 ### Unresolved create fate
 

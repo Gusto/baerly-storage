@@ -31,8 +31,8 @@
  * decision over the same window; its verdict may replace a `U`'s
  * post-image, which the write verbs use to re-apply an update to the
  * newest version of its row. See {@link CommitVerdict} and
- * `docs/spec/sync-protocol.md` §"Update: re-applied to the newest row
- * version".
+ * `docs/spec/sync-protocol.md` §"Update and delete: decided on the newest
+ * row version".
  *
  * **Crash safety.** Order is additive index `newKeys` → `log/<seq>`
  * create → stale index-key DELETEs. `LogEntry.after` is the authoritative
@@ -225,8 +225,8 @@ export interface CommitInput {
  * `check` throws to refuse; nothing is committed. It may instead return a
  * {@link CommitVerdict} whose `body` replaces a `U`'s post-image: the
  * write verbs re-apply an update to the newest version of its row this
- * way (EvalPlanQual; `docs/spec/sync-protocol.md` §"Update: re-applied to
- * the newest row version").
+ * way (EvalPlanQual; `docs/spec/sync-protocol.md` §"Update and delete:
+ * decided on the newest row version").
  *
  * Precondition: `fromSeq` is a tail a read-path probe observed on this
  * collection's log, or one past a seq the caller's own commit landed at.

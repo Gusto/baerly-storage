@@ -150,7 +150,9 @@ export const makeCollection = <T extends DocumentData>(
      * Tombstone the row at `id`. Forwards to the predicate-form `runDelete`
      * through a `byId` wire, so at most one row is matched. A missing row is
      * not an error — `deleted` is `0`. `id` need not be NFC, so a row an
-     * earlier release stored under a non-NFC id stays deletable.
+     * earlier release stored under a non-NFC id stays deletable. A row a
+     * concurrent delete removed after the read is not deleted again (nor a
+     * re-insert of its `_id`): `deleted` is `0` (see `runDelete`).
      *
      * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
      *   the writer does not resolve; the write was not committed. The writer

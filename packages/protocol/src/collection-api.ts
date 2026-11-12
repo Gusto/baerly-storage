@@ -253,8 +253,17 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * need not be NFC, so a row stored under a non-NFC id by an earlier
    * release can still be deleted.
    *
-   * @throws BaerlyError{code: "WriteConflict"} — concurrent write won
-   *         the CAS race and this commit did not land. Retriable.
+   * **Concurrent writes to the row.** A delete applies to the row this
+   * call read. If that row was deleted between the read and this commit
+   * (by a racing delete, even if its `_id` was inserted again since),
+   * nothing is committed and the call returns `{ deleted: 0 }`, so of two
+   * racing deletes one reports `1` and the other `0`. A concurrent update
+   * does not stop it: the row is deleted.
+   *
+   * @throws BaerlyError{code: "WriteConflict"} — part of the log this
+   *         commit had to check was retired by maintenance before it
+   *         could be read, or a storage precondition was rejected;
+   *         nothing was committed. Retriable: re-run the call.
    * @throws BaerlyError{code: "AmbiguousCommit"} — a committing
    *         create may be durable, but its outcome could not be
    *         resolved, so the tombstone may or may not have been
@@ -565,10 +574,23 @@ export interface Query<T extends DocumentData = DocumentData> {
    * Predicate-aware bulk delete: every matching document. For the
    * single-row case prefer {@link Collection.delete}(id).
    *
-   * @throws BaerlyError{code: "WriteConflict"} — one row's commit lost
-   *         a CAS race and did not land. Rows before it may already
-   *         be tombstoned; re-issuing the call is safe (it re-reads and
-   *         re-matches). Retriable.
+   * Each row commits on its own; `deleted` counts the rows this call
+   * deleted.
+   *
+   * **Concurrent writes to a matched row.** If another write to a matched
+   * row commits between this call's read and the row's commit, the
+   * predicate is evaluated again on that newest version (`order` and
+   * `limit` are not), and the row is deleted only if it still matches. A
+   * row already deleted in between (even if its `_id` was inserted again
+   * since) is skipped. Skipped rows are not counted in `deleted`, and no
+   * error is thrown (PostgreSQL READ COMMITTED semantics).
+   *
+   * @throws BaerlyError{code: "WriteConflict"} — part of the log one
+   *         row's commit had to check was retired by maintenance before
+   *         it could be read, or a storage precondition was rejected; that
+   *         row did not commit. Rows before it may already be tombstoned;
+   *         re-issuing the call is safe (it re-reads and re-matches).
+   *         Retriable.
    * @throws BaerlyError{code: "AmbiguousCommit"} — one row's
    *         committing create may be durable, but its outcome could
    *         not be resolved. Rows before it are already tombstoned;
