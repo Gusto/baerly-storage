@@ -1153,12 +1153,13 @@ describe("main-10: growth refusal (target behavior)", () => {
         test("same-row race: an update merged onto a row a peer shrank is judged against the live row", async () => {
           const { storage, host } = await bytesState("near");
           // A shrinks row 0 (frees 2M), then D grows row 1 by 3M into that
-          // room. B read row 0 before A: its same-size update re-grows row 0
-          // by 2M against the live row, past C.
+          // room. B read row 0 before A: its update re-sets row 0's original
+          // pad, same-size against the row it read, but re-applied to the
+          // live row it re-grows row 0 by 2M, past C.
           const result = await race(
             storage,
             host,
-            sameSizeW(0),
+            (c) => c.update(id(0), { pad: BYTE_ROW_PAD }),
             async (c) => {
               await shrinkW(0)(c);
               await c.update(id(1), { pad: GROWN_ROW_PAD });

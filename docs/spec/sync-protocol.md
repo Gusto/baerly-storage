@@ -3,7 +3,7 @@ title: Sync protocol
 audience: spec
 doc_type: current-contract
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-08-11
+last-reviewed: 2026-11-12
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -228,8 +228,9 @@ For a single-document mutation:
    exhaustion is an `Internal` runaway alarm, not normal contention. The
    write verbs instead probe linearly from their pre-commit read's tail
    and validate the entries they pass; see
-   [Insert: the first `I` wins](#insert-the-first-i-wins) and
-   [Capacity: the commit-time re-check](#capacity-the-commit-time-re-check).
+   [Insert: the first `I` wins](#insert-the-first-i-wins),
+   [Capacity: the commit-time re-check](#capacity-the-commit-time-re-check),
+   and [Update: re-applied to the newest row version](#update-re-applied-to-the-newest-row-version).
 3. **Serialize `LogEntry.after` and PUT additive (new) index keys —
    before the commit.** `I` / `U` post-images are serialized into the
    `LogEntry.after` field; current writers do not create a content side
@@ -372,6 +373,44 @@ commit time over the entries the read could not see:
 The insert decision runs first, so a peer's live row is `AlreadyExists`
 whatever the capacity re-check says. Direct `Writer` commits are not
 checked.
+
+### Update: re-applied to the newest row version
+
+An update reads the row, merges its patch, and commits the full post-image
+as `LogEntry.after`. Committing the post-image built from the read would
+undo a write to the same `_id` that committed after the read: a delete
+would be resurrected, a change to another field lost. The write verbs
+instead follow PostgreSQL READ COMMITTED's EvalPlanQual, decided in the
+same commit window as the capacity re-check:
+
+1. **Newest version.** At each window decision (before any index marker,
+   and again after each lost create race), the verb looks for entries on
+   the row's `_id` among everything committed after its read: the window
+   `[T0, seq)`, plus, in a batch, the windows of the rows already committed.
+   No entry means the read's version is still the newest, and the planned
+   post-image commits unchanged.
+2. **Deleted there: skip.** A `D` on the `_id` means the row the verb read
+   is gone, so the row commits nothing, even if a later `I` re-created the
+   `_id` (a different row). `update(id, patch)` returns `{ modified: 0 }`
+   (`404 NotFound` over HTTP); `.where(p).update()` skips the row and does
+   not count it; `replace(id, doc)` throws `NotFound`.
+3. **Rewritten there: re-apply.** For an update, `p` is evaluated again on
+   the newest post-image (`order` and `limit` are not). If it no longer
+   matches, the row is skipped as in step 2. Otherwise the patch is merged
+   onto the newest post-image, schema-validated, and that becomes the
+   commit's post-image. A `replace` keeps its document: it is
+   last-writer-wins against updates.
+4. **Index markers.** A re-applied post-image gets its own additive index
+   markers before its create, so the hybrid polarity holds: new markers
+   before the committing `log/<seq>` create, stale-marker DELETEs (computed
+   from the entry just below the committed `seq`, which is the version the
+   patch was re-applied to) after it. Markers already PUT for a post-image
+   abandoned after a lost create race stay as benign orphans (invariant 7).
+
+The result is that every committed `U` from an update is its patch merged
+onto the entry immediately before it for that `_id`, and no `U` follows a
+`D` of its row. No new error is thrown. A delete is not re-checked: a
+`delete` racing another write to the row still tombstones it.
 
 ### Unresolved create fate
 

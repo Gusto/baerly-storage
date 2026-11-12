@@ -27,6 +27,13 @@
  * commits (exactly one, absent storage failures). See {@link InsertGuard}
  * and `docs/spec/sync-protocol.md` §"Insert: the first `I` wins".
  *
+ * **Caller re-decisions.** A {@link CommitAdmission} re-runs the caller's
+ * decision over the same window; its verdict may replace a `U`'s
+ * post-image, which the write verbs use to re-apply an update to the
+ * newest version of its row. See {@link CommitVerdict} and
+ * `docs/spec/sync-protocol.md` §"Update: re-applied to the newest row
+ * version".
+ *
  * **Crash safety.** Order is additive index `newKeys` → `log/<seq>`
  * create → stale index-key DELETEs. `LogEntry.after` is the authoritative
  * post-image. A crash before the create leaves only orphan additive index
@@ -215,7 +222,11 @@ export interface CommitInput {
  * read as the insert guard, shared with it when both are set) and passes
  * it to `check` before the Step 4 index markers, and again with the
  * longer window after each lost create race, before the next create.
- * `check` throws to refuse; nothing is committed.
+ * `check` throws to refuse; nothing is committed. It may instead return a
+ * {@link CommitVerdict} whose `body` replaces a `U`'s post-image: the
+ * write verbs re-apply an update to the newest version of its row this
+ * way (EvalPlanQual; `docs/spec/sync-protocol.md` §"Update: re-applied to
+ * the newest row version").
  *
  * Precondition: `fromSeq` is a tail a read-path probe observed on this
  * collection's log, or one past a seq the caller's own commit landed at.
@@ -229,14 +240,33 @@ export interface CommitAdmission {
   /**
    * Re-decide over `window`, every entry in `[fromSeq, tail)` in seq
    * order, where `tail` is the slot the next create targets. Throw to
-   * refuse the commit. Return `true` to force the post-commit maintenance
-   * tick, as {@link CommitInput.forceMaintenance} does; the last call
-   * before the winning create decides.
+   * refuse the commit. The verdict of the last call before the winning
+   * create decides what commits; `undefined` keeps the input as given.
    */
   readonly check: (
     window: readonly LogEntry[],
     tail: number,
-  ) => boolean | undefined | Promise<boolean | undefined>;
+  ) => CommitVerdict | undefined | Promise<CommitVerdict | undefined>;
+}
+
+/**
+ * What a {@link CommitAdmission.check} call decided.
+ *
+ * @internal
+ */
+export interface CommitVerdict {
+  /**
+   * Force the post-commit maintenance tick, as
+   * {@link CommitInput.forceMaintenance} does.
+   */
+  readonly forceMaintenance?: boolean;
+  /**
+   * The post-image to commit instead of {@link CommitInput.body}; valid
+   * only on a `U`, and identity-checked like the input body. A changed
+   * body gets its own Step 4 index markers before the next create; the
+   * markers of a body it replaced stay as benign orphans.
+   */
+  readonly body?: DocumentData;
 }
 
 /**
@@ -604,6 +634,26 @@ export class Writer {
     let commitWindow: LogEntry[] | undefined;
     // Whether the latest `admission.check` asked to force the write tick.
     let admissionForces = false;
+    // The post-image this attempt commits: the input's, or the latest
+    // `admission.check` verdict's.
+    let body = input.body;
+    const decide = async (window: readonly LogEntry[], tail: number): Promise<void> => {
+      if (admission === undefined) {
+        return;
+      }
+      const verdict = await admission.check(window, tail);
+      admissionForces = verdict?.forceMaintenance === true;
+      if (verdict?.body !== undefined) {
+        if (input.op !== "U") {
+          throw new BaerlyError(
+            "InvalidConfig",
+            `${errorPrefix}: an admission verdict may replace only a U post-image; got op ${JSON.stringify(input.op)}`,
+          );
+        }
+        assertPostImageIdentity(input.docId, verdict.body, "InvalidConfig");
+        body = verdict.body;
+      }
+    };
     let preCommitTail: number;
     if (windowFrom === undefined) {
       const probeFloor = Math.max(logSeqStart, current.tail_hint);
@@ -644,7 +694,7 @@ export class Writer {
           return { replayed: true, entries: [replayed], currentEtag: baseEtag };
         }
       }
-      admissionForces = (await admission?.check(commitWindow, probe.tail)) === true;
+      await decide(commitWindow, probe.tail);
       preCommitTail = probe.tail;
     }
     let seq = preCommitTail;
@@ -667,7 +717,7 @@ export class Writer {
       doc_id: input.docId,
       session,
       seq: atSeq,
-      ...(input.op !== "D" && input.body !== undefined ? { after: input.body } : {}),
+      ...(input.op !== "D" && body !== undefined ? { after: body } : {}),
       ...(input.origin !== undefined ? { origin: input.origin } : {}),
     });
     let entry = mintEntry(seq);
@@ -687,15 +737,26 @@ export class Writer {
     // The stale-key DELETEs (de-indexing the OLD value) stay AFTER the
     // commit (Step 5b), so a crash can never de-index a committed doc.
     // See ADR-004 Q4 + `index-emit-order.test.ts`.
+    //
+    // A verdict that replaces the body on the lost-race path (Step 5) runs
+    // this again for the new body before the next create; keys already
+    // PUT by this attempt are not re-sent.
     let newKeysClassA = 0;
-    const parallelPuts: Array<Promise<unknown>> = [];
-    // Additive index keys for the NEW value — emitted before the
-    // commit on I/U (a D has no new value). `op:"D"` and a missing
-    // body project to no keys. Empty `#indexes` short-circuits.
-    if (this.#indexes.length > 0 && input.op !== "D") {
-      const newKeys = allIndexKeysFor(logPrefix, this.#indexes, input.body, input.docId);
-      for (const k of newKeys) {
+    const putKeys = new Set<string>();
+    const putNewKeys = async (image: DocumentData | undefined): Promise<void> => {
+      // Additive index keys for the NEW value — emitted before the
+      // commit on I/U (a D has no new value). `op:"D"` and a missing
+      // body project to no keys. Empty `#indexes` short-circuits.
+      if (this.#indexes.length === 0 || input.op === "D") {
+        return;
+      }
+      const parallelPuts: Array<Promise<unknown>> = [];
+      for (const k of allIndexKeysFor(logPrefix, this.#indexes, image, input.docId)) {
+        if (putKeys.has(k)) {
+          continue;
+        }
         assertKeyWithinLimit(k);
+        putKeys.add(k);
         newKeysClassA++;
         parallelPuts.push(
           this.#storage
@@ -709,8 +770,9 @@ export class Writer {
             }),
         );
       }
-    }
-    await Promise.all(parallelPuts);
+      await Promise.all(parallelPuts);
+    };
+    await putNewKeys(body);
 
     // ── Step 5. Create the commit: PUT log/<seq> via If-None-Match. ─
     // The numbered log create IS the commit (single-write commit). No
@@ -829,8 +891,14 @@ export class Writer {
             return { replayed: true, entries: [replayed], currentEtag: baseEtag };
           }
         }
-        admissionForces = (await admission?.check(commitWindow, probe.tail)) === true;
+        const bodyBefore = body;
+        await decide(commitWindow, probe.tail);
         seq = probe.tail;
+        if (body !== bodyBefore) {
+          // A rebased post-image: its markers go down before its create,
+          // as Step 4's did for the body it replaces.
+          await putNewKeys(body);
+        }
       }
       entry = mintEntry(seq);
     }
@@ -894,6 +962,7 @@ export class Writer {
     // index").
     const staleKeysClassA = await this.#cleanupStaleIndexKeysBestEffort({
       input,
+      body,
       logPrefix,
       seq,
     });
@@ -1029,6 +1098,8 @@ export class Writer {
 
   async #cleanupStaleIndexKeysBestEffort(args: {
     input: CommitInput;
+    /** The committed post-image (a verdict may have replaced `input.body`). */
+    body: DocumentData | undefined;
     logPrefix: string;
     seq: number;
   }): Promise<number> {
@@ -1048,7 +1119,7 @@ export class Writer {
         );
         const oldKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
         const newSet = new Set(
-          allIndexKeysFor(args.logPrefix, this.#indexes, input.body, input.docId),
+          allIndexKeysFor(args.logPrefix, this.#indexes, args.body, input.docId),
         );
         staleKeys = oldKeys.filter((k) => !newSet.has(k));
       } else if (input.op === "D") {

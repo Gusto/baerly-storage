@@ -2372,4 +2372,51 @@ describe("Writer — admission (commit-time re-check)", () => {
     ).rejects.toMatchObject({ code: "InvalidConfig" });
     expect(getSpy).not.toHaveBeenCalled();
   });
+
+  test("a verdict body replaces a U's post-image, and only its markers go down", async () => {
+    const storage = new MemoryStorage();
+    await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+    const writer = new Writer({
+      storage,
+      currentJsonKey: CURRENT_KEY,
+      options: { indexes: [by_title] },
+    });
+    const rebased = { _id: DOC, title: "rebased" };
+
+    const result = await writer.commit({
+      op: "U",
+      collection: COLL,
+      docId: DOC,
+      body: { _id: DOC, title: "as read" },
+      admission: { fromSeq: 0, check: () => ({ body: rebased }) },
+    });
+    expect(result.entry.after).toEqual(rebased);
+    await expect(titleMarkers(storage)).resolves.toEqual(
+      allIndexKeysFor(MANIFEST, [by_title], rebased, DOC),
+    );
+  });
+
+  test.each([
+    ["on a D", "D", undefined, { _id: DOC }],
+    ["on an I", "I", { _id: DOC }, { _id: DOC }],
+    ["naming another _id", "U", { _id: DOC }, { _id: "other" }],
+  ] as const)(
+    "a verdict body %s throws InvalidConfig and commits nothing",
+    async (_label, op, body, verdictBody) => {
+      const storage = new MemoryStorage();
+      await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+
+      await expect(
+        writer.commit({
+          op,
+          collection: COLL,
+          docId: DOC,
+          ...(body !== undefined && { body }),
+          admission: { fromSeq: 0, check: () => ({ body: verdictBody }) },
+        }),
+      ).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(durableLogSeqs(storage)).resolves.toEqual([]);
+    },
+  );
 });

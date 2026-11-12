@@ -103,12 +103,15 @@ export const makeCollection = <T extends DocumentData>(
     /**
      * Update the row at `id` by JSON-merge-patch. Forwards to the
      * predicate-form `runUpdate` through a `byId` wire, so at most one row
-     * is matched.
+     * is matched. A write to the row that commits after the read is not
+     * lost: the patch is re-applied to it, and a row deleted there is left
+     * deleted with `modified: 0` (see `runUpdate`).
      *
      * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
-     *   the writer does not resolve; the write was not committed. The writer
-     *   makes one attempt (log-create races are resolved inside it), so
-     *   re-run the call to retry. Retriable.
+     *   the writer does not resolve, or log retention retired part of the
+     *   commit window; the write was not committed. The writer makes one
+     *   attempt (log-create races are resolved inside it), so re-run the
+     *   call to retry. Retriable.
      * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
      *   durable, but its outcome could not be resolved, so the update may or
      *   may not have been applied. Re-read by `id`; absence is not proof of
@@ -123,9 +126,12 @@ export const makeCollection = <T extends DocumentData>(
      */
     update: (id, patch) => makeQuery<T>(ctx, byId(id)).update(patch),
     /**
-     * Replace the row at `id` wholesale, preserving doc identity.
+     * Replace the row at `id` wholesale, preserving doc identity. Last
+     * writer wins against a concurrent update; a concurrent delete is not
+     * undone (see `runReplaceById`).
      *
-     * @throws BaerlyError code="NotFound" — no row exists at `id`.
+     * @throws BaerlyError code="NotFound" — no row exists at `id`, including
+     *   one a concurrent delete removed after the read.
      * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
      *   the writer does not resolve; the write was not committed. The writer
      *   makes one attempt (log-create races are resolved inside it), so
