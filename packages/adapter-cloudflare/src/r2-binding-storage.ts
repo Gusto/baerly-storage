@@ -38,6 +38,11 @@ const stripQuotes = (etag: string): string =>
   etag.startsWith('"') && etag.endsWith('"') ? etag.slice(1, -1) : etag;
 const quoteEtag = (hex: string): string => `"${hex}"`;
 
+/** R2 error `10058` `TooManyRequests` at the end of a binding error message. */
+const R2_TOO_MANY_REQUESTS = /\(10058\)\s*$/;
+/** workerd's per-invocation subrequest limit ("Too many subrequests by single Worker invocation"). */
+const WORKERS_SUBREQUEST_LIMIT = /too many subrequests/i;
+
 class R2BindingStorageImpl implements Storage {
   readonly #bucket: R2Bucket;
 
@@ -174,10 +179,20 @@ class R2BindingStorageImpl implements Storage {
    * message fallback for older runtimes.
    *
    * `AccessDenied` and `InvalidConfig` are permanent and not retried.
-   * Everything else is a `NetworkError` with an unknown outcome: a plain
-   * binding error never proves the call was not applied, so it is never
-   * tagged `throttled` and an exhausted conditional create never reports
-   * `notApplied`.
+   * Two `NetworkError`s prove the call was not applied:
+   *
+   * - R2 error `10058` (`TooManyRequests`, 429: "limit: 1 write/second
+   *   per key") is tagged `throttled`, so it gets the throttle backoff
+   *   base, and a conditional create whose every attempt hit it reports
+   *   `notApplied`. R2 binding errors end `message` with the error code
+   *   in parentheses (https://developers.cloudflare.com/r2/api/error-codes/).
+   * - The Workers "Too many subrequests" limit is thrown before the call
+   *   is issued, and every later call in the invocation is refused too,
+   *   so it is tagged `refused`: not retried, and `notApplied` on a
+   *   create. The message match is a backstop, not the primary guard.
+   *
+   * Everything else is a `NetworkError` with an unknown outcome, so an
+   * exhausted conditional create does not report `notApplied`.
    */
   #callBinding<T>(fn: () => Promise<T>, op: string, conditionalCreate = false): Promise<T> {
     return retryStorageCall(
@@ -189,6 +204,16 @@ class R2BindingStorageImpl implements Storage {
             throw error;
           }
           const msg = error instanceof Error ? error.message : String(error);
+          if (R2_TOO_MANY_REQUESTS.test(msg)) {
+            throw new BaerlyError("NetworkError", `${op}: ${msg}`, {
+              cause: { status: 429, throttled: true, error },
+            });
+          }
+          if (WORKERS_SUBREQUEST_LIMIT.test(msg)) {
+            throw new BaerlyError("NetworkError", `${op}: ${msg}`, {
+              cause: { refused: true, error },
+            });
+          }
           if (/auth|permission|forbidden/i.test(msg)) {
             throw new BaerlyError("AccessDenied", `${op}: ${msg}`, { cause: error });
           }
