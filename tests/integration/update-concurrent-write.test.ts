@@ -440,7 +440,7 @@ for (const variant of makeVariants("baerly-update-race-")) {
             const rand = seededPrng(seed);
             await seedRmwRows(storage);
             const ops = rmwOpsFromPrng(rand, 14);
-            const results = await runRmwOps(jitterStorage(storage, rand), ops);
+            const results = await runRmwOps(jitterStorage(storage, rand), ops, storage);
             await assertEvalPlanQualHistory(storage, ops, results, `seed ${seed}`);
           });
         }

@@ -700,7 +700,7 @@ describe("randomized (Db + Writer)", () => {
                 async () => {
                   await bootstrapHarness(storage!, "rmw-model");
                   await seedRmwRows(storage!);
-                  const run = runRmwOps(scheduledStorage(storage!, s), ops);
+                  const run = runRmwOps(scheduledStorage(storage!, s), ops, storage!);
                   await s.waitFor(run);
                   const results = await run;
                   await assertEvalPlanQualHistory(storage!, ops, results, "rmw model");
