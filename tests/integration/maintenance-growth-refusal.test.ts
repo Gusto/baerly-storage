@@ -1236,6 +1236,38 @@ describe("main-10: growth refusal (target behavior)", () => {
           expect(after.start).toBeGreaterThan(before.start);
         });
 
+        test("a batch whose last row is skipped still runs the forced tick for the rows it committed", async () => {
+          const storage = await atEMinus1();
+          // Mark rows 0 and 1 for the batch and leave one more same-size
+          // update pending: the batch's row 0 plus the peer's write below
+          // complete a pass, and the batch's planned writes leave the
+          // collection at its refusal point, so its tick is forced.
+          await commit(storage, [
+            { op: "U", i: 0, n: 7, pad: ROW_PAD },
+            { op: "U", i: 1, n: 7, pad: ROW_PAD },
+            { op: "U", i: 2, n: 0, pad: ROW_PAD },
+          ]);
+          const before = await state(storage);
+          expect(before.tail - before.start).toBe(PASS - 2);
+          // Pause the batch's second create (row 1); the peer takes row 1
+          // out of the predicate and wins that slot, so row 1 is skipped.
+          let creates = 0;
+          const gated = pauseAt(
+            storage,
+            (op, key) => op === "put" && isLogKey(key) && ++creates === 2,
+          );
+          const batch = onHost(gated.storage, SMALL_HOST, (c) =>
+            c.where({ n: 7 }).update({ n: 9 }),
+          );
+          await gated.paused;
+          await commit(storage, [{ op: "U", i: 1, n: 8, pad: ROW_PAD }]);
+          gated.release();
+          await expect(batch).resolves.toEqual({ modified: 1 });
+          const after = await state(storage);
+          expect(after.tail).toBe(before.tail + 2);
+          expect(after.start).toBeGreaterThan(before.start);
+        });
+
         test("six concurrent inserts with room for three: exactly three commit, and growth stays below E", async () => {
           const storage = await sixteen();
           const results = await Promise.all(

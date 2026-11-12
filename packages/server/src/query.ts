@@ -422,6 +422,13 @@ interface Admission {
    */
   skipped(): void;
   /**
+   * Run the batch's forced write tick (G6) when its last planned write was
+   * skipped: that write's commit would have carried the tick, so the rows
+   * that did commit under pressure would otherwise leave the fold undone.
+   * The verb calls it once after its commit loop.
+   */
+  settle(): Promise<void>;
+  /**
    * Stamp the early capacity warning (G7) on the canonical line, from the
    * latest decision: the pre-commit one, or the last commit-time re-check.
    * The verb calls it once its commits have landed, so a write that
@@ -433,27 +440,31 @@ interface Admission {
 /**
  * One write a verb plans, as {@link admitWrites} takes it.
  *
- * A planned `U` is re-decided at commit time against the newest version of
- * its row (PostgreSQL READ COMMITTED's EvalPlanQual): if any entry for its
- * `_id` committed after the verb's read, the write is re-derived from that
- * version instead of the one the read returned. A `D` of the row in that
- * window skips the write (the commit throws {@link RowSkipped}), even when
- * a later `I` re-created the `_id`: that is a different row the verb never
- * read. Otherwise `rebase` re-derives the post-image from the newest
- * version, or returns `undefined` to skip the row; without `rebase` the
- * planned post-image commits as is (last writer wins).
+ * A planned `U` or `D` is re-decided at commit time against the newest
+ * version of its row (PostgreSQL READ COMMITTED's EvalPlanQual): if any
+ * entry for its `_id` committed after the verb's read, the write is decided
+ * from that version instead of the one the read returned. A `D` of the row
+ * in that window skips the write (the commit throws {@link RowSkipped}),
+ * even when a later `I` re-created the `_id`: that is a different row the
+ * verb never read. Otherwise, for a `U`, `rebase` re-derives the post-image
+ * from the newest version, or returns `undefined` to skip the row; without
+ * `rebase` the planned post-image commits as is (last writer wins). For a
+ * `D`, `stillMatches` re-evaluates the verb's predicate on the newest
+ * version, and the row is skipped when it no longer matches.
  */
 interface VerbWrite {
   readonly planned: PlannedWrite;
   readonly rebase?: (latest: DocumentData) => Promise<DocumentData | undefined>;
+  readonly stillMatches?: (latest: DocumentData) => boolean;
 }
 
 /**
- * Thrown from an admission check when the row a planned `U` targets was
- * deleted after the verb's read, or no longer qualifies for it. The writer
- * propagates it before the committing create, so nothing commits; the verb
- * that planned the write catches it (`update` counts the row as not
- * modified, `replace` throws `NotFound`). Never escapes `query.ts`.
+ * Thrown from an admission check when the row a planned `U` / `D` targets
+ * was deleted after the verb's read, or no longer qualifies for it. The
+ * writer propagates it before the committing create, so nothing commits;
+ * the verb that planned the write catches it (`update` / `delete` leave the
+ * row out of their count, `replace` throws `NotFound`). Never escapes
+ * `query.ts`.
  */
 class RowSkipped extends Error {
   constructor(docId: string) {
@@ -498,10 +509,10 @@ const EMPTY_HEAD = { snapshot_rows: 0, snapshot_bytes: 0, log_seq_start: 0 } as 
  * Each commit passes `next()` to `Writer.commit`, which hands back every
  * log entry in `[fromSeq, seq)`: the entries this decision has not seen.
  *
- * - **Row (EvalPlanQual).** A planned `U` whose row any entry committed
- *   after the read touched (in this window, or in an earlier row's window
- *   of the same batch) is re-derived from the newest version, or skipped;
- *   see {@link VerbWrite}. The rebased post-image is the verdict's `body`,
+ * - **Row (EvalPlanQual).** A planned `U` / `D` whose row any entry
+ *   committed after the read touched (in this window, or in an earlier
+ *   row's window of the same batch) is re-decided from the newest version,
+ *   or skipped; see {@link VerbWrite}. A rebased post-image is the verdict's `body`,
  *   so the writer indexes and commits it.
  * - **Capacity (main-10 G5-race).** An empty window with no rebase means
  *   nothing intervened, so the decision stands as made and nothing is
@@ -557,16 +568,23 @@ const admitWrites = async (
   let pending = 0;
   // The window of the latest `check` call: on commit, `[fromSeq, seq)`.
   let lastWindow: readonly LogEntry[] = [];
+  // The latest decision's G6 pressure, and the batch's last own commit.
+  let pressure = forceMaintenance;
+  let lastCommitted: LogEntry | undefined;
+  let lastSkipped = false;
   const check = async (
     window: readonly LogEntry[],
     tail: number,
   ): Promise<CommitVerdict | undefined> => {
     lastWindow = window;
-    const { planned, rebase } = verbWrites[pending]!;
+    const { planned, rebase, stillMatches } = verbWrites[pending]!;
     let rebased: DocumentData | undefined;
-    if (planned.op === "U") {
+    if (planned.op !== "I") {
       const newest = newestVersion([...sinceRead, ...window], ctx.collectionName, planned.docId);
       if (newest === "gone") {
+        throw new RowSkipped(planned.docId);
+      }
+      if (newest !== undefined && stillMatches !== undefined && !stillMatches(newest)) {
         throw new RowSkipped(planned.docId);
       }
       if (newest !== undefined && rebase !== undefined) {
@@ -598,6 +616,7 @@ const admitWrites = async (
     // Re-derive the forced tick (G6) from the state the commit lands on.
     // It rides the batch's last commit only, as the pre-commit flag does.
     warning = decision.warning;
+    pressure = decision.pressure;
     return {
       forceMaintenance: decision.pressure && pending === writes.length - 1,
       ...(rebased !== undefined && { body: rebased }),
@@ -613,11 +632,32 @@ const admitWrites = async (
       sinceRead.push(...lastWindow, entry);
       fromSeq = entry.seq + 1;
       pending++;
+      lastCommitted = entry;
+      lastSkipped = false;
     },
     skipped: () => {
       // `fromSeq` stays put, so the next row's window re-reads the
       // skipped row's window; nothing is recorded twice.
       pending++;
+      lastSkipped = true;
+    },
+    settle: async () => {
+      if (
+        !lastSkipped ||
+        lastCommitted === undefined ||
+        !pressure ||
+        getCurrentContext()?.maintenance?.disabled === true
+      ) {
+        return;
+      }
+      await dispatchWriteTick({
+        storage: ctx.storage,
+        currentJsonKey: `${ctx.collectionPrefix}/current.json`,
+        collection: ctx.collectionName,
+        prevSeq: lastCommitted.seq,
+        observedTail: lastCommitted.seq + 1,
+        forceFold: true,
+      });
     },
     warn: () => {
       if (warning !== undefined && writes.length > 0) {
@@ -856,53 +896,6 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
 };
 
 /**
- * `Query.update` implementation. Materialises the predicate/order/
- * limit-filtered match set, applies RFC 7386 `merge(prev, patch)`
- * per row, and emits one `op:"U"` `LogEntry` per affected `doc_id`
- * — one `Writer.commit()` round-trip apiece.
- *
- * Atomicity is per row, not across the N-row batch: each affected row
- * commits independently — the document is the atomic unit; there is no
- * multi-row batch.
- *
- * **Concurrent writes to a matched row (EvalPlanQual).** When another
- * write to a matched row commits between this read and the row's own
- * commit, the patch is re-applied to that newest version and the
- * predicate re-evaluated on it (`limit` / `order` are not); a row that
- * was deleted there, or no longer matches, is skipped and not counted in
- * `modified`. See {@link VerbWrite}.
- *
- * `replica_identity` defaults to `PATCH_ONLY` for every collection
- * today — emitted `U` entries carry `{ after }` (the full post-image)
- * and neither `before` nor `key_old`. Consumers rebuilding pre-images
- * under `PATCH_ONLY` need to maintain a shadow table — see
- * `packages/protocol/src/log.ts:102–118`.
- *
- * @throws BaerlyError code="WriteConflict" — one row's commit hit a rejected
- *   storage precondition `Writer.commit()` does not resolve. The
- *   partial-progress `modified` count is NOT returned in that case.
- * @throws BaerlyError code="AmbiguousCommit" — one row's committing create
- *   may be durable, but its outcome could not be resolved. Rows before it in
- *   the batch are already applied and that row's own fate is unknown; the
- *   partial-progress `modified` count is NOT returned. Re-read rows by `_id`
- *   before deciding whether to resume; absence does not prove a create failed.
- *   See `Writer.commit`.
- * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
- *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
- *   root in the type system).
- * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
- *   other than the row's (see {@link assertPatchKeepsId}), or the row's
- *   `_id` is not NFC (see {@link assertDocId}). Checked for every matched
- *   row, with schema validation, before any row commits.
- * @throws BaerlyError code="CapacityExceeded" — the batch would grow the
- *   collection past the serving host's fold ceiling (see `./capacity.ts`);
- *   decided before any row commits, and re-checked at each row's commit
- *   when a concurrent write landed since (see {@link admitWrites}), in
- *   which case rows before it are already applied.
- * @throws BaerlyError code="InvalidResponse" — a matched stored row's
- *   `_id` is not the string it is stored under.
- */
-/**
  * `merge(row, patch)` as `update` commits it, validated against the
  * collection's schema.
  *
@@ -938,6 +931,55 @@ const mergeAndValidate = async <T extends DocumentData>(
   return merged;
 };
 
+/**
+ * `Query.update` implementation. Materialises the predicate/order/
+ * limit-filtered match set, applies RFC 7386 `merge(prev, patch)`
+ * per row, and emits one `op:"U"` `LogEntry` per affected `doc_id`
+ * — one `Writer.commit()` round-trip apiece.
+ *
+ * Atomicity is per row, not across the N-row batch: each affected row
+ * commits independently — the document is the atomic unit; there is no
+ * multi-row batch.
+ *
+ * **Concurrent writes to a matched row (EvalPlanQual).** When another
+ * write to a matched row commits between this read and the row's own
+ * commit, the patch is re-applied to that newest version and the
+ * predicate re-evaluated on it (`limit` / `order` are not); a row that
+ * was deleted there, or no longer matches, is skipped and not counted in
+ * `modified`. See {@link VerbWrite}.
+ *
+ * `replica_identity` defaults to `PATCH_ONLY` for every collection
+ * today — emitted `U` entries carry `{ after }` (the full post-image)
+ * and neither `before` nor `key_old`. Consumers rebuilding pre-images
+ * under `PATCH_ONLY` need to maintain a shadow table — see
+ * `packages/protocol/src/log.ts:102–118`.
+ *
+ * @throws BaerlyError code="WriteConflict" — one row's commit hit a rejected
+ *   storage precondition `Writer.commit()` does not resolve. The
+ *   partial-progress `modified` count is NOT returned in that case.
+ * @throws BaerlyError code="AmbiguousCommit" — one row's committing create
+ *   may be durable, but its outcome could not be resolved. Rows before it in
+ *   the batch are already applied and that row's own fate is unknown; the
+ *   partial-progress `modified` count is NOT returned. Re-read rows by `_id`
+ *   before deciding whether to resume; absence does not prove a create failed.
+ *   See `Writer.commit`.
+ * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
+ *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
+ *   root in the type system), or the schema rejected a post-image; at a
+ *   row's commit (re-applied to a newer version) rows before it are
+ *   already applied.
+ * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
+ *   other than the row's (see {@link assertPatchKeepsId}), or the row's
+ *   `_id` is not NFC (see {@link assertDocId}). Checked for every matched
+ *   row, with schema validation, before any row commits.
+ * @throws BaerlyError code="CapacityExceeded" — the batch would grow the
+ *   collection past the serving host's fold ceiling (see `./capacity.ts`);
+ *   decided before any row commits, and re-checked at each row's commit
+ *   when a concurrent write landed since (see {@link admitWrites}), in
+ *   which case rows before it are already applied.
+ * @throws BaerlyError code="InvalidResponse" — a matched stored row's
+ *   `_id` is not the string it is stored under.
+ */
 const runUpdate = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
@@ -947,7 +989,9 @@ const runUpdate = async <T extends DocumentData>(
   const { rows } = read;
   // Merge and validate every row first, so the per-row checks and the
   // capacity check decide the batch whole, before its first row commits.
-  // Only the commit-time capacity re-check can stop the batch part-way.
+  // Only the commit-time re-checks can stop the batch part-way: the
+  // capacity re-check, or a `SchemaError` re-applying the patch to a newer
+  // version of a row.
   const planned: Array<{ docId: string; before: DocumentData; merged: DocumentData }> = [];
   for (const row of rows) {
     const doc = row.doc;
@@ -1002,6 +1046,7 @@ const runUpdate = async <T extends DocumentData>(
     admission.committed(entry);
     modified++;
   }
+  await admission.settle();
   admission.warn();
   return { modified };
 };
@@ -1096,6 +1141,13 @@ export const runReplaceById = async <T extends DocumentData>(
  * `Query.update`. The document is the atomic unit; there is no
  * multi-row batch.
  *
+ * **Concurrent writes to a matched row (EvalPlanQual).** As in
+ * `runUpdate`: when another write to a matched row commits between this
+ * read and the row's own commit, the predicate is re-evaluated on that
+ * newest version. A row deleted there (including by a racing delete, or
+ * deleted and re-inserted), or no longer matching, is skipped and not
+ * counted in `deleted`. See {@link VerbWrite}.
+ *
  * @throws BaerlyError code="WriteConflict" — one row's commit hit a rejected
  *   storage precondition `Writer.commit()` does not resolve. The
  *   partial-progress `deleted` count is NOT returned
@@ -1114,24 +1166,38 @@ const runDelete = async <T extends DocumentData>(
 ): Promise<{ deleted: number }> => {
   const read = await runReadRows<T>(ctx, state);
   const docIds = read.rows.map((row) => storedRowId(row, "delete"));
+  const { wire } = state;
+  const stillMatches =
+    wire === undefined ? undefined : (latest: DocumentData) => matchesWire(wire, latest);
   const admission = await admitWrites(
     ctx,
     read,
-    docIds.map((docId) => ({ planned: { op: "D", docId } })),
+    docIds.map((docId) => ({ planned: { op: "D", docId }, stillMatches })),
   );
   let deleted = 0;
-  // As in `runUpdate`, a forced tick rides the batch's last commit only.
+  // As in `runUpdate`, a forced tick rides the batch's last commit only
+  // (or `settle()`, when that row is skipped).
   for (const [i, docId] of docIds.entries()) {
-    const { entry } = await writerFor(ctx).commit({
-      op: "D",
-      collection: ctx.collectionName,
-      docId,
-      admission: admission.next(),
-      ...(admission.forceMaintenance && i === docIds.length - 1 && { forceMaintenance: true }),
-    });
+    let entry: LogEntry;
+    try {
+      ({ entry } = await writerFor(ctx).commit({
+        op: "D",
+        collection: ctx.collectionName,
+        docId,
+        admission: admission.next(),
+        ...(admission.forceMaintenance && i === docIds.length - 1 && { forceMaintenance: true }),
+      }));
+    } catch (error) {
+      if (error instanceof RowSkipped) {
+        admission.skipped();
+        continue;
+      }
+      throw error;
+    }
     admission.committed(entry);
     deleted++;
   }
+  await admission.settle();
   admission.warn();
   return { deleted };
 };
