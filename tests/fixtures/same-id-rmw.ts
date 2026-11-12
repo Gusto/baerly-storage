@@ -5,10 +5,10 @@
  * Concurrent same-`_id` read-modify-write workload and its oracle.
  *
  * Every op races the others on a pool of three `_id`s: single-row merge
- * patches, a predicate batch update, a predicate-field toggle, whole-row
- * replaces, deletes and re-inserts. The oracle checks the committed log
- * (the collection's linearization) instead of a model, so it needs no
- * knowledge of how the ops interleaved:
+ * patches, a predicate batch update and batch delete, a predicate-field
+ * toggle, whole-row replaces, deletes and re-inserts. The oracle checks the
+ * committed log (the collection's linearization) instead of a model, so it
+ * needs no knowledge of how the ops interleaved:
  *
  * - every `U` follows a live version of its row (no update or replace
  *   resurrects a delete);
@@ -16,7 +16,11 @@
  *   immediately before it in the log (no lost update), and a batch row's
  *   predecessor still matched the batch predicate;
  * - a replace's post-image is its document;
- * - each verb's result agrees with the entries it committed;
+ * - each verb's result agrees with the entries it committed, and every
+ *   committed `D` is counted by exactly one delete;
+ * - no write was wrongly skipped: a row that stayed live (and matching a
+ *   batch's predicate) at every log position between an op's start and
+ *   its end must have been written by it;
  * - reads see the log's fold.
  *
  * Callers run with write-tick maintenance off, so the whole log stays in
@@ -49,6 +53,7 @@ type RmwId = (typeof RMW_IDS)[number];
 export type RmwOp =
   | { readonly kind: "update" | "toggle" | "replace" | "insert"; readonly id: RmwId }
   | { readonly kind: "batch" }
+  | { readonly kind: "batchDelete" }
   | { readonly kind: "delete"; readonly id: RmwId };
 
 export type RmwResult = { readonly ok: unknown } | { readonly code: string | undefined };
@@ -136,13 +141,22 @@ export const scheduledStorage = (inner: Storage, s: fc.Scheduler): Storage => {
   };
 };
 
-const KINDS = ["update", "update", "toggle", "batch", "replace", "delete", "insert"] as const;
+const KINDS = [
+  "update",
+  "update",
+  "toggle",
+  "batch",
+  "replace",
+  "delete",
+  "batchDelete",
+  "insert",
+] as const;
 
 export const rmwOpsFromPrng = (rand: () => number, count: number): RmwOp[] =>
   Array.from({ length: count }, () => {
     const kind = KINDS[Math.floor(rand() * KINDS.length)]!;
     const id = RMW_IDS[Math.floor(rand() * RMW_IDS.length)]!;
-    return kind === "batch" ? { kind } : { kind, id };
+    return kind === "batch" || kind === "batchDelete" ? { kind } : { kind, id };
   });
 
 export const rmwOpsArb: fc.Arbitrary<RmwOp[]> = fc.array(
@@ -151,15 +165,22 @@ export const rmwOpsArb: fc.Arbitrary<RmwOp[]> = fc.array(
       kind: fc.constantFrom("update", "toggle", "replace", "insert", "delete"),
       id: fc.constantFrom(...RMW_IDS),
     }),
-    fc.constant({ kind: "batch" as const }),
+    fc.constantFrom({ kind: "batch" as const }, { kind: "batchDelete" as const }),
   ),
   { minLength: 2, maxLength: 8 },
 );
 
+/** The batch ops' predicate. */
+const BATCH_WHERE = { status: "open" } as const;
+const matchesBatch = (row: DocumentData | undefined): boolean => row?.["status"] === "open";
+
 const runOp = (storage: Storage, op: RmwOp, k: number): Promise<unknown> => {
   const c = collectionOn(storage);
   if (op.kind === "batch") {
-    return c.where({ status: "open" }).update(patchFor(op, k));
+    return c.where(BATCH_WHERE).update(patchFor(op, k));
+  }
+  if (op.kind === "batchDelete") {
+    return c.where(BATCH_WHERE).delete();
   }
   if (op.kind === "update" || op.kind === "toggle") {
     return c.update(op.id, patchFor(op, k));
@@ -173,15 +194,44 @@ const runOp = (storage: Storage, op: RmwOp, k: number): Promise<unknown> => {
   return c.delete(op.id);
 };
 
-/** Start every op at once over `storage`; settle each to its value or error code. */
-export const runRmwOps = (storage: Storage, ops: readonly RmwOp[]): Promise<RmwResult[]> =>
+/**
+ * An op's result, and the log length before it started (`from`) and after
+ * it settled (`to`). Its read and its commit both happened at log
+ * positions in `[from, to]`.
+ */
+export interface RmwOutcome {
+  readonly result: RmwResult;
+  readonly from: number;
+  readonly to: number;
+}
+
+/** The number of log entries (the log is dense from 0: nothing folds). */
+const logLength = async (storage: Storage): Promise<number> => {
+  let seq = 0;
+  while ((await storage.get(logObjectKey(TABLE_PREFIX, seq))) !== null) {
+    seq++;
+  }
+  return seq;
+};
+
+/**
+ * Start every op at once over `storage`; settle each to its value or error
+ * code. `logOf` is read, unjittered and unscheduled, for each op's span.
+ */
+export const runRmwOps = (
+  storage: Storage,
+  ops: readonly RmwOp[],
+  logOf: Storage,
+): Promise<RmwOutcome[]> =>
   Promise.all(
-    ops.map((op, k) =>
-      runOp(storage, op, k).then(
-        (ok) => ({ ok }),
-        (error: unknown) => ({ code: (error as { code?: string }).code }),
-      ),
-    ),
+    ops.map(async (op, k) => {
+      const from = await logLength(logOf);
+      const result = await runOp(storage, op, k).then(
+        (ok): RmwResult => ({ ok }),
+        (error: unknown): RmwResult => ({ code: (error as { code?: string }).code }),
+      );
+      return { result, from, to: await logLength(logOf) };
+    }),
   );
 
 const readWholeLog = async (storage: Storage): Promise<LogEntry[]> => {
@@ -199,25 +249,35 @@ const readWholeLog = async (storage: Storage): Promise<LogEntry[]> => {
 export const assertEvalPlanQualHistory = async (
   storage: Storage,
   ops: readonly RmwOp[],
-  results: readonly RmwResult[],
+  outcomes: readonly RmwOutcome[],
   label: string,
 ): Promise<void> => {
   const log = await readWholeLog(storage);
   const live = new Map<string, DocumentData>();
-  const writesBy = new Map<number, number>();
+  // `states[p]`: each row after the first `p` log entries.
+  const states: Array<ReadonlyMap<string, DocumentData>> = [new Map()];
+  const writes = new Map<number, Set<string>>();
   // Each check embeds `at` in the compared value, so a failure names the
   // seed, the log slot and the op.
   for (const entry of log) {
     const at = `${label}: log/${entry.seq} (${entry.op} ${entry.doc_id})`;
     const prev = live.get(entry.doc_id);
     if (entry.op === "D") {
+      // A delete re-checks its row at commit, so it never tombstones an
+      // absent one (two racing deletes commit one `D`).
+      expect({ at, deleteOfAbsentRow: prev === undefined }).toEqual({
+        at,
+        deleteOfAbsentRow: false,
+      });
       live.delete(entry.doc_id);
+      states.push(new Map(live));
       continue;
     }
     const after = entry.after!;
     const k = after["last"] as number;
-    writesBy.set(k, (writesBy.get(k) ?? 0) + 1);
+    writes.set(k, (writes.get(k) ?? new Set()).add(entry.doc_id));
     live.set(entry.doc_id, after);
+    states.push(new Map(live));
     if (entry.op === "I") {
       expect({ at, insertOverLiveRow: prev !== undefined }).toEqual({
         at,
@@ -240,22 +300,69 @@ export const assertEvalPlanQualHistory = async (
     }
     expect({ at, after }).toEqual({ at, after: merge(prev!, patchFor(op, k)) });
   }
+
+  // Completeness: a write that should have landed did. An op reads and
+  // commits at log positions in its span `[from, to]`, so if its row stayed
+  // live (and matching the batch predicate) at every position of the span,
+  // no peer deleted or disqualified it there, and skipping it is wrong.
+  const heldThroughout = (
+    outcome: RmwOutcome,
+    id: string,
+    holds: (row: DocumentData | undefined) => boolean,
+  ): boolean => states.slice(outcome.from, outcome.to + 1).every((state) => holds(state.get(id)));
+  const isLive = (row: DocumentData | undefined): boolean => row !== undefined;
+  let reportedDeletes = 0;
   ops.forEach((op, k) => {
-    const at = `${label}: op ${k} ${JSON.stringify(op)}`;
-    const wrote = writesBy.get(k) ?? 0;
-    const result = results[k]!;
-    if (op.kind === "delete") {
+    const at = `${label}: op ${k} ${JSON.stringify(op)} span [${outcomes[k]!.from}, ${outcomes[k]!.to}]`;
+    const outcome = outcomes[k]!;
+    const { result } = outcome;
+    const wrote = writes.get(k) ?? new Set<string>();
+    if (op.kind === "delete" || op.kind === "batchDelete") {
       expect({ at, result }).toMatchObject({ at, result: { ok: { deleted: expect.any(Number) } } });
+      const { deleted } = (result as { ok: { deleted: number } }).ok;
+      reportedDeletes += deleted;
+      const owed =
+        op.kind === "delete"
+          ? [op.id].filter((id) => heldThroughout(outcome, id, isLive))
+          : RMW_IDS.filter((id) => heldThroughout(outcome, id, matchesBatch));
+      // A row live throughout the span cannot stay live past this op.
+      expect({ at, deletedAtLeast: Math.min(deleted, owed.length) }).toEqual({
+        at,
+        deletedAtLeast: owed.length,
+      });
       return;
     }
-    let expected: RmwResult = { ok: { modified: wrote } };
-    if (op.kind === "replace") {
-      expected = wrote === 1 ? { ok: undefined } : { code: "NotFound" };
-    } else if (op.kind === "insert") {
-      expected = wrote === 1 ? { ok: { _id: op.id } } : { code: "AlreadyExists" };
+    if (op.kind === "insert") {
+      expect({ at, result }).toEqual({
+        at,
+        result: wrote.size === 1 ? { ok: { _id: op.id } } : { code: "AlreadyExists" },
+      });
+      const absentThroughout = heldThroughout(outcome, op.id, (row) => row === undefined);
+      expect({ at, refusedWhileAbsent: wrote.size === 0 && absentThroughout }).toEqual({
+        at,
+        refusedWhileAbsent: false,
+      });
+      return;
     }
-    expect({ at, result }).toEqual({ at, result: expected });
+    if (op.kind === "replace") {
+      expect({ at, result }).toEqual({
+        at,
+        result: wrote.size === 1 ? { ok: undefined } : { code: "NotFound" },
+      });
+    } else {
+      expect({ at, result }).toEqual({ at, result: { ok: { modified: wrote.size } } });
+    }
+    const targets = op.kind === "batch" ? RMW_IDS : [op.id];
+    const holds = op.kind === "batch" ? matchesBatch : isLive;
+    const wronglySkipped = targets.filter(
+      (id) => !wrote.has(id) && heldThroughout(outcome, id, holds),
+    );
+    expect({ at, wronglySkipped }).toEqual({ at, wronglySkipped: [] });
   });
+  // Every committed `D` is reported by exactly one delete, and none twice.
+  const committedDeletes = log.filter((entry) => entry.op === "D").length;
+  expect({ at: label, reportedDeletes }).toEqual({ at: label, reportedDeletes: committedDeletes });
+
   const rows = await collectionOn(storage).all();
   expect({ at: label, rows: Object.fromEntries(rows.map((r) => [r["_id"] as string, r])) }).toEqual(
     {
