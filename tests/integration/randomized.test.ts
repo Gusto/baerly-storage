@@ -54,6 +54,14 @@ import { foldLogEntriesOnto } from "../../packages/server/src/log-walk.ts";
 import { Writer } from "../../packages/server/src/writer.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
+import { bootstrap as bootstrapHarness } from "../fixtures/maintenance-harness.ts";
+import {
+  assertEvalPlanQualHistory,
+  rmwOpsArb,
+  runRmwOps,
+  scheduledStorage,
+  seedRmwRows,
+} from "../fixtures/same-id-rmw.ts";
 import { type EndpointCreds, loadEndpointCreds } from "../fixtures/endpoint-creds.ts";
 import {
   runCausalConsistencyCascade,
@@ -667,6 +675,36 @@ describe("randomized (Db + Writer)", () => {
               await runWithContext(
                 createObservabilityContext({ maintenance: { disabled: true } }),
                 () => runFoldCommitOrdering(storages, rounds),
+              );
+            }),
+            { numRuns: GLOBAL_RUNS > 1_000 ? base * 5 : base },
+          );
+        },
+      );
+
+      // Same-`_id` read-modify-writes: fast-check's scheduler picks the
+      // order every storage call starts in, so an update's read and its
+      // commit straddle peers' writes to the same row. The oracle checks
+      // the committed log (see `tests/fixtures/same-id-rmw.ts`).
+      test.skipIf(variant.label !== "memory" && variant.label !== "local-fs")(
+        "same-_id read-modify-writes re-apply to the newest row version (EvalPlanQual)",
+        { timeout: GLOBAL_RUNS > 1_000 ? 600_000 : 60_000 },
+        async () => {
+          const base = variant.label === "memory" ? 40 : 15;
+          await fc.assert(
+            fc.asyncProperty(rmwOpsArb, fc.scheduler(), async (ops, s) => {
+              const bucket = `rmw-${variant.label}-${uuid().slice(0, 8)}`;
+              const [storage] = await variant.makeStorages(bucket, 1);
+              await runWithContext(
+                createObservabilityContext({ maintenance: { disabled: true } }),
+                async () => {
+                  await bootstrapHarness(storage!, "rmw-model");
+                  await seedRmwRows(storage!);
+                  const run = runRmwOps(scheduledStorage(storage!, s), ops);
+                  await s.waitFor(run);
+                  const results = await run;
+                  await assertEvalPlanQualHistory(storage!, ops, results, "rmw model");
+                },
               );
             }),
             { numRuns: GLOBAL_RUNS > 1_000 ? base * 5 : base },
