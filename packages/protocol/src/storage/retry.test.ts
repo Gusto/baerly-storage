@@ -31,6 +31,8 @@ const recordingSleep = () => {
 const transient = () => new BaerlyError("NetworkError", "500", { cause: { status: 500 } });
 const throttled = () =>
   new BaerlyError("NetworkError", "429", { cause: { status: 429, throttled: true } });
+const refused = () =>
+  new BaerlyError("NetworkError", "subrequest limit", { cause: { refused: true } });
 const hinted = (seconds: number) =>
   new BaerlyError("NetworkError", "429", {
     cause: {
@@ -224,6 +226,31 @@ describe("retryStorageCall with conditionalCreate", () => {
     expect(failure.cause).not.toHaveProperty("notApplied");
   });
 
+  test("a refused create ends the loop at once and reports notApplied", async () => {
+    const { fn, calls } = sequence([refused()]);
+    const failure = (await run(fn)) as BaerlyError;
+    expect(failure).toMatchObject({
+      code: "NetworkError",
+      cause: { refused: true, notApplied: true },
+    });
+    expect(failure.retriable).toBe(true);
+    expect(calls()).toBe(1);
+  });
+
+  test("a refusal after only throttled attempts reports notApplied", async () => {
+    const { fn, calls } = sequence([throttled(), refused()]);
+    await expect(run(fn)).resolves.toMatchObject({ cause: { notApplied: true } });
+    expect(calls()).toBe(2);
+  });
+
+  test("a refusal after an uncertain attempt does not report notApplied", async () => {
+    const { fn, calls } = sequence([transient(), refused()]);
+    const failure = (await run(fn)) as BaerlyError;
+    expect(failure).toMatchObject({ code: "NetworkError", cause: { refused: true } });
+    expect(failure.cause).not.toHaveProperty("notApplied");
+    expect(calls()).toBe(2);
+  });
+
   test("a first-attempt AccessDenied stays definitive", async () => {
     const { fn, calls } = sequence([new BaerlyError("AccessDenied", "403")]);
     await expect(run(fn)).resolves.toMatchObject({ code: "AccessDenied" });
@@ -253,6 +280,16 @@ describe("retryStorageCall with conditionalCreate", () => {
       (error: unknown) => error,
     )) as BaerlyError;
     expect(failure.cause).not.toHaveProperty("notApplied");
+  });
+
+  test("without conditionalCreate a refusal ends the loop at once, with no notApplied", async () => {
+    const { fn, calls } = sequence([refused()]);
+    const failure = (await retryStorageCall(fn, { sleep: async () => {} }).catch(
+      (error: unknown) => error,
+    )) as BaerlyError;
+    expect(failure).toMatchObject({ code: "NetworkError", cause: { refused: true } });
+    expect(failure.cause).not.toHaveProperty("notApplied");
+    expect(calls()).toBe(1);
   });
 
   test("without conditionalCreate a post-retry AccessDenied is unchanged", async () => {

@@ -48,8 +48,9 @@ export interface StorageRetryOptions {
    * other than `WriteConflict` (for example a 403) cannot prove the
    * create is not durable; it is reported as `NetworkError` carrying the original
    * error as its cause, per the `Storage.put` contract. When every
-   * attempt was throttled, nothing was applied, so the final
-   * `NetworkError`'s cause carries `notApplied: true`.
+   * attempt was throttled (`cause.throttled`) or refused
+   * (`cause.refused`, which also ends the loop), nothing was applied, so
+   * the final `NetworkError`'s cause carries `notApplied: true`.
    */
   readonly conditionalCreate?: boolean;
   /** Jitter source in `[0, 1)`. Test seam; defaults to `Math.random`. */
@@ -61,6 +62,15 @@ export interface StorageRetryOptions {
 /** `true` when an attempt's rejection proves that attempt was not applied. */
 const isThrottled = (e: unknown): boolean =>
   e instanceof BaerlyError && (e.cause as { throttled?: boolean } | undefined)?.throttled === true;
+
+/**
+ * `true` when an attempt was refused before it was issued and a resend
+ * in the same invocation is refused too (the Workers subrequest limit).
+ * Like a throttle it proves the attempt was not applied; unlike one it
+ * ends the loop at once.
+ */
+const isRefused = (e: unknown): boolean =>
+  e instanceof BaerlyError && (e.cause as { refused?: boolean } | undefined)?.refused === true;
 
 const retryAfterMillis = (e: unknown): number | undefined => {
   if (!(e instanceof BaerlyError)) {
@@ -100,7 +110,8 @@ export const storageRetryDelayMillis = (
  * `retries + 1` attempts (default {@link STORAGE_RETRY_MAX_ATTEMPTS}),
  * one counter for throttles and transient failures alike, full-jitter
  * backoff between attempts (see {@link storageRetryDelayMillis}). A
- * {@link PERMANENT_STORAGE_ERROR_CODES} failure ends the loop at once.
+ * {@link PERMANENT_STORAGE_ERROR_CODES} failure, or an error whose cause
+ * carries `refused: true`, ends the loop at once.
  *
  * Every adapter wraps each request — one object call, or one `list`
  * page — in exactly one `retryStorageCall`, so a failing call costs at
@@ -137,12 +148,14 @@ export const retryStorageCall = async <T>(
         }
         throw error;
       }
-      if (!isThrottled(error)) {
+      const refused = isRefused(error);
+      if (!isThrottled(error) && !refused) {
         uncertain = true;
       }
-      // The attempt cap ends here, through the one final-attempt path, so
-      // an all-throttled create always reports `notApplied`.
-      if (attempt >= retries) {
+      // The attempt cap and a refusal end here, through the one final-attempt
+      // path, so a create whose every attempt was throttled or refused always
+      // reports `notApplied`.
+      if (attempt >= retries || refused) {
         if (opts.conditionalCreate === true && !uncertain && error instanceof BaerlyError) {
           throw new BaerlyError(error.code, error.message, {
             cause: {
