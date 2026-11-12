@@ -357,6 +357,14 @@ conditional-write semantics); that is the manual e2e recipe in
 `manual-e2e/README.md`. Run `baerly doctor --bucket=<uri>` against your
 endpoint before relying on it.
 
+**Host plan.** Every `S3HttpStorage` call is a `fetch`, so on Workers
+Free it counts against the plan's 50 subrequests per request; R2 binding
+calls do not. Workers Free + S3 over HTTP is therefore best effort with a
+low ceiling, not first-class: see
+[workload-fit.md § Scale at a glance](../about/workload-fit.md#scale-at-a-glance)
+for its envelope. Workers Paid raises the budget to 10,000 per request
+and is the first guaranteed tier for this path.
+
 **Deploy tooling still assumes R2.** `baerly deploy` and
 `baerly doctor --target=cloudflare` walk `wrangler.jsonc`'s `r2_buckets[]`
 and will flag a missing binding — they do not yet understand an S3-only
