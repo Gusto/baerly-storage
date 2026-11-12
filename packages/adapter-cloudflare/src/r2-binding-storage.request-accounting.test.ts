@@ -12,15 +12,32 @@
  * project, like `r2-binding-storage.test.ts`.
  */
 
-import { type BaerlyError, createCurrentJson, STORAGE_RETRY_MAX_ATTEMPTS } from "@baerly/protocol";
+import {
+  type BaerlyError,
+  createCurrentJson,
+  STORAGE_RETRY_MAX_ATTEMPTS,
+  STORAGE_RETRY_THROTTLE_BASE_MILLIS,
+  storageRetryDelayMillis,
+} from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 
 const NETWORK_ERROR = "NetworkError" as const;
 const AMBIGUOUS_COMMIT = "AmbiguousCommit" as const;
+
+// R2 binding errors end `message` with the R2 error code in parentheses
+// (https://developers.cloudflare.com/r2/api/error-codes/). 10058 is
+// `TooManyRequests` (429), the 1-write-per-second-per-key limit.
+const R2_SAME_KEY_RATE_LIMIT =
+  "put: Reduce your concurrent request rate for the same object. (10058)";
+// The workerd message seen when an invocation exhausts its subrequests.
+const SUBREQUEST_LIMIT =
+  "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
+
+afterEach(() => vi.restoreAllMocks());
 
 interface FakePage {
   readonly keys: readonly string[];
@@ -41,10 +58,11 @@ interface BindingCalls {
  */
 const mkBucket = (
   pages: readonly FakePage[] = [],
-  failing = false,
+  failing: boolean | string = false,
 ): { bucket: R2Bucket; calls: BindingCalls } => {
   const calls: BindingCalls = { get: 0, put: 0, delete: 0, list: [] };
-  const fail = () => Promise.reject(new Error("internal error"));
+  const message = typeof failing === "string" ? failing : "internal error";
+  const fail = () => Promise.reject(new Error(message));
   const object = { key: "k", etag: "e", uploaded: new Date(0) };
   const bucket = {
     get: () => {
@@ -110,6 +128,41 @@ describe("r2BindingStorage request accounting", () => {
     expect(issued).toBe(3);
   });
 
+  test("a same-key rate limit (10058) is retried as a throttle; an all-throttled create reports notApplied", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { bucket, calls } = mkBucket([], R2_SAME_KEY_RATE_LIMIT);
+    const storage = r2BindingStorage(bucket);
+    const err = (await storage
+      .put("k", new Uint8Array([1]), { ifNoneMatch: "*" })
+      .catch((error: unknown) => error)) as BaerlyError;
+    expect(err.code).toBe(NETWORK_ERROR);
+    expect(err.cause).toMatchObject({ throttled: true, notApplied: true });
+    expect(calls.put).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
+    // The throttle tag selects the throttle backoff base.
+    expect(storageRetryDelayMillis(err, 0, { random: () => 1 })).toBe(
+      STORAGE_RETRY_THROTTLE_BASE_MILLIS,
+    );
+  });
+
+  test("the platform's subrequest limit is not retried; a refused create reports notApplied", async () => {
+    const { bucket, calls } = mkBucket([], SUBREQUEST_LIMIT);
+    const storage = r2BindingStorage(bucket);
+    for (const op of [
+      () => storage.get("k"),
+      () => storage.put("k", new Uint8Array([1]), { ifNoneMatch: "*" }),
+      () => storage.delete("k"),
+    ]) {
+      const err = (await op().catch((error: unknown) => error)) as BaerlyError;
+      expect(err.code).toBe(NETWORK_ERROR);
+      expect(err.retriable).toBe(true);
+    }
+    expect([calls.get, calls.put, calls.delete]).toEqual([1, 1, 1]);
+    const createErr = (await storage
+      .put("k", new Uint8Array([1]), { ifNoneMatch: "*" })
+      .catch((error: unknown) => error)) as BaerlyError;
+    expect(createErr.cause).toMatchObject({ notApplied: true });
+  });
+
   test("3 pages — outer meter sees 1 list, binding sees 3", async () => {
     const pages = [
       { keys: ["p/a"], truncated: true },
@@ -157,7 +210,14 @@ const CURRENT_KEY = "app/test/tenant/t/manifests/tickets/current.json";
 const LOG_PREFIX = "app/test/tenant/t/manifests/tickets/log/";
 
 /** What the fault hook does to one log-create binding `put`. */
-type LogPutFault = "pass" | "throw" | "land-then-throw" | "deny";
+type LogPutFault =
+  | "pass"
+  | "throw"
+  | "land-then-throw"
+  | "deny"
+  | "throttle"
+  | "peer-then-throttle"
+  | "subrequest-limit";
 
 /**
  * An in-memory `R2Bucket` honoring the `onlyIf` shapes the adapter
@@ -209,6 +269,20 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault) => {
       }
       if (fault === "deny") {
         return Promise.reject(new Error("permission denied"));
+      }
+      if (fault === "throttle") {
+        return Promise.reject(new Error(R2_SAME_KEY_RATE_LIMIT));
+      }
+      if (fault === "subrequest-limit") {
+        return Promise.reject(new Error(SUBREQUEST_LIMIT));
+      }
+      if (fault === "peer-then-throttle") {
+        // A peer's create wins the key; ours is refused by the same-key limit.
+        if (!objects.has(key)) {
+          const ours = JSON.parse(new TextDecoder().decode(value)) as Record<string, unknown>;
+          store(key, new TextEncoder().encode(JSON.stringify({ ...ours, session: "INTRUDR0" })));
+        }
+        return Promise.reject(new Error(R2_SAME_KEY_RATE_LIMIT));
       }
       const onlyIf = opts?.onlyIf as R2Conditional | undefined;
       const existing = objects.get(key);
@@ -276,6 +350,40 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
     expect(calls.logPuts).toBe(3);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
     expect(counted.gets).toBe(3);
+  });
+
+  test("every log put hits the same-key rate limit — 3 binding PUTs, one readback of the empty slot; retriable NetworkError, not AmbiguousCommit", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { counted, calls, commit } = await setupWriter(() => "throttle");
+    const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
+    expect(err.code).toBe(NETWORK_ERROR);
+    expect(err.retriable).toBe(true);
+    expect(err.cause).toMatchObject({ notApplied: true });
+    expect(counted.puts).toBe(1);
+    expect(calls.logPuts).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
+    expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
+  });
+
+  test("a race loser throttled at a peer's slot forward-probes and commits at the next slot", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { counted, calls, commit } = await setupWriter((n) =>
+      n < STORAGE_RETRY_MAX_ATTEMPTS ? "peer-then-throttle" : "pass",
+    );
+    await expect(commit()).resolves.toMatchObject({ entry: { seq: 1, doc_id: "one" } });
+    // Slot 0: 3 throttled binding PUTs; slot 1: one clean PUT.
+    expect(calls.logPuts).toBe(STORAGE_RETRY_MAX_ATTEMPTS + 1);
+    expect(counted.puts).toBe(2);
+  });
+
+  test("a log create refused by the subrequest limit is one binding PUT and a retriable NetworkError", async () => {
+    const { counted, calls, commit } = await setupWriter(() => "subrequest-limit");
+    const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
+    expect(err.code).toBe(NETWORK_ERROR);
+    expect(err.retriable).toBe(true);
+    expect(err.cause).toMatchObject({ notApplied: true });
+    expect(counted.puts).toBe(1);
+    expect(calls.logPuts).toBe(1);
+    expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
   });
 
   test("lost ack (lands, then throws) — the adapter's own resend is refused by the precondition, readback adopts; outer 1 put, 2 binding PUTs", async () => {
