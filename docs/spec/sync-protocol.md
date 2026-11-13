@@ -490,8 +490,12 @@ ledger of the request that dispatched it. An attempt the ledger has no room
 for is never sent: it fails with
 `BaerlyError{code:"CapacityExceeded"}` whose cause carries `refused: true`,
 which ends the retry loop. A committing create refused before any attempt
-of uncertain outcome carries `notApplied`; after one, it is a `NetworkError`
-with an unknown fate, which the writer resolves by readback as above.
+of uncertain outcome keeps `CapacityExceeded` and carries `notApplied`; the
+writer treats it like a `notApplied` `NetworkError`, so an empty or
+unreadable readback (the ledger refuses that too when nothing is left)
+surfaces the `CapacityExceeded` refusal, with nothing committed. Refused
+after an attempt of uncertain outcome, the create is a `NetworkError` with an
+unknown fate, which the writer resolves by readback as above.
 
 The ledger has two pools: `internal`, charged for every storage call, and
 `external`, charged as well for a call that leaves through `fetch` (S3 over
