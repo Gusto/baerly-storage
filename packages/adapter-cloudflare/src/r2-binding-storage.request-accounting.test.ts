@@ -135,7 +135,7 @@ describe("r2BindingStorage request accounting", () => {
     const { bucket, calls } = mkBucket([], R2_SAME_KEY_RATE_LIMIT);
     const storage = r2BindingStorage(bucket);
     const err = (await storage
-      .put("k", new Uint8Array([1]), { ifMatch: '"e"' })
+      .put("k", new Uint8Array([1]))
       .catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(NETWORK_ERROR);
     expect(err.cause).toMatchObject({ throttled: true });
@@ -144,6 +144,17 @@ describe("r2BindingStorage request accounting", () => {
     expect(storageRetryDelayMillis(err, 0, { random: () => 1 })).toBe(
       STORAGE_RETRY_THROTTLE_BASE_MILLIS,
     );
+  });
+
+  test("an ifMatch put gets one binding call on any failure, a throttle included", async () => {
+    for (const failure of [true, R2_SAME_KEY_RATE_LIMIT]) {
+      const { bucket, calls } = mkBucket([], failure);
+      const err = (await r2BindingStorage(bucket)
+        .put("k", new Uint8Array([1]), { ifMatch: '"e"' })
+        .catch((error: unknown) => error)) as BaerlyError;
+      expect(err.code).toBe(NETWORK_ERROR);
+      expect(calls.put).toBe(1);
+    }
   });
 
   test("a same-key rate limit (10058) on every attempt preserves conditional-create uncertainty", async () => {

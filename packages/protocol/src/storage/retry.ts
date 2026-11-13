@@ -56,6 +56,15 @@ export interface StorageRetryOptions {
    */
   readonly conditionalCreate?: boolean;
   /**
+   * Set for an `If-Match` PUT (a compare-and-swap). It gets exactly one
+   * attempt, whatever `retries` says: if an attempt lands but its reply is
+   * lost or comes back as a 5xx, a resend meets the request's own write as
+   * a 412 and reports a false `WriteConflict`. Every in-tree CAS caller
+   * treats a failure as "skip; the next pass re-reads", so the failure goes
+   * straight to it. Adapters set this from `StoragePutOptions.ifMatch`.
+   */
+  readonly compareAndSwap?: boolean;
+  /**
    * The {@link RequestPool} each attempt is charged to on the active
    * invocation's request ledger. `"internal"` for a call that stays
    * inside the host (the R2 binding); `"external"`, the default, for one
@@ -115,7 +124,8 @@ export const storageRetryDelayMillis = (
 
 /**
  * Run one storage request under the single adapter retry policy: at most
- * `retries + 1` attempts (default {@link STORAGE_RETRY_MAX_ATTEMPTS}),
+ * `retries + 1` attempts (default {@link STORAGE_RETRY_MAX_ATTEMPTS}; one
+ * for a `compareAndSwap` call),
  * one counter for throttles and transient failures alike, full-jitter
  * backoff between attempts (see {@link storageRetryDelayMillis}). A
  * {@link PERMANENT_STORAGE_ERROR_CODES} failure, or an error whose cause
@@ -135,7 +145,8 @@ export const retryStorageCall = async <T>(
   fn: () => Promise<T>,
   opts: StorageRetryOptions = {},
 ): Promise<T> => {
-  const retries = opts.retries ?? STORAGE_RETRY_MAX_ATTEMPTS - 1;
+  const retries =
+    opts.compareAndSwap === true ? 0 : (opts.retries ?? STORAGE_RETRY_MAX_ATTEMPTS - 1);
   // A non-integer cap would end the loop between attempts and drop the
   // real error; reject it before any request is sent.
   if (!Number.isSafeInteger(retries) || retries < 0) {

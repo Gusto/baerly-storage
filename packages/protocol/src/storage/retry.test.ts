@@ -45,6 +45,21 @@ const hinted = (seconds: number) =>
 // Just under 1, so full jitter lands at (almost) its ceiling.
 const NEAR_ONE = 1 - 2 ** -20;
 
+describe("retryStorageCall compareAndSwap", () => {
+  test.each([
+    ["transient", transient],
+    ["throttled", throttled],
+  ])("a %s CAS failure gets one attempt, whatever retries says", async (_label, failure) => {
+    const { fn, calls } = sequence([failure()]);
+    const { sleep, waits } = recordingSleep();
+    await expect(
+      retryStorageCall(fn, { compareAndSwap: true, retries: 5, sleep }),
+    ).rejects.toMatchObject({ code: "NetworkError" });
+    expect(calls()).toBe(1);
+    expect(waits).toHaveLength(0);
+  });
+});
+
 describe("retryStorageCall attempt cap", () => {
   test(`a call failing forever makes STORAGE_RETRY_MAX_ATTEMPTS (${STORAGE_RETRY_MAX_ATTEMPTS}) attempts`, async () => {
     const { fn, calls } = sequence([transient()]);

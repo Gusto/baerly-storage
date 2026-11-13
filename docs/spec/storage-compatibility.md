@@ -3,7 +3,7 @@ title: Storage compatibility
 audience: spec
 doc_type: current-contract
 summary: Which object-storage backends baerly-storage supports (AWS S3, Cloudflare R2, and GCS's native XML API), and the conditional-write features it depends on.
-last-reviewed: 2026-07-14
+last-reviewed: 2026-11-13
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md, "../adr/006-native-gcs-adapter.md"]
 ---
@@ -174,6 +174,14 @@ Two subtleties are load-bearing:
   resolved by the writer's occupant readback. A direct `WriteConflict` there
   would adopt-read a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch ===
   "*"` branch.)
+- **An `If-Match` PUT is sent once.** The adapter does not resend a
+  compare-and-swap on any failure (`5xx`, `429`, `409`, a dropped
+  connection): when an attempt lands but its reply is lost, a resend
+  meets the request's own write as a `412` and would report a false
+  `WriteConflict`. The failure goes to the caller, which skips and
+  re-reads on its next pass. Every other request keeps the shared retry
+  policy. (`retryStorageCall`'s `compareAndSwap`, set by every adapter
+  from `ifMatch`.)
 
 | Condition (over the wire / at the boundary)                    | `BaerlyError.code` | Nominal `httpStatus` | Retriable | Source                                                              |
 | -------------------------------------------------------------- | ------------------ | -------------------- | --------- | ------------------------------------------------------------------- |
@@ -182,7 +190,7 @@ Two subtleties are load-bearing:
 | `PUT` with `If-Match` sees `404` (MinIO's stale-CAS shape)     | `WriteConflict`    | 409                  | Yes       | `s3-http.ts` `put` `404 && ifMatch !== undefined`                   |
 | `PUT` `If-None-Match: "*"` sees `409` (contended create)       | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `put` `409 && ifNoneMatch === "*"`                     |
 | Any verb sees `403`                                            | `AccessDenied`     | 403                  | No        | `s3-http.ts` `403` branches; spec.json `AccessDenied`               |
-| Any verb sees `429` or `5xx` (retries exhausted)               | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `429 \|\| status >= 500` branches; spec.json           |
+| Any verb sees `429` or `5xx` (retries exhausted; an `If-Match` PUT is not retried) | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `429 \|\| status >= 500` branches; spec.json           |
 | Unparseable / unexpected success body or missing `ETag`        | `InvalidResponse`  | 502                  | No        | `s3-http.ts` `InvalidResponse` branches; spec.json                  |
 | Empty key or a `.` / `..` path segment (rejected pre-request)  | `InvalidConfig`    | 400                  | No        | `assertValidStorageKey`; spec.json `InvalidConfig`; see [Key namespace](#key-namespace) |
 

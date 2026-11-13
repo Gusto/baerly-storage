@@ -24,6 +24,7 @@ import {
   type BaerlyError,
   createCurrentJson,
   MemoryStorage,
+  readCurrentJson,
   STORAGE_RETRY_MAX_ATTEMPTS,
   type Storage,
 } from "@baerly/protocol";
@@ -32,6 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { S3HttpStorage } from "../../packages/adapter-node/src/s3-http.ts";
+import { compact } from "../../packages/server/src/compactor.ts";
 import { Writer } from "../../packages/server/src/writer.ts";
 import { type CountingStorage, wrapCountingStorage } from "../fixtures/counting-storage.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
@@ -333,5 +335,63 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(issued.get("GET log")).toBe(TAIL_PROBE_GETS + (readbackFailures + 1) + 1 + 1);
     // GET current.json + tail probe + 2 readbacks + forward probe.
     expect(counted.gets).toBe(5);
+  });
+});
+
+describe("If-Match CAS over S3HttpStorage: one attempt, no transport retry", () => {
+  /**
+   * `S3HttpStorage` over the stub, where an `If-Match` PUT on
+   * `current.json` that lands answers 503 instead of 200 (a lost ack). A transport
+   * retry of it would meet its own write as a 412 and report a false
+   * `WriteConflict`.
+   */
+  const lostAckCas = () => {
+    const stub = makeS3Stub("b");
+    let casPuts = 0;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init);
+      const key = decodeURIComponent(new URL(req.url).pathname.replace(/^\/b\//, ""));
+      if (req.method === "PUT" && key === CURRENT_KEY && req.headers.has("If-Match")) {
+        casPuts += 1;
+        const landed = await stub.fetchImpl(req);
+        return landed.status === 200
+          ? new Response("<Error><Code>InternalError</Code></Error>", { status: 503 })
+          : landed;
+      }
+      return stub.fetchImpl(req);
+    }) as typeof fetch;
+    const storage = new S3HttpStorage({
+      endpoint: "https://example.invalid",
+      bucket: "b",
+      fetch: fetchImpl,
+      backoffMs: 0,
+    });
+    return { storage, casPuts: () => casPuts };
+  };
+
+  test("a fold whose CAS landed but lost its ack is not reported cas-lost; one PUT issued", async () => {
+    const { storage, casPuts } = lostAckCas();
+    await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
+    for (let i = 0; i < 3; i++) {
+      await writer.commit({
+        op: "I",
+        collection: "tickets",
+        docId: `d${i}`,
+        body: { _id: `d${i}`, n: i },
+      });
+    }
+    const before = casPuts();
+    const outcome = await compact(
+      { storage, currentJsonKey: CURRENT_KEY },
+      { minEntriesToCompact: 1 },
+    ).catch((error: unknown) => error);
+    expect(casPuts() - before).toBe(1);
+    // The fold published: current.json names the new snapshot.
+    const published = (await readCurrentJson(storage, CURRENT_KEY))!.json;
+    expect(published.log_seq_start).toBe(3);
+    // It is not reported as a lost race on its own write.
+    expect(outcome).not.toMatchObject({ skippedReason: "cas-lost" });
+    expect(outcome).toMatchObject({ code: NETWORK_ERROR });
   });
 });
