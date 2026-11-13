@@ -1238,9 +1238,11 @@ export class Writer {
    * not a tuning knob: `seq` grows monotonically forever, so an
    * uncapped walk is O(seq) on the write path (post-commit but inline,
    * before the response) for any doc whose last entry GC has swept.
-   * The cap is sized against the Cloudflare free-tier 50-subrequest
-   * wall, which a `U` commit has already largely spent — the
-   * derivation is on the constant. At that size the walk reaches a doc
+   * The cap is sized on latency, Workers Free CPU and the retention
+   * window it is tied to — the derivation is on the constant. Each GET
+   * is charged to the request ledger outside the commit's hold, so a
+   * refused GET ends the walk and leaves the commit acknowledged. At
+   * that size the walk reaches a doc
    * rewritten within the last few log entries and nothing colder, so
    * on any collection with more than a handful of active docs it
    * normally finds nothing.
@@ -1389,8 +1391,8 @@ export class Writer {
    *
    * Cost: one Class B GET per commit.
    * `billableClassAOps = puts + lists` excludes GET, so billing is unchanged;
-   * the subrequest arithmetic on {@link PREIMAGE_SCAN_MAX_GETS} carries the
-   * re-derivation.
+   * it is one of the calls `COMMIT_RESOLUTION_RESERVE` keeps on the request
+   * ledger.
    *
    * @throws BaerlyError code="AmbiguousCommit"
    */

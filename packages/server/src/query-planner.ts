@@ -73,8 +73,10 @@ interface FullScanPlan {
  * parallel-fan-out LIST round-trips cost more than one snapshot+log
  * fold on every backend we benchmark (see `bench/load-harness/`).
  *
- * Hard-coded at the value that survives Cloudflare's 50-subrequest
- * budget. If the default proves wrong on cheap-LIST backends
+ * Hard-coded; each value's walk is its own storage calls, charged to
+ * the invocation's request ledger like every other read (a `$in` too
+ * large for the host's limit is refused whole, not truncated). If the
+ * default proves wrong on cheap-LIST backends
  * (Minio / S3 / GCS), file a bug — the answer is "good, let's tune
  * the default," not "make it configurable."
  */

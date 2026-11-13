@@ -11,6 +11,7 @@
 
 import {
   BaerlyError,
+  CF_PAID_COMPACT_TAIL_PROBE_GETS,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   casUpdateCurrentJson,
@@ -303,7 +304,7 @@ describe("runScheduledMaintenance", () => {
 
     expect(cfPaid.compact?.maxEntriesPerRun).toBe(200);
     expect(cfPaid.compact?.minEntriesToCompact).toBe(SCHEDULED_MIN_ENTRIES_TO_COMPACT);
-    expect(cfPaid.compact?.maxTailProbeGets).toBeUndefined();
+    expect(cfPaid.compact?.maxTailProbeGets).toBe(CF_PAID_COMPACT_TAIL_PROBE_GETS);
     expect(cfPaid.gc?.maxMarksPerRun).toBe(200);
     expect(cfPaid.gc?.maxSweepsPerRun).toBe(100);
   });
