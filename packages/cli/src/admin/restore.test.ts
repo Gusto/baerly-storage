@@ -12,7 +12,7 @@
  */
 
 import { createReadStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -23,8 +23,12 @@ import {
   type GcPending,
   readCurrentJson,
   readGcPending,
+  BaerlyError,
+  type DocumentData,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
+import { Writer } from "@baerly/server/_internal/testing";
+import { canonicalStringify, runDump } from "./dump.ts";
 import { runRestore } from "./restore.ts";
 import { captureStream } from "../_internal/testing.ts";
 
@@ -681,6 +685,18 @@ describe("baerly admin restore", () => {
         stderr.restore();
       }
     };
+    const redump = async (): Promise<string> => {
+      const out = join(root, "redump.ndjson");
+      const { createWriteStream } = await import("node:fs");
+      const stream = createWriteStream(out);
+      const dumpCode = await runDump(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdout: stream } },
+      );
+      await new Promise<void>((resolve) => stream.end(resolve));
+      expect(dumpCode).toBe(0);
+      return readFile(out, "utf8");
+    };
     const row = (id: string): string => `${JSON.stringify({ _id: id, v: 1 })}\n`;
 
     test("duplicate _id on line 2 → exit 1, names both lines, 1 row committed", async () => {
@@ -729,6 +745,120 @@ describe("baerly admin restore", () => {
       expect(nfd.code).toBe(1);
       expect(nfd.err).toContain("line 2 has an invalid _id");
       expect(nfd.err).toContain("1 row committed");
+    });
+
+    test("value outside the document domain (1e999 parses to Infinity) is refused with line and count", async () => {
+      const { code, err } = await run(row("a") + '{"_id":"b","n":1e999}\n');
+      expect(code).toBe(1);
+      expect(err).toContain("InvalidConfig");
+      expect(err).toContain('line 2 (_id "b") has an invalid document');
+      expect(err).toContain("1 row committed");
+      // The remedy must reach stderr, not only the structured error.
+      expect(err).toContain("Store a finite number or null");
+    });
+
+    test("a dump at the validators' edges restores and re-dumps byte-identical", async () => {
+      // Values and ids the new checks must still accept: falsy and empty
+      // values, nested empties, numeric extremes, non-ASCII NFC text, an
+      // id with punctuation, a long id, and keys
+      // that sort differently under code-unit and locale order.
+      const edgeRows: DocumentData[] = [
+        { _id: "a.b-c_d e", f: false, n: 0, s: "", arr: [], obj: {} },
+        {
+          _id: "caf\u00e9-\u2603-\ud83d\ude00",
+          big: 9007199254740991,
+          tiny: 5e-324,
+          neg: -1.5e300,
+        },
+        {
+          _id: "x".repeat(200),
+          Z: 1,
+          a: 2,
+          B: 3,
+          nested: { z: [1, [2, [3, []]]], A: "\u0000".length },
+        },
+      ];
+      const edge = edgeRows.map((r) => `${canonicalStringify(r)}\n`).join("");
+      const { code, err } = await run(edge);
+      expect(err).toBe("");
+      expect(code).toBe(0);
+      await expect(redump()).resolves.toBe(edge);
+    });
+
+    test("a valid dump restores and re-dumps byte-identical", async () => {
+      const { code } = await run(CANONICAL_NDJSON);
+      expect(code).toBe(0);
+      await expect(redump()).resolves.toBe(CANONICAL_NDJSON.trimEnd() + "\n");
+    });
+
+    test("AmbiguousCommit on line 2 says line 2 may be committed and gives a count range", async () => {
+      const real = Writer.prototype.commit;
+      let calls = 0;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (this: Writer, ...a) {
+        calls++;
+        if (calls === 2) {
+          throw new BaerlyError("AmbiguousCommit", "the committing create was not resolved");
+        }
+        return real.apply(this, a);
+      });
+      const { code, err } = await run(row("a") + row("b") + row("c"));
+      expect(code).not.toBe(0);
+      expect(err).toContain("AmbiguousCommit");
+      expect(err).toContain("line 2 may or may not be committed");
+      expect(err).toContain("between 1 and 2 rows");
+      expect(err).not.toContain("was not committed");
+    });
+
+    test("a definite commit failure still says the line was not committed", async () => {
+      const real = Writer.prototype.commit;
+      let calls = 0;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (this: Writer, ...a) {
+        calls++;
+        if (calls === 2) {
+          throw new BaerlyError("NetworkError", "boom");
+        }
+        return real.apply(this, a);
+      });
+      const { err } = await run(row("a") + row("b"));
+      expect(err).toContain("line 2 was not committed");
+      expect(err).toContain("1 row committed");
+    });
+
+    test("tail_hint stamp failure reports all rows committed and the --force rerun, which works", async () => {
+      const realPut = LocalFsStorage.prototype.put;
+      const spy = vi.spyOn(LocalFsStorage.prototype, "put").mockImplementation(async function (
+        this: LocalFsStorage,
+        key,
+        body,
+        opts,
+      ) {
+        if (opts?.ifMatch !== undefined && String(key).endsWith("current.json")) {
+          throw new BaerlyError("NetworkError", "503 service unavailable");
+        }
+        return realPut.call(this, key, body, opts);
+      });
+      const failed = await run(row("a") + row("b"));
+      expect(failed.code).toBe(2);
+      expect(failed.err).toContain("all 2 rows were committed");
+      expect(failed.err).toContain("tail_hint");
+      expect(failed.err).toContain("--force");
+      spy.mockRestore();
+      // The advertised remedy: rerun with --force truncates and succeeds.
+      await writeFile(stdinPath, row("a") + row("b"), "utf8");
+      const rerun = await runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+      expect(rerun).toBe(0);
+      const head = await readCurrentJson(storage, `${TABLE_PREFIX}/current.json`);
+      // --force reseeds above the surviving log slots, then stamps +2.
+      expect(head?.json.tail_hint).toBe((head?.json.log_seq_start ?? 0) + 2);
     });
 
     test("malformed JSON after rows reports committed count (exit 2)", async () => {
