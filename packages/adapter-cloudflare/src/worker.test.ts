@@ -19,7 +19,7 @@ import {
 } from "@baerly/protocol";
 import { getCurrentContext } from "@baerly/server/observability";
 import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
@@ -677,7 +677,7 @@ describe("baerlyWorker config.auth synthesis", () => {
     expect(badRes.status).toBe(401);
   });
 
-  test('auth: "shared-secret" with missing env throws on first fetch and caches the error on subsequent fetches', async () => {
+  test('auth: "shared-secret" with missing env answers a scrubbed 500 envelope, logs the full error, and caches the failure', async () => {
     const bucket = getBinding();
     const tenant = `auth-ss-miss-${Date.now().toString(36)}`;
     const config: BaerlyAppConfig = {
@@ -687,39 +687,39 @@ describe("baerlyWorker config.auth synthesis", () => {
       auth: "shared-secret",
       collections: {},
     };
-    // No SHARED_SECRET on the env — `resolveVerifier` throws.
+    // No SHARED_SECRET on the env: `resolveVerifier` throws. A config
+    // resolution failure is a server fault: a scrubbed 500 envelope, with
+    // the full error on the console for the operator.
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
-    const handler = baerlyWorker(() => ({ config }));
+    let factoryCalls = 0;
+    const handler = baerlyWorker(() => {
+      factoryCalls += 1;
+      return { config };
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    // The first fetch surfaces the `InvalidConfig` BaerlyError via the
-    // ExportedHandler's default exception-propagation path. We catch it
-    // here and assert on the locked message.
-    let first: unknown;
     try {
-      await handler.fetch!(
-        new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
-        env,
-        makeNoopCtx(),
-      );
-    } catch (error) {
-      first = error;
+      for (let i = 0; i < 2; i++) {
+        const res = (await handler.fetch!(
+          new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
+          env,
+          makeNoopCtx(),
+        )) as unknown as Response;
+        expect(res.status).toBe(500);
+        expect(res.headers.get("content-type")).toBe("application/json");
+        const text = await res.text();
+        expect((JSON.parse(text) as { error?: { code?: string } }).error?.code).toBe("Internal");
+        // The scrub: neither the setting name nor the locked message leaks.
+        expect(text).not.toContain("SHARED_SECRET");
+        expect(text).not.toContain(SHARED_SECRET_MISSING_MESSAGE);
+      }
+      // The operator still sees the full locked message.
+      const logged = errorSpy.mock.calls.map((args) => args.map(String).join(" "));
+      expect(logged.some((line) => line.includes(SHARED_SECRET_MISSING_MESSAGE))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
     }
-    expect(first).toBeDefined();
-    expect((first as Error).message).toBe(SHARED_SECRET_MISSING_MESSAGE);
-
-    // Second fetch re-throws the cached error rather than re-running
-    // `resolveVerifier`. Identity-equality on the caught value pins
-    // the cached path.
-    let second: unknown;
-    try {
-      await handler.fetch!(
-        new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
-        env,
-        makeNoopCtx(),
-      );
-    } catch (error) {
-      second = error;
-    }
-    expect(second).toBe(first);
+    // The failure is cached: the factory is not re-run.
+    expect(factoryCalls).toBe(1);
   });
 });

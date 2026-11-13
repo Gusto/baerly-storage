@@ -6,6 +6,7 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev/dev-landing";
 import {
   type BaerlyAppConfig,
+  BaerlyError,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_FETCH_GC_MAX_SWEEPS,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
@@ -520,7 +521,37 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         });
       }
 
-      const { options, verifier, storage: baseStorage } = await ensureResolved(env);
+      let resolvedState: ResolvedState;
+      try {
+        resolvedState = await ensureResolved(env);
+      } catch (error) {
+        // Config resolution failed. The deployment cannot serve, which is
+        // a server fault: answer 500 with the scrubbed `Internal` envelope
+        // and an `error` canonical line. Observability is configured only
+        // after resolution succeeds, so LogTape is silent here; write the
+        // full error (with its locked message) to the console so the
+        // operator still sees it in `wrangler tail` / Workers Logs.
+        console.error(
+          `[baerly] config resolution failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+        );
+        const fault = new BaerlyError("Internal", "internal error", { cause: error });
+        const { status, envelope } = mapError(fault);
+        const failedCtx = createObservabilityContext({
+          request_id: req.headers.get("x-request-id") ?? crypto.randomUUID(),
+        });
+        flushCanonicalLine(failedCtx, failedCtx.recorder, {
+          unit: "http",
+          status,
+          outcome: deriveOutcome(req.method, status, fault),
+          error: fault,
+          extra: { method: req.method, path: url.pathname },
+        });
+        return new Response(JSON.stringify(envelope), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const { options, verifier, storage: baseStorage } = resolvedState;
 
       // Opt-in dev landing page. Off in production (options.dev
       // unset); when set, GET / serves HTML and GET /favicon.ico
