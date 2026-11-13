@@ -408,7 +408,7 @@ Implications: on Cloudflare free, a ~1 MB snapshot is near the ~10 ms
 CPU budget, and the per-pass slice makes a large tail drain over many
 write ticks. The fold ceiling is the same with an R2 binding or S3 over
 HTTP; the binding buys request headroom (tail length, indexes per write,
-`$in` size, retries), not data size. On Cloudflare paid, CPU could rebuild a multi-GB snapshot,
+retries), not data size. On Cloudflare paid, CPU could rebuild a multi-GB snapshot,
 but Worker memory (~128 MB) is the wall because a fold holds the old
 snapshot, new snapshot, and log tail at once — measured at ~2.4x the
 snapshot in peak heap. On Node, process RAM and event-loop blocking
