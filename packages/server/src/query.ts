@@ -33,6 +33,7 @@
  */
 
 import {
+  assertDocumentValues,
   assertInsertIdType,
   type CurrentJson,
   type DocumentData,
@@ -727,8 +728,9 @@ const withLiveBefore = (
  * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
  *   committed before or concurrently with this call (and, with
  *   `mintedId`, its body differs). `err._id` is the `_id`. Not retriable.
- * @throws BaerlyError code="InvalidConfig" — the supplied `_id` is present
- *   and not a string (`null` included), the resolved `_id` fails
+ * @throws BaerlyError code="InvalidConfig" — `doc` holds a value JSON
+ *   cannot store as written (see `assertDocumentValues`), the supplied
+ *   `_id` is present and not a string (`null` included), the resolved `_id` fails
  *   {@link assertDocId} (key-segment rule or not NFC), or `opts.mintedId`
  *   is set and is not the resolved `_id`. Checked before I/O.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
@@ -757,7 +759,10 @@ export const runInsert = async <T extends DocumentData>(
   // A present, non-string `_id` is a caller bug, refused before it could be
   // replaced by a minted one.
   const supplied = doc["_id"];
-  callerFacingCheck(() => assertInsertIdType(supplied));
+  callerFacingCheck(() => {
+    assertInsertIdType(supplied);
+    assertDocumentValues(doc, "insert");
+  });
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
   // Guard the resolved id at the write origin — the only place a
   // user-controlled `_id` enters as a WRITTEN key segment. Minted
@@ -961,8 +966,9 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   root in the type system), or the schema rejected a post-image; at a
  *   row's commit (re-applied to a newer version) rows before it are
  *   already applied.
- * @throws BaerlyError code="InvalidConfig" — the patch names an `_id`
- *   other than the row's (see {@link assertPatchKeepsId}), or the row's
+ * @throws BaerlyError code="InvalidConfig" — the patch holds a value JSON
+ *   cannot store as written (see `assertDocumentValues`; checked before
+ *   I/O), or names an `_id` other than the row's (see {@link assertPatchKeepsId}), or the row's
  *   `_id` is not NFC (see {@link assertDocId}). Checked for every matched
  *   row, with schema validation, before any row commits.
  * @throws BaerlyError code="CapacityExceeded" — the batch would grow the
@@ -978,6 +984,10 @@ const runUpdate = async <T extends DocumentData>(
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
+  // A value JSON would coerce or drop is refused before any I/O. The
+  // patch, not the post-image, is checked: `merge` keeps a target field a
+  // patch sets to `undefined`, so the post-image would hide it.
+  callerFacingCheck(() => assertDocumentValues(patch, "update"));
   const read = await runReadRows<T>(ctx, state);
   const { rows } = read;
   // Merge and validate every row first, so the per-row checks and the
@@ -1061,7 +1071,9 @@ const runUpdate = async <T extends DocumentData>(
  * @throws BaerlyError code="NotFound" — no row exists at `id`, including
  *   one a concurrent delete removed after this call's read.
  * @throws BaerlyError code="InvalidConfig" — `id` fails
- *   {@link assertDocId} (key-segment rule or not NFC). Checked before I/O.
+ *   {@link assertDocId} (key-segment rule or not NFC), or `doc` holds a
+ *   value JSON cannot store as written (see `assertDocumentValues`).
+ *   Checked before I/O.
  * @throws BaerlyError code="SchemaError" — post-image rejected by
  *   the collection's bound validator.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
@@ -1079,6 +1091,7 @@ export const runReplaceById = async <T extends DocumentData>(
   // Guard the caller-supplied id before it becomes a written key
   // segment (index keys, log `doc_id`). Same boundary as `runInsert`.
   assertDocId(id);
+  callerFacingCheck(() => assertDocumentValues(doc, "replace"));
   const wire: PredicateWire = {
     clauses: [{ op: "eq", field: "_id", value: id }],
   };

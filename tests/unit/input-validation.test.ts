@@ -144,3 +144,93 @@ describe("get: an id no row can be stored under", () => {
     await expect(client.collection("rows").get("missing")).resolves.toBeUndefined();
   });
 });
+
+class Ticket {
+  title = "a";
+}
+
+/** Values `JSON.stringify` would coerce, drop or reshape. */
+const INVALID_VALUES: ReadonlyArray<readonly [string, () => unknown]> = [
+  ["NaN", () => Number.NaN],
+  ["Infinity", () => Number.POSITIVE_INFINITY],
+  ["-Infinity", () => Number.NEGATIVE_INFINITY],
+  ["undefined", () => undefined],
+  ["Date", () => new Date(0)],
+  ["Map", () => new Map([["k", 1]])],
+  ["Uint8Array", () => new Uint8Array([1])],
+  ["class instance", () => new Ticket()],
+  ["boxed number", () => Object(1)],
+  ["function", () => () => 1],
+  ["symbol", () => Symbol("s")],
+];
+
+/** Each value class nested in an object member and as an array element. */
+const INVALID_DOCS: ReadonlyArray<readonly [string, () => never]> = INVALID_VALUES.flatMap(
+  ([label, make]) => [
+    [`${label} member`, () => ({ nested: { field: make() } }) as never] as const,
+    [`${label} element`, () => ({ list: [1, make()] }) as never] as const,
+  ],
+);
+
+describe("document values outside the JSON domain", () => {
+  const seeded = async () => {
+    const env = setup();
+    await env.db.collection("rows").insert({ _id: "r1", a: 1 });
+    env.counting.reset();
+    return env;
+  };
+
+  test.each(INVALID_DOCS)("Db.insert rejects a %s before any I/O", async (_label, make) => {
+    const { db, calls } = setup();
+    await expectInvalidConfig(db.collection("rows").insert(make()));
+    expect(calls()).toBe(0);
+  });
+
+  test.each(INVALID_DOCS)("Db.replace rejects a %s before any I/O", async (_label, make) => {
+    const { db, calls } = await seeded();
+    await expectInvalidConfig(db.collection("rows").replace("r1", make()));
+    expect(calls()).toBe(0);
+  });
+
+  test.each(INVALID_DOCS)("Db.update rejects a %s before any I/O", async (_label, make) => {
+    const { db, calls } = await seeded();
+    await expectInvalidConfig(db.collection("rows").update("r1", make()));
+    expect(calls()).toBe(0);
+  });
+
+  test.each(INVALID_DOCS)("Query.update rejects a %s before any I/O", async (_label, make) => {
+    const { db, calls } = await seeded();
+    await expectInvalidConfig(db.collection("rows").where({ a: 1 }).update(make()));
+    expect(calls()).toBe(0);
+  });
+
+  test("update rejects an undefined patch member even when the row has that field", async () => {
+    const { db, calls } = await seeded();
+    await expectInvalidConfig(db.collection("rows").update("r1", { a: undefined } as never));
+    expect(calls()).toBe(0);
+  });
+
+  test.each(INVALID_DOCS)(
+    "the HTTP client rejects a %s on insert, replace and update without a request",
+    async (_label, make) => {
+      const { client, requests } = await seeded();
+      const rows = client.collection("rows");
+      await expectInvalidConfig(rows.insert(make()));
+      await expectInvalidConfig(rows.replace("r1", make()));
+      await expectInvalidConfig(rows.update("r1", make()));
+      expect(requests()).toBe(0);
+    },
+  );
+
+  test("null values and an undefined top-level _id are still accepted", async () => {
+    const { db, client } = await seeded();
+    const rows = db.collection("rows");
+    await expect(rows.update("r1", { _id: undefined, b: null } as never)).resolves.toEqual({
+      modified: 1,
+    });
+    await rows.replace("r1", { _id: undefined, list: [null], n: -0 } as never);
+    await expect(rows.get("r1")).resolves.toEqual({ _id: "r1", list: [null], n: 0 });
+    const { _id } = await client.collection("rows").insert({ list: [null], z: null } as never);
+    await expect(rows.get(_id)).resolves.toEqual({ _id, list: [null], z: null });
+  });
+});

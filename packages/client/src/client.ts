@@ -4,6 +4,7 @@
    so the typed client stays structurally compatible. */
 
 import {
+  assertDocumentValues,
   assertInsertIdType,
   type BaerlyConfig,
   BaerlyError,
@@ -338,6 +339,7 @@ const makeClientCollection = <T extends DocumentData>(
       // the request resends the same minted id.
       const supplied: unknown = doc["_id"];
       assertInsertIdType(supplied);
+      assertDocumentValues(doc, "insert");
       const body =
         typeof supplied !== "string" || supplied.length === 0
           ? (() => {
@@ -353,6 +355,9 @@ const makeClientCollection = <T extends DocumentData>(
       });
     },
     async update(id, patch, opts): Promise<{ readonly modified: number }> {
+      // Checked here: `JSON.stringify` would coerce or drop these values,
+      // so the server would never see them.
+      assertDocumentValues(patch, "update");
       return request<{ modified: number }>(ctx, {
         method: "PATCH",
         path: idPath(id),
@@ -361,6 +366,7 @@ const makeClientCollection = <T extends DocumentData>(
       });
     },
     async replace(id, doc, opts): Promise<void> {
+      assertDocumentValues(doc, "replace");
       // PUT = whole-document overwrite. NOT PATCH — PATCH would be
       // RFC 7386 merge-patch and silently retain omitted fields from
       // the prior doc.
