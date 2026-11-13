@@ -792,8 +792,8 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
  * worst is 44 + 1 = 45 at `T = 7`, `D = 3`. `T = 8`, `D = 2` also fits
  * but only matches snapshot creation at the guaranteed GC cadence;
  * `T = 7`, `D = 3` leaves sweep throughput headroom.
- * The longest live tail a read then sees is `T + 1` = 8: a GET by id
- * costs 11 + 2 Cache API calls, an indexed `$in` of 16 values 27.
+ * The longest live tail a read then sees is `T + 1` = 8: any read, indexed
+ * or not (`$in` included), costs 11, plus 2 Cache API calls for a GET by id.
  * Retried calls (up to `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this
  * budget: that host is best effort.
  *

@@ -57,6 +57,7 @@ import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { bootstrap as bootstrapHarness } from "../fixtures/maintenance-harness.ts";
 import {
   assertEvalPlanQualHistory,
+  RMW_INDEXES,
   rmwOpsArb,
   runRmwOps,
   scheduledStorage,
@@ -704,6 +705,44 @@ describe("randomized (Db + Writer)", () => {
                   await s.waitFor(run);
                   const results = await run;
                   await assertEvalPlanQualHistory(storage!, ops, results, "rmw model");
+                },
+              );
+            }),
+            { numRuns: GLOBAL_RUNS > 1_000 ? base * 5 : base },
+          );
+        },
+      );
+
+      // The same workload with an index on `_id` and on the batch
+      // predicate, so markers lost to a delete/re-insert race or a
+      // commit after a LIST cannot hide a row from a verb's read. The
+      // scheduler reaches the lost-marker interleaving only by chance;
+      // `packages/server/src/index-read-completeness.test.ts` forces it
+      // for reads and for each verb.
+      test.skipIf(variant.label !== "memory" && variant.label !== "local-fs")(
+        "indexed same-_id read-modify-writes act on every live matching row",
+        { timeout: GLOBAL_RUNS > 1_000 ? 600_000 : 60_000 },
+        async () => {
+          const base = variant.label === "memory" ? 40 : 15;
+          await fc.assert(
+            fc.asyncProperty(rmwOpsArb, fc.scheduler(), async (ops, s) => {
+              const bucket = `irmw-${variant.label}-${uuid().slice(0, 8)}`;
+              const [storage] = await variant.makeStorages(bucket, 1);
+              await runWithContext(
+                createObservabilityContext({ maintenance: { disabled: true } }),
+                async () => {
+                  await bootstrapHarness(storage!, "rmw-model");
+                  await seedRmwRows(storage!, RMW_INDEXES);
+                  const run = runRmwOps(scheduledStorage(storage!, s), ops, storage!, RMW_INDEXES);
+                  await s.waitFor(run);
+                  const results = await run;
+                  await assertEvalPlanQualHistory(
+                    storage!,
+                    ops,
+                    results,
+                    "indexed rmw model",
+                    RMW_INDEXES,
+                  );
                 },
               );
             }),
