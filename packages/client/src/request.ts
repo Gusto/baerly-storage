@@ -175,13 +175,9 @@ const decodeFailure = async (
  *   (`mintedInsert`) is resent with the same serialized body, so a commit
  *   the failure hid replays as `201 { _id }` (E2) instead of adding a row.
  *   Every other non-`GET` (caller-`_id` insert, update, replace, delete) is
- *   sent once for these (E3).
- *
- * The two classes share one attempt counter, so a request that sees both
- * makes at most `max(REQUEST_RETRY_MAX_ATTEMPTS,
- * MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS)` attempts, not their product. An enveloped `NetworkError` is never retried: the
- *   server adapter already retried it. No other enveloped code is
- *   retried, bar `MaintenancePending` below.
+ *   sent once for these (E3). An enveloped `NetworkError` is never
+ *   retried: the server adapter already retried it. No other enveloped
+ *   code is retried, bar `MaintenancePending` below.
  * - **`MaintenancePending`, every verb**
  *   (`MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS`): the server's backpressure
  *   code, waited out for `error.retryAfter`. The server refuses with it
@@ -194,6 +190,10 @@ const decodeFailure = async (
  *   never a second row. `update` is an RFC 7386 merge patch, which is
  *   idempotent on the row it lands on; `replace` and `delete` are
  *   idempotent outright.
+ *
+ * The two classes share one attempt counter, so a request that sees both
+ * makes at most `max(REQUEST_RETRY_MAX_ATTEMPTS,
+ * MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS)` attempts, not their product.
  */
 export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Promise<T> => {
   const headers = new Headers(ctx.headers);

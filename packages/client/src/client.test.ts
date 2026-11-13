@@ -386,6 +386,38 @@ describe("createBaerlyClient", () => {
     });
   });
 
+  test("update, replace and delete are each sent once on an envelope-less 503", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Array<string> = [];
+      const client = createBaerlyClient({
+        baseUrl: "http://x",
+        fetch: async (req) => {
+          calls.push(req.method);
+          return new Response("upstream sad", { status: 503 });
+        },
+      });
+      const tickets = client.collection("tickets");
+      const ops = {
+        PATCH: () => tickets.update("a", { status: "closed" }),
+        PUT: () => tickets.replace("a", { status: "closed" }),
+        DELETE: () => tickets.delete("a"),
+      };
+      for (const [method, run] of Object.entries(ops)) {
+        calls.length = 0;
+        const outcome = run().then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        await vi.runAllTimersAsync();
+        await expect(outcome).resolves.toMatchObject({ code: "NetworkError", status: 503 });
+        expect(calls).toEqual([method]);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("client surfaces retriable:true on WriteConflict", async () => {
     const mock = new MockFetch();
     mock.on("POST", "/v1/c/tickets", () =>
