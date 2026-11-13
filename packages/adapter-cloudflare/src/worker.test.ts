@@ -455,6 +455,49 @@ describe("baerlyWorker observability", () => {
     expect(props["status"]).toBe(400);
     expect(props["path"]).toBe("/v1/c/c");
   });
+
+  // Matches Node: a throw around `app.fetch` (here the Cache API) is a
+  // mapped envelope with one canonical line carrying the mapped status,
+  // not a rethrow that workerd answers with its own error page.
+  test("a withReadCache throw maps to an error envelope with one canonical line", async () => {
+    const { records, sink } = collectingSink();
+    const handler = baerlyWorker(() => ({
+      config: testConfig,
+      verifier: scheduledOnlyVerifier,
+      observability: { level: "debug", sink },
+    }));
+    const env: BaerlyEnv = { BUCKET: getBinding(), APP: "t" };
+    const cache = (globalThis as unknown as { caches: { default: Cache } }).caches.default;
+    const originalMatch = cache.match;
+    cache.match = async () => {
+      throw new BaerlyError("NetworkError", "cache api down");
+    };
+    let res: Response;
+    try {
+      res = (await handler.fetch!(
+        new Request("https://x/v1/c/c/doc1", { method: "GET" }) as Request<
+          unknown,
+          IncomingRequestCfProperties
+        >,
+        env,
+        makeNoopCtx(),
+      )) as unknown as Response;
+    } finally {
+      cache.match = originalMatch;
+    }
+    expect(res.status).toBe(502);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("NetworkError");
+
+    const lines = records.filter(
+      (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
+    );
+    expect(lines).toHaveLength(1);
+    const props = lines[0]!.properties as Record<string, unknown>;
+    expect(props["status"]).toBe(502);
+    expect(props["error"]).toBeDefined();
+  });
 });
 
 describe("baerlyWorker observability opt-out", () => {
