@@ -1,5 +1,6 @@
 import {
   RequestLedger,
+  type RequestLedgerLimits,
   type RequestPool,
   retryStorageCall,
   type Storage,
@@ -115,11 +116,16 @@ export interface ChargedStorage {
 
 /**
  * Measure storage calls through the ledger: `inner` behind
- * {@link ledgeredStorage}, a ledger that counts and never refuses, and
- * the issued tally that proves the ledger's charge equals what was sent.
+ * {@link ledgeredStorage}, a ledger with `limits` (by default one that
+ * counts and never refuses), and the issued tally that proves the
+ * ledger's charge equals what was sent.
  */
-export const chargedStorage = (inner: Storage, pool: RequestPool): ChargedStorage => {
-  const ledger = new RequestLedger();
+export const chargedStorage = (
+  inner: Storage,
+  pool: RequestPool,
+  limits?: RequestLedgerLimits,
+): ChargedStorage => {
+  const ledger = new RequestLedger(limits);
   const issued = new CallTally();
   return {
     storage: ledgeredStorage(inner, pool, issued),
