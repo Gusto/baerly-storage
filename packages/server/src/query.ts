@@ -897,6 +897,8 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  * `merge(row, patch)` as `update` commits it, validated against the
  * collection's schema.
  *
+ * @throws BaerlyError code="InvalidConfig" — the post-image holds a value
+ *   JSON cannot store as written (see `assertDocumentValues`).
  * @throws BaerlyError code="SchemaError" — the merge produced `undefined`,
  *   or the schema rejected the post-image.
  */
@@ -915,6 +917,10 @@ const mergeAndValidate = async <T extends DocumentData>(
       `Query.update: merge produced undefined for doc ${JSON.stringify(row["_id"])}`,
     );
   }
+  // A value JSON would coerce or drop is refused before admission and any
+  // write. An `undefined` member is absent, as it is in the HTTP form of
+  // the patch, which `JSON.stringify` dropped it from.
+  callerFacingCheck(() => assertDocumentValues(merged, "update", { undefinedMembersAbsent: true }));
   // Validate the merged post-image, not the incoming patch.
   // Patches are partial by design — validating the patch itself
   // would reject valid updates against schemas that require fields
@@ -966,9 +972,10 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   root in the type system), or the schema rejected a post-image; at a
  *   row's commit (re-applied to a newer version) rows before it are
  *   already applied.
- * @throws BaerlyError code="InvalidConfig" — the patch holds a value JSON
- *   cannot store as written (see `assertDocumentValues`; checked before
- *   I/O), or names an `_id` other than the row's (see {@link assertPatchKeepsId}), or the row's
+ * @throws BaerlyError code="InvalidConfig" — the patch (checked before
+ *   I/O) or a merged post-image holds a value JSON cannot store as written
+ *   (see `assertDocumentValues`; an `undefined` member is absent), or the
+ *   patch names an `_id` other than the row's (see {@link assertPatchKeepsId}), or the row's
  *   `_id` is not NFC (see {@link assertDocId}). Checked for every matched
  *   row, with schema validation, before any row commits.
  * @throws BaerlyError code="CapacityExceeded" — the batch would grow the
@@ -984,10 +991,11 @@ const runUpdate = async <T extends DocumentData>(
   state: QueryState<T>,
   patch: Partial<T>,
 ): Promise<{ modified: number }> => {
-  // A value JSON would coerce or drop is refused before any I/O. The
-  // patch, not the post-image, is checked: `merge` keeps a target field a
-  // patch sets to `undefined`, so the post-image would hide it.
-  callerFacingCheck(() => assertDocumentValues(patch, "update"));
+  // The patch is also checked before any I/O. `merge` treats a `Date` or
+  // `Map` patch value as an object to merge field by field, so over an
+  // object field it would vanish from the post-image instead of being
+  // refused there. `undefined` members are absent, as in the post-image.
+  callerFacingCheck(() => assertDocumentValues(patch, "update", { undefinedMembersAbsent: true }));
   const read = await runReadRows<T>(ctx, state);
   const { rows } = read;
   // Merge and validate every row first, so the per-row checks and the

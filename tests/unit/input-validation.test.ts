@@ -172,6 +172,13 @@ const INVALID_DOCS: ReadonlyArray<readonly [string, () => never]> = INVALID_VALU
   ],
 );
 
+/**
+ * An update patch member set to `undefined` is absent (JSON drops it over
+ * HTTP), so patch cases skip that one class.
+ */
+const INVALID_PATCHES = (): typeof INVALID_DOCS =>
+  INVALID_DOCS.filter(([label]) => label !== "undefined member");
+
 describe("document values outside the JSON domain", () => {
   const seeded = async () => {
     const env = setup();
@@ -192,22 +199,45 @@ describe("document values outside the JSON domain", () => {
     expect(calls()).toBe(0);
   });
 
-  test.each(INVALID_DOCS)("Db.update rejects a %s before any I/O", async (_label, make) => {
+  test.each(INVALID_PATCHES())("Db.update rejects a %s before any I/O", async (_label, make) => {
     const { db, calls } = await seeded();
     await expectInvalidConfig(db.collection("rows").update("r1", make()));
     expect(calls()).toBe(0);
   });
 
-  test.each(INVALID_DOCS)("Query.update rejects a %s before any I/O", async (_label, make) => {
+  test.each(INVALID_PATCHES())("Query.update rejects a %s before any I/O", async (_label, make) => {
     const { db, calls } = await seeded();
     await expectInvalidConfig(db.collection("rows").where({ a: 1 }).update(make()));
     expect(calls()).toBe(0);
   });
 
-  test("update rejects an undefined patch member even when the row has that field", async () => {
+  test("an undefined patch member is absent, in-process and over HTTP", async () => {
+    const { db, client } = await seeded();
+    const patch = { a: undefined, fresh: undefined, nested: { b: undefined } } as never;
+    await expect(db.collection("rows").update("r1", patch)).resolves.toEqual({ modified: 1 });
+    await expect(client.collection("rows").update("r1", patch)).resolves.toEqual({ modified: 1 });
+    await expect(db.collection("rows").get("r1")).resolves.toEqual({ _id: "r1", a: 1, nested: {} });
+  });
+
+  test("a nested Date patch over an object field is refused, not merged away", async () => {
     const { db, calls } = await seeded();
-    await expectInvalidConfig(db.collection("rows").update("r1", { a: undefined } as never));
-    expect(calls()).toBe(0);
+    await db.collection("rows").update("r1", { meta: { at: 1 } } as never);
+    const before = calls();
+    await expectInvalidConfig(db.collection("rows").update("r1", { meta: new Date(0) } as never));
+    expect(calls()).toBe(before);
+  });
+
+  test("a class-instance document is stored by its own fields", async () => {
+    const { db, client } = await seeded();
+    const { _id } = await db.collection("rows").insert(new Ticket() as never);
+    await expect(db.collection("rows").get(_id)).resolves.toEqual({ _id, title: "a" });
+    const remote = await client.collection("rows").insert(new Ticket() as never);
+    await expect(db.collection("rows").get(remote._id)).resolves.toEqual({
+      _id: remote._id,
+      title: "a",
+    });
+    await db.collection("rows").replace("r1", new Ticket() as never);
+    await expect(db.collection("rows").get("r1")).resolves.toEqual({ _id: "r1", title: "a" });
   });
 
   test.each(INVALID_DOCS)(
@@ -217,7 +247,9 @@ describe("document values outside the JSON domain", () => {
       const rows = client.collection("rows");
       await expectInvalidConfig(rows.insert(make()));
       await expectInvalidConfig(rows.replace("r1", make()));
-      await expectInvalidConfig(rows.update("r1", make()));
+      if (_label !== "undefined member") {
+        await expectInvalidConfig(rows.update("r1", make()));
+      }
       expect(requests()).toBe(0);
     },
   );
