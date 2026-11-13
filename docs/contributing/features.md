@@ -140,8 +140,9 @@ IDs from being confused at protocol boundaries. See the
 
 ## Secondary indexes
 
-Indexes are declared under `BaerlyConfig.collections[*].indexes`.
-Writers still emit their markers, and nothing reconciles them.
+Indexes are declared under `BaerlyConfig.collections[*].indexes` and
+validated at `Db.create`. Writers still emit their markers, and nothing
+reads or reconciles them.
 Reads always fold the authoritative snapshot and log; index declarations
 do not accelerate reads or affect query membership. There is no
 manual-hint API on `Query<T>`.

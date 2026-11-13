@@ -4,69 +4,55 @@
  * The interface lives in `@baerly/protocol` so cross-platform
  * consumers (client, scaffold `baerly.config.ts`) can reference it
  * without dragging the Node-only server modules into their typecheck
- * graph. The validation / key-encoding / projection IMPLs live in
- * `packages/server/src/indexes.ts` and consume this type via
- * `import type { IndexDefinition } from "@baerly/protocol"`.
- *
- * Wire shape (single-field):
- *
- *   `<logPrefix>/index/<indexName>/<value-b32>/<docId>.json`
- *
- * Wire shape (composite):
- *
- *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
- *
- * @see docs/spec/sync-protocol.md — index emission is hybrid around
- *      the commit: additive (new) keys are PUT before the committing
- *      `log/<seq>` create, and stale-key DELETEs land after it.
- * @see packages/server/src/indexes.ts — `validateIndexDefinition`,
- *      `encodeIndexValue`, `indexKeyFor`, `projectIndexValues`,
- *      `allIndexKeysFor` (all impl).
+ * graph. `validateIndexDefinition` in `packages/server/src/indexes.ts`
+ * checks it at `Db.create`.
  */
 
 import type { PredicateWire } from "./query/wire.ts";
 
 /**
- * A secondary index declaration. Lives in `baerly.config.ts` under
- * `collections.<name>.indexes[]` and is threaded through
- * `Writer` via `WriterOptions.indexes`.
+ * A secondary index declaration, under `collections.<name>.indexes[]`
+ * in `baerly.config.ts`.
  *
- * Validated synchronously by `validateIndexDefinition` (in
- * `@baerly/server`) at writer construction — see `name` below.
+ * **An index does not speed up reads or change which rows a read
+ * returns.** Every read folds the collection's snapshot and log in
+ * full, with or without indexes. The declaration is validated and
+ * reserved for a future index-aware storage format; omit it unless an
+ * existing config already declares one.
+ *
+ * `Db.create` validates every declaration and throws on a malformed
+ * one; see each field for the rule.
+ *
+ * @example
+ * ```ts
+ * { name: "by_status", on: "status" }
+ * ```
  */
 export interface IndexDefinition {
   /**
-   * Stable path-safe identifier, used directly as a key segment under
-   * `<logPrefix>/index/<name>/...`. Must match `/^[a-z][a-z0-9_]*$/`.
-   * A reserved leading-`_` name throws `InvalidConfig`; a malformed
-   * name throws `SchemaError`. See docs/adr/003-layout-versioning-cordon.md.
+   * Stable identifier. Must match `/^[a-z][a-z0-9_]*$/`. A reserved
+   * leading-`_` name throws `InvalidConfig`; any other malformed name
+   * throws `SchemaError`.
    */
   readonly name: string;
 
   /**
-   * Field name(s) to index on. `string` is a single-field index.
-   * `readonly string[]` is composite. These fields control marker
-   * projection; reads always fold the authoritative snapshot and log.
+   * Field name(s) the index covers: a `string` for one field, a
+   * non-empty `readonly string[]` for a composite. Top-level fields
+   * only: an empty value throws `SchemaError` and a dotted path
+   * (`"meta.owner"`) throws `InvalidConfig`, both at `Db.create`.
    *
-   * Top-level fields only — dotted-path `on` values throw
-   * `SchemaError` from `projectIndexValues`.
+   * Until the writer stops emitting index markers, a write whose row
+   * holds an array in an indexed field throws `SchemaError`.
    */
   readonly on: string | readonly string[];
 
   /**
-   * Optional sparse-projection filter (wire-form). When present, the
-   * writer emits index keys ONLY for docs that satisfy `predicate`
-   * under `matchesWire(predicate, body)`. Sparse indexes shrink the
-   * on-storage key set proportionally to filter selectivity — an
-   * index that matches ~1% of writes pays ~1% of the dense Class-A
-   * PUT cost.
-   *
-   * Operators allowed: `eq`, `gt`, `gte`, `lt`, `lte`, `in` — the
-   * locked {@link PredicateOpName} vocabulary. The filter controls
-   * marker projection only; it does not restrict query membership.
-   *
-   * Wire shape example:
+   * Optional filter in wire form, for example
    * `{ clauses: [{ op: "eq", field: "status", value: "open" }] }`.
+   * Operators: `eq`, `gt`, `gte`, `lt`, `lte`, `in` (the
+   * {@link PredicateOpName} vocabulary). An invalid predicate throws
+   * `SchemaError`. It never restricts what a query returns.
    */
   readonly predicate?: PredicateWire;
 }

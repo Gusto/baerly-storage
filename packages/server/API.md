@@ -99,7 +99,7 @@ const db = Db.create({
   storage: new MemoryStorage(), // or `s3Storage(...)`, `r2BindingStorage(env.BUCKET)`, …
   app: "tickets",
   tenant: "acme-co",
-  config, // ← optional. Wires schemas + indexes
+  config, // ← optional. Wires schemas
   //   AND narrows `db.collection(name)` types.
 });
 
@@ -423,7 +423,6 @@ export default defineConfig({
   collections: {
     tickets: {
       schema: TicketSchema, // StandardSchema v1
-      indexes: [{ name: "by_status", on: "status" }], // single-field equality
     },
   },
 });
@@ -455,9 +454,10 @@ For a write that must reference its own id, write the parent first and
 read back the `_id` the server returns; design cross-collection writes
 parent-first with cleanup, not by pre-minting ids.
 
-Indexes are maintained by writers; they do not accelerate reads. Reads
-and mutation selection fold the complete snapshot and log, then apply
-predicates, order, and limit. Missing markers cannot hide rows.
+Do not declare `indexes`: they are validated at `Db.create` but never
+speed up or change a read, which folds the whole snapshot and log. Until
+the writer stops emitting index markers, a write whose row holds an
+array in an indexed field throws `SchemaError`.
 
 ## `createBaerlyClient` (browser / Node HTTP client)
 

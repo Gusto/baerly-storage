@@ -330,14 +330,17 @@ work; the protocol does not supply rewrite logic.
 
 ## 1c. Declare an index on a collection
 
-An index is a second set of storage keys: each key is a marker that says one
-document has one indexed value. The writer maintains those markers; the
-reader always folds the complete authoritative snapshot and log.
+An index declaration does not speed up reads or change their results:
+every read folds the complete authoritative snapshot and log. The field is
+kept, and validated at `Db.create`, so existing configs compile and the
+names stay reserved for a future index-aware storage format. Guidance for
+apps is to omit it. The writer still emits one marker object per indexed
+value; nothing reads or reconciles those markers.
 
 Declare indexes under `BaerlyConfig.collections[*].indexes`. Each
 `IndexDefinition` has a `name`, an `on` field tuple, and an optional
-`predicate?` for a filtered index. These declarations control marker
-maintenance, not read routing; there is no manual-hint API on `Query<T>`.
+`predicate?` for a filtered index. A malformed declaration throws at
+`Db.create`. There is no manual-hint API on `Query<T>`.
 
 ### `IndexDefinition` shape
 
@@ -391,7 +394,9 @@ cannot hide rows. Index declarations do not accelerate reads; limits do
 not bound fold I/O or memory. See the
 [read algorithm](../spec/sync-protocol.md#read-algorithm).
 
-- Top-level fields only on `on`; dotted paths throw `SchemaError` at projection.
+- Top-level fields only on `on`; a dotted path throws `InvalidConfig` at
+  `Db.create`. Until the writer stops emitting index markers, a write whose
+  row holds an array in an indexed field throws `SchemaError`.
 - `name` must match `/^[a-z][a-z0-9_]*$/`. Reserved leading-`_` names throw
   `InvalidConfig`; other malformed names throw `SchemaError`.
 - `predicate?` is a `PredicateWire` with `eq`, `gt`, `gte`, `lt`, `lte`,
