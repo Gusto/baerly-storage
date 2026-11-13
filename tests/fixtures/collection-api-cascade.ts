@@ -270,8 +270,9 @@ const runDocIdBoundary = async (
   const t = freshTableName("doc-id");
   await provision(storage, app, tenant, t);
   const notes = db.collection(t);
-  // Illegal-as-a-key-segment ids — rejected at BOTH write origins.
-  for (const bad of ["../escape", "a/b", "_reserved"]) {
+  // Illegal-as-a-key-segment ids — rejected at BOTH write origins. An
+  // unpaired surrogate cannot be percent-encoded into a URL or a key.
+  for (const bad of ["../escape", "a/b", "_reserved", "x\ud800", "\udc00x"]) {
     await expect(notes.insert({ _id: bad, title: "x" } as never)).rejects.toMatchObject({
       code: "InvalidConfig",
     });
@@ -451,6 +452,66 @@ const runLegacyNonNfcRow = async (storage: Storage, app: string, tenant: string)
     markers.push(entry.key);
   }
   expect(markers, "the legacy row's marker is gone, its neighbour's is not").toHaveLength(1);
+};
+
+/**
+ * A row whose `_id` holds an unpaired UTF-16 surrogate, written by a
+ * release that accepted such ids. Seeded by committing a placeholder id and
+ * rewriting the log entry body to the JSON escape of the ill-formed id,
+ * which is what the older writer's `JSON.stringify` produced. The
+ * collection is unindexed: an index marker key cannot hold the id on
+ * local-fs, S3, or GCS. The row stays readable and deletable in-process;
+ * `update` and `replace` refuse it.
+ */
+const runLegacyIllFormedIdRow = async (
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const LEGACY = "legacy-\ud800";
+  expect(LEGACY.isWellFormed()).toBe(false);
+  const PLACEHOLDER = "legacy-placeholder";
+  const t = freshTableName("legacy-surrogate");
+  await provision(storage, app, tenant, t);
+  const rows = Db.create({ storage, app, tenant }).collection(t);
+  await rows.insert({ _id: "keep", label: "keep" });
+  await rows.insert({ _id: PLACEHOLDER, label: "old" });
+  const prefix = `app/${app}/tenant/${tenant}/manifests/${t}/`;
+  const listed: string[] = [];
+  for await (const entry of storage.list(prefix)) {
+    listed.push(entry.key);
+  }
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  let rewritten = 0;
+  for (const key of listed) {
+    const got = await storage.get(key);
+    const text = got === null ? "" : dec.decode(got.body);
+    if (!text.includes(PLACEHOLDER)) {
+      continue;
+    }
+    rewritten++;
+    // `JSON.stringify(LEGACY)` is `"legacy-\\ud800"`: ASCII bytes.
+    await storage.put(
+      key,
+      enc.encode(text.replaceAll(PLACEHOLDER, JSON.stringify(LEGACY).slice(1, -1))),
+    );
+  }
+  expect(rewritten, "the log entry").toBe(1);
+
+  const legacyRow = { _id: LEGACY, label: "old" };
+  await expect(rows.get(LEGACY)).resolves.toEqual(legacyRow);
+  const all = await rows.where({}).all();
+  expect(all.map((r) => r["_id"]).toSorted()).toEqual(["keep", LEGACY].toSorted());
+  await expect(rows.update(LEGACY, { label: "new" })).rejects.toMatchObject({
+    code: "InvalidConfig",
+  });
+  await expect(rows.replace(LEGACY, { label: "new" } as never)).rejects.toMatchObject({
+    code: "InvalidConfig",
+  });
+  await expect(rows.delete(LEGACY)).resolves.toEqual({ deleted: 1 });
+  await expect(rows.get(LEGACY)).resolves.toBeUndefined();
+  await expect(rows.where({}).all()).resolves.toEqual([{ _id: "keep", label: "keep" }]);
 };
 
 /** Update contract: RFC 7386 — multiple matches, `null` strips key. */
@@ -1215,6 +1276,7 @@ export const runCollectionApiCascade = async (opts: {
   await runDocIdBoundary(db, opts.storage, APP, tenant);
   await runCaseAndNormalizationTwins(opts.storage, APP, tenant);
   await runLegacyNonNfcRow(opts.storage, APP, tenant);
+  await runLegacyIllFormedIdRow(opts.storage, APP, tenant);
   await runUpdateContract(db, opts.storage, APP, tenant);
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);

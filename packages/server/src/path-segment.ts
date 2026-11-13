@@ -91,9 +91,43 @@ export const assertNfcSegment = (
 };
 
 /**
+ * Resolution for an app, tenant, or collection name with an unpaired
+ * surrogate.
+ */
+const NAME_WELL_FORMED_RESOLUTION =
+  "Pass a name with no unpaired UTF-16 surrogate (name.isWellFormed() is true). One usually comes from slicing a string between the two halves of an emoji or other astral character; slice by code point instead.";
+
+/**
+ * Require `value` to be well-formed UTF-16 (`value.isWellFormed()`): no
+ * unpaired surrogate. `encodeURIComponent` throws on one and UTF-8 has no
+ * encoding for one, so such a segment can be neither addressed over HTTP
+ * nor stored as an S3, GCS, or local-fs key. Shared by the `_id` write
+ * guard and {@link assertNameSegment}.
+ *
+ * @param resolution  the `BaerlyError.resolution` for this segment's role.
+ * @throws BaerlyError code="InvalidConfig" — `value` holds an unpaired
+ *   surrogate.
+ */
+export const assertWellFormedSegment = (
+  value: string,
+  role: string,
+  verb: string,
+  resolution: string,
+): void => {
+  if (!value.isWellFormed()) {
+    const where = verb === "" ? role : `${verb}: ${role}`;
+    throw new BaerlyError(
+      "InvalidConfig",
+      `${where} may not contain an unpaired UTF-16 surrogate: ${JSON.stringify(value)}`,
+      { resolution },
+    );
+  }
+};
+
+/**
  * Guard an app, tenant, or collection name that the SDK, the HTTP
  * router, or a writing CLI verb addresses: {@link assertPathSegment},
- * then {@link assertNfcSegment}. Names are never normalized on the
+ * then {@link assertWellFormedSegment}, then {@link assertNfcSegment}. Names are never normalized on the
  * caller's behalf, so two canonically-equivalent names are never merged
  * into one. The read-only CLI verbs (`inspect`, `export`, `cost`,
  * `admin dump`, `admin fsck`, `admin usage`) apply only
@@ -101,9 +135,10 @@ export const assertNfcSegment = (
  * and exportable.
  *
  * @throws BaerlyError code="InvalidConfig" — the name breaks the
- *   key-segment rule or is not NFC.
+ *   key-segment rule, holds an unpaired surrogate, or is not NFC.
  */
 export const assertNameSegment = (value: string, role: string, verb = ""): void => {
   assertPathSegment(value, role, verb);
+  assertWellFormedSegment(value, role, verb, NAME_WELL_FORMED_RESOLUTION);
   assertNfcSegment(value, role, verb, NAME_NFC_RESOLUTION);
 };

@@ -217,13 +217,14 @@ describe("a collection stored under a legacy non-NFC name", () => {
 });
 
 describe("admin dump flags legacy row ids", () => {
-  test("reports non-NFC ids and canonically-equivalent twins, and still exports every row", async () => {
+  test("reports non-NFC ids, ill-formed ids, and canonically-equivalent twins, and still exports every row", async () => {
     const { uri, storage } = freshBucket();
     const rows = [
       { _id: NFC, kind: "x" },
       { _id: NFD, kind: "y" },
       { _id: "ñ", kind: "z" },
       { _id: "plain", kind: "w" },
+      { _id: "lone-\ud800", kind: "v" },
     ];
     await seedCollection(storage, { app: "app", tenant: "tenant", collection: "rows" }, rows);
     const flags = [`--bucket=${uri}`, "--app=app", "--tenant=tenant", "--collection=rows"];
@@ -233,13 +234,23 @@ describe("admin dump flags legacy row ids", () => {
       runDump([...flags, "--json"], { streams: { stdout: out.stream } }),
     );
     expect(json.code).toBe(0);
-    expect(out.text().trim().split("\n")).toHaveLength(4);
+    expect(out.text().trim().split("\n")).toHaveLength(5);
     const envelope = JSON.parse(json.stdout.trim()) as {
-      result: { legacy: { non_nfc_names: string[]; non_nfc_ids: string[]; twin_ids: string[][] } };
+      result: {
+        legacy: {
+          non_nfc_names: string[];
+          ill_formed_names: string[];
+          non_nfc_ids: string[];
+          ill_formed_ids: string[];
+          twin_ids: string[][];
+        };
+      };
     };
     expect(envelope.result.legacy).toEqual({
       non_nfc_names: [],
+      ill_formed_names: [],
       non_nfc_ids: [NFD, "ñ"],
+      ill_formed_ids: ["lone-\ud800"],
       twin_ids: [[NFD, NFC]],
     });
 
@@ -247,6 +258,7 @@ describe("admin dump flags legacy row ids", () => {
     const text = await captured(() => runDump(flags, { streams: { stdout: sink().stream } }));
     expect(text.code).toBe(0);
     expect(text.stderr).toContain("twin");
+    expect(text.stderr).toContain("unpaired UTF-16 surrogate");
   });
 
   test("a clean collection reports nothing", async () => {
@@ -258,7 +270,13 @@ describe("admin dump flags legacy row ids", () => {
       }),
     );
     const envelope = JSON.parse(res.stdout.trim()) as { result: { legacy: unknown } };
-    expect(envelope.result.legacy).toEqual({ non_nfc_names: [], non_nfc_ids: [], twin_ids: [] });
+    expect(envelope.result.legacy).toEqual({
+      non_nfc_names: [],
+      ill_formed_names: [],
+      non_nfc_ids: [],
+      ill_formed_ids: [],
+      twin_ids: [],
+    });
     expect(res.stderr).toBe("");
   });
 });

@@ -35,9 +35,11 @@
  *              spelling in a mixed legacy log. Snapshot validation
  *              remains strict; historical completeness is not guaranteed.
  *   --json     JSON envelope (on stdout). Its `legacy` field is the
- *              migration preflight: `non_nfc_names` (roles),
- *              `non_nfc_ids`, and `twin_ids` (groups of canonically-
- *              equivalent `_id`s). Text mode prints the same as
+ *              migration preflight: `non_nfc_names` and
+ *              `ill_formed_names` (roles), `non_nfc_ids`,
+ *              `ill_formed_ids`, and `twin_ids` (groups of
+ *              canonically-equivalent `_id`s). Ill-formed means an
+ *              unpaired UTF-16 surrogate. Text mode prints the same as
  *              warnings on stderr. Every row is exported either way. Programmatic callers can
  *              divert the NDJSON body to a separate writable via the
  *              `streams.stdout` option on {@link runDump}.
@@ -57,7 +59,10 @@ import { loadMaterialisedView } from "../export/index.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
 import {
   LEGACY_ID_MIGRATION,
+  LEGACY_ILL_FORMED_ID_MIGRATION,
+  LEGACY_ILL_FORMED_NAME_MIGRATION,
   LEGACY_NAME_MIGRATION,
+  illFormedNames,
   type LegacyIdReport,
   legacyIdReport,
   type NameRole,
@@ -163,14 +168,29 @@ const writeToSink = async (
 };
 
 /** Text-mode migration warnings on stderr; stdout carries the NDJSON. */
-const warnLegacy = (legacy: LegacyIdReport & { non_nfc_names: readonly NameRole[] }): void => {
+const warnLegacy = (
+  legacy: LegacyIdReport & {
+    non_nfc_names: readonly NameRole[];
+    ill_formed_names: readonly NameRole[];
+  },
+): void => {
   const lines: string[] = [];
   if (legacy.non_nfc_names.length > 0) {
     lines.push(`non-NFC ${legacy.non_nfc_names.join(", ")} name: ${LEGACY_NAME_MIGRATION}`);
   }
+  if (legacy.ill_formed_names.length > 0) {
+    lines.push(
+      `${legacy.ill_formed_names.join(", ")} name with an unpaired UTF-16 surrogate: ${LEGACY_ILL_FORMED_NAME_MIGRATION}`,
+    );
+  }
   if (legacy.non_nfc_ids.length > 0) {
     lines.push(
       `${legacy.non_nfc_ids.length} non-NFC _id(s) ${JSON.stringify(legacy.non_nfc_ids)}: ${LEGACY_ID_MIGRATION}`,
+    );
+  }
+  if (legacy.ill_formed_ids.length > 0) {
+    lines.push(
+      `${legacy.ill_formed_ids.length} _id(s) with an unpaired UTF-16 surrogate ${JSON.stringify(legacy.ill_formed_ids)}: ${LEGACY_ILL_FORMED_ID_MIGRATION}`,
     );
   }
   for (const group of legacy.twin_ids) {
@@ -209,10 +229,11 @@ const bundle = defineBaerlySubcommand({
     const sink: Writable = ctx.streams?.stdout ?? process.stdout;
     const count = await writeToSink(sink, view);
     // Migration preflight. Every row is still exported; this reports
-    // what `admin restore` (which requires NFC names and `_id`s) needs
-    // changed first.
+    // what `admin restore` (which requires NFC, well-formed names and
+    // `_id`s) needs changed first.
     const legacy = {
       non_nfc_names: nonNfcNames({ app, tenant, collection: args.collection }),
+      ill_formed_names: illFormedNames({ app, tenant, collection: args.collection }),
       ...legacyIdReport(view.keys()),
     };
     if (!isJsonMode()) {

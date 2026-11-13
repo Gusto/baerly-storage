@@ -501,6 +501,22 @@ export const runHttpConformanceCascade = (opts: {
         expect(data).toEqual([{ _id: nfc, title: "nfc" }]);
       });
 
+      test("POST with an unpaired-surrogate _id returns 400 InvalidConfig and writes nothing", async () => {
+        const table = await mintTable("surrogate-id");
+        for (const bad of ["x\ud800", "\udc00x"]) {
+          // JSON.stringify sends the surrogate as a `\uXXXX` escape.
+          const res = await postDoc(table, { _id: bad, title: "bad" });
+          expect(res.status).toBe(400);
+          const env = res.body as ErrorEnvelope;
+          expect(env.error?.code).toBe("InvalidConfig");
+          expect(env.error?.message).toContain("surrogate");
+        }
+        const list = await doFetch(authedRequest("GET", `/v1/c/${table}`));
+        expect(list.status).toBe(200);
+        const { data } = (await list.json()) as { readonly data: readonly DocumentData[] };
+        expect(data).toEqual([]);
+      });
+
       test("POST > 1 MiB body returns 413 PayloadTooLarge", async () => {
         const table = await mintTable("rt-big");
         // 1 MiB + 1 bytes — exactly one byte over the cap so we

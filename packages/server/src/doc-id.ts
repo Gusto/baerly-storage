@@ -1,7 +1,7 @@
 import { BaerlyError, CODE_RESOLUTIONS, type DocumentData, jsonValueEqual } from "@baerly/protocol";
 import { markCallerFacing } from "./caller-facing-error.ts";
 import { getCurrentContext } from "./observability/context.ts";
-import { assertNfcSegment, assertPathSegment } from "./path-segment.ts";
+import { assertNfcSegment, assertPathSegment, assertWellFormedSegment } from "./path-segment.ts";
 
 /**
  * Resolution for a non-NFC `_id`. A row stored under one by an earlier
@@ -9,6 +9,14 @@ import { assertNfcSegment, assertPathSegment } from "./path-segment.ts";
  */
 const DOC_ID_NFC_RESOLUTION =
   'Pass id.normalize("NFC") for a new _id. To migrate a stored non-NFC row, insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit _id for a UUID), then delete the original. On R2, copying to the normalized original id before deleting it would remove the copy\'s index markers.';
+
+/**
+ * Resolution for an `_id` with an unpaired surrogate. A row stored under
+ * one by an earlier release stays readable and deletable in-process, so it
+ * is migrated by copy.
+ */
+const DOC_ID_WELL_FORMED_RESOLUTION =
+  "Pass an _id with no unpaired UTF-16 surrogate (id.isWellFormed() is true), or omit _id for a UUID. To migrate a stored row with such an _id, read it by _id, insert a copy under a well-formed _id, then delete the original.";
 
 /**
  * Resolution for a point read whose id no row can be stored under.
@@ -21,8 +29,9 @@ const READ_ID_RESOLUTION =
  * replace, an update, or any `I` / `U` commit. The `_id` analogue of
  * `assertKeySegment` (`db.ts`).
  *
- * Applies {@link assertStoredDocId}, then requires the id to be in Unicode
- * Normalization Form C (`id === id.normalize("NFC")`). Index marker keys
+ * Applies {@link assertStoredDocId}, then requires the id to be
+ * well-formed UTF-16 (no unpaired surrogate, which no URL or S3 key can
+ * carry) and in Unicode Normalization Form C (`id === id.normalize("NFC")`). Index marker keys
  * embed the raw `_id`, and R2 stores canonically-equivalent keys (NFC `é`
  * and NFD `e` + U+0301) as one object, so two rows whose ids differ only
  * by normalization would share a marker. NFC gives each equivalence class
@@ -30,10 +39,11 @@ const READ_ID_RESOLUTION =
  * are distinct NFC strings and stay distinct ids.
  *
  * @throws BaerlyError code="InvalidConfig" — the id breaks the key-segment
- *   rule or is not NFC.
+ *   rule, holds an unpaired surrogate, or is not NFC.
  */
 export const assertDocId = (id: string): void => {
   assertStoredDocId(id);
+  assertWellFormedSegment(id, "_id", "", DOC_ID_WELL_FORMED_RESOLUTION);
   assertNfcSegment(id, "_id", "", DOC_ID_NFC_RESOLUTION);
 };
 
@@ -42,8 +52,9 @@ export const assertDocId = (id: string): void => {
  * Only the key-segment rule applies (the single shared
  * {@link assertPathSegment}: empty / `"/"` / `"."`|`".."` / C0-C1 control
  * chars / leading `"_"` (ADR-003) / overlong, all as
- * `BaerlyError{code:"InvalidConfig"}`), so a row stored under a non-NFC id
- * before {@link assertDocId} required NFC can still be deleted.
+ * `BaerlyError{code:"InvalidConfig"}`), so a row stored under a non-NFC
+ * id, or an id with an unpaired surrogate, before {@link assertDocId}
+ * refused them can still be deleted.
  */
 export const assertStoredDocId = (id: string): void => {
   assertPathSegment(id, "_id");
@@ -52,8 +63,8 @@ export const assertStoredDocId = (id: string): void => {
 /**
  * Guard the `id` of a point read (`Collection.get`, `GET
  * /v1/c/:collection/:id`) before any I/O. Applies the stored-id rule
- * ({@link assertStoredDocId}), not the NFC write rule, so a row an earlier
- * release stored under a non-NFC id stays readable. The error is marked
+ * ({@link assertStoredDocId}), not the NFC or well-formed write rules, so
+ * a row an earlier release stored under such an id stays readable. The error is marked
  * caller-facing so HTTP returns its message with the 400.
  *
  * @throws BaerlyError code="InvalidConfig" — `id` is not a string or breaks
