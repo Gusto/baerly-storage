@@ -186,6 +186,7 @@ Path-scoped conventions. **Read the matching file before editing.**
 | `tests/fixtures/fold-stage0/pre-change/**` — **do not hand-edit** | [tests/fixtures/fold-stage0/pre-change/README.md](tests/fixtures/fold-stage0/pre-change/README.md). These are captured bytes bound to a SHA-256 manifest, which the promoted study record in turn binds by hash. Reformatting or "fixing" one file breaks the chain; regenerate with `pnpm freeze:fold-stage0` instead |
 | Durable schemas, wire, or version axes | [docs/contributing/conventions/versioning.md](docs/contributing/conventions/versioning.md) |
 | `bundle-sizes.json`, `rolldown.config.ts`, or any `packages/*/src/**` size-affecting change | [docs/contributing/conventions/bundle-budgets.md](docs/contributing/conventions/bundle-budgets.md) |
+| `request-counts.json`, or a change that adds or removes storage calls on a route or maintenance tick | [docs/contributing/conventions/request-counts.md](docs/contributing/conventions/request-counts.md) |
 
 Claude users: `.claude/rules/{tests,docs,change-discipline,bundle-budgets}.md`
 carry `paths:` frontmatter, so they load only when you touch a matching
