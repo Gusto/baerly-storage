@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { backoffMillis, parseRetryAfterMillis } from "./request-retry.ts";
+import {
+  backoffMillis,
+  MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS,
+  parseRetryAfterMillis,
+  REQUEST_RETRY_MAX_ATTEMPTS,
+} from "./request-retry.ts";
 import { type Fetcher, request, type RequestContext } from "./request.ts";
 
 const okBody = { data: [1], _meta: { manifest_pointer: "c", fresh: true } };
@@ -234,6 +239,112 @@ describe("request non-GET is never retried", () => {
       settle(request(ctx, { method: "POST", path: "/v1/c/t", body: { a: 1 } })),
     ).rejects.toBe(boom);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("request minted-insert transport retry (E3)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const created = (): Response => new Response(JSON.stringify({ _id: "m" }), { status: 201 });
+  const minted = { doc: { _id: "m", a: 1 }, mintedId: "m" };
+  const insertMinted = (ctx: RequestContext, extra: { signal?: AbortSignal; retry?: false } = {}) =>
+    request<{ _id: string }>(ctx, {
+      method: "POST",
+      path: "/v1/c/t",
+      body: minted,
+      mintedInsert: true,
+      ...extra,
+    });
+
+  test.each([502, 503, 504, 408, 429])(
+    "an envelope-less %i is resent with the same body bytes",
+    async (status) => {
+      const { ctx, calls } = scripted([bare(status), created()]);
+      await expect(settle(insertMinted(ctx))).resolves.toEqual({ _id: "m" });
+      expect(calls).toHaveLength(2);
+      await expect(calls[1]!.text()).resolves.toBe(await calls[0]!.text());
+    },
+  );
+
+  test("a thrown fetch is resent", async () => {
+    const { ctx, calls } = scripted([new TypeError("fetch failed"), created()]);
+    await expect(settle(insertMinted(ctx))).resolves.toEqual({ _id: "m" });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("the cap is REQUEST_RETRY_MAX_ATTEMPTS, then the failure surfaces", async () => {
+    const { ctx, calls } = scripted([bare(502)]);
+    await expect(settle(insertMinted(ctx))).rejects.toMatchObject({
+      code: "NetworkError",
+      status: 502,
+    });
+    expect(calls).toHaveLength(REQUEST_RETRY_MAX_ATTEMPTS);
+  });
+
+  test("an enveloped error is not retried by the transport rule", async () => {
+    for (const [status, code] of [
+      [502, "NetworkError"],
+      [409, "AlreadyExists"],
+      [500, "Internal"],
+    ] as const) {
+      const { ctx, calls } = scripted([envelope(status, code), created()]);
+      await expect(settle(insertMinted(ctx))).rejects.toMatchObject({ code, status });
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  test("retry: false makes it single-attempt", async () => {
+    const { ctx, calls } = scripted([bare(503), created()]);
+    await expect(settle(insertMinted(ctx, { retry: false }))).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("an abort during the backoff stops at once", async () => {
+    const { ctx, calls } = scripted([bare(503), created()]);
+    const ac = new AbortController();
+    const reason = new Error("stop");
+    const outcome = insertMinted(ctx, { signal: ac.signal }).then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    ac.abort(reason);
+    await expect(outcome).resolves.toBe(reason);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("without the flag a caller-_id insert, update, replace and delete are sent once", async () => {
+    for (const method of ["POST", "PATCH", "PUT", "DELETE"] as const) {
+      const { ctx, calls } = scripted([bare(503), served(method)]);
+      await expect(
+        settle(request(ctx, { method, path: "/v1/c/t/a", body: { doc: { _id: "a" } } })),
+      ).rejects.toMatchObject({ status: 503 });
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  test("MaintenancePending and transport retries share one budget, not a product", async () => {
+    const { ctx, calls } = scripted([
+      pending({ retryAfter: 1 }),
+      bare(503),
+      pending({ retryAfter: 1 }),
+      bare(503),
+      created(),
+    ]);
+    await expect(settle(insertMinted(ctx))).rejects.toMatchObject({
+      code: "MaintenancePending",
+    });
+    expect(calls).toHaveLength(
+      Math.max(REQUEST_RETRY_MAX_ATTEMPTS, MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS),
+    );
   });
 });
 
