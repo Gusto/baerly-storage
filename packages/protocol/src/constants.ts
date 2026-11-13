@@ -426,6 +426,18 @@ export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
 export const GC_MAX_PENDING_CANDIDATES: number = 1000;
 
 /**
+ * Keys per LIST response page on every in-tree object-store adapter:
+ * S3 and GCS `max-keys` and R2 binding `limit` all cap at 1000. `runGc`
+ * widens its orphan-snapshot mark window past already-pending keys only
+ * up to this size, so the widening never adds a full LIST page (a
+ * provider may still truncate a page short and cost another request).
+ *
+ * @see packages/server/src/gc.ts
+ * @see docs/spec/storage-compatibility.md
+ */
+export const GC_MARK_LIST_PAGE_KEYS: number = 1000;
+
+/**
  * Bounded retry cap for the `gc/pending.json` CAS read-modify-write
  * loop in {@link casUpdateGcPending}. On `WriteConflict` (a concurrent GC
  * pass landed between this pass's read and its write) the loop

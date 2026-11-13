@@ -302,6 +302,95 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     ).toBeGreaterThan(mid.objects);
   });
 
+  test("REAL 7-day grace: replaced snapshots plateau at ~fold rate × grace, not grow linearly", async () => {
+    // Every test above runs `gcGraceMillis: 0`, so a mark is swept on the
+    // pass that made it and the mark window never holds a waiting cohort.
+    // Under the real grace each marked orphan occupies the ledger for a
+    // week. The mark phase must look PAST those pending keys, or its
+    // budget fills with already-marked orphans and marking collapses to
+    // ~`gcMaxMarks` per grace period while folds keep replacing snapshots.
+    //
+    // CF-free per-pass caps, a simulated clock, and a write every
+    // `WRITE_GAP_MS`: ~one fold per `minEntriesToCompact` writes, so
+    // several folds per simulated day — well above the 20-per-week the
+    // window-pinned mark phase can sustain.
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const GRACE_DAYS = 7;
+    const DAYS = 24;
+    const WRITES_PER_DAY = 240;
+    const WRITE_GAP_MS = DAY_MS / WRITES_PER_DAY;
+    const SMALL_SET = 20;
+    let clockMs = Date.parse("2026-01-01T00:00:00.000Z");
+    const profile: BoundedMaintenanceOptions = {
+      profile: MAINTENANCE_PROFILE_CF_FREE,
+      minEntriesToCompact: 20,
+      phasesPerTick: "single",
+      now: () => new Date(clockMs),
+    };
+
+    const storage = new MemoryStorage();
+    await bootstrap(storage, KEY);
+    const writer = new Writer({ storage, currentJsonKey: KEY });
+    const ctx = createObservabilityContext({ maintenance: { options: profile } });
+    const snapshotPrefix = `${KEY.slice(0, KEY.lastIndexOf("/"))}/snapshot/L9/`;
+    const countSnapshots = async (): Promise<number> => {
+      let n = 0;
+      for await (const _ of storage.list(snapshotPrefix)) {
+        n += 1;
+      }
+      return n;
+    };
+
+    const perDay: number[] = [];
+    let folds = 0;
+    let lastSnapshot: string | null = null;
+    await runWithContext(ctx, async () => {
+      for (let day = 0; day < DAYS; day++) {
+        for (let w = 0; w < WRITES_PER_DAY; w++) {
+          const i = day * WRITES_PER_DAY + w;
+          clockMs += WRITE_GAP_MS;
+          await writer.commit({
+            op: i < SMALL_SET ? "I" : "U",
+            collection: COLL,
+            docId: `d${i % SMALL_SET}`,
+            body: { _id: `d${i % SMALL_SET}`, n: i, pad: "y".repeat(200) },
+          });
+          const snap = (await readCurrentJson(storage, KEY))!.json.snapshot;
+          if (snap !== lastSnapshot) {
+            folds += 1;
+            lastSnapshot = snap;
+          }
+        }
+        perDay.push(await countSnapshots());
+      }
+    });
+
+    const foldsPerDay = folds / DAYS;
+    const trajectory = perDay.map((n, d) => `d${d + 1}:${n}`).join(" ");
+    // The fixture must actually out-fold the window-pinned rate
+    // (`gcMaxMarks` per grace), or the plateau below proves nothing.
+    expect(
+      foldsPerDay,
+      `fixture folds ${foldsPerDay.toFixed(1)}/day — must exceed ${MAINTENANCE_PROFILE_CF_FREE.gcMaxMarks}/${GRACE_DAYS} by a wide margin`,
+    ).toBeGreaterThan((4 * MAINTENANCE_PROFILE_CF_FREE.gcMaxMarks) / GRACE_DAYS);
+
+    // Steady state: an orphan is marked within a GC tick of its fold and
+    // swept on the first GC tick after its grace, so the population is
+    // fold rate × (grace + one day of slack) plus the live snapshot.
+    const bound = Math.ceil(foldsPerDay * (GRACE_DAYS + 1)) + 1;
+    const peakAfterGrace = Math.max(...perDay.slice(GRACE_DAYS + 2));
+    expect(
+      peakAfterGrace,
+      `trajectory ${trajectory} — peak ${peakAfterGrace} exceeds ${foldsPerDay.toFixed(1)} folds/day × ${GRACE_DAYS + 1}d + 1 = ${bound}`,
+    ).toBeLessThanOrEqual(bound);
+    // And flat: the last week grows no faster than one day of folds.
+    const growth = perDay[DAYS - 1]! - perDay[DAYS - 1 - GRACE_DAYS]!;
+    expect(
+      growth,
+      `trajectory ${trajectory} — grew ${growth} over the final ${GRACE_DAYS} days`,
+    ).toBeLessThanOrEqual(Math.ceil(foldsPerDay));
+  });
+
   test("an UN-sliced whole-tail fold of >=100 entries would BLOW the 50-subrequest CF-free budget", () => {
     // Why slicing is load-bearing: compact's worst-case budget is
     // `3 + maxEntriesPerRun` subrequests (1 GET current + 1 GET prior

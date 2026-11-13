@@ -231,9 +231,15 @@ does, and raising the sweep rate does not fix it:
   budget — is what paces reclamation.
 
 Mark coverage is not on this list. GC's one remaining mark phase scans
-`snapshot/L9/`, where at most one key is permanently undeletable (the
-live `current.snapshot`), so any `maxMarks >= 2` makes progress and the
-phase cannot stall. That is why nothing carries a rotation cursor.
+`snapshot/L9/` from the lexicographic start on every pass, so no key
+can hide behind a cursor. Its LIST window is `maxMarks` plus the
+snapshot keys already pending in `gc/pending.json` plus the live
+`current.snapshot`, capped at one LIST page
+(`GC_MARK_LIST_PAGE_KEYS`) and never below `maxMarks`. A cohort waiting
+out its grace therefore does not occupy the mark budget: each pass marks
+up to `maxMarks` orphans that are not yet pending, so marking keeps pace
+with folds until the ledger itself is full. At steady state the
+replaced-snapshot population is about fold rate × grace.
 
 Under above-envelope churn, artifacts can become eligible faster than
 either pass reclaims them. Growth in those prefixes is the signal; the
