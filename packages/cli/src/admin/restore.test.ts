@@ -546,7 +546,7 @@ describe("baerly admin restore", () => {
     expect(head?.json.tail_hint).toBe(3);
   });
 
-  test("malformed line → exit 2, no rows committed", async () => {
+  test("line missing _id → InvalidConfig (exit 1), no rows committed", async () => {
     // First line is bad (missing _id); confirms the ticket's
     // "no partial-restore state survives when the first line is
     // the failure" semantics.
@@ -561,7 +561,7 @@ describe("baerly admin restore", () => {
     } finally {
       stderr.restore();
     }
-    expect(exitCode).toBe(2);
+    expect(exitCode).toBe(1);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head?.json.tail_hint).toBe(0);
   });
@@ -665,6 +665,78 @@ describe("baerly admin restore", () => {
     expect(stderr.captured.join("")).toContain("InvalidConfig");
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head?.json.tail_hint).toBe(0);
+  });
+
+  describe("per-row validation and partial progress", () => {
+    const run = async (ndjson: string): Promise<{ code: number; err: string }> => {
+      await writeFile(stdinPath, ndjson, "utf8");
+      const stderr = captureStream(process.stderr);
+      try {
+        const code = await runRestore(
+          [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+          { streams: { stdin: createReadStream(stdinPath) } },
+        );
+        return { code, err: stderr.captured.join("") };
+      } finally {
+        stderr.restore();
+      }
+    };
+    const row = (id: string): string => `${JSON.stringify({ _id: id, v: 1 })}\n`;
+
+    test("duplicate _id on line 2 → exit 1, names both lines, 1 row committed", async () => {
+      const { code, err } = await run(row("a") + row("a"));
+      expect(code).toBe(1);
+      expect(err).toContain("InvalidConfig");
+      expect(err).toContain('line 2 repeats _id "a" first seen on line 1');
+      expect(err).toContain("1 row committed");
+      await expect(storage.get(`${TABLE_PREFIX}/log/0.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/1.json`)).resolves.toBeNull();
+    });
+
+    test("duplicate at line k of n commits exactly k-1 rows", async () => {
+      const { code, err } = await run(row("a") + row("b") + row("c") + row("b") + row("d"));
+      expect(code).toBe(1);
+      expect(err).toContain('line 4 repeats _id "b" first seen on line 2');
+      expect(err).toContain("3 rows committed");
+      await expect(storage.get(`${TABLE_PREFIX}/log/2.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/3.json`)).resolves.toBeNull();
+    });
+
+    test("invalid _id at line 2 → exit 1 with escaped _id and committed count", async () => {
+      const { code, err } = await run(row("ok") + row("_leading"));
+      expect(code).toBe(1);
+      expect(err).toContain('line 2 has an invalid _id "_leading"');
+      expect(err).toContain("1 row committed");
+    });
+
+    test("missing or empty _id → InvalidConfig (exit 1) with line, count, and remedy", async () => {
+      const missing = await run(row("a") + '{"v":1}\n');
+      expect(missing.code).toBe(1);
+      expect(missing.err).toContain("InvalidConfig");
+      expect(missing.err).toContain("line 2 missing non-empty string _id");
+      expect(missing.err).toContain("1 row committed");
+      expect(missing.err).toContain("Add a non-empty string _id");
+    });
+
+    test("empty-string _id on the first line → InvalidConfig (exit 1)", async () => {
+      const empty = await run('{"_id":""}\n');
+      expect(empty.code).toBe(1);
+      expect(empty.err).toContain("InvalidConfig");
+    });
+
+    test("non-NFC and control-char _ids report line and count", async () => {
+      const nfd = await run(row("ok") + row("cafe\u0301"));
+      expect(nfd.code).toBe(1);
+      expect(nfd.err).toContain("line 2 has an invalid _id");
+      expect(nfd.err).toContain("1 row committed");
+    });
+
+    test("malformed JSON after rows reports committed count (exit 2)", async () => {
+      const { code, err } = await run(row("a") + "{nope\n");
+      expect(code).toBe(2);
+      expect(err).toContain("line 2 is not valid JSON");
+      expect(err).toContain("1 row committed");
+    });
   });
 
   test("traversal-shaped --collection rejected at the CLI chokepoint → InvalidConfig (exit 1), writes nothing", async () => {

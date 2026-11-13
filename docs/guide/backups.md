@@ -165,9 +165,21 @@ compaction and GC pass to finish. Clearing `gc/pending.json` cannot fence
 a GC pass that already loaded old candidates; such a pass can otherwise
 delete log keys recreated by the restore.
 
-Restore is row-committing, not file-atomic: malformed NDJSON or a
-mid-stream storage failure leaves prior rows committed. Re-run with
-`--force` into the scratch target, or choose a fresh recovery prefix.
+Restore validates each line before committing it, in stream order. It
+refuses (`InvalidConfig`, exit 1, naming the line number and the escaped
+`_id`) a duplicate `_id` and an `_id` outside the write domain (the
+key-segment rule or not NFC). Restore never rewrites an `_id`: fix the dump
+line, or rewrite it to a fresh NFC `_id` that is not canonically
+equivalent to the original. A dump from an older release whose `_id`s are
+not NFC cannot be restored as-is; keep the raw dump, rewrite those ids,
+and restore the rewritten copy.
+
+Restore is row-committing, not file-atomic: validation is per row. Rows
+before the failing line are committed; the failing line and later lines
+are not, and the error message reports how many rows were committed. The
+same holds for malformed NDJSON (exit 2) or a mid-stream storage failure.
+Recover by restoring again into a fresh target, or with `--force`. There is
+no whole-stream pre-validation pass, because stdin is a stream.
 
 On R2's Class A billing meter, before any in-band maintenance from a
 long import, restore's base billable shapes are: fresh non-empty `N + 2`
