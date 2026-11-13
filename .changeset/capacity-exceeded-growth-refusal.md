@@ -28,3 +28,26 @@ maintenance profile). Nothing is committed when a write is refused.
 The decision is recomputed on every request from the collection's current
 state, so the refusal clears with no operator action. Direct `Writer` commits,
 including `baerly admin restore`, are not checked.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before: a collection past its host's fold ceiling kept accepting writes
+// while compaction silently stalled
+await tickets.insert(doc);
+
+// after: growth can be refused. CapacityExceeded is not retriable, so a
+// generic retry wrapper (retriable === false) will not loop on it.
+try {
+  await tickets.insert(doc);
+} catch (err) {
+  if (err instanceof BaerlyError && err.code === "CapacityExceeded") {
+    // Nothing was committed. Delete or shrink rows, archive the collection,
+    // or move it to a host with a larger ceiling; reads and deletes still work.
+  } else {
+    throw err;
+  }
+}
+```
+
+Over HTTP the refusal is `409` with `error.code: "CapacityExceeded"`. Alerting that matched `409` as a write conflict should match on `error.code` instead.

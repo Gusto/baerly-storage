@@ -19,3 +19,19 @@ const [a, b] = await Promise.allSettled([
 The rule is enforced by the writer, so it holds once every process writing to a collection runs this release. A writer still on an older release does not check the window, and its insert can still land over a concurrent one.
 
 This narrows the `Collection.insert` contract rather than adding to it. Under the [API surface lock](../docs/contributing/conventions/change-discipline.md#api-surface-lock) a behavioural shift needs a supersession record, and this changeset is that record: "concurrent inserts of one `_id` can both succeed" is superseded by "at most one concurrent insert of an `_id` commits".
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before: concurrent inserts of one _id could both resolve
+await tickets.insert({ _id: "t-1", by: "a" }).catch(() => undefined);
+// after: treat AlreadyExists as "someone else won"; re-read instead of retrying
+try {
+  await tickets.insert({ _id: "t-1", by: "a" });
+} catch (err) {
+  if (!(err instanceof BaerlyError && err.code === "AlreadyExists")) throw err;
+  const winner = await tickets.get("t-1"); // the first committer's row
+}
+```
+
+Code that used a duplicate insert as an unconditional upsert must call `replace(id, doc)` (last-writer-wins) or `update(id, patch)` instead.

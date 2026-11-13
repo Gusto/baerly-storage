@@ -11,3 +11,26 @@ Near a collection's fold ceiling, writes now drive maintenance themselves instea
 - A full fold pass of the pending tail that would rebuild past the byte ceiling now also counts as no progress, alongside a stored snapshot past the ceiling: that pass would defer on every tick, so every write is refused with `CapacityExceeded`, and reads keep working.
 
 On Cloudflare that fold runs in `ctx.waitUntil` after the response, like every write tick. Reads still never run maintenance, and nothing new is configured.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before: no such code; a write near the ceiling either committed or stalled
+await tickets.insert(doc);
+
+// after: MaintenancePending is retriable (503 + Retry-After). Wait, then repeat.
+for (let attempt = 0; ; attempt++) {
+  try {
+    await tickets.insert(doc);
+    break;
+  } catch (err) {
+    if (err instanceof BaerlyError && err.code === "MaintenancePending" && attempt < 2) {
+      await new Promise((r) => setTimeout(r, (err.retryAfter ?? 1) * 1000));
+      continue;
+    }
+    throw err;
+  }
+}
+```
+
+The bundled HTTP client already retries `MaintenancePending` itself (see the client retry entries); a raw-HTTP caller or a custom `fetch` wrapper must honor `Retry-After`. An exhaustive `switch (err.code)` over `BaerlyErrorCode` must add the new case.
