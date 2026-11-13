@@ -127,10 +127,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * (`name !== name.normalize("NFC")`). Names are never normalized for
    * you: pass `name.normalize("NFC")`.
    *
-   * @throws BaerlyError code="InvalidConfig" when `app` or `tenant` is
-   *   empty, contains `/`, is `"."` or `".."`, contains control
-   *   characters, starts with the reserved `"_"` prefix, exceeds
-   *   256 bytes, or is not NFC.
+   * @throws BaerlyError code="InvalidConfig" when `app`, `tenant`, or a
+   *   `config.collections` key is empty, contains `/`, is `"."` or
+   *   `".."`, contains control characters, starts with the reserved
+   *   `"_"` prefix, exceeds 256 bytes, or is not NFC.
    *
    * @example
    * ```ts
@@ -172,6 +172,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const { storage, app, tenant } = config;
     assertKeySegment(app, "app", "Db.create");
     assertKeySegment(tenant, "tenant", "Db.create");
+    // Config collection keys fail here, not at first use.
+    for (const name of Object.keys(config.config?.collections ?? {})) {
+      assertKeySegment(name, "collection", "Db.create");
+    }
     // Always derive runtime maps from `config.collections`. Absent
     // config ⇒ empty maps (no schemas, no indexes); the kernel
     // behaves the same as a config with `collections: {}`.

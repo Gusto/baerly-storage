@@ -95,4 +95,19 @@ describe("ensureTable", () => {
       readCurrentJson(storage, keyFor("helpdesk", "beta", "tickets")),
     ).resolves.not.toBeNull();
   });
+
+  test.each([
+    { app: "cafe\u0301", tenant: "t", table: "rows" },
+    { app: "a", tenant: "cafe\u0301", table: "rows" },
+    { app: "a", tenant: "t", table: "cafe\u0301" },
+    { app: "a", tenant: "t", table: "../x" },
+  ])("refuses a name the SDK refuses (%j) and writes nothing", async (names) => {
+    const storage = new MemoryStorage();
+    await expect(ensureTable(storage, names)).rejects.toMatchObject({ code: "InvalidConfig" });
+    const keys: string[] = [];
+    for await (const e of storage.list("")) {
+      keys.push(e.key);
+    }
+    expect(keys).toEqual([]);
+  });
 });
