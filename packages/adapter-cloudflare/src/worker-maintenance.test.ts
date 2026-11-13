@@ -725,6 +725,7 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
   test("repeated non-positive health checks fail without consuming the init-check flag", async () => {
     const bucket = getBinding();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const verifier: Verifier = async () => ({ tenantPrefix: "throw-then-warn-t", identity: {} });
     const handler = baerlyWorker<BaerlyEnv>(() => ({ config: testConfig, verifier }));
     const noopCtx = mockExecutionContext();
@@ -737,13 +738,14 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
       BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "0",
     } as unknown as BaerlyEnv;
     for (let attempt = 0; attempt < 2; attempt++) {
-      await expect(
-        handler.fetch!(
-          new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
-          badEnv,
-          noopCtx,
-        ),
-      ).rejects.toMatchObject({ code: "InvalidConfig" });
+      const res = (await handler.fetch!(
+        new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
+        badEnv,
+        noopCtx,
+      )) as unknown as Response;
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("Internal");
     }
 
     // Closure-scoped state persists across calls to this handler. Once

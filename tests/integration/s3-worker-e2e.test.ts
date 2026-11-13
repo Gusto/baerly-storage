@@ -20,8 +20,8 @@
  * package `src`) because it imports the node-free `/s3` barrel and the
  * package-layer linter forbids `adapter-cloudflare → adapter-node`.
  */
-import { BaerlyError, type BaerlyAppConfig } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { type BaerlyAppConfig } from "@baerly/protocol";
+import { describe, expect, test, vi } from "vitest";
 import { S3HttpStorage, sigV4Signer } from "../../packages/adapter-node/src/s3.ts";
 import { baerlyWorker, type BaerlyEnv } from "../../packages/adapter-cloudflare/src/worker.ts";
 import { assertAllRequestsSigned, makeS3Stub } from "../fixtures/s3-memory-stub.ts";
@@ -111,22 +111,19 @@ describe("baerlyWorker routes HTTP through injected S3HttpStorage", () => {
     const req = (): Request<unknown, IncomingRequestCfProperties> =>
       asCfRequest(new Request("https://x/v1/c/notes/anything", { method: "GET" }));
 
-    const attempt = async (): Promise<unknown> => {
-      try {
-        await handler.fetch!(req(), env, makeExec());
-        return undefined;
-      } catch (error) {
-        return error;
-      }
-    };
+    const attempt = async (): Promise<Response> =>
+      (await handler.fetch!(req(), env, makeExec())) as unknown as Response;
 
-    const first = await attempt();
-    expect(first).toBeInstanceOf(BaerlyError);
-    expect((first as BaerlyError).code).toBe("InvalidConfig");
-
-    const second = await attempt();
-    // Same instance → served from the `resolutionError` cache, proving the
-    // fail-closed state is sticky and not silently re-resolved per request.
-    expect(second).toBe(first);
+    // Every request answers a scrubbed 500 JSON envelope. (That the
+    // failure is cached rather than re-resolved is pinned in
+    // `worker.test.ts`.)
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (let i = 0; i < 2; i++) {
+      const res = await attempt();
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("Internal");
+    }
+    errorSpy.mockRestore();
   });
 });
