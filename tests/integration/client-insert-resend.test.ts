@@ -118,3 +118,49 @@ test("calling insert again mints a new auto-ID", async () => {
   expect(doc).toEqual({ title: "same" });
   await expect(db.collection("notes").where({}).all()).resolves.toHaveLength(2);
 });
+
+test("a proxy 5xx after a landed commit is retried by the client and replays to 201, one row", async () => {
+  const db = Db.create({ storage: new MemoryStorage(), app: "client-resend", tenant: "proxy-5xx" });
+  const router = createRouter({ db });
+  const statuses: Array<number> = [];
+  let proxyFailures = 1;
+  const client = createBaerlyClient({
+    baseUrl: "http://localhost",
+    fetch: async (request) => {
+      const res = await router.fetch(request);
+      statuses.push(res.status);
+      if (proxyFailures > 0) {
+        // The commit landed; the proxy drops the answer and returns its own 502.
+        proxyFailures -= 1;
+        return new Response("bad gateway", { status: 502 });
+      }
+      return res;
+    },
+  });
+
+  const { _id } = await client.collection("tickets").insert({ title: "once" });
+
+  expect(statuses).toEqual([201, 201]);
+  await expect(db.collection("tickets").where({}).all()).resolves.toEqual([{ _id, title: "once" }]);
+});
+
+test("a proxy 5xx after a landed caller-_id insert is not retried and adds no row", async () => {
+  const db = Db.create({ storage: new MemoryStorage(), app: "client-resend", tenant: "caller-id" });
+  const router = createRouter({ db });
+  const statuses: Array<number> = [];
+  const client = createBaerlyClient({
+    baseUrl: "http://localhost",
+    fetch: async (request) => {
+      const res = await router.fetch(request);
+      statuses.push(res.status);
+      return new Response("bad gateway", { status: 502 });
+    },
+  });
+
+  await expect(
+    client.collection("tickets").insert({ _id: "human-id", title: "once" }),
+  ).rejects.toMatchObject({ code: "NetworkError", status: 502 });
+
+  expect(statuses).toEqual([201]);
+  await expect(db.collection("tickets").where({}).all()).resolves.toHaveLength(1);
+});

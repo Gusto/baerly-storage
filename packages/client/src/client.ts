@@ -377,6 +377,7 @@ const makeClientCollection = <T extends DocumentData>(
         path: `/v1/c/${encodeSegment(name, "collection")}`,
         body,
         signal: opts?.signal,
+        ...("mintedId" in body && { mintedInsert: true as const }),
       });
     },
     async update(id, patch, opts): Promise<{ readonly modified: number }> {

@@ -23,6 +23,12 @@ export interface RequestOptions {
   readonly signal?: AbortSignal;
   /** `false` makes the request single-attempt, for callers that own their own retry loop. */
   readonly retry?: false;
+  /**
+   * Marks a `POST` insert whose `_id` the SDK minted and sent as `mintedId`
+   * (E2). Only such a request may be resent after a transport failure: if the
+   * first attempt had committed, the server replays its `201 { _id }`.
+   */
+  readonly mintedInsert?: true;
 }
 
 /**
@@ -164,9 +170,16 @@ const decodeFailure = async (
  * An abort stops at once, and the final failure is thrown unchanged.
  * `retry: false` disables both.
  *
- * - **Transport, `GET` only** (`REQUEST_RETRY_MAX_ATTEMPTS`): a thrown
- *   `fetch` or an envelope-less 5xx, 408 or 429. A non-`GET` is sent once
- *   for these (E3). An enveloped `NetworkError` is never retried: the
+ * - **Transport, `GET` and minted inserts** (`REQUEST_RETRY_MAX_ATTEMPTS`):
+ *   a thrown `fetch` or an envelope-less 5xx, 408 or 429. A minted insert
+ *   (`mintedInsert`) is resent with the same serialized body, so a commit
+ *   the failure hid replays as `201 { _id }` (E2) instead of adding a row.
+ *   Every other non-`GET` (caller-`_id` insert, update, replace, delete) is
+ *   sent once for these (E3).
+ *
+ * The two classes share one attempt counter, so a request that sees both
+ * makes at most `max(REQUEST_RETRY_MAX_ATTEMPTS,
+ * MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS)` attempts, not their product. An enveloped `NetworkError` is never retried: the
  *   server adapter already retried it. No other enveloped code is
  *   retried, bar `MaintenancePending` below.
  * - **`MaintenancePending`, every verb**
@@ -193,7 +206,8 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
       ? AbortSignal.any([opts.signal, ctx.signal])
       : (opts.signal ?? ctx.signal);
   const retry = opts.retry !== false;
-  const transportAttempts = opts.method === "GET" && retry ? REQUEST_RETRY_MAX_ATTEMPTS : 1;
+  const transportAttempts =
+    (opts.method === "GET" || opts.mintedInsert === true) && retry ? REQUEST_RETRY_MAX_ATTEMPTS : 1;
   const pendingAttempts = retry ? MAINTENANCE_PENDING_CLIENT_MAX_ATTEMPTS : 1;
 
   for (let attempt = 1; ; attempt++) {
