@@ -27,6 +27,13 @@ Every writer to a collection must run 0.7.0 before you rely on the new
 write guarantees (first-wins inserts, update semantics): an older writer
 does not check the new conditions.
 
+0.7.0 also stops writing index markers (section 6). A 0.6.0 node that
+reads a bucket 0.7.0 wrote, in a mixed fleet during a rolling deploy or
+after a rollback, misses the rows 0.7.0 wrote from indexed queries until
+0.6.0's `baerly admin rebuild-index` runs for each index. Finish the
+rollout before relying on indexed reads, and run that repair if you roll
+back.
+
 ## 1. App code: errors
 
 `BaerlyErrorCode` changed. `Conflict` is gone; `retriable` is a function of
@@ -45,7 +52,7 @@ new BaerlyError("NetworkError", "PUT failed", { cause, issues });
 
 `new BaerlyError(code, message, options?)` and `errorEnvelope(code, message,
 options?)` (from `@gusto/baerly-storage/http`) take one options object:
-`cause`, `issues`, `status`, `resolution`, `_id`. The `retriable` argument is
+`cause`, `issues`, `status`, `resolution`, `_id`, `retryAfter`. The `retriable` argument is
 gone. Untyped JavaScript gets no error for an old positional call; fix it
 by hand.
 
@@ -56,24 +63,25 @@ New codes and what to do:
 | `WriteConflict` | 409 | yes | Re-read, retry with bounded backoff. |
 | `AlreadyExists` | 409 | no | Duplicate `_id`. Re-read or use `update`/`replace`. |
 | `AmbiguousCommit` | 409 | no | Fate unknown. Re-read the row named by `err._id`; absence does not prove failure. Retry an insert with the same `_id`. |
-| `CapacityExceeded` | 409 | no | Nothing committed. Delete or shrink rows, or move the collection to a larger host. Reads and deletes keep working. |
+| `CapacityExceeded` | 409 | no | Not retriable unchanged. A single write commits nothing when refused. A multi-row `where(...).update()` / `.delete()` refused part-way (including by a request's storage budget) keeps the rows it already committed: re-read, then retry on a fresh request or narrow the query. Delete or shrink rows to make room; reads and deletes keep working. Host-side remedies are in section 4. |
 | `MaintenancePending` | 503 + `Retry-After` | yes | Nothing committed. Wait `err.retryAfter` seconds, repeat. |
 | `InvalidConfig` | 400 | no | The input is outside the write domain (sections 2 and 3). |
 
 ```ts
-try {
-  await tickets.insert(doc);
-} catch (err) {
-  if (!(err instanceof BaerlyError)) throw err;
-  switch (err.code) {
-    case "MaintenancePending":
-      await sleep((err.retryAfter ?? 1) * 1000); // then repeat
-      break;
-    case "CapacityExceeded": // not retriable unchanged
-    case "AlreadyExists":
-    case "AmbiguousCommit":
-    default:
-      throw err;
+import { BaerlyError } from "@gusto/baerly-storage";
+
+// MaintenancePending: wait err.retryAfter seconds and repeat. Every other
+// code is thrown to the caller.
+for (let attempt = 0; ; attempt++) {
+  try {
+    await tickets.insert(doc);
+    break;
+  } catch (err) {
+    if (err instanceof BaerlyError && err.code === "MaintenancePending" && attempt < 2) {
+      await new Promise((r) => setTimeout(r, (err.retryAfter ?? 1) * 1000));
+      continue;
+    }
+    throw err;
   }
 }
 ```
@@ -173,17 +181,13 @@ await tasks.insert({ due: new Date(0), score: NaN, tags: new Map() });
 await tasks.insert({ due: new Date(0).toISOString(), score: null, tags: {} });
 ```
 
-**Reads now fold authoritative state.** Reads and mutation targets are
-selected from the full snapshot plus the committed log; they no longer LIST
-index markers, so a missing marker cannot hide a live row.
+**Reads fold authoritative state.** Every read and every mutation target
+is selected from the full snapshot plus the committed log. Declared
+`indexes` do not make a read cheaper (section 6), so every query costs the
+same snapshot and log load whether or not it matches anything.
 
 - Row order among ties is not stable between releases. Add an explicit
   `order(...)` before a `limit` whenever the choice of rows matters.
-- An indexed query that matches nothing now has to prove absence, which
-  loads the snapshot and log: an empty result costs about a full scan.
-  Budget for it on hot "does it exist" lookups; prefer `get(id)`.
-- A filtered (`predicate`) index is skipped, and the query full-scans, when
-  the query does not imply the index's filter.
 
 **Collection, app and tenant names must be NFC** (section 5 has the legacy
 recipe). `Db.create` (including `config.collections` keys), `db.collection`,
@@ -227,8 +231,8 @@ Near the ceiling, writes drive maintenance themselves and may answer
 `MaintenancePending`. The decision is recomputed per request, so refusals
 clear without operator action. A collection already past its host's ceiling
 (folded on a larger host, now served by a smaller one) refuses every write:
-serve it from a larger `BAERLY_MAINTENANCE_PROFILE` (`cf-paid`, `node`) or
-export it with `baerly admin dump`. `baerly admin restore` bypasses the
+serve it with `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Workers Paid, or from
+the Node adapter, or export it with `baerly admin dump`. `baerly admin restore` bypasses the
 check.
 
 **Maintenance env validation.** Invalid values fail loudly instead of
@@ -239,13 +243,13 @@ surfaces a Worker exception.
 | --- | --- |
 | `BAERLY_MAINTENANCE_DISABLE=yes` / `no` | `true` / `false` (or `1` / `0`, or unset) |
 | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES=0` or negative | unset, or a positive number |
-| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES=8mb` (non-numeric) | a plain number of bytes (strict rejection is tracked for 0.7.0, see `rel-maintenance-env-strict`) |
-| unknown `BAERLY_MAINTENANCE_PROFILE` fell back to `cf-free` | `cf-free` or `cf-paid` (same ticket) |
 
 **Host tiers.** The per-profile ceilings, the fold-at-7-pending rule on
 Workers Free with non-R2 storage, and `CLOUDFLARE_FREE_TIER` /
 `CLOUDFLARE_PAID_TIER` constants changed. `CLOUDFLARE_FREE_TIER.compact
-.minEntriesToCompact` dropped from 50 to 20. Check
+.minEntriesToCompact` dropped from 50 to 20. `CLOUDFLARE_PAID_TIER`'s
+scheduled floor dropped from 50 to 1, so a Paid cron now folds tails of 1 to
+49 entries. Check
 [workload-fit.md](../about/workload-fit.md) for the current table.
 
 - **Workers Free + R2 binding:** one `runScheduledMaintenance(args,
@@ -253,17 +257,26 @@ Workers Free with non-R2 storage, and `CLOUDFLARE_FREE_TIER` /
   alternation is no longer needed. `runScheduledMaintenance`'s default
   `minEntriesToCompact` is 1 (was 100).
 - **Workers Free + S3 over HTTP (best effort):** keep alternating direct
-  `compact()` and `runGc()` calls. Accepted limits on this host: an update
-  that changes 9 or more indexed fields is refused with `CapacityExceeded`
-  (the commit pre-check needs more of the 45 allowed `fetch` calls than
-  remain; 8 commit, 9 refuse at the longest tail); past a pending tail of
-  about 9 entries a worst-case update cannot fold in its write tick, so the
-  tail does not shorten there; and a scheduled `compact()` whose `tail_hint`
+  `compact()` and `runGc()` calls. Accepted limits on this host: past a
+  pending tail of about 9 entries a worst-case update cannot fold in its
+  write tick, so the tail does not shorten there
+  <!-- TODO(option-c): re-measure after markers are dropped -->; and a scheduled `compact()` whose `tail_hint`
   is about 20 or more entries stale does not fit the 45 calls, so every later
   pass stops at the same point. Use the R2 binding for request headroom.
 - **Workers Paid:** `CLOUDFLARE_PAID_TIER` walks at most 1,000 log slots per
   compaction pass. If you switch on `CompactResult.skippedReason`, handle the
   new `"probe-budget-checkpointed"` case.
+
+**Fold-ceiling signals.** A collection past the fold ceiling now logs a
+`fold_deferred` warning (category `["baerly", "maintenance"]`) on each
+first deferral and then at most once per 1,000 writes. `compact()` returns
+`deferral: { dimension, snapshotBytes, snapshotRows }` on its `"deferred"`
+result and no longer emits `db.compaction.deferred_total` itself; that
+counter gains a `gate` label, and `db.compaction.deferred_bytes_total` /
+`db.compaction.deferred_rows_total` are new. `baerly inspect` reports
+`fold_gate` per host profile. A custom `MaintenanceDispatch` gains an
+optional `warn` sink; set `warn: logMaintenanceWarning` (from
+`@gusto/baerly-storage/observability`) or it gets only a `console.warn`.
 
 **Storage retries.** Retry now happens at one layer, 3 attempts per request.
 `S3HttpStorage` and `GcsHttpStorage` `retries` defaults to `2` (was `8`); a
@@ -332,8 +345,7 @@ repair.
 read it by `_id`, insert a copy under a fresh NFC id that is not canonically
 equivalent to the original (omit `_id` for a UUID), then delete the
 original. For canonically-equivalent pairs, copy both under fresh ids, then
-delete both. On R2, never copy to the normalized original id: deleting the
-original then removes the copy's index markers.
+delete both.
 
 **Legacy names.** A non-NFC name's data is read-only through the SDK and
 HTTP; `baerly inspect`, `export`, `admin dump` and `fsck` still read it. On
@@ -353,8 +365,8 @@ one collection at a time. A name with no stored data only needs
 
 **Dump and restore (0.1.0, local-fs, or any rewrite).** Follow
 [backups.md](backups.md): pause writers, drain maintenance, restore into a
-separate target, run `fsck` and `fsck --indexes --config=<path>`, then
-`rebuild-index` per index and cut over. `baerly admin restore` now:
+separate target, run `fsck`, compare reads against the source, then cut
+over. `baerly admin restore` now:
 
 - refuses a line whose `_id` repeats an earlier line, is outside the key
   rules, or is not NFC, with `InvalidConfig` (exit 1) naming the line number
@@ -374,17 +386,33 @@ such a row. 0.7.0 rejects the id on restore. Rewrite those ids in the
 NDJSON (to a fresh id without `/`) before restoring, and update any
 reference to the old id.
 
-**In place from 0.6.0.** No format change. After deploying, run `fsck` and
-`fsck --indexes --config=<path>` per collection; `rebuild-index` per index
-if drift is reported. Stale index markers from 0.6.0 are harmless: reads no
-longer trust them.
+**In place from 0.6.0.** No format change. After deploying, run
+`baerly admin fsck` per collection. Existing `index/` objects are inert
+(section 6).
 
 ## 6. Index markers
 
-> **TODO (owner decision pending, ticket not yet written):** 0.7.0 stops
-> maintaining index markers. This section is a placeholder for what an app
-> or operator must do (query behavior, `rebuild-index` / `fsck --indexes`
-> role, cost). Do not ship the guide with this section unresolved.
+0.7.0 stops maintaining index markers. Reads already fold the snapshot and
+log for every query, so markers were pure write cost.
+
+- A collection's `indexes` declaration is still accepted and validated at
+  `Db.create`, but it changes no storage call and no read result. Declaring
+  an index does not make a query faster; omit them in new code. Writes on a
+  collection that declares indexes cost the same as writes on one that does
+  not.
+- Removed: `rebuildIndex` (from `@gusto/baerly-storage/maintenance`),
+  `allIndexKeysFor`, `baerly admin rebuild-index`, and
+  `baerly admin fsck --indexes` / `--fix`. `fsck` without those flags is
+  unchanged.
+- Legacy `index/` objects written by earlier releases are inert: nothing
+  reads, writes or lists them. They cost only storage. To reclaim it, delete
+  by prefix, per collection, once no 0.6.0 node reads the bucket:
+  `app/<app>/tenant/<tenant>/manifests/<collection>/index/` (under your
+  bucket key prefix, if any). No cleanup is required for correctness.
+- Mixed fleet or rollback: a 0.6.0 node reading a bucket 0.7.0 wrote misses
+  0.7.0-written rows on indexed queries until 0.6.0's
+  `baerly admin rebuild-index` runs for each index. Do not delete the
+  `index/` prefix while a rollback is still possible.
 
 ## Dependency bumps
 
