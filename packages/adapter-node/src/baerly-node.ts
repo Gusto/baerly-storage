@@ -102,9 +102,9 @@ export interface BaerlyNodeHandle {
  * env vars. `BAERLY_MAINTENANCE_DISABLE` accepts unset / `""` / `"0"` /
  * `"false"` (enabled) or `"1"` / `"true"` (disabled), case-insensitively;
  * anything else throws `BaerlyError{code:"InvalidConfig"}`.
- * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` uses a finite positive number as
- * the override; unset, empty, or non-numeric values use the Node profile
- * default, while zero or negative values throw `InvalidConfig`. These
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` uses a plain positive decimal
+ * integer as the override; unset or empty values use the Node profile
+ * default, and any other value throws `InvalidConfig`. These
  * values are re-read for API/database requests that reach maintenance
  * dispatch; health/spec and configured dev/static short-circuits bypass
  * them. For an explicit out-of-band sweep, call

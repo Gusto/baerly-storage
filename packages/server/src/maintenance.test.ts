@@ -1354,6 +1354,14 @@ describe("parseMaintenanceEnv", () => {
     });
   });
 
+  test("MAX_SAFE_INTEGER is the largest accepted BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
+    expect(
+      parseMaintenanceEnv(
+        reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: String(Number.MAX_SAFE_INTEGER) }),
+      ).maxFoldBytes,
+    ).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   test("valid numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES parses to maxFoldBytes", () => {
     expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "1048576" }))).toEqual({
       maxFoldBytes: 1_048_576,
@@ -1361,10 +1369,34 @@ describe("parseMaintenanceEnv", () => {
     });
   });
 
-  test("non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES is ignored (NaN → undefined, does not throw)", () => {
-    expect(parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "lots" }))).toEqual({
-      disabled: false,
-    });
+  test("non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES throws InvalidConfig naming the variable and value", () => {
+    for (const v of [
+      "8mb",
+      "1O24",
+      "lots",
+      "Infinity",
+      "1e400",
+      // Strict: a plain positive decimal integer only, no trimming.
+      " 1024 ",
+      "1024\n",
+      "0x400",
+      "1e6",
+      "1.5",
+      "1e300",
+      "+1024",
+      "01024",
+      String(Number.MAX_SAFE_INTEGER + 1),
+    ]) {
+      let caughtError: unknown;
+      try {
+        parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_MAX_FOLD_BYTES: v }));
+      } catch (error) {
+        caughtError = error;
+      }
+      expect((caughtError as BaerlyError).code).toBe("InvalidConfig");
+      expect((caughtError as BaerlyError).message).toContain("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
+      expect((caughtError as BaerlyError).message).toContain(JSON.stringify(v));
+    }
   });
 
   test("non-positive BAERLY_MAINTENANCE_MAX_FOLD_BYTES throws InvalidConfig", () => {
@@ -1394,7 +1426,7 @@ describe("parseMaintenanceEnv", () => {
   test("BAERLY_MAINTENANCE_DISABLE outside the closed vocabulary throws InvalidConfig", () => {
     // "yes"/"on" used to be silently truthy; "no"/"off" used to be silently
     // truthy too (the original bug this vocabulary closes). All now throw.
-    for (const v of ["yes", "on", "no", "off", "2", "disable"]) {
+    for (const v of ["yes", "on", "no", "off", "2", "disable", " true", "1 "]) {
       let caughtError: unknown;
       try {
         parseMaintenanceEnv(reader({ BAERLY_MAINTENANCE_DISABLE: v }));
