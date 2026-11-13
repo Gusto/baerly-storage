@@ -33,6 +33,7 @@
  */
 
 import {
+  assertInsertIdType,
   type CurrentJson,
   type DocumentData,
   type LogEntry,
@@ -61,9 +62,10 @@ import {
   noteCapacityWarning,
   type PlannedWrite,
 } from "./capacity.ts";
-import { markCallerFacing } from "./caller-facing-error.ts";
+import { callerFacingCheck, markCallerFacing } from "./caller-facing-error.ts";
 import {
   assertDocId,
+  assertReadDocId,
   insertAlreadyExists,
   insertReplaysRow,
   recordInsertReplay,
@@ -324,14 +326,17 @@ export const runAllWithMeta = <T extends DocumentData>(
  * from kernel-internal sites (`Collection<T>.get` etc.) without
  * tripping the wire-only rule that bans top-level `_id`.
  *
+ * `id` is checked by {@link assertReadDocId} before any I/O.
+ *
  * @internal — router uses this to preserve `_meta` envelope;
  *   mirrors {@link runAllWithMeta} and {@link Collection.get}.
  */
-export const runByIdWithMeta = <T extends DocumentData>(
+export const runByIdWithMeta = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   id: string,
 ): Promise<ReadResult<T>> => {
-  return runRead<T>(ctx, {
+  assertReadDocId(id);
+  return await runRead<T>(ctx, {
     wire: { clauses: [{ op: "eq", field: "_id", value: id }] },
     order: undefined,
     limit: 1,
@@ -722,9 +727,10 @@ const withLiveBefore = (
  * @throws BaerlyError code="AlreadyExists" — a live row holds `_id`,
  *   committed before or concurrently with this call (and, with
  *   `mintedId`, its body differs). `err._id` is the `_id`. Not retriable.
- * @throws BaerlyError code="InvalidConfig" — the resolved `_id` fails
+ * @throws BaerlyError code="InvalidConfig" — the supplied `_id` is present
+ *   and not a string (`null` included), the resolved `_id` fails
  *   {@link assertDocId} (key-segment rule or not NFC), or `opts.mintedId`
- *   is set and is not the resolved `_id`.
+ *   is set and is not the resolved `_id`. Checked before I/O.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
  *   `Writer.commit()` does not resolve, or log retention retired part of the
  *   window the insert guard had to read; nothing was committed. Retriable.
@@ -748,7 +754,10 @@ export const runInsert = async <T extends DocumentData>(
   // mint a UUIDv7. The locked contract
   // (`packages/protocol/src/collection-api.ts:120–122`) names UUIDv7 as the
   // auto-id source.
+  // A present, non-string `_id` is a caller bug, refused before it could be
+  // replaced by a minted one.
   const supplied = doc["_id"];
+  callerFacingCheck(() => assertInsertIdType(supplied));
   const _id = typeof supplied === "string" && supplied.length > 0 ? supplied : uuidv7();
   // Guard the resolved id at the write origin — the only place a
   // user-controlled `_id` enters as a WRITTEN key segment. Minted

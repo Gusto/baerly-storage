@@ -4,6 +4,7 @@
    so the typed client stays structurally compatible. */
 
 import {
+  assertInsertIdType,
   type BaerlyConfig,
   BaerlyError,
   type CollectionNames,
@@ -294,8 +295,17 @@ const makeClientCollection = <T extends DocumentData>(
   name: string,
 ): ClientCollection<T> => {
   const collectionForQuery = makeClientQuery<T>(ctx, name, emptyState);
-  const idPath = (id: string): string =>
-    `/v1/c/${encodeURIComponent(name)}/${encodeURIComponent(id)}`;
+  // `""`, `"."` and `".."` are never stored ids, and URL resolution would
+  // collapse them onto the list route or the parent path, so they are
+  // refused here; the server checks every other id rule.
+  const idPath = (id: string): string => {
+    if (id === "" || id === "." || id === "..") {
+      throw new BaerlyError("InvalidConfig", `_id may not be ${JSON.stringify(id)}`, {
+        resolution: 'Pass the _id string of a stored row; an _id is never empty, "." or "..".',
+      });
+    }
+    return `/v1/c/${encodeURIComponent(name)}/${encodeURIComponent(id)}`;
+  };
   return {
     name,
     where: (predicate) => collectionForQuery.where(predicate),
@@ -321,12 +331,13 @@ const makeClientCollection = <T extends DocumentData>(
       }
     },
     async insert(doc, opts): Promise<{ readonly _id: string }> {
-      // Same rule as the server's `runInsert`: only a non-empty string `_id`
-      // is caller-supplied; anything else is replaced by a minted id there,
-      // so it must be here too for a retransmitted request to carry a stable
+      // Same rule as the server's `runInsert`: a present non-string `_id`
+      // throws; an absent or empty one is replaced by a minted id there, so
+      // it must be here too for a retransmitted request to carry a stable
       // id. The body is serialized once, so a `fetch` wrapper that resends
       // the request resends the same minted id.
       const supplied: unknown = doc["_id"];
+      assertInsertIdType(supplied);
       const body =
         typeof supplied !== "string" || supplied.length === 0
           ? (() => {

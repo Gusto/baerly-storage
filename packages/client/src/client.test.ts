@@ -122,12 +122,12 @@ describe("createBaerlyClient", () => {
       expect("mintedId" in (bodies[0] as object)).toBe(false);
     });
 
-    test("treats a non-string _id like an omitted one, as the server does", async () => {
+    test("rejects a present non-string _id without a request, as the server does", async () => {
       const { bodies, tickets } = capture();
-      await tickets.insert({ _id: 7 as unknown as string, title: "a" });
-      const body = bodies[0] as { doc: { _id: string }; mintedId: string };
-      expect(isUuidV7(body.doc._id)).toBe(true);
-      expect(body).toEqual({ doc: { title: "a", _id: body.doc._id }, mintedId: body.doc._id });
+      await expect(
+        tickets.insert({ _id: 7 as unknown as string, title: "a" }),
+      ).rejects.toMatchObject({ code: "InvalidConfig" });
+      expect(bodies).toEqual([]);
     });
 
     test("does not mutate the caller's document", async () => {
