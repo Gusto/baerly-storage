@@ -5,6 +5,7 @@ import {
   mintGeneration,
   type Storage,
 } from "@baerly/protocol";
+import { assertNameSegment } from "@baerly/server/_internal/testing";
 
 /**
  * Optional pre-warm: idempotently create the `current.json` manifest
@@ -18,7 +19,10 @@ import {
  *
  * Wraps {@link createCurrentJson} with the canonical key shape
  * (`app/<app>/tenant/<tenant>/manifests/<table>/current.json`) and
- * swallows `BaerlyError{code:"WriteConflict"}` so re-runs are safe. An
+ * swallows `BaerlyError{code:"WriteConflict"}` so re-runs are safe. The
+ * three names follow the same rule as `Db.create` / `db.collection`
+ * (including Unicode Normalization Form C), refused with
+ * `BaerlyError{code:"InvalidConfig"}` before any write. An
  * existing manifest is preserved verbatim — this function never
  * overwrites a populated manifest. The seed shape matches the kernel's
  * auto-create, with one deliberate exception: `generation` is a fresh
@@ -41,6 +45,10 @@ export const ensureTable = async (
   storage: Storage,
   args: { app: string; tenant: string; table: string },
 ): Promise<void> => {
+  // The SDK's name rule (key segment + NFC), before any write.
+  assertNameSegment(args.app, "app", "ensureTable");
+  assertNameSegment(args.tenant, "tenant", "ensureTable");
+  assertNameSegment(args.table, "table", "ensureTable");
   const key = `app/${args.app}/tenant/${args.tenant}/manifests/${args.table}/current.json`;
   try {
     await createCurrentJson(storage, key, {

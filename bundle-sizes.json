@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 334116,
-      "gz": 105976,
-      "minGz": 27066,
+      "raw": 334600,
+      "gz": 106847,
+      "minGz": 27184,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
@@ -37,9 +37,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 548920,
-      "gz": 167530,
-      "minGz": 53485,
+      "raw": 549397,
+      "gz": 167731,
+      "minGz": 53611,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
@@ -58,9 +58,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 468592,
-      "gz": 142364,
-      "minGz": 44934,
+      "raw": 468883,
+      "gz": 142496,
+      "minGz": 45064,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
@@ -72,9 +72,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 177506,
-      "gz": 56179,
-      "minGz": 14102,
+      "raw": 177520,
+      "gz": 56919,
+      "minGz": 14157,
       "note": "operator-side; reached from the cloudflare.js closure."
     },
     "observability.js": {
@@ -97,17 +97,17 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 80846,
+      "raw": 85608,
       "note": "dev-only; never enters a consumer bundle. At the 2% shipped rate it produced 12 of 32 historical trips for no safety benefit."
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 725677,
+      "raw": 726567,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 734570,
+      "raw": 735460,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }

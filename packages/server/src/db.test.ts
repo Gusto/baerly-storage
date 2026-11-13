@@ -154,6 +154,13 @@ describe("app, tenant and collection names must be NFC", () => {
     await expect(db().probeLogTail(bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
   });
 
+  test.each(NON_NFC)("Db.create rejects a config collection key %j", (bad) => {
+    const config: BaerlyConfig = { collections: { [bad]: {} } };
+    expect(() =>
+      Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t", config }),
+    ).toThrow(expect.objectContaining(NFC_ERROR));
+  });
+
   test("NFC names that differ by case or compatibility form stay distinct", async () => {
     const storage = new MemoryStorage();
     const names = ["caf\u00e9", "Tickets", "tickets", "\ufb01le", "file", "\uff21", "A"];
