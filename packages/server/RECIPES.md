@@ -86,6 +86,31 @@ under a fresh NFC id that is not canonically equivalent to the original
 copying to the normalized original id before deleting it would remove the
 copy's index markers.
 
+### `app`/`tenant`/`collection must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
+
+**Cause:** `Db.create`, `db.collection`, or an HTTP route got an app,
+tenant, or collection name that is not NFC, such as `"cafe\u0301"` (NFD)
+instead of `"caf\u00e9"`. R2 stores canonically-equivalent keys as one
+object, so the two spellings would address one key prefix there and two
+elsewhere.
+**Fix:** pass `name.normalize("NFC")` for a new name. Data an earlier
+release stored under a non-NFC name is read-only: `baerly inspect`,
+`baerly export`, `baerly admin dump`, and `baerly admin fsck` still read
+it. To keep it writable, dump it and restore it under an NFC name that is
+not canonically equivalent to the original, then point the app at the new
+name:
+
+```sh
+baerly admin dump --bucket=$B --app=app --tenant=t --collection=$'cafe\u0301' > rows.ndjson
+baerly admin restore --bucket=$B --app=app --tenant=t --collection=$'caf\u00e9-v2' < rows.ndjson
+```
+
+The normalized original name is not a safe target: on R2 it addresses the
+legacy objects. Run `baerly admin fsck` first: it flags non-NFC names.
+`baerly admin dump` also flags non-NFC `_id`s and canonically-equivalent
+twin `_id`s, which restore refuses or which share index markers on R2;
+give each a fresh NFC `_id` in the NDJSON before restoring.
+
 ### Resending an auto-ID insert over HTTP (`mintedId`)
 
 **Cause:** an HTTP client minted the insert's `_id` and resent the insert after

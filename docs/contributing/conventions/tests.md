@@ -107,10 +107,12 @@ The four storage adapters — `MemoryStorage`, `LocalFsStorage`, `S3HttpStorage`
 `runCollectionApiCascade` / `runCausalConsistencyCascade` drivers. `green locally ⇒ green
 in cloud` rests on memory/local-fs reproducing the minio/r2 **error codes** (the
 `error-code parity` table), **CAS semantics** (exactly-one-winner under concurrent
-create), **byte-exact keys** (keys and collection names differing only by case or
-Unicode normalization, and `_id`s differing only by case, are distinct — the case
-`LocalFsStorage` on a folding filesystem would otherwise merge; a non-NFC `_id` is
-refused on write, and one stored earlier stays readable and deletable), and
+create), **byte-exact keys** (keys, collection names, and `_id`s differing only by case are
+distinct everywhere; keys differing only by Unicode normalization are distinct on
+every backend except R2, which declares it unsupported via
+`normalizationDistinctKeys: false` — the case `LocalFsStorage` on a folding
+filesystem would otherwise merge; a non-NFC `_id` or name is refused on write, and
+data stored under one earlier stays readable), and
 **validation order** (`$`-key rejection is
 synchronous + I/O-free; schema validation rejects an invalid write before any mutating
 I/O reaches the bucket).
