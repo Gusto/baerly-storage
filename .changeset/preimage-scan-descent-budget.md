@@ -18,13 +18,9 @@ subrequests per request: an indexed `U` commit plus a co-occurring
 maintenance fold tick already spends ~41 of them.
 
 **Behaviour change.** Stale index keys are now cleaned up only for a
-doc rewritten within the budget. Colder docs keep an extra index key
-until `rebuildIndex` or `baerly admin fsck --indexes` runs. That
-residual is benign by construction — an extra key is a false positive
-the read path drops, never a missing candidate — but it is more common
-than before, and `docs/spec/sync-protocol.md` invariant 7 has been
-amended to say so. Run `fsck --indexes` if you rely on index-key counts
-directly.
+doc rewritten within the budget. Colder docs keep an extra index key.
+No read consults index markers, so the residual changes no result, and
+`docs/spec/sync-protocol.md` invariant 7 says so.
 
 No new metric label: the give-up path is the common case at this
 budget, so counting it on `db.write.index_cleanup_errors_total` would
