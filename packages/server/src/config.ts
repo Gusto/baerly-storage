@@ -18,6 +18,7 @@
  */
 
 import type { BaerlyConfig, IndexDefinition, SchemaValidator } from "@baerly/protocol";
+import { validateIndexDefinition } from "./indexes.ts";
 
 /**
  * Flatten `BaerlyConfig.collections` into the per-collection
@@ -29,6 +30,16 @@ import type { BaerlyConfig, IndexDefinition, SchemaValidator } from "@baerly/pro
  * so the projection rule (drop empty index arrays; omit absent
  * schemas) stays in one place. Future `CollectionDefinition`
  * fields (lifecycle hooks, replica_identity) land here too.
+ *
+ * Every declared index is validated here, so a malformed declaration
+ * fails at {@link Db.create} rather than at the first write. Indexes
+ * change no read result, so validation is all a declaration buys:
+ * it keeps the names and shapes reserved.
+ *
+ * @throws BaerlyError code="InvalidConfig" — an index `name` uses the
+ *   reserved leading `_`, or an `on` field is a dotted path.
+ * @throws BaerlyError code="SchemaError" — an index `name` fails
+ *   `/^[a-z][a-z0-9_]*$/`, `on` is empty, or `predicate` is invalid.
  */
 export const collectionsToMaps = (
   collections: BaerlyConfig["collections"] | undefined,
@@ -46,6 +57,9 @@ export const collectionsToMaps = (
       schemas.set(name, def.schema);
     }
     if (def.indexes !== undefined && def.indexes.length > 0) {
+      for (const index of def.indexes) {
+        validateIndexDefinition(index);
+      }
       indexes.set(name, def.indexes);
     }
   }

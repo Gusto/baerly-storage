@@ -211,8 +211,7 @@ returned; inspect the affected rows before deciding whether to resume.
 
 **Cause:** SQL/ORM muscle memory. No such method.
 **Fix:** use `.where(...)` directly. Reads always fold the authoritative
-snapshot and log; index declarations control marker maintenance, not
-query routing.
+snapshot and log; declared `indexes` do not change how a read runs.
 
 ### `BaerlyError code="InvalidConfig"` — `baerly: no auth configured`
 
@@ -281,7 +280,7 @@ inside a `useQuery` callback.
   `.all()`) returns the **whole collection** — there is no default row
   cap, and auth pins a tenant, not a row owner. Scope non-owner reads in
   your own route: inject a `where owner_id = <verified id>` predicate
-  (ideally index-backed) and clamp `limit = min(requested ?? MAX, MAX)`.
+  and clamp `limit = min(requested ?? MAX, MAX)`.
   Rejecting `?limit` backfires — it forces the uncapped path. See
   `docs/guide/auth.md` § Authorization Boundary.
 

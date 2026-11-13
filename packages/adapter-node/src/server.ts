@@ -39,8 +39,8 @@ export interface CreateFetchHandlerOptions {
   /**
    * Your `baerly.config.ts`. When set, the adapter forwards it to
    * {@link Db.create} on every request — so server-side schema
-   * validation fires on commits and the auto-planner sees declared
-   * indexes. Without this option, declared collections have no
+   * validation fires on commits and declared indexes are validated.
+   * Without this option, declared collections have no
    * effect on the `/v1/c/*` surface.
    *
    * Only `collections` is read — deploy-time fields (`target`,
