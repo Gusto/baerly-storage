@@ -88,7 +88,7 @@ describe("GET /v1/since on Workers Free", () => {
         .filter((c) => c.name.startsWith(`${host.name}:`) && totalCalls(c.counts) > hostLimit)
         .map((c) => c.name);
       expect(over).toEqual([]);
-      const idle = cells.find((c) => c.name === `${host.name}:since-idle`)!;
+      const idle = cells.find((c) => c.name === `${host.name}:since-idle-no-timeout`)!;
       // Two calls per idle cycle: all but an odd one left over.
       expect(totalCalls(idle.counts)).toBe(hostLimit - (hostLimit % 2));
     }
