@@ -1,22 +1,7 @@
-// Gates the read-path Class A cost claim in
-// `docs/about/cost-model.md` §"Maintenance is write-driven; reads are pure":
-//
-//   - For unindexed idle reads the expected Class A count is exactly zero.
-//   - The read-path exception is an indexed `.where()`: one `ListObjects`
-//     per equality value, so `$in` over N values costs N calls.
-//
-// `packages/server/src/reads-pure.test.ts` guards the neighbouring but
-// distinct property — that repeated reads over an over-ratio collection
-// neither mutate nor enumerate — on `classAOps` (PUT + DELETE + LIST) over
-// unindexed collections only. That gate cannot express the indexed
-// exception below, and it counts DELETE, which is $0. This file uses
-// `billableClassAOps` (PUT + LIST) because the claim it gates is a dollar
-// cost.
-//
-// Assertions here pin each counter individually rather than a sum. A sum of
-// non-negative counters at zero is also satisfied by a read that did no work
-// at all, so every case additionally asserts its terminal resolved the right
-// answer, and the unindexed cases assert a GET floor.
+// Gates the read-path Class A cost claim in docs/about/cost-model.md:
+// reads fold snapshots and logs without PUT, DELETE or LIST, including
+// predicates on declared indexes and multi-value $in queries. Every terminal
+// verifies its answer and a GET floor so a vacuous read cannot pass.
 
 import { MemoryStorage, type Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
@@ -97,7 +82,7 @@ describe("read-path Class A cost", () => {
       );
     });
 
-    test(`indexed ${terminal.name} costs exactly one LIST`, async () => {
+    test(`indexed ${terminal.name} costs zero Class A ops`, async () => {
       const counting = wrapCountingStorage(await seed(true));
 
       await terminal.read(dbFor(counting.storage, true));
@@ -106,12 +91,13 @@ describe("read-path Class A cost", () => {
         puts: counting.puts,
         deletes: counting.deletes,
         lists: counting.lists,
-      }).toEqual({ puts: 0, deletes: 0, lists: 1 });
-      expect(counting.billableClassAOps).toBe(1);
+      }).toEqual({ puts: 0, deletes: 0, lists: 0 });
+      expect(counting.billableClassAOps).toBe(0);
+      expect(counting.gets).toBeGreaterThan(0);
     });
   }
 
-  test("an indexed $in walk costs exactly one LIST per equality value", async () => {
+  test("an indexed $in predicate costs zero Class A ops", async () => {
     const counting = wrapCountingStorage(await seed(true));
 
     const rows = await dbFor(counting.storage, true)
@@ -120,9 +106,9 @@ describe("read-path Class A cost", () => {
       .all();
 
     expect(rows, "the $in union must resolve every seeded doc").toHaveLength(SEEDED);
-    expect(counting.lists, "cost-model.md: $in over N values costs N Class A calls").toBe(
-      TAGS.length,
-    );
+    expect(counting.lists).toBe(0);
+    expect(counting.billableClassAOps).toBe(0);
+    expect(counting.gets).toBeGreaterThan(0);
     expect({ puts: counting.puts, deletes: counting.deletes }).toEqual({ puts: 0, deletes: 0 });
   });
 });

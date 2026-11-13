@@ -23,7 +23,7 @@ import type { BaerlyConfig, IndexDefinition, SchemaValidator } from "@baerly/pro
  * Flatten `BaerlyConfig.collections` into the per-collection
  * `schemas` and `indexes` maps that {@link Db.create} consumes at
  * runtime. Used by the Cloudflare and Node adapters to pipe a
- * single `config` object through to the writer/planner.
+ * single `config` object through to the writer.
  *
  * Both adapters import this helper rather than inlining the loop
  * so the projection rule (drop empty index arrays; omit absent

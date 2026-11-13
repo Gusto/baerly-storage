@@ -1,22 +1,8 @@
 /**
- * Pure-function query planner. Picks a walk plan (or a full-scan
- * decision) from a predicate + the collection's declared indexes.
- *
- * Zero I/O, zero storage-encoding awareness, zero `Db`/`Storage`
- * imports. The planner sits between `runRead`'s predicate intake and
- * the executor that walks index entries; the executor handles every
- * storage-encoding boundary (`encodeIndexValue`, `Storage.list`,
- * etc.).
- *
- * Walks are equality-prefix anchored — single-field, composite full,
- * and composite partial-prefix — with an optional tail slot
- * (`rangeOn` / `inOn` on {@link IndexWalkPlan}) so a range / `$in`
- * clause on the LAST indexed field beyond the equality prefix gets
- * pushed into the walk too. A filtered-index cost bias ranks them.
- *
- * Numeric range / `$in` are routed normally; the encoder at
- * `./indexes.ts:encodeIndexValue` is value-order-preserving for
- * numbers.
+ * Pure index-plan analysis retained for direct callers and tests.
+ * Query reads do not execute these plans: marker membership cannot
+ * establish a complete row set at the log cursor. Reads always fold
+ * the complete authoritative snapshot and log instead.
  */
 
 import { type DocumentValue, type PredicateWire } from "@baerly/protocol";
@@ -24,24 +10,13 @@ import type { IndexDefinition } from "./indexes.ts";
 import { predicateImplies } from "./query-planner-implies.ts";
 
 /**
- * Tagged union returned by {@link planQuery}. The read path
- * routes on `kind` — `index-walk` invokes the executor, `full-scan`
- * falls through to the snapshot + log fold.
+ * Tagged union returned by {@link planQuery}; not used to route reads.
  */
 export type QueryPlan = IndexWalkPlan | FullScanPlan;
 
 /**
- * Plan to satisfy the predicate by walking one declared index. The
- * executor encodes `equalityKeys` via `encodeIndexValue` at the I/O
- * boundary and lists `<collectionPrefix>/index/<indexName>/<v0>/.../<vN>/`.
- *
- * `rangeOn` and `inOn` are the optional tail slot — at most one is
- * set, and only when a routable range / `$in` clause lands on the
- * last indexed field beyond the equality prefix. The executor
- * re-applies the FULL original wire via `matchesWire(...)` after
- * fetching rows; that
- * single check is both the stale-index defence and the residue
- * consumer, so the planner does NOT emit a separate `postFilter`.
+ * Describes an index prefix and optional range or `in` tail slot.
+ * This is analysis output only; the query reader does not execute it.
  */
 export interface IndexWalkPlan {
   readonly kind: "index-walk";
@@ -119,9 +94,7 @@ interface RangeOpInfo {
 
 /**
  * Choose a query plan over the wire predicate + declared indexes.
- * Pure function. The executor enforces the I/O semantics; the
- * planner's only contract is "given these inputs, this is the
- * routing decision."
+ * Pure function. Its output does not route authoritative query reads.
  *
  * Algorithm:
  *  1. `wire === undefined` or empty → `no-predicate`.

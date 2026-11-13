@@ -580,10 +580,10 @@ export class Writer {
    * before the log create. `LogEntry.after` is the authoritative post-image.
    * A crash before the create leaves orphan additive index keys only. A crash
    * AFTER the create is a durable, committed write at `seq` whose index
-   * `newKeys` are already present (so it's index-findable); the only residual
-   * is a possibly-undeleted stale OLD-value key, dropped by `matchesWire` and
-   * cleaned by a later write / `rebuild-index`. The inverse — de-indexing a
-   * committed doc — is never produced by a crash; only the concurrent
+   * `newKeys` are already present; the only residual
+   * is a possibly-undeleted stale OLD-value key, cleaned by a later write /
+   * `rebuild-index`. Reads fold authoritative data without consulting markers.
+   * De-indexing a committed doc is never produced by a crash; only the concurrent
    * delete-after-commit ABA at `#readPreImage` produces it.
    */
   async #singleAttemptCommit(
@@ -733,9 +733,8 @@ export class Writer {
     // (no crash-made false-negative; the concurrent delete-after-commit
     // ABA at `#readPreImage` is the one exception). A crash after a `newKey` PUT but
     // before the commit leaves an orphan additive key for an
-    // UNcommitted write — benign: the index read includes the
-    // candidate docId, the fold finds no committed (or the prior)
-    // value, and `matchesWire` (query.ts) drops the false-positive.
+    // UNcommitted write — benign: reads use committed log post-images
+    // and do not consult index markers.
     // The stale-key DELETEs (de-indexing the OLD value) stay AFTER the
     // commit (Step 5b), so a crash can never de-index a committed doc.
     // See ADR-004 Q4 + `index-emit-order.test.ts`.
@@ -937,9 +936,8 @@ export class Writer {
     // handles only the OTHER half: deleting the OLD value's now-obsolete
     // markers. Keeping the stale-key DELETE AFTER the commit is the
     // load-bearing polarity (ADR-004 Q4): a crash here leaves the OLD
-    // value's marker lingering — benign, the index read includes the
-    // candidate, the fold sees the doc's NEW committed value, and
-    // `matchesWire` (query.ts) drops the false-positive; the lingering
+    // value's marker lingering — benign, reads fold the doc's NEW
+    // committed value without consulting markers; the lingering
     // key is cleaned by a later same-doc write or operator
     // `rebuild-index`. The inverse — de-indexing a committed doc with no
     // log entry to drive repair — cannot come from a crash, since the
@@ -1214,9 +1212,8 @@ export class Writer {
    *
    * That is the accepted trade, not a silent failure. Giving up is
    * benign by construction: the caller computes no stale keys, and an
-   * extra index key is a false positive the read path drops
-   * (`matchesWire`), never a missing candidate — `docs/spec/sync-
-   * protocol.md` invariant 7. `rebuildIndex` (`./rebuild-index.ts`)
+   * extra index key cannot affect reads, which fold authoritative
+   * state without consulting markers. `rebuildIndex` (`./rebuild-index.ts`)
    * and `baerly admin fsck --indexes` are the authoritative
    * reconcilers. The give-up is deliberately NOT counted on
    * `db.write.index_cleanup_errors_total`: at this budget it is the

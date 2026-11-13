@@ -95,9 +95,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   readonly #schemas: ReadonlyMap<string, SchemaValidator>;
   /**
    * Per-collection {@link IndexDefinition}s threaded onto every
-   * {@link CollectionReadContext} this `Db` mints. Empty map means "no
-   * indexes declared" — every read falls through to the snapshot +
-   * log fold path.
+   * {@link CollectionReadContext} this `Db` mints for writer marker
+   * maintenance. Reads always fold the complete snapshot and log.
    *
    * Derived from `config.collections[*].indexes` via
    * {@link collectionsToMaps} at {@link Db.create} time.
@@ -149,7 +148,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
      *    `collections[name].schema` via {@link RowOf}.
      * 2. **Runtime.** Schemas and indexes are derived from
      *    `config.collections` via {@link collectionsToMaps}. Schema
-     *    validation and index routing are wired automatically — no
+     *    validation and index maintenance are wired automatically — no
      *    second hand-off step.
      *
      * @example

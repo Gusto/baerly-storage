@@ -108,8 +108,13 @@ export const FREE_FETCH_WRITES: readonly FreeFetchWrite[] = [
   "mixed",
 ];
 
-export type FreeFetchRead = "get" | "indexed-query" | "in-query";
-export const FREE_FETCH_READS: readonly FreeFetchRead[] = ["get", "indexed-query", "in-query"];
+export type FreeFetchRead = "get" | "indexed-query" | "indexed-miss" | "in-query";
+export const FREE_FETCH_READS: readonly FreeFetchRead[] = [
+  "get",
+  "indexed-query",
+  "indexed-miss",
+  "in-query",
+];
 
 const indexDefs = (n: number): IndexDefinition[] =>
   Array.from({ length: n }, (_, k) => ({ name: `by_f${k}`, on: `f${k}` }));
@@ -259,6 +264,8 @@ export const measureFreeFetchRun = async (
         const r = makeDb(requestCountingStorage(storage, tally), indexes).collection(COLL);
         if (read === "get") {
           await r.get(snapId(1));
+        } else if (read === "indexed-miss") {
+          await r.where({ f0: "absent" }).all();
         } else if (read === "indexed-query") {
           await r.where(indexes > 0 ? { f0: "v3" } : { n: 3 }).all();
         } else {
@@ -325,6 +332,7 @@ export const FREE_FETCH_CACHE_API_CALLS: Record<FreeFetchWrite | FreeFetchRead, 
   mixed: 1,
   get: 2,
   "indexed-query": 0,
+  "indexed-miss": 0,
   "in-query": 0,
 };
 

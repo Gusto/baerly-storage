@@ -160,7 +160,6 @@ flowchart TD
 
     subgraph engine["Read / write engine · @baerly/server"]
         query["query.ts<br/>Query reader + mutation terminals"]
-        planner["query-planner.ts<br/>planQuery"]
         writer["writer.ts<br/>single-write commit"]
         indexhelpers["indexes.ts<br/>validate · encode · project"]
         logio["log-tail · log-walk · snapshot<br/>tail probe + fold"]
@@ -172,7 +171,6 @@ flowchart TD
 
     db --> collection
     collection --> query
-    query --> planner
     query --> writer
     query --> logio
     query -. uses .-> protocol
@@ -181,7 +179,6 @@ flowchart TD
     writer --> storage
     writer -. uses .-> protocol
     writer -. post-commit .-> maint
-    planner -. uses .-> protocol
     indexhelpers -. uses .-> protocol
     logio --> storage
     logio -. uses .-> protocol
@@ -313,8 +310,8 @@ Write ordering is asymmetric: the writer serializes `LogEntry.after`
 and writes additive index markers before the `log/<seq>` create; stale
 index markers are deleted after commit. A row becomes visible only when
 a committed log entry is replayed; index objects alone are ignored as
-rows. Index markers are zero-byte objects used to find candidate doc
-ids.
+rows. Index markers are maintained zero-byte artifacts; reads do not
+use them to determine membership.
 
 1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`,
    `runInsert` in `packages/server/src/query.ts`): normalises the
@@ -396,28 +393,19 @@ ids.
    predicate AST from `where()` / `order()` / `limit()`, and returns the
    filtered rows.
 
-#### Planner step (between the predicate and the log fold)
+#### Authoritative membership and read cursors
 
-The committed log, folded over the snapshot, is the row truth. Indexes
-only choose candidate doc ids. Extra stale markers add work; missing
-markers can hide rows from an index-routed query.
+Every read folds the complete snapshot and log suffix before applying
+its predicate, order, and limit. The returned tail describes exactly
+that folded state, including for empty results and mutation selection.
+Index markers do not participate in read membership: a delayed stale-key
+DELETE can erase a reinserted row's marker, and a commit between a marker
+LIST and the tail probe can be absent from that LIST. Strongly consistent
+individual storage operations do not make those sequences atomic.
 
-When `Collection.where(p).all()` has a predicate AND the
-collection has declared `indexes`, the reader calls
-`planQuery(predicate, indexes)` (in
-`packages/server/src/query-planner.ts`) after the `current.json` read
-and before the log fold. The planner returns either
-`IndexWalkPlan{indexName, equalityKeys, rangeOn?, inOn?}`
-— which routes the reader through `runIndexWalkPlan` to LIST under the
-encoded index prefix and resolve only the matching doc ids — or
-`FullScanPlan{reason}` — which falls through to the snapshot+log fold.
-Every fetched row passes through a post-fetch `matchesWire(...)`
-re-check; it drops stale extra index entries and consumes predicate
-clauses the index did not cover. Run `rebuildIndex` before treating a
-newly declared or suspect index as complete. For filtered indexes, marker
-completeness is sound only when the query implies the index filter. The
-plan shape, diagnostic `reason` values, and filtered-index caveat are in
-[features.md](contributing/features.md) §"Secondary indexes".
+This removes index LIST calls. A nonempty indexed read already loaded
+the snapshot and log; an empty marker result must now do the same work
+to prove absence. Limits bound returned rows, not fold I/O or memory.
 
 The HTTP `/v1/since?collection=<name>&cursor=<opaque>` route in
 `packages/server/src/http/since.ts` walks the log from a caller-supplied
@@ -582,7 +570,8 @@ adapter package. Platform-specific code belongs in adapters.
 ## Storage layout in the bucket
 
 Every object for one collection lives under one prefix: `log/` holds
-commits; `index/`, `snapshot/`, and `gc/` support reads and maintenance;
+commits; `snapshot/` supports reads, `index/` holds writer-maintained
+artifacts, and `gc/` supports maintenance;
 `content/` holds inert legacy side objects that neither readers nor GC
 touch. For a `Db` constructed with `app="tickets"` and `tenant="acme"`,
 that prefix is the tree root below — shown once here, then omitted

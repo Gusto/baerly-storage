@@ -12,8 +12,7 @@
  *
  *   `<logPrefix>/index/<indexName>/<value-b32>/<docId>.json`
  *
- * Wire shape (composite — read-path routable by a left-anchored
- * equality prefix, optionally with a range / `$in` tail slot):
+ * Wire shape (composite):
  *
  *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
  *
@@ -46,9 +45,8 @@ export interface IndexDefinition {
 
   /**
    * Field name(s) to index on. `string` is a single-field index.
-   * `readonly string[]` is composite; the read path can route a
-   * left-anchored equality prefix and, when present, a range / `$in`
-   * clause on the final indexed field beyond that equality prefix.
+   * `readonly string[]` is composite. These fields control marker
+   * projection; reads always fold the authoritative snapshot and log.
    *
    * Top-level fields only — dotted-path `on` values throw
    * `SchemaError` from `projectIndexValues`.
@@ -64,21 +62,11 @@ export interface IndexDefinition {
    * PUT cost.
    *
    * Operators allowed: `eq`, `gt`, `gte`, `lt`, `lte`, `in` — the
-   * locked {@link PredicateOpName} vocabulary. Range-shaped and
-   * `in`-shaped filters compose with the planner's cost-bias step
-   * via the implication checker, which proves whether a query
-   * predicate is contained in the filter's value range. A query
-   * that the filter's range / set strictly contains will route
-   * through the filtered index in preference to an unfiltered
-   * alternative.
+   * locked {@link PredicateOpName} vocabulary. The filter controls
+   * marker projection only; it does not restrict query membership.
    *
    * Wire shape example:
    * `{ clauses: [{ op: "eq", field: "status", value: "open" }] }`.
-   *
-   * Planner cost-bias: a filtered index whose predicate is implied
-   * by the query predicate outranks an unfiltered alternative; an
-   * unfiltered index outranks a filtered one whose predicate is NOT
-   * implied (walking the smaller key set would miss matching docs).
    */
   readonly predicate?: PredicateWire;
 }

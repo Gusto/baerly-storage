@@ -28,8 +28,8 @@
  *   `<logPrefix>/index/<indexName>/<a-b32>/<b-b32>/<docId>.json`
  *
  * Body is zero bytes. Each entry is a fact ("doc `<docId>` has
- * `<field> = <value>`"), not data. Readers list the prefix to collect
- * candidate doc ids, then resolve them through the snapshot+log fold.
+ * `<field> = <value>`"), not data. Reads do not use these artifacts
+ * for membership; they fold the complete snapshot and log.
  *
  * Encoding is RFC-4648 base-32 (lowercase alphabet `[0-9a-v]`,
  * matching `packages/protocol/src/log.ts:str2uintDesc` style) on a
@@ -40,13 +40,7 @@
  *   - Equal-by-value inputs produce byte-equal segments.
  *   - Lex order under storage `list(prefix)` matches value order:
  *     `null < false < true < number < string < object`, with
- *     numeric values ordered by IEEE 754 magnitude (range walks
- *     and `$in` walks over numeric fields are first-class — no
- *     planner fall-back to full-scan).
- *
- * Composite read routing is left-anchored. The planner may consume an
- * equality prefix plus a range / `$in` tail slot; predicates that do
- * not match a routable prefix fall back to the snapshot+log fold.
+ *     numeric values ordered by IEEE 754 magnitude.
  *
  * @see docs/spec/sync-protocol.md — index emission is hybrid around
  *      the commit: additive (new) keys are PUT before the committing
@@ -289,7 +283,7 @@ export const encodeIndexValue = (v: unknown): string => {
 /**
  * Storage `list(prefix)` boundary for every entry under one index
  * of a collection: `<logPrefix>/index/<name>/`. Used by the rebuild
- * command's reconciliation walk and by the read-path index hint.
+ * command's reconciliation walk; query reads do not enumerate markers.
  */
 export const indexKeyPrefix = (logPrefix: string, indexName: string): string =>
   `${logPrefix}/index/${indexName}/`;
@@ -300,8 +294,7 @@ export const indexKeyPrefix = (logPrefix: string, indexName: string): string =>
  * Single-field: `<logPrefix>/index/<name>/<v0-b32>/<docId>.json`.
  * Composite:    `<logPrefix>/index/<name>/<v0-b32>/<v1-b32>/.../<docId>.json`.
  *
- * Composite entries are read-path routable when the planner can consume
- * a left-anchored prefix of the indexed tuple.
+ * Composite entries encode indexed fields in declaration order.
  */
 export const indexKeyFor = (
   logPrefix: string,

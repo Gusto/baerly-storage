@@ -174,9 +174,8 @@ export const walkLogRangeWithBytes = async (
  * Entries whose `collection` does not match `opts.collection`, or
  * whose `doc_id` is `undefined`, are skipped. When
  * `opts.docIdFilter` is provided, only entries whose `doc_id` is
- * present in the filter set are folded — used by the index-walk
- * read path to scope the fold to the docs the planner already
- * resolved.
+ * present in the filter set are folded. Authoritative query reads
+ * omit this filter so the row set is complete at the returned tail.
  *
  * This is the canonical fold used by the read path
  * (`query.ts`) and the index reconciler (`rebuild-index.ts`).

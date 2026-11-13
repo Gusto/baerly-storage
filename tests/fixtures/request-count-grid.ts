@@ -211,6 +211,7 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
         }
         await route("get", false, (s) => coll(s).get(id));
         await route("indexed-query", false, (s) => coll(s).where({ f0: "v3" }).all());
+        await route("indexed-miss", false, (s) => coll(s).where({ f0: "absent" }).all());
         await route("scan", false, (s) => coll(s).where({ n: 3 }).all());
 
         if (indexes > 0) {
