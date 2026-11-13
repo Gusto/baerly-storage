@@ -582,13 +582,9 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
         // Tenant resolution: the Verifier owns it unconditionally.
-        let result: Awaited<ReturnType<Verifier>>;
-        try {
-          result = await verifier(req);
-        } catch (error) {
-          // A throwing verifier is an enveloped, mapped error with its own
-          // canonical line — never a 401 (that would tell OAuth clients to
-          // discard credentials during an IdP outage).
+        // An error thrown before the router runs: an enveloped, mapped
+        // error with its own canonical line.
+        const respondMapped = (error: unknown): Response => {
           const { status, envelope } = mapError(error);
           flushCanonicalLine(obsCtx, obsCtx.recorder, {
             unit: "http",
@@ -601,6 +597,14 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             status,
             headers: { "content-type": "application/json" },
           });
+        };
+        let result: Awaited<ReturnType<Verifier>>;
+        try {
+          result = await verifier(req);
+        } catch (error) {
+          // A throwing verifier is never a 401 (that would tell OAuth
+          // clients to discard credentials during an IdP outage).
+          return respondMapped(error);
         }
         if (result === null) {
           return flushUnauthorizedAndRespond(obsCtx, req);
@@ -615,12 +619,20 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // base handle is resolved once per isolate (see `ResolvedState`);
         // only the observability wrap is per-request.
         const storage = observableStorage(baseStorage);
-        const db = Db.create({
-          storage,
-          app: env.APP,
-          tenant: tenantPrefix,
-          config: options.config,
-        });
+        // `Db.create` refuses an invalid tenant (for example a non-NFC
+        // claim) with `InvalidConfig`; map it to a 400 envelope as the
+        // Node adapter does.
+        let db: Db;
+        try {
+          db = Db.create({
+            storage,
+            app: env.APP,
+            tenant: tenantPrefix,
+            config: options.config,
+          });
+        } catch (error) {
+          return respondMapped(error);
+        }
 
         const app = createRouter({
           db,
