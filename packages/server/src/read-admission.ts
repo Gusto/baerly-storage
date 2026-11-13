@@ -116,7 +116,7 @@ const NARROW = "Narrow the predicate or add a limit.";
 const TAIL =
   "The pending log folds into the snapshot as writes run maintenance; until then this read is refused.";
 const OUTGROWN =
-  "Delete or shrink rows, or export the collection with baerly admin dump and move it to a larger host.";
+  "Delete or shrink rows to make room, or export the collection with baerly admin dump.";
 
 /**
  * One read's admission state. Built after the read GETs `current.json`;
