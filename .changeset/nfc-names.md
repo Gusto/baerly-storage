@@ -2,7 +2,7 @@
 "@gusto/baerly-storage": minor
 ---
 
-**Breaking:** app, tenant, and collection names must now be in Unicode Normalization Form C (`name === name.normalize("NFC")`), the rule `_id` writes already follow. `Db.create` (including `config.collections` keys), `db.collection`, every HTTP route, `ensureTable`, and the writing CLI verbs (`baerly admin restore`, `baerly admin rebuild-index`, `baerly admin fsck --indexes --fix`) refuse any other name with `InvalidConfig` (HTTP 400). Names are never normalized for you, so two canonically-equivalent names never become one. Names that differ only by case (`Tickets` / `tickets`) or by compatibility form (`ﬁle` / `file`) stay distinct.
+**Breaking:** app, tenant, and collection names must now be in Unicode Normalization Form C (`name === name.normalize("NFC")`), the rule `_id` writes already follow. `Db.create` (including `config.collections` keys), `db.collection`, every HTTP route, `ensureTable`, and the writing CLI verb (`baerly admin restore`) refuse any other name with `InvalidConfig` (HTTP 400). Names are never normalized for you, so two canonically-equivalent names never become one. Names that differ only by case (`Tickets` / `tickets`) or by compatibility form (`ﬁle` / `file`) stay distinct.
 
 R2 stores canonically-equivalent keys as one object, so a collection named with NFD `e` + U+0301 and one named with NFC `é` shared one key prefix on R2 and had two prefixes on every other host.
 
