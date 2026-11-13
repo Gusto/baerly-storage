@@ -15,6 +15,7 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   casUpdateCurrentJson,
@@ -822,6 +823,78 @@ describe("baerly admin restore", () => {
       const { err } = await run(row("a") + row("b"));
       expect(err).toContain("line 2 was not committed");
       expect(err).toContain("1 row committed");
+    });
+
+    test("input stream failure reports durable progress and recovery guidance", async () => {
+      let committed!: () => void;
+      const firstCommit = new Promise<void>((resolve) => {
+        committed = resolve;
+      });
+      const realCommit = Writer.prototype.commit;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (
+        this: Writer,
+        ...args
+      ) {
+        const result = await realCommit.apply(this, args);
+        committed();
+        return result;
+      });
+      const input = Readable.from(
+        (async function* () {
+          yield row("a");
+          await firstCommit;
+          throw new Error("input EIO");
+        })(),
+      );
+      const stderr = captureStream(process.stderr);
+      let code: number;
+      try {
+        code = await runRestore(
+          [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+          { streams: { stdin: input } },
+        );
+      } finally {
+        stderr.restore();
+      }
+      expect(code).toBe(2);
+      const err = stderr.captured.join("");
+      expect(err).toContain("input EIO");
+      expect(err).toContain("1 row committed");
+      expect(err).toContain("--force");
+      await expect(storage.get(`${TABLE_PREFIX}/log/0.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/1.json`)).resolves.toBeNull();
+    });
+
+    test("final manifest read failure reports all rows committed", async () => {
+      let committed = false;
+      const realCommit = Writer.prototype.commit;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (
+        this: Writer,
+        ...args
+      ) {
+        const result = await realCommit.apply(this, args);
+        committed = true;
+        return result;
+      });
+      const realGet = LocalFsStorage.prototype.get;
+      const spy = vi.spyOn(LocalFsStorage.prototype, "get").mockImplementation(async function (
+        this: LocalFsStorage,
+        key,
+        opts,
+      ) {
+        if (committed && key === CURRENT_JSON_KEY) {
+          throw new BaerlyError("NetworkError", "final manifest GET failed");
+        }
+        return realGet.call(this, key, opts);
+      });
+      const { code, err } = await run(row("a"));
+      expect(code).toBe(2);
+      expect(err).toContain("NetworkError");
+      expect(err).toContain("all 1 row were committed");
+      expect(err).toContain("--force");
+      spy.mockRestore();
+      await expect(storage.get(`${TABLE_PREFIX}/log/0.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/1.json`)).resolves.toBeNull();
     });
 
     test("tail_hint stamp failure reports all rows committed and the --force rerun, which works", async () => {
