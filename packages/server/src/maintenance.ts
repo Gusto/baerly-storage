@@ -28,11 +28,16 @@ import {
   CF_FREE_COMPACT_TAIL_PROBE_GETS,
   CF_PAID_COMPACT_TAIL_PROBE_GETS,
   GC_STARVATION_GUARD,
+  LOG_RETENTION_MAX_DELETES_PER_TICK,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
+  MAINTENANCE_FOLD_BASE_REQUESTS,
+  MAINTENANCE_GC_BASE_REQUESTS,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
+  MAINTENANCE_RETIRE_BASE_REQUESTS,
+  MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
@@ -280,7 +285,10 @@ const profileToScheduledOptions = (
  * (`CF_FREE_INTERNAL_REQUEST_LIMIT`), 45 through `fetch`
  * (`CF_FREE_EXTERNAL_REQUEST_LIMIT`). The caps bound one pass's work so
  * that it fits those limits; they do not need to stay under a 50 of their
- * own.
+ * own. The in-band write tick (`runBoundedMaintenance`) also sizes each
+ * phase from what the ledger has left, net of commit holds: a fold that
+ * does not fit is skipped, and a GC slice or retirement pass runs with a
+ * smaller DELETE cap.
  *
  * Budget arithmetic (worst case, one storage call per GET, PUT, DELETE or
  * LIST page):
@@ -578,7 +586,10 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
  * See `maintenance-profile-equivalence.test.ts`.
  *
  * Never throws — the write-tick caller must never see a maintenance
- * failure. CAS contention is swallowed quietly; an over-ceiling deferral
+ * failure. CAS contention is swallowed quietly, and so is a call the
+ * invocation's request ledger refused (each phase is sized from the
+ * ledger's remainder first; see the request-budget note inside, and
+ * `docs/spec/sync-protocol.md` "Per-invocation request budget"); an over-ceiling deferral
  * is not an error but is signalled loudly (see `signalFoldDeferred`
  * inside); unexpected throws bump
  * `db.maintenance.unexpected_error_total`, log a stack, and are
@@ -661,6 +672,38 @@ export const runBoundedMaintenance = async (
     ...(options?.gcGraceMillis !== undefined && { graceMillis: options.gcGraceMillis }),
     ...(options?.now !== undefined && { now: options.now }),
   } as InternalRunGcOptions;
+
+  // Request budget. On a host with a per-invocation request cap the tick
+  // shares the ledger of the write that dispatched it (`ctx.waitUntil` work
+  // included), so each phase is sized at its start from what that ledger
+  // has left on the pool the storage charges, net of active holds
+  // (`storageRemaining()`). A tick dispatched while a multi-row write runs
+  // sits outside every commit hold, so it sizes against the room the later
+  // rows' commit-resolution reserves leave. A phase whose common-path
+  // cost does not fit is skipped, and a GC slice or retirement pass that
+  // fits only in part runs with a smaller DELETE cap. The profile's caps
+  // stay the ceilings. A call that still overruns (a retry, a tail a
+  // concurrent writer lengthened) is refused by the ledger before it is
+  // sent; the tick ends there and the next one resumes.
+  const ledger = getCurrentContext()?.ledger;
+  const requestsLeft = (): number => ledger?.storageRemaining() ?? Infinity;
+  const skipForBudget = (phase: "fold" | "gc" | "retire" | "tail_hint"): void => {
+    ctxMetrics().counter("db.maintenance.request_budget_skipped_total", 1, { collection, phase });
+  };
+
+  const retireWithinBudget = async (): Promise<void> => {
+    const deletes = requestsLeft() - MAINTENANCE_RETIRE_BASE_REQUESTS;
+    if (deletes < 1) {
+      skipForBudget("retire");
+      return;
+    }
+    const logRetention = options?.logRetention;
+    const maxDeletes = logRetention?.maxDeletes ?? LOG_RETENTION_MAX_DELETES_PER_TICK;
+    await retireLogs(storage, currentJsonKey, {
+      logRetention: deletes < maxDeletes ? { ...logRetention, maxDeletes: deletes } : logRetention,
+      ...(signal !== undefined && { signal }),
+    });
+  };
 
   try {
     // ── Step 1. Read current.json once. ──────────────────────────────
@@ -748,6 +791,10 @@ export const runBoundedMaintenance = async (
       // next tick. Retrying inside one tick would reintroduce the extra
       // ops this guard exists to bound.
       tailHintPublished = true;
+      if (requestsLeft() < MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS) {
+        skipForBudget("tail_hint");
+        return;
+      }
       try {
         await casUpdateCurrentJson(
           storage,
@@ -849,7 +896,15 @@ export const runBoundedMaintenance = async (
     };
 
     const runGcAndRefreshTailHint = async (): Promise<void> => {
-      await runGc({ storage, currentJsonKey }, gcOpts);
+      const sweeps = requestsLeft() - MAINTENANCE_GC_BASE_REQUESTS;
+      if (sweeps < 0) {
+        skipForBudget("gc");
+      } else {
+        await runGc(
+          { storage, currentJsonKey },
+          sweeps < gcMaxSweeps ? { ...gcOpts, maxSweepsPerRun: sweeps } : gcOpts,
+        );
+      }
       await refreshTailHintIfNeeded();
     };
 
@@ -882,15 +937,23 @@ export const runBoundedMaintenance = async (
         // Retire stale logs after GC even on the early-return path.
         // Non-WriteConflict errors re-throw into the outer catch below
         // (unexpected_error_total + stack log), like every other phase.
-        await retireLogs(storage, currentJsonKey, {
-          logRetention: options?.logRetention,
-          ...(signal !== undefined && { signal }),
-        });
+        await retireWithinBudget();
         return;
       }
 
       // ── Step 3. Fold-priority. ───────────────────────────────────────
-      if (gate1) {
+      // A fold folds at most one pass of the tail the runner sees. It is not
+      // shortened to fit: the growth refusal (`capacity.ts`) models passes
+      // of exactly `maxFoldEntriesPerPass` seqs, so a shorter pass could
+      // rebuild past `C` where the modelled one lands. One that does not
+      // fit is skipped and falls through to GC like a pre-fold defer.
+      const foldFits =
+        requestsLeft() >=
+        MAINTENANCE_FOLD_BASE_REQUESTS +
+          Math.min(maxFoldEntriesPerPass, Math.max(0, nextSeq - logSeqStart));
+      if (gate1 && foldViable && !foldFits) {
+        skipForBudget("fold");
+      } else if (gate1) {
         if (foldViable) {
           // Thread the same `C` / `E` ceilings the pre-fold projection
           // above used into compact() as a Node-side belt-and-suspenders.
@@ -975,10 +1038,7 @@ export const runBoundedMaintenance = async (
       // swallowed inside `retireLogs`; anything unexpected re-throws into
       // this runner's outer catch (counter + stack log), never out of the
       // write-tick path.
-      await retireLogs(storage, currentJsonKey, {
-        logRetention: options?.logRetention,
-        ...(signal !== undefined && { signal }),
-      });
+      await retireWithinBudget();
     } finally {
       await refreshTailHintIfNeeded();
     }
@@ -986,6 +1046,12 @@ export const runBoundedMaintenance = async (
     // CAS contention (WriteConflict) thrown by compact()/runGc() is an
     // EXPECTED signal — swallow without the unexpected-error counter.
     if (isWriteConflict(error)) {
+      return;
+    }
+    // So is a call the request ledger refused: the tick spent this
+    // invocation's request budget, and the next tick resumes.
+    if (error instanceof BaerlyError && error.code === "CapacityExceeded") {
+      ctxMetrics().counter("db.maintenance.request_budget_refused_total", 1, { collection });
       return;
     }
     // Anything else is unexpected: count it, log the stack, swallow.
