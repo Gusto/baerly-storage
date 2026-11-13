@@ -1,0 +1,7 @@
+---
+"@gusto/baerly-storage": minor
+---
+
+A Cloudflare Worker on the free profile whose storage is not the R2 binding (for example `S3HttpStorage`) now folds a collection's log once 9 writes are pending, instead of waiting for the pending log to grow as large as the snapshot. Every storage call on that host is one of the free plan's 50 subrequests per request, and a write or read replays the pending log, so with the old trigger the tail outgrew what a request could afford and the fold never fit. With the early fold, a write plus the fold it triggers, and a read of the longest tail it leaves, stay within 45 calls, GC slice included, for up to 3 indexes per write and an `$in` of up to 16 values. The host is detected from the storage the Worker is given, so no configuration is needed; the R2 binding, `BAERLY_MAINTENANCE_PROFILE=cf-paid`, and Node keep the existing trigger. On that host a GC slice also deletes at most 4 replaced snapshots instead of 10, which still outpaces the one snapshot each fold replaces.
+
+Folding more often rewrites the snapshot more often. A replaced snapshot is deleted only after the 7-day GC grace period, so once GC keeps pace the bucket holds about the fold rate times 7 days of replaced snapshots: at ~30 writes/min on a 512 KiB collection, ~34,000 snapshots (~16 GiB). GC does not yet mark replaced snapshots at that rate, so they can accumulate past that today.

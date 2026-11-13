@@ -278,3 +278,13 @@ class R2BindingStorageImpl implements Storage {
 export function r2BindingStorage(bucket: R2Bucket): Storage {
   return new R2BindingStorageImpl(bucket);
 }
+
+/**
+ * Whether `storage` is the R2 binding itself (from {@link r2BindingStorage}).
+ * R2 binding calls do not count toward Workers Free's 50 external
+ * subrequests; anything else a Worker is given (`S3HttpStorage`, or a
+ * wrapper around either) is assumed to reach the bucket through `fetch`,
+ * where every call does.
+ */
+export const isR2BindingStorage = (storage: Storage): boolean =>
+  storage instanceof R2BindingStorageImpl;

@@ -45,6 +45,23 @@ On a host where the tick shares the request's budget (a Workers
 `ctx.waitUntil` tick does), a write costs its route cell plus whichever tick
 it dispatches.
 
+The `free-fetch:*` cells are whole requests on Workers Free with storage
+reached through `fetch`, where every call is one of the 50 external
+subrequests. Each runs one write kind (`insert`, the `update` worst case, a
+`mixed` rotation) from a 100-doc snapshot through a full cycle of fold and GC
+phases, with the tick options the Cloudflare adapter builds for that host. GC
+runs with the production grace period over a seeded backlog of due
+snapshots, so every GC slice deletes its full sweep cap, and log retirement
+is live. A `<kind>+tick` cell is the most expensive write, route plus tick; a
+read cell is the most expensive read at any state a `mixed` write left,
+before its tick ran. `tests/unit/request-counts.test.ts` also asserts that
+every such cell, plus the Worker's Cache API calls, stays within 45 calls,
+the budget `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and
+`CF_FREE_FETCH_GC_MAX_SWEEPS` are derived from. The Cache API counts are
+measured under workerd by
+`packages/adapter-cloudflare/src/worker-maintenance.test.ts`. The fixture is
+`tests/fixtures/request-count-free-fetch.ts`.
+
 Every state publishes `tail_hint` at the true tail, so a read replays exactly
 `tail` entries and pays no forward probe over a stale hint.
 
@@ -83,5 +100,7 @@ the route and the state that exposes it.
 ## Changing the grid
 
 Adding, renaming or removing a cell shows up as `ADDED` / `REMOVED` and is
-cleared the same way, with `--write`. Keep the grid small enough that the test
-stays well under a second.
+cleared the same way, with `--write`. The test takes about 2 s: under a
+second for the route grid, about a second for the free-fetch runs, which
+must cover a whole fold/GC phase cycle to reach the worst request. Keep
+additions from growing either part.

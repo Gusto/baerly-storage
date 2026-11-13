@@ -28,6 +28,7 @@
 
 import {
   type BaerlyAppConfig,
+  CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -54,6 +55,10 @@ import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
+import {
+  FREE_FETCH_CACHE_API_CALLS,
+  FREE_FETCH_TICK_OPTIONS,
+} from "../../../tests/fixtures/request-count-free-fetch.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import {
   baerlyWorker,
@@ -247,6 +252,125 @@ describe("resolveCfMaintenanceProfile — profile selection from BAERLY_MAINTENA
 
   test("resolveCfMaintenanceProfile defaults to cf-free for the cron path", () => {
     expect(resolveCfMaintenanceProfile(() => undefined)).toBe(MAINTENANCE_PROFILE_CF_FREE);
+  });
+});
+
+describe("early fold when storage is reached through fetch on Workers Free", () => {
+  test("storage other than the R2 binding folds at CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES", () => {
+    const ctx = mockExecutionContext();
+    // Exactly the options the `free-fetch:*` request-count cells run with.
+    expect(cfMaintenanceDispatch(ctx, () => undefined, new MemoryStorage()).options).toEqual(
+      FREE_FETCH_TICK_OPTIONS,
+    );
+    expect(FREE_FETCH_TICK_OPTIONS.foldAtTailEntries).toBe(CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES);
+  });
+
+  test("the R2 binding, cf-paid, and an unknown storage keep the ratio trigger", () => {
+    const ctx = mockExecutionContext();
+    const binding = r2BindingStorage(getBinding());
+    expect(cfMaintenanceDispatch(ctx, () => undefined, binding).options).not.toHaveProperty(
+      "foldAtTailEntries",
+    );
+    expect(cfMaintenanceDispatch(ctx, () => undefined).options).not.toHaveProperty(
+      "foldAtTailEntries",
+    );
+    const paid = cfMaintenanceDispatch(
+      ctx,
+      (k) => (k === "BAERLY_MAINTENANCE_PROFILE" ? "cf-paid" : undefined),
+      new MemoryStorage(),
+    );
+    expect(paid.options).not.toHaveProperty("foldAtTailEntries");
+  });
+
+  test("a Worker given non-binding storage folds the tail at the trigger, with no configuration", async () => {
+    const tenant = tenantId("fetchfold");
+    const storage = new MemoryStorage();
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const handler = baerlyWorker<BaerlyEnv>(() => ({ config: testConfig, verifier, storage }));
+    const env: BaerlyEnv = { APP: "t" };
+    const post = async (n: number): Promise<void> => {
+      const { ctx, drain } = makeCollectingCtx();
+      const res = await handler.fetch!(
+        new Request("https://x/v1/c/c", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: { n } }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        ctx,
+      );
+      expect(res.status).toBe(201);
+      await drain();
+    };
+    const key = `app/t/tenant/${tenant}/manifests/c/current.json`;
+    for (let n = 0; n < CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES - 1; n++) {
+      await post(n);
+    }
+    expect((await readCurrentJson(storage, key))!.json.log_seq_start).toBe(0);
+    // The write that brings the tail to the trigger folds it, far below
+    // the ratio trigger's first fold.
+    await post(CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES);
+    expect((await readCurrentJson(storage, key))!.json.log_seq_start).toBe(
+      CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+    );
+  });
+});
+
+describe("Cache API calls the free-fetch request-count cells add", () => {
+  test("each request kind makes exactly the calls the cells charge", async () => {
+    const tenant = tenantId("cachecalls");
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const handler = baerlyWorker<BaerlyEnv>(() => ({
+      config: { ...testConfig, collections: { c: { indexes: [{ name: "by_f0", on: "f0" }] } } },
+      verifier,
+      storage: new MemoryStorage(),
+    }));
+    const env: BaerlyEnv = { APP: "t" };
+    const cache = (caches as unknown as { default: Cache }).default;
+    const spies = [vi.spyOn(cache, "match"), vi.spyOn(cache, "put"), vi.spyOn(cache, "delete")];
+    const send = async (method: string, path: string, body?: unknown): Promise<number> => {
+      for (const spy of spies) {
+        spy.mockClear();
+      }
+      const { ctx, drain } = makeCollectingCtx();
+      const res = await handler.fetch!(
+        new Request(`https://x${path}`, {
+          method,
+          ...(body !== undefined && {
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        ctx,
+      );
+      expect(res.status).toBeLessThan(300);
+      await res.arrayBuffer();
+      await drain();
+      return spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
+    };
+    try {
+      const where = encodeURIComponent(
+        JSON.stringify({ clauses: [{ op: "eq", field: "f0", value: "y" }] }),
+      );
+      await expect(send("POST", "/v1/c/c", { doc: { _id: "a", f0: "x" } })).resolves.toBe(
+        FREE_FETCH_CACHE_API_CALLS.insert,
+      );
+      await expect(send("GET", "/v1/c/c/a")).resolves.toBe(FREE_FETCH_CACHE_API_CALLS.get);
+      await expect(send("PATCH", "/v1/c/c/a", { patch: { f0: "y" } })).resolves.toBe(
+        FREE_FETCH_CACHE_API_CALLS.update,
+      );
+      await expect(send("GET", `/v1/c/c?where=${where}`)).resolves.toBe(
+        FREE_FETCH_CACHE_API_CALLS["indexed-query"],
+      );
+      // `mixed` rotates inserts, updates and deletes; it is charged its
+      // most expensive member.
+      await expect(send("DELETE", "/v1/c/c/a")).resolves.toBe(FREE_FETCH_CACHE_API_CALLS.mixed);
+    } finally {
+      for (const spy of spies) {
+        spy.mockRestore();
+      }
+    }
   });
 });
 

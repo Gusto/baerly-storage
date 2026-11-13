@@ -38,6 +38,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   casUpdateCurrentJson,
   type Collection,
+  CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
@@ -45,13 +46,9 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import {
-  type BoundedMaintenanceOptions,
-  type MaintenanceProfile,
-  runBoundedMaintenance,
-} from "@baerly/server/maintenance";
+import { type MaintenanceProfile, runBoundedMaintenance } from "@baerly/server/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
-import { Writer } from "@baerly/server/_internal/testing";
+import { type InternalBoundedMaintenanceOptions, Writer } from "@baerly/server/_internal/testing";
 import {
   APP,
   bootstrap as bootstrapCurrentJson,
@@ -142,6 +139,7 @@ const replay = async (
   storage: Storage,
   ops: readonly Op[],
   profile?: MaintenanceProfile,
+  overrides?: InternalBoundedMaintenanceOptions,
 ): Promise<void> => {
   const writer = new Writer({ storage, currentJsonKey: CURRENT_JSON_KEY });
   const commitAll = async (): Promise<void> => {
@@ -162,7 +160,8 @@ const replay = async (
             minEntriesToCompact: 50,
             phasesPerTick: "both", // fold AND gc per tick
             gcGraceMillis: 0, // sweep marked orphans the same pass (no 8-day clock advance)
-          } satisfies BoundedMaintenanceOptions,
+            ...overrides,
+          } satisfies InternalBoundedMaintenanceOptions,
         };
   await runWithContext(createObservabilityContext({ maintenance }), commitAll);
 };
@@ -176,14 +175,28 @@ const readRows = async (storage: Storage): Promise<Ticket[]> => {
 interface ProfileCase {
   readonly label: string;
   readonly profile: MaintenanceProfile;
+  /** Host options the adapter adds on top of the profile. */
+  readonly options?: InternalBoundedMaintenanceOptions;
 }
 
-// Three maintained profiles plus the fold/GC-disabled reference make four
-// full replays in case (A).
+// Four maintained cases plus the fold/GC-disabled reference make five full
+// replays in case (A).
 const PROFILE_CASES: readonly ProfileCase[] = [
   { label: "cf-free", profile: MAINTENANCE_PROFILE_CF_FREE },
   { label: "node", profile: MAINTENANCE_PROFILE_NODE },
   { label: "cf-paid", profile: MAINTENANCE_PROFILE_CF_PAID },
+  // Workers Free with storage over `fetch`: the adapter folds every few
+  // writes, one phase per tick. A small retention window puts log
+  // retirement between those frequent folds within this replay.
+  {
+    label: "cf-free-fetch",
+    profile: MAINTENANCE_PROFILE_CF_FREE,
+    options: {
+      foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+      phasesPerTick: "single",
+      logRetention: { window: 16 },
+    },
+  },
 ];
 
 const VARIANTS = makeVariants("baerly-profile-equiv-");
@@ -235,7 +248,7 @@ describe("MaintenanceProfile cross-profile correctness", () => {
           const foldProgress: Record<string, number> = {};
           for (const pc of PROFILE_CASES) {
             const storage = await freshBucket();
-            await replay(storage, ops, pc.profile);
+            await replay(storage, ops, pc.profile, pc.options);
 
             // Non-vacuity: a fold actually landed under this profile —
             // maintenance ran, this isn't comparing two un-maintained
@@ -243,6 +256,12 @@ describe("MaintenanceProfile cross-profile correctness", () => {
             const cur = await readCurrentJson(storage, CURRENT_JSON_KEY);
             expect(cur!.json.snapshot, `${pc.label}: a fold must have landed`).not.toBeNull();
             expect(cur!.json.log_seq_start, `${pc.label}: the tail folded`).toBeGreaterThan(0);
+            if (pc.options?.logRetention !== undefined) {
+              expect(
+                cur!.json.log_delete_floor ?? 0,
+                `${pc.label}: log retirement ran`,
+              ).toBeGreaterThan(0);
+            }
 
             foldProgress[pc.label] = cur!.json.log_seq_start;
             maintained[pc.label] = await readRows(storage);

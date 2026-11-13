@@ -31,6 +31,7 @@ import {
   createObservabilityContext,
   runWithContext,
 } from "../../packages/server/src/observability/context.ts";
+import { freeFetchCells } from "./request-count-free-fetch.ts";
 import { type CallCounts, CallTally, requestCountingStorage } from "./request-counting-storage.ts";
 
 const APP = "rc";
@@ -264,6 +265,12 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
           await tick("tick:gc-sweep", (s) => gcTick(s, 0), foldTick);
         }
       }
+    }
+  }
+  // Whole requests on Workers Free with storage reached through `fetch`.
+  for (const indexes of INDEX_COUNTS) {
+    for (const cell of await freeFetchCells(indexes)) {
+      out[cell.name] = cell.counts;
     }
   }
   return out;

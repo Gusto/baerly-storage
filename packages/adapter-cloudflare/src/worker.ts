@@ -6,6 +6,8 @@
 import { type DevLandingOptions, renderDevLanding } from "@baerly/dev/dev-landing";
 import {
   type BaerlyAppConfig,
+  CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+  CF_FREE_FETCH_GC_MAX_SWEEPS,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
@@ -30,6 +32,7 @@ import {
   runWithContext,
 } from "@baerly/server/observability";
 import { type CacheStatus, invalidateOnWrite, withReadCache } from "./cache.ts";
+import { isR2BindingStorage } from "./r2-binding-storage.ts";
 import { resolveWorkerStorage } from "./resolve-storage.ts";
 
 /**
@@ -146,6 +149,17 @@ export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | u
     : MAINTENANCE_PROFILE_CF_FREE;
 
 /**
+ * Write-tick options on the free profile for storage reached through
+ * `fetch`: the GC sweep capped, and the server's unpublished host trigger
+ * `foldAtTailEntries` (`InternalBoundedMaintenanceOptions`), spread into
+ * the public options bag. `worker-maintenance.test.ts` pins the result.
+ */
+const CF_FREE_FETCH_TICK = {
+  profile: { ...MAINTENANCE_PROFILE_CF_FREE, gcMaxSweeps: CF_FREE_FETCH_GC_MAX_SWEEPS },
+  foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+} as const;
+
+/**
  * Assemble the per-request {@link MaintenanceDispatch} for a Cloudflare
  * Worker.
  *
@@ -184,12 +198,28 @@ export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | u
  *
  * `readEnv` defaults to reading off the bound `env`; the parameter
  * exists for direct unit coverage.
+ *
+ * `storage` is the Worker's base storage. On the free profile, storage
+ * other than the R2 binding (`S3HttpStorage`, or any wrapper) spends one
+ * of Free's 50 external subrequests per call, so the write tick folds as
+ * soon as the live tail reaches {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES}
+ * entries, and a GC slice sweeps at most {@link CF_FREE_FETCH_GC_MAX_SWEEPS}
+ * snapshots: a write replays the tail, and on a longer tail or a larger
+ * sweep the write plus the tick it dispatches no longer fit in one
+ * request. Detected from the storage itself, so it needs no
+ * configuration. Absent ⇒ treated as the R2 binding.
  */
 export const cfMaintenanceDispatch = (
   ctx: ExecutionContext,
   readEnv: (key: string) => string | undefined,
+  storage?: Storage,
 ): MaintenanceDispatch => {
   const { maxFoldBytes, disabled } = parseMaintenanceEnv(readEnv);
+  const profile = resolveCfMaintenanceProfile(readEnv);
+  const fetchBudgeted =
+    profile === MAINTENANCE_PROFILE_CF_FREE &&
+    storage !== undefined &&
+    !isR2BindingStorage(storage);
 
   return {
     // CF dispatches the fold off the ack via `ctx.waitUntil` — the
@@ -208,7 +238,7 @@ export const cfMaintenanceDispatch = (
       // resolves the profile via the SAME `resolveCfMaintenanceProfile` export
       // so the two maintenance triggers stay coherent when the operator wires
       // the recipe below into their `scheduled` handler.
-      profile: resolveCfMaintenanceProfile(readEnv),
+      ...(fetchBudgeted ? CF_FREE_FETCH_TICK : { profile }),
     },
   };
 };
@@ -252,7 +282,9 @@ export interface BaerlyWorkerOptions {
    * from a Worker — e.g. `new S3HttpStorage(...)` +
    * `sigV4Signer(...)` from `@gusto/baerly-storage/s3`. Resolved once
    * per isolate inside the factory (where `env` is in scope), same as
-   * the R2 binding.
+   * the R2 binding. On the free profile, storage other than the R2
+   * binding spends Free's 50 external subrequests, so the write tick
+   * folds after a few writes instead of on the ratio trigger.
    */
   readonly storage?: Storage;
   /**
@@ -538,10 +570,14 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // per request so a hot-swapped `env` is observed at call time.
       const obsCtx = createObservabilityContext({
         request_id: requestId,
-        maintenance: cfMaintenanceDispatch(ctx, (k) => {
-          const value = (env as unknown as Record<string, unknown>)[k];
-          return typeof value === "string" ? value : undefined;
-        }),
+        maintenance: cfMaintenanceDispatch(
+          ctx,
+          (k) => {
+            const value = (env as unknown as Record<string, unknown>)[k];
+            return typeof value === "string" ? value : undefined;
+          },
+          baseStorage,
+        ),
       });
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
