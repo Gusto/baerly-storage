@@ -539,8 +539,9 @@ export class Writer {
    * failure resolves by one occupant readback, because adapters can hide
    * earlier sends. When the call reports every attempt refused unapplied
    * (`cause.notApplied`), the same readback runs because a throttle can hide
-   * a lost race: a foreign occupant forward-probes, and an empty or
-   * unreadable slot propagates the retriable `NetworkError`.
+   * a lost race: a foreign occupant forward-probes, a slot read back as
+   * empty propagates the retriable `NetworkError`, and an unreadable slot
+   * is `AmbiguousCommit` as for any other failed create.
    * Unresolved creates throw non-retriable `AmbiguousCommit`; failures
    * before the create propagate.
    *
@@ -724,10 +725,12 @@ export class Writer {
     // multiply that policy's attempts (retry at one layer). The outcome of
     // that one call decides the next step:
     //   - success ⇒ committed at `seq`;
-    //   - `cause.notApplied` (every attempt throttled or refused) ⇒ nothing
-    //     of ours can be at `seq`, but a throttle may hide a lost race, so
-    //     one occupant readback: foreign ⇒ forward-probe; absent or
-    //     unreadable ⇒ the retriable `NetworkError` propagates;
+    //   - `cause.notApplied` (every attempt throttled or refused) ⇒ one
+    //     occupant readback, because a throttle may hide a lost race and
+    //     a store may not document that its throttle is unapplied: own
+    //     entry ⇒ adopt; foreign ⇒ forward-probe; an observed empty slot
+    //     ⇒ the retriable `NetworkError` propagates; unreadable ⇒
+    //     `AmbiguousCommit`;
     //   - `AccessDenied` / `InvalidConfig` ⇒ definitive under the
     //     `Storage.put` contract; propagates as-is;
     //   - a 412, or any other failure (an uncertain send — e.g. a dropped
@@ -779,9 +782,9 @@ export class Writer {
           // this is the slot's only send, so nothing of ours is at `seq`.
           throw error;
         } else if (isCreateNotApplied(error)) {
-          // Nothing of ours is at `seq` either, but a throttle can hide a
-          // lost race (R2 answers a same-key create race with a 429, not a
-          // 412), so the readback still tells a peer's slot from an empty one.
+          // A throttle can hide a lost race (R2 can answer a same-key create
+          // race with a 429, not a 412), so the readback still tells a
+          // peer's slot from an empty one.
           notApplied = true;
         }
       }
@@ -791,9 +794,10 @@ export class Writer {
         occupant = await this.#readLogOccupant(logEntryKey);
         decision = tryAdoptOwnSessionLogEntry({ self: entry, existing: occupant });
       } catch (error) {
-        if (notApplied) {
-          // An empty or unreadable slot leaves nothing to resolve: the
-          // retriable refusal stands.
+        if (notApplied && error instanceof BaerlyError && error.code === "NotFound") {
+          // The readback saw the slot empty, which confirms the adapter's
+          // not-applied report: the retriable refusal stands. An unreadable
+          // or malformed slot confirms nothing, so it stays ambiguous.
           throw createFailure;
         }
         throw ambiguous(
@@ -1025,14 +1029,21 @@ export class Writer {
       snapshot_rows: 0,
       generation: mintGeneration(),
     };
+    let createFailure: unknown;
     try {
       return await createCurrentJson(this.#storage, this.#currentJsonKey, initial);
     } catch (error) {
-      if (!isWriteConflict(error)) {
+      // A create refused unapplied is usually a peer provisioning the same
+      // key (R2's same-key throttle), so it recovers by re-read like a 412.
+      if (!isWriteConflict(error) && !isCreateNotApplied(error)) {
         throw error;
       }
+      createFailure = error;
     }
     const recovered = await readCurrentJson(this.#storage, this.#currentJsonKey);
+    if (recovered === null && isCreateNotApplied(createFailure)) {
+      throw createFailure;
+    }
     if (recovered === null) {
       throw new BaerlyError(
         "InvalidResponse",

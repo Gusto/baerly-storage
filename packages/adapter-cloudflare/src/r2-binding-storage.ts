@@ -179,17 +179,23 @@ class R2BindingStorageImpl implements Storage {
    * message fallback for older runtimes.
    *
    * `AccessDenied` and `InvalidConfig` are permanent and not retried.
-   * Two `NetworkError`s prove the call was not applied:
+   * Two `NetworkError`s are treated as not applied:
    *
    * - R2 error `10058` (`TooManyRequests`, 429: "limit: 1 write/second
-   *   per key") is tagged `throttled`, so it gets the throttle backoff
-   *   base, and a conditional create whose every attempt hit it reports
-   *   `notApplied`. R2 binding errors end `message` with the error code
-   *   in parentheses (https://developers.cloudflare.com/r2/api/error-codes/).
-   * - The Workers "Too many subrequests" limit is thrown before the call
-   *   is issued, and every later call in the invocation is refused too,
-   *   so it is tagged `refused`: not retried, and `notApplied` on a
-   *   create. The message match is a backstop, not the primary guard.
+   *   per key") is tagged `throttled`, so it is retried from the throttle
+   *   backoff base, and a conditional create whose every attempt hit it
+   *   reports `notApplied`. R2 binding errors end `message` with the
+   *   error code in parentheses
+   *   (https://developers.cloudflare.com/r2/api/error-codes/).
+   * - The Workers "Too many subrequests" limit is tagged `refused`: not
+   *   retried, since every later call in the invocation is refused too,
+   *   and `notApplied` on a create. The message match is a backstop, not
+   *   the primary guard.
+   *
+   * Cloudflare does not document that either error means the write was
+   * not applied. What makes `notApplied` safe is the Writer's occupant
+   * readback: only a slot it reads back as empty becomes a retriable
+   * `NetworkError`, and an unreadable slot stays `AmbiguousCommit`.
    *
    * Everything else is a `NetworkError` with an unknown outcome, so an
    * exhausted conditional create does not report `notApplied`.
