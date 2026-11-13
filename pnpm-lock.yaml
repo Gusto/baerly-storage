@@ -57,7 +57,7 @@ importers:
         version: 0.5.0(vitest@5.0.5)
       '@hono/node-server':
         specifier: ^2.1.5
-        version: 2.1.6(hono@4.13.14)
+        version: 2.1.6(hono@4.13.16)
       '@stryker-mutator/core':
         specifier: 10.1.1
         version: 10.1.1(@types/node@26.6.5)
@@ -332,7 +332,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.1.5
-        version: 2.1.6(hono@4.13.14)
+        version: 2.1.6(hono@4.13.16)
       '@rgrove/parse-xml':
         specifier: 5.0.0
         version: 5.0.0
@@ -341,7 +341,7 @@ importers:
         version: 1.0.20
       hono:
         specifier: ^4.13.14
-        version: 4.13.14
+        version: 4.13.16
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -362,7 +362,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.1.5
-        version: 2.1.6(hono@4.13.14)
+        version: 2.1.6(hono@4.13.16)
       citty:
         specifier: ^0.2.2
         version: 0.2.2
@@ -417,7 +417,7 @@ importers:
         version: link:../server
       '@hono/node-server':
         specifier: ^2.1.5
-        version: 2.1.6(hono@4.13.14)
+        version: 2.1.6(hono@4.13.16)
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -437,7 +437,7 @@ importers:
         version: 2.3.5
       hono:
         specifier: ^4.13.14
-        version: 4.13.14
+        version: 4.13.16
       jose:
         specifier: ^6.2.13
         version: 6.2.13
@@ -2951,8 +2951,8 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
-  hono@4.13.14:
-    resolution: {integrity: sha512-yhRLQ21U6qa9Hsu2N7Qcbh8tE+WKEcoErjIo56LeSGiGXGp9sA7UpE86Ui9uexb61KakiGwuHMn2QdV7w6i6kQ==}
+  hono@4.13.16:
+    resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@7.0.2:
@@ -4960,9 +4960,9 @@ snapshots:
       fast-check: 4.10.2
       vitest: 5.0.5(@types/node@26.6.5)(@vitest/coverage-v8@5.0.5)(happy-dom@21.0.4)(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
 
-  '@hono/node-server@2.1.6(hono@4.13.14)':
+  '@hono/node-server@2.1.6(hono@4.13.16)':
     dependencies:
-      hono: 4.13.14
+      hono: 4.13.16
 
   '@iconify/types@2.0.0': {}
 
@@ -6628,7 +6628,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.13.14: {}
+  hono@4.13.16: {}
 
   hosted-git-info@7.0.2:
     dependencies:
