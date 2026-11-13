@@ -119,6 +119,9 @@ What doesn't fit in API.md lives here.
 - [`guide/client-auth.md`](guide/client-auth.md) — Browser-to-server
   auth recipes and the dev/prod × Cloudflare/Node matrix. Scaffolds
   ship minimal recipes; fail-closed hardening lives in this guide.
+- [`guide/upgrading-to-0.7.md`](guide/upgrading-to-0.7.md) — Old-to-new
+  migration for 0.7.0: error codes, write semantics, host limits, and
+  the legacy-data preflight and restore recipe.
 - [`guide/backups.md`](guide/backups.md) — Safe NDJSON dump with
   retention rotation, checksums, restore, and restore drills.
 - [`guide/observability.md`](guide/observability.md) — Operator
