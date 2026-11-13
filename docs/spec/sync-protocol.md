@@ -544,6 +544,40 @@ call to `external`, at most `CF_CACHE_API_MAX_CALLS` per invocation; a cache
 `match` or `put` without room is skipped and the request is served from
 storage, and the invalidation after a write is always sent.
 
+### Read admission
+
+A read whose work does not fit the serving request is refused whole with
+`CapacityExceeded`, never answered with a truncated row set, and a read that
+fits returns the same rows on every host. A refused read writes nothing and
+dispatches no maintenance, so a read never carries `MaintenancePending`.
+Admission runs in two stages (`packages/server/src/read-admission.ts`):
+
+1. **Head.** From `current.json` alone, the read is refused when its work is
+   certain not to fit. `tail_hint` is a lower bound on the tail, so the
+   strict range `[log_seq_start, tail_hint)`, the snapshot GET and the
+   probe's closing empty slot are a lower bound on the storage calls; when
+   that is more than the request ledger has left, the read is refused
+   before its snapshot GET.
+2. **Staged.** The ledger charges each storage call as it is issued. The
+   forward probe past `tail_hint` is capped at
+   `min(LOG_FORWARD_PROBE_CAP, ledger remaining)` (`forwardProbeCap` in
+   `log-tail.ts`, shared by every read path that probes); exhausting a
+   ledger-set cap is `CapacityExceeded`, exhausting `LOG_FORWARD_PROBE_CAP`
+   remains the `Internal` runaway alarm.
+
+The host may also set a read envelope on the observability context
+(`readEnvelope`): snapshot bytes and rows (checked from the head before the
+snapshot GET), tail entries and bytes (each stored body charged before it is
+decoded), rows materialized before predicate, sort and limit, and rows in
+the answer (a count is exempt). Every read, index-covered or not, is a full
+fold (see [Read algorithm](#read-algorithm)), so these are also the bounds
+on an index-covered read: its work is the snapshot rows plus the tail
+entries it materializes, and there is no index-specific bound. Two
+collections with identical heads but different tails are told apart at the
+staged checks. No shipped profile sets the data bounds
+yet; the Worker sets only the request pool its storage charges, so the head
+check is exact for the R2 binding and for `fetch` storage.
+
 ### Crash safety
 
 Crashes fall on one side of the commit line: serializing `LogEntry.after`

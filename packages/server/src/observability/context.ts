@@ -51,6 +51,7 @@ import {
 // runtime cycle. A type-only edge erases at build time, so tsgo /
 // rolldown see no cycle.
 import type { MaintenanceDispatch } from "../maintenance.ts";
+import type { ReadEnvelope } from "../read-admission.ts";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 /** Read-mostly per-request observability state. */
@@ -97,6 +98,13 @@ export interface ObservabilityContext {
    * scope never sees it.
    */
   readonly hold?: RequestHold;
+  /**
+   * The host's read envelope, set by the adapter with its host's bounds.
+   * A read whose staged work falls outside it is refused whole with
+   * `CapacityExceeded` (see `read-admission.ts`). Absent ⇒ reads are
+   * bounded by the ledger alone.
+   */
+  readonly readEnvelope?: ReadEnvelope;
 }
 
 /**
@@ -119,6 +127,8 @@ export interface ObservabilityContextInit {
   readonly maintenance?: MaintenanceDispatch;
   /** Storage request budget. See {@link ObservabilityContext.ledger}. */
   readonly ledger?: RequestLedger;
+  /** Read envelope. See {@link ObservabilityContext.readEnvelope}. */
+  readonly readEnvelope?: ReadEnvelope;
 }
 
 /**
@@ -136,6 +146,7 @@ export const createObservabilityContext = (
   recorder: init.recorder ?? new RequestScopedMetricsRecorder(),
   ...(init.maintenance !== undefined && { maintenance: init.maintenance }),
   ...(init.ledger !== undefined && { ledger: init.ledger }),
+  ...(init.readEnvelope !== undefined && { readEnvelope: init.readEnvelope }),
 });
 
 /**
