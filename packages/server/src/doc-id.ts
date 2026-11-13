@@ -1,7 +1,7 @@
 import { BaerlyError, CODE_RESOLUTIONS, type DocumentData, jsonValueEqual } from "@baerly/protocol";
 import { markCallerFacing } from "./caller-facing-error.ts";
 import { getCurrentContext } from "./observability/context.ts";
-import { assertPathSegment } from "./path-segment.ts";
+import { assertNfcSegment, assertPathSegment } from "./path-segment.ts";
 
 /**
  * Resolution for a non-NFC `_id`. A row stored under one by an earlier
@@ -34,13 +34,7 @@ const READ_ID_RESOLUTION =
  */
 export const assertDocId = (id: string): void => {
   assertStoredDocId(id);
-  if (id !== id.normalize("NFC")) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `_id must be in Unicode Normalization Form C: ${JSON.stringify(id)}`,
-      { resolution: DOC_ID_NFC_RESOLUTION },
-    );
-  }
+  assertNfcSegment(id, "_id", "", DOC_ID_NFC_RESOLUTION);
 };
 
 /**

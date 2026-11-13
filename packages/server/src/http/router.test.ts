@@ -690,4 +690,33 @@ describe("collection-segment validation closes the traversal bypass", () => {
     const envelope = (await res.json()) as ErrorEnvelope;
     expect(envelope.error.code).toBe("InvalidConfig");
   });
+
+  // `cafe%CC%81` decodes to NFD "cafe\u0301", canonically equivalent
+  // to NFC "caf\u00e9" (`caf%C3%A9`). R2 would store both under one
+  // prefix, so the route refuses the non-NFC spelling for reads and
+  // writes alike.
+  test.each([
+    ["GET", "http://localhost/v1/c/cafe%CC%81?where=%7B%22clauses%22%3A%5B%5D%7D"],
+    ["POST", "http://localhost/v1/c/cafe%CC%81"],
+  ])("%s on a non-NFC collection name is rejected InvalidConfig", async (method, url) => {
+    const app = buildApp();
+    const res = await app.request(url, {
+      method,
+      ...(method === "POST" && {
+        body: JSON.stringify({ doc: { title: "x" } }),
+        headers: { "content-type": "application/json" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("InvalidConfig");
+  });
+
+  test("the NFC spelling of the same collection name is accepted", async () => {
+    const app = buildApp();
+    const res = await app.request(
+      "http://localhost/v1/c/caf%C3%A9?where=%7B%22clauses%22%3A%5B%5D%7D",
+    );
+    expect(res.status).toBe(200);
+  });
 });

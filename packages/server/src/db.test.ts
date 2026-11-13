@@ -117,6 +117,61 @@ describe("Db.create", () => {
   });
 });
 
+describe("app, tenant and collection names must be NFC", () => {
+  // Each is canonically equivalent to a different NFC string, so R2
+  // would store it and its NFC form under one key prefix.
+  const NON_NFC = [
+    "cafe\u0301", // NFD of "caf\u00e9"
+    "\u212b", // ANGSTROM SIGN; NFC is U+00C5
+    "\u2126", // OHM SIGN; NFC is U+03A9
+    "\u1100\u1161", // conjoining jamo; NFC is U+AC00
+  ];
+  // Each input is otherwise a valid segment, so `InvalidConfig` is the
+  // NFC rule firing.
+  const NFC_ERROR = { code: "InvalidConfig" };
+  const db = (): Db => Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+
+  test.each(NON_NFC)("Db.create rejects app %j", (bad) => {
+    expect(() => Db.create({ storage: new MemoryStorage(), app: bad, tenant: "t" })).toThrow(
+      expect.objectContaining(NFC_ERROR),
+    );
+  });
+
+  test.each(NON_NFC)("Db.create rejects tenant %j", (bad) => {
+    expect(() => Db.create({ storage: new MemoryStorage(), app: "a", tenant: bad })).toThrow(
+      expect.objectContaining(NFC_ERROR),
+    );
+  });
+
+  test.each(NON_NFC)("db.collection and collectionReadContext reject %j", (bad) => {
+    expect(() => db().collection(bad)).toThrow(expect.objectContaining(NFC_ERROR));
+    expect(() => db().collectionReadContext(bad)).toThrow(expect.objectContaining(NFC_ERROR));
+  });
+
+  test.each(NON_NFC)("the /v1/since seams reject collection %j", async (bad) => {
+    await expect(db().getCurrentJson(bad)).rejects.toMatchObject(NFC_ERROR);
+    await expect(db().getLogEntry(bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
+    await expect(db().probeLogTail(bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
+  });
+
+  test("NFC names that differ by case or compatibility form stay distinct", async () => {
+    const storage = new MemoryStorage();
+    const names = ["caf\u00e9", "Tickets", "tickets", "\ufb01le", "file", "\uff21", "A"];
+    for (const app of ["caf\u00e9", "\u00c5"]) {
+      const d = Db.create({ storage, app, tenant: "\uac00" });
+      for (const name of names) {
+        await d.collection(name).insert({ _id: "row", name });
+      }
+    }
+    for (const app of ["caf\u00e9", "\u00c5"]) {
+      const d = Db.create({ storage, app, tenant: "\uac00" });
+      for (const name of names) {
+        await expect(d.collection(name).where({}).all()).resolves.toEqual([{ _id: "row", name }]);
+      }
+    }
+  });
+});
+
 describe("Db.create config derivation", () => {
   // Regression: `config` used to be a type-only seam. App and test
   // code that wrote `Db.create({ storage, app, tenant, config })`

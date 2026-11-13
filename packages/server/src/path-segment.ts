@@ -53,3 +53,57 @@ export const assertPathSegment = (value: string, role: string, verb = ""): void 
   // Leading `_` is the ADR-003 reserved namespace.
   assertNameNotReserved(value, where);
 };
+
+/**
+ * Resolution for a non-NFC app, tenant, or collection name. Data an
+ * earlier release stored under one stays readable through the operator
+ * CLI, and is migrated by export and restore under a new name.
+ */
+const NAME_NFC_RESOLUTION =
+  'Pass name.normalize("NFC") for a new app, tenant, or collection name. Data an earlier release stored under a non-NFC name is read-only: export it with `baerly admin dump` and restore it with `baerly admin restore` under an NFC name that is not canonically equivalent to the original. The normalized original name is not a safe target, because R2 stores canonically-equivalent keys as one object.';
+
+/**
+ * Require `value` to be in Unicode Normalization Form C
+ * (`value === value.normalize("NFC")`). R2 stores canonically-equivalent
+ * keys (NFC `é` and NFD `e` + U+0301) as one object, so two segments that
+ * differ only by normalization would address the same objects there. NFC
+ * gives each equivalence class one spelling. Case and compatibility
+ * variants (`A` / `a`, `ﬁ` / `fi`) are distinct NFC strings and stay
+ * distinct. Shared by the `_id` write guard and {@link assertNameSegment}.
+ *
+ * @param resolution  the `BaerlyError.resolution` for this segment's role.
+ * @throws BaerlyError code="InvalidConfig" — `value` is not NFC.
+ */
+export const assertNfcSegment = (
+  value: string,
+  role: string,
+  verb: string,
+  resolution: string,
+): void => {
+  if (value !== value.normalize("NFC")) {
+    const where = verb === "" ? role : `${verb}: ${role}`;
+    throw new BaerlyError(
+      "InvalidConfig",
+      `${where} must be in Unicode Normalization Form C: ${JSON.stringify(value)}`,
+      { resolution },
+    );
+  }
+};
+
+/**
+ * Guard an app, tenant, or collection name that the SDK, the HTTP
+ * router, or a writing CLI verb addresses: {@link assertPathSegment},
+ * then {@link assertNfcSegment}. Names are never normalized on the
+ * caller's behalf, so two canonically-equivalent names are never merged
+ * into one. The read-only CLI verbs (`inspect`, `export`, `cost`,
+ * `admin dump`, `admin fsck`, `admin usage`) apply only
+ * {@link assertPathSegment}, which keeps a legacy non-NFC name readable
+ * and exportable.
+ *
+ * @throws BaerlyError code="InvalidConfig" — the name breaks the
+ *   key-segment rule or is not NFC.
+ */
+export const assertNameSegment = (value: string, role: string, verb = ""): void => {
+  assertPathSegment(value, role, verb);
+  assertNfcSegment(value, role, verb, NAME_NFC_RESOLUTION);
+};
