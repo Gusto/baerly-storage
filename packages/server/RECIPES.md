@@ -94,9 +94,9 @@ instead of `"caf\u00e9"`. R2 stores canonically-equivalent keys as one
 object, so the two spellings would address one key prefix there and two
 elsewhere.
 **Fix:** pass `name.normalize("NFC")` for a new name. Data an earlier
-release stored under a non-NFC name is read-only: `baerly inspect`,
-`baerly export`, `baerly admin dump`, and `baerly admin fsck` still read
-it. To keep it writable, dump it and restore it under an NFC name that is
+release stored under a non-NFC name is accessible through `baerly inspect`,
+`baerly export`, `baerly admin dump`, and `baerly admin fsck`.
+To keep it writable, dump it and restore it under an NFC name that is
 not canonically equivalent to the original, then point the app at the new
 name:
 
@@ -111,6 +111,11 @@ legacy objects. Run `baerly admin fsck` first: it flags non-NFC names.
 twin `_id`s, which restore refuses or which share index markers on R2;
 give each a fresh NFC `_id` in the NDJSON before restoring.
 
+The alias guard checks stored collection names, not app or tenant identity.
+Normalized legacy app or tenant aliases can still read and modify the same
+data on R2; migrate those namespaces to fresh names instead of relying on
+refusal.
+
 ### `collection ... addresses data stored under the canonically-equivalent name ...` (HTTP 400, `code="InvalidConfig"`)
 
 **Cause:** on R2, this NFC collection name addresses objects an earlier
@@ -120,6 +125,16 @@ folds, and exports refuse rather than skip those rows.
 stored spelling (`baerly admin dump --collection=<stored name>`) and
 restore it under an NFC name that is not canonically equivalent to either
 spelling, as in the entry above.
+
+If the log contains both spellings, stop writes and maintenance and keep
+a copy of the source bucket. Use `baerly admin dump
+--recover-legacy-names --collection=<exact stored name>` with the same
+bucket, app, and tenant flags to recover each spelling separately into
+different fresh collections. Recovery keeps rows, updates, and deletes
+separate even when `_id`s overlap. It requires a snapshot naming the
+selected spelling or no snapshot; an opposite-spelling snapshot is
+refused. Rows discarded by older compaction cannot be reconstructed, so
+historical completeness is not guaranteed.
 
 ### Resending an auto-ID insert over HTTP (`mintedId`)
 

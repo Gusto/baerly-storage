@@ -2,13 +2,13 @@ import { BaerlyError } from "@baerly/protocol";
 import { markCallerFacing } from "./caller-facing-error.ts";
 
 const ALIASED_COLLECTION_RESOLUTION =
-  "An earlier release stored this collection under a non-NFC name, and this name addresses the same stored objects, so it cannot be read or written safely. Keep the app on a different NFC name: export the stored data with `baerly admin dump --collection=<stored name>` and restore it with `baerly admin restore` under an NFC name that is not canonically equivalent to either spelling.";
+  "An earlier release stored this collection under a non-NFC name, and this name addresses the same stored objects, so it cannot be read or written safely. Keep the app on a different NFC name: export the stored data with `baerly admin dump --collection=<stored name>` and restore it with `baerly admin restore` under an NFC name that is not canonically equivalent to either spelling. For a mixed legacy log, dump with --recover-legacy-names selects one exact spelling and requires a matching snapshot or no snapshot.";
 
 /**
  * `true` when a stored log entry, snapshot, or snapshot manifest that
- * names collection `stored` belongs to collection `expected`. Every
- * fold, compaction, capacity check, and export that filters stored
- * records by collection asks through this.
+ * names collection `stored` belongs to collection `expected`. Live
+ * folds, compaction, capacity checks, and ordinary exports filter through
+ * this guard. Explicit CLI recovery selects exact spellings instead.
  *
  * R2 stores canonically-equivalent keys as one object, so an NFC name
  * addresses the objects a legacy non-NFC name wrote (and vice versa).

@@ -209,12 +209,19 @@ export const inferPlanForCollection = (params: {
  * provisioned). Returns an empty map when the collection is
  * provisioned but holds no rows (every doc tombstoned, or no
  * inserts yet).
+ *
+ * `recoverLegacyNames` selects only byte-identical collection names in
+ * a mixed legacy log. Snapshot identity and integrity checks remain
+ * strict: a snapshot for the other spelling cannot establish this
+ * collection's base state. Recovery never reconstructs rows an earlier
+ * compaction discarded.
  */
 export const loadMaterialisedView = async (params: {
   storage: Storage;
   currentJsonKey: string;
   collection: string;
   signal?: AbortSignal;
+  recoverLegacyNames?: boolean;
 }): Promise<ReadonlyMap<string, ExportRow> | null> => {
   const { storage, currentJsonKey, collection } = params;
   const read = await readCurrentJson(
@@ -243,7 +250,11 @@ export const loadMaterialisedView = async (params: {
     params.signal !== undefined ? { signal: params.signal } : undefined,
   );
   for (const entry of [...strict, ...probe.entries]) {
-    if (!isOwnCollection(entry.collection, collection)) {
+    const own =
+      params.recoverLegacyNames === true
+        ? entry.collection === collection
+        : isOwnCollection(entry.collection, collection);
+    if (!own) {
       continue;
     }
     if (entry.doc_id === undefined) {
