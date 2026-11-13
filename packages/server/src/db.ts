@@ -380,7 +380,9 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * return them. Unlike {@link probeLogTail}, reaching `cap` is not an
    * error: the chunk comes back as `kind: "at-least"`, a prefix of the
    * entries past `hint`, so a caller with a bounded request budget can
-   * deliver it and resume after its last entry. Each slot is one GET.
+   * deliver it and resume after its last entry. A slot GET the request
+   * ledger refuses ends the chunk the same way, keeping the entries read
+   * before it. Each slot is one GET; size `cap` with `forwardProbeCap`.
    *
    * @throws BaerlyError code="Internal" — `hint` is below the floor, as
    *         for {@link probeLogTail}.
@@ -401,7 +403,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     assertNameSegment(collection, "collection");
     assertAtOrAboveLogFloor("probeLogChunk", hint, current);
     const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
-    const chunk = await probeTailChunk(this.#storage, logPrefix, hint, opts);
+    const chunk = await probeTailChunk(this.#storage, logPrefix, hint, {
+      ...opts,
+      stopOnRefusal: true,
+    });
     // As for getLogEntry: refuse a legacy non-NFC spelling's entries.
     for (const entry of chunk.entries) {
       isOwnCollection(entry.collection, collection);
