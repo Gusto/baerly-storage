@@ -336,7 +336,6 @@ interface CapturableOptions {
   ifMatch?: string;
   ifNoneMatch?: string;
   contentType?: string;
-  versionId?: string;
   startAfter?: string;
   maxKeys?: number;
   signal?: AbortSignal;
@@ -398,7 +397,6 @@ export const wrapJournaledStorage = (input: {
       ...(opts?.ifMatch !== undefined && { if_match: opts.ifMatch }),
       ...(opts?.ifNoneMatch !== undefined && { if_none_match: opts.ifNoneMatch }),
       ...(opts?.contentType !== undefined && { content_type: opts.contentType }),
-      ...(opts?.versionId !== undefined && { version_id: opts.versionId }),
       ...(opts?.startAfter !== undefined && { start_after: opts.startAfter }),
       ...(opts?.maxKeys !== undefined && { max_keys: opts.maxKeys }),
       ...(opts?.signal !== undefined && {
@@ -482,7 +480,6 @@ export const wrapJournaledStorage = (input: {
                 status: "returned",
                 classification: "found",
                 etag: result.etag,
-                ...(result.versionId !== undefined && { version_id: result.versionId }),
               };
         return result;
       } catch (error: unknown) {
@@ -530,7 +527,6 @@ export const wrapJournaledStorage = (input: {
         status: "returned",
         classification: "put_ok",
         etag: settled.value.etag,
-        ...(settled.value.versionId !== undefined && { version_id: settled.value.versionId }),
       };
       if (isolated) {
         uncertain.delete(key);

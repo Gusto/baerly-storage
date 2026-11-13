@@ -931,8 +931,8 @@ describe("Writer — filtered index", () => {
 
     override async get(
       key: string,
-      opts?: { ifNoneMatch?: string; versionId?: string; signal?: AbortSignal },
-    ): Promise<{ body: Uint8Array; etag: string; versionId?: string } | null> {
+      opts?: { signal?: AbortSignal },
+    ): Promise<{ body: Uint8Array; etag: string } | null> {
       if (
         this.armedAfterLogCreate &&
         this.failPreImageRead &&
@@ -1711,8 +1711,8 @@ describe("Writer — pre-image scan depth", () => {
 
     override async get(
       key: string,
-      opts?: { ifNoneMatch?: string; versionId?: string; signal?: AbortSignal },
-    ): Promise<{ body: Uint8Array; etag: string; versionId?: string } | null> {
+      opts?: { signal?: AbortSignal },
+    ): Promise<{ body: Uint8Array; etag: string } | null> {
       if (this.#armed && key.includes("/log/")) {
         this.postCommitLogGets++;
       }

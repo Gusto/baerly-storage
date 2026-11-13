@@ -93,12 +93,6 @@ export class ManifestCachedStorage implements Storage {
         // Refresh LRU recency.
         this.#cache.delete(key);
         this.#cache.set(key, cached);
-        // Honour `If-None-Match`: a matching ETag means the caller
-        // already has the body; return null (304 semantics per the
-        // `Storage` interface contract — s3-http returns null on 304).
-        if (opts?.ifNoneMatch !== undefined && opts.ifNoneMatch === cached.etag) {
-          return null;
-        }
         return { body: cached.body, etag: cached.etag };
       }
       if (isManifest) {

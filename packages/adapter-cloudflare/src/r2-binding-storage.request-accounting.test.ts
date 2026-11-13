@@ -249,7 +249,7 @@ type LogPutFault =
   | "subrequest-limit";
 
 /**
- * An in-memory `R2Bucket` honoring the `onlyIf` shapes the adapter
+ * An in-memory `R2Bucket` honoring the `onlyIf` PUT shapes the adapter
  * sends, counting binding `get` / `put` per key class. `logPutFault`
  * sees the 0-based ordinal of log-key `put`s once armed.
  */
@@ -268,7 +268,7 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
     return meta(key, etag);
   };
   const bucket = {
-    get: (key: string, opts?: R2GetOptions) => {
+    get: (key: string) => {
       if (isLog(key)) {
         calls.logGets++;
       } else {
@@ -280,10 +280,6 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
       const obj = objects.get(key);
       if (obj === undefined) {
         return Promise.resolve(null);
-      }
-      const onlyIf = opts?.onlyIf as R2Conditional | undefined;
-      if (onlyIf?.etagDoesNotMatch === obj.etag) {
-        return Promise.resolve(meta(key, obj.etag));
       }
       return Promise.resolve({
         ...meta(key, obj.etag),

@@ -50,15 +50,6 @@ describe("S3HttpStorage.get", () => {
     expect(req.url).toBe("https://example.invalid/b/k");
   });
 
-  test("304 with ifNoneMatch → null", async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(304));
-    const s = mkStorage(fetchFn as unknown as typeof fetch);
-    const got = await s.get("k", { ifNoneMatch: '"abc"' });
-    expect(got).toBeNull();
-    const req = fetchFn.mock.calls[0]![0] as Request;
-    expect(req.headers.get("If-None-Match")).toBe('"abc"');
-  });
-
   test("404 → null", async () => {
     const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(404));
     const s = mkStorage(fetchFn as unknown as typeof fetch);

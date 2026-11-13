@@ -19,11 +19,8 @@
 export interface Storage {
   /**
    * Fetch a single object. Returns `null` on not-found (404
-   * semantics). With `ifNoneMatch`, returns `null` if the current
-   * ETag matches (304 semantics — caller's cached copy is current).
-   * With `versionId`, fetches a specific historical version (only
-   * meaningful on a versioned S3 bucket; non-versioning impls may
-   * ignore). Other failure modes throw `BaerlyError`.
+   * semantics). Every read is unconditional and returns the current
+   * version. Other failure modes throw `BaerlyError`.
    */
   get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null>;
 
@@ -71,25 +68,12 @@ export interface Storage {
 }
 
 export interface StorageGetOptions {
-  readonly ifNoneMatch?: string;
-  /**
-   * Pin to a specific historical version. Maps to S3's
-   * `?versionId=…` query parameter on versioned buckets. Impls that
-   * don't model versions may ignore.
-   */
-  readonly versionId?: string;
   readonly signal?: AbortSignal;
 }
 
 export interface StorageGetResult {
   readonly body: Uint8Array;
   readonly etag: string;
-  /**
-   * S3 `x-amz-version-id` of the returned object on versioned
-   * buckets; `undefined` for unversioned reads or impls without
-   * native versioning.
-   */
-  readonly versionId?: string;
 }
 
 export interface StoragePutResult {
@@ -101,12 +85,6 @@ export interface StoragePutResult {
    * `undefined` if no clock signal is available.
    */
   readonly serverDate?: Date;
-  /**
-   * S3 `x-amz-version-id` of the new object version on versioned
-   * buckets; `undefined` for unversioned writes or impls without
-   * native versioning.
-   */
-  readonly versionId?: string;
 }
 
 export interface StoragePutOptions {

@@ -160,13 +160,8 @@ describe("GcsHttpStorage", () => {
     expect([...res!.body]).toEqual([7, 8, 9]);
   });
 
-  // GCS has no generation-based conditional GET: x-goog-if-generation-not-match
-  // is evaluated against the MD5 ETag, never the generation carried as the
-  // opaque etag, so a version-token conditional read can never 304. get()
-  // therefore ignores ifNoneMatch entirely (emits NEITHER the x-goog- header
-  // nor S3's If-None-Match) — consistent with supportsConditionalGet:false in
-  // the conformance suite. The kernel never issues a conditional read anyway.
-  test("get ignores ifNoneMatch (GCS has no generation-based conditional read)", async () => {
+  // get() is always unconditional: it emits no conditional header.
+  test("get sends no conditional header", async () => {
     let hasGenerationHeader = true;
     let hasIfNoneMatch = true;
     const s = new GcsHttpStorage({
@@ -181,21 +176,10 @@ describe("GcsHttpStorage", () => {
         });
       }),
     });
-    const res = await s.get("k", { ifNoneMatch: "555" });
+    const res = await s.get("k");
     expect(hasGenerationHeader).toBe(false);
     expect(hasIfNoneMatch).toBe(false);
     expect(res!.etag).toBe("556");
-  });
-
-  // Defensive: get() sends no conditional header, so a conformant GCS won't
-  // return 304 — but a caching proxy/gateway could, and 304 maps to null.
-  test("get maps a 304 response to null", async () => {
-    const s = new GcsHttpStorage({
-      bucket: "b",
-      sign: passthroughSign,
-      fetch: stub(() => new Response(null, { status: 304 })),
-    });
-    await expect(s.get("k")).resolves.toBeNull();
   });
 
   test("get of missing key returns null (404)", async () => {
