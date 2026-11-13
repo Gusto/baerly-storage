@@ -73,9 +73,10 @@ import {
 } from "./doc-id.ts";
 import { type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { probeReadTail } from "./log-tail.ts";
 import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
+import { ReadBudget } from "./read-admission.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { type CommitAdmission, type CommitVerdict, Writer } from "./writer.ts";
 import { isOwnCollection } from "./collection-alias.ts";
@@ -279,7 +280,7 @@ export const makeQuery = <T extends DocumentData>(
       return res.rows;
     },
     count: async () => {
-      const res = await runRead<T>(ctx, state);
+      const res = await runRead<T>(ctx, state, { countOnly: true });
       return res.rows.length;
     },
     update: (patch) => runUpdate<T>(ctx, state, patch),
@@ -307,9 +308,16 @@ export const makeQuery = <T extends DocumentData>(
 export const runAllWithMeta = <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
+  opts?: ReadOptions,
 ): Promise<ReadResult<T>> => {
-  return runRead<T>(ctx, state);
+  return runRead<T>(ctx, state, opts);
 };
+
+/** Options for a read terminal. */
+export interface ReadOptions {
+  /** The caller returns only the row count, so the output bound does not apply. */
+  readonly countOnly?: boolean;
+}
 
 /**
  * By-id read entry surfacing the same `ReadResult<T>` shape as
@@ -1239,8 +1247,14 @@ const runDelete = async <T extends DocumentData>(
 const runRead = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
+  opts?: ReadOptions,
 ): Promise<ReadResult<T>> => {
-  const { rows, manifestPointer, fresh } = await runReadRows(ctx, state);
+  // The host's read envelope admits the read (see `read-admission.ts`).
+  const budget = new ReadBudget(ctx.collectionName);
+  const { rows, manifestPointer, fresh } = await runReadRows(ctx, state, budget);
+  if (opts?.countOnly !== true) {
+    budget.admitOutput(rows.length);
+  }
   return { rows: rows.map((row) => row.doc), manifestPointer, fresh };
 };
 
@@ -1258,6 +1272,8 @@ interface StoredRow<T extends DocumentData> {
 const runReadRows = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
+  // A write verb's pre-commit read is bounded by the request ledger only.
+  budget: ReadBudget = new ReadBudget(ctx.collectionName, {}),
 ): Promise<{
   readonly rows: StoredRow<T>[];
   readonly manifestPointer: string;
@@ -1301,6 +1317,7 @@ const runReadRows = async <T extends DocumentData>(
   // `seq < log_seq_start` have been folded into the snapshot (or
   // dropped on truncation) and MUST NOT be GET-required here — the
   // bucket may have already swept them via `runGc()`.
+  budget.admitHead(head.json);
   const hint = head.json.tail_hint;
   const logSeqStart = logSeqStartOf(head.json);
   const baseDocs: Map<string, DocumentData> =
@@ -1317,8 +1334,14 @@ const runReadRows = async <T extends DocumentData>(
   // compactor that advanced `log_seq_start` past a stale `tail_hint`
   // must NOT have its folded entries re-read by the probe.
   const probeFrom = Math.max(logSeqStart, hint);
-  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint);
-  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, probeFrom);
+  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint, {
+    onBody: budget.chargeTailBody,
+  });
+  const probe = await probeReadTail(ctx.storage, ctx.collectionPrefix, probeFrom, {
+    pool: budget.requestPool,
+    onBody: budget.chargeTailBody,
+    refusal: budget.probeRefusal,
+  });
   const tail = probe.tail;
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────

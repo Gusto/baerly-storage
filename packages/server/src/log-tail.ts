@@ -7,12 +7,43 @@
 
 import {
   type LogEntry,
+  type RequestPool,
   type Storage,
   BaerlyError,
+  currentRequestLedger,
   decodeJsonBytes,
   LOG_FORWARD_PROBE_CAP,
   logObjectKey,
 } from "@baerly/protocol";
+
+/** A forward probe's slot cap, and which bound set it. */
+export interface ForwardProbeCap {
+  /** Slots the probe may GET. */
+  readonly slots: number;
+  /**
+   * `"request"` when the active invocation's request ledger set the cap:
+   * exhausting it is a capacity refusal (`CapacityExceeded`), the whole
+   * answer refused. `"runaway"` when {@link LOG_FORWARD_PROBE_CAP} did:
+   * exhausting it is the `Internal` runaway alarm.
+   */
+  readonly bound: "request" | "runaway";
+}
+
+/**
+ * The forward-probe cap for a read in the active invocation:
+ * `min(LOG_FORWARD_PROBE_CAP, ledger remaining on pool)`. Every read path
+ * that probes past `tail_hint` (collection reads, `/v1/since`) sizes its
+ * probe here, so a probe never plans more GETs than the request can
+ * issue, and running out is a capacity refusal rather than the runaway
+ * alarm. Without a ledger (or with one that never refuses, as on Node) the
+ * runaway cap applies.
+ */
+export const forwardProbeCap = (pool: RequestPool = "internal"): ForwardProbeCap => {
+  const remaining = currentRequestLedger()?.remaining(pool) ?? Infinity;
+  return remaining < LOG_FORWARD_PROBE_CAP
+    ? { slots: Math.max(0, remaining), bound: "request" }
+    : { slots: LOG_FORWARD_PROBE_CAP, bound: "runaway" };
+};
 
 export type TailProbeChunk =
   | {
@@ -39,7 +70,13 @@ export const probeTailChunk = async (
   storage: Storage,
   logPrefix: string,
   hint: number,
-  opts?: { signal?: AbortSignal; cap?: number; tolerateMalformed?: boolean },
+  opts?: {
+    signal?: AbortSignal;
+    cap?: number;
+    tolerateMalformed?: boolean;
+    /** Called with each occupied slot's stored body length before it is decoded; may throw to stop the probe. */
+    onBody?: (bytes: number) => void;
+  },
 ): Promise<TailProbeChunk> => {
   const cap = opts?.cap ?? LOG_FORWARD_PROBE_CAP;
   const getOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
@@ -52,6 +89,7 @@ export const probeTailChunk = async (
     if (got === null) {
       return { kind: "exact", tail: seq, entries, complete };
     }
+    opts?.onBody?.(got.body.byteLength);
     try {
       entries.push(decodeJsonBytes<LogEntry>(got.body));
     } catch (error) {
@@ -112,6 +150,45 @@ export const probeTailFrom = async (
   throw new BaerlyError(
     "Internal",
     `probeTailFrom: forward probe exceeded ${opts?.cap ?? LOG_FORWARD_PROBE_CAP} from hint ${hint} on ${logPrefix}`,
+  );
+};
+
+/**
+ * {@link probeTailFrom} for a read, capped by {@link forwardProbeCap}. When
+ * the request ledger set the cap and every capped slot is occupied, the
+ * tail is past what this request can probe: throws `refusal()` (a whole
+ * `CapacityExceeded` answer) rather than the runaway alarm. `onBody` sees
+ * each stored body length before decode, as on {@link probeTailChunk}.
+ *
+ * @throws the `refusal()` error when the ledger cap is exhausted.
+ * @throws BaerlyError code="Internal" when {@link LOG_FORWARD_PROBE_CAP} is.
+ */
+export const probeReadTail = async (
+  storage: Storage,
+  logPrefix: string,
+  hint: number,
+  opts: {
+    readonly refusal: () => BaerlyError;
+    readonly pool?: RequestPool;
+    readonly onBody?: (bytes: number) => void;
+    readonly signal?: AbortSignal;
+  },
+): Promise<{ tail: number; entries: LogEntry[] }> => {
+  const cap = forwardProbeCap(opts.pool);
+  const result = await probeTailChunk(storage, logPrefix, hint, {
+    cap: cap.slots,
+    ...(opts.onBody !== undefined && { onBody: opts.onBody }),
+    ...(opts.signal !== undefined && { signal: opts.signal }),
+  });
+  if (result.kind === "exact") {
+    return { tail: result.tail, entries: result.entries };
+  }
+  if (cap.bound === "request") {
+    throw opts.refusal();
+  }
+  throw new BaerlyError(
+    "Internal",
+    `probeReadTail: forward probe exceeded ${cap.slots} from hint ${hint} on ${logPrefix}`,
   );
 };
 

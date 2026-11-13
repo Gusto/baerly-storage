@@ -31,6 +31,7 @@ export {
   runWithContext,
   getCurrentContext,
 } from "./context.ts";
+export type { ReadEnvelope } from "../read-admission.ts";
 export {
   type CategoryName,
   type FriendlyLogLevel,

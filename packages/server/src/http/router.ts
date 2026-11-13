@@ -229,6 +229,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
         order: undefined,
         limit: undefined,
       },
+      { countOnly: true },
     );
     return c.json(
       {

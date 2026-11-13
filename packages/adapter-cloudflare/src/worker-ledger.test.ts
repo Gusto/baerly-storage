@@ -33,7 +33,8 @@ import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { CallTally, totalCalls } from "../../../tests/fixtures/request-counting-storage.ts";
 import { invalidateOnWrite, withReadCache } from "./cache.ts";
-import { baerlyWorker, type BaerlyEnv, cfRequestLedger } from "./worker.ts";
+import { r2BindingStorage } from "./r2-binding-storage.ts";
+import { baerlyWorker, type BaerlyEnv, cfReadEnvelope, cfRequestLedger } from "./worker.ts";
 
 const testConfig: BaerlyAppConfig = {
   app: "t",
@@ -285,5 +286,13 @@ describe("the read cache charges the ledger and never refuses for it", () => {
       withReadCache(new Request(url), "t", async () => ok()),
     );
     expect(after.cache_status).toBe("miss");
+  });
+});
+
+describe("cfReadEnvelope", () => {
+  test("names the pool the Worker's storage charges, and leaves the data bounds unset", () => {
+    const binding = {} as unknown as Parameters<typeof r2BindingStorage>[0];
+    expect(cfReadEnvelope(r2BindingStorage(binding))).toEqual({ requestPool: "internal" });
+    expect(cfReadEnvelope(new MemoryStorage())).toEqual({ requestPool: "external" });
   });
 });
