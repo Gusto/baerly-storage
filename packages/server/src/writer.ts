@@ -59,6 +59,7 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   CODE_RESOLUTIONS,
+  COMMIT_RESOLUTION_RESERVE,
   type CurrentJson,
   type CurrentJsonRead,
   type DocumentData,
@@ -81,6 +82,7 @@ import {
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   SESSION_ID_LENGTH,
+  STORAGE_RETRY_MAX_ATTEMPTS,
   countKey,
   readCurrentJson,
   timestamp,
@@ -482,6 +484,12 @@ export class Writer {
    *   `admission` is set and part of its window was folded and retired (or
    *   is longer than `LOG_FORWARD_PROBE_CAP`) before the writer could read
    *   it. Nothing was committed; re-read and retry.
+   * @throws BaerlyError code="CapacityExceeded" when the request ledger
+   *   cannot afford this commit's index markers, its create and
+   *   `COMMIT_RESOLUTION_RESERVE`, checked before Step 4 and again before
+   *   each create after a lost race; or when the ledger refused the create
+   *   itself before any attempt was sent (`cause.notApplied`), or any
+   *   storage call before it. Nothing was committed.
    * @throws whatever `admission.check` throws (the write verbs throw
    *   `CapacityExceeded` or `MaintenancePending`). Nothing was committed.
    *
@@ -745,15 +753,16 @@ export class Writer {
     // previously PUT keys: a peer may have used and deleted them while
     // winning an intervening slot.
     let newKeysClassA = 0;
-    const putNewKeys = async (image: DocumentData | undefined): Promise<void> => {
-      // Additive index keys for the NEW value — emitted before the
-      // commit on I/U (a D has no new value). `op:"D"` and a missing
-      // body project to no keys. Empty `#indexes` short-circuits.
-      if (this.#indexes.length === 0 || input.op === "D") {
-        return;
-      }
+    // Additive index keys for the NEW value — emitted before the commit on
+    // I/U (a D has no new value). `op:"D"` and a missing body project to no
+    // keys. Empty `#indexes` short-circuits.
+    const newKeysFor = (image: DocumentData | undefined): readonly string[] =>
+      this.#indexes.length === 0 || input.op === "D"
+        ? []
+        : allIndexKeysFor(logPrefix, this.#indexes, image, input.docId);
+    const putNewKeys = async (keys: readonly string[]): Promise<void> => {
       const parallelPuts: Array<Promise<unknown>> = [];
-      for (const k of allIndexKeysFor(logPrefix, this.#indexes, image, input.docId)) {
+      for (const k of keys) {
         assertKeyWithinLimit(k);
         newKeysClassA++;
         parallelPuts.push(
@@ -770,7 +779,12 @@ export class Writer {
       }
       await Promise.all(parallelPuts);
     };
-    await putNewKeys(body);
+    // The commit-resolution reserve (`COMMIT_RESOLUTION_RESERVE`): refuse
+    // here, with nothing written, unless the request ledger can still
+    // afford every marker PUT, the create, and the calls that resolve it.
+    const firstKeys = newKeysFor(body);
+    this.#assertCommitBudget(firstKeys.length, errorPrefix);
+    await putNewKeys(firstKeys);
 
     // ── Step 5. Create the commit: PUT log/<seq> via If-None-Match. ─
     // The numbered log create IS the commit (single-write commit). No
@@ -881,6 +895,10 @@ export class Writer {
       }
       if (commitWindow === undefined) {
         seq = await findLogTail(this.#storage, logPrefix, seq + 1);
+        // The probe spent requests: re-check the reserve before the next
+        // create. A refusal is clean, as the occupant proved nothing of
+        // this commit landed.
+        this.#assertCommitBudget(0, errorPrefix);
       } else {
         // Windowed commit: the occupant and every entry the forward probe
         // passes join the window, and the window decisions re-run before
@@ -905,11 +923,13 @@ export class Writer {
         const bodyBefore = body;
         await decide(commitWindow, probe.tail);
         seq = probe.tail;
-        if (body !== bodyBefore) {
-          // A rebased post-image: its markers go down before its create,
-          // as Step 4's did for the body it replaces.
-          await putNewKeys(body);
-        }
+        // A rebased post-image: its markers go down before its create, as
+        // Step 4's did for the body it replaces. The probe spent requests,
+        // so the reserve is re-checked first, markers included; a refusal
+        // is clean for the same reason as a window refusal above.
+        const rebasedKeys = body === bodyBefore ? [] : newKeysFor(body);
+        this.#assertCommitBudget(rebasedKeys.length, errorPrefix);
+        await putNewKeys(rebasedKeys);
       }
       entry = mintEntry(seq);
     }
@@ -1155,11 +1175,12 @@ export class Writer {
         );
         staleKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
       }
-    } catch {
+    } catch (error) {
       ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
         collection: input.collection,
         step: "pre-image-read",
       });
+      countPostCommitRefusal(error, input.collection, "pre-image-read");
       return 0;
     }
 
@@ -1167,11 +1188,12 @@ export class Writer {
     const indexDeletes: Array<Promise<unknown>> = [];
     for (const k of staleKeys) {
       indexDeletes.push(
-        this.#storage.delete(k).catch(() => {
+        this.#storage.delete(k).catch((error: unknown) => {
           ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
             collection: input.collection,
             step: "delete",
           });
+          countPostCommitRefusal(error, input.collection, "stale-delete");
         }),
       );
     }
@@ -1390,6 +1412,7 @@ export class Writer {
       // — throwing `AmbiguousCommit` on an unreadable manifest would reject
       // durable commits far more often than the fault this check catches.
       ctxMetrics().counter("db.write.delete_floor_check_skipped_total", 1, { collection });
+      countPostCommitRefusal(error, collection, "delete-floor-check");
       return;
     }
     if (read === null) {
@@ -1413,6 +1436,34 @@ export class Writer {
       "AmbiguousCommit",
       `${errorPrefix}: the committing create at seq ${seq} on ${this.#currentJsonKey} landed below the certified delete floor ${deleteFloor}; that log object is beneath every reader's floor, and this mutation may or may not have been applied by an earlier attempt — retry is at-least-once`,
       { resolution: CODE_RESOLUTIONS.AmbiguousCommit, _id: docId },
+    );
+  }
+
+  /**
+   * Refuse the commit before its next write unless the active request
+   * ledger can still afford `markers` additive index-marker PUTs and the
+   * committing create, each at full retries, plus
+   * {@link COMMIT_RESOLUTION_RESERVE} for the readback and delete-floor
+   * check that resolve the create. Called before Step 4 and again before
+   * each create that follows a lost race. No create of this commit has
+   * landed or can land when it throws: before Step 4 nothing was sent, and
+   * after a lost race a foreign occupant holds the slot this commit's only
+   * send targeted (markers already PUT stay as benign orphans). A host without request limits (Node, or no ledger)
+   * never refuses.
+   *
+   * @throws BaerlyError code="CapacityExceeded", cause `{ refused: true }`.
+   */
+  #assertCommitBudget(markers: number, errorPrefix: string): void {
+    const remaining = getCurrentContext()?.ledger?.storageRemaining() ?? Infinity;
+    const needed = STORAGE_RETRY_MAX_ATTEMPTS * (markers + 1) + COMMIT_RESOLUTION_RESERVE;
+    if (remaining >= needed) {
+      return;
+    }
+    throw new BaerlyError(
+      "CapacityExceeded",
+      `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit on ${this.#currentJsonKey} may need (its ${String(markers)} index markers and the committing create, with retries, plus resolving the create), so nothing was committed; the work this request needs does not fit in one request on this host`,
+      // The HTTP envelope fills in the code's canonical resolution.
+      { cause: { refused: true, needed, remaining } },
     );
   }
 
@@ -1569,6 +1620,26 @@ const isCreateNotApplied = (err: unknown): boolean =>
   err instanceof BaerlyError &&
   (err.code === "NetworkError" || err.code === "CapacityExceeded") &&
   ((err as BaerlyError).cause as { notApplied?: boolean } | undefined)?.notApplied === true;
+
+/**
+ * Count a post-commit step the request ledger refused on
+ * `db.write.post_commit_refused_total`. Those steps run after a known
+ * commit and swallow their failures, so the refusal leaves the commit
+ * acknowledged; the counter shows which step went without.
+ */
+const countPostCommitRefusal = (
+  err: unknown,
+  collection: string,
+  phase: "delete-floor-check" | "pre-image-read" | "stale-delete",
+): void => {
+  if (
+    err instanceof BaerlyError &&
+    err.code === "CapacityExceeded" &&
+    (err.cause as { refused?: boolean } | undefined)?.refused === true
+  ) {
+    ctxMetrics().counter("db.write.post_commit_refused_total", 1, { collection, phase });
+  }
+};
 
 /**
  * Reject an `insertGuard` on anything but an `I`, or with an

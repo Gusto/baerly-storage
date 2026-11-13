@@ -35,6 +35,13 @@
  *     the delete-floor check was skipped for that commit rather than
  *     evaluated. A sustained rate means the check is not covering the writes
  *     it exists to protect, even though no individual commit is rejected.
+ *   - `db.write.post_commit_refused_total` — counter, labelled by
+ *     `collection` and `phase` (`delete-floor-check` / `pre-image-read` /
+ *     `stale-delete`). The request ledger refused a storage call of a step
+ *     that runs after a known commit; the step was skipped and the commit
+ *     stands. The commit-resolution reserve covers the floor check, so a
+ *     `delete-floor-check` rate means concurrent work in the same
+ *     invocation spent it.
  *   - `db.write.unresolved_create_total` — counter, labelled by
  *     `collection`. A rejected committing create could not be resolved by
  *     readback, so the commit failed with `AmbiguousCommit`.

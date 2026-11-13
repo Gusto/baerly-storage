@@ -48,6 +48,9 @@ export class RequestLedger {
   #internal = 0;
   #external = 0;
   #cache = 0;
+  // The strictest pool an `acquire` has charged: storage calls run through
+  // one adapter per invocation, so this is the pool they draw on.
+  #storagePool: RequestPool | undefined;
 
   constructor(limits: RequestLedgerLimits = UNLIMITED_REQUESTS) {
     this.limits = limits;
@@ -67,12 +70,28 @@ export class RequestLedger {
   }
 
   /**
+   * Requests still allowed on the pool this invocation's storage calls
+   * draw on: `external` once any storage call charged it, else `internal`
+   * once one charged that, else `Infinity` (no storage call has been
+   * charged, so the storage in use does not charge this ledger). A caller
+   * that must keep room for its next calls, such as the writer's
+   * commit-resolution reserve, checks this after its first storage call.
+   * Cache API calls do not count as storage calls here.
+   */
+  storageRemaining(): number {
+    return this.#storagePool === undefined ? Infinity : this.remaining(this.#storagePool);
+  }
+
+  /**
    * Charge one request to `pool`, or refuse it before it is sent.
    *
    * @throws BaerlyError code="CapacityExceeded", cause `{ refused: true }`,
    *   when `pool` has no room. Nothing is charged.
    */
   acquire(pool: RequestPool): void {
+    if (this.#storagePool !== "external") {
+      this.#storagePool = pool;
+    }
     if (this.remaining(pool) < 1) {
       const limit = pool === "internal" ? this.limits.internal : this.limits.external;
       throw new BaerlyError(

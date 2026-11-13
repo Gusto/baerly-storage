@@ -983,7 +983,11 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   collection past the serving host's fold ceiling (see `./capacity.ts`);
  *   decided before any row commits, and re-checked at each row's commit
  *   when a concurrent write landed since (see {@link admitWrites}), in
- *   which case rows before it are already applied.
+ *   which case rows before it are already applied. Also thrown when the
+ *   request's storage budget runs out (the request ledger, including the
+ *   writer's commit-resolution reserve): rows before the refused one are
+ *   applied, it and the rows after it are not, and nothing is ambiguous.
+ *   The partial-progress `modified` count is NOT returned.
  * @throws BaerlyError code="InvalidResponse" — a matched stored row's
  *   `_id` is not the string it is stored under.
  */
@@ -1172,6 +1176,11 @@ export const runReplaceById = async <T extends DocumentData>(
  *   the batch are already tombstoned and that row's own fate is unknown; the
  *   partial-progress `deleted` count is NOT returned. Re-read rows by `_id`
  *   before deciding whether to resume. See `Writer.commit`.
+ * @throws BaerlyError code="CapacityExceeded" — as in `runUpdate`: the
+ *   batch would grow past the fold ceiling (a delete can when a pending
+ *   fold cannot make progress), or the request's storage budget ran out
+ *   part-way. Rows before the refused one are tombstoned, it and the rows
+ *   after it are not; the partial-progress `deleted` count is NOT returned.
  * @throws BaerlyError code="InvalidResponse" — a matched stored row's
  *   `_id` is not the string it is stored under.
  */
