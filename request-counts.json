@@ -294,9 +294,9 @@
     "free-fetch:indexed-query idx=3 snap=100": "get=11 put=0 delete=0 listPage=0 total=11",
     "free-fetch:indexed-miss idx=3 snap=100": "get=11 put=0 delete=0 listPage=0 total=11",
     "free-fetch:in-query[16] idx=3 snap=100": "get=11 put=0 delete=0 listPage=0 total=11",
-    "free-fetch:since-idle": "get=44 put=0 delete=0 listPage=0 total=44",
+    "free-fetch:since-idle-no-timeout": "get=44 put=0 delete=0 listPage=0 total=44",
     "free-fetch:since-busy tail=200": "get=45 put=0 delete=0 listPage=0 total=45",
-    "free-r2:since-idle": "get=900 put=0 delete=0 listPage=0 total=900",
+    "free-r2:since-idle-no-timeout": "get=900 put=0 delete=0 listPage=0 total=900",
     "free-r2:since-busy tail=200": "get=202 put=0 delete=0 listPage=0 total=202"
   }
 }

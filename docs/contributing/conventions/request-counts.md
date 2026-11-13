@@ -66,9 +66,13 @@ measured under workerd by
 
 The `free-fetch:since-*` and `free-r2:since-*` cells are `GET /v1/since`
 long-polls under the ledger's Free limits, `external` (45) over `fetch` and
-`internal` (900) on the R2 binding. `since-idle` is a poll that finds
-nothing, with a deadline no budget outlasts, so the cell is every call the
-route spends holding it; `since-busy` is the first request over a
+`internal` (900) on the R2 binding. `since-idle-no-timeout` is a poll that
+finds nothing, run with no effective deadline and a zero poll interval, so
+the ledger ends it: the most an idle poll can spend on that host, not its
+cost at the route defaults. At the defaults (25 s at 1 s) an idle poll costs
+44 calls over `fetch`, where the ledger still ends it, and 52 on the R2
+binding, where the timeout does; `packages/server/src/http/since.test.ts`
+pins both under fake timers. `since-busy` is the first request over a
 200-entry unfolded tail. `tests/unit/request-counts.test.ts` asserts that
 each stays within its host's limit. The fixture is
 `tests/fixtures/request-count-since.ts`.
