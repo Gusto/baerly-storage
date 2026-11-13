@@ -23,6 +23,8 @@ import {
   discoverCollections,
   estimateWritesPerMin,
   runUsage,
+  runUsageScan,
+  type UsageFinding,
 } from "./usage.ts";
 import { captureStream } from "../_internal/testing.ts";
 
@@ -217,6 +219,32 @@ describe("discoverCollections", () => {
     await seedLogEntries(storage, "x", "bob", "comments", { count: 2, windowMinutes: 1 });
     await expect(discoverCollections(storage, "x", "alice")).resolves.toEqual(["tickets"]);
     await expect(discoverCollections(storage, "x", "bob")).resolves.toEqual(["comments"]);
+  });
+});
+
+describe("runUsageScan — legacy non-NFC name discovery", () => {
+  test("flags non-NFC app/tenant names and every listed non-NFC or twin collection", async () => {
+    const storage = new MemoryStorage();
+    const tenant = "\u212b"; // ANGSTROM SIGN; NFC is U+00C5
+    for (const c of ["cafe\u0301", "caf\u00e9", "tickets"]) {
+      await seedLogEntries(storage, "x", tenant, c, { count: 2, windowMinutes: 1 });
+    }
+    const findings: UsageFinding[] = [];
+    await runUsageScan({ app: "x", tenant }, storage, findings);
+    const names = findings.filter((f) => f.check === "names");
+    expect(names.every((f) => f.severity === "warning")).toBe(true);
+    // The tenant, the NFD collection, and the canonically-equivalent pair.
+    expect(names).toHaveLength(3);
+    // Usage is still estimated for every listed collection.
+    expect(findings.filter((f) => f.check.startsWith("usage-"))).toHaveLength(3);
+  });
+
+  test("reports no name finding for NFC names", async () => {
+    const storage = new MemoryStorage();
+    await seedLogEntries(storage, "x", "y", "caf\u00e9", { count: 2, windowMinutes: 1 });
+    const findings: UsageFinding[] = [];
+    await runUsageScan({ app: "x", tenant: "y" }, storage, findings);
+    expect(findings.filter((f) => f.check === "names")).toEqual([]);
   });
 });
 
