@@ -109,8 +109,8 @@ export const makeCollection = <T extends DocumentData>(
      * @throws BaerlyError code="SchemaError" — from the per-collection
      *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
      * @throws BaerlyError code="InvalidConfig" — the supplied `_id` is not a
-     *   string (`null` included), or breaks the key-segment rule or is not
-     *   NFC. Nothing was written.
+     *   string (`null` included), or breaks the key-segment rule, holds an
+     *   unpaired UTF-16 surrogate, or is not NFC. Nothing was written.
      */
     insert: (doc) => runInsert<T>(ctx, doc),
     /**
@@ -133,7 +133,8 @@ export const makeCollection = <T extends DocumentData>(
      *   collection's bound validator, or `merge(prev, patch)` produced
      *   `undefined`.
      * @throws BaerlyError code="InvalidConfig" — the patch's top-level `_id`
-     *   is present and is not `id` (`null` included), or `id` is not NFC.
+     *   is present and is not `id` (`null` included), or `id` holds an
+     *   unpaired UTF-16 surrogate or is not NFC.
      * @throws BaerlyError code="InvalidResponse" — the stored row's `_id` is
      *   not the string `id`; repair it with `replace(id, doc)`.
      */
@@ -156,7 +157,8 @@ export const makeCollection = <T extends DocumentData>(
      * @throws BaerlyError code="SchemaError" — post-image rejected by the
      *   collection's bound validator.
      * @throws BaerlyError code="InvalidConfig" — `id` breaks the key-segment
-     *   rule or is not NFC. Nothing was written.
+     *   rule, holds an unpaired UTF-16 surrogate, or is not NFC. Nothing
+     *   was written.
      */
     replace: (id, doc) => runReplaceById<T>(ctx, id, doc),
     /**

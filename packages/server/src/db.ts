@@ -123,14 +123,16 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * `BaerlyError{code:"InvalidConfig"}` if either `app` or `tenant`
    * is empty, contains `/`, is `"."` or `".."`, contains control
    * characters, starts with the reserved `"_"` prefix, exceeds
-   * 256 bytes, or is not in Unicode Normalization Form C
+   * 256 bytes, contains an unpaired UTF-16 surrogate
+   * (`!name.isWellFormed()`), or is not in Unicode Normalization Form C
    * (`name !== name.normalize("NFC")`). Names are never normalized for
    * you: pass `name.normalize("NFC")`.
    *
    * @throws BaerlyError code="InvalidConfig" when `app`, `tenant`, or a
    *   `config.collections` key is empty, contains `/`, is `"."` or
    *   `".."`, contains control characters, starts with the reserved
-   *   `"_"` prefix, exceeds 256 bytes, or is not NFC.
+   *   `"_"` prefix, exceeds 256 bytes, contains an unpaired surrogate,
+   *   or is not NFC.
    *
    * @example
    * ```ts

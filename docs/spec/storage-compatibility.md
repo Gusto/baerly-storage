@@ -76,7 +76,10 @@ compatibility variants (`A` / `a`, `ﬁ` / `fi`, `Ａ` / `A`) distinct. The
 kernel copes by requiring every written `_id` and every app, tenant, and
 collection name to be NFC (`assertNfcSegment` in
 `packages/server/src/path-segment.ts`), so two of them are canonically
-equivalent only if they are the same string. R2's conformance rows (S3 API
+equivalent only if they are the same string. The same writes also
+require well-formed UTF-16 (`assertWellFormedSegment`): a string with an
+unpaired surrogate has no UTF-8 encoding, so no S3, GCS, or local-fs key
+and no percent-encoded URL can carry it. R2's conformance rows (S3 API
 and binding) declare normalization distinctness unsupported
 (`normalizationDistinctKeys: false`) rather than skip it: the case asserts
 that each spelling reads back its own body or the last-written one.
@@ -89,8 +92,18 @@ and the writing verbs (`admin restore`,
 migration dumps the collection and restores it under an NFC name that is
 not canonically equivalent to the legacy one; on R2 the normalized
 original name addresses the legacy objects. `admin fsck` flags non-NFC
-names, and `admin dump` flags non-NFC `_id`s and canonically-equivalent
-twin `_id`s, before the migration.
+names, and `admin dump` flags non-NFC `_id`s, `_id`s and names with an
+unpaired surrogate, and canonically-equivalent twin `_id`s, before the
+migration. A stored `_id` with an unpaired surrogate stays readable and
+deletable but is not a write target.
+
+To migrate such a row in place, read it, remove `_id` from the copy,
+insert it so the SDK generates a fresh UUID, then delete the original.
+R2 bindings convert an unpaired surrogate in a key to U+FFFD, so using
+`id.toWellFormed()` as the destination shares the original's index
+markers; deleting the original would remove the copy's markers. Use fresh
+namespace names too: repairing a legacy app, tenant, or collection name
+with `toWellFormed()` can address the original objects on R2.
 
 The collection alias guard checks names in log and snapshot bodies;
 these records do not identify the app or tenant. Normalized aliases of

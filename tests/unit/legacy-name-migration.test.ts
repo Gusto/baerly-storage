@@ -15,6 +15,7 @@ import { describe, expect, test } from "vitest";
 import {
   createCurrentJson,
   getOrCreateMemoryStorageForBucket,
+  MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
@@ -24,6 +25,8 @@ import { runFsck } from "../../packages/cli/src/admin/fsck.ts";
 import { runRebuildIndex } from "../../packages/cli/src/admin/rebuild-index.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { runInspect } from "../../packages/cli/src/inspect.ts";
+import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
+import { rebuildIndex } from "../../packages/server/src/rebuild-index.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
 const NFC = "café";
@@ -86,6 +89,55 @@ const ROWS = [
   { _id: "a", kind: "x" },
   { _id: "b", kind: "y" },
 ];
+
+describe("migration of an ill-formed legacy _id", () => {
+  test.each(["bad-\ud800", "bad-\udc00"])(
+    "copying %j with a generated id preserves its index after deleting the original",
+    async (legacyId) => {
+      const base = new MemoryStorage({ ephemeral: true });
+      // R2 bindings convert lone surrogates in keys to U+FFFD. JSON log
+      // bodies retain the original id, so the row and its marker differ.
+      const storage: Storage = {
+        get: (key, opts) => base.get(key.toWellFormed(), opts),
+        put: (key, body, opts) => base.put(key.toWellFormed(), body, opts),
+        delete: (key, opts) => base.delete(key.toWellFormed(), opts),
+        list: (key, opts) => base.list(key.toWellFormed(), opts),
+      };
+      const names = { app: "app", tenant: "tenant", collection: "rows" };
+      const prefix = "app/app/tenant/tenant/manifests/rows";
+      const indexes = [{ name: "by_kind", on: "kind" }];
+      const original = { _id: legacyId, kind: "x" };
+      await seedCollection(storage, names, [original]);
+      const [legacyMarker] = allIndexKeysFor(prefix, indexes, original, legacyId);
+      await storage.put(legacyMarker!, new Uint8Array());
+      const [repairedMarker] = allIndexKeysFor(prefix, indexes, original, legacyId.toWellFormed());
+      await expect(storage.get(repairedMarker!)).resolves.not.toBeNull();
+
+      const rows = Db.create({
+        storage,
+        app: names.app,
+        tenant: names.tenant,
+        config: { collections: { rows: { indexes } } },
+      }).collection("rows");
+      const stored = await rows.get(legacyId);
+      expect(stored).toEqual(original);
+      const { _id: _legacyId, ...copy } = stored!;
+      const { _id: migratedId } = await rows.insert(copy);
+      expect(migratedId).not.toBe(legacyId.toWellFormed());
+      await expect(rows.delete(legacyId)).resolves.toEqual({ deleted: 1 });
+      await expect(rows.get(legacyId)).resolves.toBeUndefined();
+      await expect(rows.get(migratedId)).resolves.toEqual({ _id: migratedId, kind: "x" });
+      const markers: string[] = [];
+      for await (const entry of storage.list(`${prefix}/index/by_kind/`)) {
+        markers.push(entry.key);
+      }
+      expect(markers).toEqual(allIndexKeysFor(prefix, indexes, copy, migratedId));
+      await expect(
+        rebuildIndex(storage, `${prefix}/current.json`, indexes[0]!, { dryRun: true }),
+      ).resolves.toMatchObject({ added: 0, removed: 0, kept: 1 });
+    },
+  );
+});
 
 describe("a collection stored under a legacy non-NFC name", () => {
   test("the SDK refuses the name; the read-only CLI verbs still read it", async () => {
@@ -217,13 +269,14 @@ describe("a collection stored under a legacy non-NFC name", () => {
 });
 
 describe("admin dump flags legacy row ids", () => {
-  test("reports non-NFC ids and canonically-equivalent twins, and still exports every row", async () => {
+  test("reports non-NFC ids, ill-formed ids, and canonically-equivalent twins, and still exports every row", async () => {
     const { uri, storage } = freshBucket();
     const rows = [
       { _id: NFC, kind: "x" },
       { _id: NFD, kind: "y" },
       { _id: "ñ", kind: "z" },
       { _id: "plain", kind: "w" },
+      { _id: "lone-\ud800", kind: "v" },
     ];
     await seedCollection(storage, { app: "app", tenant: "tenant", collection: "rows" }, rows);
     const flags = [`--bucket=${uri}`, "--app=app", "--tenant=tenant", "--collection=rows"];
@@ -233,13 +286,23 @@ describe("admin dump flags legacy row ids", () => {
       runDump([...flags, "--json"], { streams: { stdout: out.stream } }),
     );
     expect(json.code).toBe(0);
-    expect(out.text().trim().split("\n")).toHaveLength(4);
+    expect(out.text().trim().split("\n")).toHaveLength(5);
     const envelope = JSON.parse(json.stdout.trim()) as {
-      result: { legacy: { non_nfc_names: string[]; non_nfc_ids: string[]; twin_ids: string[][] } };
+      result: {
+        legacy: {
+          non_nfc_names: string[];
+          ill_formed_names: string[];
+          non_nfc_ids: string[];
+          ill_formed_ids: string[];
+          twin_ids: string[][];
+        };
+      };
     };
     expect(envelope.result.legacy).toEqual({
       non_nfc_names: [],
+      ill_formed_names: [],
       non_nfc_ids: [NFD, "ñ"],
+      ill_formed_ids: ["lone-\ud800"],
       twin_ids: [[NFD, NFC]],
     });
 
@@ -247,6 +310,7 @@ describe("admin dump flags legacy row ids", () => {
     const text = await captured(() => runDump(flags, { streams: { stdout: sink().stream } }));
     expect(text.code).toBe(0);
     expect(text.stderr).toContain("twin");
+    expect(text.stderr).toContain("unpaired UTF-16 surrogate");
   });
 
   test("a clean collection reports nothing", async () => {
@@ -258,7 +322,13 @@ describe("admin dump flags legacy row ids", () => {
       }),
     );
     const envelope = JSON.parse(res.stdout.trim()) as { result: { legacy: unknown } };
-    expect(envelope.result.legacy).toEqual({ non_nfc_names: [], non_nfc_ids: [], twin_ids: [] });
+    expect(envelope.result.legacy).toEqual({
+      non_nfc_names: [],
+      ill_formed_names: [],
+      non_nfc_ids: [],
+      ill_formed_ids: [],
+      twin_ids: [],
+    });
     expect(res.stderr).toBe("");
   });
 });

@@ -63,6 +63,21 @@ describe("Db.create", () => {
     }
   });
 
+  test("rejects an app or tenant with an unpaired surrogate as InvalidConfig", () => {
+    const storage = new MemoryStorage();
+    for (const [app, tenant] of [
+      ["a\ud800", "t"],
+      ["a", "\udc00t"],
+    ]) {
+      expect(() => Db.create({ storage, app: app!, tenant: tenant! })).toThrow(
+        expect.objectContaining({
+          code: "InvalidConfig",
+          message: expect.stringContaining("surrogate"),
+        }),
+      );
+    }
+  });
+
   test("collection names cannot start with the reserved _ prefix", () => {
     const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
     expect(() => db.collection("_v2")).toThrow(/reserved for system use/);
@@ -74,7 +89,7 @@ describe("Db.create", () => {
     expect(() => db.collection("notes")).not.toThrow();
   });
 
-  test.each(["..", ".", "a/b", "with\u0000null", "x".repeat(257)])(
+  test.each(["..", ".", "a/b", "with\u0000null", "x".repeat(257), "c\ud800", "\udc00c"])(
     "db.collection(%j) is rejected InvalidConfig",
     (bad) => {
       const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });

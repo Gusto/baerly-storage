@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { BaerlyError } from "@baerly/protocol";
-import { assertPathSegment, MAX_SEGMENT_BYTES } from "./path-segment.ts";
+import { assertNameSegment, assertPathSegment, MAX_SEGMENT_BYTES } from "./path-segment.ts";
 
 describe("assertPathSegment", () => {
   test.each([
@@ -40,5 +40,26 @@ describe("assertPathSegment", () => {
     } catch (error) {
       expect((error as BaerlyError).message).toContain("tenant");
     }
+  });
+});
+
+describe("unpaired UTF-16 surrogates", () => {
+  const ILL_FORMED = ["x\ud800", "\udc00x", "\ude00\ud83d"]; // high, low, reversed pair
+
+  test.each(ILL_FORMED)("assertNameSegment rejects %j as InvalidConfig", (bad) => {
+    expect(() => assertNameSegment(bad, "collection", "test")).toThrow(
+      expect.objectContaining({
+        code: "InvalidConfig",
+        message: expect.stringContaining("surrogate"),
+      }),
+    );
+  });
+
+  test.each(ILL_FORMED)("assertPathSegment, the read-only rule, accepts %j", (bad) => {
+    expect(() => assertPathSegment(bad, "collection", "test")).not.toThrow();
+  });
+
+  test("a surrogate pair is well-formed", () => {
+    expect(() => assertNameSegment("\u{1f600}", "collection", "test")).not.toThrow();
   });
 });

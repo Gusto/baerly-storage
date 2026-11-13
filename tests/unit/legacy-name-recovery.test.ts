@@ -188,4 +188,79 @@ describe("explicit recovery of mixed legacy collection names", () => {
       err.restore();
     }
   });
+
+  test.each([
+    // A lone surrogate in a row id under one spelling of a mixed log.
+    { collection: NFD, ids: [NFD, NFC], names: ["collection"], illFormedNames: [] },
+    // A lone surrogate in the collection name itself; R2 folds nothing here.
+    { collection: "lone\ud800", ids: ["lone\ud800"], names: [], illFormedNames: ["collection"] },
+  ])(
+    "reports unpaired surrogates under exact-spelling recovery of $collection",
+    async ({ collection, ids, names, illFormedNames }) => {
+      const base = new MemoryStorage({ ephemeral: true });
+      const storage: Storage = {
+        get: (key, opts) => base.get(key.normalize("NFC"), opts),
+        put: (key, body, opts) => base.put(key.normalize("NFC"), body, opts),
+        delete: (key, opts) => base.delete(key.normalize("NFC"), opts),
+        list: (key, opts) => base.list(key.normalize("NFC"), opts),
+      };
+      await createCurrentJson(
+        storage,
+        `${prefix(collection)}/current.json`,
+        logStateCurrentJson({ snapshot: null, log_seq_start: 0, tail_hint: ids.length }),
+      );
+      // Each spelling in `ids` writes its own ill-formed row; only the
+      // selected spelling's row may be exported and reported.
+      for (const [i, spelling] of ids.entries()) {
+        const docId = `bad-${i}-\udc00`;
+        await seedLogEntry(storage, prefix(spelling), i, {
+          collection: spelling,
+          doc_id: docId,
+          after: { _id: docId, value: spelling },
+        });
+      }
+      vi.spyOn(bucketUri, "parseBucketUri").mockResolvedValue({ storage, keyPrefix: "" });
+      let body = "";
+      const stdout = new Writable({
+        write(chunk, _enc, done) {
+          body += chunk.toString();
+          done();
+        },
+      });
+      const out = captureStream(process.stdout);
+      const err = captureStream(process.stderr);
+      try {
+        const flags = [
+          "--bucket=memory://recovery",
+          "--app=app",
+          "--tenant=tenant",
+          `--collection=${collection}`,
+          "--recover-legacy-names",
+          "--json",
+        ];
+        await expect(runDump(flags, { streams: { stdout } })).resolves.toBe(0);
+        expect(body.trim().split("\n")).toHaveLength(1);
+        expect(JSON.parse(out.captured.join("")).result.legacy).toEqual({
+          non_nfc_names: names,
+          ill_formed_names: illFormedNames,
+          non_nfc_ids: [],
+          ill_formed_ids: ["bad-0-\udc00"],
+          twin_ids: [],
+        });
+        // Text mode warns on stderr for exactly the reported roles.
+        await expect(runDump(flags.slice(0, -1), { streams: { stdout } })).resolves.toBe(0);
+        const warned = err.captured.join("");
+        expect(warned).toContain("_id(s) with an unpaired UTF-16 surrogate");
+        if (illFormedNames.length > 0) {
+          expect(warned).toContain("collection name with an unpaired UTF-16 surrogate");
+          expect(warned).toContain("the CLI cannot pass one");
+        } else {
+          expect(warned).not.toContain("name with an unpaired UTF-16 surrogate");
+        }
+      } finally {
+        out.restore();
+        err.restore();
+      }
+    },
+  );
 });

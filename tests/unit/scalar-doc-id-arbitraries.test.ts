@@ -1,6 +1,6 @@
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import { assertDocId } from "../../packages/server/src/doc-id.ts";
+import { assertDocId, assertStoredDocId } from "../../packages/server/src/doc-id.ts";
 import { assertSnapshotDocId, compareDocIds } from "../../packages/server/src/snapshot-doc-id.ts";
 import {
   DOC_ID_MAX_UTF8_BYTES,
@@ -108,6 +108,14 @@ describe("invalidDocIdArb", () => {
       expect(() => assertSnapshotDocId(value.id)).toThrowError(
         expect.objectContaining({ code: "InvalidConfig" }),
       );
+      // The write guard refuses every out-of-domain id, unpaired
+      // surrogates included; the stored-id guard admits only those.
+      expect(() => assertDocId(value.id)).toThrowError(
+        expect.objectContaining({ code: "InvalidConfig" }),
+      );
+      if (expectedRule(value.rule) === "surrogate") {
+        expect(() => assertStoredDocId(value.id)).not.toThrow();
+      }
     },
   );
 

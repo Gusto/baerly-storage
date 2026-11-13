@@ -117,7 +117,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * a number, a boolean, an object) throws rather than being replaced
    * by a generated id. A non-empty one must be of at most 256 UTF-8
    * bytes with no `/`, no control characters, no leading `_`, not `.` or
-   * `..`, and in Unicode Normalization Form C
+   * `..`, with no unpaired UTF-16 surrogate (`id.isWellFormed()`), and
+   * in Unicode Normalization Form C
    * (`id === id.normalize("NFC")`). Ids that differ only by case are
    * distinct.
    *
@@ -199,8 +200,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         top-level `_id` is present and is not the row's `_id`
    *         (`null` included). A patch cannot re-key or strip a row;
    *         omit `_id`, or pass the row's own `_id`. Also thrown when
-   *         the row's `_id` is not NFC (stored by an earlier release):
-   *         such a row can be read and deleted but not updated. Insert a
+   *         the row's `_id` is not NFC or holds an unpaired UTF-16
+   *         surrogate (stored by an earlier release): such a row can be
+   *         read and deleted but not updated. Insert a
    *         copy under a fresh NFC id that is not canonically equivalent
    *         to the original (for example, omit `_id` for a UUID), then
    *         delete the original. On R2, using the normalized original id
@@ -246,7 +248,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         on this collection; nothing was committed. Retriable: wait
    *         `err.retryAfter` seconds, then repeat the call.
    * @throws BaerlyError{code: "InvalidConfig"} — `id` breaks the `_id`
-   *         rules on {@link Collection.insert}, including NFC; nothing
+   *         rules on {@link Collection.insert}, including NFC and
+   *         well-formed UTF-16; nothing
    *         was written.
    *
    * @example
@@ -565,7 +568,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
    *         top-level `_id` is present and is not a matched row's
    *         `_id` (`null` included), or a matched row's `_id` is not
-   *         NFC (see {@link Collection.update}). Checked for every
+   *         NFC or not well-formed (see {@link Collection.update}). Checked for every
    *         matched row before any row commits.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by

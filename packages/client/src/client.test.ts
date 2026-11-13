@@ -50,6 +50,47 @@ describe("createBaerlyClient", () => {
     expect(_id).toBe("doc-1");
   });
 
+  describe("unpaired UTF-16 surrogates", () => {
+    const noRequest = (): { calls: string[]; client: ReturnType<typeof createBaerlyClient> } => {
+      const calls: string[] = [];
+      const client = createBaerlyClient({
+        baseUrl: "http://x",
+        fetch: async (req) => {
+          calls.push(req.url);
+          return jsonResponse(okEnvelope(null));
+        },
+      });
+      return { calls, client };
+    };
+
+    test.each(["x\ud800", "\udc00x"])(
+      "an _id of %j rejects InvalidConfig without a request",
+      async (id) => {
+        const { calls, client } = noRequest();
+        const tickets = client.collection("tickets");
+        const invalid = expect.objectContaining({
+          code: "InvalidConfig",
+          message: expect.stringContaining("surrogate"),
+        });
+        await expect(tickets.get(id)).rejects.toEqual(invalid);
+        await expect(tickets.update(id, { title: "a" })).rejects.toEqual(invalid);
+        await expect(tickets.replace(id, { title: "a" })).rejects.toEqual(invalid);
+        await expect(tickets.delete(id)).rejects.toEqual(invalid);
+        expect(calls).toEqual([]);
+      },
+    );
+
+    test("a collection name with one rejects InvalidConfig without a request", async () => {
+      const { calls, client } = noRequest();
+      const bad = client.collection("t\ud800");
+      const invalid = expect.objectContaining({ code: "InvalidConfig" });
+      await expect(bad.where({}).all()).rejects.toEqual(invalid);
+      await expect(bad.insert({ title: "a" })).rejects.toEqual(invalid);
+      await expect(bad.get("a")).rejects.toEqual(invalid);
+      expect(calls).toEqual([]);
+    });
+  });
+
   describe("insert() auto-ID minting", () => {
     const capture = () => {
       const mock = new MockFetch();

@@ -20,6 +20,9 @@ describe("assertDocId", () => {
     "\u2126", // OHM SIGN: NFC maps it to U+03A9
     "q\u0307\u0323", // combining marks out of canonical order
     "\u1100\u1161", // conjoining jamo that NFC composes to U+AC00
+    "x\ud800", // unpaired high surrogate
+    "\udc00x", // unpaired low surrogate
+    "\ude00\ud83d", // reversed surrogate pair
   ])("rejects %j", (bad) => {
     expect(() => assertDocId(bad)).toThrow(BaerlyError);
     try {
@@ -71,8 +74,8 @@ describe("assertDocId — NFC", () => {
 });
 
 describe("assertStoredDocId", () => {
-  test.each(["cafe\u0301", "\u212b", "caf\u00e9", "user-42"])(
-    "accepts the stored id %j whatever its normalization form",
+  test.each(["cafe\u0301", "\u212b", "caf\u00e9", "user-42", "x\ud800", "\udc00x"])(
+    "accepts the stored id %j whatever its normalization form or well-formedness",
     (id) => {
       expect(() => assertStoredDocId(id)).not.toThrow();
     },

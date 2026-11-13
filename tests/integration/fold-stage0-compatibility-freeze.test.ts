@@ -566,11 +566,16 @@ describe("fold-stage0 frozen corpus: restore compatibility contract", () => {
       ],
       null,
     ],
+    // Not released behavior: released restore accepted an
+    // unpaired-surrogate `_id`, and the write guard now refuses it, so
+    // restore exits InvalidConfig and writes nothing. Matched by pattern
+    // rather than byte-exact, because restore's diagnostic framing (line
+    // prefix, validation order) is not part of this contract.
     [
       "restore/malformed-scalar.ndjson",
-      0,
-      [["\ud800", { _id: "\ud800", note: "lone-high" }]],
-      null,
+      1,
+      [],
+      /InvalidConfig: .*_id may not contain an unpaired UTF-16 surrogate/,
     ],
     // Deliberate 0.7.0 change: restore refuses duplicate and missing _ids
     // with a committed-row count; input bytes unchanged.
@@ -593,7 +598,7 @@ describe("fold-stage0 frozen corpus: restore compatibility contract", () => {
       null,
     ],
   ] as const)(
-    "%s returns released exit %s and materialized rows",
+    "%s returns exit %s and materialized rows",
     async (fixture, exit, rows, diagnostic) => {
       expect.hasAssertions();
       const restored = await restoreFixture(fixture);
@@ -604,8 +609,10 @@ describe("fold-stage0 frozen corpus: restore compatibility contract", () => {
       });
       expect(restored.code).toBe(exit);
       expect(view === null ? null : [...view.entries()]).toEqual(rows);
-      if (diagnostic !== null) {
+      if (typeof diagnostic === "string") {
         expect(restored.stderr).toBe(diagnostic);
+      } else if (diagnostic !== null) {
+        expect(restored.stderr).toMatch(diagnostic);
       }
     },
   );

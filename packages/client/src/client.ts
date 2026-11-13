@@ -291,6 +291,25 @@ const emptyState: QueryState = {
   limit: undefined,
 };
 
+/**
+ * `encodeURIComponent(value)` for one URL path segment, refusing an
+ * unpaired UTF-16 surrogate as the server does: `encodeURIComponent`
+ * would throw a `URIError` on one.
+ */
+const encodeSegment = (value: string, role: string): string => {
+  if (!value.isWellFormed()) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `${role} may not contain an unpaired UTF-16 surrogate: ${JSON.stringify(value)}`,
+      {
+        resolution:
+          "Pass a string with no unpaired UTF-16 surrogate (value.isWellFormed() is true).",
+      },
+    );
+  }
+  return encodeURIComponent(value);
+};
+
 const makeClientCollection = <T extends DocumentData>(
   ctx: RequestContext,
   name: string,
@@ -311,7 +330,7 @@ const makeClientCollection = <T extends DocumentData>(
         resolution: 'Pass the _id string of a stored row; an _id is never empty, "." or "..".',
       });
     }
-    return `/v1/c/${encodeURIComponent(name)}/${encodeURIComponent(id)}`;
+    return `/v1/c/${encodeSegment(name, "collection")}/${encodeSegment(id, "_id")}`;
   };
   return {
     name,
@@ -355,7 +374,7 @@ const makeClientCollection = <T extends DocumentData>(
           : { doc };
       return request<{ _id: string }>(ctx, {
         method: "POST",
-        path: `/v1/c/${encodeURIComponent(name)}`,
+        path: `/v1/c/${encodeSegment(name, "collection")}`,
         body,
         signal: opts?.signal,
       });
@@ -429,7 +448,7 @@ const makeClientQuery = <T extends DocumentData>(
       params.set("limit", String(override.limit));
     }
     const qs = params.toString();
-    return `/v1/c/${encodeURIComponent(collectionName)}${qs.length > 0 ? `?${qs}` : ""}`;
+    return `/v1/c/${encodeSegment(collectionName, "collection")}${qs.length > 0 ? `?${qs}` : ""}`;
   };
 
   return {
