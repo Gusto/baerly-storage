@@ -31,7 +31,11 @@
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
  *   --collection Required. Collection name.
- *   --json     JSON envelope (on stdout). Programmatic callers can
+ *   --json     JSON envelope (on stdout). Its `legacy` field is the
+ *              migration preflight: `non_nfc_names` (roles),
+ *              `non_nfc_ids`, and `twin_ids` (groups of canonically-
+ *              equivalent `_id`s). Text mode prints the same as
+ *              warnings on stderr. Every row is exported either way. Programmatic callers can
  *              divert the NDJSON body to a separate writable via the
  *              `streams.stdout` option on {@link runDump}.
  *
@@ -48,7 +52,15 @@ import { type ArgsDef } from "citty";
 import { BaerlyError, type DocumentValue, type DocumentData } from "@baerly/protocol";
 import { loadMaterialisedView } from "../export/index.ts";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { emitSuccess } from "../output.ts";
+import {
+  LEGACY_ID_MIGRATION,
+  LEGACY_NAME_MIGRATION,
+  type LegacyIdReport,
+  legacyIdReport,
+  type NameRole,
+  nonNfcNames,
+} from "../legacy-names.ts";
+import { emitSuccess, isJsonMode } from "../output.ts";
 import {
   APP_ARG,
   assertCollectionArg,
@@ -142,6 +154,27 @@ const writeToSink = async (
   return count;
 };
 
+/** Text-mode migration warnings on stderr; stdout carries the NDJSON. */
+const warnLegacy = (legacy: LegacyIdReport & { non_nfc_names: readonly NameRole[] }): void => {
+  const lines: string[] = [];
+  if (legacy.non_nfc_names.length > 0) {
+    lines.push(`non-NFC ${legacy.non_nfc_names.join(", ")} name: ${LEGACY_NAME_MIGRATION}`);
+  }
+  if (legacy.non_nfc_ids.length > 0) {
+    lines.push(
+      `${legacy.non_nfc_ids.length} non-NFC _id(s) ${JSON.stringify(legacy.non_nfc_ids)}: ${LEGACY_ID_MIGRATION}`,
+    );
+  }
+  for (const group of legacy.twin_ids) {
+    lines.push(
+      `canonically-equivalent twin _ids ${JSON.stringify(group)} share index markers on R2: ${LEGACY_ID_MIGRATION}`,
+    );
+  }
+  for (const line of lines) {
+    process.stderr.write(`baerly admin dump: warning: ${line}\n`);
+  }
+};
+
 const bundle = defineBaerlySubcommand({
   name: "admin.dump",
   meta: {
@@ -166,11 +199,22 @@ const bundle = defineBaerlySubcommand({
     }
     const sink: Writable = ctx.streams?.stdout ?? process.stdout;
     const count = await writeToSink(sink, view);
+    // Migration preflight. Every row is still exported; this reports
+    // what `admin restore` (which requires NFC names and `_id`s) needs
+    // changed first.
+    const legacy = {
+      non_nfc_names: nonNfcNames({ app, tenant, collection: args.collection }),
+      ...legacyIdReport(view.keys()),
+    };
+    if (!isJsonMode()) {
+      warnLegacy(legacy);
+    }
     emitSuccess({
       command: "admin.dump",
       status: "ok",
       collection: args.collection,
       dumped: count,
+      legacy,
     });
     return 0;
   },

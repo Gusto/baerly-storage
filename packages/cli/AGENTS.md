@@ -33,6 +33,16 @@ module's transitive imports are evaluated lazily.
 Exit-code contract (per `src/deploy.ts:10-16` and friends): 0 success,
 1 user error, 2 storage/external error, 3 protocol invariant.
 
+Name rule: read-only verbs (`inspect`, `export`, `cost`, `admin dump`,
+`admin fsck`, `admin usage`) validate `--app` / `--tenant` /
+`--collection` with the bare key-segment rule, so a legacy non-NFC name
+stays readable and exportable. Writing verbs (`admin restore`,
+`admin rebuild-index`, `admin fsck --indexes --fix`) also require NFC via
+`assertWritableNames` (`src/subcommand.ts`), matching the SDK. `admin fsck`
+and `admin dump` report non-NFC names, and `admin dump` reports non-NFC and
+canonically-equivalent `_id`s, as the migration preflight
+(`src/legacy-names.ts`).
+
 Two citty (`^0.2.2`) quirks this package works around — the camelCase
 alias it auto-injects for kebab-case flags, and `runCommand` not
 intercepting `--help`/`--version` the way `runMain` does — are
