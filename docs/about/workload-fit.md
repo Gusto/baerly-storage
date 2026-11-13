@@ -214,7 +214,11 @@ snapshots; above that rate, replaced snapshots accumulate.
 A read that must replay a longer pending tail, such as one racing a write
 burst, can need more than the 45 calls a request may make, and so can a
 request whose storage calls are retried; such a read is refused whole with
-`CapacityExceeded`, never answered with missing rows. Past the envelope, expect more
+`CapacityExceeded`, never answered with missing rows. The `/v1/since`
+change feed is the exception: it stops polling when its calls run out, so
+an idle long-poll returns after about 22 seconds instead of 25 and a busy
+one returns part of the backlog, which the next poll continues. Past the
+envelope, expect more
 `CapacityExceeded` and `MaintenancePending`; data is never lost. For more
 request headroom use the R2 binding; for guaranteed CPU, use Paid.
 

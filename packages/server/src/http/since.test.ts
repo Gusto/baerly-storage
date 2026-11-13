@@ -3,7 +3,7 @@
 
 /**
  * Long-poll handler tests — `longPollSince` + `listEventsSince`.
- * Seven cases:
+ * Eight cases:
  *
  *   1. cursor validation (invalid shape → SchemaError).
  *   2. empty cursor + no current.json → empty events, fast.
@@ -12,15 +12,33 @@
  *   5. idle timeout → empty events + same cursor.
  *   6. AbortSignal aborts promptly → empty events.
  *   7. pre-snapshot cursor → SchemaError.
+ *   8. under a request ledger (Workers Free): idle polls end in an empty
+ *      200, busy polls deliver a resumable prefix, an exhausted start
+ *      refuses with a retriable MaintenancePending.
  *
  * Every test uses `pollIntervalMs: 25-50` and `timeoutMs: 100-2000`
  * so the suite stays well inside the 30 s default budget.
  */
 
-import { type CurrentJson, createCurrentJson, formatCursor, MemoryStorage } from "@baerly/protocol";
+import {
+  BaerlyError,
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
+  type CurrentJson,
+  createCurrentJson,
+  formatCursor,
+  MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+  MemoryStorage,
+  RequestLedger,
+  type RequestPool,
+} from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ledgeredStorage } from "../../../../tests/fixtures/ledgered-storage.ts";
 import { LOG_STATE_GENERATION, logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
+import { CallTally, totalCalls } from "../../../../tests/fixtures/request-counting-storage.ts";
+import type { SinceResponse } from "../contract.ts";
 import { Db } from "../db.ts";
+import { createObservabilityContext, runWithContext } from "../observability/context.ts";
 import { listEventsSince, longPollSince } from "./since.ts";
 
 const APP = "test";
@@ -444,5 +462,239 @@ describe("longPollSince — cursor advances past the digit boundary", () => {
 
     expect(second.events).toEqual([]);
     expect(second.next_cursor).toBe(cursor);
+  });
+});
+
+/**
+ * `longPollSince` under a per-invocation request ledger, as on Workers
+ * Free with storage reached through `fetch` (S3 over HTTP): 45 external
+ * calls for the whole request. Each test runs the poll inside a context
+ * carrying the ledger, and advances the fake clock from inside it too,
+ * so the poll's timer callbacks charge the same ledger.
+ */
+describe("longPollSince — under a request ledger", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The Workers Free limits: 900 internal, 45 external. */
+  const freeLedger = (): RequestLedger =>
+    new RequestLedger({
+      internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+      external: CF_FREE_EXTERNAL_REQUEST_LIMIT,
+    });
+
+  /** A provisioned collection with `rows` unfolded log entries, written with no ledger. */
+  const seeded = async (rows: number): Promise<MemoryStorage> => {
+    const { db, storage } = makeDb();
+    await provision(storage);
+    await runWithContext(
+      createObservabilityContext({ maintenance: { disabled: true } }),
+      async () => {
+        for (let i = 0; i < rows; i++) {
+          await db.collection(TABLE).insert({ title: `row-${i}` });
+        }
+      },
+    );
+    return storage;
+  };
+
+  interface Polled {
+    readonly result: SinceResponse | undefined;
+    readonly error: unknown;
+    /** Fake-clock milliseconds from the call to its settlement. */
+    readonly elapsedMs: number;
+    readonly ledger: RequestLedger;
+    /** Calls that reached storage. */
+    readonly issued: number;
+  }
+
+  /**
+   * One `/v1/since` request: a fresh ledger, storage behind it charged to
+   * `pool`, the clock advanced in `stepMs` steps until the poll settles.
+   */
+  const poll = async (
+    storage: MemoryStorage,
+    cursor: string,
+    opts: {
+      ledger?: RequestLedger;
+      pool?: RequestPool;
+      timeoutMs?: number;
+      pollIntervalMs?: number;
+      stepMs?: number;
+    } = {},
+  ): Promise<Polled> => {
+    const ledger = opts.ledger ?? freeLedger();
+    const issued = new CallTally();
+    const db = Db.create({
+      storage: ledgeredStorage(storage, opts.pool ?? "external", issued),
+      app: APP,
+      tenant: TENANT,
+    });
+    const stepMs = opts.stepMs ?? 50;
+    return runWithContext(createObservabilityContext({ ledger }), async () => {
+      const start = Date.now();
+      const outcome: { settled?: { result?: SinceResponse; error?: unknown; at: number } } = {};
+      void longPollSince({
+        db,
+        collection: TABLE,
+        cursor,
+        ...(opts.timeoutMs !== undefined && { timeoutMs: opts.timeoutMs }),
+        ...(opts.pollIntervalMs !== undefined && { pollIntervalMs: opts.pollIntervalMs }),
+      }).then(
+        (result) => {
+          outcome.settled = { result, at: Date.now() };
+        },
+        (error: unknown) => {
+          outcome.settled = { error, at: Date.now() };
+        },
+      );
+      // Settle the fast path, then step the clock until the poll ends.
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; outcome.settled === undefined && i < 10_000; i++) {
+        await vi.advanceTimersByTimeAsync(stepMs);
+      }
+      const settled = outcome.settled;
+      expect(settled).toBeDefined();
+      return {
+        result: settled!.result,
+        error: settled!.error,
+        elapsedMs: settled!.at - start,
+        ledger,
+        issued: totalCalls(issued.read()),
+      };
+    });
+  };
+
+  /** The cursor of the newest entry: a caught-up client's steady state. */
+  const caughtUp = async (storage: MemoryStorage, pool?: RequestPool): Promise<string> => {
+    const polled = await poll(storage, "", pool === undefined ? {} : { pool });
+    return polled.result!.next_cursor;
+  };
+
+  test("an idle poll at the default timeout and interval ends in an empty 200, not a refusal", async () => {
+    const storage = await seeded(1);
+    // The client's steady state: it holds the cursor of the newest entry.
+    const first = await poll(storage, "");
+    expect(first.result?.events).toHaveLength(1);
+    const cursor = first.result!.next_cursor;
+
+    // 25 s at 1 s needs ~26 idle cycles; 45 external calls cover ~22.
+    const idle = await poll(storage, cursor, { stepMs: 100 });
+    expect(idle.error).toBeUndefined();
+    expect(idle.result).toEqual({ events: [], next_cursor: cursor });
+    // It held for most of the budget, not one cycle.
+    expect(idle.elapsedMs).toBeGreaterThanOrEqual(20_000);
+    expect(idle.ledger.charged.external).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+    expect(idle.ledger.charged.external).toBe(idle.issued);
+
+    // And it keeps syncing: the next request delivers a new write.
+    const { db } = makeDb(storage);
+    await runWithContext(
+      createObservabilityContext({ maintenance: { disabled: true } }),
+      async () => {
+        await db.collection(TABLE).insert({ title: "after-idle" });
+      },
+    );
+    const next = await poll(storage, cursor);
+    expect(next.result?.events.map((e) => (e.after as { title: string }).title)).toEqual([
+      "after-idle",
+    ]);
+  });
+
+  test("an idle poll on the R2 binding's internal pool also ends in an empty 200", async () => {
+    const storage = await seeded(1);
+    const cursor = await caughtUp(storage, "internal");
+    // 900 internal calls outlast the 25 s default at 1 s: the timeout ends it.
+    const idle = await poll(storage, cursor, { pool: "internal", stepMs: 500 });
+    expect(idle.result).toEqual({ events: [], next_cursor: cursor });
+    expect(idle.elapsedMs).toBeGreaterThanOrEqual(25_000);
+    expect(idle.ledger.charged.internal).toBe(idle.issued);
+    expect(idle.ledger.charged.external).toBe(0);
+  });
+
+  test("a busy poll delivers a prefix within the budget and the next request resumes exactly", async () => {
+    const rows = 100;
+    const storage = await seeded(rows);
+    const seen: string[] = [];
+    let cursor = "";
+    let requests = 0;
+    while (seen.length < rows) {
+      const polled = await poll(storage, cursor);
+      expect(polled.error).toBeUndefined();
+      expect(polled.result!.events.length).toBeGreaterThan(0);
+      // A prefix comes back on the fast path, without waiting.
+      expect(polled.elapsedMs).toBe(0);
+      expect(polled.ledger.charged.external).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+      expect(polled.ledger.charged.external).toBe(polled.issued);
+      seen.push(...polled.result!.events.map((e) => (e.after as { title: string }).title));
+      cursor = polled.result!.next_cursor;
+      requests += 1;
+    }
+    // In order, each exactly once.
+    expect(seen).toEqual(Array.from({ length: rows }, (_, i) => `row-${i}`));
+    expect(requests).toBe(3);
+    // Caught up: the next request idles.
+    const idle = await poll(storage, cursor, { timeoutMs: 3_000 });
+    expect(idle.result).toEqual({ events: [], next_cursor: cursor });
+  });
+
+  test("a ledger exhausted at the start refuses with MaintenancePending and a Retry-After", async () => {
+    const storage = await seeded(1);
+    const ledger = freeLedger();
+    for (let i = 0; i < CF_FREE_EXTERNAL_REQUEST_LIMIT - 1; i++) {
+      ledger.acquire("external");
+    }
+    const polled = await poll(storage, "", { ledger });
+    expect(polled.error).toMatchObject({
+      name: "BaerlyError",
+      code: "MaintenancePending",
+      retriable: true,
+      retryAfter: MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+    });
+    // Refused before any storage call.
+    expect(polled.issued).toBe(0);
+    expect(polled.elapsedMs).toBe(0);
+  });
+
+  test.each([2, 3, 5])(
+    "with room for %i calls, an empty batch never returns before one poll interval",
+    async (room) => {
+      const storage = await seeded(1);
+      const cursor = await caughtUp(storage);
+      const ledger = new RequestLedger({
+        internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+        external: room,
+      });
+      const polled = await poll(storage, cursor, { ledger, stepMs: 10 });
+      expect(polled.result).toEqual({ events: [], next_cursor: cursor });
+      expect(polled.elapsedMs).toBeGreaterThanOrEqual(1_000);
+      expect(polled.ledger.charged.external).toBe(polled.issued);
+      expect(polled.issued).toBeLessThanOrEqual(room);
+    },
+  );
+
+  test("a refusal inside a cycle ends the poll with what it has, never an error", async () => {
+    const storage = await seeded(1);
+    const cursor = await caughtUp(storage);
+    // Every log GET fails, so the adapter retries the probe until the
+    // ledger refuses an attempt: room 3 is current.json plus two probe
+    // attempts, and the third is refused mid-cycle.
+    const failing: MemoryStorage = Object.assign(Object.create(storage) as MemoryStorage, {
+      get: (key: string, opts?: Parameters<MemoryStorage["get"]>[1]) =>
+        key.includes("/log/")
+          ? Promise.reject(new BaerlyError("NetworkError", "injected"))
+          : storage.get(key, opts),
+    });
+    const ledger = new RequestLedger({ internal: CF_FREE_INTERNAL_REQUEST_LIMIT, external: 3 });
+    const polled = await poll(failing, cursor, { ledger, stepMs: 10 });
+    expect(polled.error).toBeUndefined();
+    expect(polled.result).toEqual({ events: [], next_cursor: cursor });
+    expect(polled.elapsedMs).toBeGreaterThanOrEqual(1_000);
+    expect(polled.issued).toBe(3);
+    expect(polled.ledger.charged.external).toBe(3);
   });
 });
