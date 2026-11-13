@@ -141,8 +141,10 @@ IDs from being confused at protocol boundaries. See the
 ## Secondary indexes
 
 Indexes are declared under `BaerlyConfig.collections[*].indexes` and
-validated at `Db.create`. Writers still emit their markers, and nothing
-reads or reconciles them.
+validated at `Db.create`. A declaration changes no storage call: writers
+maintain no index objects, and buckets from before 0.7 keep inert markers
+under `index/`
+([Legacy index markers](../spec/sync-protocol.md#legacy-index-markers)).
 Reads always fold the authoritative snapshot and log; index declarations
 do not accelerate reads or affect query membership. There is no
 manual-hint API on `Query<T>`.
@@ -178,24 +180,24 @@ as `IndexDefinition`. Server runtime helpers in
 [`packages/server/src/config.ts`](../../packages/server/src/config.ts)
 and
 [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts)
-validate and normalize those protocol-owned shapes.
+validate those protocol-owned shapes.
 
 ### Read correctness
 
-Markers are not an authoritative membership set. A delayed stale-marker
-DELETE can erase a live row's marker, and marker enumeration cannot share
-a read cursor atomically with the later log probe. Every read and mutation
-selection therefore folds the complete snapshot and log, then applies the
-predicate, order, and limit. Missing, stale, newly declared, and filtered
-indexes all leave query results unchanged. An empty result still pays the
+Every read and mutation selection folds the complete snapshot and log,
+then applies the predicate, order, and limit. Declared, newly declared and
+filtered indexes, and any legacy markers, all leave query results
+unchanged. An empty result still pays the
 full fold cost; reads issue no index LISTs.
 
 ### Pointers
 
-- Marker projection: [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts).
+- Declaration validation: [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts).
 - Reads and mutation selection: [`packages/server/src/query.ts`](../../packages/server/src/query.ts).
 - Regression coverage: [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts),
-  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts).
+  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts),
+  and [`tests/unit/declared-indexes-inert.test.ts`](../../tests/unit/declared-indexes-inert.test.ts)
+  (a declaration changes no storage call).
 - Contract: [Read algorithm](../spec/sync-protocol.md#read-algorithm).
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
@@ -282,7 +284,7 @@ zero overhead.
 
 Reads `current.json` + snapshot + live log tail and prints a
 read-only summary of one collection (tail_hint, log_seq_start,
-writer_fence, materialised row count, per-index key counts).
+writer_fence, materialised row count).
 
 Bolt-on (adding baerly-storage to an existing Cloudflare Worker project) lives
 in `@gusto/create-baerly-storage`: `pnpm create @gusto/baerly-storage@latest .` detects `wrangler.jsonc` and

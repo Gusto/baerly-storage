@@ -3,10 +3,9 @@
 ---
 
 A write now keeps enough of its request's storage budget to resolve its own
-commit. Before it writes any index marker, and again before each retry at a
-new log slot after losing a race, it checks that the budget still covers
-every marker, the commit and the calls that confirm it, and holds that
-much so that other work in the same request, such as write-tick maintenance
+commit. Before its commit, and again before each retry at a new log slot
+after losing a race, it checks that the budget still covers the commit and
+the calls that confirm it (9 storage calls), and holds that much so that other work in the same request, such as write-tick maintenance
 running in `ctx.waitUntil`, cannot spend it; if the budget is short, it
 fails with `CapacityExceeded` (not retriable unchanged) and nothing is
 written.

@@ -36,7 +36,7 @@ contract is [`spec/sync-protocol.md`](spec/sync-protocol.md).
 | **Forward-probe** | Reading `log/<seq>` upward from `max(log_seq_start, tail_hint)` until the first 404. That gap is the true tail. |
 | **`tail_hint`** | A non-authoritative lower-bound starting point for the forward-probe, stored in `current.json`. It only ever moves forward; it is not the authoritative tail. |
 | **Legacy content object** | Side object emitted by a legacy writer, retained for verified v0.6.0 bucket compatibility. Inert; GC does not reclaim it, and no migration is required. See [Legacy content side objects](spec/sync-protocol.md#legacy-content-side-objects). |
-| **Index marker** | A small (zero-byte) object whose existence records one secondary-index fact. Written by writers; no read, mutation, or tool consults it. |
+| **Index marker** | A zero-byte object under `index/` that a writer before 0.7 PUT per declared index. Inert: 0.7 writes none, and nothing reads or reclaims one. See [Legacy index markers](spec/sync-protocol.md#legacy-index-markers). |
 | **LSN** | An opaque external cursor shaped `<base32-time>_<session>_<seq>`. Downstream change-feed consumers sort by the integer `seq`, never by the timestamp prefix. |
 
 ## Maintenance

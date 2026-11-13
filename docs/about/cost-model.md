@@ -13,7 +13,7 @@ The cost meter to watch is **billable Class A object-storage
 operations**: PUTs and LISTs. Class B GETs are much cheaper. All reads
 fold the snapshot and log using Class B GETs, with no index LISTs.
 
-The smallest successful write is an unindexed insert on the first try:
+The smallest successful write is an insert on the first try:
 one create-if-absent PUT for `log/<seq>`, whose inline post-image carries
 the document body. That one-op **commit floor** matters because the log
 create is the commit. There is no new content side-object or
@@ -22,8 +22,8 @@ create is the commit. There is no new content side-object or
 The billable steady-state number is higher than the floor because
 successful writes may also run bounded maintenance. Measured effective
 Class A write-amplification is ~2× on Cloudflare and ~2.5× on serverful
-Node. Deletes are cheaper; indexes, retries, and first-collection
-provisioning add bounded ops. The read tail forward-probe is
+Node. Retries and first-collection provisioning add bounded ops;
+declared indexes add none. The read tail forward-probe is
 Class B GET work, so it does not touch the Class A meter.
 
 All prices below were re-checked **2026-06-22** against the official
@@ -103,8 +103,8 @@ CloudWatch / Workers Analytics / Datadog; see
 baerly-storage publishes and tests a ceiling so cost drift is caught.
 Three bounds matter:
 
-- **Small constant storage ops per logical write.** The unindexed
-  first-try insert baseline is the committing `log/<seq>` create: 1
+- **Small constant storage ops per logical write.** The first-try
+  insert, update or delete baseline, with or without declared indexes, is the committing `log/<seq>` create: 1
   Class A op. Its inline post-image carries the document body, so there
   is no new content side-object or `current.json` write on the commit
   path. No current kernel reader depends on legacy content side-objects;
@@ -112,8 +112,7 @@ Three bounds matter:
   prefix, so anything a legacy writer left there is inert and bills as
   stored bytes only
   ([contract](../spec/sync-protocol.md#legacy-content-side-objects)).
-  Deletes can be cheaper; indexes, retries, and first-collection
-  provisioning add bounded mutations. Snapshot writes amortize across
+  Retries and first-collection provisioning add bounded mutations. Snapshot writes amortize across
   many log entries and are issued by the compactor, not the commit step.
   The `db.write.class_a_ops_per_logical_write` histogram is emitted on
   every commit (verified in CI by `writer.test.ts`). If you pipe it to a
@@ -135,8 +134,7 @@ Three bounds matter:
   the live-tail log by deterministic GETs, whether or not indexes are
   declared. The forward-probe stops at the first 404. Empty predicates
   and empty results still require the authoritative fold; order and
-  limit do not bound fold I/O or memory. Removing index routing saves
-  LISTs, but empty marker results no longer skip snapshot and log loads.
+  limit do not bound fold I/O or memory.
 
 ### Maintenance is write-driven; reads are pure
 

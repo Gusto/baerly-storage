@@ -182,8 +182,7 @@ not you are paying. Hosts fall into three support tiers:
 
 Both Free hosts share the same data ceiling (the Cloudflare free column
 above). The R2 binding buys request headroom — a longer pending tail,
-more indexes per write, a larger `$in`, room for retries — not a bigger
-collection. Free CPU is best effort: a CPU kill hasn't been observed,
+room for retries — not a bigger collection. Free CPU is best effort: a CPU kill hasn't been observed,
 but the ~10 ms budget is not a guarantee
 ([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)).
 
@@ -201,28 +200,22 @@ retries and 45 calls of the 50 budgeted, are:
 
 | Bound | Free + S3 limit |
 | --- | --- |
-| Indexes per write | 3 |
-| Largest `$in` | 16 values |
 | Pending tail length | 8 entries |
 
-Two consequences of that budget are accepted on this host:
+A write costs 7 + tail calls and its worst request, write plus
+maintenance, 31 (30 storage calls plus one Cache API call); any read at the longest 8-entry tail costs 11, an `$in`
+of any size included. Declared indexes change none of these. One
+consequence of the budget is accepted on this host:
 
-- **An update that changes 9 or more indexed fields is refused** with
-  `CapacityExceeded` once 5 or more writes are pending (11 or more on an
-  empty tail, 8 or more at the longest 8-entry tail). Before it writes
-  anything, a commit checks that it can still afford 3 × (index markers +
-  1) + 6 calls: its new index markers and the committing create at full
-  retries, plus 6 to resolve the create. With the 5 + tail calls the
-  update has already spent reading, 9 indexes at a 5-entry tail need
-  10 + 36 = 46 calls, one more than 45.
-- **Past a pending tail of about 9 entries, a worst-case update cannot
-  fold.** A fold of an `e`-entry tail costs 6 + `e` calls. A tail that
-  long, for example after a burst of concurrent writes, leaves an update
-  that finds and replaces an old index image (15 + tail + 2 × indexes
-  calls) too few calls for it, so its write tick skips the fold and the
-  tail does not shorten on that tick. Inserts (7 + tail + indexes) and
-  cheaper writes still fold it up to a tail of about 14. The R2 binding
-  has the request headroom to fold it.
+- **Past a pending tail of 15 entries, a write cannot fold.** A write at
+  tail `t` costs 7 + `t` calls and a fold of its `t + 1` entries 6 more
+  than that, so a write at a 15-entry tail plus its fold is 44 calls and
+  at 16 the write tick skips the fold. A tail that long, for example after
+  a burst of concurrent writes, then does not shorten on a write tick, and
+  from 32 pending entries a write is refused with `CapacityExceeded`
+  before it writes anything: its reads plus the 9 calls a commit keeps to
+  resolve its create pass 45. The R2 binding has the request headroom to
+  fold it.
 
 The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
 writes, and GC reclaims about 1,000 replaced snapshots per collection per

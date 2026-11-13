@@ -217,8 +217,7 @@ The safe cutover shape is:
    `runScheduledMaintenance` calls, and wait for in-flight compaction and
    GC passes to finish.
 2. Restore into a separate recovery bucket or tenant prefix.
-3. Run `baerly admin fsck` on the recovered collection. Restore
-   writes no index markers and needs none: no read consults them.
+3. Run `baerly admin fsck` on the recovered collection.
 4. Point the app at the recovered bucket/prefix. This direct route
    cutover is preferred, and it is the only route that rewrites no keys.
 5. If infrastructure requires a raw object copy instead, copy into a
@@ -244,7 +243,8 @@ The safe cutover shape is:
    - Copy `current.json` **last** — after the snapshot it names (when
      non-null) and every live log object exist at the destination. If
      `current.json` lands first, readers can reference missing objects.
-     Skip `index/`: no read depends on index markers.
+     Skip `index/`: it holds only legacy markers that nothing reads (see
+     [Legacy index markers](#legacy-index-markers)).
    - No kernel reader depends on content side objects, and GC does not
      touch them. Copy `content/` only when preserving a legacy or
      mixed-version bucket for legacy writers or tooling. Otherwise skip
@@ -285,6 +285,42 @@ For R2, MinIO, and native GCS, use the configured endpoint or provider
 tooling against the identical full prefix; the AWS command is not portable
 to those providers.
 
+### Legacy index markers
+
+Writers before 0.7 PUT a zero-byte marker under
+`app/<app>/tenant/<tenant>/manifests/<collection>/index/` for each declared
+index a write touched. 0.7 writes none and no 0.7 read, write, `fsck` or
+maintenance pass opens one, so existing markers are inert and cost only
+storage. GC never reclaims them. The one 0.7 command that still lists them
+is `baerly admin usage`, which lists all of `manifests/` to discover
+collection names, so a large legacy prefix costs it extra LIST pages.
+
+No cleanup is required for correctness. To reclaim the bytes, delete the
+prefix once no 0.6 instance will read the collection again (see below).
+Build the target exactly as for
+[Legacy content cleanup](#legacy-content-cleanup), ending in `/index/`
+instead of `/content/`, and review the dry run first:
+
+```sh
+# Copy the exact configured URI, including any bucket key prefix.
+INDEX_PREFIX='s3://bucket/prod/app/acme/tenant/t1/manifests/tickets/index/'
+aws s3 rm --recursive --dryrun "$INDEX_PREFIX"
+# After reviewing the dry run:
+aws s3 rm --recursive "$INDEX_PREFIX"
+```
+
+**Rolling back to 0.6, or a mixed 0.6 / 0.7 fleet.** 0.6 reads of an
+indexed `where` took membership from these markers, and 0.7 writes create
+none. So a 0.6 instance reading a collection that a 0.7 instance has
+written to, during a rolling deploy or after a rollback, misses every row
+0.7 inserted or changed from every query it routes through an index. There is no version gate: 0.6 indexed reads
+could already miss live rows. To roll back, finish the rollback first,
+then run 0.6's `baerly admin rebuild-index` once per declared index of
+each affected collection; it rebuilds the markers from the snapshot and
+log. 0.6 writers in a mixed fleet keep creating markers, which 0.7
+ignores. Do not delete the `index/` prefix while a rollback is still
+possible, or a rollback must rebuild every index.
+
 ## Restore Drill
 
 At least once per retention window, run a restore drill: verify the
@@ -324,5 +360,5 @@ baerly admin dump \
 cmp "$DUMP" /tmp/tickets-restored.ndjson
 ```
 
-This comparison proves the materialized rows, not secondary index
-markers. Use the indexed `fsck` step above for indexed collections.
+This comparison proves the materialized rows, which is everything a read
+depends on.

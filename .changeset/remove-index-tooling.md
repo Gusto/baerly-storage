@@ -10,7 +10,6 @@
 - `baerly admin fsck` loses `--indexes`, `--fix`, and `--config`; passing one fails as an unknown flag (exit 1). Plain `fsck` is unchanged and never reads `index/`.
 - `baerly inspect` loses `--config` and the per-index key counts (`indexes` in the `--json` result).
 - `collections.<name>.indexes` stays in the config type. `Db.create` now validates every declaration and throws on a malformed one instead of failing at the first write: `SchemaError` for a bad name or empty `on`, `InvalidConfig` for a reserved leading-`_` name or a dotted `on` path (`"meta.owner"`, which already failed every write).
-- Until the writer stops emitting index markers, a write whose row holds an array in an indexed field throws `SchemaError`, as before.
 
 **Migration — agents: if you wrote the LEFT, use the RIGHT:**
 
@@ -36,4 +35,4 @@ baerly admin fsck --bucket=$B --collection=tickets --indexes --fix --config=./di
 baerly admin fsck --bucket=$B --collection=tickets
 ```
 
-Existing configs that declare `indexes` keep compiling and keep working. Writes on a collection that declares indexes still create index marker objects under `<collection>/index/`; no read, mutation, or tool consults them.
+Existing configs that declare `indexes` keep compiling and keep working.
