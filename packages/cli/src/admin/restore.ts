@@ -355,12 +355,23 @@ const bundle = defineBaerlySubcommand({
     const seenIds = new Map<string, number>();
     // Every failure past this point says how many rows are already
     // durable, so the operator knows what the target now holds.
-    const committedNote = (): string =>
-      `; ${count} row${count === 1 ? "" : "s"} committed before this line (they remain in the target; restore again into a fresh target, or with --force)`;
+    const committedNote = (when = "before this line"): string =>
+      `; ${count} row${count === 1 ? "" : "s"} committed ${when} (they remain in the target; restore again into a fresh target, or with --force)`;
     const idFix =
       "Restore never rewrites an _id. Fix the dump line, or rewrite it to a fresh NFC _id that is not canonically equivalent to the original.";
+    // Catch iterator failures separately from validation and commit failures,
+    // which already carry their line-specific progress (or ambiguity range).
+    const lines = (async function* () {
+      try {
+        yield* rl;
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        failure.message += committedNote("before input failed");
+        throw failure;
+      }
+    })();
     try {
-      for await (const line of rl) {
+      for await (const line of lines) {
         lineNo++;
         if (line.length === 0) {
           continue;
@@ -463,30 +474,30 @@ const bundle = defineBaerlySubcommand({
     // the value already stored, and `log_seq_start`. (Defends against a
     // compactor that advanced the hint between the reseed and here.)
     if (count > 0) {
-      const afterLoad = await readCurrentJson(bucket.storage, currentJsonKey);
-      if (afterLoad !== null) {
-        const clampedTail = Math.max(
-          baseSeq + count,
-          afterLoad.json.tail_hint,
-          afterLoad.json.log_seq_start,
-        );
-        const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
-        assertCurrentJsonTransition(afterLoad.json, stamped, currentJsonKey);
-        try {
+      try {
+        const afterLoad = await readCurrentJson(bucket.storage, currentJsonKey);
+        if (afterLoad !== null) {
+          const clampedTail = Math.max(
+            baseSeq + count,
+            afterLoad.json.tail_hint,
+            afterLoad.json.log_seq_start,
+          );
+          const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
+          assertCurrentJsonTransition(afterLoad.json, stamped, currentJsonKey);
           await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
             ifMatch: afterLoad.etag,
             contentType: "application/json",
           });
-        } catch (error) {
-          // No retry: the If-Match stop-rule holds. All rows are durable;
-          // only the read-efficiency hint is missing, and a rerun with
-          // --force truncates the collection and restores it cleanly.
-          throw new BaerlyError(
-            error instanceof BaerlyError ? error.code : "NetworkError",
-            `baerly admin restore: all ${count} row${count === 1 ? "" : "s"} were committed, but stamping tail_hint on current.json failed: ${(error as Error).message}. Rerun restore with --force to truncate and restore the dump again.`,
-            { cause: error },
-          );
         }
+      } catch (error) {
+        // No retry: the If-Match stop-rule holds. All rows are durable;
+        // only the read-efficiency hint is missing, and a rerun with
+        // --force truncates the collection and restores it cleanly.
+        throw new BaerlyError(
+          error instanceof BaerlyError ? error.code : "NetworkError",
+          `baerly admin restore: all ${count} row${count === 1 ? "" : "s"} were committed, but stamping tail_hint on current.json failed: ${(error as Error).message}. Rerun restore with --force to truncate and restore the dump again.`,
+          { cause: error },
+        );
       }
     }
     emitSuccess({
