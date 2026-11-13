@@ -565,16 +565,30 @@ the later rows' commit-resolution reserves leave, and never plans to spend
 them. A fold needs `MAINTENANCE_FOLD_BASE_REQUESTS` (5) plus the entries
 it would fold and is skipped, never shortened, when that does not fit: the
 growth refusal models fold passes of exactly `maxFoldEntriesPerPass`
-entries. A GC slice needs `MAINTENANCE_GC_BASE_REQUESTS` (6) and a
-retirement pass `MAINTENANCE_RETIRE_BASE_REQUESTS` (3); each runs with its
-DELETE cap lowered to what is left after that and is skipped when nothing
-is. The `tail_hint` refresh needs `MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`
-(2). These are common-path costs (each call answered first time, no
-contention). A retry or a concurrent writer can still overrun one; the
-ledger refuses that call before it is sent, the tick ends quietly
-(`db.maintenance.request_budget_refused_total`), and every phase is
-crash-safe at any call, so the next tick resumes. A skipped phase counts
-`db.maintenance.request_budget_skipped_total` (label `phase`).
+entries. A GC slice needs `MAINTENANCE_GC_BASE_REQUESTS` (6) and runs with
+its sweep cap lowered to what is left after that, or is skipped when
+nothing is. The `tail_hint` refresh needs
+`MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS` (2). These are common-path costs
+(each call answered first time, no contention). A retry or a concurrent
+writer can still overrun one; the ledger refuses that call before it is
+sent and the tick ends quietly
+(`db.maintenance.request_budget_refused_total`). A fold or GC slice cut
+short this way leaves nothing the next tick cannot redo: an unpublished
+snapshot is an orphan GC collects, and an unrecorded sweep is swept again.
+A skipped phase counts `db.maintenance.request_budget_skipped_total`
+(label `phase`).
+
+Log retirement is sized for every attempt instead, because it moves
+`log_delete_floor` past its range before it DELETEs that range, and the
+next pass starts at the floor: a DELETE that fails after the floor CAS
+leaks that log object. The pass takes at most
+`(remaining − MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS) / STORAGE_RETRY_MAX_ATTEMPTS`
+DELETEs (`MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS` = 7, the most it can be
+charged before the CAS lands), so the ledger never refuses one of them on
+its own account. A crash, a DELETE that fails all its attempts, or calls
+charged concurrently by other work in the same invocation between the
+floor CAS and the DELETEs still leak the objects not deleted (they are
+never read again, only stored); that window predates the ledger.
 
 ### Read admission
 

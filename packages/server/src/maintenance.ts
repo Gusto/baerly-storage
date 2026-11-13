@@ -36,7 +36,7 @@ import {
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
-  MAINTENANCE_RETIRE_BASE_REQUESTS,
+  MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
   MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
@@ -44,6 +44,7 @@ import {
   noopMetricsRecorder,
   readCurrentJson,
   SCHEDULED_MIN_ENTRIES_TO_COMPACT,
+  STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
 import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
@@ -692,7 +693,11 @@ export const runBoundedMaintenance = async (
   };
 
   const retireWithinBudget = async (): Promise<void> => {
-    const deletes = requestsLeft() - MAINTENANCE_RETIRE_BASE_REQUESTS;
+    // Unlike the other phases, sized for every attempt: the floor CAS lands
+    // before the DELETEs, so a DELETE refused after it leaks for good.
+    const deletes = Math.floor(
+      (requestsLeft() - MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS) / STORAGE_RETRY_MAX_ATTEMPTS,
+    );
     if (deletes < 1) {
       skipForBudget("retire");
       return;
@@ -1048,9 +1053,15 @@ export const runBoundedMaintenance = async (
     if (isWriteConflict(error)) {
       return;
     }
-    // So is a call the request ledger refused: the tick spent this
-    // invocation's request budget, and the next tick resumes.
-    if (error instanceof BaerlyError && error.code === "CapacityExceeded") {
+    // So is a call refused before it was sent (`cause.refused`: the request
+    // ledger, or the platform's subrequest limit): the tick spent this
+    // invocation's request budget, and the next tick resumes. Any other
+    // CapacityExceeded is unexpected here.
+    if (
+      error instanceof BaerlyError &&
+      error.code === "CapacityExceeded" &&
+      (error.cause as { refused?: boolean } | undefined)?.refused === true
+    ) {
       ctxMetrics().counter("db.maintenance.request_budget_refused_total", 1, { collection });
       return;
     }
