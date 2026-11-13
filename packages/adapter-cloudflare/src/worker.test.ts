@@ -421,6 +421,40 @@ describe("baerlyWorker observability", () => {
     expect(props["error"]).toBeDefined();
     expect(props["path"]).toBe("/v1/c/c");
   });
+
+  // Matches Node (`server.ts`): `Db.create` refusing the verifier's
+  // tenant (here a non-NFC claim) is a mapped 400 envelope with its own
+  // canonical line, not an unhandled 500.
+  test("a non-NFC tenant from the verifier maps to a 400 InvalidConfig envelope", async () => {
+    const { records, sink } = collectingSink();
+    const handler = baerlyWorker(() => ({
+      config: testConfig,
+      verifier: async () => ({ tenantPrefix: "cafe\u0301", identity: {} }),
+      observability: { level: "debug", sink },
+    }));
+    const env: BaerlyEnv = { BUCKET: getBinding(), APP: "t" };
+
+    const res = await handler.fetch!(
+      new Request("https://x/v1/c/c", { method: "GET" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
+      env,
+      makeNoopCtx(),
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("InvalidConfig");
+
+    const lines = records.filter(
+      (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
+    );
+    expect(lines).toHaveLength(1);
+    const props = lines[0]!.properties as Record<string, unknown>;
+    expect(props["status"]).toBe(400);
+    expect(props["path"]).toBe("/v1/c/c");
+  });
 });
 
 describe("baerlyWorker observability opt-out", () => {

@@ -37,9 +37,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 559553,
-      "gz": 170988,
-      "minGz": 54852,
+      "raw": 559717,
+      "gz": 171025,
+      "minGz": 54869,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
