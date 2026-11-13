@@ -49,7 +49,10 @@ import {
   runScheduledMaintenance,
   shouldFireMaintenance,
 } from "./maintenance.ts";
-import type { InternalMaintenanceOptions } from "./maintenance-options.ts";
+import type {
+  InternalBoundedMaintenanceOptions,
+  InternalMaintenanceOptions,
+} from "./maintenance-options.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
@@ -604,6 +607,25 @@ describe("runBoundedMaintenance", () => {
     expect(after).toBeGreaterThan(before);
     // No GC ran ⇒ no DELETEs and no gc/pending.json was touched.
     expect(c.report()["delete"]).toBe(0);
+  });
+
+  test("foldAtTailEntries folds a tail that long with the ratio cold, and no shorter one", async () => {
+    // A small tail on a large snapshot: ratio far below 1, and the tail
+    // under WRITE_TICK_MIN_ENTRIES_TO_COMPACT, so only foldAtTailEntries
+    // can trip Gate 1.
+    for (const [tail, folds] of [
+      [8, false],
+      [9, true],
+    ] as const) {
+      const inner = new MemoryStorage();
+      await seedLog(inner, KEY, COLL, tail);
+      await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
+      await runBoundedMaintenance(
+        { storage: inner, currentJsonKey: KEY, prevSeq: tail, observedTail: tail },
+        { foldAtTailEntries: 9 } as InternalBoundedMaintenanceOptions,
+      );
+      await expect(readSeqStart(inner, KEY)).resolves.toBe(folds ? tail : 0);
+    }
   });
 
   test("the write-tick floor stays WRITE_TICK_MIN_ENTRIES_TO_COMPACT — a 40-entry gate1-tripping tail does NOT fold", async () => {

@@ -42,6 +42,7 @@ import {
 import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
 import { runGc, type InternalRunGcOptions, type RunGcResult } from "./gc.ts";
 import type {
+  InternalBoundedMaintenanceOptions,
   InternalMaintenanceOptions,
   LogRetentionOptions,
   MaintenanceOptions,
@@ -649,8 +650,11 @@ export const runBoundedMaintenance = async (
     const tailBytesEst = estimateTailBytes(current, nextSeq);
 
     const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
+    const foldAtTailEntries = (options as InternalBoundedMaintenanceOptions | undefined)
+      ?.foldAtTailEntries;
     const gate1 =
       forceFold ||
+      (foldAtTailEntries !== undefined && nextSeq - logSeqStart >= foldAtTailEntries) ||
       (ratio >= MAINTENANCE_TARGET_RATIO && nextSeq - logSeqStart >= minEntriesToCompact);
     // SAFETY ceiling (conservative CF CPU/memory budget) — EXACT snapshot_bytes/rows, NEVER the estimate.
     // The pass is not projected: compact() stops at the first entry that
@@ -843,7 +847,12 @@ export const runBoundedMaintenance = async (
           // lost CAS, so the runner does NOT (avoids double-count).
           const foldRes = await compact({ storage, currentJsonKey }, {
             maxEntriesPerRun: maxFoldEntriesPerPass,
-            minEntriesToCompact,
+            // compact() re-checks the floor against the tail it discovers,
+            // so it must accept whichever Gate-1 arm tripped.
+            minEntriesToCompact:
+              foldAtTailEntries === undefined
+                ? minEntriesToCompact
+                : Math.min(minEntriesToCompact, foldAtTailEntries),
             ceilingBytes: C,
             ceilingEntries: E,
             // B4: on the write-tick path the runner already knows a fresh
