@@ -316,6 +316,21 @@ interleaving can be inspected and the injected entropy replayed by
 passing the seed back. (Timer-driven interleaving remains wall-clock
 dependent, so replay is not fully deterministic.)
 
+## Deterministic R2 create-outcome coverage
+
+`packages/adapter-cloudflare/src/r2-binding-storage.request-accounting.test.ts`
+drives the real R2 adapter, retry helper, and Writer with an injected binding:
+
+- an applied create reporting `10058` is adopted by readback after a later
+  denial, invalid configuration, subrequest refusal, or precondition failure;
+- an empty readback after exhausted R2 throttles remains `AmbiguousCommit`;
+- a foreign occupant reached through throttles advances to the next slot;
+- index-marker throttles retain the throttle backoff and can recover.
+
+These schedules exercise admitted unknown outcomes; they are not captured
+production R2 traces. `packages/protocol/src/storage/retry.test.ts` separately
+checks that a later refusal cannot erase earlier throttle uncertainty.
+
 ## Deterministic delete-floor coverage
 
 The optional `current.json.log_delete_floor` safety envelope is covered by

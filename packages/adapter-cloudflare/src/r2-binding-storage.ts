@@ -179,23 +179,24 @@ class R2BindingStorageImpl implements Storage {
    * message fallback for older runtimes.
    *
    * `AccessDenied` and `InvalidConfig` are permanent and not retried.
-   * Two `NetworkError`s are treated as not applied:
+   * Two `NetworkError`s have distinct retry behavior:
    *
    * - R2 error `10058` (`TooManyRequests`, 429: "limit: 1 write/second
    *   per key") is tagged `throttled`, so it is retried from the throttle
-   *   backoff base, and a conditional create whose every attempt hit it
-   *   reports `notApplied`. R2 binding errors end `message` with the
+   *   backoff base. Its `mayHaveApplied` flag preserves create uncertainty:
+   *   Cloudflare does not document that this error proves an unapplied write.
+   *   R2 binding errors end `message` with the
    *   error code in parentheses
    *   (https://developers.cloudflare.com/r2/api/error-codes/).
    * - The Workers "Too many subrequests" limit is tagged `refused`: not
    *   retried, since every later call in the invocation is refused too,
-   *   and `notApplied` on a create. The message match is a backstop, not
-   *   the primary guard.
+   *   and `notApplied` on a create when no earlier attempt is uncertain.
+   *   The message match is a backstop, not the primary guard.
    *
-   * Cloudflare does not document that either error means the write was
-   * not applied. What makes `notApplied` safe is the Writer's occupant
-   * readback: only a slot it reads back as empty becomes a retriable
-   * `NetworkError`, and an unreadable slot stays `AmbiguousCommit`.
+   * The Writer reads back a failed create: an own entry is adopted, a
+   * foreign entry advances to the next slot, and an unknown outcome stays
+   * `AmbiguousCommit` even when the slot is currently empty. A negative
+   * read cannot prove that an unresolved write will never land.
    *
    * Everything else is a `NetworkError` with an unknown outcome, so an
    * exhausted conditional create does not report `notApplied`.
@@ -212,7 +213,7 @@ class R2BindingStorageImpl implements Storage {
           const msg = error instanceof Error ? error.message : String(error);
           if (R2_TOO_MANY_REQUESTS.test(msg)) {
             throw new BaerlyError("NetworkError", `${op}: ${msg}`, {
-              cause: { status: 429, throttled: true, error },
+              cause: { status: 429, throttled: true, mayHaveApplied: true, error },
             });
           }
           if (WORKERS_SUBREQUEST_LIMIT.test(msg)) {

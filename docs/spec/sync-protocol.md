@@ -445,16 +445,22 @@ create-only put: an adapter that retries internally reports a rejection that
 follows an attempt of unknown outcome as `NetworkError` instead. A
 `NetworkError` whose `cause.notApplied` is `true` reports that no attempt of
 that call was applied: the adapters set it when every internal attempt was
-throttled (`429`, S3's `503 SlowDown`, or R2 error `10058`, its
-one-write-per-second-per-key limit) or refused before issue (the Workers
-subrequest limit, which the R2 adapter does not retry). An adapter builds it as
+provably throttled before applying (`429` or S3's `503 SlowDown`) or refused
+before issue (the Workers subrequest limit, which the R2 adapter does not
+retry). An adapter builds it as
 `new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`.
-Cloudflare does not document that either R2 case is unapplied, so the writer
-still reads the slot back once, which also catches a same-key create race lost
-with a `429` instead of a `412`. An own-entry occupant is adopted and an
-identified foreign occupant advances the writer to the next slot, as above. A
-slot read back as empty propagates the `NetworkError` as-is. An unreadable or
-malformed occupant is `AmbiguousCommit`, as for any other failed create. This
+The writer still reads the slot back once, since a throttle can hide a create
+race lost with a `429` instead of a `412`. An own-entry occupant is adopted
+and an identified foreign occupant advances the writer to the next slot, as
+above. A slot read back as empty propagates the `NetworkError` as-is. An
+unreadable or malformed occupant is `AmbiguousCommit`, as for any other
+failed create.
+
+R2 error `10058` uses the throttle backoff but retains an unknown create
+outcome (`cause.mayHaveApplied`), since Cloudflare does not document that it
+proves an unapplied write. A later definitive rejection cannot erase that
+uncertainty. An empty readback is still `AmbiguousCommit`: a negative read
+does not prove an unresolved write will never land. This
 contract is scoped to failed committing-create calls;
 earlier read, configuration, and index-write errors keep their ordinary error behavior. The same code also covers the
 certified-delete-floor case described in invariant 5: a create may have

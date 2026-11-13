@@ -49,8 +49,9 @@ export interface StorageRetryOptions {
    * create is not durable; it is reported as `NetworkError` carrying the original
    * error as its cause, per the `Storage.put` contract. When every
    * attempt was throttled (`cause.throttled`) or refused
-   * (`cause.refused`, which also ends the loop), nothing was applied, so
-   * the final `NetworkError`'s cause carries `notApplied: true`.
+   * (`cause.refused`, which also ends the loop), the final `NetworkError`'s
+   * cause carries `notApplied: true`, unless a throttle's cause carries
+   * `mayHaveApplied: true` because the adapter cannot prove its outcome.
    */
   readonly conditionalCreate?: boolean;
   /** Jitter source in `[0, 1)`. Test seam; defaults to `Math.random`. */
@@ -59,15 +60,14 @@ export interface StorageRetryOptions {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
-/** `true` when an attempt's rejection proves that attempt was not applied. */
+/** `true` when an attempt uses the throttle backoff. */
 const isThrottled = (e: unknown): boolean =>
   e instanceof BaerlyError && (e.cause as { throttled?: boolean } | undefined)?.throttled === true;
 
 /**
  * `true` when an attempt was refused before it was issued and a resend
  * in the same invocation is refused too (the Workers subrequest limit).
- * Like a throttle it proves the attempt was not applied; unlike one it
- * ends the loop at once.
+ * This proves the attempt was not applied and ends the loop at once.
  */
 const isRefused = (e: unknown): boolean =>
   e instanceof BaerlyError && (e.cause as { refused?: boolean } | undefined)?.refused === true;
@@ -149,12 +149,15 @@ export const retryStorageCall = async <T>(
         throw error;
       }
       const refused = isRefused(error);
-      if (!isThrottled(error) && !refused) {
+      const mayHaveApplied =
+        error instanceof BaerlyError &&
+        (error.cause as { mayHaveApplied?: boolean } | undefined)?.mayHaveApplied === true;
+      if ((!isThrottled(error) && !refused) || mayHaveApplied) {
         uncertain = true;
       }
       // The attempt cap and a refusal end here, through the one final-attempt
-      // path, so a create whose every attempt was throttled or refused always
-      // reports `notApplied`.
+      // path. Only a create whose every attempt was provably unapplied
+      // reports `notApplied`; a throttle may retain an unknown outcome.
       if (attempt >= retries || refused) {
         if (opts.conditionalCreate === true && !uncertain && error instanceof BaerlyError) {
           throw new BaerlyError(error.code, error.message, {
