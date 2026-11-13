@@ -56,6 +56,7 @@ export interface CollectionDefinition {
    * Secondary indexes declared for this collection. Each declared
    * index produces one zero-byte PUT per commit (when the indexed
    * field is set on the doc), landing before the committing log entry.
+   * Reads do not use them, so an index never makes a read cheaper.
    * See `./indexes.ts` for the key shape.
    */
   readonly indexes?: ReadonlyArray<IndexDefinition>;

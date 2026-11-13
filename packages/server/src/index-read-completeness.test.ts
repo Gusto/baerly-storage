@@ -63,6 +63,37 @@ const holdOnce = (
   return { storage, reached, release };
 };
 
+/**
+ * A pass-through view of `inner` that parks every `delete` `match` accepts
+ * until `release()`; `reached` resolves when the first one arrives.
+ */
+const holdDeletes = (
+  inner: Storage,
+  match: (key: string) => boolean,
+): { storage: Storage; reached: Promise<void>; release: () => void } => {
+  let arrive!: () => void;
+  const reached = new Promise<void>((r) => {
+    arrive = r;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  const storage: Storage = {
+    get: (key, opts) => inner.get(key, opts),
+    put: (key, body, opts) => inner.put(key, body, opts),
+    async delete(key, opts) {
+      if (match(key)) {
+        arrive();
+        await released;
+      }
+      return inner.delete(key, opts);
+    },
+    list: (prefix, opts) => inner.list(prefix, opts),
+  };
+  return { storage, reached, release };
+};
+
 const ids = (rows: readonly DocumentData[]): string[] =>
   rows.map((r) => r["_id"] as string).toSorted();
 
@@ -101,6 +132,62 @@ describe("reads return every live matching row with declared indexes", () => {
       { _id: "x", by: "B2" },
     ]);
   });
+
+  test.each(["update by id", "batch update", "delete by id", "batch delete"] as const)(
+    "%s acts on a row re-inserted while a delete's stale-marker DELETE was in flight",
+    async (verb) => {
+      // The interleaving the indexed same-_id RMW property can only reach
+      // by chance, fixed: A's post-commit DELETEs of `x`'s markers (issued
+      // in parallel, so every one is held) land after B's re-insert, so B's
+      // live row has no `by_id` or `by_by` marker left. A verb that took
+      // membership from markers would act on nothing.
+      const inner = new MemoryStorage();
+      const config = {
+        collections: {
+          [COLL]: {
+            indexes: [
+              { name: "by_id", on: "_id" },
+              { name: "by_by", on: "by" },
+            ],
+          },
+        },
+      };
+      const aGate = holdDeletes(inner, (key) => key.includes("/index/"));
+      const a = Db.create({ storage: aGate.storage, app: APP, tenant: TENANT, config });
+      const b = Db.create({ storage: inner, app: APP, tenant: TENANT, config });
+      await offTick(() => b.collection(COLL).insert({ _id: "x", by: "B" }));
+
+      const deleting = offTick(() => a.collection(COLL).delete("x"));
+      await aGate.reached;
+      await offTick(() => b.collection(COLL).insert({ _id: "x", by: "B" }));
+      aGate.release();
+      await deleting;
+      const markers: string[] = [];
+      for await (const entry of inner.list(`${PREFIX}/index/`)) {
+        markers.push(entry.key);
+      }
+      expect(markers, "the race leaves the live row with no marker").toEqual([]);
+
+      const rows = b.collection(COLL);
+      await offTick(async () => {
+        if (verb === "update by id") {
+          await rows.update("x", { n: 1 });
+          await expect(rows.get("x")).resolves.toEqual({ _id: "x", by: "B", n: 1 });
+        } else if (verb === "batch update") {
+          await expect(rows.where({ by: "B" }).update({ n: 1 })).resolves.toEqual({
+            modified: 1,
+          });
+          await expect(rows.get("x")).resolves.toEqual({ _id: "x", by: "B", n: 1 });
+        } else if (verb === "delete by id") {
+          await expect(rows.delete("x")).resolves.toEqual({ deleted: 1 });
+          await expect(rows.get("x")).resolves.toBeUndefined();
+        } else {
+          await expect(rows.where({ by: "B" }).delete()).resolves.toEqual({ deleted: 1 });
+          await expect(rows.get("x")).resolves.toBeUndefined();
+        }
+      });
+    },
+  );
 
   test("a read's tail does not cover a matching row committed between its LIST and its tail probe", async () => {
     // The walk LISTs `by_status/open/` (empty), then probes the log tail.

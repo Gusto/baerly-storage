@@ -327,12 +327,11 @@ async function main(): Promise<void> {
     const startedIso = new Date().toISOString();
     const collection = preset.schema.collection;
 
-    // Optional auto-planner config. When `--indexes=auto`, declare a
+    // Optional index config. When `--indexes=auto`, declare a
     // single-field index on `popularityRank` — the field the
-    // `filtered-list` op kind targets in `replay.ts` — so the planner
-    // can route the read through `runIndexWalkPlan` instead of the
-    // snapshot+log fold. When `--indexes=none`, leave the config
-    // undefined so `Db.create` builds with no index routing.
+    // `filtered-list` op kind targets in `replay.ts` — so writes pay
+    // the marker cost (reads fold the snapshot + log either way). When
+    // `--indexes=none`, leave the config undefined.
     const dbConfig: BaerlyConfig | undefined =
       indexesMode === "auto"
         ? {
