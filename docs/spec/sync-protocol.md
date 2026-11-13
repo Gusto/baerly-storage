@@ -738,10 +738,12 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   Stale-log classification continues to use the initial monotone
   `log_seq_start`; a stale read can delay collection but cannot make a live log
   stale.
-- Cloudflare Free schedules one collection and one phase per invocation,
-  alternating direct bounded `compact()` and `runGc()` calls. Fan-out must be
-  sharded or driven by a persisted collection cursor; the combined
-  `runScheduledMaintenance()` helper is for Cloudflare Paid or Node budgets.
+- A Cloudflare scheduled invocation processes one collection. With the R2
+  binding, Free or Paid, one combined `runScheduledMaintenance()` call with the
+  host's profile fits the request ledger; on Free with storage over `fetch` it
+  does not, so that host alternates direct bounded `compact()` and `runGc()`
+  calls, one phase per invocation. Fan-out must be sharded or driven by a
+  persisted collection cursor.
 - Cloudflare can defer the tick past the response with
   `ctx.waitUntil`; Node runs inline unless the host wraps it
   differently.
@@ -761,7 +763,7 @@ defaults, deliberately:
 | In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
 | Scheduled (`runScheduledMaintenance`, no `options.compact`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
 | Cloudflare Paid scheduled (`runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The library-provided scheduled profile exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
-| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. Do not pass this object to `runScheduledMaintenance`. |
+| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. Pass it to `runScheduledMaintenance` only with the R2 binding; with storage over `fetch`, alternate its `.compact` / `.gc` halves. |
 | Direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; direct callers should pass a threshold sized to their trigger. |
 
 The scheduled floor drains the tail to zero so reads stay O(snapshot),
@@ -769,7 +771,8 @@ not O(history). Every fold rewrites the entire snapshot, so at a
 5-minute cadence a threshold of 1 bounds snapshot rewrites to one per
 tick that actually received writes (an idle tick costs only the
 `current.json` GET + tail probe, no PUT). `CLOUDFLARE_PAID_TIER` uses
-that same floor of 1; Free still carries an explicit 20. A
+that same floor of 1 with a 1,000-GET tail probe
+(`CF_PAID_COMPACT_TAIL_PROBE_GETS`); Free carries an explicit 20. A
 write-amplification-sensitive caller whose fold cost outweighs its
 per-entry read cost raises the floor explicitly via
 `options.compact.minEntriesToCompact`; the trade is a tail of up to

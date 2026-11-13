@@ -9,6 +9,8 @@
 
 import {
   BaerlyError,
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
   COMMIT_RESOLUTION_RESERVE,
   createCurrentJson,
   encodeJsonBytes,
@@ -26,6 +28,7 @@ import {
 import { describe, expect, test, vi } from "vitest";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
 import type { IndexDefinition } from "./indexes.ts";
 import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
@@ -595,5 +598,78 @@ describe.each(POOLS)("a multi-row indexed update under the request ledger (%s po
     // One dispatch per row, none from inside a commit hold.
     expect(dispatchedHolds).toEqual([undefined, undefined]);
     await expect(statuses(lossy)).resolves.toEqual({ a: "closed", b: "closed" });
+  });
+});
+
+describe("index-count limit on Workers Free over fetch", () => {
+  const KEY = "app/rc/tenant/t/manifests/docs/current.json";
+
+  /**
+   * Update one doc, changing all `indexes` indexed fields, at a pending
+   * tail of `tail` entries over a folded snapshot, under the Free external
+   * ledger. Returns the error code, or "ok".
+   */
+  const updateAt = async (tail: number, indexes: number): Promise<string> => {
+    const inner = new MemoryStorage();
+    const defs = Array.from({ length: indexes }, (_, k) => ({ name: `by_f${k}`, on: `f${k}` }));
+    const coll = (storage: Storage) =>
+      Db.create({
+        storage,
+        app: "rc",
+        tenant: "t",
+        config: { collections: { docs: { indexes: defs } } },
+      }).collection("docs");
+    const body = (id: string) => ({
+      _id: id,
+      ...Object.fromEntries(defs.map((d) => [d.on, "a"])),
+    });
+    const noTick = createObservabilityContext({ maintenance: { dispatch: () => {} } });
+    await runWithContext(noTick, async () => {
+      for (let i = 0; i < 10; i++) {
+        await coll(inner).insert(body(`s${i}`));
+      }
+    });
+    await compact({ storage: inner, currentJsonKey: KEY }, {
+      maxEntriesPerRun: 10,
+      minEntriesToCompact: 1,
+    } as InternalCompactOptions);
+    await runWithContext(noTick, async () => {
+      for (let i = 0; i < tail; i++) {
+        await coll(inner).insert(body(`t${i}`));
+      }
+    });
+    const ledger = new RequestLedger({
+      internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+      external: CF_FREE_EXTERNAL_REQUEST_LIMIT,
+    });
+    const ctx = createObservabilityContext({ ledger, maintenance: { dispatch: () => {} } });
+    return await runWithContext(ctx, async () => {
+      try {
+        await coll(ledgeredStorage(inner, "external")).update(
+          "s1",
+          Object.fromEntries(defs.map((d) => [d.on, "z"])),
+        );
+        return "ok";
+      } catch (error) {
+        return (error as BaerlyError).code;
+      }
+    });
+  };
+
+  // Published in docs/about/workload-fit.md: an update changing 9 indexed
+  // fields is refused once 5 or more writes are pending. The update reads
+  // 5 + tail calls before its hold; the hold is 3 x (markers + 1) + 6.
+  test("an update changing 9 indexed fields is refused from a 5-entry tail; at 4 it commits", async () => {
+    const indexes = 9;
+    const needed = (tail: number): number =>
+      5 + tail + STORAGE_RETRY_MAX_ATTEMPTS * (indexes + 1) + COMMIT_RESOLUTION_RESERVE;
+    // The first tail at which the 9-index update no longer fits.
+    let firstRefusedTail = 0;
+    while (needed(firstRefusedTail) <= CF_FREE_EXTERNAL_REQUEST_LIMIT) {
+      firstRefusedTail += 1;
+    }
+    expect(firstRefusedTail).toBe(5);
+    await expect(updateAt(firstRefusedTail - 1, indexes)).resolves.toBe("ok");
+    await expect(updateAt(firstRefusedTail, indexes)).resolves.toBe("CapacityExceeded");
   });
 });

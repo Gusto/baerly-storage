@@ -216,6 +216,16 @@ Sink wiring and field reference are in
 | >10 GB per tenant stored | R2 free-tier storage line; a cost signal, not a protocol ceiling. baerly-storage does not enforce per-tenant byte limits. |
 | ~100 collections per tenant | Soft fan-out guideline; bench-grounded linear cost. Nothing in the protocol enforces a cap. |
 
+On Workers, each request has a storage-call budget: 900 calls through the R2
+binding and 45 through `fetch` on Free, 9,000 on Paid (`cfRequestLedger`). A
+request that would exceed it is refused with `CapacityExceeded`, except a
+`GET /v1/since` long-poll: it stops polling when its calls run out and returns
+what it has, so on Free with S3 over HTTP an idle long-poll returns after about
+22 seconds instead of 25 and a busy one returns part of the backlog, which the
+client's next poll continues. Neither is an error. The Free with S3 over HTTP
+envelope is in
+[workload-fit.md](../about/workload-fit.md#scale-at-a-glance).
+
 Graduation thresholds and the fold-cost derivation live in
 [graduation.md](../about/graduation.md); cost math lives in
 [cost-model.md](../about/cost-model.md).
