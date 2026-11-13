@@ -1559,12 +1559,15 @@ const isDefinitiveCreateRejection = (err: unknown): boolean =>
   err instanceof BaerlyError && (err.code === "AccessDenied" || err.code === "InvalidConfig");
 
 /**
- * `true` when a create-only put's `NetworkError` reports, per the
- * `Storage.put` contract, that no attempt of the call was applied.
+ * `true` when a create-only put reports, per the `Storage.put` contract,
+ * that no attempt of the call was applied: a `NetworkError` after every
+ * attempt was throttled or refused before issue, or the request ledger's
+ * `CapacityExceeded` when it refused the call before any attempt of
+ * unknown outcome. `cause.notApplied` is the proof either way.
  */
 const isCreateNotApplied = (err: unknown): boolean =>
   err instanceof BaerlyError &&
-  err.code === "NetworkError" &&
+  (err.code === "NetworkError" || err.code === "CapacityExceeded") &&
   ((err as BaerlyError).cause as { notApplied?: boolean } | undefined)?.notApplied === true;
 
 /**
