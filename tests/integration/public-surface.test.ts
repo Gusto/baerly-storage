@@ -78,7 +78,6 @@ import {
   CLOUDFLARE_FREE_TIER,
   CLOUDFLARE_PAID_TIER,
   compact,
-  rebuildIndex,
   runGc,
   runScheduledMaintenance,
 } from "@gusto/baerly-storage/maintenance";
@@ -90,7 +89,13 @@ describe("@gusto/baerly-storage/maintenance", () => {
     expect(typeof CLOUDFLARE_PAID_TIER).toBe("object");
     expect(typeof compact).toBe("function");
     expect(typeof runGc).toBe("function");
-    expect(typeof rebuildIndex).toBe("function");
+  });
+
+  test("does not export index-marker tooling", async () => {
+    const root: Record<string, unknown> = await import("@gusto/baerly-storage");
+    const maintenance: Record<string, unknown> = await import("@gusto/baerly-storage/maintenance");
+    expect(root).not.toHaveProperty("allIndexKeysFor");
+    expect(maintenance).not.toHaveProperty("rebuildIndex");
   });
 });
 

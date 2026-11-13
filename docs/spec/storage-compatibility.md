@@ -87,8 +87,7 @@ that each spelling reads back its own body or the last-written one.
 Data an earlier release stored under a non-NFC name or `_id` predates the
 rule. The SDK and HTTP router refuse non-NFC names. The read-only CLI
 verbs (`inspect`, `export`, `admin dump`, `admin fsck`) still accept them,
-and the writing verbs (`admin restore`,
-`admin rebuild-index`, `admin fsck --indexes --fix`) refuse them. A
+and the writing verb (`admin restore`) refuses them. A
 migration dumps the collection and restores it under an NFC name that is
 not canonically equivalent to the legacy one; on R2 the normalized
 original name addresses the legacy objects. `admin fsck` flags non-NFC

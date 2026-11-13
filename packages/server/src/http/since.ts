@@ -305,7 +305,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  * return the parsed `LogEntry`s in causal order.
  *
  * On-bucket log keys are `log/<seq>.json` — the same shape
- * `compactor` / `gc` / `rebuild-index` walk. Iterating
+ * `compactor` / `gc` walk. Iterating
  * `[startSeq, endSeq)` and GET-ing each key directly avoids the
  * lex-`startAfter` hazard on integer filenames (`10.json` sorts
  * before `2.json` lex) and gives us the global causal ordering for

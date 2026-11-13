@@ -7,9 +7,6 @@
  * what a migration has to handle, including rows whose `_id`s are
  * canonically equivalent (legacy twins).
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, test } from "vitest";
 import {
@@ -22,7 +19,6 @@ import { Db } from "@baerly/server";
 import { captureStream } from "../../packages/cli/src/_internal/testing.ts";
 import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runFsck } from "../../packages/cli/src/admin/fsck.ts";
-import { runRebuildIndex } from "../../packages/cli/src/admin/rebuild-index.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { runInspect } from "../../packages/cli/src/inspect.ts";
 import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
@@ -232,39 +228,6 @@ describe("a collection stored under a legacy non-NFC name", () => {
     const restored = await rows.where({}).all();
     expect(restored).toHaveLength(ROWS.length);
     expect(restored).toEqual(expect.arrayContaining(ROWS));
-  });
-
-  test("rebuild-index and fsck --indexes --fix refuse a non-NFC name", async () => {
-    const { uri, storage } = freshBucket();
-    await seedCollection(storage, { app: "app", tenant: "tenant", collection: NFD }, ROWS);
-    const flags = [`--bucket=${uri}`, "--app=app", "--tenant=tenant", `--collection=${NFD}`];
-    const rebuilt = await captured(() =>
-      runRebuildIndex([...flags, "--index=by_kind", "--on=kind"]),
-    );
-    expect(rebuilt.code).toBe(1);
-
-    const dir = await mkdtemp(join(tmpdir(), "baerly-legacy-names-"));
-    try {
-      const config = join(dir, "baerly.config.json");
-      await writeFile(
-        config,
-        JSON.stringify({ collections: { [NFD]: { indexes: [{ name: "by_kind", on: "kind" }] } } }),
-      );
-      const fixed = await captured(() =>
-        runFsck([...flags, "--indexes", "--fix", `--config=${config}`]),
-      );
-      expect(fixed.code).toBe(1);
-      // Read-only drift check on the same legacy name still runs.
-      const checked = await captured(() => runFsck([...flags, "--indexes", `--config=${config}`]));
-      expect(checked.code).toBe(4);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-    const indexKeys: string[] = [];
-    for await (const e of storage.list(`app/app/tenant/tenant/manifests/${NFD}/index/`)) {
-      indexKeys.push(e.key);
-    }
-    expect(indexKeys).toEqual([]);
   });
 });
 
