@@ -47,6 +47,21 @@ describe("probeTailFrom", () => {
     expect(result.entries.map((entry) => entry.seq)).toEqual([5, 6, 7, 8, 9]);
   });
 
+  test("stopOnRefusal ends the chunk at a refused slot and keeps the entries before it", async () => {
+    const inner = new MemoryStorage();
+    await seedLogEntries(inner, PREFIX, 5, 11);
+    const refused = new BaerlyError("CapacityExceeded", "no room", { cause: { refused: true } });
+    const storage: Storage = Object.assign(Object.create(inner) as Storage, {
+      get: (key: string) =>
+        key === logObjectKey(PREFIX, 8) ? Promise.reject(refused) : inner.get(key),
+    });
+    const result = await probeTailChunk(storage, PREFIX, 5, { stopOnRefusal: true });
+    expect(result).toMatchObject({ kind: "at-least", lowerBound: 8 });
+    expect(result.entries.map((entry) => entry.seq)).toEqual([5, 6, 7]);
+    // Without it, the refusal propagates.
+    await expect(probeTailChunk(storage, PREFIX, 5)).rejects.toBe(refused);
+  });
+
   test("hint already at the tail returns empty", async () => {
     const storage = new MemoryStorage();
     // Nothing seeded at or above the hint.
