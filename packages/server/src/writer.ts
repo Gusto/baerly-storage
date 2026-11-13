@@ -99,6 +99,7 @@ import { walkLogRange } from "./log-walk.ts";
 import { findLogTail, probeTailFrom } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 import { dispatchWriteTick, shouldFireMaintenance } from "./maintenance.ts";
+import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 
@@ -1023,10 +1024,17 @@ export class Writer {
     // verb found the collection at its growth-refusal point.
     const forceFold =
       (input.forceMaintenance === true || admissionForces) && maint?.disabled !== true;
+    // The adapter's host trigger (`InternalBoundedMaintenanceOptions`): a
+    // live tail this long fires too, so the runner's Gate 1 sees it.
+    const foldAtTailEntries = (maint?.options as InternalBoundedMaintenanceOptions | undefined)
+      ?.foldAtTailEntries;
     const maintenanceDue =
       maint?.disabled === true
         ? observedTail - current.tail_hint >= MAINTENANCE_TAIL_HINT_REFRESH_WRITES
-        : forceFold || shouldFireMaintenance(current, prevSeq, gcInterval, observedTail);
+        : forceFold ||
+          (foldAtTailEntries !== undefined &&
+            observedTail - current.log_seq_start >= foldAtTailEntries) ||
+          shouldFireMaintenance(current, prevSeq, gcInterval, observedTail);
     if (maintenanceDue) {
       await dispatchWriteTick({
         storage: this.#storage,
