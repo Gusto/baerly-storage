@@ -651,7 +651,9 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       expect(folded.log_seq_start).toBeGreaterThan(0);
     },
   );
+});
 
+describe("fold contention with an explicit grace-0 GC (in-band maintenance off)", () => {
   test(
     "contention does not leak: concurrent folds strand orphan snapshots, GC keeps the count BOUNDED (invariant under write count)",
     // The orphan-snapshot source here is the PRIOR snapshot each round
@@ -673,8 +675,8 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
     // produces ZERO orphans, verified), but the orphan production scales
     // with ROUNDS, not FOLDERS.
     //
-    // GC runs on the fold cadence with grace=0 (the write-tick shape), so
-    // it must keep pace with that ~rounds-proportional residual. The gate
+    // GC runs once per round with grace=0 and is the ONLY collector —
+    // in-band maintenance is off for the commits — so it must keep pace with that ~rounds-proportional residual. The gate
     // is the §7.1 RATE in its sharpest form: the post-drain orphan count
     // must be BOUNDED and INVARIANT under the write count — a 2× longer
     // run must NOT leave ~2× the orphans. Memory-only (see block comment).
@@ -699,15 +701,23 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
           maxSweepsPerRun: 100,
         } as InternalRunGcOptions;
         for (let chunk = 0; chunk < rounds; chunk++) {
-          for (let i = 0; i < 60; i++) {
-            const id = `d${(chunk * 60 + i) % WORKING_SET}`;
-            await writer.commit({
-              op: "I",
-              collection: COLLECTION,
-              docId: id,
-              body: { _id: id, n: chunk * 60 + i, blob },
-            });
-          }
+          // In-band maintenance OFF: this test's GC is the grace-0 pass
+          // below. A write-tick GC would mark the same orphans first with
+          // the real 7-day grace, and the drain could not sweep them.
+          await runWithContext(
+            createObservabilityContext({ maintenance: { disabled: true } }),
+            async () => {
+              for (let i = 0; i < 60; i++) {
+                const id = `d${(chunk * 60 + i) % WORKING_SET}`;
+                await writer.commit({
+                  op: "I",
+                  collection: COLLECTION,
+                  docId: id,
+                  body: { _id: id, n: chunk * 60 + i, blob },
+                });
+              }
+            },
+          );
           // FOLDERS concurrent fold attempts on the SAME current.json:
           // identical body ⇒ identical content-addressed key, so the
           // losers' PUT idempotently overwrites the winner's key (NOT a
@@ -740,10 +750,11 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       const orphansShort = await runContention(20);
       const orphansLong = await runContention(40);
 
-      // (a) Absolute bound: well below the ~rounds = 40 superseded-prior
-      //     snapshots a non-reclaiming design would strand at rounds=40
-      //     (one per round, FOLDERS-independent — see block comment).
-      const BOUND = 60;
+      // (a) Absolute bound. A working grace-0 GC drains to 0 orphans at
+      //     both lengths; one that sweeps nothing strands ~1 per round
+      //     (19 and 39 measured). 5 is the working residual plus margin,
+      //     and sits far below the zero-sweep counts.
+      const BOUND = 5;
       expect(
         orphansShort,
         `short-run orphan snapshots (${orphansShort}) must stay bounded`,
@@ -755,9 +766,10 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
 
       // (b) INVARIANCE under write count — the sharp §7.1 rate gate:
       //     doubling the run does NOT roughly double the residual. We
-      //     allow a small constant cadence-boundary slack on top of the
-      //     short run; a write-proportional leak (≈2×) blows past it.
-      const INVARIANCE_SLACK = 25;
+      //     allow a small constant slack on top of the short run; a
+      //     write-proportional leak (19 → 39 when nothing sweeps) blows
+      //     past it.
+      const INVARIANCE_SLACK = 5;
       expect(
         orphansLong,
         `orphan count must be invariant under write volume: long-run ${orphansLong} vs short-run ${orphansShort} (slack ${INVARIANCE_SLACK}); a write-proportional leak would show ~2×`,

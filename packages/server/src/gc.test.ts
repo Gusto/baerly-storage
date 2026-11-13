@@ -430,6 +430,113 @@ describe("runGc", () => {
     expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual([canonical]);
   });
 
+  test("marks past a pending cohort that is still waiting out its grace", async () => {
+    // The lex-first `maxMarks` keys are marked on pass 1 and stay pending
+    // for the full grace. Pass 2 must mark the NEXT keys, not re-see the
+    // same window and mark nothing for a week.
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const orphans: string[] = [];
+    for (let index = 0; index < 50; index++) {
+      const key = snapshotKey(PREFIX, index, index + 1, index.toString(16).padStart(64, "0"));
+      orphans.push(key);
+      await inner.put(key, new TextEncoder().encode("{}"));
+    }
+    const { storage, trace } = tracingStorage(inner);
+    const opts = {
+      maxMarksPerRun: 20,
+      now: () => new Date("2026-01-01T00:00:00.000Z"),
+    } as InternalRunGcOptions;
+
+    const marked: number[] = [];
+    for (let pass = 0; pass < 3; pass++) {
+      const result = await runGc({ storage, currentJsonKey: KEY }, opts);
+      marked.push(result.marked.orphan_snapshot);
+    }
+
+    expect(marked).toEqual([20, 20, 10]);
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual(orphans);
+    // One LIST per pass, and nothing swept inside the grace.
+    expect(trace.lists).toHaveLength(3);
+    expect(trace.deletes).toEqual([]);
+  });
+
+  test("at the ledger ceiling, marking stops until a sweep frees room", async () => {
+    // Documented ceiling, not a goal: with GC_MAX_PENDING_CANDIDATES
+    // orphans pending, the one-page window holds only pending keys, and
+    // `mergeGcPending` would drop any append past the cap anyway. Newer
+    // orphans wait for the cohort's grace to elapse.
+    const inner = new MemoryStorage();
+    await bootstrap(inner, KEY);
+    const pendingOrphans: string[] = [];
+    for (let index = 0; index < GC_MAX_PENDING_CANDIDATES + 5; index++) {
+      const key = snapshotKey(PREFIX, index, index + 1, index.toString(16).padStart(64, "0"));
+      await inner.put(key, new TextEncoder().encode("{}"));
+      if (index < GC_MAX_PENDING_CANDIDATES) {
+        pendingOrphans.push(key);
+      }
+    }
+    await createGcPending(inner, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: pendingOrphans.map((key) => ({
+        key,
+        due_at: "2099-01-01T00:00:00.000Z",
+        reason: "orphan-snapshot" as const,
+        generation: LOG_STATE_GENERATION,
+      })),
+      last_swept_at: "",
+    });
+
+    const result = await runGc({ storage: inner, currentJsonKey: KEY }, {
+      maxMarksPerRun: 20,
+    } as InternalRunGcOptions);
+
+    expect(result.marked.orphan_snapshot).toBe(0);
+    expect(result.pendingDepth).toBe(GC_MAX_PENDING_CANDIDATES);
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((candidate) => candidate.key)).toEqual(pendingOrphans);
+  });
+
+  test.each([
+    { maxMarksPerRun: 20, pendingKeys: 0, windowKeys: 21 },
+    { maxMarksPerRun: 20, pendingKeys: 500, windowKeys: 521 },
+    { maxMarksPerRun: 20, pendingKeys: GC_MAX_PENDING_CANDIDATES, windowKeys: 1000 },
+    { maxMarksPerRun: 1500, pendingKeys: GC_MAX_PENDING_CANDIDATES, windowKeys: 1500 },
+  ])(
+    "mark LIST window: maxMarks $maxMarksPerRun + $pendingKeys pending ⇒ maxKeys $windowKeys",
+    async ({ maxMarksPerRun, pendingKeys, windowKeys }) => {
+      // The window widens past pending keys only up to one LIST page, and
+      // never shrinks below the mark budget.
+      const inner = new MemoryStorage();
+      await bootstrap(inner, KEY);
+      await createGcPending(inner, PENDING_KEY, {
+        schema_version: GC_PENDING_SCHEMA_VERSION,
+        candidates: Array.from({ length: pendingKeys }, (_, index) => ({
+          key: snapshotKey(PREFIX, index, index + 1, "d".repeat(64)),
+          due_at: "2099-01-01T00:00:00.000Z",
+          reason: "orphan-snapshot" as const,
+          generation: LOG_STATE_GENERATION,
+        })),
+        last_swept_at: "",
+      });
+      const seen: Array<number | undefined> = [];
+      const storage: Storage = {
+        get: (key, o) => inner.get(key, o),
+        put: (key, body, o) => inner.put(key, body, o),
+        delete: (key, o) => inner.delete(key, o),
+        list(prefix, o) {
+          seen.push(o?.maxKeys);
+          return inner.list(prefix, o);
+        },
+      };
+
+      await runGc({ storage, currentJsonKey: KEY }, { maxMarksPerRun } as InternalRunGcOptions);
+
+      expect(seen).toEqual([windowKeys]);
+    },
+  );
+
   test("emits zero-sweep observations when nothing swept this pass", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);

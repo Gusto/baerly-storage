@@ -35,13 +35,40 @@
  *     `<collectionPrefix>/snapshot/L9/...` key not equal to
  *     `current.snapshot`. Each compactor run replaces the pointer; the
  *     prior file becomes unreferenced. Discovery is scoped to this
- *     binary's owned `snapshot/L9/` namespace. Within that scanned,
- *     protocol-written keyspace at most ONE key is permanently
- *     undeletable (the live `current.snapshot`), so for any `maxMarks
- *     >= 2` the window cannot be all-undeletable. Future L0-L8 layouts
+ *     binary's owned `snapshot/L9/` namespace. Future L0-L8 layouts
  *     stay opaque to this binary and do not consume the bounded mark
  *     window. Opaque L9 keys are ignored during mark and evicted from
  *     legacy ledgers without a DELETE; no current writer emits one.
+ *
+ * **Mark window rule.** Every pass LISTs `snapshot/L9/` from the
+ * lexicographic start — no persisted cursor, so no orphan can sit
+ * behind a position the scan never revisits (a restore that deletes the
+ * ledger, a stale-generation drop, or a lost CAS simply re-marks on the
+ * next pass). The window is `maxMarks` plus every key the pass will
+ * certainly skip: the snapshot keys already in `gc/pending.json` and the
+ * one live `current.snapshot`. The loop stops after `maxMarks` NEW
+ * marks. Without the widening, older keys sort first and a cohort
+ * waiting out its 7-day grace fills a `maxMarks`-key window, capping
+ * marking at `maxMarks` per grace while folds keep orphaning snapshots.
+ * The widening is capped at {@link GC_MARK_LIST_PAGE_KEYS} (one full
+ * provider page) and never shrinks the window below `maxMarks`, so it
+ * adds no LIST page request beyond what `maxMarks` alone costs: one
+ * request per 1000 keys, more only if the provider truncates a page
+ * short. Marking only adds ledger entries; deletion authority stays with
+ * the sweep gate below.
+ *
+ * Progress: within the protocol-written L9 keyspace at most ONE key is
+ * permanently unmarkable (the live `current.snapshot`), so for any
+ * `maxMarks >= 1` a pass whose ledger has room marks an unpending orphan
+ * if one exists in the window. Opaque L9 keys (non-canonical names) are
+ * skipped but still occupy window slots; no current writer emits one.
+ *
+ * Ceiling: `GC_MAX_PENDING_CANDIDATES` (1000) bounds the in-flight
+ * cohort, so a collection reclaims at most ~1000 replaced snapshots per
+ * 7-day grace — about 143 folds/day. At the cap the window holds only
+ * pending keys and `mergeGcPending` drops appends past the cap, so
+ * marking stops until the oldest cohort comes due and is swept; a
+ * collection folding faster than that accumulates the excess.
  *
  * **`content/` is deliberately NOT a category.** Legacy
  * `<collectionPrefix>/content/<sha>.json` side objects — written by
@@ -76,6 +103,7 @@ import {
   type MetricsRecorder,
   type Storage,
   GC_GRACE_PERIOD_MILLIS,
+  GC_MARK_LIST_PAGE_KEYS,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
   NO_GENERATION,
@@ -271,13 +299,22 @@ export const runGc = async (
   // ── Step 3. Mark orphan snapshots. ──────────────────────────────
   const newCandidates: GcCandidate[] = [];
   let markedOrphanSnapshot = 0;
-  // Uncursored on purpose — `listWindow` with no cursor, so the window
-  // is always the lexicographic first `maxMarks`. See the module JSDoc
-  // for why this phase is the one exemption.
+  // Uncursored on purpose — every pass scans from the lexicographic
+  // start, so no key can hide behind a position. The window is widened
+  // past the keys this pass already knows it will skip (see
+  // `markWindowKeys` and the module JSDoc), and the loop stops at
+  // `maxMarks` NEW marks.
+  const snapshotPrefix = `${collectionPrefix}/snapshot/L9/`;
+  const pendingSnapshotKeys = pending.json.candidates.filter((c) =>
+    c.key.startsWith(snapshotPrefix),
+  ).length;
   for await (const entry of storage.list(
-    `${collectionPrefix}/snapshot/L9/`,
-    listWindow(maxMarks, undefined, signal),
+    snapshotPrefix,
+    listWindow(markWindowKeys(maxMarks, pendingSnapshotKeys), undefined, signal),
   )) {
+    if (markedOrphanSnapshot >= maxMarks) {
+      break;
+    }
     // Liveness starts with exact key equality with the active pointer,
     // never a parsed key range — a snapshot installed directly by
     // `admin restore` or by a replacement fold is live whatever its seq
@@ -591,6 +628,22 @@ const listWindow = (
   ...(cursor !== undefined && { startAfter: cursor }),
   ...(signal !== undefined && { signal }),
 });
+
+/**
+ * `maxKeys` for the orphan-snapshot mark LIST: `maxMarks` plus every key
+ * the pass is certain to skip without marking — the `pendingSnapshotKeys`
+ * already in the ledger under `snapshot/L9/` and the one live
+ * `current.snapshot`. Without the widening, a ledger cohort waiting out
+ * its grace fills the lex-first window and marking stalls at `maxMarks`
+ * per grace period.
+ *
+ * Capped at {@link GC_MARK_LIST_PAGE_KEYS} so the widening never adds a
+ * full LIST page: a pass with `maxMarks` at or under one page fits one
+ * page request unless the provider truncates short. The cap is never
+ * below `maxMarks`, so a bounded pass scans at least what it always did.
+ */
+const markWindowKeys = (maxMarks: number, pendingSnapshotKeys: number): number =>
+  Math.max(maxMarks, Math.min(maxMarks + pendingSnapshotKeys + 1, GC_MARK_LIST_PAGE_KEYS));
 
 /**
  * Parse the exact canonical `log/<seq>.json` key for this collection.
