@@ -7,9 +7,9 @@ The `Conflict` error code is removed and split in two, and `retriable` is now de
 - `WriteConflict` (HTTP 409, `retriable: true`, generic public message): a lost conditional write or CAS race. Re-read, then retry with bounded backoff. `Storage` implementations throw it for every rejected precondition (stale `If-Match`, or an `If-None-Match: "*"` collision).
 - `AlreadyExists` (HTTP 409, `retriable: false`, message kept): a duplicate `_id` on `insert`, or `baerly admin restore` into an existing collection without `--force`. Never retry; pick a different `_id` or use `update` / `replace`.
 
-`BaerlyError.retriable` is a pure function of `code`: only `NetworkError` and `WriteConflict` are retriable. The HTTP envelope still carries `retriable`, derived from the code. The client SDK ignores the wire value and derives it from the code. A code the client doesn't know (`Conflict` from an older server, or one added by a newer server) decodes by HTTP status, the same way as a response without an envelope: `NetworkError` for 5xx, 408 and 429, otherwise `Internal`. Only the message carries over; the undecoded wire error, including its `resolution`, `issues` and `_id`, is kept on `cause`. The CLI exits 3 for both new codes.
+`BaerlyError.retriable` is a pure function of `code`: only `NetworkError`, `WriteConflict` and `MaintenancePending` are retriable. The HTTP envelope still carries `retriable`, derived from the code. The client SDK ignores the wire value and derives it from the code. A code the client doesn't know (`Conflict` from an older server, or one added by a newer server) decodes by HTTP status, the same way as a response without an envelope: `NetworkError` for 5xx, 408 and 429, otherwise `Internal`. Only the message carries over; the undecoded wire error, including its `resolution`, `issues` and `_id`, is kept on `cause`. The CLI exits 3 for both new codes.
 
-Migration:
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
 
 ```ts
 // before

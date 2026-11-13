@@ -37,3 +37,20 @@ Buckets written by earlier versions need no migration. A bucket whose previous
 GC already swept a long sub-floor log prefix carries `log_delete_floor = 0` for
 those sequences until retirement certifies them, so the check does not cover
 those legacy holes until the floor catches up.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before: a commit below the certified-deleted floor resolved as success
+await tickets.insert(doc);
+// after: it throws AmbiguousCommit (not retriable). Re-read before retrying.
+try {
+  await tickets.insert({ ...doc, _id });
+} catch (err) {
+  if (!(err instanceof BaerlyError && err.code === "AmbiguousCommit")) throw err;
+  const row = await tickets.get(err._id ?? _id); // the write may or may not have landed
+  if (row === undefined) await tickets.insert({ ...doc, _id }); // same _id: cannot duplicate
+}
+```
+
+An exhaustive `switch (err.code)` must add `"AmbiguousCommit"`.

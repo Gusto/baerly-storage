@@ -1,5 +1,5 @@
 ---
-"@gusto/baerly-storage": patch
+"@gusto/baerly-storage": minor
 ---
 
 Fix `LocalFsStorage` (`localFsStorage` on the `/node` barrel, and the
@@ -43,3 +43,15 @@ file rather than data can simply be moved out. To recover, dump the
 directory with the previous release (`baerly admin dump`) and restore into a
 fresh directory (`baerly admin restore`). There is no in-place migration:
 keys a folding filesystem has already merged cannot be recovered.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```sh
+# before: 0.6.0 reused the data directory in place
+# after: when the directory is refused with InvalidConfig, dump with the
+# previous release and restore into a fresh directory with this one
+baerly admin dump    --bucket=file:///old-data --app=app --tenant=t --collection=tickets > tickets.ndjson   # 0.6.0 binary
+baerly admin restore --bucket=file:///new-data --app=app --tenant=t --collection=tickets < tickets.ndjson   # this release
+```
+
+Repeat per collection. A directory whose names are all lowercase ASCII and not dot-prefixed is adopted as-is and needs nothing.
