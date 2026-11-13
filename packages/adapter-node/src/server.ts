@@ -94,8 +94,8 @@ export interface CreateFetchHandlerOptions {
  * in tests — and a real process env in production — is observed:
  *
  *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (the snapshot
- *     ceiling `C`). Parsed as a number; a non-numeric value is ignored
- *     (falls back to the profile default); zero or negative throws
+ *     ceiling `C`). A plain positive decimal integer; unset or `""` falls
+ *     back to the profile default; any other value throws
  *     `BaerlyError{code:"InvalidConfig"}`.
  *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Closed,
  *     case-insensitive vocabulary: unset/`""`/`"0"`/`"false"` → `false`;

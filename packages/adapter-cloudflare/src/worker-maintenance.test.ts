@@ -193,10 +193,22 @@ describe("cfMaintenanceDispatch", () => {
     expect(m.maxFoldBytes).toBe(4096);
   });
 
-  test("ignores a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
+  test.each(["8mb", "1O24"])(
+    "rejects a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES (%j) with InvalidConfig",
+    (raw) => {
+      const ctx = mockExecutionContext();
+      expect(() =>
+        cfMaintenanceDispatch(ctx, (k) =>
+          k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? raw : undefined,
+        ),
+      ).toThrow(expect.objectContaining({ code: "InvalidConfig" }));
+    },
+  );
+
+  test("an empty BAERLY_MAINTENANCE_MAX_FOLD_BYTES keeps the profile default", () => {
     const ctx = mockExecutionContext();
     const m = cfMaintenanceDispatch(ctx, (k) =>
-      k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "not-a-number" : undefined,
+      k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "" : undefined,
     );
     expect(m.maxFoldBytes).toBeUndefined();
   });
@@ -227,17 +239,48 @@ describe("resolveCfMaintenanceProfile — profile selection from BAERLY_MAINTENA
     expect(d.options?.profile).toBe(MAINTENANCE_PROFILE_CF_PAID);
   });
 
-  test("absent/unknown BAERLY_MAINTENANCE_PROFILE defaults to cf-free", () => {
-    const ctx = makeCtx();
-    expect(cfMaintenanceDispatch(ctx, () => undefined).options?.profile).toBe(
-      MAINTENANCE_PROFILE_CF_FREE,
-    );
-    expect(
-      cfMaintenanceDispatch(ctx, (k) =>
-        k === "BAERLY_MAINTENANCE_PROFILE" ? "garbage" : undefined,
-      ).options?.profile,
-    ).toBe(MAINTENANCE_PROFILE_CF_FREE);
-  });
+  test.each([undefined, "", "cf-free"])(
+    "BAERLY_MAINTENANCE_PROFILE=%j selects cf-free on the write-tick path",
+    (raw) => {
+      const d = cfMaintenanceDispatch(makeCtx(), (k) =>
+        k === "BAERLY_MAINTENANCE_PROFILE" ? raw : undefined,
+      );
+      expect(d.options?.profile).toBe(MAINTENANCE_PROFILE_CF_FREE);
+    },
+  );
+
+  // Closed vocabulary: a misspelled profile used to resolve to cf-free
+  // silently, leaving a paid Worker on free caps and ceilings.
+  const badProfiles = ["garbage", "cf_paid", "CF-PAID", "cf-paid "];
+
+  test.each(badProfiles)(
+    "BAERLY_MAINTENANCE_PROFILE=%j throws InvalidConfig on the write-tick path",
+    (raw) => {
+      expect(() =>
+        cfMaintenanceDispatch(makeCtx(), (k) =>
+          k === "BAERLY_MAINTENANCE_PROFILE" ? raw : undefined,
+        ),
+      ).toThrow(expect.objectContaining({ code: "InvalidConfig" }));
+    },
+  );
+
+  test.each(badProfiles)(
+    "BAERLY_MAINTENANCE_PROFILE=%j throws InvalidConfig on the cron path, naming the variable, value, and accepted values",
+    (raw) => {
+      let caught: unknown;
+      try {
+        resolveCfMaintenanceProfile((k) => (k === "BAERLY_MAINTENANCE_PROFILE" ? raw : undefined));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ code: "InvalidConfig" });
+      const message = (caught as Error).message;
+      expect(message).toContain("BAERLY_MAINTENANCE_PROFILE");
+      expect(message).toContain(JSON.stringify(raw));
+      expect(message).toContain('"cf-free"');
+      expect(message).toContain('"cf-paid"');
+    },
+  );
 
   // Step 11: cron-path selection — both triggers resolve the profile through
   // the same `resolveCfMaintenanceProfile` helper, so they stay coherent when
@@ -252,6 +295,8 @@ describe("resolveCfMaintenanceProfile — profile selection from BAERLY_MAINTENA
 
   test("resolveCfMaintenanceProfile defaults to cf-free for the cron path", () => {
     expect(resolveCfMaintenanceProfile(() => undefined)).toBe(MAINTENANCE_PROFILE_CF_FREE);
+    expect(resolveCfMaintenanceProfile(() => "")).toBe(MAINTENANCE_PROFILE_CF_FREE);
+    expect(resolveCfMaintenanceProfile(() => "cf-free")).toBe(MAINTENANCE_PROFILE_CF_FREE);
   });
 });
 
@@ -722,7 +767,7 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
     expect(maintWarns).toHaveLength(0);
   });
 
-  test("repeated non-positive health checks fail without consuming the init-check flag", async () => {
+  test("a non-positive value leaves health green without consuming the init-check flag", async () => {
     const bucket = getBinding();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -730,22 +775,20 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
     const handler = baerlyWorker<BaerlyEnv>(() => ({ config: testConfig, verifier }));
     const noopCtx = mockExecutionContext();
 
-    // A non-positive value must fail every health probe until the binding
-    // is corrected. A throwing parse must not complete the init check.
+    // The init check skips a value it cannot parse (the dispatch build
+    // rejects it on API requests); it must not complete the check.
     const badEnv = {
       BUCKET: bucket,
       APP: "t",
       BAERLY_MAINTENANCE_MAX_FOLD_BYTES: "0",
     } as unknown as BaerlyEnv;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = (await handler.fetch!(
+      const res = await handler.fetch!(
         new Request("https://x/v1/healthz") as Request<unknown, IncomingRequestCfProperties>,
         badEnv,
         noopCtx,
-      )) as unknown as Response;
-      expect(res.status).toBe(500);
-      const body = (await res.json()) as { error?: { code?: string } };
-      expect(body.error?.code).toBe("Internal");
+      );
+      expect(res.status).toBe(200);
     }
 
     // Closure-scoped state persists across calls to this handler. Once
@@ -769,12 +812,108 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
 });
 
 /**
- * `BAERLY_MAINTENANCE_DISABLE` is parsed later than
- * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`: the ceiling check runs inside
- * `ensureResolved` (ahead of healthz), while `DISABLE` is read when the
- * per-request maintenance dispatch is built — after the healthz / dev
- * short-circuits, before the verifier. That split is what makes an
- * invalid `DISABLE` leave health probes green while failing API requests.
+ * Every invalid combination of the two init-read vars keeps the
+ * unauthenticated surfaces (healthz, spec, dev landing) and a cron callback
+ * that does not read them available, and fails API requests at the dispatch
+ * build. The over-raised valid byte value matters because only it makes the
+ * init ceiling check resolve the profile.
+ */
+describe("invalid MAX_FOLD_BYTES × PROFILE combinations on the CF request path", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const overRaised = String(CF_FREE_MAX_SAFE_FOLD_BYTES + 1);
+  const cases: Array<[string | undefined, string | undefined]> = [
+    ["8mb", undefined],
+    ["8mb", "cf-free"],
+    ["8mb", "cf_paid"],
+    ["0", "cf-paid"],
+    ["0", "cf_paid"],
+    [" 1024", "cf-free"],
+    [undefined, "cf_paid"],
+    [overRaised, "cf_paid"],
+    [overRaised, "cf-paid "],
+  ];
+  const scheduledEvent: ScheduledController = {
+    scheduledTime: Date.UTC(2026, 0, 1, 0, 0, 0),
+    cron: "* * * * *",
+    noRetry(): void {},
+  };
+
+  test.each(cases)(
+    "MAX_FOLD_BYTES=%j PROFILE=%j: healthz/spec/dev and a cron callback stay up, an API request throws InvalidConfig",
+    async (bytes, profile) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const bucket = getBinding();
+      const tenant = tenantId("bad-combo");
+      await provision(r2BindingStorage(bucket), tenant);
+      const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+      let cronRan = false;
+      const handler = baerlyWorker<BaerlyEnv>(() => ({
+        config: testConfig,
+        verifier,
+        dev: { app: "t", uiUrl: "https://ui.example" },
+        scheduled: () => {
+          cronRan = true;
+        },
+      }));
+      const noopCtx = mockExecutionContext();
+      const env = {
+        BUCKET: bucket,
+        APP: "t",
+        ...(bytes !== undefined && { BAERLY_MAINTENANCE_MAX_FOLD_BYTES: bytes }),
+        ...(profile !== undefined && { BAERLY_MAINTENANCE_PROFILE: profile }),
+      } as unknown as BaerlyEnv;
+      const status = async (path: string): Promise<number> => {
+        const res = await handler.fetch!(
+          new Request(`https://x${path}`) as Request<unknown, IncomingRequestCfProperties>,
+          env,
+          noopCtx,
+        );
+        return res.status;
+      };
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(status("/v1/healthz")).resolves.toBe(200);
+        await expect(status("/v1/spec")).resolves.toBe(200);
+        await expect(status("/")).resolves.toBe(200);
+        await expect(status("/v1/c/c")).rejects.toMatchObject({ code: "InvalidConfig" });
+      }
+      await handler.scheduled!(scheduledEvent, env, noopCtx);
+      expect(cronRan).toBe(true);
+    },
+  );
+
+  test("a cron callback that resolves an invalid profile gets InvalidConfig", async () => {
+    const handler = baerlyWorker<BaerlyEnv>(() => ({
+      config: testConfig,
+      scheduled: (_event, env) => {
+        resolveCfMaintenanceProfile((k) => {
+          const v = (env as unknown as Record<string, unknown>)[k];
+          return typeof v === "string" ? v : undefined;
+        });
+      },
+    }));
+    const env = {
+      BUCKET: getBinding(),
+      APP: "t",
+      BAERLY_MAINTENANCE_PROFILE: "CF-PAID",
+    } as unknown as BaerlyEnv;
+    await expect(
+      handler.scheduled!(scheduledEvent, env, mockExecutionContext()),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+  });
+});
+
+/**
+ * `BAERLY_MAINTENANCE_DISABLE` and `BAERLY_MAINTENANCE_PROFILE` are parsed
+ * later than `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`: the ceiling check runs
+ * inside `ensureResolved` (ahead of healthz) and reads the profile only for
+ * an over-raised byte ceiling, while both are read when the per-request
+ * maintenance dispatch is built — after the healthz / dev short-circuits,
+ * before the verifier. That split is what makes an invalid `DISABLE` or
+ * `PROFILE` leave health probes green while failing API requests.
  *
  * On CF the throw propagates out of `fetch` through the ExportedHandler's
  * default exception path rather than the canonical JSON envelope. That is
@@ -784,57 +923,63 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
  * `mapError` boundary. Pinned here so a change to either half is a
  * visible test edit.
  */
-describe("invalid BAERLY_MAINTENANCE_DISABLE on the CF request path", () => {
-  test("health stays green, an API request throws InvalidConfig, and a corrected binding recovers", async () => {
-    const bucket = getBinding();
-    const tenant = tenantId("bad-disable");
-    await provision(r2BindingStorage(bucket), tenant);
+describe("invalid dispatch-time maintenance env on the CF request path", () => {
+  test.each([
+    ["BAERLY_MAINTENANCE_DISABLE", "yes", "false"],
+    ["BAERLY_MAINTENANCE_PROFILE", "cf_paid", "cf-free"],
+  ])(
+    "%s=%j: health stays green, an API request throws InvalidConfig, and a corrected binding recovers",
+    async (key, bad, good) => {
+      const bucket = getBinding();
+      const tenant = tenantId("bad-env");
+      await provision(r2BindingStorage(bucket), tenant);
 
-    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
-    const handler = baerlyWorker<BaerlyEnv>(() => ({ config: testConfig, verifier }));
-    const noopCtx = mockExecutionContext();
-    const badEnv = {
-      BUCKET: bucket,
-      APP: "t",
-      BAERLY_MAINTENANCE_DISABLE: "yes",
-    } as unknown as BaerlyEnv;
+      const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+      const handler = baerlyWorker<BaerlyEnv>(() => ({ config: testConfig, verifier }));
+      const noopCtx = mockExecutionContext();
+      const badEnv = {
+        BUCKET: bucket,
+        APP: "t",
+        [key]: bad,
+      } as unknown as BaerlyEnv;
 
-    // Parsed after the healthz short-circuit: the load balancer's probe
-    // and the anonymous machine contract stay available.
-    const probeStatus = async (path: string): Promise<number> => {
-      const res = await handler.fetch!(
-        new Request(`https://x${path}`) as Request<unknown, IncomingRequestCfProperties>,
-        badEnv,
-        noopCtx,
-      );
-      return res.status;
-    };
-    await expect(probeStatus("/v1/healthz")).resolves.toBe(200);
-    await expect(probeStatus("/v1/spec")).resolves.toBe(200);
-
-    // An API request reaches the dispatch build and fails — every time,
-    // since the binding is re-read per request.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      await expect(
-        handler.fetch!(
-          new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
+      // Parsed after the healthz short-circuit: the load balancer's probe
+      // and the anonymous machine contract stay available.
+      const probeStatus = async (path: string): Promise<number> => {
+        const res = await handler.fetch!(
+          new Request(`https://x${path}`) as Request<unknown, IncomingRequestCfProperties>,
           badEnv,
           noopCtx,
-        ),
-      ).rejects.toMatchObject({ code: "InvalidConfig" });
-    }
+        );
+        return res.status;
+      };
+      await expect(probeStatus("/v1/healthz")).resolves.toBe(200);
+      await expect(probeStatus("/v1/spec")).resolves.toBe(200);
 
-    // Correcting the binding restores service without a new isolate.
-    const goodEnv = {
-      BUCKET: bucket,
-      APP: "t",
-      BAERLY_MAINTENANCE_DISABLE: "false",
-    } as unknown as BaerlyEnv;
-    const recovered = await handler.fetch!(
-      new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
-      goodEnv,
-      noopCtx,
-    );
-    expect(recovered.status).toBe(200);
-  });
+      // An API request reaches the dispatch build and fails — every time,
+      // since the binding is re-read per request.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(
+          handler.fetch!(
+            new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
+            badEnv,
+            noopCtx,
+          ),
+        ).rejects.toMatchObject({ code: "InvalidConfig" });
+      }
+
+      // Correcting the binding restores service without a new isolate.
+      const goodEnv = {
+        BUCKET: bucket,
+        APP: "t",
+        [key]: good,
+      } as unknown as BaerlyEnv;
+      const recovered = await handler.fetch!(
+        new Request("https://x/v1/c/c") as Request<unknown, IncomingRequestCfProperties>,
+        goodEnv,
+        noopCtx,
+      );
+      expect(recovered.status).toBe(200);
+    },
+  );
 });

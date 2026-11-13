@@ -144,11 +144,12 @@ describe("nodeMaintenanceDispatch", () => {
     }
   });
 
-  test("ignores a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES", () => {
-    const m = nodeMaintenanceDispatch((k) =>
-      k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "not-a-number" : undefined,
-    );
-    expect(m.maxFoldBytes).toBeUndefined();
+  test("rejects a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES with InvalidConfig", () => {
+    expect(() =>
+      nodeMaintenanceDispatch((k) =>
+        k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? "8mb" : undefined,
+      ),
+    ).toThrow(expect.objectContaining({ code: "InvalidConfig" }));
   });
 
   test("threads BAERLY_MAINTENANCE_DISABLE → disabled via process.env (vi.stubEnv)", () => {

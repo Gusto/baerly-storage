@@ -84,8 +84,10 @@ honours `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from its own environment, so
 run it with the value your host uses, and reports `maintenance` as
 `enabled`, `disabled`, or `invalid-config` from
 `BAERLY_MAINTENANCE_DISABLE`. A maintenance env value the adapters would
-reject is a stderr warning, not a failure, and a rejected
-`MAX_FOLD_BYTES` falls back to the profile default. Exit code is 0
+reject is, for the CLI only, a stderr warning rather than a failure, and
+the CLI reports a rejected `MAX_FOLD_BYTES` against the profile default;
+the adapters refuse API requests with `InvalidConfig` until the value is
+fixed. Exit code is 0
 whatever the verdict.
 `baerly admin usage` reports writes/min against the M-size ceiling: the
 ~30 writes/min/collection workload line.
@@ -379,8 +381,8 @@ Maintenance has two configuration planes:
 
 | Env var | Effect | When to set it |
 | --- | --- | --- |
-| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides static snapshot ceiling `C`, whatever the active profile's value is (512 KiB cf-free, 8 MiB cf-paid, 32 MiB node). Raises `S_max = C`, letting larger snapshot rebuilds pass the gate. Must be a positive number: zero or negative throws on every request that reads it — including a Cloudflare health probe, since the free-tier ceiling warning reads this var before `/v1/healthz` short-circuits. An empty or non-numeric value (e.g. `""`, `"8mb"`) is ignored and falls back to the profile default instead of throwing. | On a large Node host, after confirming the host can rebuild that snapshot (`C ≈ heap / 10`). On Cloudflare, prefer the profile switch first. |
-| `BAERLY_MAINTENANCE_PROFILE` | Cloudflare-only. Accepts `cf-free` (default) or `cf-paid`. `cf-paid` raises fold-entry and GC cadence/mark/sweep caps to Node values, using the paid 10,000-subrequest budget, **and** selects the paid ceilings `C = 8 MiB` / `E = 32,768`. This is the only way to raise `E` on Cloudflare. | On Cloudflare Paid, after upgrading the plan tier, to recover per-pass throughput and the paid ceilings. Do not set on Node; Node selects its own profile, and its ceilings, automatically. |
+| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides static snapshot ceiling `C`, whatever the active profile's value is (512 KiB cf-free, 8 MiB cf-paid, 32 MiB node). Raises `S_max = C`, letting larger snapshot rebuilds pass the gate. Must be a plain positive decimal integer byte count (e.g. `8388608`), untrimmed: zero, negatives, `"8mb"`, `"1e6"`, `"0x400"`, `"1.5"`, and surrounding whitespace throw `InvalidConfig` on every API request instead of being silently accepted. Unset or `""` keeps the profile default. On Node and Cloudflare alike, `/v1/healthz`, `/v1/spec`, and dev routes stay up. | On a large Node host, after confirming the host can rebuild that snapshot (`C ≈ heap / 10`). On Cloudflare, prefer the profile switch first. |
+| `BAERLY_MAINTENANCE_PROFILE` | Cloudflare-only. Accepts `cf-free` (default; also unset or `""`) or `cf-paid`, case-sensitive; any other value, including surrounding whitespace, throws `InvalidConfig` on API requests (healthz, spec, and dev routes stay up). `cf-paid` raises fold-entry and GC cadence/mark/sweep caps to Node values, using the paid 10,000-subrequest budget, **and** selects the paid ceilings `C = 8 MiB` / `E = 32,768`. This is the only way to raise `E` on Cloudflare. | On Cloudflare Paid, after upgrading the plan tier, to recover per-pass throughput and the paid ceilings. Do not set on Node; Node selects its own profile, and its ceilings, automatically. |
 | `BAERLY_MAINTENANCE_DISABLE` | Kill switch; disables in-band fold/GC phases while preserving bounded `tail_hint` refresh. Accepts a closed, case-insensitive vocabulary only: `""` / `"0"` / `"false"` (not disabled, the default) or `"1"` / `"true"` (disabled). Any other value throws on every request that reads it instead of being silently accepted — on Node and Cloudflare alike, `/v1/healthz` and `/v1/spec` are unaffected since they're served before this var is read. | Diagnostics, or to stop fold attempts on a deferring collection while you plan graduation. |
 
 There is no env var for `E`. It is a kernel constant, not
