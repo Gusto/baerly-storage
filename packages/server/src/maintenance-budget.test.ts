@@ -2,32 +2,41 @@
    field on document shapes; the budget test seeds doc bodies with it. */
 
 /**
- * Cloudflare free-tier subrequest budget guard.
+ * Cloudflare maintenance request budgets.
  *
- * One scheduled Worker invocation is capped at 50 subrequests on the
- * free tier; this test wraps `MemoryStorage` in a counting proxy and
- * proves that every isolated scheduled phase under
- * {@link CLOUDFLARE_FREE_TIER} stays at or below that budget. R2
- * binding ops map 1:1 to subrequests, so the proxy counts `get` /
- * `put` / `delete` / `list` invocations as one each.
+ * Wraps `MemoryStorage` the way an adapter issues requests
+ * (`ledgeredStorage`): every GET, PUT, DELETE and LIST page is one
+ * storage call, the unit the per-invocation request ledger charges.
+ * Each maintenance phase under {@link CLOUDFLARE_FREE_TIER} (and the
+ * write-tick passes the runner composes from it) is pinned at its exact
+ * call count, a regression counter, and checked against Workers Free with
+ * the R2 binding: with every call retried
+ * {@link STORAGE_RETRY_MAX_ATTEMPTS} times it fits
+ * {@link CF_FREE_INTERNAL_REQUEST_LIMIT}. Free with storage over `fetch`
+ * (45 calls) is checked per whole request by the `free-fetch:*` cells in
+ * `tests/unit/request-counts.test.ts`.
  *
- * The Cloudflare scheduled handler runs only one phase per tick
- * (even-minute compact, odd-minute GC), so these tests check each phase
- * in isolation, mirroring production. If a future refactor inflates
- * either phase's per-tick budget, this is the load-bearing test that
- * fails — do NOT relax the assertion. Tune `CLOUDFLARE_FREE_TIER` or the
- * underlying primitives instead.
+ * If a refactor moves a pin, re-derive the `CLOUDFLARE_FREE_TIER` JSDoc
+ * before updating it; do NOT relax the limit check. Tune
+ * `CLOUDFLARE_FREE_TIER` or the underlying primitives instead.
  */
 
 import {
   BaerlyError,
+  CF_FREE_COMPACT_TAIL_PROBE_GETS,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
+  CF_PAID_COMPACT_TAIL_PROBE_GETS,
+  CF_PAID_REQUEST_LIMIT,
   CURRENT_JSON_SCHEMA_VERSION,
   GC_PENDING_SCHEMA_VERSION,
   GC_STARVATION_GUARD,
   LOG_FORWARD_PROBE_CAP,
+  LOG_RETENTION_MAX_DELETES_PER_TICK,
   MAINTENANCE_MAX_FOLD_ROWS,
   MAINTENANCE_PROFILE_CF_FREE,
+  MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
+  STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   createCurrentJson,
   createGcPending,
@@ -35,11 +44,6 @@ import {
   MemoryStorage,
   readCurrentJson,
   type Storage,
-  type StorageGetOptions,
-  type StorageGetResult,
-  type StorageListEntry,
-  type StoragePutOptions,
-  type StoragePutResult,
 } from "@baerly/protocol";
 import { describe, expect, test, vi } from "vitest";
 import {
@@ -48,56 +52,59 @@ import {
   seedLogEntries,
 } from "../../../tests/fixtures/log-state.ts";
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
+import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
+import {
+  type CallCounts,
+  CallTally,
+  totalCalls,
+} from "../../../tests/fixtures/request-counting-storage.ts";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { runGc } from "./gc.ts";
 import { computeRetirableRange } from "./log-retention.ts";
-import { CLOUDFLARE_FREE_TIER, crossesGcBoundary, runBoundedMaintenance } from "./maintenance.ts";
+import {
+  CLOUDFLARE_FREE_TIER,
+  CLOUDFLARE_PAID_TIER,
+  crossesGcBoundary,
+  runBoundedMaintenance,
+} from "./maintenance.ts";
 import { snapshotKey } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
-const FREE_TIER_BUDGET = 50;
+/**
+ * Most storage calls one pass may issue fault-free so that, with every
+ * call retried `STORAGE_RETRY_MAX_ATTEMPTS` times, it still fits a Workers
+ * Free invocation through the R2 binding: `900 / 3` = 300.
+ */
+const FREE_R2_PASS_BUDGET = Math.floor(CF_FREE_INTERNAL_REQUEST_LIMIT / STORAGE_RETRY_MAX_ATTEMPTS);
 
 /**
- * Wrap a {@link Storage} and count its top-level method invocations.
- * `get` / `put` / `delete` / `list` each count as one storage op
- * (R2 binding semantics: one op per call, regardless of body size).
+ * Count the storage calls `inner` is sent, as a host charges them: one
+ * per GET, PUT and DELETE, and one per LIST page (`ledgeredStorage`).
+ * `listedPrefixes` records the prefix of each LIST page.
  */
 const countingStorage = (
   inner: Storage,
 ): {
   storage: Storage;
   getOps: () => number;
-  report: () => Record<string, number>;
+  report: () => CallCounts;
   listedPrefixes: () => string[];
 } => {
-  const counts = { get: 0, put: 0, delete: 0, list: 0 };
+  const tally = new CallTally();
   const prefixes: string[] = [];
-  const wrapper: Storage = {
-    async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
-      counts.get += 1;
-      return inner.get(key, opts);
-    },
-    async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
-      counts.put += 1;
-      return inner.put(key, body, opts);
-    },
-    async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
-      counts.delete += 1;
-      return inner.delete(key, opts);
-    },
-    list(
-      prefix: string,
-      opts?: { startAfter?: string; maxKeys?: number; signal?: AbortSignal },
-    ): AsyncIterable<StorageListEntry> {
-      counts.list += 1;
+  const recording: Storage = {
+    get: (key, opts) => inner.get(key, opts),
+    put: (key, body, opts) => inner.put(key, body, opts),
+    delete: (key, opts) => inner.delete(key, opts),
+    list: (prefix, opts) => {
       prefixes.push(prefix);
       return inner.list(prefix, opts);
     },
   };
   return {
-    storage: wrapper,
-    getOps: (): number => counts.get + counts.put + counts.delete + counts.list,
-    report: (): Record<string, number> => ({ ...counts }),
+    storage: ledgeredStorage(recording, "internal", tally),
+    getOps: (): number => totalCalls(tally.read()),
+    report: (): CallCounts => tally.read(),
     listedPrefixes: (): string[] => [...prefixes],
   };
 };
@@ -156,10 +163,11 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
       observedTail: 80,
     });
 
+    expect(counted.report()).toEqual({ get: 5, put: 2, delete: 0, listPage: 1 });
     expect(
       counted.getOps(),
       `ops by category: ${JSON.stringify(counted.report())}`,
-    ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    ).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
     await expect(inner.get(liveContent)).resolves.not.toBeNull();
     expect(counted.listedPrefixes()).not.toContain(`${prefix}/content/`);
   });
@@ -194,15 +202,19 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
 
     const current = await readCurrentJson(inner, KEY);
     expect(current?.json.tail_hint).toBe(128);
+    expect(counted.report()).toEqual({ get: 6, put: 3, delete: 0, listPage: 1 });
     expect(
       counted.getOps(),
       `ops by category: ${JSON.stringify(counted.report())}`,
-    ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    ).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
     expect(counted.listedPrefixes()).not.toContain(`${prefix}/content/`);
   });
 
-  test("compact-only ticks converge from a stale-low tail_hint within the 50-op budget", async () => {
-    // Even-minute branch of the scheduled handler: compact alone. The
+  test("compact-only ticks converge from a stale-low tail_hint within budget", async () => {
+    // A scheduled compact phase alone. Checked against the Free + R2
+    // budget: the 48- and 49-call passes do NOT fit the 45 a Free
+    // invocation may spend over `fetch`, where a compact this far behind
+    // its `tail_hint` stalls (see the CLOUDFLARE_FREE_TIER JSDoc). The
     // writer deliberately leaves tail_hint stale, so each invocation must
     // bound discovery, checkpoint progress, and let later ticks resume.
     const inner = new MemoryStorage();
@@ -242,7 +254,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(reachedBelowMinThreshold).toBe(true);
     expect(perPassOps.length).toBeLessThan(10);
     expect(
-      perPassOps.every((ops) => ops <= FREE_TIER_BUDGET),
+      perPassOps.every((ops) => ops <= FREE_R2_PASS_BUDGET),
       `per-pass ops: ${JSON.stringify(perPassOps)}; reports: ${JSON.stringify(reports)}`,
     ).toBe(true);
     expect(perPassOps, `reports: ${JSON.stringify(reports)}`).toEqual([48, 49, 49, 49, 25, 2]);
@@ -254,7 +266,9 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(finalCurrent!.json).toMatchObject({ log_seq_start: 100, tail_hint: 100 });
   });
 
-  // Drives the real alternating scheduled phases end to end rather than
+  // Drives the real alternating scheduled phases end to end, checked
+  // against the Free + R2 budget (its first compact passes exceed the 45
+  // calls Free allows over `fetch`), rather than
   // priming `tail_hint` by hand — hand-priming hides the stale-hint catch-up
   // cost, which is exactly the cost that has to stay inside the budget. Every
   // invocation must stay bounded AND advance both manifest positions
@@ -299,7 +313,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
         expect(
           ops,
           `entries=${entryCount}; invocation=${invocation}; phase=${phase}; report=${JSON.stringify(report)}`,
-        ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+        ).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
         // Same condition the post-loop assertions pin, so the loop exits
         // exactly when the drain it is measuring has happened.
         drained =
@@ -328,7 +342,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   // + 6 final pending CAS ops (GC_PENDING_CAS_MAX_ATTEMPTS x [GET, PUT])
   // + 2 `tail_hint` refresh ops (casUpdateCurrentJson: GET + PUT, single
   //   attempt — it does not retry)
-  // = 26, against a 50-subrequest invocation cap.
+  // = 26 (78 with every call retried).
   test("maximally contended write-tick GC refreshes tail_hint at 26 storage operations", async () => {
     const inner = new MemoryStorage();
     const prefix = "app/t/tenant/x/manifests/c";
@@ -423,10 +437,21 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     //          + 3 final CAS reads + tail_hint refresh read + retireLogRange gate read
     // put 5  = pending bootstrap create + 3 final CAS writes + refresh write
     // list 1  = snapshot/ LIST (GC never LISTs log/)
-    expect(counted.report()).toEqual({ get: 10, put: 5, delete: 10, list: 1 });
+    expect(counted.report()).toEqual({ get: 10, put: 5, delete: 10, listPage: 1 });
     const totalOps = counted.getOps();
     expect(totalOps).toBe(26);
-    expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    expect(totalOps).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
+  });
+
+  test("one scheduled compact + GC + retirement pass fits Free with the R2 binding at full retries", () => {
+    // The CLOUDFLARE_FREE_TIER JSDoc worst cases: compaction 4 + N + P,
+    // contended GC 12 + S, retirement 3 + LOG_RETENTION_MAX_DELETES_PER_TICK.
+    const compaction =
+      4 + MAINTENANCE_PROFILE_CF_FREE.maxFoldEntriesPerPass + CF_FREE_COMPACT_TAIL_PROBE_GETS;
+    const gc = 12 + MAINTENANCE_PROFILE_CF_FREE.gcMaxSweeps;
+    const retirement = 3 + LOG_RETENTION_MAX_DELETES_PER_TICK;
+    expect([compaction, gc, retirement]).toEqual([49, 22, 23]);
+    expect(compaction + gc + retirement).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
   });
 
   test("a never-folding GC-only collection's tail_hint gap stays far below the forward-probe cap", () => {
@@ -448,7 +473,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   // still evaluates as due and rewrites byte-identical bytes.
   //
   // Every collection shape reaches this path. It is a correctness-of-op-count
-  // pin, not a rescue of the 50-op cap — the redundant write would cost 2 ops
+  // pin, not a rescue of a request limit — the redundant write would cost 2 ops
   // on an already-cheap pass.
   test("a deferring fold that falls through to GC refreshes tail_hint exactly once", async () => {
     const inner = new MemoryStorage();
@@ -513,14 +538,15 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(currentJsonPuts).toBe(1);
     const current = await readCurrentJson(inner, KEY);
     expect(current?.json.tail_hint).toBe(observedTail);
-    expect(counted.getOps()).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    expect(counted.getOps()).toBe(25);
+    expect(counted.getOps()).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
   });
 
   test("B4: a write-tick fold with a STALE-LOW stored tail_hint stays within budget because observedTail bounds the probe", async () => {
     // Under single-write commit the writer never advances tail_hint, so on
     // a never-yet-folded backlog the stored hint can lag the true tail by
     // the whole tail. If compact() re-probed from that stale hint it would
-    // walk O(gap) GETs — blowing the 50-subrequest budget on a long tail.
+    // walk O(gap) GETs — one per stale entry, unbounded by the tail.
     // B4 threads the writer's in-memory observedTail into the runner's
     // compact() call as the probe floor, so the ceiling probe is bounded by
     // "commits since this writer's commit" (here: an immediate 404), NOT by
@@ -552,8 +578,12 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     );
 
     const ops = getOps();
+    // runner GET + compact()'s current GET + one probe GET at observedTail
+    // + 20 log GETs + snapshot PUT + CAS PUT: the probe starts at the
+    // writer's tail, not the stale hint.
+    expect(report()).toEqual({ get: 23, put: 2, delete: 0, listPage: 0 });
     expect(ops, `ops by category: ${JSON.stringify(report())}`).toBeLessThanOrEqual(
-      FREE_TIER_BUDGET,
+      FREE_R2_PASS_BUDGET,
     );
   });
 
@@ -567,7 +597,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   // + 20 log GETs (WRITE_TICK_FOLD_ENTRIES_PER_PASS)
   // + 2 for the one signal CAS (GET + PUT) stamping `last_warned_seq` and
   //   `tail_hint` together
-  // = 26, against a 50-subrequest invocation cap. No GC, no retirement:
+  // = 26 (78 with every call retried). No GC, no retirement:
   // the compact() walk is this tick's one phase.
   test("a single-phase rebuild-gate defer tick stays at 26 storage operations", async () => {
     const inner = new MemoryStorage();
@@ -620,17 +650,18 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(after.log_seq_start).toBe(seeded.log_seq_start);
     expect(after.last_warned_seq).toBe(observedTail);
     expect(after.tail_hint).toBe(observedTail);
-    expect(counted.report()).toEqual({ get: 25, put: 1, delete: 0, list: 0 });
+    expect(counted.report()).toEqual({ get: 25, put: 1, delete: 0, listPage: 0 });
     const totalOps = counted.getOps();
     expect(totalOps).toBe(26);
-    expect(totalOps).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    expect(totalOps).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
   });
 
   // Fold/retire phase separation. In `"single"` phase mode a write-tick
   // fold returns from the runner BEFORE the Step-5 retirement call — a
   // compact pass is ≤49 ops on its own, so retirement (up to 23 more)
-  // sharing a fold tick would blow the 50-subrequest free-tier cap (see
-  // LOG_RETENTION_MAX_DELETES_PER_TICK's JSDoc). This pin holds today by
+  // sharing a fold tick would take it to 72, past what a write on Free over
+  // `fetch` can spend (see LOG_RETENTION_MAX_DELETES_PER_TICK's JSDoc). This
+  // pin holds today by
   // control flow alone; a refactor that hoists Step 5 above the fold
   // return must fail HERE rather than silently regress the cap.
   test("a single-phase fold tick issues zero retirement storage ops", async () => {
@@ -691,9 +722,49 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     const retirable = computeRetirableRange(current!.json, { window: 0, maxDeletes: 20 });
     expect(retirable.start).toBeLessThan(retirable.end);
 
+    expect(counted.report()).toEqual({ get: 23, put: 2, delete: 0, listPage: 0 });
     expect(
       counted.getOps(),
       `ops by category: ${JSON.stringify(counted.report())}`,
-    ).toBeLessThanOrEqual(FREE_TIER_BUDGET);
+    ).toBeLessThanOrEqual(FREE_R2_PASS_BUDGET);
+  });
+});
+
+describe("CLOUDFLARE_PAID_TIER budget", () => {
+  const KEY = "app/t/tenant/x/manifests/c/current.json";
+  const PREFIX = "app/t/tenant/x/manifests/c";
+
+  // 1 current GET + P probe GETs + 1 prior-snapshot GET + N log GETs
+  // + 1 snapshot PUT + 1 current.json CAS PUT.
+  const worstCompactPass =
+    4 + MAINTENANCE_PROFILE_CF_PAID.maxFoldEntriesPerPass + CF_PAID_COMPACT_TAIL_PROBE_GETS;
+
+  test("a compact pass fits the Paid request limit with every call retried", () => {
+    expect(worstCompactPass * STORAGE_RETRY_MAX_ATTEMPTS).toBeLessThanOrEqual(
+      CF_PAID_REQUEST_LIMIT,
+    );
+  });
+
+  test("a compact pass behind a stale tail_hint bounds its probe and still folds", async () => {
+    const inner = new MemoryStorage();
+    // A tail longer than the probe budget, with tail_hint left at 0.
+    const entries = CF_PAID_COMPACT_TAIL_PROBE_GETS + 200;
+    await createCurrentJson(inner, KEY, logStateCurrentJson({ log_seq_start: 0, tail_hint: 0 }));
+    await seedLogEntries(inner, PREFIX, 0, entries, (seq) => ({
+      after: { _id: `d${seq}`, n: seq },
+    }));
+    const counted = countingStorage(inner);
+
+    const result = await compact(
+      { storage: counted.storage, currentJsonKey: KEY },
+      CLOUDFLARE_PAID_TIER.compact,
+    );
+
+    expect(result.written).toBe(true);
+    expect(result.entriesFolded).toBe(MAINTENANCE_PROFILE_CF_PAID.maxFoldEntriesPerPass);
+    // The worst pass less the prior-snapshot GET (there is no snapshot
+    // yet): 1 current + P probe + N log GETs + 2 PUTs.
+    expect(counted.report()).toEqual({ get: 1201, put: 2, delete: 0, listPage: 0 });
+    expect(counted.getOps()).toBe(worstCompactPass - 1);
   });
 });

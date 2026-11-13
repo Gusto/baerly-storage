@@ -37,12 +37,14 @@
  */
 
 import {
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
   readCurrentJson,
   type Storage,
+  WRITE_TICK_FOLD_ENTRIES_PER_PASS,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
@@ -391,15 +393,16 @@ describe("§7.1 drain-rate invariant (write-tick, real Writer)", () => {
     ).toBeLessThanOrEqual(Math.ceil(foldsPerDay));
   });
 
-  test("an UN-sliced whole-tail fold of >=100 entries would BLOW the 50-subrequest CF-free budget", () => {
-    // Why slicing is load-bearing: compact's worst-case budget is
-    // `3 + maxEntriesPerRun` subrequests (1 GET current + 1 GET prior
+  test("an UN-sliced whole-tail fold of >=100 entries would not fit one Free request over fetch", () => {
+    // Why slicing is load-bearing: a fold costs at least
+    // `3 + maxEntriesPerRun` storage calls (1 GET current + 1 GET prior
     // snapshot + N GET log + 1 PUT snapshot + 1 PUT current). Folding a
-    // whole 100-entry tail in one pass is 3 + 100 = 103 > 50. The
-    // CF-free slice caps N at 20 ⇒ 3 + 20 = 23 < 50.
+    // whole 100-entry tail in one pass is 103, past the 45 calls the
+    // request ledger allows a Workers Free invocation over `fetch`. The
+    // CF-free slice caps N at 20, so the fold itself fits.
     const wholeTailFoldCost = 3 + 100;
-    expect(wholeTailFoldCost).toBeGreaterThan(50);
-    const slicedFoldCost = 3 + 20;
-    expect(slicedFoldCost).toBeLessThanOrEqual(50);
+    expect(wholeTailFoldCost).toBeGreaterThan(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+    const slicedFoldCost = 3 + WRITE_TICK_FOLD_ENTRIES_PER_PASS;
+    expect(slicedFoldCost).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
   });
 });

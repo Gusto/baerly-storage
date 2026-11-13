@@ -268,10 +268,14 @@ export const COMMIT_RESOLUTION_RESERVE: number = 2 * STORAGE_RETRY_MAX_ATTEMPTS;
  * steady state on the free-tier profile).
  *
  * 16 bounds CONCURRENCY, not the per-request total: a walk still issues
- * one GET per live-tail entry, 16 at a time. The free cap (50/request)
- * is not met by this bound — see `docs/spec/scale-ceilings.md`
- * §Per-tier bounds. A free-tier reader relies on the compactor keeping
- * the live tail short enough that the walk never approaches it.
+ * one GET per live-tail entry, 16 at a time, and every GET is charged to
+ * the invocation's request ledger, which refuses a read whose tail does
+ * not fit the host's limit. On Workers the platform also caps an
+ * invocation at 6 simultaneous outgoing connections, R2 binding calls
+ * included, so the walk runs at most 6 at a time there whatever this
+ * value is. A reader relies on the compactor keeping the live tail short
+ * enough that the walk fits; see `docs/spec/scale-ceilings.md`
+ * §Per-tier bounds.
  *
  * @see packages/server/src/log-walk.ts (`walkLogRange`)
  */
@@ -308,25 +312,19 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
  * its pre-image below the floor. The budget is anchored at the
  * committing seq instead, which makes the cost unconditional.
  *
- * **Sized by the subrequest wall, not by coverage.** Cloudflare free
- * allows 50 subrequests per request total
- * (`docs/spec/scale-ceilings.md` §Per-tier bounds); R2 binding ops count
- * 1:1, and a `ctx.waitUntil` maintenance continuation draws on the
- * same per-invocation budget. One `op:"U"` commit on a single-index
- * collection already costs ~15 before this walk — 1 GET
- * `current.json`, ~10 sequential GETs for `findLogTail`'s gallop over
- * a one-fold-interval `tail_hint` lag, 1 index `newKey` PUT, the
- * `log/<seq>` create, 1 GET re-reading `current.json` after that create
- * resolves to reject a create that landed below the certified delete floor
- * (`Writer#assertCommitAboveDeleteFloor`), 1 stale-key DELETE — and the
- * write-tick fold branch it may dispatch costs ~26 more (1 runner GET
- * + `compact()`'s 3 + {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS} log
- * GETs + 2 PUTs). `50 - 15 - 26 = 9`; `PREIMAGE_SCAN_MAX_GETS = 8`
- * leaves one spare subrequest. The post-create delete-floor re-read adds no
- * billable cost — `billableClassAOps = puts + lists` excludes GET — but it
- * does consume the subrequest headroom, so this budget cannot rise without
- * re-deriving the total. The walk is strictly SEQUENTIAL, so this is a hard
- * per-request cost, not a fan-out bound like {@link MAX_PARALLEL_LOG_READS}.
+ * **Sized by latency, CPU and retention, not by a request cap.** The
+ * walk is strictly SEQUENTIAL and runs inline before the response: each
+ * step is one storage round trip (about 75 ms per R2 binding call
+ * measured from a Worker, so 8 steps is about 0.6 s) and, on Workers Free,
+ * about 0.25 ms of a 10 ms CPU budget. {@link LOG_RETENTION_SEQ_WINDOW} is
+ * this value times 128, so raising it also widens the log objects kept
+ * below the floor. Every GET is charged to the invocation's request
+ * ledger, and the walk runs after the commit has resolved, outside the
+ * commit's hold: a refused GET ends the walk, the commit stays
+ * acknowledged, and `db.write.post_commit_refused_total` records it. On
+ * Workers Free with storage over `fetch` (45 calls a request) the walk is
+ * part of the measured worst-case update (`15 + t + 2I` in
+ * `request-counts.json`); see {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES}.
  *
  * **What that budget actually covers.** The pre-image sits roughly
  * one working-set of seqs back, so 8 reaches a doc rewritten within
@@ -342,10 +340,10 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
  * than signal.
  *
  * A per-tier budget on `MaintenanceProfile` (free 8, Node / CF-paid
- * far higher — the same commit leaves ~9,780 of a 10,000 subrequest
- * budget there) would buy real coverage back on the larger tiers.
- * Not built: it widens the profile surface for a best-effort cleanup
- * path whose backstop already exists.
+ * far higher, where the same commit leaves most of a 9,000-call ledger
+ * limit) would buy real coverage back on the larger tiers. Not built: it
+ * widens the profile surface for a best-effort cleanup path whose
+ * backstop already exists.
  *
  * @see packages/server/src/writer.ts (`Writer#readPreImage`)
  */
@@ -390,23 +388,25 @@ export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
 
 /**
  * Maximum log-object DELETEs a retention pass may attempt on one write tick.
- * Twenty fits within the most constrained request budget and drains faster than
- * the fold floor advances in steady state.
+ * Twenty keeps a GC tick plus retirement at 48 calls (144 with every call
+ * retried), inside Workers Free's 900-call R2 binding limit, and drains faster
+ * than the fold floor advances in steady state.
  *
  * `retireLogRange` is the pass that spends this budget. Every maintenance
  * trigger runs it via the shared `retireLogs` helper in `maintenance.ts`:
  * `runScheduledMaintenance` after its GC phase, and `runBoundedMaintenance`
  * both on the hard-GC early-return path and as its final step. The combined
- * per-tick subrequest arithmetic, against the worst cases `maintenance.ts`'s
- * `CLOUDFLARE_FREE_TIER` JSDoc documents:
+ * per-tick storage-call arithmetic, against the worst cases `maintenance.ts`'s
+ * `CLOUDFLARE_FREE_TIER` JSDoc documents (fault-free; times
+ * {@link STORAGE_RETRY_MAX_ATTEMPTS} with every call retried):
  *
- * - One retirement pass, worst case, is 23 subrequests: 1 advisory-gate GET
+ * - One retirement pass, worst case, is 23 calls: 1 advisory-gate GET
  *   + `casUpdateCurrentJson`'s own GET + 1 CAS PUT + up to 20 DELETEs.
  * - A maximally contended write-tick GC including the retirement gate read
  *   is 26 storage operations, pinned exactly by `maintenance-budget.test.ts`.
  *   When the gate finds work, the pass adds its CAS read + CAS write + up to
- *   20 DELETEs on top (48 of 50 worst case).
- * - A compaction pass is ≤49, so compact + retirement is 72. **Retirement
+ *   20 DELETEs on top (48, or 144 retried).
+ * - A compaction pass is ≤49, so compact + retirement would be 72. **Retirement
  *   cannot share a tick with a fold**: in `"single"` phase mode a write-tick
  *   fold returns before the runner's retirement step, and
  *   `maintenance-budget.test.ts` pins that a fold tick issues zero retirement
@@ -644,13 +644,40 @@ export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
  * prior-snapshot fold pass costs 1 GET current + P GETs tail probe +
  * 1 GET prior snapshot + N GETs log + 1 PUT snapshot + 1 PUT current
  * = 4 + N + P storage operations. With P=25 and the Free profile's
- * N=20 slice, the worst pass is 49 operations, leaving one operation
- * below the 50-subrequest invocation cap.
+ * N=20 slice, the worst pass is 49 operations, 147 with every call
+ * retried, inside the 900 a Free invocation may spend through the R2
+ * binding ({@link CF_FREE_INTERNAL_REQUEST_LIMIT}). Through `fetch` (45)
+ * the worst pass does not fit, and a pass about 20 or more entries behind
+ * its `tail_hint` stalls there; see `CLOUDFLARE_FREE_TIER`. Kept at 25
+ * because Free CPU, not the request count, binds first on the binding,
+ * and the maintenance-backlog baselines were measured at it.
  *
  * @see packages/server/src/maintenance.ts
  * @see packages/server/src/maintenance-budget.test.ts
  */
 export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
+
+/**
+ * Cloudflare Paid scheduled-compactor tail-discovery budget (`P`) for
+ * `CLOUDFLARE_PAID_TIER`. Without one, the scheduled probe may walk up to
+ * {@link LOG_FORWARD_PROBE_CAP} (100,000) GETs past a stale `tail_hint`,
+ * which no Paid invocation can issue: the request ledger refuses the pass
+ * at {@link CF_PAID_REQUEST_LIMIT} and nothing folds. With a budget, a
+ * pass that exhausts it checkpoints the certified lower bound in
+ * `current.json` and the next pass resumes there.
+ *
+ * With the Paid profile's per-pass slice
+ * `N` = {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} (200), the worst
+ * pass is `4 + N + P` = 1,204 storage calls, 3,612 with every call retried
+ * {@link STORAGE_RETRY_MAX_ATTEMPTS} times, well inside 9,000. 1,000 is
+ * five slices of discovery per pass: large enough that a pass behind by
+ * a normal backlog still folds, small enough that a scheduled compact, GC
+ * and retirement pass together stay under the limit at full retries.
+ *
+ * @see packages/server/src/maintenance.ts (`CLOUDFLARE_PAID_TIER`)
+ * @see packages/server/src/maintenance-budget.test.ts
+ */
+export const CF_PAID_COMPACT_TAIL_PROBE_GETS: number = 1000;
 
 /**
  * compact()'s minEntriesToCompact, set EXPLICITLY by the runner so it agrees with Gate 1
@@ -1020,9 +1047,9 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
 
 /**
  * CF-paid profile — opt-in via `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A paid
- * isolate keeps the CF-free single-phase shape (one phase per request) but has the 10,000-
- * subrequest budget (vs free's 50), so it reuses the `NODE_MAINTENANCE_*`
- * per-pass caps.
+ * isolate keeps the CF-free single-phase shape (one phase per request) but has a
+ * 9,000-call request ledger limit ({@link CF_PAID_REQUEST_LIMIT}), so it reuses the
+ * `NODE_MAINTENANCE_*` per-pass caps.
  *
  * A profile moves RATE and the DEFER THRESHOLD, never the stored data or the
  * query semantics — that is the equivalence invariant, and it is what
