@@ -3,13 +3,16 @@
  * ledger's Free limits: storage over `fetch` (S3 over HTTP) charges the
  * 45-call `external` pool, the R2 binding the 900-call `internal` pool.
  *
- * An idle cell is one long-poll that finds nothing, run with a deadline
- * no budget outlasts, so the ledger, not the clock, ends it: the cell is
- * every call the route spends holding the poll. A busy cell is one
+ * A `since-idle-no-timeout` cell is one long-poll that finds nothing,
+ * run with a deadline no budget outlasts and a zero poll interval, so the
+ * ledger, not the clock, ends it: the most calls an idle long-poll can
+ * spend on that host, not its cost at the route defaults. At the
+ * defaults (25 s at 1 s) the `fetch` host also ends on the ledger, at the
+ * same 44 calls, while the R2 binding's timeout ends it at 52; both are
+ * pinned by `packages/server/src/http/since.test.ts` under fake timers,
+ * which this real-time program cannot use. A `since-busy` cell is one
  * long-poll from an empty cursor over a 200-entry unfolded tail: the
- * prefix the first request delivers. Both are deterministic. The
- * long-poll's behavior under the ledger is pinned by
- * `packages/server/src/http/since.test.ts`.
+ * prefix the first request delivers. Both are deterministic.
  */
 
 import {
@@ -91,7 +94,7 @@ const measure = async (
   return charged.read();
 };
 
-/** The `since` cells: idle and busy, per Free host. */
+/** The `since` cells: idle (no timeout) and busy, per Free host. */
 export const sinceCells = async (): Promise<Array<{ name: string; counts: CallCounts }>> => {
   const idle = await seed(1);
   // The client's steady state: it holds the cursor of the newest entry.
@@ -104,7 +107,10 @@ export const sinceCells = async (): Promise<Array<{ name: string; counts: CallCo
   const busy = await seed(SINCE_BUSY_TAIL);
   const cells: Array<{ name: string; counts: CallCounts }> = [];
   for (const host of SINCE_HOSTS) {
-    cells.push({ name: `${host.name}:since-idle`, counts: await measure(idle, host.pool, cursor) });
+    cells.push({
+      name: `${host.name}:since-idle-no-timeout`,
+      counts: await measure(idle, host.pool, cursor),
+    });
     cells.push({
       name: `${host.name}:since-busy tail=${SINCE_BUSY_TAIL}`,
       counts: await measure(busy, host.pool, ""),
