@@ -572,12 +572,19 @@ describe("fold-stage0 frozen corpus: restore compatibility contract", () => {
       [["\ud800", { _id: "\ud800", note: "lone-high" }]],
       null,
     ],
-    ["restore/duplicate-ids.ndjson", 0, [["duplicate", { _id: "duplicate", n: 2 }]], null],
+    // Deliberate 0.7.0 change: restore refuses duplicate and missing _ids
+    // with a committed-row count; input bytes unchanged.
+    [
+      "restore/duplicate-ids.ndjson",
+      1,
+      [["duplicate", { _id: "duplicate", n: 1 }]],
+      'baerly admin.restore: InvalidConfig: baerly admin restore: line 2 repeats _id "duplicate" first seen on line 1; 1 row committed before this line (they remain in the target; restore again into a fresh target, or with --force). Restore never rewrites an _id. Fix the dump line, or rewrite it to a fresh NFC _id that is not canonically equivalent to the original.\n',
+    ],
     [
       "restore/missing-id.ndjson",
-      2,
+      1,
       [],
-      "baerly admin.restore: Unknown: baerly admin restore: line 1 missing non-empty string _id\n",
+      "baerly admin.restore: InvalidConfig: baerly admin restore: line 1 missing non-empty string _id; 0 rows committed before this line (they remain in the target; restore again into a fresh target, or with --force). Add a non-empty string _id to the dump line.\n",
     ],
     [
       "restore/identity-divergent.ndjson",
