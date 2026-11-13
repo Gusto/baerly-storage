@@ -195,6 +195,72 @@ describe("a Worker request runs under one ledger", () => {
   });
 });
 
+describe("an idle /v1/since long-poll on Workers Free with storage over fetch", () => {
+  test("ends in an empty 200 within the external limit, and the next poll keeps syncing", async () => {
+    const tenant = tenantId("ledger-since");
+    const inner = new MemoryStorage();
+    const key = `app/t/tenant/${tenant}/manifests/c/current.json`;
+    await createCurrentJson(inner, key, {
+      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+      snapshot: null,
+      tail_hint: 0,
+      log_seq_start: 0,
+      writer_fence: { epoch: 0, owner: "ledger-test", claimed_at: "" },
+      snapshot_bytes: 0,
+      snapshot_rows: 0,
+    });
+    const issued = new CallTally();
+    const ledgers: RequestLedger[] = [];
+    const verifier: Verifier = async () => {
+      ledgers.push(getCurrentContext()!.ledger!);
+      return { tenantPrefix: tenant, identity: {} };
+    };
+    // The defaults' ratio, 25 s at 1 s, scaled down: about 26 idle polls,
+    // more than 45 external calls cover at two per poll.
+    const handler = baerlyWorker<BaerlyEnv>(() => ({
+      config: testConfig,
+      verifier,
+      storage: ledgeredStorage(inner, "external", issued),
+      sinceTimeoutMs: 500,
+      sincePollIntervalMs: 20,
+    }));
+    const since = async (cursor: string): Promise<Response> => {
+      const { ctx, drain } = collectingCtx();
+      const res = await handler.fetch!(
+        request(`/v1/since?collection=c&cursor=${encodeURIComponent(cursor)}`),
+        { APP: "t" },
+        ctx,
+      );
+      await drain();
+      return res;
+    };
+
+    const idle = await since("");
+    expect(idle.status).toBe(200);
+    await expect(idle.json()).resolves.toEqual({ events: [], next_cursor: "" });
+    expect(ledgers.at(-1)!.charged.external).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+    expect(ledgers.at(-1)!.charged.external).toBe(totalCalls(issued.read()));
+
+    const { ctx, drain } = collectingCtx();
+    const put = await handler.fetch!(
+      request("/v1/c/c", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: { _id: "d0" } }),
+      }),
+      { APP: "t" },
+      ctx,
+    );
+    expect(put.status).toBeLessThan(300);
+    await drain();
+
+    const next = await since("");
+    expect(next.status).toBe(200);
+    const body = (await next.json()) as { events: Array<{ doc_id: string }> };
+    expect(body.events.map((e) => e.doc_id)).toEqual(["d0"]);
+  });
+});
+
 describe("a cron invocation gets its own ledger", () => {
   test("the scheduled handler runs inside a context carrying a fresh profile ledger", async () => {
     const seen: Array<RequestLedger | undefined> = [];
