@@ -238,10 +238,9 @@ For a single-document mutation:
    **before** the committing log create, so no crash can leave a
    committed row unindexed. A concurrent same-doc write still can: a
    stale-key DELETE (step 5) may land after a peer re-PUT the same marker,
-   so index completeness is not guaranteed and insert uniqueness does not
-   rely on it. (Stale index keys are deleted _after_ the commit;
-   see step 5. Index completeness is its own invariant — see the index
-   access-path notes under "[Read algorithm](#read-algorithm)".)
+   so index completeness is not guaranteed. Reads and insert uniqueness
+   use the authoritative snapshot-plus-log fold, not marker membership.
+   Stale index keys are deleted _after_ the commit; see step 5.
 4. **Create `log/<seq>.json` with `If-None-Match: "*"` — this create
    _is_ the commit.** Winning (`200`) means committed; a `412` means
    the slot is occupied (re-probe the next seq, per the
@@ -487,29 +486,20 @@ Crashes fall on one side of the commit line: serializing `LogEntry.after`
 and PUTting additive (new) index keys are preparation, the `log/<seq>`
 create is the commit, and stale-key DELETEs are cleanup. The single
 `log/<seq>` create is the only point at which the mutation becomes
-committed, so every crash either leaves the doc fully committed and
-index-findable or fully uncommitted.
+committed. Reads reconstruct visibility from the snapshot and log,
+independently of index markers.
 
-| Crash point                                       | Bucket residue                                                                                                                             | Reader behavior                                                                                                                        |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Before the log create (during new-key PUTs)       | Orphan additive index keys may exist; the doc is **not** committed (no log entry).                                                          | Invisible — an orphan additive key is a benign false-positive dropped by `matchesWire`.                                                |
-| After the log create, before the stale-key DELETE | The doc is **committed** and correctly index-findable (its new keys have already been written); it may transiently carry an extra _stale_ key. | Visible and findable. The extra stale key is a benign false-positive that `matchesWire` drops.                                         |
+| Crash point | Bucket residue | Reader behavior |
+| --- | --- | --- |
+| Before the log create (during new-key PUTs) | Orphan additive index keys may exist; no committed log entry. | The uncommitted row is invisible. |
+| After the log create, before the stale-key DELETE | Committed entry and possibly stale index keys. | The committed row is visible from the log. |
 
-Index failures are asymmetric: extra candidates are repairable false
-positives, but missing candidates can hide committed rows from
-index-routed queries. The old two-write commit could leave a
-_committed_ doc silently **de-indexed** by a crash; the read path
-filters false positives but cannot recover missing candidates.
-
-The single-write order eliminates that failure: new keys are PUT
-_before_ the commit, so no crash leaves a committed doc unindexed, and
-stale-key DELETEs land only _after_ the commit, so an uncommitted write
-can never remove a key a committed value depends on. The residual is
-safe: an extra key is a false-positive. It can be healed by the doc's
-next write when the capped pre-image walk still reaches the prior image
-(see invariant 7); `rebuildIndex` is the whole-collection backstop. (A
-bounded in-tick reconcile slice was considered and deferred — see
-[ADR-004](../adr/004-single-write-commit.md#closed-paths).)
+Marker maintenance is not atomic with the log. A delayed stale-key DELETE
+can erase a marker that a concurrent same-id reinsertion needs, even on
+strongly consistent storage. Extra or missing markers do not affect reads
+or mutation selection because neither uses marker membership.
+`rebuildIndex` reconciles these artifacts; it is not a prerequisite for
+read correctness.
 
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
@@ -530,10 +520,10 @@ tail_hint)`, and the forward-probe.
 Every read loads `current.json` fresh for the collection to get the
 snapshotted prefix and the probe start for newer commits. If
 `current.json` is missing, the collection is empty. Otherwise, a
-full-scan read reconstructs the collection from a snapshot plus a
+read reconstructs the collection from a snapshot plus a
 numbered log suffix.
 
-For a full-scan read:
+For every read:
 
 1. Read `current.json`.
 2. Load `current.snapshot` if it is non-null, verifying the snapshot
@@ -553,27 +543,17 @@ For a full-scan read:
    - `D` deletes `doc_id`.
 5. Apply the predicate, order, and limit in memory.
 
-The index path is a shortcut to candidates, not a second source of
-truth. `planQuery` may choose an index prefix, fetch candidate document
-IDs, and fold only the relevant log entries, then re-check the predicate
-against materialized rows. Stale extra index markers can make the path
-do extra work and cannot invent rows. Missing index markers can hide
-rows from an index-routed query, so index completeness is a real
-invariant. Newly declared or suspect indexes must be reconciled with
-`rebuildIndex` before operators treat them as complete.
+The returned tail and rows come from this same complete fold. Predicates,
+including filtered-index predicates, cannot restrict which committed
+entries are loaded. Selection for update, delete, and replace uses the
+same authoritative row set. Reads issue no index LISTs and do not depend
+on index completeness. Declaring or rebuilding an index does not change
+query results or accelerate reads.
 
-Marker completeness is necessary but not sufficient. For a _filtered_
-(partial) index, the route is sound only when the query predicate
-implies the index filter. An index filtered to `status = "open"` is
-sound for a query that asks for `status = "open"` and `priority = "p1"`;
-it is not sound for a query that asks only for `priority = "p1"`,
-because the index LIST never yields closed rows and the post-fetch
-predicate re-check cannot resurrect rows the LIST never returned. The
-planner prefers an implied-or-unfiltered index and, as a last resort
-when it is the only candidate, will still route through a non-implied
-filtered index — which is unsound for that query (it can silently drop
-matching rows). This last-resort path is a known limitation in
-[`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts).
+An empty result still requires loading the snapshot and log to prove
+absence. Order and limit apply after materialization, so they do not
+bound fold I/O or memory. Existing snapshot ceilings and host request
+budgets remain the workload constraints; no read-side maintenance runs.
 
 ## Snapshots and compaction
 

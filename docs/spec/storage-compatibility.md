@@ -292,18 +292,16 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 | **Unsupported**   | GCS via S3-interop, Azure Blob  | GCS's **S3-interop** endpoint scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so that path **cannot** linearize the commit log. Use the native `gcsStorage` adapter (Tier 1) instead; do not point `S3HttpStorage` at GCS. Azure Blob is not an S3 API and has no adapter. |
 | **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
 
-> **R2 listing is strongly consistent; insert uniqueness still folds the
-> log.** R2 guarantees strongly consistent object listing through both the
-> S3 API and Worker bindings. Cloudflare's caching caveat applies to cached
-> custom-domain access, not those direct bucket operations (see
+> **R2 listing is strongly consistent; reads use the log.** R2 guarantees
+> strongly consistent object listing through both the S3 API and Worker
+> bindings. Cloudflare's caching caveat applies to cached custom-domain
+> access, not direct bucket operations (see
 > [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)).
-> Commits use conditional `log/<seq>` creates and tail discovery uses GET
-> probes; neither depends on LIST. Index-routed reads enumerate markers,
-> but a stale-marker DELETE racing a re-PUT can leave a live row without a
-> marker, and a commit between LIST and the tail probe can fall outside the
-> listed results. Therefore insert duplicate checks fold the log even when
-> an index leads on `_id`. The credential-gated R2 S3 conformance harness
-> currently polls LIST assertions (`eventuallyConsistentList`); that test
+> Commits use conditional `log/<seq>` creates; reads and mutation selection
+> fold the snapshot and log using GET probes. None depends on index LIST.
+> Strong listing cannot prevent a stale-marker DELETE racing a re-PUT,
+> or make a marker LIST atomic with a later log probe. The credential-gated
+> R2 S3 harness polls LIST assertions (`eventuallyConsistentList`); that
 > tolerance does not describe R2's consistency guarantee.
 
 ### S3 (over HTTP) from a Cloudflare Worker

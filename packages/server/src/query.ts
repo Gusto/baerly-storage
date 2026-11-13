@@ -34,7 +34,6 @@
 
 import {
   type CurrentJson,
-  type DocumentValue,
   type DocumentData,
   type LogEntry,
   logSeqStartOf,
@@ -69,12 +68,11 @@ import {
   insertReplaysRow,
   recordInsertReplay,
 } from "./doc-id.ts";
-import { encodeIndexValue, type IndexDefinition } from "./indexes.ts";
+import { type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
-import { type IndexWalkPlan, planQuery, type QueryPlan } from "./query-planner.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { type CommitAdmission, type CommitVerdict, Writer } from "./writer.ts";
 
@@ -114,12 +112,9 @@ export interface CollectionReadContext {
    */
   readonly schema?: SchemaValidator;
   /**
-   * Per-collection {@link IndexDefinition}s threaded onto every
-   * read. Consumed by `planQuery(...)` inside `runRead` to pick an
-   * index-walk plan when the predicate's equality fields cover a
-   * declared index's `on` tuple left-to-right. Empty array means
-   * "no indexes declared" — every read falls through to the
-   * snapshot + log fold path.
+   * Per-collection {@link IndexDefinition}s maintained by the Writer.
+   * Reads take membership from the complete snapshot plus log fold.
+   * Empty array means no indexes declared.
    *
    * Mirrors the shape callers build when flattening
    * `BaerlyConfig.collections[*].indexes` into a map keyed by name
@@ -525,8 +520,7 @@ const EMPTY_HEAD = { snapshot_rows: 0, snapshot_bytes: 0, log_seq_start: 0 } as 
  * Each `committed(entry)` moves `fromSeq` past this batch's own commit, so
  * the writer reads only entries this decision has not seen.
  *
- * With no folded state (an unprovisioned collection, or an index walk
- * that matched nothing), the collection is empty or nothing is written,
+ * With no folded state (an unprovisioned collection), the collection is empty,
  * so the pre-commit check is skipped; a re-check starts from an empty
  * collection.
  *
@@ -788,23 +782,13 @@ export const runInsert = async <T extends DocumentData>(
   // Pre-commit `_id`-collision check: a live row at the check read's
   // tail `T0` throws `AlreadyExists` with no writer round-trip. The
   // writer's guard trusts this check for every entry below `T0`, so
-  // insert uniqueness must rest on the log alone. The read therefore
-  // folds the log (`indexes: []`) even when an index covers `_id`: index
-  // completeness is not guaranteed. A writer's stale-marker DELETE runs
-  // after its commit and can land after a peer's re-PUT of the same
-  // marker was swallowed as a 412, leaving a live row with no marker (the
-  // ABA noted on `Writer#readPreImage`). Even with strongly consistent
-  // LIST (including R2), a commit between the LIST and the tail probe can
-  // be absent from the index result. Either race could miss a live row
-  // and let a second `I` for its `_id` commit.
-  const existing = await runReadRows<DocumentData>(
-    { ...ctx, indexes: [] },
-    {
-      wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
-      order: undefined,
-      limit: 1,
-    },
-  );
+  // insert uniqueness rests on the authoritative fold, as every read's
+  // membership does.
+  const existing = await runReadRows<DocumentData>(ctx, {
+    wire: { clauses: [{ op: "eq", field: "_id", value: _id }] },
+    order: undefined,
+    limit: 1,
+  });
   const live = existing.rows[0];
   if (live !== undefined) {
     if (mintedId !== undefined && insertReplaysRow(body, live.doc)) {
@@ -1240,14 +1224,9 @@ const runReadRows = async <T extends DocumentData>(
   readonly fresh: boolean;
   /**
    * The log tail this read folded through: the first empty slot its
-   * probe found, or `0` when the collection is not provisioned. On the
-   * full-scan path `rows` is the complete matching state at that tail. On
-   * the index-walk path `rows` is only as complete as the index at LIST
-   * time: a live row whose marker is missing (a stale-marker DELETE that
-   * raced a re-PUT) or whose commit landed between the LIST and the probe
-   * can be absent from `rows` although its entry sits below
-   * `tail`. A caller that needs a sound "absent through `tail`" must read
-   * on the full fold (`indexes: []`), as `runInsert` does.
+   * probe found, or `0` when the collection is not provisioned. Before
+   * predicate, order and limit are applied, the fold contains every live
+   * row through this tail; markers do not restrict membership.
    */
   readonly tail: number;
   /** The folded state, for the write verbs' capacity check. */
@@ -1271,33 +1250,9 @@ const runReadRows = async <T extends DocumentData>(
     return { rows: [], manifestPointer: "m1:0000000000000", fresh, tail: 0 };
   }
 
-  // ── Optional index-walk fast path. ──────────────────────────────
-  // `planQuery` is a pure function over `(wire, indexes)`. It picks
-  // the longest-prefix-matching index from the collection's declared
-  // indexes and emits a `FullScanPlan` when nothing matches. We
-  // route on `plan.kind`; the in-memory `matchesWire(...)` re-check
-  // on every fetched doc defends against stale index entries AND
-  // consumes the planner's residue (range clauses, unrelated
-  // equality on non-indexed fields).
-  const plan: QueryPlan = planQuery(state.wire, ctx.indexes);
-  if (plan.kind === "index-walk") {
-    const walk = await runIndexWalkPlan<T>(ctx, head.json, state, plan);
-    let rows = walk.rows;
-    if (state.order !== undefined) {
-      rows = sortByOrderSpec(rows, state.order);
-    }
-    if (state.limit !== undefined && state.limit < rows.length) {
-      rows = rows.slice(0, state.limit);
-    }
-    return {
-      rows,
-      manifestPointer: serializeManifestPointer(head.json, walk.tail),
-      fresh,
-      tail: walk.tail,
-      ...(walk.folded !== undefined && { folded: { head: head.json, ...walk.folded } }),
-    };
-  }
-  // plan.kind === "full-scan" — fall through to the snapshot+log fold.
+  // Markers cannot establish membership: post-commit cleanup can remove
+  // a reinserted row's marker, and a LIST can precede a commit that the
+  // tail probe includes. Fold authoritative state before filtering.
 
   // Load the snapshot, if any. `compact()` guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
@@ -1369,267 +1324,6 @@ const runReadRows = async <T extends DocumentData>(
     tail,
     folded: { head: head.json, base: baseDocs, tail: [...entries, ...probe.entries] },
   };
-};
-
-/**
- * Range-walk exclusive-lower sentinel. `Storage.list({startAfter})`
- * is strict-greater; to position the cursor PAST every entry whose
- * value-segment equals `ENCODE(lo)`, append a character that
- * lex-sorts strictly greater than every base-32 character (the
- * encoder alphabet is `[0-9a-v]`, topping out at `v` = 0x76) AND
- * strictly greater than the path separator `/` (0x2F).
- *
- * `~` (0x7E) satisfies both. The cursor `${eqPrefix}${ENCODE(lo)}/~`
- * lex-sorts strictly greater than the LARGEST possible key under
- * the `lo` value bucket but strictly less than the smallest key
- * under any bucket with a larger value-segment. The next LIST
- * result is the first entry with value-segment strictly greater
- * than `ENCODE(lo)` — exactly the exclusive-lower semantics we
- * want.
- */
-const RANGE_EXCLUSIVE_LOWER_SENTINEL = "~";
-
-/**
- * Bounded parallelism for `$in` multi-walk LISTs. Each batch of this
- * many `$in` values dispatches its `list()` calls concurrently; the
- * loop waits on the batch before starting the next.
- *
- * Picked low (8) to stay well under any cloud-provider per-call concurrency
- * ceiling while still amortising LIST round-trip latency on multi-value
- * `$in` queries. The planner's `IN_FANOUT_THRESHOLD` (50) caps the total
- * fan-out independently — see `packages/server/src/query-planner.ts`.
- */
-const IN_FANOUT_PARALLELISM = 8;
-
-/**
- * Execute an {@link IndexWalkPlan} against the bucket. Returns the
- * post-filtered, fully-resolved row set. The full original
- * `state.wire` is re-applied via `matchesWire(...)` after fetching
- * rows — this defends against stale index entries AND consumes the
- * planner's residue (range clauses, unrelated equality on
- * non-indexed fields) in one place.
- *
- * Storage shape (equality-only walks):
- *   - Single-field walk (`equalityKeys.length === 1`): list
- *     `<collectionPrefix>/index/<name>/<v0-b32>/`; each yielded key has
- *     tail `<docId>.json` (single segment).
- *   - Composite full walk (`equalityKeys.length === def.on.length`):
- *     list `<collectionPrefix>/index/<name>/<v0-b32>/<v1-b32>/.../<vN-b32>/`;
- *     each yielded key has tail `<docId>.json` (single segment).
- *   - Composite partial-prefix walk (`equalityKeys.length <
- *     def.on.length`): list `<collectionPrefix>/index/<name>/<v0-b32>/
- *     .../<vM-b32>/`; each yielded key has tail
- *     `<v{M+1}-b32>/.../<vN-b32>/<docId>.json` — MULTI-segment.
- *     Split on `/` and take the last segment.
- *
- * Storage shape (T3, range / `$in` walks):
- *   - Range walk (`plan.rangeOn !== undefined`): list
- *     `<collectionPrefix>/index/<name>/<eq-segs>/` and break on the
- *     first decoded value-segment past the upper bound. Lower
- *     bound is enforced via `startAfter` (exclusive lower) or an
- *     in-loop skip (inclusive lower) — see
- *     {@link RANGE_EXCLUSIVE_LOWER_SENTINEL}.
- *   - `$in` walk (`plan.inOn !== undefined`): one LIST per value,
- *     with the equality prefix prepended to each, dispatched in
- *     batches of {@link IN_FANOUT_PARALLELISM} `Promise.all`-style.
- *     Doc-ids accumulate into a single Set (union semantics).
- *
- * Stale-row defence:
- *   - An index entry pointing at a docId whose underlying doc has
- *     since been updated to a different value (rebuild hasn't run)
- *     is dropped by the in-memory `matchesWire(...)` re-check.
- *   - An index entry pointing at a docId whose underlying doc has
- *     been deleted (tombstone in the log) is dropped during the
- *     fold (the `D` op removes it from the materialised set).
- *
- * @internal
- */
-const runIndexWalkPlan = async <T extends DocumentData>(
-  ctx: CollectionReadContext,
-  head: CurrentJson,
-  state: QueryState<T>,
-  plan: IndexWalkPlan,
-): Promise<{
-  rows: StoredRow<T>[];
-  tail: number;
-  folded?: { base: ReadonlyMap<string, DocumentData>; tail: readonly LogEntry[] };
-}> => {
-  const encodedSegments = plan.equalityKeys.map((v) => encodeIndexValue(v));
-  const eqPrefix =
-    encodedSegments.length === 0
-      ? `${ctx.collectionPrefix}/index/${plan.indexName}/`
-      : `${ctx.collectionPrefix}/index/${plan.indexName}/${encodedSegments.join("/")}/`;
-
-  // 1. List index entries; extract docId from the LAST segment of
-  //    each key's tail. Multi-segment tails appear under composite
-  //    partial-prefix walks; single-segment tails appear under
-  //    single-field walks and composite full walks.
-  const docIdSet = new Set<string>();
-
-  if (plan.rangeOn !== undefined) {
-    // Range-LIST under the equality prefix. The value-segment sits
-    // immediately after `eqPrefix`; we lex-compare it against the
-    // encoded bounds. Lex comparison is sound because
-    // `encodeIndexValue` is value-order-preserving for every
-    // supported type — numbers via the sortable IEEE 754 payload,
-    // strings via UTF-8 byte order, all framed under the type-tag
-    // prefix that keeps types disjoint.
-    const r = plan.rangeOn;
-    const loEncoded = r.lo === undefined ? undefined : encodeIndexValue(r.lo);
-    const hiEncoded = r.hi === undefined ? undefined : encodeIndexValue(r.hi);
-    // Exclusive lower → position the cursor past all entries
-    // whose value-segment equals `ENCODE(r.lo)` via the sentinel.
-    // Inclusive lower → no startAfter; in-loop skip filters values
-    // strictly less than `ENCODE(r.lo)` (no-op for the bucket
-    // matching `ENCODE(r.lo)` itself).
-    const startAfter =
-      r.lo !== undefined && !r.loInclusive
-        ? `${eqPrefix}${loEncoded}/${RANGE_EXCLUSIVE_LOWER_SENTINEL}`
-        : undefined;
-    const listOpts = startAfter === undefined ? {} : { startAfter };
-    for await (const entry of ctx.storage.list(eqPrefix, listOpts)) {
-      const tail = entry.key.slice(eqPrefix.length);
-      const firstSlash = tail.indexOf("/");
-      if (firstSlash < 0) {
-        continue;
-      } // defensive: malformed key
-      const valueSeg = tail.slice(0, firstSlash);
-      // Inclusive-lower in-loop skip (couldn't push to startAfter).
-      if (loEncoded !== undefined && valueSeg < loEncoded) {
-        continue;
-      }
-      // Upper-bound break — lex-ascending enumeration, so once we
-      // pass the upper bound we're done.
-      if (hiEncoded !== undefined) {
-        if (r.hiInclusive ? valueSeg > hiEncoded : valueSeg >= hiEncoded) {
-          break;
-        }
-      }
-      // Decode the doc-id from the LAST `/`-separated segment of
-      // the tail. Single-field walk → tail is `<valueSeg>/<docId>.json`
-      // and the LAST segment is `<docId>.json`. Composite walk with
-      // tail extension → tail is `<valueSeg>/...moreSegs/<docId>.json`
-      // and the LAST segment is still `<docId>.json`.
-      const lastSlash = tail.lastIndexOf("/");
-      const last =
-        lastSlash === firstSlash ? tail.slice(firstSlash + 1) : tail.slice(lastSlash + 1);
-      if (!last.endsWith(".json")) {
-        continue;
-      }
-      const docId = last.slice(0, -".json".length);
-      if (docId.length === 0) {
-        continue;
-      }
-      docIdSet.add(docId);
-    }
-  } else if (plan.inOn !== undefined) {
-    // `$in` multi-walk: dispatch up to IN_FANOUT_PARALLELISM `list()` calls
-    // in parallel per batch. Union of doc-ids across all values; per-value
-    // walks are independent so batching is sound. The planner has already
-    // vetted the total fan-out (≤ IN_FANOUT_THRESHOLD); the encoder is
-    // value-order-preserving across every supported type, so numeric
-    // members route the same as strings.
-    //
-    // Cancellation note: `Promise.all` rejects on the first rejection but
-    // does NOT cancel the other in-flight `list()` calls — the `Storage`
-    // contract doesn't promise mid-stream cancellation. Storage errors
-    // are rare; tightening this is out of scope.
-    const values = plan.inOn.values;
-    const walkOne = async (value: DocumentValue): Promise<string[]> => {
-      const valPrefix = `${eqPrefix}${encodeIndexValue(value)}/`;
-      const ids: string[] = [];
-      for await (const entry of ctx.storage.list(valPrefix)) {
-        const tail = entry.key.slice(valPrefix.length);
-        if (!tail.endsWith(".json")) {
-          continue;
-        }
-        const lastSlash = tail.lastIndexOf("/");
-        const docId =
-          lastSlash === -1
-            ? tail.slice(0, -".json".length)
-            : tail.slice(lastSlash + 1, -".json".length);
-        if (docId.length === 0) {
-          continue;
-        }
-        ids.push(docId);
-      }
-      return ids;
-    };
-    for (let i = 0; i < values.length; i += IN_FANOUT_PARALLELISM) {
-      const batch = values.slice(i, i + IN_FANOUT_PARALLELISM);
-      const results = await Promise.all(batch.map(walkOne));
-      for (const ids of results) {
-        for (const id of ids) {
-          docIdSet.add(id);
-        }
-      }
-    }
-  } else {
-    // Equality-only walk (T2 path).
-    for await (const entry of ctx.storage.list(eqPrefix)) {
-      const tail = entry.key.slice(eqPrefix.length);
-      if (!tail.endsWith(".json")) {
-        continue;
-      }
-      const lastSlash = tail.lastIndexOf("/");
-      const docId =
-        lastSlash === -1
-          ? tail.slice(0, -".json".length)
-          : tail.slice(lastSlash + 1, -".json".length);
-      if (docId.length === 0) {
-        continue;
-      }
-      docIdSet.add(docId);
-    }
-  }
-  // Discover the true tail once (probe runs even with no matches so
-  // the manifest pointer still reflects it). Strict range stays
-  // `[log_seq_start, tail_hint)`; the probe folds `[max(log_seq_start,
-  // tail_hint), tail)` — see the floor rationale in `runRead`.
-  const logSeqStart = logSeqStartOf(head);
-  const hint = head.tail_hint;
-  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, Math.max(logSeqStart, hint));
-  const tail = probe.tail;
-
-  const docIds = Array.from(docIdSet);
-  if (docIds.length === 0) {
-    return { rows: [], tail };
-  }
-
-  // 2. Resolve each docId by folding `(snapshot, log)` scoped to the
-  //    matched set. Same fold the table-scan path uses, scoped to
-  //    one Set<docId>.
-  const matched = new Set(docIds);
-  const baseDocs: Map<string, DocumentData> =
-    head.snapshot === null
-      ? new Map()
-      : await loadSnapshotAsMap(ctx.storage, head.snapshot, ctx.collectionName);
-  const docs = new Map<string, T>();
-  for (const id of matched) {
-    const seeded = baseDocs.get(id);
-    if (seeded !== undefined) {
-      docs.set(id, seeded as T);
-    }
-  }
-  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint);
-  foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName, docIdFilter: matched });
-  foldLogEntriesOnto(docs, probe.entries, { collection: ctx.collectionName, docIdFilter: matched });
-
-  // 3. Apply the FULL original wire as the stale-row defence, then
-  //    the planner's residue postFilter on top. `matchesWire` is
-  //    open-world, so applying the full original wire (which the
-  //    planner partly consumed) is the simpler invariant: if the
-  //    doc still passes the original wire, it stays. Range / `in`
-  //    clauses that landed in `plan.postFilter` are part of
-  //    `state.wire` — they pass through here automatically.
-  const rows: StoredRow<T>[] = [];
-  const wire = state.wire;
-  for (const [docId, doc] of docs) {
-    if (wire === undefined || matchesWire(wire, doc)) {
-      rows.push({ docId, doc });
-    }
-  }
-  return { rows, tail, folded: { base: baseDocs, tail: [...entries, ...probe.entries] } };
 };
 
 /**

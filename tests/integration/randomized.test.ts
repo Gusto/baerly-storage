@@ -734,3 +734,97 @@ describe("randomized (Db + Writer)", () => {
     });
   }
 });
+
+fcTest.prop({
+  changes: fc.array(
+    fc.record({
+      id: fc.integer({ min: 0, max: 4 }),
+      rank: fc.integer({ min: 0, max: 20 }),
+      remove: fc.boolean(),
+      fold: fc.boolean(),
+    }),
+    { minLength: 1, maxLength: 15 },
+  ),
+})(
+  "snapshot-plus-log reads and mutation selection survive missing index markers",
+  async ({ changes }) => {
+    const storage = new MemoryStorage();
+    const app = "marker-membership";
+    const tenant = "t";
+    const collection = "c";
+    const prefix = `app/${app}/tenant/${tenant}/manifests/${collection}`;
+    const db = Db.create({
+      storage,
+      app,
+      tenant,
+      config: {
+        collections: {
+          [collection]: {
+            indexes: [
+              { name: "by_id", on: "_id" },
+              { name: "by_rank", on: "rank" },
+            ],
+          },
+        },
+      },
+    });
+    const rows = db.collection(collection);
+    const model = new Map<string, DocumentData>();
+    await runWithContext(
+      createObservabilityContext({ maintenance: { disabled: true } }),
+      async () => {
+        for (const change of changes) {
+          const id = `r${change.id}`;
+          if (change.remove) {
+            await rows.delete(id);
+            model.delete(id);
+          } else if (model.has(id)) {
+            await rows.replace(id, { rank: change.rank });
+            model.set(id, { _id: id, rank: change.rank });
+          } else {
+            await rows.insert({ _id: id, rank: change.rank });
+            model.set(id, { _id: id, rank: change.rank });
+          }
+          if (change.fold) {
+            await compact(
+              { storage, currentJsonKey: `${prefix}/current.json` },
+              {
+                minEntriesToCompact: 1,
+              },
+            );
+          }
+          // Represents marker loss after the stale-delete/reinsert race. Losing
+          // markers cannot erase rows in either the folded base or live tail.
+          for await (const marker of storage.list(`${prefix}/index/`)) {
+            await storage.delete(marker.key);
+          }
+          const expected = [...model.values()].toSorted(
+            (a, b) =>
+              Number(a["rank"]) - Number(b["rank"]) ||
+              String(a["_id"]).localeCompare(String(b["_id"])),
+          );
+          await expect(rows.order({ rank: "asc", _id: "asc" }).all()).resolves.toEqual(expected);
+          await expect(rows.get(id)).resolves.toEqual(model.get(id));
+          const selected = expected.filter((row) => Number(row["rank"]) >= 10).slice(0, 2);
+          await expect(
+            rows
+              .where((q) => q.gte("rank", 10))
+              .order({ rank: "asc", _id: "asc" })
+              .limit(2)
+              .all(),
+          ).resolves.toEqual(selected);
+          await expect(
+            rows
+              .where((q) => q.gte("rank", 10))
+              .order({ rank: "asc", _id: "asc" })
+              .limit(2)
+              .update({ touched: true }),
+          ).resolves.toEqual({ modified: selected.length });
+          for (const row of selected) {
+            model.set(String(row["_id"]), { ...row, touched: true });
+          }
+        }
+      },
+    );
+  },
+);

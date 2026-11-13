@@ -455,10 +455,9 @@ For a write that must reference its own id, write the parent first and
 read back the `_id` the server returns; design cross-collection writes
 parent-first with cleanup, not by pre-minting ids.
 
-Indexes: declared here, threaded into `Db.create` automatically. The
-read-path auto-planner picks an index when the predicate matches;
-mismatches fall back to the full scan with a metric bump (correctness
-preserved).
+Indexes are maintained by writers; they do not accelerate reads. Reads
+and mutation selection fold the complete snapshot and log, then apply
+predicates, order, and limit. Missing markers cannot hide rows.
 
 ## `createBaerlyClient` (browser / Node HTTP client)
 

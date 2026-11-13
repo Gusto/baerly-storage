@@ -10,9 +10,8 @@ related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 # Cost model
 
 The cost meter to watch is **billable Class A object-storage
-operations**: PUTs and LISTs. Class B GETs are much cheaper. Unindexed
-reads mostly stay on the Class B meter; indexed `.where()` reads can
-issue Class A LISTs.
+operations**: PUTs and LISTs. Class B GETs are much cheaper. All reads
+fold the snapshot and log using Class B GETs, with no index LISTs.
 
 The smallest successful write is an unindexed insert on the first try:
 one create-if-absent PUT for `log/<seq>`, whose inline post-image carries
@@ -24,7 +23,7 @@ The billable steady-state number is higher than the floor because
 successful writes may also run bounded maintenance. Measured effective
 Class A write-amplification is ~2× on Cloudflare and ~2.5× on serverful
 Node. Deletes are cheaper; indexes, retries, and first-collection
-provisioning add bounded ops. The unindexed read tail forward-probe is
+provisioning add bounded ops. The read tail forward-probe is
 Class B GET work, so it does not touch the Class A meter.
 
 All prices below were re-checked **2026-06-22** against the official
@@ -131,15 +130,13 @@ Three bounds matter:
   (`pnpm bench:amortized-write-cost`) and gated by
   `tests/integration/write-amp.test.ts`. `DeleteObject` (the GC
   sweep) is $0 on R2/S3 and is excluded from this count.
-- **`< 1 Class A op / writer / hour` for idle readers.** For unindexed
-  idle reads, the expected value is exactly zero. They walk
-  `current.json`, the snapshot, and the live-tail log by deterministic
-  GETs. The tail forward-probe GETs from
-  `max(log_seq_start, tail_hint)` (normally `tail_hint`) to the first
-  404; those are Class B calls. The read-path exception is an indexed
-  `.where()`: it issues one `ListObjects` Class A call per equality value
-  (`$in` ⇒ N calls) to walk the index prefix and resolve matching `_id`s.
-  The default fold path (full scan over snapshot + tail) is zero Class A.
+- **`< 1 Class A op / writer / hour` for idle readers.** The expected
+  value is exactly zero. Reads walk `current.json`, the snapshot, and
+  the live-tail log by deterministic GETs, whether or not indexes are
+  declared. The forward-probe stops at the first 404. Empty predicates
+  and empty results still require the authoritative fold; order and
+  limit do not bound fold I/O or memory. Removing index routing saves
+  LISTs, but empty marker results no longer skip snapshot and log loads.
 
 ### Maintenance is write-driven; reads are pure
 
@@ -151,7 +148,7 @@ does zero maintenance work
 - **A bucket with no later writes pays a bounded ≤ ~1× tail replay per
   read while folds succeed.** At the default
   `MAINTENANCE_TARGET_RATIO = 1.0`, the live tail stays within ~1× the
-  snapshot, so an unindexed reader replays at most about one snapshot's
+  snapshot, so a reader replays at most about one snapshot's
   worth of log entries on top of the snapshot. Above `S_max` (the
   snapshot ceiling `C` / `E`), the fold defers and the tail grows
   unbounded. Read cost then climbs with every write since the last fold.

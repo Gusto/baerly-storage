@@ -140,11 +140,11 @@ IDs from being confused at protocol boundaries. See the
 
 ## Secondary indexes
 
-Indexes are declared on the collection config; the planner picks one
-automatically from the query predicate. There is no manual-hint API
-on `Query<T>` — declaring an `IndexDefinition` under
-`BaerlyConfig.collections[*].indexes` is the only way to bias the
-read path.
+Indexes are declared under `BaerlyConfig.collections[*].indexes`.
+Writers maintain their markers and `rebuildIndex` reconciles them.
+Reads always fold the authoritative snapshot and log; index declarations
+do not accelerate reads or affect query membership. There is no
+manual-hint API on `Query<T>`.
 
 ### Declaring an index
 
@@ -179,85 +179,24 @@ and
 [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts)
 validate and normalize those protocol-owned shapes.
 
-### How the planner picks one
+### Read correctness
 
-- Equality on the leftmost indexed field is the cheapest plan; the
-  planner walks under the encoded equality prefix.
-- Range (`gt`/`gte`/`lt`/`lte`) and `in` clauses are accepted
-  on the **last** indexed field after any equality prefix. Range on
-  a non-last field peels the equality and pushes the range clause
-  into the post-fetch `matchesWire(...)` residue (`postFilter`).
-- When multiple indexes match, the planner prefers (in order):
-  filtered indexes whose `def.predicate` (a `PredicateWire`) is
-  implied by the query wire; longest equality prefix; definition
-  order. A filtered index whose predicate is _not_ implied is ranked
-  last and used only as a last resort when it is the only candidate —
-  see the soundness caveat below.
-- Otherwise `planQuery` emits `FullScanPlan` and the read walks the
-  snapshot+log fold. Diagnostic `reason` values:
-  `"no-predicate"`, `"no-indexes-declared"`,
-  `"no-matching-index"`, `"predicate-uses-operators-only"`.
-
-An index is correct only when its marker set is complete for the
-declared definition. Stale extra markers are harmless: the reader
-materializes each candidate row and re-checks `matchesWire(...)`, so
-extra markers cost I/O but cannot invent rows. Missing markers can hide
-rows from an index-routed query. After adding an index to an existing
-collection, run `rebuildIndex` / `baerly admin rebuild-index` before
-treating the index as authoritative.
-
-Marker completeness is necessary but not sufficient for a _filtered_
-(partial) index. The route is sound only when the index's filter
-predicate is implied by the query predicate; otherwise the LIST never
-yields rows that fall outside the filter, and the post-fetch
-`matchesWire(...)` re-check cannot resurrect rows the LIST never
-returned. The planner ranks a non-implied filtered index last but, as a
-known limitation, will still route through it as a last resort when it
-is the only candidate — which is unsound for that query (it can silently
-drop matching rows). The fallback and its caveat are documented in the
-`rank()` comment in
-[`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts).
-
-#### Numeric range and `in` walks
-
-`encodeIndexValue` is value-order-preserving across types: numbers
-are encoded as sortable IEEE 754, strings as raw UTF-8, and a
-leading type tag keeps `"5"` and `5` in disjoint slots. Range walks
-and `in` walks over numeric fields route normally — no full-scan
-fallback. The only routing-side guard that remains for `in` is
-`IN_FANOUT_THRESHOLD` (50): an `in` whose value list exceeds that
-threshold falls back to full-scan because N sequential LISTs cost
-more than one snapshot+log fold. String range walks remain safe
-under UTF-8 byte order (ISO 8601 timestamps, `"p1"/"p2"/"p3"`
-priorities, zero-padded numerics in string form, etc.).
+Markers are not an authoritative membership set. A delayed stale-marker
+DELETE can erase a live row's marker, and marker enumeration cannot share
+a read cursor atomically with the later log probe. Every read and mutation
+selection therefore folds the complete snapshot and log, then applies the
+predicate, order, and limit. Missing, stale, newly declared, and filtered
+indexes all leave query results unchanged. An empty result still pays the
+full fold cost; reads issue no index LISTs.
 
 ### Pointers
 
-- Implementation:
-  [`packages/server/src/query-planner.ts`](../../packages/server/src/query-planner.ts)
-  (`planQuery`, `IndexWalkPlan`, `FullScanPlan`),
-  [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts)
-  (`IndexDefinition`, key encoding, filter-aware projector),
-  [`packages/server/src/query.ts`](../../packages/server/src/query.ts)
-  (`runIndexWalkPlan` at the I/O boundary),
-  [`packages/server/src/rebuild-index.ts`](../../packages/server/src/rebuild-index.ts)
-  (filter-aware reconciliation),
-  [`packages/protocol/src/query/wire.ts`](../../packages/protocol/src/query/wire.ts)
-  (`PredicateWire`, `PredicateClause`, `PredicateOpName`),
-  [`packages/protocol/src/query/builder.ts`](../../packages/protocol/src/query/builder.ts)
-  (`PredicateBuilder<T>`),
-  [`packages/server/src/query-planner-implies.ts`](../../packages/server/src/query-planner-implies.ts)
-  (`predicateImplies`).
-- Tests:
-  [`packages/server/src/query-planner.test.ts`](../../packages/server/src/query-planner.test.ts),
-  [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts)
-  (the `describe("auto-planner index routing")` block),
-  [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts),
+- Marker projection: [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts).
+- Reconciliation: [`packages/server/src/rebuild-index.ts`](../../packages/server/src/rebuild-index.ts).
+- Reads and mutation selection: [`packages/server/src/query.ts`](../../packages/server/src/query.ts).
+- Regression coverage: [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts),
   [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts).
-- Docs: this section, [`docs/architecture.md`](../architecture.md)
-  §"Lifecycle of `db.collection(...).insert()`",
-  [`docs/contributing/extending.md`](./extending.md)
-  §1c "Declare an index on a collection".
+- Contract: [Read algorithm](../spec/sync-protocol.md#read-algorithm).
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
 

@@ -61,8 +61,8 @@ operation stays inside that chosen row set.
 - **Todo list:** the whole app is the `todos` collection. Add, list,
   update, and delete all live inside one row set.
 - **Notes with one tag:** the home screen and the scalar tag filter are
-  reads from the `notes` collection. A `by_tag` index changes how the
-  read is found; it does not change the boundary.
+  reads from the `notes` collection. The predicate filters the folded
+  row set; declaring a `by_tag` index does not change the read boundary.
 - **RSVP page:** the event page reads the `rsvps` collection filtered by
   `event_id`, then counts that same set. If the product becomes a global
   event dashboard, that is a different shape question.
@@ -70,7 +70,7 @@ operation stays inside that chosen row set.
   `clicks` filtered by `link_id`. Clicks are rows in their own
   collection, not a growing array embedded in the link document.
 - **Bookmarks:** the domain filter works because `domain` is a stored
-  derived field with an index. The user-facing read still comes from the
+  derived field. The user-facing read still comes from the
   `bookmarks` collection.
 - **Single-channel chat:** the channel is the collection. Long-poll
   change reads watch that collection's log.

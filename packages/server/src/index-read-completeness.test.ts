@@ -1,13 +1,4 @@
-/**
- * Index-routed reads must return every live row that matches the
- * predicate, and the tail a read reports must not cover a matching row it
- * did not return. Each case compares an index-routed read against the
- * full fold of the same bucket.
- *
- * All three are `test.fails`: the index walk takes membership from the
- * marker LIST, so a missing or not-yet-listed marker hides a live row.
- * The fix is open (IDX-1); flip each to `test` when it lands.
- */
+/** Reads and mutation selection must use authoritative snapshot-plus-log membership. */
 
 import {
   type DocumentData,
@@ -17,6 +8,7 @@ import {
   type StorageListEntry,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { runAllWithMeta, serializeManifestPointer } from "./query.ts";
@@ -26,7 +18,7 @@ const TENANT = "t";
 const COLL = "c";
 const PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
 
-/** Write-tick maintenance off, so `current.json` changes only by commit. */
+/** Write-tick maintenance off, so reads retain the seeded snapshot and tail. */
 const MAINTENANCE_OFF = createObservabilityContext({ maintenance: { disabled: true } });
 
 const offTick = async <R>(fn: () => Promise<R>): Promise<R> =>
@@ -74,14 +66,23 @@ const holdOnce = (
 const ids = (rows: readonly DocumentData[]): string[] =>
   rows.map((r) => r["_id"] as string).toSorted();
 
-describe("index-routed reads return every live matching row", () => {
-  test.fails("a row re-inserted while a delete's stale-marker DELETE was in flight is still found", async () => {
+describe("reads return every live matching row with declared indexes", () => {
+  test("a row re-inserted while a delete's stale-marker DELETE was in flight is still found", async () => {
     // A commits `D` for `x`, then DELETEs `x`'s `by_id` marker. B's
     // re-insert lands in between: its marker PUT finds the marker still
     // present (412, swallowed), then B commits `I`. A's DELETE then
     // removes the only marker for B's live row.
     const inner = new MemoryStorage();
-    const config = { collections: { [COLL]: { indexes: [{ name: "by_id", on: "_id" }] } } };
+    const config = {
+      collections: {
+        [COLL]: {
+          indexes: [
+            { name: "by_id", on: "_id" },
+            { name: "by_by", on: "by" },
+          ],
+        },
+      },
+    };
     const aGate = holdOnce(inner, (op, key) => op === "delete" && key.includes("/index/by_id/"));
     const a = Db.create({ storage: aGate.storage, app: APP, tenant: TENANT, config });
     const b = Db.create({ storage: inner, app: APP, tenant: TENANT, config });
@@ -96,12 +97,12 @@ describe("index-routed reads return every live matching row", () => {
     const fullScan = Db.create({ storage: inner, app: APP, tenant: TENANT }).collection(COLL);
     await expect(fullScan.get("x")).resolves.toEqual({ _id: "x", by: "B2" });
     await expect(b.collection(COLL).get("x")).resolves.toEqual({ _id: "x", by: "B2" });
-    await expect(b.collection(COLL).where({ _id: "x" }).all()).resolves.toEqual([
+    await expect(b.collection(COLL).where({ by: "B2" }).all()).resolves.toEqual([
       { _id: "x", by: "B2" },
     ]);
   });
 
-  test.fails("a read's tail does not cover a matching row committed between its LIST and its tail probe", async () => {
+  test("a read's tail does not cover a matching row committed between its LIST and its tail probe", async () => {
     // The walk LISTs `by_status/open/` (empty), then probes the log tail.
     // B's insert of an `open` row commits in between, so the probe walks
     // past B's entry while the row it carries was never a candidate.
@@ -127,13 +128,12 @@ describe("index-routed reads return every live matching row", () => {
     const head = await readCurrentJson(inner, `${PREFIX}/current.json`);
     const coversX = raced.manifestPointer === serializeManifestPointer(head!.json, 2);
     const returnsX = ids(raced.rows).includes("x");
-    expect({ coversX, returnsX }).not.toEqual({ coversX: true, returnsX: false });
+    expect({ coversX, returnsX }).toEqual({ coversX: true, returnsX: true });
   });
 
-  test.fails("an index read finds a row whose marker an eventually consistent LIST has not yet returned", async () => {
-    // R2's S3 `ListObjectsV2` is eventually consistent: a just-created
-    // marker can be absent from LIST although GET sees it. Model it with
-    // a LIST that omits every object created after `lagFrom()`.
+  test("a read finds a row omitted by a synthetic lagging marker LIST", async () => {
+    // Synthetic lagging LIST coverage, beyond the strong listing guarantees
+    // of S3 and R2. Reads must not depend on marker enumeration at all.
     const inner = new MemoryStorage();
     const created = new Set<string>();
     let lagging = false;
@@ -170,3 +170,118 @@ describe("index-routed reads return every live matching row", () => {
     ]);
   });
 });
+
+const removeMarkers = async (storage: Storage): Promise<void> => {
+  for await (const marker of storage.list(`${PREFIX}/index/`)) {
+    await storage.delete(marker.key);
+  }
+};
+
+const seedWithoutMarkers = async (fold: boolean | "mixed") => {
+  const inner = new MemoryStorage();
+  const db = Db.create({
+    storage: inner,
+    app: APP,
+    tenant: TENANT,
+    config: {
+      collections: {
+        [COLL]: {
+          indexes: [
+            { name: "by_id", on: "_id" },
+            { name: "by_status_rank", on: ["status", "rank"] },
+            { name: "by_rank", on: "rank" },
+          ],
+        },
+      },
+    },
+  });
+  await offTick(async () => {
+    for (const [id, status, rank] of [
+      ["a", "open", 3],
+      ["b", "closed", 2],
+      ["c", "open", 1],
+      ["d", "open", 4],
+    ] as const) {
+      await db.collection(COLL).insert({ _id: id, status, rank });
+    }
+  });
+  if (fold) {
+    const result = await compact(
+      { storage: inner, currentJsonKey: `${PREFIX}/current.json` },
+      {
+        minEntriesToCompact: 1,
+      },
+    );
+    expect(result.written).toBe(true);
+  }
+  if (fold === "mixed") {
+    await offTick(() => db.collection(COLL).insert({ _id: "e", status: "closed", rank: 8 }));
+  }
+  await removeMarkers(inner);
+  return { inner, rows: db.collection(COLL) };
+};
+
+for (const [fold, location] of [
+  [false, "tail"],
+  [true, "snapshot"],
+  ["mixed", "snapshot plus tail"],
+] as const) {
+  describe(`missing markers in ${location}`, () => {
+    test("predicate, order and limit apply to complete membership without LIST", async () => {
+      const { inner, rows } = await seedWithoutMarkers(fold);
+      inner.list = () => {
+        throw new Error("reads must not LIST markers");
+      };
+      await expect(rows.get("a")).resolves.toEqual({ _id: "a", status: "open", rank: 3 });
+      await expect(
+        rows.where({ status: "open" }).order({ rank: "asc" }).limit(2).all(),
+      ).resolves.toEqual([
+        { _id: "c", status: "open", rank: 1 },
+        { _id: "a", status: "open", rank: 3 },
+      ]);
+      await expect(
+        rows
+          .where((q) => q.in("rank", [1, 4]))
+          .order({ rank: "desc" })
+          .all(),
+      ).resolves.toEqual([
+        { _id: "d", status: "open", rank: 4 },
+        { _id: "c", status: "open", rank: 1 },
+      ]);
+      await expect(rows.where((q) => q.gte("rank", 2).lt("rank", 4)).count()).resolves.toBe(2);
+      await expect(rows.where({ status: "missing" }).all()).resolves.toEqual([]);
+    });
+
+    test.each(["replace", "delete"] as const)(
+      "%s by id selects a row with no marker",
+      async (verb) => {
+        const { rows } = await seedWithoutMarkers(fold);
+        await offTick(async () => {
+          if (verb === "replace") {
+            await rows.replace("a", { status: "replaced", rank: 9 });
+            await expect(rows.get("a")).resolves.toEqual({ _id: "a", status: "replaced", rank: 9 });
+          } else {
+            await expect(rows.delete("a")).resolves.toEqual({ deleted: 1 });
+            await expect(rows.get("a")).resolves.toBeUndefined();
+          }
+        });
+      },
+    );
+
+    test("update, replace and delete select live rows with missing markers", async () => {
+      const { rows } = await seedWithoutMarkers(fold);
+      await offTick(async () => {
+        await expect(
+          rows.where({ status: "open" }).order({ rank: "asc" }).limit(2).update({ changed: true }),
+        ).resolves.toEqual({ modified: 2 });
+        await expect(rows.replace("d", { status: "replaced", rank: 5 })).resolves.toBeUndefined();
+        await expect(rows.where({ status: "open" }).delete()).resolves.toEqual({ deleted: 2 });
+      });
+      await expect(rows.order({ rank: "asc" }).all()).resolves.toEqual([
+        { _id: "b", status: "closed", rank: 2 },
+        { _id: "d", status: "replaced", rank: 5 },
+        ...(fold === "mixed" ? [{ _id: "e", status: "closed", rank: 8 }] : []),
+      ]);
+    });
+  });
+}

@@ -234,11 +234,10 @@ The safe cutover shape is:
      keys under the source generation; the destination bootstraps a
      fresh ledger on its first GC pass.
    - Copy `current.json` **last** — after the snapshot it names (when
-     non-null), every live log object, and rebuilt index objects
-     required by indexed reads exist at the destination. If
-     `current.json` lands first, readers can reference missing objects;
-     if required index markers are missing, index-routed reads can miss
-     rows.
+     non-null) and every live log object exist at the destination. If
+     `current.json` lands first, readers can reference missing objects.
+     Index artifacts can be rebuilt independently; reads do not depend
+     on their completeness.
    - No kernel reader depends on content side objects, and GC does not
      touch them. Copy `content/` only when preserving a legacy or
      mixed-version bucket for legacy writers or tooling. Otherwise skip

@@ -155,8 +155,9 @@ returned; inspect the affected rows before deciding whether to resume.
 ### `.useIndex(...)` / `.hint(...)` is not a function
 
 **Cause:** SQL/ORM muscle memory. No such method.
-**Fix:** the planner picks the index automatically from the
-`IndexDefinition`s registered in `baerly.config.ts`.
+**Fix:** use `.where(...)` directly. Reads always fold the authoritative
+snapshot and log; index declarations control marker maintenance, not
+query routing.
 
 ### `BaerlyError code="InvalidConfig"` — `baerly: no auth configured`
 

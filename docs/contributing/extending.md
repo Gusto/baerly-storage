@@ -332,12 +332,12 @@ work; the protocol does not supply rewrite logic.
 
 An index is a second set of storage keys: each key is a marker that says one
 document has one indexed value. The writer maintains those markers; the
-reader's planner decides whether to walk them or fall back to the full row set.
+reader always folds the complete authoritative snapshot and log.
 
 Declare indexes under `BaerlyConfig.collections[*].indexes`. Each
 `IndexDefinition` has a `name`, an `on` field tuple, and an optional
-`predicate?` for a filtered index. The auto-planner picks a walk plan from the
-declared set at read time; there is no manual-hint API on `Query<T>`.
+`predicate?` for a filtered index. These declarations control marker
+maintenance, not read routing; there is no manual-hint API on `Query<T>`.
 
 ### `IndexDefinition` shape
 
@@ -368,61 +368,34 @@ export default defineConfig({
 ### Worked example — composite
 
 ```ts
-// Composite on [status, priority]. A query like
-//   db.collection("tickets").where({ status: "open", priority: "p1" }).all()
-// walks under <prefix>/index/by_status_priority/<status-b32>/<priority-b32>/.
-// When only `priority` is present, the planner emits FullScanPlan
-// (no left anchor on `status`).
+// Composite markers encode status, then priority.
+// Reads fold the snapshot and log regardless of declared indexes.
 { name: "by_status_priority", on: ["status", "priority"] },
 ```
 
 ### Worked example — filtered
 
 ```ts
-// Only `status = "open"` docs project keys. Smaller LIST footprint
-// than a dense `by_assignee` when most tickets are closed.
+// Only `status = "open"` docs project keys, reducing marker writes
+// compared with a dense `by_assignee` when most tickets are closed.
 { name: "by_open_assignee",
   on: "assignee",
   predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] } },
 ```
 
-### What the planner does at read time
+### Read behavior and conventions
 
-See [architecture.md](../architecture.md) §"Planner step (between the predicate
-and the log fold)" for the lifecycle. If the predicate can consume at least one
-left-anchored indexed field, the planner emits `IndexWalkPlan` and the reader
-walks the encoded index prefix. Otherwise it emits `FullScanPlan`, and the read
-falls through to the snapshot+log fold.
+Reads and mutation selection always fold the complete snapshot and log,
+then apply the predicate, order, and limit. Missing or filtered markers
+cannot hide rows. Index declarations do not accelerate reads; limits do
+not bound fold I/O or memory. See the
+[read algorithm](../spec/sync-protocol.md#read-algorithm).
 
-### Conventions to follow
-
-- Top-level fields only on `on` — dotted-path values throw
-  `SchemaError` at projection time
-  (`packages/server/src/indexes.ts:337-345`).
-- `name` must match `/^[a-z][a-z0-9_]*$/`. A name in the reserved
-  leading-`_` namespace throws `InvalidConfig`; a name that fails the
-  regex throws `SchemaError`.
-- **Filtered indexes are sound only when the query predicate implies the index
-  predicate.** Keep an unfiltered fallback for broader queries; otherwise the
-  planner can route through the filtered index as a last resort and miss rows
-  outside the filter.
-- `predicate?` is a `PredicateWire` —
-  `{ clauses: PredicateClause[] }`. It accepts the full operator vocabulary (`eq`,
-  `gt` / `gte`, `lt` / `lte`, `in`) end-to-end. `predicateImplies`
-  reasons about range and `in` containment, so the planner prefers
-  a filtered index whenever the query's bounds (whether expressed
-  as equality, `in` members, or another range) fall inside the
-  filter's bounds.
-- **Numeric range and `in` walks route through the index** — see
-  [`docs/contributing/features.md`](features.md)
-  §"Numeric range and `in` walks".
-  The value-order-preserving encoder keeps numeric and string ranges
-  in disjoint, sortable slots; string-encoded values (ISO 8601
-  timestamps, zero-padded numerics) remain a fine choice when you
-  want a single key space across heterogenous inputs.
-- When no predicate is given, no indexes are declared, or no declared index
-  consumes any predicate field, `planQuery` emits `FullScanPlan` and the read
-  walks the snapshot+log fold unchanged.
+- Top-level fields only on `on`; dotted paths throw `SchemaError` at projection.
+- `name` must match `/^[a-z][a-z0-9_]*$/`. Reserved leading-`_` names throw
+  `InvalidConfig`; other malformed names throw `SchemaError`.
+- `predicate?` is a `PredicateWire` with `eq`, `gt`, `gte`, `lt`, `lte`,
+  and `in` clauses. It controls marker projection only.
 
 ### Adding an index to an existing deployment
 
@@ -442,7 +415,8 @@ The command also accepts `--app` and `--tenant`; when omitted, they default from
 matching declared index; the current CLI resolves the index's `on` field only,
 so do not use it as the source of truth for filtered-index predicates. The
 writer emits forward entries on every commit; pre-existing rows are not
-back-projected until rebuild runs.
+back-projected until rebuild runs. This affects marker completeness only;
+reads remain complete before rebuilding.
 
 ### Verify
 

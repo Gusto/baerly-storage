@@ -593,44 +593,6 @@ const SCENARIOS = {
       };
     },
   },
-  /** One indexed LIST over 30 markers, issued as 3-key pages. */
-  pagedList: {
-    bound: "maxStorageCalls",
-    envelope: tighten("maxStorageCalls", 8),
-    extraPrecondition: (m, envelope) => {
-      expect(m.stack.kernel.lists).toBe(1);
-      expect(m.stack.issued.lists).toBeGreaterThanOrEqual(10);
-      expect(callsOf(m.stack.kernel)).toBeLessThanOrEqual(envelope.maxStorageCalls);
-    },
-    build: async (fresh) => {
-      const storage = await fresh();
-      const docs = await insertMany(dbFor(storage, true), 30, (i) => ({
-        _id: `p-${pad2(i)}`,
-        n: i,
-        tag: "x",
-      }));
-      await foldAll(storage);
-      return {
-        base: storage,
-        stack: () => adapterStack(storage, { pageKeys: 3, failAttempts: () => 0 }),
-        read: async (s) => sortedById(await items(dbFor(s, true)).where({ tag: "x" }).all()),
-        expected: sortedById(docs),
-      };
-    },
-  },
-  /**
-   * Stale-marker fixture read by index: 2 live rows fit the output bound,
-   * but the 36 examined markers (34 stale) trip the work bound.
-   */
-  staleMarkerWork: {
-    bound: "maxIndexEntriesExamined",
-    envelope: tighten("maxIndexEntriesExamined"),
-    contrast: "maxOutputRows",
-    build: async (fresh) => {
-      const { storage, liveX } = await seedStaleMarkers(fresh);
-      return plain(storage, readTagX, liveX);
-    },
-  },
 } satisfies Record<string, Scenario>;
 
 type ScenarioName = keyof typeof SCENARIOS;
@@ -728,13 +690,29 @@ for (const variant of VARIANTS) {
     test.fails("retries: retried storage requests count toward the call bound", () =>
       expectRefusal(SCENARIOS.retriedGets, fresh));
 
-    // flip to test() when main-2 Task 4 lands (charge each LIST page at issue)
-    test.fails("pagination: every LIST page counts toward the call bound", () =>
-      expectRefusal(SCENARIOS.pagedList, fresh));
+    test("declared indexes issue no LIST pages, even through a small-page adapter", async () => {
+      const storage = await fresh();
+      const docs = await insertMany(dbFor(storage, true), 30, (i) => ({
+        _id: `p-${pad2(i)}`,
+        n: i,
+        tag: "x",
+      }));
+      await foldAll(storage);
+      const stack = adapterStack(storage, { pageKeys: 3, failAttempts: () => 0 });
+      expect(sortedById(await items(dbFor(stack.storage, true)).where({ tag: "x" }).all())).toEqual(
+        sortedById(docs),
+      );
+      expect(stack.kernel.lists).toBe(0);
+      expect(stack.issued.lists).toBe(0);
+    });
 
-    // flip to test() when main-2 Task 3 lands (index fanout/work bound)
-    test.fails("index work bound: examined stale markers are charged though the output fits", () =>
-      expectRefusal(SCENARIOS.staleMarkerWork, fresh));
+    test("stale markers consume no read work and do not change output", async () => {
+      const { storage, liveX } = await seedStaleMarkers(fresh);
+      const measured = await measure(plain(storage, readTagX, liveX));
+      expect(measured.value).toEqual(liveX);
+      expect(measured.usage.maxIndexEntriesExamined).toBe(0);
+      expect(measured.stack.issued.lists).toBe(0);
+    });
 
     // ── Same head, different tail ─────────────────────────────────────
 
@@ -823,7 +801,7 @@ for (const variant of VARIANTS) {
       );
     });
 
-    // Markers count toward the work bound (`staleMarkerWork`), never the output bound.
+    // Markers are not read; the output bound counts only live matching rows.
     test("stale index markers: the output bound counts returned rows, not markers", async () => {
       const { storage, liveX, xMarkers } = await seedStaleMarkers(fresh);
       const envelope = tighten("maxOutputRows");

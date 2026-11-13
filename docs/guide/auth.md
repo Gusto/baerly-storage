@@ -296,10 +296,9 @@ default row cap, and an authenticated non-owner sees every row under the
 tenant. Two consequences for your interceptor:
 
 - **Scope the rows.** Inject a predicate keyed to the verified identity
-  (`where owner_id = <verified sub>`) before delegating. Prefer a
-  predicate that hits a declared index — the engine then resolves
-  matched rows via an index walk instead of folding the whole
-  collection. A bare `?limit` clamp only bounds what is returned: the
+  (`where owner_id = <verified sub>`) before delegating. All reads fold
+  the authoritative snapshot and log, including when indexes are
+  declared. A bare `?limit` clamp only bounds what is returned: the
   engine still folds the whole collection into memory before applying
   the limit, so a limit alone caps exposure but not read cost.
 - **Do not reject `?limit` to "force" a cap.** It backfires — a request

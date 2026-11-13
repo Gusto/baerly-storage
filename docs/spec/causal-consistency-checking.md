@@ -316,6 +316,21 @@ interleaving can be inspected and the injected entropy replayed by
 passing the seed back. (Timer-driven interleaving remains wall-clock
 dependent, so replay is not fully deterministic.)
 
+## Complete membership at the read cursor
+
+`packages/server/src/index-read-completeness.test.ts` pins the delayed
+stale-marker DELETE/reinsert race and a commit between marker enumeration
+and the read's log probe. The rows and returned tail must describe the
+same complete snapshot-plus-log state. Tail and folded-snapshot fixtures
+remove markers and check point reads, predicate/order/limit, and
+update/replace/delete selection without index LISTs.
+
+`tests/integration/randomized.test.ts` additionally generates insert,
+replace, delete, and compaction histories against a row-map model,
+removes markers after each step, and checks complete reads and ordered,
+limited mutation selection. This exercises both the folded base and
+live log suffix independently of marker completeness.
+
 ## Deterministic R2 create-outcome coverage
 
 `packages/adapter-cloudflare/src/r2-binding-storage.request-accounting.test.ts`
