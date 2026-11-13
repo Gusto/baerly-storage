@@ -184,10 +184,7 @@ export const walkLogRangeWithBytes = async (
  *   - `D`: tombstone — `map.delete(entry.doc_id)`.
  *
  * Entries whose `collection` does not match `opts.collection`, or
- * whose `doc_id` is `undefined`, are skipped. When
- * `opts.docIdFilter` is provided, only entries whose `doc_id` is
- * present in the filter set are folded. Authoritative query reads
- * omit this filter so the row set is complete at the returned tail.
+ * whose `doc_id` is `undefined`, are skipped.
  *
  * This is the canonical fold used by the read path
  * (`query.ts`) and the index reconciler (`rebuild-index.ts`).
@@ -201,18 +198,14 @@ export const foldLogEntriesOnto = <T extends DocumentData>(
   entries: Iterable<LogEntry>,
   opts: {
     readonly collection: string;
-    readonly docIdFilter?: ReadonlySet<string>;
   },
 ): void => {
-  const { collection, docIdFilter } = opts;
+  const { collection } = opts;
   for (const entry of entries) {
     if (!isOwnCollection(entry.collection, collection)) {
       continue;
     }
     if (entry.doc_id === undefined) {
-      continue;
-    }
-    if (docIdFilter !== undefined && !docIdFilter.has(entry.doc_id)) {
       continue;
     }
     switch (entry.op) {

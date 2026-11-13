@@ -25,7 +25,6 @@ import {
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
-import { planQuery } from "./query-planner.ts";
 import { runAllWithMeta, serializeManifestPointer, singleIdFromPredicate } from "./query.ts";
 
 const wireOf = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
@@ -565,7 +564,14 @@ describe("serializeManifestPointer", () => {
   });
 });
 
-describe("auto-planner index routing", () => {
+/**
+ * Reads take membership from the snapshot + committed-log fold, so a
+ * declared index never changes which rows a read returns. These cases
+ * seed through a Writer that declares the same indexes and assert the
+ * read result only; the predicate shapes are the ones an index-aware
+ * read would have to get right.
+ */
+describe("reads on a collection with declared indexes: equality predicates", () => {
   let storage: MemoryStorage;
 
   beforeEach(() => {
@@ -574,8 +580,7 @@ describe("auto-planner index routing", () => {
 
   /**
    * Build a Db with one declared single-field index `by_status` on
-   * the `tickets` collection. Mirrors the writer's `indexes` so the
-   * reader's planner picks the same entries on the wire.
+   * the `tickets` collection, mirroring the writer's `indexes`.
    */
   const dbWithByStatus = (): Db =>
     Db.create({
@@ -649,8 +654,8 @@ describe("auto-planner index routing", () => {
   });
 
   test("applies the predicate residue when the predicate has multiple keys", async () => {
-    // The planner routes through `by_status` at prefix-length 1; the
-    // post-fetch `matches(...)` re-check filters by `assignee`.
+    // Only one predicate key is covered by `by_status`; the result
+    // must still be filtered by `assignee`.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -727,10 +732,8 @@ describe("auto-planner index routing", () => {
   });
 
   test("composite index walked at partial prefix returns the right docs", async () => {
-    // [status, priority] index, walked at partial-prefix length 1
-    // (`status` only). Each yielded key has tail
-    // `<priority-b32>/<docId>.json` — TWO segments. This exercises
-    // the multi-segment doc-id extraction in `runIndexWalkPlan`.
+    // [status, priority] index; the predicate covers only its
+    // leading field (`status`).
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -815,8 +818,8 @@ describe("auto-planner index routing", () => {
   });
 
   test("mixed predicate with an operator clause walks the index and in-memory-filters the operator", async () => {
-    // The planner routes on the equality clause; the operator clause
-    // lands on the post-fetch matches() re-check.
+    // The index covers the equality clause only; the operator clause
+    // must still filter the result.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -981,7 +984,7 @@ describe("operator predicates — full-scan path", () => {
   });
 });
 
-describe("auto-planner range and $in walks (T3)", () => {
+describe("reads on a collection with declared indexes: range and $in predicates", () => {
   let storage: MemoryStorage;
 
   beforeEach(() => {
@@ -1205,8 +1208,7 @@ describe("auto-planner range and $in walks (T3)", () => {
 
   test("range on non-last indexed field still returns correct rows via postFilter", async () => {
     // Composite [tenant, age]. Predicate {tenant:{$gt:"a"}, age:"012"}
-    // — the planner treats `tenant` itself as the tail range slot
-    // (no equality consumes it), pushes the age=012 into postFilter.
+    // ranges on the leading field and pins the trailing one.
     // Verify result matches the in-memory full-scan.
     await provision(storage);
     const writer = new Writer({
@@ -1243,11 +1245,6 @@ describe("auto-planner range and $in walks (T3)", () => {
     // ABOVE `age=10` (one byte 0x39 vs two bytes 0x31 0x30), so a
     // `$gte:10` walk could miss multi-digit rows or include `9`. With
     // the new encoder, `{$gte:10, $lt:30}` returns exactly [10,15,18,22].
-    //
-    // Pin the planner choice first so a regression that fell back to
-    // full-scan (e.g. by reintroducing a `containsNumber` guard) would
-    // trip this test instead of silently passing on the executor's
-    // correctness — the surrounding cascade already covers that.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1263,17 +1260,6 @@ describe("auto-planner range and $in walks (T3)", () => {
       });
     }
     const indexes = [{ name: "by_age", on: "age" }] as const;
-    const plan = planQuery(
-      wireOf([
-        { op: "gte", field: "age", value: 10 },
-        { op: "lt", field: "age", value: 30 },
-      ]),
-      indexes,
-    );
-    expect(plan.kind).toBe("index-walk");
-    if (plan.kind === "index-walk") {
-      expect(plan.indexName).toBe("by_age");
-    }
     const db = Db.create({
       storage,
       app: APP,
@@ -1316,15 +1302,6 @@ describe("auto-planner range and $in walks (T3)", () => {
       });
     }
     const indexes = [{ name: "by_team", on: "team" }] as const;
-    const plan = planQuery(
-      wireOf([{ op: "in", field: "team", value: ["platform", "infra", "data"] }]),
-      indexes,
-    );
-    expect(plan.kind).toBe("index-walk");
-    if (plan.kind === "index-walk") {
-      expect(plan.indexName).toBe("by_team");
-      expect(plan.inOn?.values).toEqual(["platform", "infra", "data"]);
-    }
     const db = Db.create({
       storage,
       app: APP,

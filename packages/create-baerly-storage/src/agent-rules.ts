@@ -55,8 +55,8 @@ Anti-patterns that compile but are wrong:
 
 - \`db.collection(...).insertOne(...)\` — no such method. Use
   \`db.collection(...).insert(...)\`.
-- \`.useIndex("name")\` — does not exist. The query planner picks
-  indexes automatically from registered \`IndexDefinition\`s.
+- \`.useIndex("name")\` — does not exist. Declared \`indexes\` do not
+  change how a read runs; every read scans the collection.
 - \`z.string().nullable()\` — \`DocumentValue\` excludes \`null\`. Use
   \`.optional()\`; \`null\` in update patches is the RFC 7386 deletion
   sentinel.
