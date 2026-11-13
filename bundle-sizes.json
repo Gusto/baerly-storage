@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 369426,
-      "gz": 117147,
-      "minGz": 30438,
+      "raw": 370398,
+      "gz": 117740,
+      "minGz": 30493,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
@@ -37,9 +37,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 590999,
-      "gz": 180333,
-      "minGz": 57706,
+      "raw": 591971,
+      "gz": 180917,
+      "minGz": 57769,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
@@ -58,9 +58,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 504156,
-      "gz": 153377,
-      "minGz": 48581,
+      "raw": 504505,
+      "gz": 153776,
+      "minGz": 48632,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
@@ -102,12 +102,12 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 763975,
+      "raw": 764947,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 772868,
+      "raw": 773840,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }

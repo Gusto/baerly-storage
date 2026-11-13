@@ -34,9 +34,8 @@ Common anti-patterns that compile but are wrong:
 - Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
   query surface is `db.collection(...).where({ field: value }).all()` or
   `.where(q => q.gte("count", 1))`. See **Predicates** below.
-- `.useIndex("name")` / `.hint(...)` — no such methods. The planner
-  picks the index automatically from `IndexDefinition`s in
-  `baerly.config.ts`. See **Indexes** below.
+- `.useIndex("name")` / `.hint(...)` — no such methods. Declared
+  indexes do not change how a read runs. See **Indexes** below.
 
 <!-- stop:end -->
 ## What this is
@@ -242,28 +241,12 @@ http://localhost:5173/<path>`) before declaring the task complete.
   boolean / nested object. Use `q.in("tag", [...])` for set
   membership when you'd otherwise want `{ tag: ["todo","wip"] }`.
 
-- **Indexes** — declare them in `baerly.config.ts`; the read-path
-  planner picks one automatically when the predicate's equality
-  fields (and at most one range / `in` clause on the next indexed
-  field) cover the index's `on` tuple. No call-site hint is needed
-  — `Query<T>` has no `.useIndex()` method.
-
-  ```ts
-  import { defineConfig } from "@gusto/baerly-storage/config";
-
-  export default defineConfig({
-    collections: {
-      notes: {
-        indexes: [{ name: "by_body", on: "body" }],
-      },
-    },
-  });
-  ```
-
-  The adapter passes your `config` into
-  `Db.create({ storage, app, tenant, config })` for you. Predicates the
-  planner can't route fall back to the full scan with a metric bump —
-  correctness is preserved.
+- **Indexes** — don't declare them. Every read folds the whole
+  collection (snapshot + log) and filters in memory; a declared index
+  neither speeds a read up nor changes its result. `defineConfig`
+  still accepts `indexes` and `Db.create` validates them, so an
+  existing config keeps compiling. For a hot filtered read, maintain a
+  side-projection (see the unbounded-read anti-pattern below).
 
 - **Schemas (live feature)** — schemas are validated on the server
   for every `insert` / `update` / `replace` when bound. Declare via
@@ -456,9 +439,9 @@ apps or tenancy enforced outside baerly-storage.
 - Calling `db.collection(...).all()` (or any unbounded read) inside a
   per-request handler. The call scans the entire collection on every
   request — fine for a fixture-sized table, catastrophic at any real
-  size, and `pnpm verify` doesn't surface the cost. Push the filter
-  into the predicate so the index planner can prune
-  (`db.collection("notes").where({ ... }).all()`), or maintain a
+  size, and `pnpm verify` doesn't surface the cost. A predicate
+  (`db.collection("notes").where({ ... }).all()`) trims the response
+  but still folds the whole collection, so instead maintain a
   side-projection (Postgres/SQLite/search index) populated
   incrementally from the `/v1/since?collection=<name>&cursor=<opaque>`
   log feed or from a write hook —

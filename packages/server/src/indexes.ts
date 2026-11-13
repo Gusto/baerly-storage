@@ -73,7 +73,8 @@ const B32_ALPHABET = "0123456789abcdefghijklmnopqrstuv";
  * Reject malformed {@link IndexDefinition} shapes synchronously, at
  * writer construction. See docs/adr/003-layout-versioning-cordon.md.
  *
- * @throws BaerlyError code="InvalidConfig" — reserved leading-`_` `name`.
+ * @throws BaerlyError code="InvalidConfig" — reserved leading-`_` `name`,
+ *   or an `on` field is a dotted path (only top-level fields project).
  * @throws BaerlyError code="SchemaError" — `name` fails the regex, or `on` is empty.
  */
 export const validateIndexDefinition = (def: IndexDefinition): void => {
@@ -90,6 +91,14 @@ export const validateIndexDefinition = (def: IndexDefinition): void => {
     }
   } else if (def.on.length === 0) {
     throw new BaerlyError("SchemaError", `index ${def.name}.on must be non-empty array`);
+  }
+  for (const field of typeof def.on === "string" ? [def.on] : def.on) {
+    if (field.includes(".")) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `index ${def.name}.on must name top-level fields; dotted paths are not supported (got ${JSON.stringify(field)})`,
+      );
+    }
   }
   if (def.predicate !== undefined) {
     try {

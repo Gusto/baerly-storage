@@ -96,8 +96,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   readonly #schemas: ReadonlyMap<string, SchemaValidator>;
   /**
    * Per-collection {@link IndexDefinition}s threaded onto every
-   * {@link CollectionReadContext} this `Db` mints for writer marker
-   * maintenance. Reads always fold the complete snapshot and log.
+   * {@link CollectionReadContext} this `Db` mints. Only the writer
+   * sees them; reads always fold the complete snapshot and log.
    *
    * Derived from `config.collections[*].indexes` via
    * {@link collectionsToMaps} at {@link Db.create} time.
@@ -149,10 +149,13 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
      * 1. **Types.** `db.collection(name)` narrows `name` to declared
      *    collection names and infers the row type from
      *    `collections[name].schema` via {@link RowOf}.
-     * 2. **Runtime.** Schemas and indexes are derived from
-     *    `config.collections` via {@link collectionsToMaps}. Schema
-     *    validation and index maintenance are wired automatically — no
-     *    second hand-off step.
+     * 2. **Runtime.** Schemas are wired from `config.collections`
+     *    via {@link collectionsToMaps} — no second hand-off step.
+     *    Declared `indexes` are validated here (a malformed one throws
+     *    `SchemaError` or `InvalidConfig`) but do not speed up reads
+     *    or change their results. Until the writer stops emitting
+     *    index markers, a write whose row holds an array in an
+     *    indexed field throws `SchemaError`.
      *
      * @example
      * ```ts
