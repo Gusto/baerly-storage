@@ -12,8 +12,13 @@ import {
   loadRequestCountSnapshot,
   parseCell,
 } from "../../scripts/request-counts.ts";
-import { measureRequestCounts } from "../fixtures/request-count-grid.ts";
-import { CallTally, requestCountingStorage } from "../fixtures/request-counting-storage.ts";
+import { INDEX_COUNTS, measureRequestCounts } from "../fixtures/request-count-grid.ts";
+import { FREE_FETCH_BUDGET, freeFetchCells } from "../fixtures/request-count-free-fetch.ts";
+import {
+  CallTally,
+  requestCountingStorage,
+  totalCalls,
+} from "../fixtures/request-counting-storage.ts";
 import { MemoryStorage } from "@baerly/protocol";
 
 describe("request-counts.json", () => {
@@ -25,6 +30,21 @@ describe("request-counts.json", () => {
     }
     expect(changes).toHaveLength(0);
   });
+});
+
+describe("Workers Free with storage over fetch", () => {
+  // Each `free-fetch:*` cell is a whole request, route plus the tick it
+  // dispatches; the Worker's Cache API calls share the same quota.
+  test.each(INDEX_COUNTS)(
+    "every request at %i indexes fits the external subrequest budget",
+    async (indexes) => {
+      const cells = await freeFetchCells(indexes);
+      const over = cells
+        .map((c) => ({ name: c.name, calls: totalCalls(c.counts) + c.cacheApiCalls }))
+        .filter((c) => c.calls > FREE_FETCH_BUDGET);
+      expect(over).toEqual([]);
+    },
+  );
 });
 
 describe("request-counts format", () => {

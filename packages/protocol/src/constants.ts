@@ -549,6 +549,86 @@ export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
 export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
 
 /**
+ * Live-tail length at which the write tick folds on Workers Free when the
+ * Worker reaches its bucket through `fetch` (S3 over HTTP) rather than the
+ * R2 binding, whatever the tail-to-snapshot ratio. The Cloudflare adapter
+ * detects that host from the storage it was given and threads this as
+ * `foldAtTailEntries`, with {@link CF_FREE_FETCH_GC_MAX_SWEEPS}; Free with
+ * the R2 binding, Paid, and Node keep the ratio trigger alone.
+ *
+ * **Why the ratio trigger fails there.** Every storage call on that host is
+ * one of Free's 50 external subrequests per invocation; the budget is 45,
+ * leaving 5 for the verifier and platform. The Cloudflare limits page counts
+ * subrequests per invocation and does not exempt `ctx.waitUntil` work, so
+ * the tick a write dispatches is assumed to share the write's cap. A write
+ * and a read both replay the live tail, one GET per entry, so a request
+ * costs at least its tail. The ratio trigger first folds near 512 entries
+ * (`MAINTENANCE_MIN_LIVE_BYTES` / 128-byte entries) and no sooner than
+ * {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT} (50): at that tail an insert
+ * alone costs 57 calls, so the fold never fits and every read fails once
+ * the tail passes ~41.
+ *
+ * **Derivation of 9.** From `request-counts.json` (100-doc snapshot, live
+ * tail `t`, `I >= 1` indexes): an insert costs `7 + t + I`, the update
+ * worst case (pre-image outside the 8-GET walk) `15 + t + I`, and a fold of
+ * `e` entries `6 + e`. A fold and a GC slice never share a tick
+ * (`phasesPerTick: "single"`), so a request costs its route plus one of:
+ *
+ * - the fold, triggered by the write that brings the tail to `T`:
+ *   `(15 + (T - 1) + I) + (6 + T) = 20 + 2T + I`, 41 at `T = 9`, `I = 3`;
+ * - a GC slice sweeping `D` = {@link CF_FREE_FETCH_GC_MAX_SWEEPS} due
+ *   snapshots, plus log retirement, on a write whose tail the hard-GC guard
+ *   let reach `T + 1` by pre-empting the fold.
+ *
+ * Plus one Cache API `delete` (which shares the subrequest quota) on a
+ * PATCH or DELETE. The `free-fetch:*` cells in `request-counts.json`
+ * measure the whole request through a full cycle of fold and GC phases,
+ * with every GC slice sweeping its full cap. At `I = 3` the worst is
+ * 44 + 1 = 45 at `T = 9`, `D = 4`; at `T = 10` the fold alone already
+ * exceeds 45, so 9 is the largest trigger that fits. The longest live tail
+ * a read then sees is `T + 1` = 10: a GET by id costs 13 + 2 Cache API
+ * calls, an indexed `$in` of 16 values 29. Retried calls (up to
+ * `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this budget: that host is
+ * best effort.
+ *
+ * Changing this value, a fold or GC cost, or the GC cadence moves the
+ * `free-fetch:*` cells; `tests/unit/request-counts.test.ts` asserts they
+ * stay within 45.
+ *
+ * @see packages/adapter-cloudflare/src/worker.ts (`cfMaintenanceDispatch`)
+ * @see tests/fixtures/request-count-free-fetch.ts
+ * @see https://developers.cloudflare.com/workers/platform/limits/#subrequests
+ */
+export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 9;
+
+/**
+ * Most replaced snapshots one write-tick GC slice deletes on Workers Free
+ * when storage is reached through `fetch`; replaces
+ * {@link WRITE_TICK_GC_MAX_SWEEPS} (10) there. Each DELETE is one of the
+ * request's external subrequests, and a full 10-delete slice on top of the
+ * write that dispatched it exceeds the 45-call budget. 4 is the largest
+ * sweep for which every `free-fetch:*` cell fits at
+ * {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} (derivation there).
+ *
+ * **Sweep throughput must outrun the fold rate.** Every landed fold
+ * replaces one snapshot, so a collection produces at most one sweep
+ * candidate per `T` commits (`T` = the fold trigger). On
+ * `phasesPerTick: "single"` a fold may pre-empt a cadence GC tick but never
+ * the hard-GC tick, which runs once per
+ * `WRITE_TICK_GC_INTERVAL * GC_STARVATION_GUARD` = 16 commits, so the
+ * guaranteed sweep rate alone must cover it:
+ *
+ *     D / 16 >= 1 / T,  i.e.  D >= 16 / T = 1.8 at T = 9.
+ *
+ * `D = 4` clears that with more than 2x margin before counting the cadence
+ * GC ticks folds do not pre-empt. This sizes the sweep only; it assumes
+ * marking keeps pace with the fold rate.
+ *
+ * @see packages/adapter-cloudflare/src/worker.ts (`cfMaintenanceDispatch`)
+ */
+export const CF_FREE_FETCH_GC_MAX_SWEEPS: number = 4;
+
+/**
  * `runScheduledMaintenance`'s own `minEntriesToCompact` floor, applied when the
  * caller passes no `options.compact.minEntriesToCompact`. Deliberately NOT
  * `DEFAULT_MIN_TO_COMPACT` (compact()'s own 100) or
