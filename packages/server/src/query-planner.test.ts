@@ -458,6 +458,16 @@ describe("planQuery — filtered index cost bias", () => {
     }
   });
 
+  test("a lone filtered index whose filter is NOT implied falls back to full-scan", () => {
+    const filtered: IndexDefinition = {
+      name: "open_by_assignee",
+      on: "assignee",
+      predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
+    };
+    const plan = planQuery(wire([{ op: "eq", field: "assignee", value: "alice" }]), [filtered]);
+    expect(plan.kind).toBe("full-scan");
+  });
+
   test("longest equality prefix breaks ties among implied filters", () => {
     const filteredShort: IndexDefinition = {
       name: "open_by_assignee",

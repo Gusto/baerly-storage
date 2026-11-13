@@ -538,6 +538,41 @@ const runDeleteContract = async (
 };
 
 /**
+ * A filtered index whose filter the query does not imply must not be
+ * walked: `where({ assignee })` returns the open AND the closed row.
+ */
+const runFilteredIndexNotImplied = async (
+  storage: Storage,
+  app: string,
+  tenant: string,
+): Promise<void> => {
+  const t = freshTableName("filtered");
+  await provision(storage, app, tenant, t);
+  const db = Db.create({
+    storage,
+    app,
+    tenant,
+    config: {
+      collections: {
+        [t]: {
+          indexes: [
+            {
+              name: "open_by_assignee",
+              on: "assignee",
+              predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
+            },
+          ],
+        },
+      },
+    },
+  });
+  await db.collection(t).insert({ assignee: "alice", status: "open" });
+  await db.collection(t).insert({ assignee: "alice", status: "closed" });
+  const rows = await db.collection(t).where({ assignee: "alice" }).all();
+  expect(rows.map((r) => r["status"]).toSorted()).toEqual(["closed", "open"]);
+};
+
+/**
  * Cross-writer WriteConflict: two concurrent direct mutations racing on the
  * same table's `current.json`. The locked contract
  * (`packages/protocol/src/collection-api.ts:211-215`) says single-attempt — at
@@ -1183,6 +1218,7 @@ export const runCollectionApiCascade = async (opts: {
   await runUpdateContract(db, opts.storage, APP, tenant);
   await runTableReplaceByIdContract(db, opts.storage, APP, tenant);
   await runDeleteContract(db, opts.storage, APP, tenant);
+  await runFilteredIndexNotImplied(opts.storage, APP, tenant);
 
   // 4. Concurrent-write WriteConflict (cross-writer CAS loss on a single doc).
   if (opts.rivalStorage !== undefined) {
