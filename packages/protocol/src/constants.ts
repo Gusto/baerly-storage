@@ -242,18 +242,21 @@ export const CF_CACHE_API_MAX_CALLS: number = 3;
  * walk, stale index-marker DELETEs, the write tick) is best effort and is
  * not reserved.
  *
- * The writer refuses a commit with `CapacityExceeded`, before it writes
- * anything, unless the ledger still allows
+ * Each slot's attempt runs under a request-ledger hold
+ * (`RequestLedger.hold`) of
  * `STORAGE_RETRY_MAX_ATTEMPTS * (newIndexMarkers + 1) + COMMIT_RESOLUTION_RESERVE`
- * storage requests: each additive index-marker PUT and the create itself at
- * full retries, plus this reserve. After a lost create race it re-checks the
- * same sum (markers only when the re-decided post-image needs new ones)
- * before the next create, since the forward probe spent requests.
+ * requests: each additive index-marker PUT and the create itself at full
+ * retries, plus this reserve. Other work in the invocation (a
+ * `ctx.waitUntil` write tick) cannot spend held requests. The writer
+ * refuses with `CapacityExceeded`, before it writes anything, when the
+ * ledger's room cannot cover the hold. After a lost create race it takes a
+ * new hold (markers only when the re-decided post-image needs new ones)
+ * before the next create.
  *
  * The arithmetic assumes the default adapter retry policy; an adapter
  * configured with more retries can need more than it reserves.
  *
- * @see packages/server/src/writer.ts (`#assertCommitBudget`)
+ * @see packages/server/src/writer.ts (`#withCommitHold`)
  */
 export const COMMIT_RESOLUTION_RESERVE: number = 2 * STORAGE_RETRY_MAX_ATTEMPTS;
 
