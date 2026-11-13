@@ -44,10 +44,10 @@ export interface Storage {
    * follows an attempt of unknown outcome as `NetworkError` instead; the
    * writer resolves `NetworkError` by reading the slot back. A create-only
    * put's `NetworkError` whose `cause.notApplied` is `true` must guarantee
-   * that no attempt of that call was applied (for example, every attempt was
-   * throttled); the writer then reads the slot back only to tell a peer's
-   * occupant from an empty slot. An unreadable readback can still report
-   * `AmbiguousCommit`. Build it with
+   * that no attempt of that call was applied or can still apply (for example,
+   * every attempt was definitively throttled before applying). The writer
+   * still reads the slot back to resolve an occupant, but an empty or failed readback
+   * preserves the original retriable `NetworkError`. Build it with
    * `new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`:
    * the detail object goes under `cause`, never as the options object.
    */

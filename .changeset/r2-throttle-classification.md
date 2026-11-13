@@ -11,5 +11,7 @@ proves an unapplied write, so an empty or unreadable slot remains
 `AmbiguousCommit`, including when a later retry was definitively rejected.
 
 A Workers "Too many subrequests" error from the R2 binding is no longer retried,
-since every later call in the same invocation is refused too. A commit refused
-this way whose slot is read back as empty fails with a retriable `NetworkError`.
+since every later call in the same invocation is refused too. When no earlier
+attempt has an uncertain outcome, a commit refused this way fails with a
+retriable `NetworkError` when its slot is empty or its readback fails, since no
+attempt applied or can still apply.
