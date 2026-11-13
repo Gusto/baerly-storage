@@ -584,7 +584,12 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // Tenant resolution: the Verifier owns it unconditionally.
         // An error thrown before the router runs: an enveloped, mapped
         // error with its own canonical line.
-        const respondMapped = (error: unknown): Response => {
+        let result: Awaited<ReturnType<Verifier>>;
+        try {
+          result = await verifier(req);
+        } catch (error) {
+          // A throwing verifier is never a 401 (that would tell OAuth
+          // clients to discard credentials during an IdP outage).
           const { status, envelope } = mapError(error);
           flushCanonicalLine(obsCtx, obsCtx.recorder, {
             unit: "http",
@@ -597,14 +602,6 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             status,
             headers: { "content-type": "application/json" },
           });
-        };
-        let result: Awaited<ReturnType<Verifier>>;
-        try {
-          result = await verifier(req);
-        } catch (error) {
-          // A throwing verifier is never a 401 (that would tell OAuth
-          // clients to discard credentials during an IdP outage).
-          return respondMapped(error);
         }
         if (result === null) {
           return flushUnauthorizedAndRespond(obsCtx, req);
@@ -619,31 +616,27 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // base handle is resolved once per isolate (see `ResolvedState`);
         // only the observability wrap is per-request.
         const storage = observableStorage(baseStorage);
-        // `Db.create` refuses an invalid tenant (for example a non-NFC
-        // claim) with `InvalidConfig`; map it to a 400 envelope as the
-        // Node adapter does.
-        let db: Db;
+        // One `try` covers `Db.create` (refuses an invalid tenant, for
+        // example a non-NFC claim), `createRouter` and the read-cache
+        // wrapped `app.fetch`. Any throw maps to the JSON error envelope
+        // with the mapped status, and one canonical line records it, as
+        // the Node adapter does.
+        let cacheStatus: CacheStatus = "bypass";
+        let outboundStatus = 500;
+        let caughtError: unknown;
+        let response: Response;
         try {
-          db = Db.create({
+          const db = Db.create({
             storage,
             app: env.APP,
             tenant: tenantPrefix,
             config: options.config,
           });
-        } catch (error) {
-          return respondMapped(error);
-        }
-
-        const app = createRouter({
-          db,
-          sinceTimeoutMs: options.sinceTimeoutMs,
-          sincePollIntervalMs: options.sincePollIntervalMs,
-        });
-
-        let cacheStatus: CacheStatus = "bypass";
-        let response: Response | undefined;
-        let caughtError: unknown;
-        try {
+          const app = createRouter({
+            db,
+            sinceTimeoutMs: options.sinceTimeoutMs,
+            sincePollIntervalMs: options.sincePollIntervalMs,
+          });
           // Hono's `fetch` returns `Response | Promise<Response>`;
           // `withReadCache` wants a `Promise<Response>`. Normalize
           // via `Promise.resolve` so the sync-return branch is wrapped.
@@ -652,30 +645,35 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
           );
           cacheStatus = cacheResult.cache_status;
           response = cacheResult.response;
+          outboundStatus = response.status;
         } catch (error) {
           caughtError = error;
-          throw error;
+          const mapped = mapError(error);
+          outboundStatus = mapped.status;
+          response = new Response(JSON.stringify(mapped.envelope), {
+            status: mapped.status,
+            headers: { "content-type": "application/json" },
+          });
         } finally {
-          const status = caughtError !== undefined ? 500 : (response?.status ?? 500);
           flushCanonicalLine(obsCtx, obsCtx.recorder, {
             unit: "http",
-            status,
-            outcome: deriveOutcome(req.method, status, caughtError),
+            status: outboundStatus,
+            outcome: deriveOutcome(req.method, outboundStatus, caughtError),
             ...(caughtError !== undefined && { error: caughtError }),
             extra: {
               method: req.method,
-              path: new URL(req.url).pathname,
+              path: url.pathname,
               cache_status: cacheStatus,
             },
           });
         }
-        // `response` is defined here — the `catch` arm above rethrew,
-        // so reaching this line implies the try block completed.
-        // Best-effort invalidate after writes. `ctx.waitUntil` keeps
-        // the Worker alive for the cache.delete without blocking
-        // the response.
-        ctx.waitUntil(invalidateOnWrite(req, tenantPrefix, response!.status));
-        return response!;
+        // Best-effort invalidate after writes, skipped when the request
+        // threw. `ctx.waitUntil` keeps the Worker alive for the
+        // cache.delete without blocking the response.
+        if (caughtError === undefined) {
+          ctx.waitUntil(invalidateOnWrite(req, tenantPrefix, response.status));
+        }
+        return response;
       });
     },
 
