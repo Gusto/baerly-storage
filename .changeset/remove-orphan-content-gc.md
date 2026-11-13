@@ -53,3 +53,15 @@ but the two degraded reasons carried no checkpoint, so a collection with
 an unreadable log entry or snapshot stopped advancing `tail_hint`
 entirely, and its read and write forward-probes re-walked a growing live
 tail. Every GC tick now takes the ordinary rate-limited refresh.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before (0.6.0)
+const { marked } = await runGc(args);
+console.log(marked.orphan_content);
+// after: the member is gone; do not read it
+const { marked } = await runGc(args);
+```
+
+Delete the field from any dashboard or assertion that reads `RunGcResult.marked.orphan_content`. A leftover `content/` prefix needs no action.

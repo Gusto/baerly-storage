@@ -34,3 +34,9 @@ list-entry comparison as adapter-optional — which is precisely why it
 could not see the GC bug. It now compares entries whole, so a
 backend-specific field cannot be reintroduced without a conformance
 failure.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before: yield { key, etag, lastModified }  // after: yield { key, etag }
+```

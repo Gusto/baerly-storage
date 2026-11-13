@@ -25,8 +25,9 @@ tail of 1–49. That helper now defaults to
 `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` callers start
 folding tails of 1–49 (more snapshot rewrites on a hot Paid cron; an
 idle tick still costs only the `current.json` GET + tail probe).
-`CLOUDFLARE_FREE_TIER` still carries an explicit 20 and must not be
-passed to `runScheduledMaintenance`. Callers already passing
+`CLOUDFLARE_FREE_TIER` still carries an explicit 20. It fits one
+`runScheduledMaintenance` call on Workers Free with the R2 binding; on Workers
+Free with S3 over HTTP, alternate `compact()` and `runGc()` instead. Callers already passing
 `{ compact: { minEntriesToCompact: N } }` to batch folds are unchanged.
 If you relied on the bare call **not** folding small tails — e.g. to
 batch snapshot rewrites on a write-amplification-sensitive host — pass
