@@ -50,8 +50,27 @@ describe("assertDocumentValues", () => {
     expect(refusal(doc).message).toContain("a.back");
   });
 
-  test("refuses a non-plain root", () => {
-    expect(refusal(new Date(0)).message).toContain("the document is");
+  test("accepts a non-plain root and checks its own fields", () => {
+    expect(() => assertDocumentValues(new Ticket(), "insert")).not.toThrow();
+    const ticket = Object.assign(new Ticket(), { score: Number.NaN });
+    expect(refusal(ticket).message).toContain("score");
+  });
+
+  test("refuses a value at the root itself", () => {
+    expect(refusal(Number.NaN).message).toContain("the document is NaN");
+  });
+
+  test("undefinedMembersAbsent allows undefined members but not elements", () => {
+    const options = { undefinedMembersAbsent: true };
+    expect(() =>
+      assertDocumentValues({ a: undefined, b: { c: undefined } }, "update", options),
+    ).not.toThrow();
+    expect(() => assertDocumentValues({ list: [undefined] }, "update", options)).toThrow(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    expect(() => assertDocumentValues({ a: Number.NaN }, "update", options)).toThrow(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
   });
 
   test("quotes a non-identifier key in the path", () => {
@@ -86,12 +105,26 @@ describe("assertDocumentValues", () => {
     expect(refusal({ a: { _id: undefined } }).message).toContain("a._id");
   });
 
-  test("walks a deep document without overflowing the call stack", () => {
+  test("walks a deep document without overflowing the call stack, with a bounded path", () => {
     let deep: Record<string, unknown> = { leaf: Number.NaN };
     for (let i = 0; i < 100_000; i++) {
       deep = { d: deep };
     }
-    expect(refusal(deep).message).toContain(".leaf");
+    const { message } = refusal(deep);
+    expect(message).toBe("insert: document value at d.d.d.d.….d.d.d.leaf is NaN");
+  });
+
+  test("keeps a path at the edge length whole", () => {
+    expect(
+      refusal({ a: { b: { c: { d: { e: { f: { g: { h: Number.NaN } } } } } } } }).message,
+    ).toContain("a.b.c.d.e.f.g.h");
+  });
+
+  test("truncates a long key in the path", () => {
+    const key = "k".repeat(10_000);
+    const { message } = refusal({ [key]: Number.NaN });
+    expect(message.length).toBeLessThan(200);
+    expect(message).toContain(`["${"k".repeat(64)}"…]`);
   });
 });
 

@@ -355,9 +355,10 @@ const makeClientCollection = <T extends DocumentData>(
       });
     },
     async update(id, patch, opts): Promise<{ readonly modified: number }> {
-      // Checked here: `JSON.stringify` would coerce or drop these values,
-      // so the server would never see them.
-      assertDocumentValues(patch, "update");
+      // Checked here: `JSON.stringify` would coerce these values, so the
+      // server would never see them. It drops an `undefined` member, which
+      // leaves that field unchanged, so that one stays allowed.
+      assertDocumentValues(patch, "update", { undefinedMembersAbsent: true });
       return request<{ modified: number }>(ctx, {
         method: "PATCH",
         path: idPath(id),

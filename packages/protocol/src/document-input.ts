@@ -1,3 +1,4 @@
+import { DOCUMENT_ERROR_PATH_EDGE_SEGMENTS, DOCUMENT_ERROR_PATH_KEY_CHARS } from "./constants.ts";
 import { BaerlyError } from "./errors.ts";
 
 const INSERT_ID_RESOLUTION =
@@ -45,18 +46,35 @@ type Pending = {
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
-const pathOf = (at: Pending): string => {
-  let path = "";
-  for (let step: Pending | undefined = at; step?.key !== undefined; step = step.parent) {
-    const { key } = step;
-    let segment = `[${JSON.stringify(key)}]`;
-    if (typeof key === "number") {
-      segment = `[${key}]`;
-    } else if (IDENTIFIER.test(key)) {
-      segment = `.${key}`;
-    }
-    path = segment + path;
+const renderSegment = (key: string | number): string => {
+  if (typeof key === "number") {
+    return `[${key}]`;
   }
+  if (key.length > DOCUMENT_ERROR_PATH_KEY_CHARS) {
+    return `[${JSON.stringify(key.slice(0, DOCUMENT_ERROR_PATH_KEY_CHARS))}…]`;
+  }
+  return IDENTIFIER.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+};
+
+/**
+ * The path from the root to `at`, as `a.b[2]["c d"]`. A deep path keeps
+ * its first and last {@link DOCUMENT_ERROR_PATH_EDGE_SEGMENTS} segments
+ * around a `.…` marker, so the message stays bounded.
+ */
+const pathOf = (at: Pending): string => {
+  const keys: Array<string | number> = [];
+  for (let step: Pending | undefined = at; step?.key !== undefined; step = step.parent) {
+    keys.push(step.key);
+  }
+  keys.reverse();
+  const edge = DOCUMENT_ERROR_PATH_EDGE_SEGMENTS;
+  const path =
+    keys.length > 2 * edge
+      ? `${keys.slice(0, edge).map(renderSegment).join("")}.…${keys
+          .slice(-edge)
+          .map(renderSegment)
+          .join("")}`
+      : keys.map(renderSegment).join("");
   return path.startsWith(".") ? path.slice(1) : path;
 };
 
@@ -71,6 +89,17 @@ const refuse = (verb: string, at: Pending, what: string, resolution: string): ne
   );
 };
 
+/** Options for {@link assertDocumentValues}. */
+export interface DocumentValuesOptions {
+  /**
+   * Treat an `undefined` object member as absent rather than refusing it,
+   * as an update patch does: `JSON.stringify` drops the member, which is
+   * the same patch as omitting it. `undefined` array elements are still
+   * refused (JSON turns them into `null`).
+   */
+  readonly undefinedMembersAbsent?: boolean;
+}
+
 /**
  * Reject a document (or update patch) holding a value JSON cannot store
  * as written. `JSON.stringify` would silently turn `NaN` and `±Infinity`
@@ -78,25 +107,34 @@ const refuse = (verb: string, at: Pending, what: string, resolution: string): ne
  * elements into `null`, and reduce a `Date`, `Map`, typed array, boxed
  * primitive or class instance to a different shape; a function, symbol or
  * bigint would be dropped or throw. Each of those throws here instead,
- * naming the path of the first offending value, as do circular references.
+ * naming the path of the first offending value (capped, see
+ * {@link DOCUMENT_ERROR_PATH_EDGE_SEGMENTS}), as do circular references.
  *
  * Allowed: strings, finite numbers (`-0` included), booleans, `null` (at
  * any depth), arrays, and plain objects (prototype `Object.prototype` or
- * `null`). A top-level `_id: undefined` counts as absent, as on `insert`
- * and in an update patch. No size, depth or `null` limits are applied:
- * those belong to the storage format.
+ * `null`). The root itself may be any object; its own
+ * enumerable fields are checked. A top-level `_id: undefined` counts as
+ * absent, as on `insert`; with `undefinedMembersAbsent`, every
+ * `undefined` object member does. No size, depth or `null` limits are
+ * applied: those belong to the storage format.
  *
- * Pure and I/O-free. The write verbs call it on the caller's value before
- * any storage call; the HTTP client calls it before serializing, because
- * the coercions above happen in `JSON.stringify` and a server only ever
- * sees their result.
+ * Pure and I/O-free. `insert` and `replace` call it on the caller's
+ * document before any storage call, and `update` on each merged
+ * post-image before any write; the HTTP client calls it before
+ * serializing (on the patch, for `update`), because the coercions above
+ * happen in `JSON.stringify` and a server only ever sees their result.
  *
  * @param verb  the calling verb, used as the message prefix
  *   (`"insert"`, `"replace"`, `"update"`, …).
  * @throws BaerlyError code="InvalidConfig" — `value` holds a value outside
  *   the JSON document domain. The message names its path.
  */
-export const assertDocumentValues = (value: unknown, verb: string): void => {
+export const assertDocumentValues = (
+  value: unknown,
+  verb: string,
+  options?: DocumentValuesOptions,
+): void => {
+  const undefinedMembersAbsent = options?.undefinedMembersAbsent === true;
   // Explicit work stack, so a deep document does not consume the call
   // stack. `ancestors` holds the containers on the current root-to-node
   // path; a container reached again through its own subtree is a cycle
@@ -146,8 +184,11 @@ export const assertDocumentValues = (value: unknown, verb: string): void => {
       }
       continue;
     }
+    // The root may be any object: a write copies its own enumerable fields
+    // (`{ ...doc }`), so only nested values must be plain. An object from
+    // another realm (a `vm` context, an iframe) fails this check too.
     const prototype: unknown = Object.getPrototypeOf(current);
-    if (prototype !== Object.prototype && prototype !== null) {
+    if (next.parent !== undefined && prototype !== Object.prototype && prototype !== null) {
       const name = (current as { constructor?: { name?: unknown } }).constructor?.name;
       return refuse(
         verb,
@@ -164,7 +205,10 @@ export const assertDocumentValues = (value: unknown, verb: string): void => {
     for (let i = keys.length - 1; i >= 0; i--) {
       const key = keys[i]!;
       const member = (current as Record<string, unknown>)[key];
-      if (member === undefined && key === "_id" && next.parent === undefined) {
+      if (
+        member === undefined &&
+        (undefinedMembersAbsent || (key === "_id" && next.parent === undefined))
+      ) {
         continue;
       }
       pending.push({ value: member, parent: next, key });

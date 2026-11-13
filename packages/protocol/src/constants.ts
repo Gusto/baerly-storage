@@ -1,4 +1,20 @@
 /**
+ * Leading and trailing path segments an `assertDocumentValues` error keeps
+ * (`a.b.c.d.….w.x.y.z`). The document is caller-controlled and unbounded
+ * in depth, so the message's path is capped; 4 + 4 segments name the
+ * field's top-level location and its immediate container, which is what a
+ * caller needs to find it.
+ */
+export const DOCUMENT_ERROR_PATH_EDGE_SEGMENTS = 4;
+
+/**
+ * Characters of one object key an `assertDocumentValues` error path shows
+ * before eliding the rest. Keys are caller-controlled and unbounded, so
+ * this keeps one long key from making the message unbounded.
+ */
+export const DOCUMENT_ERROR_PATH_KEY_CHARS = 64;
+
+/**
  * Max total object-key length S3 and R2 accept (UTF-8 bytes). A key
  * over this fails the PUT with an opaque provider 400; baerly surfaces
  * it early as InvalidConfig. See docs/spec/storage-compatibility.md.
