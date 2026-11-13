@@ -38,11 +38,11 @@ const ROWS = [
 ];
 
 /** A legacy NFD collection whose rows live only in its unfolded log. */
-const seedLegacyLog = async (storage: Storage): Promise<void> => {
+const seedLegacyLog = async (storage: Storage, tailHint: number = ROWS.length): Promise<void> => {
   await createCurrentJson(
     storage,
     `${prefixFor(NFD)}/current.json`,
-    logStateCurrentJson({ tail_hint: ROWS.length }),
+    logStateCurrentJson({ tail_hint: tailHint }),
   );
   for (const [seq, row] of ROWS.entries()) {
     await seedLogEntry(storage, prefixFor(NFD), seq, {
@@ -84,6 +84,15 @@ describe("an NFC name that aliases a legacy NFD collection on R2", () => {
     );
     const head = await readCurrentJson(storage, `${prefixFor(NFC)}/current.json`);
     await expect(db.getLogEntry(NFC, 0, head!.json)).rejects.toMatchObject(ALIASED);
+  });
+
+  test("the /v1/since forward probe refuses legacy entries past tail_hint", async () => {
+    const { storage } = r2Model();
+    await seedLegacyLog(storage, 0);
+    const db = Db.create({ storage, app: "app", tenant: "tenant" });
+    await expect(listEventsSince({ db, collection: NFC, cursor: "" })).rejects.toMatchObject(
+      ALIASED,
+    );
   });
 
   test("compact and scheduled maintenance refuse and delete nothing", async () => {

@@ -544,6 +544,18 @@ call to `external`, at most `CF_CACHE_API_MAX_CALLS` per invocation; a cache
 `match` or `put` without room is skipped and the request is served from
 storage, and the invalidation after a write is always sent.
 
+The `/v1/since` long-poll reads the ledger and never runs past it, so it
+never fails with the ledger's `CapacityExceeded`. Each poll cycle starts
+only with room for an idle one (two GETs: `current.json` and the probe at
+the cursor), and its entry reads and probe are capped by what is left. Out
+of room, the request returns the entries it has read, a prefix whose
+`next_cursor` resumes after the last one, or, having waited at least one
+poll interval, an empty batch at the same cursor. A request without room
+for its first cycle returns `MaintenancePending` (503, `Retry-After`), so
+an empty batch never comes back sooner than one interval. On `cf-free`
+with storage over `fetch` this shortens an idle long-poll to about 22 of
+its 25 seconds; elsewhere the timeout ends it first.
+
 ### Read admission
 
 A read whose work does not fit the serving request is refused whole with

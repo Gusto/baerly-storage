@@ -21,7 +21,7 @@ import {
 } from "@baerly/protocol";
 import { isOwnCollection } from "./collection-alias.ts";
 import { collectionsToMaps } from "./config.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { probeTailChunk, probeTailFrom, type TailProbeChunk } from "./log-tail.ts";
 import { assertNameSegment } from "./path-segment.ts";
 import type { CollectionReadContext } from "./query.ts";
 import { makeCollection } from "./collection.ts";
@@ -375,6 +375,40 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
     const { tail } = await probeTailFrom(this.#storage, logPrefix, hint, opts);
     return tail;
+  }
+
+  /**
+   * Forward-probe at most `cap` committed log entries from `hint` and
+   * return them. Unlike {@link probeLogTail}, reaching `cap` is not an
+   * error: the chunk comes back as `kind: "at-least"`, a prefix of the
+   * entries past `hint`, so a caller with a bounded request budget can
+   * deliver it and resume after its last entry. Each slot is one GET.
+   *
+   * @throws BaerlyError code="Internal" — `hint` is below the floor, as
+   *         for {@link probeLogTail}.
+   * @throws BaerlyError code="InvalidResponse" — an occupied slot does
+   *         not hold valid JSON.
+   * @throws BaerlyError code="InvalidConfig" — an entry names a
+   *         canonically-equivalent but byte-different collection, as for
+   *         {@link getLogEntry}.
+   *
+   * @internal — typed seam for the HTTP handler.
+   */
+  async probeLogChunk(
+    collection: string,
+    hint: number,
+    current: CurrentJson,
+    opts: { cap: number; signal?: AbortSignal },
+  ): Promise<TailProbeChunk> {
+    assertNameSegment(collection, "collection");
+    assertAtOrAboveLogFloor("probeLogChunk", hint, current);
+    const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
+    const chunk = await probeTailChunk(this.#storage, logPrefix, hint, opts);
+    // As for getLogEntry: refuse a legacy non-NFC spelling's entries.
+    for (const entry of chunk.entries) {
+      isOwnCollection(entry.collection, collection);
+    }
+    return chunk;
   }
 }
 
