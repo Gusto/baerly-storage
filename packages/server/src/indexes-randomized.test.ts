@@ -13,8 +13,8 @@
  * `allIndexKeysFor`, PLUS the stale markers the writer is documented
  * to leave behind when a doc's prior post-image is more than
  * `PREIMAGE_SCAN_MAX_GETS` commits back (`docs/spec/sync-protocol.md`
- * invariant 7: an accepted benign false positive, reconciled by
- * `rebuildIndex`). The oracle mirrors that cap exactly: a stale marker
+ * invariant 7: an accepted benign false positive no read consults).
+ * The oracle mirrors that cap exactly: a stale marker
  * is expected iff the superseding write missed the pre-image, and any
  * stale marker within the cap still fails the property. The model is a
  * plain `Map<_id, doc>`; the

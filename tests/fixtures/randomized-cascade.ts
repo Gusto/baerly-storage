@@ -35,8 +35,7 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { allIndexKeysFor, Db, probeTailFrom } from "@baerly/server";
-import { rebuildIndex } from "@baerly/server/maintenance";
+import { Db, probeTailFrom } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import {
   CentralisedOfflineFirstCausalSystem,
@@ -101,6 +100,7 @@ interface Instance {
   readonly db: Db;
   readonly writer: Writer;
   readonly storage: Storage;
+  readonly tenant: string;
   readonly currentJsonKey: string;
   readonly logPrefix: string;
 }
@@ -207,38 +207,30 @@ const readLatest = async (
 };
 
 /**
- * T4 invariant — when the filtered index is declared, the live key
- * set under its prefix MUST equal `allIndexKeysFor(FILTERED_INDEX,
- * liveBody)` after a {@link rebuildIndex} reconciliation pass.
- *
- * Multi-writer cascade contention can leave orphan index entries in
- * the bucket — CAS retries throw the prior attempt's PUT/DELETE
- * work away from `current.json` but the storage-level keys persist
- * until the next writer's diff path cleans them up or a rebuild
- * runs. The chapter's correctness invariant lives at the rebuild
- * boundary: after rebuild, the on-storage key set MUST equal the
- * filter-aware projection of the live doc set.
+ * Declared-index invariant — when the filtered index is declared, a
+ * read through a `Db` that declares it returns exactly what the log
+ * says is live: the doc iff its latest value satisfies the index's
+ * filter. Reads take membership from the fold, so the markers the
+ * contended writers left behind (orphans from CAS retries included)
+ * must not change the answer.
  *
  * The cascade is single-key (`COLLECTION === docId`) so the live
- * set is at most one row; the expectation collapses to "zero keys
- * iff the live doc doesn't satisfy the filter, else one key for
- * that doc".
+ * set is at most one row.
  */
-const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
-  // Quiesce the cascade with a rebuild pass before asserting. The
-  // rebuild reconciles the live doc set against the on-storage
-  // index keys (CONTRACTS §4 — `rebuildIndex` consumes
-  // `allIndexKeysFor` and is filter-aware via T4's projector
-  // change).
-  await rebuildIndex(inst.storage, inst.currentJsonKey, FILTERED_INDEX);
+const assertFilteredIndexReadMatchesLive = async (inst: Instance): Promise<void> => {
   const latest = await readLatest(inst, COLLECTION);
   const live = latest?.value;
-  const expected = new Set(allIndexKeysFor(inst.logPrefix, [FILTERED_INDEX], live, COLLECTION));
-  const actual = new Set<string>();
-  for await (const entry of inst.storage.list(`${inst.logPrefix}/index/${FILTERED_INDEX.name}/`)) {
-    actual.add(entry.key);
-  }
-  expect(actual, "filtered-index live key set != allIndexKeysFor(liveBody)").toEqual(expected);
+  const db = Db.create({
+    storage: inst.storage,
+    app: APP,
+    tenant: inst.tenant,
+    config: { collections: { [COLLECTION]: { indexes: [FILTERED_INDEX] } } },
+  });
+  const rows = await db.collection(COLLECTION).where({ sender: 0 }).all();
+  expect(
+    rows.map((r) => r["_id"]),
+    "indexed read != live doc set under the index filter",
+  ).toEqual(live?.sender === 0 ? [COLLECTION] : []);
 };
 
 /**
@@ -255,8 +247,7 @@ const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
  * Filtered-index injected by `runCausalConsistencyCascade` when
  * `opts.injectFilteredIndex === true` (T4). Filters on `sender === 0`
  * so ~1/N of writes match the predicate; the assertion at the end
- * of the cascade walks the storage and checks the live key set
- * equals `allIndexKeysFor(FILTERED_INDEX)(liveBody)`.
+ * of the cascade checks an indexed read against the live doc.
  */
 const FILTERED_INDEX: IndexDefinition = {
   name: "cascade_filter",
@@ -297,6 +288,7 @@ const buildInstances = async (
       db,
       writer,
       storage,
+      tenant: sharedTenant,
       currentJsonKey: sharedCurrentKey,
       logPrefix: sharedLogPrefix,
     };
@@ -397,10 +389,10 @@ export const runCausalConsistencyCascade = (opts: {
   pollTickMs: number;
   clockOffsetsMs?: readonly number[];
   /**
-   * T4: when `true`, the cascade declares a sparse filtered index
-   * over the single shared doc and, after the cascade completes,
-   * asserts the on-storage key set under the index's prefix equals
-   * `allIndexKeysFor(FILTERED_INDEX, liveDoc)`. The filter matches
+   * When `true`, the cascade declares a sparse filtered index over
+   * the single shared doc and, after the cascade completes, asserts
+   * that a read through a `Db` declaring it returns the live doc iff
+   * the doc satisfies the filter. The filter matches
    * roughly 1/N of broadcasts (`sender === 0`), exercising both the
    * miss→match and match→miss U-quadrants under live contention.
    */
@@ -631,7 +623,7 @@ export const runCausalConsistencyCascade = (opts: {
                   )}`,
                 ).toEqual([]);
                 if (opts.injectFilteredIndex) {
-                  await assertFilteredIndexConsistent(instances[0]!);
+                  await assertFilteredIndexReadMatchesLive(instances[0]!);
                 }
                 done();
               } catch (error) {

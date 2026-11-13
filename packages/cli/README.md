@@ -14,10 +14,9 @@ registered command definitions.
 | ---------------------------- | ----------------------------------------------------------------------------------------------- |
 | `baerly deploy`              | Dispatch by `baerly.config.ts:target`; today only Cloudflare deploy is implemented.             |
 | `baerly doctor`              | Cloudflare deploy invariant checks, or `--bucket <uri>` CAS probe for any backend.              |
-| `baerly inspect`             | Read-only summary of one collection's snapshot / log / index state.                             |
+| `baerly inspect`             | Read-only summary of one collection's snapshot / log state.                                     |
 | `baerly export`              | SQL export for one collection (`--target=sqlite` / `--target=postgres` / `--target=d1`).        |
 | `baerly cost`                | Class A / Class B operation accounting for one collection.                                      |
-| `baerly admin rebuild-index` | Reconcile one declared index.                                                                   |
 | `baerly admin dump`          | Canonical NDJSON dump of one collection's materialized view.                                    |
 | `baerly admin restore`       | Import `admin dump` NDJSON into a fresh or `--force`-truncated collection.                      |
 | `baerly admin fsck`          | Read-only consistency walk; exits 4 on findings.                                                |

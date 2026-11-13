@@ -63,11 +63,6 @@ const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopM
 
 export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
 export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
-export {
-  type RebuildIndexOptions,
-  type RebuildIndexResult,
-  rebuildIndex,
-} from "./rebuild-index.ts";
 // Public half only. `InternalMaintenanceOptions` is declared alongside
 // it but deliberately NOT re-exported here — this is a published entry,
 // and re-exporting the widening is exactly the leak being fixed.

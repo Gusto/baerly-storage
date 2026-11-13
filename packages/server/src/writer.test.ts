@@ -1819,8 +1819,7 @@ describe("Writer — pre-image scan depth", () => {
     // The accepted trade, pinned so it is a deliberate choice rather
     // than a surprise: one seq deeper than the budget and the old key
     // survives. That is benign — an extra index key is a false
-    // positive the read path drops, never a missing candidate — and
-    // `rebuildIndex` / `fsck --indexes` is the reconciler.
+    // positive the read path never consults.
     const FLOOR = 300;
     const storage = new MemoryStorage();
     await createCurrentJson(

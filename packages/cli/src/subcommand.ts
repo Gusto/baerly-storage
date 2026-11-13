@@ -50,7 +50,7 @@ import { emitError, setJsonMode, errorToExitCode } from "./output.ts";
  * `--bucket` / `--app` / `--tenant` / `--collection` / `--json`
  * descriptions can't drift copy-to-copy (they did: `--collection` had
  * both "Collection name" and "Collection name." variants). Bespoke
- * flags (`--config`, `--indexes`, `--provider`, `--verbose`, …) stay
+ * flags (`--config`, `--provider`, `--verbose`, …) stay
  * inline in the command that owns them.
  */
 export const BUCKET_ARG = {
@@ -167,8 +167,8 @@ export const assertCollectionArg = (collection: string, verb: string): void => {
 };
 
 /**
- * Guard the names a WRITING verb (`admin restore`, `admin rebuild-index`,
- * `admin fsck --indexes --fix`) is about to write under: the server's
+ * Guard the names a WRITING verb (`admin restore`) is about to write
+ * under: the server's
  * SDK name rule, which adds Unicode Normalization Form C to the
  * key-segment rule. Read-only verbs keep the bare key-segment rule
  * ({@link assertCollectionArg} plus `resolveAppTenant`), so a legacy

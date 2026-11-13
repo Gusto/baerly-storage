@@ -564,7 +564,7 @@ adapter package. Platform-specific code belongs in adapters.
   fetches a snapshot from object storage, verifies the SHA-256
   baked into the filename, and returns a `Map<_id, body>`. Internal
   callers: the compactor's fold-base load, the reader
-  (`Query.runRead`), `rebuildIndex`. See
+  (`Query.runRead`), and the CLI's export and fsck. See
   [extending.md §5](contributing/extending.md#5-shared-utilities-on-the-public-surface).
 
 ## Storage layout in the bucket

@@ -10,8 +10,7 @@
  * - `@gusto/baerly-storage/http` — `createRouter`, `mapError`,
  *   `listEventsSince`, `longPollSince`, body-size cap.
  * - `@gusto/baerly-storage/maintenance` — `compact`, `runGc`,
- *   `rebuildIndex`, `runScheduledMaintenance`,
- *   tuning profiles.
+ *   `runScheduledMaintenance`, tuning profiles.
  * - `@gusto/baerly-storage/observability` — context, recorder,
  *   canonical-line helpers, logger config.
  */
@@ -29,7 +28,7 @@ export { collectionsToMaps } from "./config.ts";
 /** @internal — consumed by `@baerly/adapter-cloudflare` and `@baerly/adapter-node`. */
 export { resolveVerifier } from "./auth/internal/resolve-verifier.ts";
 export { Db } from "./db.ts";
-export { type IndexDefinition, allIndexKeysFor } from "./indexes.ts";
+export type { IndexDefinition } from "./indexes.ts";
 export {
   type SnapshotBody,
   encodeSnapshotBody,
