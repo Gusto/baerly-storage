@@ -334,8 +334,8 @@ An index declaration does not speed up reads or change their results:
 every read folds the complete authoritative snapshot and log. The field is
 kept, and validated at `Db.create`, so existing configs compile and the
 names stay reserved for a future index-aware storage format. Guidance for
-apps is to omit it. The writer still emits one marker object per indexed
-value; nothing reads or reconciles those markers.
+apps is to omit it. A declaration changes no storage call: the writer
+maintains no index objects.
 
 Declare indexes under `BaerlyConfig.collections[*].indexes`. Each
 `IndexDefinition` has a `name`, an `on` field tuple, and an optional
@@ -371,7 +371,6 @@ export default defineConfig({
 ### Worked example — composite
 
 ```ts
-// Composite markers encode status, then priority.
 // Reads fold the snapshot and log regardless of declared indexes.
 { name: "by_status_priority", on: ["status", "priority"] },
 ```
@@ -379,8 +378,7 @@ export default defineConfig({
 ### Worked example — filtered
 
 ```ts
-// Only `status = "open"` docs project keys, reducing marker writes
-// compared with a dense `by_assignee` when most tickets are closed.
+// A filtered declaration is validated like any other; it restricts nothing.
 { name: "by_open_assignee",
   on: "assignee",
   predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] } },
@@ -389,23 +387,17 @@ export default defineConfig({
 ### Read behavior and conventions
 
 Reads and mutation selection always fold the complete snapshot and log,
-then apply the predicate, order, and limit. Missing or filtered markers
-cannot hide rows. Index declarations do not accelerate reads; limits do
+then apply the predicate, order, and limit. Index declarations do not accelerate reads; limits do
 not bound fold I/O or memory. See the
 [read algorithm](../spec/sync-protocol.md#read-algorithm).
 
 - Top-level fields only on `on`; a dotted path throws `InvalidConfig` at
-  `Db.create`. Until the writer stops emitting index markers, a write whose
-  row holds an array in an indexed field throws `SchemaError`.
+  `Db.create`. A row may hold any value, arrays included, in a declared
+  field.
 - `name` must match `/^[a-z][a-z0-9_]*$/`. Reserved leading-`_` names throw
   `InvalidConfig`; other malformed names throw `SchemaError`.
 - `predicate?` is a `PredicateWire` with `eq`, `gt`, `gte`, `lt`, `lte`,
-  and `in` clauses. It controls marker projection only.
-
-### Adding an index to an existing deployment
-
-Declare it and deploy. No backfill or reconciliation step exists, because
-no read consults markers.
+  and `in` clauses. It never restricts what a query returns.
 
 ### Verify
 

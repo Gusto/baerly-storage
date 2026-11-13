@@ -146,23 +146,21 @@ See [docs/contributing/development.md](docs/contributing/development.md) for ful
 Reading order for a mental model: `packages/server/src/` →
 `index.ts` (public barrel + bundler entry) → `db.ts` (`Db`) →
 `collection.ts` + `query.ts` (SQL-shape API + predicate AST) →
-`writer.ts` (commit path) → `indexes.ts` → `compactor.ts` / `gc.ts` /
+`writer.ts` (commit path) → `compactor.ts` / `gc.ts` /
 `maintenance.ts` (durability sweeps). Pure, I/O-free modules live in
 `@baerly/protocol`; Node-only `Storage` impls in `@baerly/dev`;
 concrete S3/R2 adapters in `@baerly/adapter-{node,cloudflare}`. Each
 package has its own `AGENTS.md` — read that before its source.
 
-Two non-obvious invariants in there, because you can't see them by
+One non-obvious invariant in there, because you can't see it by
 skimming:
 
 - **`writer.ts`**: serialize the `I` / `U` post-image into
-  `LogEntry.after` → PUT additive index markers → create `log/<seq>` via
-  `If-None-Match: "*"`. **That create IS the commit** — there is no
-  `current.json` write on the commit path. Stale index entries are DELETEd
-  only after it succeeds.
-- **`indexes.ts`**: index keys are lex-order-preserving base-32. The
-  writer's emission is deliberately *hybrid-polarity* — new markers
-  before the committing log create, stale marker deletes after it.
+  `LogEntry.after` → create `log/<seq>` via `If-None-Match: "*"`. **That
+  create IS the commit** — there is no `current.json` write on the commit
+  path, and it is the commit's only write. Declared `indexes` change no
+  storage call; buckets from before 0.7 may hold inert `index/` objects
+  that nothing reads or writes.
 
 The full lifecycle of `db.collection().insert()`, plus a Mermaid
 dependency graph, is in

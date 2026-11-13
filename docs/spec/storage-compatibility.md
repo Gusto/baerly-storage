@@ -57,10 +57,9 @@ baerly-storage addresses objects by string key over `PUT` / `GET` /
 Keys are **byte-exact**: distinct UTF-8 byte sequences are distinct
 objects, including keys that differ only by case (`A` / `a`) or by
 Unicode normalization (NFC `é` / NFD `e` + U+0301). A backend MUST NOT
-fold either. This is load-bearing, not cosmetic: index marker keys embed
-the caller's raw `_id`, and collection, app, and tenant names are
-interpolated raw into key prefixes, so a folding store silently merges
-rows and collections. S3 and Minio are byte-exact natively.
+fold either. This is load-bearing, not cosmetic: collection, app, and
+tenant names are interpolated raw into key prefixes, so a folding store
+silently merges collections. S3 and Minio are byte-exact natively.
 `LocalFsStorage` escapes each key segment into a fold-invariant alphabet
 on disk so it stays byte-exact on case- and normalization-folding
 filesystems such as default macOS APFS. (Conformance: _"keys differing
@@ -348,9 +347,8 @@ doctor --bucket` probe races K concurrent creates of a fresh key and
 > access, not direct bucket operations (see
 > [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)).
 > Commits use conditional `log/<seq>` creates; reads and mutation selection
-> fold the snapshot and log using GET probes. None depends on index LIST.
-> Strong listing cannot prevent a stale-marker DELETE racing a re-PUT,
-> or make a marker LIST atomic with a later log probe. The credential-gated
+> fold the snapshot and log using GET probes. None depends on a LIST.
+> The credential-gated
 > R2 S3 harness polls LIST assertions (`eventuallyConsistentList`); that
 > tolerance does not describe R2's consistency guarantee.
 

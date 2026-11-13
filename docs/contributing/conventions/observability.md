@@ -164,8 +164,6 @@ The load-bearing kernel metrics today (canonical list in
 - `db.write.class_a_ops_per_logical_write` — writer histogram
   (recommended operator alert when p99 exceeds ~5; not a shipped or
   CI-gated check).
-- `db.write.index_ops_per_logical_write` — writer histogram
-  (`K (PUT) + L (DELETE)` per commit, per-collection label).
 - `db.write.ambiguous_commit_total` — writer counter, labelled by
   `collection` and `cleanup` (`deleted` / `failed`). A committing create
   won at a sequence already certified deleted, so the commit failed with
@@ -183,11 +181,10 @@ The load-bearing kernel metrics today (canonical list in
   evaluated. A sustained rate means the check is not covering the writes
   it exists to protect, even though no individual commit is rejected.
 - `db.write.post_commit_refused_total` — writer counter, labelled by
-  `collection` and `phase` (`delete-floor-check` / `pre-image-read` /
-  `stale-delete`). The request ledger refused a storage call of a step that
-  runs after a known commit; the step was skipped and the commit stands.
-  The floor check runs inside the commit's ledger hold, so a
-  `delete-floor-check` count means a call outside every hold (the read
+  `collection` and `phase` (`delete-floor-check`, the only post-commit
+  step). The request ledger refused a storage call of a step that runs
+  after a known commit; the step was skipped and the commit stands. The
+  floor check runs inside the commit's ledger hold, so a count means a call outside every hold (the read
   cache's post-write invalidation) or a platform cap below the ledger's
   limit cut into it.
 - `db.write.unresolved_create_total` — writer counter, labelled by

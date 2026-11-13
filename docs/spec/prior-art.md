@@ -31,7 +31,7 @@ not the older provisional `C1` / `C2` / `C3` bundle as originally worded.
 | Label  | Plain-English mechanism                                                                                                                                                                                                                                                                                   | Where to read more                                                                                                                                      |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **P1** | A write commits by creating the next numbered `log/<seq>.json` object with `If-None-Match: "*"`; `current.json` is not the commit head. If the acknowledgement is lost, the same in-flight writer can adopt the already-written log entry after a strict same-session / same-sequence / same-entry check. | [ADR-004](../adr/004-single-write-commit.md), [`log-conflict-adoption.ts`](../../packages/server/src/log-conflict-adoption.ts)                          |
-| **P2** | New index markers are written before the commit and stale markers are deleted after it. Reads reconstruct snapshot-plus-log state independently of marker completeness, including concurrent cleanup races.                                                                                                                                             | [sync-protocol.md](sync-protocol.md#crash-safety)                                                                                                       |
+| **P2** | Retired in 0.7: writers emit no index markers. Earlier releases wrote new markers before the commit and deleted stale ones after it; reads reconstruct snapshot-plus-log state independently of them.                                                                                                                                             | [sync-protocol.md](sync-protocol.md#crash-safety)                                                                                                       |
 | **P3** | Compaction and GC run as bounded write-tick slices; reads never perform maintenance. The honest bound is per configured slice, not a fixed operation count for every bucket state.                                                                                                                        | [ADR-002](../adr/002-ephemeral-coordination.md), [sync-protocol.md](sync-protocol.md#maintenance-runtime-model)                                         |
 | **S1** | A bucket can be probed for stale-`If-Match` rejection, existing-key `If-None-Match` rejection, and exactly-one-winner concurrent create-if-absent before the protocol relies on it.                                                                                                                       | [storage-compatibility.md](storage-compatibility.md), [ADR-004](../adr/004-single-write-commit.md#decision) |
 | **S2** | Writers target the first empty log sequence and readers stop at the first missing sequence. This dense forward-probe rule lets `current.json` leave the commit path.                                                                                                                                      | [sync-protocol.md](sync-protocol.md#protocol-invariants)                                                                                                |
@@ -85,7 +85,8 @@ mechanisms S1-S3:
   same-session / same-sequence / same-entry check.
 - **P2:** write additive index markers before the commit and delete stale
   markers after the commit, so crash residue is an extra candidate rather
-  than a missing committed row.
+  than a missing committed row. *Retired in 0.7: the writer emits no
+  markers, so the create is the commit's only write.*
 - **P3:** run compaction and garbage collection as bounded write-triggered
   slices; reads never run maintenance.
 - **S1:** probe the backend for the required conditional-write behavior.
@@ -205,8 +206,8 @@ Relevant facts:
 
 The safe differentiation is narrow: baerly-storage's live protocol uses
 conditional create/CAS, dense numbered log ordering, lost-ack adoption,
-hybrid index emission, and bounded write-triggered maintenance in ways mps3
-did not. Do not imply that mps3 failed to use object storage as a datastore.
+and bounded write-triggered maintenance in ways mps3 did not (releases
+before 0.7 also used hybrid index emission). Do not imply that mps3 failed to use object storage as a datastore.
 
 ## Iceberg, Delta Lake, and Table-Format Commit Families
 
@@ -392,7 +393,8 @@ Lead with the live, narrow mechanisms:
    same sequence, and same full entry.
 2. **Crash-safe index emission around the commit.** Additive markers before
    commit, stale deletes after commit, read-path refiltering. Crashes may
-   leave false positives, not missing committed rows.
+   leave false positives, not missing committed rows. Retired in 0.7, which
+   emits no markers.
 3. **Write-triggered bounded maintenance with pure reads.** Compaction and
    GC run from writes under host profiles. Reads do not perform
    maintenance. GC cost can scale with live log length, so do not describe

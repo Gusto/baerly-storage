@@ -318,18 +318,20 @@ dependent, so replay is not fully deterministic.)
 
 ## Complete membership at the read cursor
 
-`packages/server/src/index-read-completeness.test.ts` pins the delayed
-stale-marker DELETE/reinsert race and a commit between marker enumeration
-and the read's log probe. The rows and returned tail must describe the
-same complete snapshot-plus-log state. Tail and folded-snapshot fixtures
-remove markers and check point reads, predicate/order/limit, and
-update/replace/delete selection without index LISTs.
+`packages/server/src/index-read-completeness.test.ts` pins a commit that
+lands while a read's tail probe is in flight: the rows and returned tail
+must describe the same complete snapshot-plus-log state. Tail and
+folded-snapshot fixtures seed a wrong legacy index-marker corpus (missing,
+stale and ghost markers, as a pre-0.7 writer could leave) and check point
+reads, predicate/order/limit, and update/replace/delete selection without
+any LIST.
 
 `tests/integration/randomized.test.ts` additionally generates insert,
-replace, delete, and compaction histories against a row-map model,
-removes markers after each step, and checks complete reads and ordered,
+replace, delete, and compaction histories against a row-map model over a
+generated legacy marker corpus, and checks complete reads and ordered,
 limited mutation selection. This exercises both the folded base and
-live log suffix independently of marker completeness.
+live log suffix. `tests/unit/declared-indexes-inert.test.ts` asserts that
+declaring indexes changes no storage call of any verb, tick or read.
 
 ## Deterministic R2 create-outcome coverage
 
@@ -341,8 +343,7 @@ drives the real R2 adapter, retry helper, and Writer with an injected binding:
 - an empty readback after exhausted R2 throttles remains `AmbiguousCommit`;
 - a create refused by an invocation-wide subrequest limit stays retriable
   even when that same limit refuses its readback;
-- a foreign occupant reached through throttles advances to the next slot;
-- index-marker throttles retain the throttle backoff and can recover.
+- a foreign occupant reached through throttles advances to the next slot.
 
 These schedules exercise admitted unknown outcomes; they are not captured
 production R2 traces. `packages/protocol/src/storage/retry.test.ts` separately
