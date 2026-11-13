@@ -39,6 +39,52 @@ describe("assertDocumentValues", () => {
     expect(error.resolution).toBeTypeOf("string");
   });
 
+  test.each(["own", "inherited", "array", "root", "accessor"])(
+    "refuses a %s toJSON hook without running it",
+    (kind) => {
+      let calls = 0;
+      const hook = () => {
+        calls++;
+        return { amount: Number.NaN };
+      };
+      const container = kind === "array" ? [10] : { amount: 10 };
+      if (kind === "inherited" || kind === "array" || kind === "root") {
+        Object.setPrototypeOf(
+          container,
+          Object.create(Object.getPrototypeOf(container), {
+            toJSON: { value: hook },
+          }),
+        );
+      } else {
+        Object.defineProperty(
+          container,
+          "toJSON",
+          kind === "accessor"
+            ? {
+                get() {
+                  calls++;
+                  return hook;
+                },
+              }
+            : { value: hook },
+        );
+      }
+      const error = refusal(kind === "root" ? container : { nested: container });
+      expect(error.code).toBe("InvalidConfig");
+      expect(calls).toBe(0);
+    },
+  );
+
+  test("allows a non-callable toJSON member that shadows a prototype hook", () => {
+    class Root {
+      toJSON = null;
+      amount = 10;
+    }
+    Object.defineProperty(Root.prototype, "toJSON", { value: () => Number.NaN });
+    expect(() => assertDocumentValues(new Root(), "insert")).not.toThrow();
+    expect(() => assertDocumentValues({ nested: { toJSON: "data" } }, "insert")).not.toThrow();
+  });
+
   test("refuses a missing array element", () => {
     // eslint-disable-next-line no-sparse-arrays -- the hole is the subject
     expect(refusal({ list: [1, , 3] }).message).toContain("list[1]");

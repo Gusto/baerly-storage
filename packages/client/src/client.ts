@@ -298,8 +298,14 @@ const makeClientCollection = <T extends DocumentData>(
   const collectionForQuery = makeClientQuery<T>(ctx, name, emptyState);
   // `""`, `"."` and `".."` are never stored ids, and URL resolution would
   // collapse them onto the list route or the parent path, so they are
-  // refused here; the server checks every other id rule.
+  // refused here; the server checks every other id rule. Non-string ids
+  // must not be coerced by encodeURIComponent into another row's id.
   const idPath = (id: string): string => {
+    if (typeof id !== "string") {
+      throw new BaerlyError("InvalidConfig", `_id must be a string, got ${typeof id}`, {
+        resolution: "Pass the _id string of a stored row.",
+      });
+    }
     if (id === "" || id === "." || id === "..") {
       throw new BaerlyError("InvalidConfig", `_id may not be ${JSON.stringify(id)}`, {
         resolution: 'Pass the _id string of a stored row; an _id is never empty, "." or "..".',

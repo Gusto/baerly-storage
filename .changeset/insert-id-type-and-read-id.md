@@ -27,3 +27,5 @@ try {
   found = undefined;
 }
 ```
+
+The HTTP client also refuses non-string ids on `get`, `update`, `replace` and `delete` before sending a request, instead of coercing them into a different row's id.
