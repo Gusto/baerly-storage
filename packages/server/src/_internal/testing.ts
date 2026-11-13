@@ -58,6 +58,7 @@ export type {
 export { type RetireLogRangeResult, retireLogRange } from "../log-retention.ts";
 export { type CommitInput, type CommitResult, type WriterOptions, Writer } from "../writer.ts";
 export { assertNameSegment, assertPathSegment, MAX_SEGMENT_BYTES } from "../path-segment.ts";
+export { isOwnCollection } from "../collection-alias.ts";
 export {
   type AdoptionContext,
   type AdoptionDecision,

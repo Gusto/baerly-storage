@@ -111,6 +111,16 @@ legacy objects. Run `baerly admin fsck` first: it flags non-NFC names.
 twin `_id`s, which restore refuses or which share index markers on R2;
 give each a fresh NFC `_id` in the NDJSON before restoring.
 
+### `collection ... addresses data stored under the canonically-equivalent name ...` (HTTP 400, `code="InvalidConfig"`)
+
+**Cause:** on R2, this NFC collection name addresses objects an earlier
+release wrote under a non-NFC spelling of the same name. Reads, writes,
+folds, and exports refuse rather than skip those rows.
+**Fix:** keep the app on a different NFC name. Dump the data under the
+stored spelling (`baerly admin dump --collection=<stored name>`) and
+restore it under an NFC name that is not canonically equivalent to either
+spelling, as in the entry above.
+
 ### Resending an auto-ID insert over HTTP (`mintedId`)
 
 **Cause:** an HTTP client minted the insert's `_id` and resent the insert after

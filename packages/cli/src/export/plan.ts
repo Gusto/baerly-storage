@@ -1,5 +1,6 @@
 import { BaerlyError, readCurrentJson, type DocumentValue, type Storage } from "@baerly/protocol";
 import { loadSnapshotAsMap, probeTailFrom, walkLogRange } from "@baerly/server";
+import { isOwnCollection } from "@baerly/server/_internal/testing";
 import type { ColumnPlan, ExportPlan, ExportRow, SqlTarget, SqlType } from "./types.ts";
 import { quoteIdentifier } from "./sql-escape.ts";
 
@@ -242,7 +243,7 @@ export const loadMaterialisedView = async (params: {
     params.signal !== undefined ? { signal: params.signal } : undefined,
   );
   for (const entry of [...strict, ...probe.entries]) {
-    if (entry.collection !== collection) {
+    if (!isOwnCollection(entry.collection, collection)) {
       continue;
     }
     if (entry.doc_id === undefined) {

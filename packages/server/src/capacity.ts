@@ -51,6 +51,7 @@ import {
 } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { encodeSnapshotBody } from "./snapshot.ts";
+import { isOwnCollection } from "./collection-alias.ts";
 
 /** One mutation a verb is about to commit, in commit order. */
 export interface PlannedWrite {
@@ -404,7 +405,7 @@ export const capacityDecision = (args: {
   }
 
   // Skip what the fold skips (`foldLogEntriesOnto`): another collection's entries.
-  const own = tail.filter((entry) => entry.collection === collection);
+  const own = tail.filter((entry) => isOwnCollection(entry.collection, collection));
   const projection = projectSnapshot(head, base, collection);
   // With no new writes, `compact()` folds the tail in passes of
   // `maxFoldEntriesPerPass` seqs from `log_seq_start` (other collections'
@@ -413,7 +414,7 @@ export const capacityDecision = (args: {
   const pass = ceilings.maxFoldEntriesPerPass;
   let tailLands = true;
   for (const [i, entry] of tail.entries()) {
-    if (entry.collection === collection) {
+    if (isOwnCollection(entry.collection, collection)) {
       // Where `compact()` stops: a row-adding entry at `E` rows.
       if (projection.addsRow(entry.op, entry.doc_id, entry.after) && !(projection.rows < maxRows)) {
         return noProgress(

@@ -19,6 +19,7 @@ import {
   type Storage,
   type UnboundConfig,
 } from "@baerly/protocol";
+import { isOwnCollection } from "./collection-alias.ts";
 import { collectionsToMaps } from "./config.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { assertNameSegment } from "./path-segment.ts";
@@ -298,6 +299,10 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *         `current.log_delete_floor` (a distinct message: the object is
    *         gone, not merely reclaimable).
    *
+   * @throws BaerlyError code="InvalidConfig" — the entry names a
+   *         canonically-equivalent but byte-different collection (a
+   *         legacy non-NFC spelling on R2); see `isOwnCollection`.
+   *
    * @internal — typed seam for the HTTP handler; app code should use
    *             the collection API.
    */
@@ -329,7 +334,11 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
         cause: error,
       });
     }
-    return parsed as LogEntry;
+    const entry = parsed as LogEntry;
+    // On R2 an NFC name addresses a legacy non-NFC spelling's objects;
+    // the change feed refuses them as every read does.
+    isOwnCollection(entry.collection, collection);
+    return entry;
   }
 
   /**

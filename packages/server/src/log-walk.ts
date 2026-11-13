@@ -32,6 +32,7 @@ import {
   logObjectKey,
   MAX_PARALLEL_LOG_READS,
 } from "@baerly/protocol";
+import { isOwnCollection } from "./collection-alias.ts";
 
 /**
  * Fetch a single log entry. Centralises the "missing entry inside the
@@ -194,7 +195,7 @@ export const foldLogEntriesOnto = <T extends DocumentData>(
 ): void => {
   const { collection, docIdFilter } = opts;
   for (const entry of entries) {
-    if (entry.collection !== collection) {
+    if (!isOwnCollection(entry.collection, collection)) {
       continue;
     }
     if (entry.doc_id === undefined) {
