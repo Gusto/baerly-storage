@@ -81,6 +81,30 @@ describe("GcsHttpStorage", () => {
     ).rejects.toMatchObject({ code: "WriteConflict" });
   });
 
+  test("a generation-match CAS that fails with a 5xx or 429 is not resent; a plain PUT is", async () => {
+    for (const status of [500, 503, 429]) {
+      let calls = 0;
+      const s = new GcsHttpStorage({
+        bucket: "b",
+        sign: passthroughSign,
+        backoffMs: 0,
+        fetch: stub(() => {
+          calls += 1;
+          return new Response(null, { status });
+        }),
+      });
+      await expect(
+        s.put("current.json", new Uint8Array([1]), { ifMatch: "1712000000000001" }),
+      ).rejects.toMatchObject({ code: "NetworkError" });
+      expect(calls).toBe(1);
+      calls = 0;
+      await expect(s.put("current.json", new Uint8Array([1]))).rejects.toMatchObject({
+        code: "NetworkError",
+      });
+      expect(calls).toBe(3);
+    }
+  });
+
   test("put surfaces AccessDenied on 403", async () => {
     const s = new GcsHttpStorage({
       bucket: "b",

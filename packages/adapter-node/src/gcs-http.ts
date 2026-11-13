@@ -100,11 +100,14 @@ export class GcsHttpStorage implements Storage {
     }
   }
 
-  #retry<T>(fn: () => Promise<T>, conditionalCreate = false): Promise<T> {
+  #retry<T>(fn: () => Promise<T>, put?: StoragePutOptions): Promise<T> {
     return retryStorageCall(fn, {
       ...(this.#retries !== undefined && { retries: this.#retries }),
       ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
-      conditionalCreate,
+      conditionalCreate: put?.ifNoneMatch === "*",
+      // A generation-match CAS is never resent: a resend after a lost ack
+      // would see its own write as a 412.
+      compareAndSwap: put?.ifMatch !== undefined && put.ifNoneMatch !== "*",
       // Every request leaves through `fetch`: the ledger's external pool.
       pool: "external",
     });
@@ -200,7 +203,7 @@ export class GcsHttpStorage implements Storage {
         result.serverDate = new Date(dateStr);
       }
       return result;
-    }, opts?.ifNoneMatch === "*");
+    }, opts);
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {

@@ -246,19 +246,34 @@ describe("S3HttpStorage.put", () => {
     });
   });
 
-  test("409 on contended ifMatch → retried, then NetworkError (not InvalidResponse)", async () => {
+  test("409 on contended ifMatch → NetworkError (not InvalidResponse), not resent", async () => {
     // AWS S3 also returns 409 ConditionalRequestConflict when concurrent
-    // `If-Match` PUTs race (the compactor's `current.json` CAS). It must be
-    // retryable like the create race so the re-issued PUT resolves to 200 or
-    // 412 → WriteConflict.
+    // `If-Match` PUTs race (the compactor's `current.json` CAS). It maps to
+    // a retryable NetworkError like the create race, but a CAS is never
+    // resent by the adapter: its caller skips and re-reads next pass.
     const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(409));
     const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 1 });
     await expect(s.put("k", new Uint8Array(0), { ifMatch: '"e1"' })).rejects.toMatchObject({
       code: "NetworkError",
       cause: { status: 409 },
     });
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
+
+  test.each([500, 503, 429])(
+    "an ifMatch PUT answered %i gets one attempt; a plain PUT keeps the retry policy",
+    async (status) => {
+      const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(status));
+      const s = mkStorage(fetchFn as unknown as typeof fetch, { retries: 2 });
+      await expect(s.put("k", new Uint8Array(0), { ifMatch: '"e1"' })).rejects.toMatchObject({
+        code: "NetworkError",
+      });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      fetchFn.mockClear();
+      await expect(s.put("k", new Uint8Array(0))).rejects.toMatchObject({ code: "NetworkError" });
+      expect(fetchFn).toHaveBeenCalledTimes(3);
+    },
+  );
 });
 
 describe("S3HttpStorage.delete", () => {

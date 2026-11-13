@@ -95,7 +95,12 @@ class R2BindingStorageImpl implements Storage {
     const result = await this.#callBinding(
       () => this.#bucket.put(key, body, putOpts),
       `PUT ${key}`,
-      opts?.ifNoneMatch === "*",
+      {
+        conditionalCreate: opts?.ifNoneMatch === "*",
+        // An `etagMatches` CAS is never resent: a resend after a lost ack
+        // would see its own write as a precondition failure.
+        compareAndSwap: opts?.ifMatch !== undefined,
+      },
     );
     if (result === null) {
       // Binding signals precondition failure as `null`. It resolves rather
@@ -178,7 +183,8 @@ class R2BindingStorageImpl implements Storage {
    * the binding ever adds typed errors, tighten the sniff and keep the
    * message fallback for older runtimes.
    *
-   * `AccessDenied` and `InvalidConfig` are permanent and not retried.
+   * `AccessDenied` and `InvalidConfig` are permanent and not retried. An
+   * `ifMatch` put (`compareAndSwap`) gets one attempt and no retry at all.
    * Two `NetworkError`s have distinct retry behavior:
    *
    * - R2 error `10058` (`TooManyRequests`, 429: "limit: 1 write/second
@@ -201,7 +207,11 @@ class R2BindingStorageImpl implements Storage {
    * Everything else is a `NetworkError` with an unknown outcome, so an
    * exhausted conditional create does not report `notApplied`.
    */
-  #callBinding<T>(fn: () => Promise<T>, op: string, conditionalCreate = false): Promise<T> {
+  #callBinding<T>(
+    fn: () => Promise<T>,
+    op: string,
+    mode: { conditionalCreate?: boolean; compareAndSwap?: boolean } = {},
+  ): Promise<T> {
     return retryStorageCall(
       async () => {
         try {
@@ -232,7 +242,7 @@ class R2BindingStorageImpl implements Storage {
       },
       // Binding calls are subrequests to an internal service: charged to
       // the request ledger's `internal` pool only.
-      { conditionalCreate, pool: "internal" },
+      { ...mode, pool: "internal" },
     );
   }
 }

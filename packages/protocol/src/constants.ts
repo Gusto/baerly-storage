@@ -125,7 +125,9 @@ export const RETRY_AFTER_MAX_SECONDS: number = 60;
  * one `Storage` call before surfacing the last failure: S3, GCS, and
  * the R2 binding, for `get` / `put` / `delete` and for each `list`
  * page. 429 and 5xx share this one counter, so a failing call costs at
- * most 3 requests on every host. Applied by `retryStorageCall`.
+ * most 3 requests on every host. Applied by `retryStorageCall`. An
+ * `ifMatch` put (a compare-and-swap) is the exception: one attempt,
+ * since a resend after a lost ack would meet its own write as a 412.
  *
  * 3 is the common prior-art cap: AWS SDK standard retry mode allows 3
  * attempts (https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html),

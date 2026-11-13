@@ -104,11 +104,14 @@ export class S3HttpStorage implements Storage {
     }
   }
 
-  #retry<T>(fn: () => Promise<T>, conditionalCreate = false): Promise<T> {
+  #retry<T>(fn: () => Promise<T>, put?: StoragePutOptions): Promise<T> {
     return retryStorageCall(fn, {
       ...(this.#retries !== undefined && { retries: this.#retries }),
       ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
-      conditionalCreate,
+      conditionalCreate: put?.ifNoneMatch === "*",
+      // An If-Match PUT is never resent: a resend after a lost ack would
+      // see its own write as a 412.
+      compareAndSwap: put?.ifMatch !== undefined && put.ifNoneMatch !== "*",
       // Every request leaves through `fetch`: the ledger's external pool.
       pool: "external",
     });
@@ -174,11 +177,12 @@ export class S3HttpStorage implements Storage {
       // AWS S3 returns 409 ConditionalRequestConflict when concurrent
       // conditional writes race: a create (If-None-Match:"*") or a CAS
       // (If-Match). Minio returns 412. 409 means the write was contended
-      // and may NOT have landed, so it maps to a retryable NetworkError —
-      // this adapter's retry re-issues the same PUT, which resolves to 200
-      // (we win) or 412 (key changed/present → WriteConflict → the Writer's
-      // readback adopts or re-probes). A direct WriteConflict here would
-      // adopt-read a possibly-absent entry.
+      // and may NOT have landed, so it maps to a retryable NetworkError.
+      // For a create, this adapter's retry re-issues the same PUT, which
+      // resolves to 200 (we win) or 412 (key changed/present →
+      // WriteConflict → the Writer's readback adopts or re-probes); a
+      // direct WriteConflict here would adopt-read a possibly-absent
+      // entry. A CAS gets no resend, so its caller sees the NetworkError.
       if (res.status === 409 && (opts?.ifNoneMatch === "*" || opts?.ifMatch !== undefined)) {
         throw new BaerlyError(
           "NetworkError",
@@ -213,7 +217,7 @@ export class S3HttpStorage implements Storage {
         result.versionId = versionId;
       }
       return result;
-    }, opts?.ifNoneMatch === "*");
+    }, opts);
   }
 
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
