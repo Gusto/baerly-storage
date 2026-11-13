@@ -64,18 +64,33 @@ rows and collections. S3 and Minio are byte-exact natively.
 `LocalFsStorage` escapes each key segment into a fold-invariant alphabet
 on disk so it stays byte-exact on case- and normalization-folding
 filesystems such as default macOS APFS. (Conformance: _"keys differing
-only by case or Unicode normalization are distinct objects"_.)
+only by case are distinct objects"_ runs on every backend; _"keys
+differing only by Unicode normalization are distinct objects"_ runs on
+every backend except R2, below.)
 
 **R2 folds canonical equivalence.** Over the S3 API, R2 stores keys that
 are canonically equivalent (NFC `é` and NFD `e` + U+0301, `Å` U+00C5 and
 U+212B ANGSTROM SIGN) as one object: a second put overwrites the first,
 and `list` returns the most recently written spelling. It keeps case and
 compatibility variants (`A` / `a`, `ﬁ` / `fi`, `Ａ` / `A`) distinct. The
-kernel copes by requiring every written `_id` to be NFC
-(`packages/server/src/doc-id.ts`), so two `_id`s are canonically
-equivalent only if they are the same string. Collection, app, and tenant
-names have no NFC rule yet, so canonically-equivalent names share one
-prefix on R2.
+kernel copes by requiring every written `_id` and every app, tenant, and
+collection name to be NFC (`assertNfcSegment` in
+`packages/server/src/path-segment.ts`), so two of them are canonically
+equivalent only if they are the same string. R2's conformance rows (S3 API
+and binding) declare normalization distinctness unsupported
+(`normalizationDistinctKeys: false`) rather than skip it: the case asserts
+that each spelling reads back its own body or the last-written one.
+
+Data an earlier release stored under a non-NFC name or `_id` predates the
+rule. Non-NFC names are read-only: the SDK and HTTP router refuse them,
+the read-only CLI verbs (`inspect`, `export`, `admin dump`, `admin fsck`)
+still read them, and the writing verbs (`admin restore`,
+`admin rebuild-index`, `admin fsck --indexes --fix`) refuse them. A
+migration dumps the collection and restores it under an NFC name that is
+not canonically equivalent to the legacy one; on R2 the normalized
+original name addresses the legacy objects. `admin fsck` flags non-NFC
+names, and `admin dump` flags non-NFC `_id`s and canonically-equivalent
+twin `_id`s, before the migration.
 
 The dot-segment rule is a **portability invariant, not a vendor quirk.**
 RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant
