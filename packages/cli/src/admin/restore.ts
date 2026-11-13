@@ -37,16 +37,19 @@
  *   Maintenance adds the same measured profile overhead as the main
  *   cost model.
  *
- * Partial-restore semantics: a mid-stream Network / Internal / parse
- * error leaves the target in a partial state (some log entries committed,
- * while the final `tail_hint` stamp may not have landed). Re-run with
- * `--force` to truncate, or hand-clean. The
- * malformed-line case (missing `_id`, bad JSON) fails fast on that
- * line; rows committed BEFORE it survive.
+ * Partial-restore semantics: validation is per row, in stream order. A
+ * line that fails (bad JSON, missing/duplicate/invalid-domain `_id`, or a
+ * storage error) stops the run; rows BEFORE it stay committed, that line
+ * and later ones are not, and the error message says how many rows
+ * committed. The final `tail_hint` stamp may not have landed. Restore
+ * again into a fresh target, or with `--force`. A whole-stream pre-pass
+ * is deliberately not done (stdin is a stream). `_id`s are never
+ * rewritten.
  *
  * Exit codes:
  *   0 — every row committed.
- *   1 — InvalidConfig (bad bucket URI, missing args).
+ *   1 — InvalidConfig (bad bucket URI, missing args, duplicate `_id`, or
+ *       an `_id` outside the write domain: key-segment rule + NFC).
  *   2 — Network / storage error mid-stream, or a malformed NDJSON
  *       line (raised as a plain `Error`, not `BaerlyError`).
  *   3 — AlreadyExists from a pre-existing target without --force, or a
@@ -58,6 +61,7 @@ import { createInterface } from "node:readline";
 import { type ArgsDef } from "citty";
 import {
   assertCurrentJsonTransition,
+  assertDocumentValues,
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -69,7 +73,7 @@ import {
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { Writer } from "@baerly/server/_internal/testing";
+import { assertDocId, Writer } from "@baerly/server/_internal/testing";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { emitSuccess } from "../output.ts";
 import {
@@ -129,7 +133,8 @@ const tailFromListedLogKeys = async (
 const bundle = defineBaerlySubcommand({
   name: "admin.restore",
   meta: {
-    description: "Bulk-import canonical NDJSON into a fresh collection.",
+    description:
+      "Bulk-import canonical NDJSON into a fresh collection. Validates per row: rows before a failing line stay committed, and the error reports the count (re-run into a fresh target or with --force). Duplicate or non-NFC/invalid _ids are refused, never rewritten.",
   },
   args: RESTORE_ARGS,
   handler: async (args, ctx) => {
@@ -347,44 +352,116 @@ const bundle = defineBaerlySubcommand({
     const rl = createInterface({ input, crlfDelay: Infinity });
     let count = 0;
     let lineNo = 0;
-    for await (const line of rl) {
-      lineNo++;
-      if (line.length === 0) {
-        continue;
-      }
-      let parsed: unknown;
+    const seenIds = new Map<string, number>();
+    // Every failure past this point says how many rows are already
+    // durable, so the operator knows what the target now holds.
+    const committedNote = (when = "before this line"): string =>
+      `; ${count} row${count === 1 ? "" : "s"} committed ${when} (they remain in the target; restore again into a fresh target, or with --force)`;
+    const idFix =
+      "Restore never rewrites an _id. Fix the dump line, or rewrite it to a fresh NFC _id that is not canonically equivalent to the original.";
+    // Catch iterator failures separately from validation and commit failures,
+    // which already carry their line-specific progress (or ambiguity range).
+    const lines = (async function* () {
       try {
-        parsed = JSON.parse(line);
+        yield* rl;
       } catch (error) {
-        // Malformed NDJSON mid-stream → exit 2 (the ticket's
-        // partial-restore contract: the line that failed wasn't
-        // committed, but anything BEFORE it survives). Bare `Error`
-        // (not `BaerlyError`) routes through the helper's "unknown"
-        // arm → exit 2.
-        throw new Error(
-          `baerly admin restore: line ${lineNo} is not valid JSON: ${(error as Error).message}`,
-          { cause: error },
-        );
+        const failure = error instanceof Error ? error : new Error(String(error));
+        failure.message += committedNote("before input failed");
+        throw failure;
       }
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error(`baerly admin restore: line ${lineNo} is not a JSON object`);
+    })();
+    try {
+      for await (const line of lines) {
+        lineNo++;
+        if (line.length === 0) {
+          continue;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch (error) {
+          // Malformed NDJSON mid-stream → exit 2. Bare `Error` (not
+          // `BaerlyError`) routes through the helper's "unknown" arm.
+          throw new Error(
+            `baerly admin restore: line ${lineNo} is not valid JSON: ${(error as Error).message}${committedNote()}`,
+            { cause: error },
+          );
+        }
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error(
+            `baerly admin restore: line ${lineNo} is not a JSON object${committedNote()}`,
+          );
+        }
+        const row = parsed as Record<string, unknown>;
+        const id = row["_id"];
+        if (typeof id !== "string" || id.length === 0) {
+          const fix = "Add a non-empty string _id to the dump line.";
+          throw new BaerlyError(
+            "InvalidConfig",
+            `baerly admin restore: line ${lineNo} missing non-empty string _id${committedNote()}. ${fix}`,
+            { resolution: fix },
+          );
+        }
+        const firstLine = seenIds.get(id);
+        if (firstLine !== undefined) {
+          throw new BaerlyError(
+            "InvalidConfig",
+            `baerly admin restore: line ${lineNo} repeats _id ${JSON.stringify(id)} first seen on line ${firstLine}${committedNote()}. ${idFix}`,
+            { resolution: idFix },
+          );
+        }
+        try {
+          assertDocId(id);
+        } catch (error) {
+          throw new BaerlyError(
+            "InvalidConfig",
+            `baerly admin restore: line ${lineNo} has an invalid _id ${JSON.stringify(id)}: ${(error as Error).message}${committedNote()}. ${idFix}`,
+            { cause: error, resolution: idFix },
+          );
+        }
+        seenIds.set(id, lineNo);
+        // Document-value domain: JSON.parse can still yield a value the
+        // write path refuses (`1e999` parses to Infinity).
+        try {
+          assertDocumentValues(row, "restore");
+        } catch (error) {
+          if (error instanceof BaerlyError) {
+            throw new BaerlyError(
+              "InvalidConfig",
+              `baerly admin restore: line ${lineNo} (_id ${JSON.stringify(id)}) has an invalid document: ${error.message}${committedNote()}${error.resolution === undefined ? "" : `. ${error.resolution}`}`,
+              { cause: error, resolution: error.resolution },
+            );
+          }
+          throw error;
+        }
+
+        // Pass the full object as the body — `_id` is part of the
+        // body in the doc shape, and the writer keys on `docId`
+        // separately.
+        const body = row as unknown as DocumentData;
+        try {
+          await writer.commit({
+            op: "I",
+            collection: args.collection,
+            docId: id,
+            body,
+          });
+        } catch (error) {
+          if (error instanceof Error) {
+            if ((error as { code?: unknown }).code === "AmbiguousCommit") {
+              // The committing create's fate is unresolved: line N may
+              // already be durable, so the count is a range, not a figure.
+              error.message += `; line ${lineNo} may or may not be committed (between ${count} and ${count + 1} rows are in the target); restore again with --force to get an exact copy of the dump`;
+            } else {
+              error.message += `; line ${lineNo} was not committed${committedNote()}`;
+            }
+          }
+          throw error;
+        }
+        count++;
       }
-      const row = parsed as Record<string, unknown>;
-      const id = row["_id"];
-      if (typeof id !== "string" || id.length === 0) {
-        throw new Error(`baerly admin restore: line ${lineNo} missing non-empty string _id`);
-      }
-      // Pass the full object as the body — `_id` is part of the
-      // body in the doc shape, and the writer keys on `docId`
-      // separately.
-      const body = row as unknown as DocumentData;
-      await writer.commit({
-        op: "I",
-        collection: args.collection,
-        docId: id,
-        body,
-      });
-      count++;
+    } finally {
+      rl.close();
     }
     // Stamp the final `tail_hint` durably. Under single-write commit the
     // writer never advances the hint (it's compactor-advanced) — but a
@@ -397,19 +474,30 @@ const bundle = defineBaerlySubcommand({
     // the value already stored, and `log_seq_start`. (Defends against a
     // compactor that advanced the hint between the reseed and here.)
     if (count > 0) {
-      const afterLoad = await readCurrentJson(bucket.storage, currentJsonKey);
-      if (afterLoad !== null) {
-        const clampedTail = Math.max(
-          baseSeq + count,
-          afterLoad.json.tail_hint,
-          afterLoad.json.log_seq_start,
+      try {
+        const afterLoad = await readCurrentJson(bucket.storage, currentJsonKey);
+        if (afterLoad !== null) {
+          const clampedTail = Math.max(
+            baseSeq + count,
+            afterLoad.json.tail_hint,
+            afterLoad.json.log_seq_start,
+          );
+          const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
+          assertCurrentJsonTransition(afterLoad.json, stamped, currentJsonKey);
+          await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
+            ifMatch: afterLoad.etag,
+            contentType: "application/json",
+          });
+        }
+      } catch (error) {
+        // No retry: the If-Match stop-rule holds. All rows are durable;
+        // only the read-efficiency hint is missing, and a rerun with
+        // --force truncates the collection and restores it cleanly.
+        throw new BaerlyError(
+          error instanceof BaerlyError ? error.code : "NetworkError",
+          `baerly admin restore: all ${count} row${count === 1 ? "" : "s"} were committed, but stamping tail_hint on current.json failed: ${(error as Error).message}. Rerun restore with --force to truncate and restore the dump again.`,
+          { cause: error },
         );
-        const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
-        assertCurrentJsonTransition(afterLoad.json, stamped, currentJsonKey);
-        await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
-          ifMatch: afterLoad.etag,
-          contentType: "application/json",
-        });
       }
     }
     emitSuccess({

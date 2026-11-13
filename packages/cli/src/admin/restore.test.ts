@@ -12,9 +12,10 @@
  */
 
 import { createReadStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   casUpdateCurrentJson,
@@ -23,8 +24,12 @@ import {
   type GcPending,
   readCurrentJson,
   readGcPending,
+  BaerlyError,
+  type DocumentData,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
+import { Writer } from "@baerly/server/_internal/testing";
+import { canonicalStringify, runDump } from "./dump.ts";
 import { runRestore } from "./restore.ts";
 import { captureStream } from "../_internal/testing.ts";
 
@@ -546,7 +551,7 @@ describe("baerly admin restore", () => {
     expect(head?.json.tail_hint).toBe(3);
   });
 
-  test("malformed line → exit 2, no rows committed", async () => {
+  test("line missing _id → InvalidConfig (exit 1), no rows committed", async () => {
     // First line is bad (missing _id); confirms the ticket's
     // "no partial-restore state survives when the first line is
     // the failure" semantics.
@@ -561,7 +566,7 @@ describe("baerly admin restore", () => {
     } finally {
       stderr.restore();
     }
-    expect(exitCode).toBe(2);
+    expect(exitCode).toBe(1);
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head?.json.tail_hint).toBe(0);
   });
@@ -665,6 +670,276 @@ describe("baerly admin restore", () => {
     expect(stderr.captured.join("")).toContain("InvalidConfig");
     const head = await readCurrentJson(storage, CURRENT_JSON_KEY);
     expect(head?.json.tail_hint).toBe(0);
+  });
+
+  describe("per-row validation and partial progress", () => {
+    const run = async (ndjson: string): Promise<{ code: number; err: string }> => {
+      await writeFile(stdinPath, ndjson, "utf8");
+      const stderr = captureStream(process.stderr);
+      try {
+        const code = await runRestore(
+          [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+          { streams: { stdin: createReadStream(stdinPath) } },
+        );
+        return { code, err: stderr.captured.join("") };
+      } finally {
+        stderr.restore();
+      }
+    };
+    const redump = async (): Promise<string> => {
+      const out = join(root, "redump.ndjson");
+      const { createWriteStream } = await import("node:fs");
+      const stream = createWriteStream(out);
+      const dumpCode = await runDump(
+        [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+        { streams: { stdout: stream } },
+      );
+      await new Promise<void>((resolve) => stream.end(resolve));
+      expect(dumpCode).toBe(0);
+      return readFile(out, "utf8");
+    };
+    const row = (id: string): string => `${JSON.stringify({ _id: id, v: 1 })}\n`;
+
+    test("duplicate _id on line 2 → exit 1, names both lines, 1 row committed", async () => {
+      const { code, err } = await run(row("a") + row("a"));
+      expect(code).toBe(1);
+      expect(err).toContain("InvalidConfig");
+      expect(err).toContain('line 2 repeats _id "a" first seen on line 1');
+      expect(err).toContain("1 row committed");
+      await expect(storage.get(`${TABLE_PREFIX}/log/0.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/1.json`)).resolves.toBeNull();
+    });
+
+    test("duplicate at line k of n commits exactly k-1 rows", async () => {
+      const { code, err } = await run(row("a") + row("b") + row("c") + row("b") + row("d"));
+      expect(code).toBe(1);
+      expect(err).toContain('line 4 repeats _id "b" first seen on line 2');
+      expect(err).toContain("3 rows committed");
+      await expect(storage.get(`${TABLE_PREFIX}/log/2.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/3.json`)).resolves.toBeNull();
+    });
+
+    test("invalid _id at line 2 → exit 1 with escaped _id and committed count", async () => {
+      const { code, err } = await run(row("ok") + row("_leading"));
+      expect(code).toBe(1);
+      expect(err).toContain('line 2 has an invalid _id "_leading"');
+      expect(err).toContain("1 row committed");
+    });
+
+    test("missing or empty _id → InvalidConfig (exit 1) with line, count, and remedy", async () => {
+      const missing = await run(row("a") + '{"v":1}\n');
+      expect(missing.code).toBe(1);
+      expect(missing.err).toContain("InvalidConfig");
+      expect(missing.err).toContain("line 2 missing non-empty string _id");
+      expect(missing.err).toContain("1 row committed");
+      expect(missing.err).toContain("Add a non-empty string _id");
+    });
+
+    test("empty-string _id on the first line → InvalidConfig (exit 1)", async () => {
+      const empty = await run('{"_id":""}\n');
+      expect(empty.code).toBe(1);
+      expect(empty.err).toContain("InvalidConfig");
+    });
+
+    test("non-NFC and control-char _ids report line and count", async () => {
+      const nfd = await run(row("ok") + row("cafe\u0301"));
+      expect(nfd.code).toBe(1);
+      expect(nfd.err).toContain("line 2 has an invalid _id");
+      expect(nfd.err).toContain("1 row committed");
+    });
+
+    test("value outside the document domain (1e999 parses to Infinity) is refused with line and count", async () => {
+      const { code, err } = await run(row("a") + '{"_id":"b","n":1e999}\n');
+      expect(code).toBe(1);
+      expect(err).toContain("InvalidConfig");
+      expect(err).toContain('line 2 (_id "b") has an invalid document');
+      expect(err).toContain("1 row committed");
+      // The remedy must reach stderr, not only the structured error.
+      expect(err).toContain("Store a finite number or null");
+    });
+
+    test("a dump at the validators' edges restores and re-dumps byte-identical", async () => {
+      // Values and ids the new checks must still accept: falsy and empty
+      // values, nested empties, numeric extremes, non-ASCII NFC text, an
+      // id with punctuation, a long id, and keys
+      // that sort differently under code-unit and locale order.
+      const edgeRows: DocumentData[] = [
+        { _id: "a.b-c_d e", f: false, n: 0, s: "", arr: [], obj: {} },
+        {
+          _id: "caf\u00e9-\u2603-\ud83d\ude00",
+          big: 9007199254740991,
+          tiny: 5e-324,
+          neg: -1.5e300,
+        },
+        {
+          _id: "x".repeat(200),
+          Z: 1,
+          a: 2,
+          B: 3,
+          nested: { z: [1, [2, [3, []]]], A: "\u0000".length },
+        },
+      ];
+      const edge = edgeRows.map((r) => `${canonicalStringify(r)}\n`).join("");
+      const { code, err } = await run(edge);
+      expect(err).toBe("");
+      expect(code).toBe(0);
+      await expect(redump()).resolves.toBe(edge);
+    });
+
+    test("a valid dump restores and re-dumps byte-identical", async () => {
+      const { code } = await run(CANONICAL_NDJSON);
+      expect(code).toBe(0);
+      await expect(redump()).resolves.toBe(CANONICAL_NDJSON.trimEnd() + "\n");
+    });
+
+    test("AmbiguousCommit on line 2 says line 2 may be committed and gives a count range", async () => {
+      const real = Writer.prototype.commit;
+      let calls = 0;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (this: Writer, ...a) {
+        calls++;
+        if (calls === 2) {
+          throw new BaerlyError("AmbiguousCommit", "the committing create was not resolved");
+        }
+        return real.apply(this, a);
+      });
+      const { code, err } = await run(row("a") + row("b") + row("c"));
+      expect(code).not.toBe(0);
+      expect(err).toContain("AmbiguousCommit");
+      expect(err).toContain("line 2 may or may not be committed");
+      expect(err).toContain("between 1 and 2 rows");
+      expect(err).not.toContain("was not committed");
+    });
+
+    test("a definite commit failure still says the line was not committed", async () => {
+      const real = Writer.prototype.commit;
+      let calls = 0;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (this: Writer, ...a) {
+        calls++;
+        if (calls === 2) {
+          throw new BaerlyError("NetworkError", "boom");
+        }
+        return real.apply(this, a);
+      });
+      const { err } = await run(row("a") + row("b"));
+      expect(err).toContain("line 2 was not committed");
+      expect(err).toContain("1 row committed");
+    });
+
+    test("input stream failure reports durable progress and recovery guidance", async () => {
+      let committed!: () => void;
+      const firstCommit = new Promise<void>((resolve) => {
+        committed = resolve;
+      });
+      const realCommit = Writer.prototype.commit;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (
+        this: Writer,
+        ...args
+      ) {
+        const result = await realCommit.apply(this, args);
+        committed();
+        return result;
+      });
+      const input = Readable.from(
+        (async function* () {
+          yield row("a");
+          await firstCommit;
+          throw new Error("input EIO");
+        })(),
+      );
+      const stderr = captureStream(process.stderr);
+      let code: number;
+      try {
+        code = await runRestore(
+          [`--bucket=file://${root}`, `--app=${APP}`, `--tenant=${TENANT}`, `--collection=${COLL}`],
+          { streams: { stdin: input } },
+        );
+      } finally {
+        stderr.restore();
+      }
+      expect(code).toBe(2);
+      const err = stderr.captured.join("");
+      expect(err).toContain("input EIO");
+      expect(err).toContain("1 row committed");
+      expect(err).toContain("--force");
+      await expect(storage.get(`${TABLE_PREFIX}/log/0.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/1.json`)).resolves.toBeNull();
+    });
+
+    test("final manifest read failure reports all rows committed", async () => {
+      let committed = false;
+      const realCommit = Writer.prototype.commit;
+      vi.spyOn(Writer.prototype, "commit").mockImplementation(async function (
+        this: Writer,
+        ...args
+      ) {
+        const result = await realCommit.apply(this, args);
+        committed = true;
+        return result;
+      });
+      const realGet = LocalFsStorage.prototype.get;
+      const spy = vi.spyOn(LocalFsStorage.prototype, "get").mockImplementation(async function (
+        this: LocalFsStorage,
+        key,
+        opts,
+      ) {
+        if (committed && key === CURRENT_JSON_KEY) {
+          throw new BaerlyError("NetworkError", "final manifest GET failed");
+        }
+        return realGet.call(this, key, opts);
+      });
+      const { code, err } = await run(row("a"));
+      expect(code).toBe(2);
+      expect(err).toContain("NetworkError");
+      expect(err).toContain("all 1 row were committed");
+      expect(err).toContain("--force");
+      spy.mockRestore();
+      await expect(storage.get(`${TABLE_PREFIX}/log/0.json`)).resolves.not.toBeNull();
+      await expect(storage.get(`${TABLE_PREFIX}/log/1.json`)).resolves.toBeNull();
+    });
+
+    test("tail_hint stamp failure reports all rows committed and the --force rerun, which works", async () => {
+      const realPut = LocalFsStorage.prototype.put;
+      const spy = vi.spyOn(LocalFsStorage.prototype, "put").mockImplementation(async function (
+        this: LocalFsStorage,
+        key,
+        body,
+        opts,
+      ) {
+        if (opts?.ifMatch !== undefined && String(key).endsWith("current.json")) {
+          throw new BaerlyError("NetworkError", "503 service unavailable");
+        }
+        return realPut.call(this, key, body, opts);
+      });
+      const failed = await run(row("a") + row("b"));
+      expect(failed.code).toBe(2);
+      expect(failed.err).toContain("all 2 rows were committed");
+      expect(failed.err).toContain("tail_hint");
+      expect(failed.err).toContain("--force");
+      spy.mockRestore();
+      // The advertised remedy: rerun with --force truncates and succeeds.
+      await writeFile(stdinPath, row("a") + row("b"), "utf8");
+      const rerun = await runRestore(
+        [
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--force",
+        ],
+        { streams: { stdin: createReadStream(stdinPath) } },
+      );
+      expect(rerun).toBe(0);
+      const head = await readCurrentJson(storage, `${TABLE_PREFIX}/current.json`);
+      // --force reseeds above the surviving log slots, then stamps +2.
+      expect(head?.json.tail_hint).toBe((head?.json.log_seq_start ?? 0) + 2);
+    });
+
+    test("malformed JSON after rows reports committed count (exit 2)", async () => {
+      const { code, err } = await run(row("a") + "{nope\n");
+      expect(code).toBe(2);
+      expect(err).toContain("line 2 is not valid JSON");
+      expect(err).toContain("1 row committed");
+    });
   });
 
   test("traversal-shaped --collection rejected at the CLI chokepoint → InvalidConfig (exit 1), writes nothing", async () => {

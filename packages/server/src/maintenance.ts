@@ -1056,23 +1056,24 @@ export interface MaintenanceDispatch {
  * {@link MaintenanceDispatch} overrides. Shared by every host adapter so the
  * cross-host contract has one source of truth.
  *
- * `maxFoldBytes` (`C`) is the finite, positive
- * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` or undefined. A non-numeric value
- * (`"8mb"`) is ignored and falls back to the active profile's default — a
- * typo there costs one deploy at the default ceiling. A value that parses
- * to zero or negative throws instead of falling back: `snapshot_bytes <= C`
- * would then be false forever, so the fold would defer on every tick and
- * the live tail would grow unbounded — a config typo reaching the same
- * stall shape as running past scale.
+ * `maxFoldBytes` (`C`) is `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` written as a
+ * plain positive decimal integer (`/^[1-9][0-9]*$/`, at most
+ * `Number.MAX_SAFE_INTEGER`), or undefined when unset or `""` (the active
+ * profile's default applies). Anything else throws, untrimmed: `" 1024"`,
+ * `"0x400"`, `"1e6"`, `"1.5"`, `"8mb"`. A unit-suffixed or mistyped value
+ * would otherwise run silently at the default ceiling; zero or negative
+ * would make `snapshot_bytes <= C` false forever, so the fold would defer
+ * on every tick and the live tail would grow unbounded.
  *
- * `disabled` reads `BAERLY_MAINTENANCE_DISABLE` against a closed,
+ * `disabled` reads `BAERLY_MAINTENANCE_DISABLE`, untrimmed, against a closed,
  * case-insensitive vocabulary: unset, `""`, `"0"`, `"false"` → `false`;
  * `"1"`, `"true"` → `true`; anything else throws. The prior truthy-if-
  * non-empty parsing silently disabled maintenance on `"no"` / `"off"` —
  * the two most natural ways an operator would try to spell "don't disable".
  *
- * @throws {BaerlyError} `InvalidConfig` for a non-positive
- * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, or a `BAERLY_MAINTENANCE_DISABLE`
+ * @throws {BaerlyError} `InvalidConfig` for a
+ * `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` that is not a plain positive decimal
+ * integer, or a `BAERLY_MAINTENANCE_DISABLE`
  * value outside the closed vocabulary above.
  */
 export const parseMaintenanceEnv = (
@@ -1082,16 +1083,13 @@ export const parseMaintenanceEnv = (
   let maxFoldBytes: number | undefined;
   if (rawFoldBytes !== undefined && rawFoldBytes !== "") {
     const parsedFoldBytes = Number(rawFoldBytes);
-    if (Number.isFinite(parsedFoldBytes)) {
-      if (parsedFoldBytes <= 0) {
-        throw new BaerlyError(
-          "InvalidConfig",
-          `BAERLY_MAINTENANCE_MAX_FOLD_BYTES must be a positive number, got ${JSON.stringify(rawFoldBytes)}`,
-        );
-      }
-      maxFoldBytes = parsedFoldBytes;
+    if (!/^[1-9][0-9]*$/.test(rawFoldBytes) || !Number.isSafeInteger(parsedFoldBytes)) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `BAERLY_MAINTENANCE_MAX_FOLD_BYTES must be unset, "", or a positive decimal integer byte count no greater than ${Number.MAX_SAFE_INTEGER}, got ${JSON.stringify(rawFoldBytes)}`,
+      );
     }
-    // Non-numeric (NaN): ignored, falls back to the profile default (Ruling 3).
+    maxFoldBytes = parsedFoldBytes;
   }
 
   const rawDisable = readEnv("BAERLY_MAINTENANCE_DISABLE");

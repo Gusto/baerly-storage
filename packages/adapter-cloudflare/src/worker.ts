@@ -85,8 +85,11 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     observed limit); `cf-paid` carries 8 MiB. This var wins over either. On
  *     the free profile a value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES}
  *     warns LOUDLY once at init — a fold that large may exceed a free
- *     isolate's CPU or memory resources and not land. Zero or negative throws
- *     `BaerlyError{code:"InvalidConfig"}` when the binding is read.
+ *     isolate's CPU or memory resources and not land. Unset / `""` keep
+ *     the profile default; anything but a plain positive decimal integer
+ *     (`"8mb"`, `"0"`, `" 1024"`, `"1e6"`) throws
+ *     `BaerlyError{code:"InvalidConfig"}` when maintenance dispatch is
+ *     built. Health, dev, and `/v1/spec` routes stay up.
  *   - `BAERLY_MAINTENANCE_DISABLE` — kill switch. Closed, case-insensitive
  *     vocabulary: unset / `""` / `"0"` / `"false"` → not disabled;
  *     `"1"` / `"true"` → disabled; anything else throws
@@ -96,9 +99,11 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     {@link MAINTENANCE_PROFILE_CF_PAID}, which raises BOTH the per-pass
  *     throughput caps (GC marks/sweeps, fold entries per pass) to the
  *     Node-tier values, exploiting the paid 10,000-subrequest budget, AND
- *     the snapshot ceilings to `C` = 8 MiB / `E` = 32,768. Default /
- *     unknown values resolve to `cf-free` (unchanged zero-config
- *     behaviour). `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` still overrides `C`
+ *     the snapshot ceilings to `C` = 8 MiB / `E` = 32,768. Closed,
+ *     case-sensitive vocabulary: unset / `""` / `"cf-free"` → `cf-free`
+ *     (zero-config default); `"cf-paid"` → `cf-paid`; anything else throws
+ *     `BaerlyError{code:"InvalidConfig"}` when maintenance dispatch is
+ *     built. `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` still overrides `C`
  *     on top of whichever profile resolves; `E` has no var, so the
  *     profile switch is the ONLY way to raise the row arm on Cloudflare.
  *     Must be set consistently on BOTH the write-tick path and the cron
@@ -110,10 +115,11 @@ export interface BaerlyEnv {
   APP: string;
   /**
    * Override the snapshot-rebuild ceiling `C` the resolved profile
-   * carries (512 KiB on `cf-free`, 8 MiB on `cf-paid`). Parsed as a
-   * number; ignored when unset, empty, or non-numeric. Zero or negative throws
-   * `BaerlyError{code:"InvalidConfig"}` when read. On the free profile a
-   * value above {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns once at init.
+   * carries (512 KiB on `cf-free`, 8 MiB on `cf-paid`). A plain positive
+   * decimal integer byte count; ignored when unset or empty. Any other
+   * value throws `BaerlyError{code:"InvalidConfig"}` when maintenance
+   * dispatch is built. On the free profile a value above
+   * {@link CF_FREE_MAX_SAFE_FOLD_BYTES} warns once at init.
    */
   BAERLY_MAINTENANCE_MAX_FOLD_BYTES?: string;
   /**
@@ -131,15 +137,17 @@ export interface BaerlyEnv {
   /**
    * Opt-in maintenance profile. `"cf-paid"` raises per-pass throughput
    * caps to Node-tier values on a paid Worker isolate AND takes the paid
-   * snapshot ceilings (`C` = 8 MiB, `E` = 32,768). Default / unknown
-   * values resolve to `cf-free`.
+   * snapshot ceilings (`C` = 8 MiB, `E` = 32,768). Unset / `""` /
+   * `"cf-free"` select `cf-free`; anything other than those and
+   * `"cf-paid"` throws `BaerlyError{code:"InvalidConfig"}` when
+   * maintenance dispatch is built.
    */
   BAERLY_MAINTENANCE_PROFILE?: string;
 }
 
 /**
  * Resolve the maintenance profile from the opt-in operator env var.
- * Default (unset / unknown) is the CPU-limited CF-free profile, so
+ * Unset, `""`, and `"cf-free"` select the CPU-limited CF-free profile, so
  * zero-config behavior is unchanged. `cf-paid` raises the per-pass caps
  * to exploit the paid 10,000-subrequest budget AND the snapshot ceilings
  * to `C` = 8 MiB / `E` = 32,768, measured against the paid isolate's own
@@ -147,11 +155,24 @@ export interface BaerlyEnv {
  * dispatch and the cron path so the two maintenance triggers stay
  * coherent when the operator wires the recipe below into their
  * scheduled handler.
+ *
+ * @throws {BaerlyError} `InvalidConfig` for any other value (`"cf_paid"`,
+ * `"CF-PAID"`, `"cf-paid "`): a misspelled opt-in would otherwise leave a
+ * paid Worker on free caps and ceilings without any signal.
  */
-export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | undefined) =>
-  readEnv("BAERLY_MAINTENANCE_PROFILE") === "cf-paid"
-    ? MAINTENANCE_PROFILE_CF_PAID
-    : MAINTENANCE_PROFILE_CF_FREE;
+export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | undefined) => {
+  const raw = readEnv("BAERLY_MAINTENANCE_PROFILE");
+  if (raw === undefined || raw === "" || raw === "cf-free") {
+    return MAINTENANCE_PROFILE_CF_FREE;
+  }
+  if (raw === "cf-paid") {
+    return MAINTENANCE_PROFILE_CF_PAID;
+  }
+  throw new BaerlyError(
+    "InvalidConfig",
+    `BAERLY_MAINTENANCE_PROFILE must be one of "", "cf-free", "cf-paid", got ${JSON.stringify(raw)}`,
+  );
+};
 
 /** Read a string var off the `env` binding (CF `vars` are always strings). */
 const envReader =
@@ -217,15 +238,16 @@ const CF_FREE_FETCH_TICK = {
  * NOT `process.env` — Workers have no process env:
  *
  *   - `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` → `maxFoldBytes` (`C`), which
- *     overrides the resolved profile's ceiling. Parsed as a number;
- *     ignored when unset / NaN; zero or negative throws
+ *     overrides the resolved profile's ceiling. A plain positive decimal
+ *     integer; ignored when unset / `""`; any other value throws
  *     `BaerlyError{code:"InvalidConfig"}`.
  *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Closed,
  *     case-insensitive vocabulary: unset/`""`/`"0"`/`"false"` → `false`;
  *     `"1"`/`"true"` → `true`; anything else throws
  *     `BaerlyError{code:"InvalidConfig"}`.
  *   - `BAERLY_MAINTENANCE_PROFILE` → `options.profile`, via
- *     {@link resolveCfMaintenanceProfile}.
+ *     {@link resolveCfMaintenanceProfile} (closed vocabulary; anything
+ *     outside it throws `BaerlyError{code:"InvalidConfig"}`).
  *
  * `readEnv` defaults to reading off the bound `env`; the parameter
  * exists for direct unit coverage.
@@ -502,25 +524,32 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     // equivalent of this guardrail because paid's ceiling is memory-bound,
     // not CPU-bound, and no safe-override threshold has been measured
     // above it.
+    //
+    // An invalid value is skipped here, not thrown: this runs ahead of the
+    // healthz / spec / dev short-circuits and `scheduled()`, which must stay
+    // up. The per-request dispatch build re-parses both vars and throws
+    // `InvalidConfig` on API requests. The check stays pending so a
+    // corrected binding still gets its warning.
     if (!maintenanceCeilingChecked) {
-      const rawFoldBytes = (env as unknown as Record<string, unknown>)[
-        "BAERLY_MAINTENANCE_MAX_FOLD_BYTES"
-      ];
-      const { maxFoldBytes } = parseMaintenanceEnv((k) =>
-        typeof rawFoldBytes === "string" && k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES"
-          ? rawFoldBytes
-          : undefined,
-      );
-      const onFreeProfile =
-        resolveCfMaintenanceProfile((k) => {
-          const v = (env as unknown as Record<string, unknown>)[k];
-          return typeof v === "string" ? v : undefined;
-        }) === MAINTENANCE_PROFILE_CF_FREE;
-      if (
-        onFreeProfile &&
-        maxFoldBytes !== undefined &&
-        maxFoldBytes > CF_FREE_MAX_SAFE_FOLD_BYTES
-      ) {
+      const readMaintenanceEnv = (k: string): string | undefined => {
+        const v = (env as unknown as Record<string, unknown>)[k];
+        return typeof v === "string" ? v : undefined;
+      };
+      const rawFoldBytes = readMaintenanceEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES");
+      let overFreeCeiling: boolean;
+      try {
+        const { maxFoldBytes } = parseMaintenanceEnv((k) =>
+          k === "BAERLY_MAINTENANCE_MAX_FOLD_BYTES" ? rawFoldBytes : undefined,
+        );
+        // The profile is resolved only for an over-raised ceiling.
+        overFreeCeiling =
+          maxFoldBytes !== undefined &&
+          maxFoldBytes > CF_FREE_MAX_SAFE_FOLD_BYTES &&
+          resolveCfMaintenanceProfile(readMaintenanceEnv) === MAINTENANCE_PROFILE_CF_FREE;
+      } catch {
+        return resolved;
+      }
+      if (overFreeCeiling) {
         console.warn(
           `[baerly] BAERLY_MAINTENANCE_MAX_FOLD_BYTES=${rawFoldBytes} exceeds the ` +
             `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
