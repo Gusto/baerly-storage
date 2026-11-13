@@ -27,9 +27,8 @@ export interface ReplayOpts {
   readonly recordLatency: (kind: string, ms: number) => void;
   /**
    * Optional {@link BaerlyConfig} forwarded to `Db.create`. Declared
-   * `collections[*].indexes` add writer marker cost only; every read
-   * folds the snapshot + log either way. Set by the CLI's
-   * `--indexes=auto|none` flag.
+   * `collections[*].indexes` change no storage call, so the CLI sets
+   * none.
    */
   readonly config?: BaerlyConfig;
 }

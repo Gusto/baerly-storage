@@ -604,7 +604,7 @@ describe("reads on a collection with declared indexes: equality predicates", () 
       },
     });
 
-  test("auto-routes a single-field equality predicate to the declared index", async () => {
+  test("a single-field equality predicate on a declared index returns the matching rows", async () => {
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -634,7 +634,7 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     expect(ids).toEqual(["t-1", "t-2"]);
   });
 
-  test("returns empty result when the index prefix is empty (no matches)", async () => {
+  test("returns an empty result when no row matches a declared field", async () => {
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -676,7 +676,7 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     expect(rows.map((r) => r["_id"])).toEqual(["t-1"]);
   });
 
-  test("respects .limit() applied after the index walk", async () => {
+  test("respects .limit() on a declared field", async () => {
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -695,9 +695,8 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     expect(rows).toHaveLength(2);
   });
 
-  test("composite index routes a two-field equality predicate through the walk path", async () => {
-    // [status, priority] index, full walk (length 2 of 2). Each
-    // yielded key has tail `<docId>.json` (single segment).
+  test("a two-field equality predicate on a composite declaration returns the matching rows", async () => {
+    // Both fields of a [status, priority] declaration.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -726,7 +725,7 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     expect(rows.map((r) => r["_id"])).toEqual(["t-1"]);
   });
 
-  test("composite index walked at partial prefix returns the right docs", async () => {
+  test("an equality on the leading field of a composite declaration returns the right docs", async () => {
     // [status, priority] index; the predicate covers only its
     // leading field (`status`).
     await provision(storage);
@@ -763,11 +762,8 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["t-1", "t-2", "t-3"]);
   });
 
-  test("composite [a,b,c] index walked at prefix [a,b] returns the right docs", async () => {
-    // Three-field index walked at length 2 of 3. Each yielded key
-    // has tail `<c-b32>/<docId>.json` — TWO segments — exercising
-    // the same multi-segment extraction as the [status, priority]
-    // case but with a deeper tail. Fixture: 3 (a,b) groups × 3 c-
+  test("an equality on two of three composite fields [a,b,c] returns the right docs", async () => {
+    // Equality on two of the three declared fields. Fixture: 3 (a,b) groups × 3 c-
     // values × ~1 doc/c = ~9 docs; assert just the 3 docs whose
     // (a,b) = (1,2).
     await provision(storage);
@@ -776,8 +772,8 @@ describe("reads on a collection with declared indexes: equality predicates", () 
       currentJsonKey: currentJsonKey(COLL),
     });
     const docs: Array<{ id: string; a: number; b: number; c: number }> = [
-      // (a=1, b=2) group — three docs that share the walk's [1,2]
-      // prefix and differ only on `c`. These are the rows we want
+      // (a=1, b=2) group — three docs that share (a, b) and differ
+      // only on `c`. These are the rows we want
       // back.
       { id: "x-1", a: 1, b: 2, c: 10 },
       { id: "x-2", a: 1, b: 2, c: 20 },
@@ -810,7 +806,7 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["x-1", "x-2", "x-3"]);
   });
 
-  test("mixed predicate with an operator clause walks the index and in-memory-filters the operator", async () => {
+  test("a mixed equality and operator predicate on declared fields returns the right docs", async () => {
     // The index covers the equality clause only; the operator clause
     // must still filter the result.
     await provision(storage);
@@ -1015,9 +1011,9 @@ describe("reads on a collection with declared indexes: range and $in predicates"
       },
     });
 
-  test("single-field range walk over string-typed field returns the slice", async () => {
+  test("a single-field range over a string-typed declared field returns the slice", async () => {
     // Seed docs with `priority` ∈ {p1..p9}. Index on `priority`.
-    // Walk inclusive lower / exclusive upper [p3, p7).
+    // Inclusive lower / exclusive upper [p3, p7).
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1039,7 +1035,7 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["priority"]).toSorted()).toEqual(["p3", "p4", "p5", "p6"]);
   });
 
-  test("exclusive lower bound walk skips the lower-bound bucket via sentinel", async () => {
+  test("an exclusive lower bound skips rows equal to the bound", async () => {
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1062,7 +1058,7 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["priority"]).toSorted()).toEqual(["p3", "p4", "p5"]);
   });
 
-  test("inclusive upper bound walk includes the upper-bound bucket", async () => {
+  test("an inclusive upper bound includes rows equal to the bound", async () => {
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1084,13 +1080,10 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["priority"]).toSorted()).toEqual(["p1", "p2", "p3"]);
   });
 
-  test("composite eq+range walk constrains to the matching slice", async () => {
+  test("a composite eq+range predicate constrains to the matching slice", async () => {
     // Seed (tenant, age) where `age` is string-typed (zero-padded
-    // values) so the composite eq+range walks over byte-order-stable
-    // strings that match what `encodeIndexValue` produces — keeps the
-    // assertion focused on the eq+range slicing rather than on the
-    // numeric encoder's lex/value-order behaviour, which has its own
-    // dedicated smoke test below.
+    // values) so the eq+range predicate compares byte-order-stable
+    // strings, keeping the assertion on the eq+range slicing.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1124,7 +1117,7 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a1", "a2", "a3"]);
   });
 
-  test("$in multi-walk returns the union of matching docs", async () => {
+  test("$in on a declared field returns the union of matching docs", async () => {
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1153,7 +1146,7 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["t-1", "t-3", "t-4"]);
   });
 
-  test("stale-entry post-filter defence: range walk drops obsolete index entries", async () => {
+  test("a range over a declared field returns only rows whose newest value matches", async () => {
     // Insert a doc at priority="p2", then update to priority="p5".
     // Both entries land on disk via the writer's diff-old-new emit,
     // so the by_priority/<p2-b32>/<doc>.json key is deleted and the
@@ -1192,7 +1185,7 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(below).toEqual([]);
   });
 
-  test("range on non-last indexed field still returns correct rows via postFilter", async () => {
+  test("a range on a non-last composite field returns the correct rows", async () => {
     // Composite [tenant, age]. Predicate {tenant:{$gt:"a"}, age:"012"}
     // ranges on the leading field and pins the trailing one.
     // Verify result matches the in-memory full-scan.
@@ -1224,12 +1217,10 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["_id"]).toSorted()).toEqual(["a1", "b1", "z1"]);
   });
 
-  test("numeric range walk returns the right rows", async () => {
+  test("a numeric range over a declared field returns the right rows", async () => {
     // End-to-end smoke for the value-order-preserving numeric encoder.
-    // Under the old byte-order-preserving encoder, `age=9` lex-sorted
-    // ABOVE `age=10` (one byte 0x39 vs two bytes 0x31 0x30), so a
-    // `$gte:10` walk could miss multi-digit rows or include `9`. With
-    // the new encoder, `{$gte:10, $lt:30}` returns exactly [10,15,18,22].
+    // Numeric order, not lex order: `{$gte:10, $lt:30}` returns exactly
+    // [10,15,18,22] and never `9`.
     await provision(storage);
     const writer = new Writer({
       storage,
@@ -1257,14 +1248,9 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     expect(rows.map((r) => r["age"] as number).toSorted((a, b) => a - b)).toEqual([10, 15, 18, 22]);
   });
 
-  test("$in multi-walk returns the union of all values' docs", async () => {
-    // Pin the union semantics of the parallel-batched $in walk. The
-    // batched fan-out replaced a sequential per-value loop; if a
-    // regression dropped a value or duplicated a doc this would trip.
-    //
-    // Seed via `Writer` directly for setup convenience —
-    // equivalent to a `Db.create({ config })` path now that the
-    // production wiring threads `config.collections[].indexes`.
+  test("$in over a declared field returns the union of all values' docs", async () => {
+    // Pin the union semantics of $in: a dropped value or a duplicated
+    // doc trips this. Seeded via `Writer` directly for setup convenience.
     await provision(storage);
     const writer = new Writer({
       storage,

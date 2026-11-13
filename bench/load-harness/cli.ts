@@ -48,7 +48,6 @@ import {
 } from "@baerly/protocol";
 import { S3HttpStorage, gcsStorage } from "@baerly/adapter-node";
 import type { EndpointCreds } from "../../tests/fixtures/endpoint-creds.ts";
-import type { BaerlyConfig } from "@baerly/server";
 import { LocalFsStorage } from "@baerly/dev";
 import { CountingStorage } from "../storage.ts";
 import { assembleResult, type Variant } from "./assemble-result.ts";
@@ -121,10 +120,6 @@ const compactProfile = arg("profile", "UNBOUNDED") as CompactProfileName;
 const outputDir = arg("output-dir", "bench/results/load");
 const tenants = argNumber("tenants", 1);
 const app = arg("app", "bench");
-const indexesMode = arg("indexes", "none") as "auto" | "none";
-if (indexesMode !== "auto" && indexesMode !== "none") {
-  throw new Error(`bench:load: --indexes must be "auto" or "none" (got ${String(indexesMode)})`);
-}
 
 // ---------------------------------------------------------------------------
 // Variant-to-Storage factory
@@ -327,20 +322,6 @@ async function main(): Promise<void> {
     const startedIso = new Date().toISOString();
     const collection = preset.schema.collection;
 
-    // Optional index config. When `--indexes=auto`, declare a
-    // single-field index on `popularityRank` — the field the
-    // `filtered-list` op kind targets in `replay.ts` — so writes pay
-    // the marker cost (reads fold the snapshot + log either way). When
-    // `--indexes=none`, leave the config undefined.
-    const dbConfig: BaerlyConfig | undefined =
-      indexesMode === "auto"
-        ? {
-            collections: {
-              [collection]: { indexes: [{ name: "by_popularity_rank", on: "popularityRank" }] },
-            },
-          }
-        : undefined;
-
     // Bootstrap current.json for every tenant in the dataset before
     // seeding. `Writer` requires current.json to exist; `Db.create`
     // alone does NOT create it (same pattern as the integration tests).
@@ -366,7 +347,6 @@ async function main(): Promise<void> {
       defaultTenant: "hot",
       collection,
       dataset,
-      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     // Phase 2: Ingest — write-heavy replay.
@@ -378,7 +358,6 @@ async function main(): Promise<void> {
       ops: writeOps,
       phase: "ingest",
       recordLatency,
-      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     // Phase 3: Query pre-compact — read-only on uncompacted log.
@@ -390,7 +369,6 @@ async function main(): Promise<void> {
       ops: readOps,
       phase: "query-pre",
       recordLatency,
-      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     // Phase 4: Compact.
@@ -410,7 +388,6 @@ async function main(): Promise<void> {
       ops: readOps,
       phase: "query-post",
       recordLatency,
-      ...(dbConfig !== undefined && { config: dbConfig }),
     });
 
     const result = assembleResult({
@@ -421,7 +398,7 @@ async function main(): Promise<void> {
       totalOps,
       seed,
       startedIso,
-      backendDetails: { ...built.backendDetails, indexes_mode: indexesMode },
+      backendDetails: built.backendDetails,
       seedRes,
       ingestRes,
       queryPreRes,

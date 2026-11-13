@@ -14,9 +14,10 @@ import type { PredicateWire } from "./query/wire.ts";
  * A secondary index declaration, under `collections.<name>.indexes[]`
  * in `baerly.config.ts`.
  *
- * **An index does not speed up reads or change which rows a read
- * returns.** Every read folds the collection's snapshot and log in
- * full, with or without indexes. The declaration is validated and
+ * **An index does not speed up reads, change which rows a read
+ * returns, or cost a write anything.** Every read folds the
+ * collection's snapshot and log in full, and no storage call depends on
+ * the declaration. The declaration is validated and
  * reserved for a future index-aware storage format; omit it unless an
  * existing config already declares one.
  *
@@ -41,9 +42,7 @@ export interface IndexDefinition {
    * non-empty `readonly string[]` for a composite. Top-level fields
    * only: an empty value throws `SchemaError` and a dotted path
    * (`"meta.owner"`) throws `InvalidConfig`, both at `Db.create`.
-   *
-   * Until the writer stops emitting index markers, a write whose row
-   * holds an array in an indexed field throws `SchemaError`.
+   * A row may hold any value, arrays included, in a declared field.
    */
   readonly on: string | readonly string[];
 
