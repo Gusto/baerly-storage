@@ -556,6 +556,26 @@ an empty batch never comes back sooner than one interval. On `cf-free`
 with storage over `fetch` this shortens an idle long-poll to about 22 of
 its 25 seconds; elsewhere the timeout ends it first.
 
+The write tick a commit dispatches shares that ledger, so it sizes each
+phase at the phase's start from what the ledger has left on the pool its
+storage charges, net of active holds, with the host profile's per-pass
+caps as ceilings. The tick is dispatched outside every commit hold, so a
+tick that runs while a multi-row write continues sizes against the room
+the later rows' commit-resolution reserves leave, and never plans to spend
+them. A fold needs `MAINTENANCE_FOLD_BASE_REQUESTS` (5) plus the entries
+it would fold and is skipped, never shortened, when that does not fit: the
+growth refusal models fold passes of exactly `maxFoldEntriesPerPass`
+entries. A GC slice needs `MAINTENANCE_GC_BASE_REQUESTS` (6) and a
+retirement pass `MAINTENANCE_RETIRE_BASE_REQUESTS` (3); each runs with its
+DELETE cap lowered to what is left after that and is skipped when nothing
+is. The `tail_hint` refresh needs `MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`
+(2). These are common-path costs (each call answered first time, no
+contention). A retry or a concurrent writer can still overrun one; the
+ledger refuses that call before it is sent, the tick ends quietly
+(`db.maintenance.request_budget_refused_total`), and every phase is
+crash-safe at any call, so the next tick resumes. A skipped phase counts
+`db.maintenance.request_budget_skipped_total` (label `phase`).
+
 ### Read admission
 
 A read whose work does not fit the serving request is refused whole with
