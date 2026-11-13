@@ -109,6 +109,21 @@ const INVALID_READ_IDS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 describe("get: an id no row can be stored under", () => {
+  test.each(NON_STRING_IDS)(
+    "point operations reject a %s id without a request",
+    async (_label, id) => {
+      const { db, client, calls, requests } = setup();
+      await expectInvalidConfig(db.collection("rows").get(id as string));
+      const rows = client.collection("rows");
+      await expectInvalidConfig(rows.get(id as string));
+      await expectInvalidConfig(rows.update(id as string, { a: 1 }));
+      await expectInvalidConfig(rows.replace(id as string, { a: 1 }));
+      await expectInvalidConfig(rows.delete(id as string));
+      expect(calls()).toBe(0);
+      expect(requests()).toBe(0);
+    },
+  );
+
   test.each(INVALID_READ_IDS)("Db.get rejects %s before any I/O", async (_label, id) => {
     const { db, calls } = setup();
     await expectInvalidConfig(db.collection("rows").get(id));
@@ -210,6 +225,65 @@ describe("document values outside the JSON domain", () => {
     await expectInvalidConfig(db.collection("rows").where({ a: 1 }).update(make()));
     expect(calls()).toBe(0);
   });
+
+  test.each(["nested", "array", "inherited-array", "root", "accessor", "inherited-accessor"])(
+    "Db and HTTP writes reject a %s toJSON hook before I/O",
+    async (kind) => {
+      const { db, client, calls, requests } = await seeded();
+      let hookCalls = 0;
+      const hook = () => {
+        hookCalls++;
+        return { a: Number.NaN };
+      };
+      const make = () => {
+        if (kind === "root") {
+          class Root {
+            _id = "r1";
+            a = 1;
+            toJSON() {
+              return hook();
+            }
+          }
+          return new Root() as never;
+        }
+        class HookedArray extends Array<number> {
+          toJSON() {
+            return hook();
+          }
+        }
+        if (kind === "inherited-array") {
+          return { _id: "r1", nested: new HookedArray(1, 10) } as never;
+        }
+        const nested = kind === "array" || kind === "inherited-accessor" ? [10] : { amount: 10 };
+        const hookOwner = kind === "inherited-accessor" ? Object.create(Array.prototype) : nested;
+        if (kind === "inherited-accessor") {
+          Object.setPrototypeOf(nested, hookOwner);
+        }
+        Object.defineProperty(
+          hookOwner,
+          "toJSON",
+          kind === "accessor" || kind === "inherited-accessor"
+            ? {
+                get() {
+                  hookCalls++;
+                  return hook;
+                },
+              }
+            : { value: hook },
+        );
+        return { _id: "r1", nested } as never;
+      };
+      for (const rows of [db.collection("rows"), client.collection("rows")]) {
+        await expectInvalidConfig(rows.insert(make()));
+        await expectInvalidConfig(rows.replace("r1", make()));
+        await expectInvalidConfig(rows.update("r1", make()));
+      }
+      await expectInvalidConfig(db.collection("rows").where({ a: 1 }).update(make()));
+      expect(calls()).toBe(0);
+      expect(requests()).toBe(0);
+      expect(hookCalls).toBe(0);
+    },
+  );
 
   test("an undefined patch member is absent, in-process and over HTTP", async () => {
     const { db, client } = await seeded();

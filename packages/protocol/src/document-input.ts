@@ -34,8 +34,27 @@ const NON_PLAIN_RESOLUTION =
   "Store plain JSON: convert a Date with date.toISOString(), a Map with Object.fromEntries(map), a Set or typed array with Array.from(value), a boxed primitive with value.valueOf(), and copy a class instance's fields into a plain object.";
 const NON_JSON_TYPE_RESOLUTION =
   "Store a string, finite number, boolean, null, plain object or array there. Convert a bigint with String(value); remove functions and symbols.";
+const TO_JSON_RESOLUTION =
+  "Remove the toJSON hook and pass its intended JSON data explicitly. Documents and patches must not customize JSON serialization.";
 const CIRCULAR_RESOLUTION =
   "Remove the circular reference: a document is a tree of plain objects and arrays.";
+
+/** Inspect descriptors so even a toJSON getter is refused without running it. */
+const hasJsonHook = (value: object): boolean => {
+  for (
+    let at: object | null = value;
+    at !== null;
+    at = Object.getPrototypeOf(at) as object | null
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(at, "toJSON");
+    if (descriptor !== undefined) {
+      // JSON looks up the first property in the chain. A non-callable
+      // data value shadows any inherited hook and is ordinary JSON data.
+      return !("value" in descriptor) || typeof descriptor.value === "function";
+    }
+  }
+  return false;
+};
 
 /** One value awaiting a check, with the link back to its parent for the error path. */
 type Pending = {
@@ -109,6 +128,8 @@ export interface DocumentValuesOptions {
  * bigint would be dropped or throw. Each of those throws here instead,
  * naming the path of the first offending value (capped, see
  * {@link DOCUMENT_ERROR_PATH_EDGE_SEGMENTS}), as do circular references.
+ * Callable or accessor `toJSON` properties (own or inherited) are refused
+ * without invoking them, including on the root and on arrays.
  *
  * Allowed: strings, finite numbers (`-0` included), booleans, `null` (at
  * any depth), arrays, and plain objects (prototype `Object.prototype` or
@@ -118,7 +139,12 @@ export interface DocumentValuesOptions {
  * `undefined` object member does. No size, depth or `null` limits are
  * applied: those belong to the storage format.
  *
- * Pure and I/O-free. `insert` and `replace` call it on the caller's
+ * The input graph must remain stable until the write completes. Ordinary
+ * field getters are read during traversal; changing getters, proxies and
+ * concurrent mutation are not supported as a way to supply document data.
+ * This check does not snapshot the graph or execute serialization hooks.
+ *
+ * I/O-free. `insert` and `replace` call it on the caller's
  * document before any storage call, and `update` on each merged
  * post-image before any write; the HTTP client calls it before
  * serializing (on the patch, for `update`), because the coercions above
@@ -174,6 +200,9 @@ export const assertDocumentValues = (
     }
     if (ancestors.has(current)) {
       return refuse(verb, next, "a circular reference", CIRCULAR_RESOLUTION);
+    }
+    if (hasJsonHook(current)) {
+      return refuse(verb, next, "an object with a toJSON hook", TO_JSON_RESOLUTION);
     }
     if (Array.isArray(current)) {
       ancestors.add(current);
