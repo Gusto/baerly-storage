@@ -2,7 +2,7 @@
 title: Conventions for request counts
 audience: coder
 summary: The exact per-route storage-call snapshot, what its grid covers, and what to do when the gate goes red.
-last-reviewed: 2026-11-12
+last-reviewed: 2026-11-13
 tags: [conventions, request-counts, performance]
 related: [bundle-budgets.md, tests.md]
 ---
@@ -72,9 +72,14 @@ attempt. Retries (up to `STORAGE_RETRY_MAX_ATTEMPTS` per call) and fault paths
 are covered by the adapters' request-accounting tests, not here.
 
 The grid lives in `tests/fixtures/request-count-grid.ts`. Calls are counted
-through `requestCountingStorage` in `tests/fixtures/request-counting-storage.ts`,
-which reports each call to a one-method `RequestCounter`. A request ledger's
-charge counter can stand in for that counter without changing the grid.
+by the request ledger, the per-invocation budget the adapters enforce:
+`chargedStorage` in `tests/fixtures/ledgered-storage.ts` routes every call,
+and every LIST page, through `retryStorageCall` as an adapter does, so each
+one is charged to the ledger before it is issued. It also tallies what
+reaches `MemoryStorage` by kind and fails the cell unless the ledger's
+charge equals that tally, so the gate proves the ledger charges exactly
+what is issued. The `free-fetch:*` cells charge the `external` pool, the
+one Workers Free caps at `CF_FREE_EXTERNAL_REQUEST_LIMIT`.
 
 ## The gate
 
@@ -102,7 +107,7 @@ the route and the state that exposes it.
 ## Changing the grid
 
 Adding, renaming or removing a cell shows up as `ADDED` / `REMOVED` and is
-cleared the same way, with `--write`. The test takes about 2 s: under a
-second for the route grid, about a second for the free-fetch runs, which
-must cover a whole fold/GC phase cycle to reach the worst request. Keep
-additions from growing either part.
+cleared the same way, with `--write`. The test takes about 3 s alone, most of it
+the free-fetch runs, which must cover a whole fold/GC phase cycle to reach
+the worst request; it carries a 30 s timeout so a loaded machine does not
+flake it. Keep additions from growing either part.

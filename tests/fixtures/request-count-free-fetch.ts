@@ -33,6 +33,7 @@ import {
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
   gcPendingKey,
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_FETCH_GC_MAX_SWEEPS,
   CURRENT_JSON_SCHEMA_VERSION,
@@ -53,12 +54,8 @@ import {
   createObservabilityContext,
   runWithContext,
 } from "../../packages/server/src/observability/context.ts";
-import {
-  type CallCounts,
-  CallTally,
-  requestCountingStorage,
-  totalCalls,
-} from "./request-counting-storage.ts";
+import { chargedStorage } from "./ledgered-storage.ts";
+import { type CallCounts, totalCalls } from "./request-counting-storage.ts";
 
 const APP = "rc";
 const TENANT = "t";
@@ -231,8 +228,8 @@ export const measureFreeFetchRun = async (
       write: (coll: ReturnType<Db["collection"]>) => Promise<unknown>,
       between: () => Promise<void>,
     ): Promise<CallCounts> => {
-      const tally = new CallTally();
-      const counted = requestCountingStorage(storage, tally);
+      // Every call leaves through `fetch`: the external pool.
+      const charged = chargedStorage(storage, "external");
       const { foldAtTailEntries: adapterTrigger, ...rest } = FREE_FETCH_TICK_OPTIONS;
       const trigger = foldAtTailEntries === undefined ? adapterTrigger : foldAtTailEntries;
       const options: InternalBoundedMaintenanceOptions = {
@@ -245,34 +242,37 @@ export const measureFreeFetchRun = async (
       const pending: Array<() => Promise<void>> = [];
       const ctx = createObservabilityContext({
         maintenance: { options, dispatch: (task) => void pending.push(task) },
+        ledger: charged.ledger,
       });
-      await runWithContext(ctx, () => write(makeDb(counted, indexes).collection(COLL)));
+      await runWithContext(ctx, () => write(makeDb(charged.storage, indexes).collection(COLL)));
       await between();
       await runWithContext(ctx, async () => {
         for (const task of pending) {
           await task();
         }
       });
-      return tally.read();
+      return charged.read();
     };
     const measureReads = async (): Promise<void> => {
       for (const read of FREE_FETCH_READS) {
         if (read === "in-query" && indexes === 0) {
           continue;
         }
-        const tally = new CallTally();
-        const r = makeDb(requestCountingStorage(storage, tally), indexes).collection(COLL);
-        if (read === "get") {
-          await r.get(snapId(1));
-        } else if (read === "indexed-miss") {
-          await r.where({ f0: "absent" }).all();
-        } else if (read === "indexed-query") {
-          await r.where(indexes > 0 ? { f0: "v3" } : { n: 3 }).all();
-        } else {
-          const values = Array.from({ length: FREE_FETCH_IN_SIZE }, (_, v) => `v${v}`);
-          await r.where((q) => q.in("f0", values)).all();
-        }
-        reads[read] = worse(reads[read], tally.read());
+        const charged = chargedStorage(storage, "external");
+        const r = makeDb(charged.storage, indexes).collection(COLL);
+        await runWithContext(createObservabilityContext({ ledger: charged.ledger }), async () => {
+          if (read === "get") {
+            await r.get(snapId(1));
+          } else if (read === "indexed-miss") {
+            await r.where({ f0: "absent" }).all();
+          } else if (read === "indexed-query") {
+            await r.where(indexes > 0 ? { f0: "v3" } : { n: 3 }).all();
+          } else {
+            const values = Array.from({ length: FREE_FETCH_IN_SIZE }, (_, v) => `v${v}`);
+            await r.where((q) => q.in("f0", values)).all();
+          }
+        });
+        reads[read] = worse(reads[read], charged.read());
       }
     };
     for (let i = 0; i < writesPerRun; i++) {
@@ -311,10 +311,10 @@ export const measureFreeFetchRun = async (
 };
 
 /**
- * External subrequests one Workers Free invocation may spend on storage:
- * the 50-subrequest cap less 5 for the verifier and platform.
+ * External subrequests one Workers Free invocation may spend on storage
+ * and the Cache API: the request ledger's Free external limit.
  */
-export const FREE_FETCH_BUDGET = 45;
+export const FREE_FETCH_BUDGET = CF_FREE_EXTERNAL_REQUEST_LIMIT;
 
 /**
  * Cache API calls the Worker adds to a request, which share the subrequest

@@ -14,11 +14,12 @@ import {
 } from "../../scripts/request-counts.ts";
 import { INDEX_COUNTS, measureRequestCounts } from "../fixtures/request-count-grid.ts";
 import { FREE_FETCH_BUDGET, freeFetchCells } from "../fixtures/request-count-free-fetch.ts";
+import { chargedStorage } from "../fixtures/ledgered-storage.ts";
+import { totalCalls } from "../fixtures/request-counting-storage.ts";
 import {
-  CallTally,
-  requestCountingStorage,
-  totalCalls,
-} from "../fixtures/request-counting-storage.ts";
+  createObservabilityContext,
+  runWithContext,
+} from "../../packages/server/src/observability/context.ts";
 import {
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_FETCH_GC_MAX_SWEEPS,
@@ -27,15 +28,25 @@ import {
   WRITE_TICK_GC_INTERVAL,
 } from "@baerly/protocol";
 
+/**
+ * The whole grid runs in one test: about 3 s alone, so the default 5 s
+ * timeout flakes when the suite runs beside other CPU-bound work.
+ */
+const GRID_TIMEOUT_MS = 30_000;
+
 describe("request-counts.json", () => {
-  test("every grid cell issues exactly its committed storage calls", async () => {
-    const changes = compareCounts(loadRequestCountSnapshot(), await measureRequestCounts());
-    // Thrown as text so a failure prints the per-cell diff once, readably.
-    if (changes.length > 0) {
-      throw new Error(formatChanges(changes));
-    }
-    expect(changes).toHaveLength(0);
-  });
+  test(
+    "every grid cell issues exactly its committed storage calls",
+    async () => {
+      const changes = compareCounts(loadRequestCountSnapshot(), await measureRequestCounts());
+      // Thrown as text so a failure prints the per-cell diff once, readably.
+      if (changes.length > 0) {
+        throw new Error(formatChanges(changes));
+      }
+      expect(changes).toHaveLength(0);
+    },
+    GRID_TIMEOUT_MS,
+  );
 });
 
 describe("Workers Free with storage over fetch", () => {
@@ -80,22 +91,44 @@ describe("request-counts format", () => {
   });
 });
 
-describe("requestCountingStorage", () => {
+describe("chargedStorage", () => {
   test("charges one listPage per 1000 keys pulled, and one for an empty list", async () => {
     const inner = new MemoryStorage();
     for (let i = 0; i < 2001; i++) {
       await inner.put(`k/${String(i).padStart(4, "0")}`, new Uint8Array());
     }
-    const tally = new CallTally();
-    const counted = requestCountingStorage(inner, tally);
+    const charged = chargedStorage(inner, "external");
     let n = 0;
-    for await (const _ of counted.list("k/")) {
-      n += 1;
+    await runWithContext(createObservabilityContext({ ledger: charged.ledger }), async () => {
+      for await (const _ of charged.storage.list("k/")) {
+        n += 1;
+      }
+      expect(n).toBe(2001);
+      for await (const _ of charged.storage.list("none/")) {
+        n += 1;
+      }
+    });
+    expect(charged.read()).toEqual({ get: 0, put: 0, delete: 0, listPage: 4 });
+    expect(charged.ledger.charged).toEqual({ internal: 4, external: 4, cache: 0 });
+  });
+
+  test("a page boundary at exactly 1000 keys issues no empty follow-up page", async () => {
+    const inner = new MemoryStorage();
+    for (let i = 0; i < 1000; i++) {
+      await inner.put(`k/${String(i).padStart(4, "0")}`, new Uint8Array());
     }
-    expect(n).toBe(2001);
-    for await (const _ of counted.list("none/")) {
-      n += 1;
-    }
-    expect(tally.read()).toEqual({ get: 0, put: 0, delete: 0, listPage: 4 });
+    const charged = chargedStorage(inner, "internal");
+    await runWithContext(createObservabilityContext({ ledger: charged.ledger }), async () => {
+      for await (const _ of charged.storage.list("k/")) {
+        // drain
+      }
+    });
+    expect(charged.read().listPage).toBe(1);
+  });
+
+  test("read() fails when the work ran outside the ledger's context", async () => {
+    const charged = chargedStorage(new MemoryStorage(), "internal");
+    await charged.storage.get("k");
+    expect(() => charged.read()).toThrow(/request ledger charged internal=0/);
   });
 });

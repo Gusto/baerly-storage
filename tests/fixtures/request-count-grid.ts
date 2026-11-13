@@ -4,7 +4,7 @@
 /**
  * The deterministic grid behind `request-counts.json`: exact happy-path
  * storage-call counts per route and per maintenance tick, over
- * `MemoryStorage`. Shared by `tests/unit/request-counts.test.ts` (the
+ * `MemoryStorage`, read off the request ledger's charge. Shared by `tests/unit/request-counts.test.ts` (the
  * gate) and `scripts/request-counts.ts` (`--write` / `--report`), so both
  * measure the same thing.
  *
@@ -29,10 +29,12 @@ import { Db } from "../../packages/server/src/db.ts";
 import { runBoundedMaintenance } from "../../packages/server/src/maintenance.ts";
 import {
   createObservabilityContext,
+  getCurrentContext,
   runWithContext,
 } from "../../packages/server/src/observability/context.ts";
+import { chargedStorage } from "./ledgered-storage.ts";
 import { freeFetchCells } from "./request-count-free-fetch.ts";
-import { type CallCounts, CallTally, requestCountingStorage } from "./request-counting-storage.ts";
+import type { CallCounts } from "./request-counting-storage.ts";
 
 const APP = "rc";
 const TENANT = "t";
@@ -85,10 +87,19 @@ const makeDb = (storage: Storage, indexes: number): Db =>
  * route alone. The tick it would dispatch is measured on its own by the
  * `tick:*` rows.
  */
-const withoutTicks = <T>(fn: () => Promise<T>): Promise<T> =>
-  Promise.resolve(
-    runWithContext(createObservabilityContext({ maintenance: { dispatch: () => {} } }), fn),
+const withoutTicks = <T>(fn: () => Promise<T>): Promise<T> => {
+  // Keep the measuring context's ledger, so the route stays charged.
+  const ledger = getCurrentContext()?.ledger;
+  return Promise.resolve(
+    runWithContext(
+      createObservabilityContext({
+        maintenance: { dispatch: () => {} },
+        ...(ledger !== undefined && { ledger }),
+      }),
+      fn,
+    ),
   );
+};
 
 /** Deep-copy every object, so a mutating route never leaks into the next cell. */
 const cloneStorage = async (src: MemoryStorage): Promise<MemoryStorage> => {
@@ -158,9 +169,10 @@ const targetId = (spec: StateSpec): string => {
 };
 
 /**
- * Count the calls `run` issues against `base`. A mutating cell runs on a
- * private copy; `prepare` (uncounted) brings that copy to the cell's
- * starting state first.
+ * Count the calls `run` issues against `base`, as the request ledger
+ * charges them (`chargedStorage` checks the charge equals what was
+ * issued). A mutating cell runs on a private copy; `prepare` (uncounted)
+ * brings that copy to the cell's starting state first.
  */
 const measure = async (
   base: MemoryStorage,
@@ -170,9 +182,11 @@ const measure = async (
 ): Promise<CallCounts> => {
   const inner = mutates ? await cloneStorage(base) : base;
   await prepare?.(inner);
-  const tally = new CallTally();
-  await run(requestCountingStorage(inner, tally));
-  return tally.read();
+  const charged = chargedStorage(inner, "internal");
+  await runWithContext(createObservabilityContext({ ledger: charged.ledger }), () =>
+    run(charged.storage),
+  );
+  return charged.read();
 };
 
 const cellName = (op: string, spec: StateSpec, extra = ""): string =>
