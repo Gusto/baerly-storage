@@ -28,7 +28,6 @@ A production backend certified as full `Storage` MUST support:
   (`packages/protocol/src/storage/types.ts`).
 - `ifMatch` compare-and-swap on `put`.
 - `ifNoneMatch: "*"` create-only on `put`.
-- `ifNoneMatch` conditional `get` (304-equivalent → `null`).
 - **Exactly-one-winner** under concurrent create-if-absent — the
   log-append commit relies on it.
 - UTF-8 byte-ordered `list` with `startAfter` + `maxKeys` pagination.

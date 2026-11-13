@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 369857,
-      "gz": 118176,
-      "minGz": 30726,
+      "raw": 369772,
+      "gz": 118156,
+      "minGz": 30712,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
@@ -37,23 +37,23 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 591510,
-      "gz": 181152,
-      "minGz": 57937,
+      "raw": 591230,
+      "gz": 181086,
+      "minGz": 57888,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 101663,
-      "gz": 33381,
-      "minGz": 12129,
+      "raw": 101103,
+      "gz": 33265,
+      "minGz": 12037,
       "note": "Worker-safe S3 entry, so consumer-facing. Demonstrated catch: fast-xml-parser is pinned at 5.8.0 because 5.9.3 inflated this closure ~25%."
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 96186,
-      "gz": 31944,
-      "minGz": 10316,
+      "raw": 96041,
+      "gz": 31893,
+      "minGz": 10283,
       "note": "Worker-safe GCS entry, so consumer-facing. Smaller than s3.js because the GOOG4 signer is lighter than aws4fetch."
     },
     "http.js": {
@@ -97,17 +97,17 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 85947,
+      "raw": 85869,
       "note": "dev-only; never enters a consumer bundle. At the 2% shipped rate it produced 12 of 32 historical trips for no safety benefit."
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 765154,
+      "raw": 764286,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 774047,
+      "raw": 773179,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }

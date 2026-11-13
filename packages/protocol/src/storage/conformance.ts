@@ -106,21 +106,6 @@ export interface ConformanceOptions {
    * generation (`"1"`, which no live object ever carries → 412 → WriteConflict).
    */
   readonly staleEtag?: string;
-  /**
-   * When true, `get(key, { ifNoneMatch: <etag> })` returns `null` if the
-   * current version token equals `<etag>` (a conditional read). Defaults to
-   * true — Memory/LocalFs/S3/R2 all key their 304/not-modified path off the
-   * same token they return as the etag. GCS opts out: its native XML API
-   * honors `x-goog-if-generation-{match,not-match}` against the `generation`
-   * carried in the opaque etag, but only as write-style CAS preconditions
-   * that 412 on failure — never as a 304-when-unchanged read (empirically,
-   * `if-generation-not-match: <live-gen>` returns 200 with the full body,
-   * not 304), so a round-tripped version token can never yield a 304.
-   * The kernel never issues a conditional read — every kernel `ifNoneMatch`
-   * is `put(…, { ifNoneMatch: "*" })` create-if-absent — so this capability
-   * is not a baerly prerequisite, unlike the CAS writes above.
-   */
-  readonly supportsConditionalGet?: boolean;
 }
 
 export interface ConformanceFactoryResult {
@@ -340,7 +325,6 @@ export function defineStorageConformanceSuite(
     eventuallyConsistentList: options.eventuallyConsistentList ?? false,
     remoteNetwork: options.remoteNetwork ?? false,
     staleEtag: options.staleEtag ?? '"deadbeef"',
-    supportsConditionalGet: options.supportsConditionalGet ?? true,
   };
 
   // An eventually-consistent backend is necessarily remote, so it inherits
@@ -708,32 +692,6 @@ export function defineStorageConformanceSuite(
           );
         });
       }
-    });
-
-    // Skipped for backends whose conditional read can't key off the version
-    // token (GCS — see `supportsConditionalGet`). The kernel never issues a
-    // conditional read, so this is not a baerly prerequisite.
-    describe.runIf(opts.supportsConditionalGet)("conditional get — ifNoneMatch", () => {
-      test("returns null when current etag matches ifNoneMatch", async () => {
-        const { etag } = await s.put("k", new TextEncoder().encode("v"));
-        const got = await pollUntil(
-          () => s.get("k", { ifNoneMatch: etag }),
-          (g) => g === null,
-          settle,
-        );
-        expect(got).toBeNull();
-      });
-
-      test("returns the object when ifNoneMatch is stale", async () => {
-        const { etag } = await s.put("k", new TextEncoder().encode("v"));
-        const got = await pollUntil(
-          () => s.get("k", { ifNoneMatch: opts.staleEtag }),
-          (g) => g !== null && g.etag === etag,
-          settle,
-        );
-        expect(got).not.toBeNull();
-        expect(got!.etag).toBe(etag);
-      });
     });
 
     describe("delete", () => {

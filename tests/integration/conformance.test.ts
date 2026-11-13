@@ -154,12 +154,8 @@ describe("conformance", () => {
           // GCS's version token is an int64 `generation`, not an ETag: a
           // quoted-hex CAS value is a *malformed* precondition (400
           // InvalidArgument), so feed a well-formed-but-stale generation that
-          // no live object carries (→ 412 → WriteConflict). And GCS's native XML
-          // API honors the generation preconditions only as 412-CAS writes,
-          // never as a 304-when-unchanged read, so a version-token conditional
-          // read can't 304 — opt out (the kernel never issues one). Both are
-          // no-ops for aws/R2.
-          ...(isGcs && { staleEtag: "1", supportsConditionalGet: false }),
+          // no live object carries (→ 412 → WriteConflict). A no-op for aws/R2.
+          ...(isGcs && { staleEtag: "1" }),
         };
       }
       defineStorageConformanceSuite(
