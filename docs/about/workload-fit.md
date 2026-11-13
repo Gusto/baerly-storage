@@ -2,7 +2,7 @@
 title: Workload fit
 audience: product
 summary: A qualitative shape test for deciding whether an app fits baerly-storage before sizing the workload.
-last-reviewed: 2026-08-07
+last-reviewed: 2026-11-12
 tags: [positioning, product, workload]
 related: [thesis.md, cost-model.md, graduation.md]
 ---
@@ -190,21 +190,32 @@ but the ~10 ms budget is not a guarantee
 **Workers Free + S3 over HTTP (best effort).** Every storage call is a
 `fetch`, and the free plan allows 50 per request, so this host gets a
 lower request envelope than the R2 binding. It is not first-class: no
-zero-config guarantee and no tuning work. The envelope is collections up
-to ~500 documents (512 KiB) with light writes (~30/min); the request
-limits are:
+zero-config guarantee and no tuning work. The Worker detects this host
+from the storage it is given, folds once 9 writes are pending, and
+deletes at most 4 replaced snapshots per GC slice, so a write and the
+maintenance it triggers fit in one request. The envelope is collections
+up to ~500 documents (512 KiB) with about 1 write per minute sustained
+per collection (~900 per day; bursts are fine), below the ~30/min the R2
+binding and the other hosts take. The request limits, measured with no
+retries and 45 calls of the 50 budgeted, are:
 
 | Bound | Free + S3 limit |
 | --- | --- |
-| Indexes per collection | To be measured |
-| Largest `$in` | To be measured |
-| Pending tail length | To be measured |
+| Indexes per write | 3 |
+| Largest `$in` | 16 values |
+| Pending tail length | 10 entries |
 
-A read that must replay a long pending tail, such as one racing a write
-burst, can exceed the 50-call limit and fail. Past the envelope, expect
-more `CapacityExceeded` and `MaintenancePending`, because a fold may not
-fit in the write that triggers it; data is never lost. For more request headroom use the R2 binding; for guaranteed CPU,
-use Paid.
+The write rate comes from GC. Each fold rewrites the snapshot, one per ~9
+writes, and GC reclaims about 1,000 replaced snapshots per collection per
+7-day grace period. At ~900 writes per day, about 100 folds a day leave
+~700 replaced snapshots in the bucket, at most ~350 MiB for 512 KiB
+snapshots; above that rate, replaced snapshots accumulate.
+
+A read that must replay a longer pending tail, such as one racing a write
+burst, can exceed the 50-call limit and fail, and so can a request whose
+storage calls are retried. Past the envelope, expect more
+`CapacityExceeded` and `MaintenancePending`; data is never lost. For more
+request headroom use the R2 binding; for guaranteed CPU, use Paid.
 
 At the ceiling, growth is refused with `CapacityExceeded`: reads,
 deletes and shrinking updates keep working, and the refusal clears once
