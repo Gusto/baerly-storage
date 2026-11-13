@@ -51,12 +51,12 @@ export interface RetireLogRangeResult {
    * the {@link Storage} DELETE contract), so this is a request count, not a
    * count of objects that were physically present.
    *
-   * This does NOT cover the call's full subrequest cost: an active pass also
+   * This does NOT cover the call's full storage-call cost: an active pass also
    * issues 2 GETs (the advisory gate read, then {@link casUpdateCurrentJson}'s
    * own read) + 1 PUT (the floor CAS), and a no-op pass (empty gate) still
-   * costs 1 GET. A caller budgeting against the 50-subrequest free-tier cap
-   * that {@link LOG_RETENTION_MAX_DELETES_PER_TICK}'s JSDoc names — the
-   * combined GC-sweep + fold + retirement total per tick — must add those
+   * costs 1 GET. A caller budgeting a tick against a per-invocation request
+   * limit (the combined GC-sweep + fold + retirement total that
+   * {@link LOG_RETENTION_MAX_DELETES_PER_TICK}'s JSDoc derives) must add those
    * manifest round-trips itself; `deleted` alone undercounts.
    *
    * Two states make {@link computeRetirableRange} return an empty range, so

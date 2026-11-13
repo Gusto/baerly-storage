@@ -1771,12 +1771,12 @@ describe("Writer — pre-image scan depth", () => {
     });
 
     // Asserted as a LITERAL, not against `PREIMAGE_SCAN_MAX_GETS`.
-    // The constant's value is the fix — it is sized against the
-    // Cloudflare free-tier 50-subrequest wall, most of which a `U`
-    // commit has already spent. A self-referential assertion would
-    // stay green if someone raised it back to a value that blows that
-    // wall, which is exactly the regression this test exists to catch.
-    // On `main` this walk cost 400 GETs.
+    // The constant's value is the fix — it is sized on the walk's
+    // sequential latency, Workers Free CPU and the retention window tied
+    // to it, and the worst-case update on Free over `fetch` spends all 8.
+    // A self-referential assertion would stay green if someone raised it
+    // without re-deriving those, which is exactly the regression this
+    // test exists to catch. Before the cap this walk cost 400 GETs.
     expect(storage.postCommitLogGets).toBe(8);
   });
 

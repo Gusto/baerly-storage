@@ -13,8 +13,10 @@
  *   1. `cfMaintenanceDispatch` reads `BAERLY_MAINTENANCE_*` off the
  *      `env` binding (strings) and threads CF-free caps +
  *      `phasesPerTick: "single"` + `dispatch = ctx.waitUntil`.
- *   2. A real fold lands under the CF free-tier 50-subrequest budget
- *      and advances `log_seq_start` by the per-pass slice.
+ *   2. A real fold over the R2 binding lands at a pinned storage-call
+ *      count, charged to the Free request ledger and within its limit
+ *      at full retries, and advances `log_seq_start` by the per-pass
+ *      slice.
  *   3. `db.compaction.cas_lost_total` records from INSIDE the
  *      `waitUntil` continuation — the ALS store survives past the
  *      response.
@@ -29,6 +31,7 @@
 import {
   type BaerlyAppConfig,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -38,6 +41,7 @@ import {
   MemoryStorage,
   readCurrentJson,
   type Storage,
+  STORAGE_RETRY_MAX_ATTEMPTS,
   type Verifier,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_GC_INTERVAL,
@@ -64,6 +68,7 @@ import {
   baerlyWorker,
   type BaerlyEnv,
   cfMaintenanceDispatch,
+  cfRequestLedger,
   resolveCfMaintenanceProfile,
 } from "./worker.ts";
 
@@ -419,8 +424,8 @@ describe("Cache API calls the free-fetch request-count cells add", () => {
   });
 });
 
-describe("write-tick fold under the CF free-tier subrequest budget", () => {
-  test("a real fold lands without exceeding 50 subrequests and advances log_seq_start by the per-pass slice", async () => {
+describe("write-tick fold under the CF free-tier request ledger", () => {
+  test("a real fold lands at its pinned call count within the Free R2 limit and advances log_seq_start by the per-pass slice", async () => {
     const bucket = getBinding();
     const tenant = tenantId("fold");
     const inner = r2BindingStorage(bucket);
@@ -442,13 +447,29 @@ describe("write-tick fold under the CF free-tier subrequest budget", () => {
     const counting = wrapCountingStorage(inner);
     const noopCtx = mockExecutionContext();
     const m = cfMaintenanceDispatch(noopCtx, () => undefined);
-    await runBoundedMaintenance(
-      { storage: counting.storage, currentJsonKey: KEY(tenant), prevSeq: 110 },
-      m.options,
+    // The Free ledger the Worker gives each invocation; the binding charges
+    // every attempt to its `internal` pool.
+    const ledger = cfRequestLedger(() => undefined);
+    await runWithContext(createObservabilityContext({ ledger }), () =>
+      runBoundedMaintenance(
+        { storage: counting.storage, currentJsonKey: KEY(tenant), prevSeq: 110 },
+        m.options,
+      ),
     );
 
-    // (a) Stays under the CF free-tier 50-subrequest budget.
-    expect(counting.classAOps).toBeLessThanOrEqual(50);
+    // (a) Every storage call, GETs included, is charged once; the pass is
+    // pinned and fits the Free R2 limit with every call retried.
+    const calls = counting.gets + counting.classAOps;
+    expect(ledger.charged).toEqual({ internal: calls, external: 0, cache: 0 });
+    // No `observedTail` here, so compact()'s probe walks the whole stale
+    // 110-entry tail from `tail_hint` 0: the count grows with the tail.
+    expect({ gets: counting.gets, puts: counting.puts, lists: counting.lists }).toEqual({
+      gets: 134,
+      puts: 2,
+      lists: 0,
+    });
+    expect(calls).toBe(136);
+    expect(calls * STORAGE_RETRY_MAX_ATTEMPTS).toBeLessThanOrEqual(CF_FREE_INTERNAL_REQUEST_LIMIT);
 
     // (b) Folded the per-pass slice — log_seq_start advanced by
     // maxFoldEntriesPerPass (= WRITE_TICK_FOLD_ENTRIES_PER_PASS = 20),
