@@ -27,3 +27,15 @@ each under a fresh NFC id that is not canonically equivalent to either
 original, then delete the originals. An NDJSON export that contains a
 non-NFC `_id` must have that id normalized before `baerly admin restore`
 accepts it; ensure the resulting ids are unique.
+
+**Migration — agents: if you wrote the LEFT, use the RIGHT:**
+
+```ts
+// before: any string was accepted as a caller-supplied _id
+await tickets.insert({ _id: "café", title: "hi" }); // NFD "é"
+// after: normalize ids you mint, or omit _id to get a UUIDv7
+await tickets.insert({ _id: "café".normalize("NFC"), title: "hi" });
+await tickets.insert({ title: "hi" });
+```
+
+Normalizing an id gives a new identity, so apply it only to ids of rows that do not exist yet. For rows already stored under a non-NFC `_id`, use the copy recipe above; for a dump, rewrite the id in the NDJSON before `baerly admin restore`.
