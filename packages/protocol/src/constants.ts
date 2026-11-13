@@ -689,6 +689,65 @@ export const CF_PAID_COMPACT_TAIL_PROBE_GETS: number = 1000;
 export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
 
 /**
+ * Storage requests a write-tick fold issues besides its log GETs, on its
+ * common path (every call answered first time, no concurrent writer): the
+ * `current.json` GET, one tail-probe GET at the writer's observed tail, the
+ * prior-snapshot GET, the snapshot PUT and the `current.json` CAS PUT. A
+ * fold of `e` entries costs `5 + e` after the runner's own `current.json`
+ * GET (the `6 + e` in {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES}'s
+ * derivation counts that GET too).
+ *
+ * `runBoundedMaintenance` skips the fold when the invocation's request
+ * ledger has less than this plus the tail it would fold left. Retries and
+ * a tail a concurrent writer lengthened can still overrun; the ledger
+ * refuses that call before it is sent and the next tick folds again.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const MAINTENANCE_FOLD_BASE_REQUESTS: number = 5;
+
+/**
+ * Storage requests a write-tick GC slice issues besides its sweep DELETEs,
+ * on its common path: the `current.json` GET, the `gc/pending.json` GET,
+ * one snapshot LIST page, the fresh `current.json` GET before a due sweep,
+ * and the pending CAS (GET + PUT). A slice sweeping `S` costs `6 + S`.
+ * Contention adds at most 6 (the pending-bootstrap race, two more CAS
+ * attempts), the `12 + S` worst case in `CLOUDFLARE_FREE_TIER`'s JSDoc.
+ *
+ * `runBoundedMaintenance` lowers the slice's sweep cap to what the
+ * invocation's request ledger has left after this, and skips the slice
+ * when not even this is left. A deferred sweep stays pending for the next
+ * slice.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const MAINTENANCE_GC_BASE_REQUESTS: number = 6;
+
+/**
+ * Storage requests a log-retirement pass issues besides its DELETEs: the
+ * advisory `current.json` GET and the floor CAS (GET + PUT). A pass that
+ * retires `D` log objects costs `3 + D`; one with nothing to retire costs 1.
+ *
+ * `runBoundedMaintenance` lowers the pass's delete cap to what the
+ * invocation's request ledger has left after this, and skips the pass
+ * when that leaves no DELETE. The range not retired stays retirable.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ * @see packages/server/src/log-retention.ts (`retireLogRange`)
+ */
+export const MAINTENANCE_RETIRE_BASE_REQUESTS: number = 3;
+
+/**
+ * Storage requests the write tick's `tail_hint` refresh issues: one
+ * non-retrying `casUpdateCurrentJson` (GET + PUT). `runBoundedMaintenance`
+ * skips the refresh when the invocation's request ledger has less left; a
+ * later tick refreshes instead.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
+
+/**
  * Live-tail length at which the write tick folds on Workers Free when the
  * Worker reaches its bucket through `fetch` (S3 over HTTP) rather than the
  * R2 binding, whatever the tail-to-snapshot ratio. The Cloudflare adapter
