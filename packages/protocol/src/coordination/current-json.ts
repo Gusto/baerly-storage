@@ -140,9 +140,10 @@ export interface CurrentJson {
    * deleted. Every `log/<seq>.json` with `seq < log_delete_floor` is
    * gone from the bucket. Distinct from {@link log_seq_start}, which is the
    * lowest sequence a READER may need: the gap between them is the
-   * deliberately-retained safety window (`LOG_RETENTION_SEQ_WINDOW`),
-   * sized from intentional point-in-time readers below the floor, not from
-   * the writer-retry window that `GC_GRACE_PERIOD_MILLIS` covers.
+   * deliberately-retained window (`LOG_RETENTION_SEQ_WINDOW`), a rate
+   * limit on retirement that keeps folded entries readable for a windowed
+   * commit below the floor, not the writer-retry window that
+   * `GC_GRACE_PERIOD_MILLIS` covers.
    *
    * A FLOOR, not a rotation cursor. The deletable set is a contiguous
    * range over integer `seq` order that only ever grows at one end, so

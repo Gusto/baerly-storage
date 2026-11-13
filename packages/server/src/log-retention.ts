@@ -95,10 +95,9 @@ export interface RetireLogRangeResult {
  * a caller overrides it (via {@link computeRetirableRange}, which also clamps
  * a malformed stored floor per `docs/spec/sync-protocol.md` invariant 12).
  * That bound holds only at the default window: `opts.window` is a test seam
- * that can shrink or erase the pre-image reach the window preserves
- * (`PREIMAGE_SCAN_MAX_GETS`) and steepen the retirement rate it limits (this
- * module's own `{window: 0}` tests push the floor to `log_seq_start`
- * exactly).
+ * that can shrink or erase the folded entries the window keeps readable for
+ * a windowed commit and steepen the retirement rate it limits (this module's
+ * own `{window: 0}` tests push the floor to `log_seq_start` exactly).
  * `log_delete_floor` is monotone under the transition validator regardless of
  * `window`. So by the time a slot is physically deleted, a durable
  * certificate that it is gone already exists — which is what makes

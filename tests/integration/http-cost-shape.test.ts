@@ -10,7 +10,7 @@ import {
   type BaerlyAppConfig,
   CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
-  UNINDEXED_COMMIT_CLASS_A_FLOOR,
+  COMMIT_CLASS_A_FLOOR,
   createCurrentJson,
   type Storage,
   type Verifier,
@@ -159,8 +159,8 @@ for (const variant of VARIANTS) {
         body: JSON.stringify({ doc: { title: "Login broken", status: "open" } }),
       });
       expect(res.status).toBe(201);
-      expect(UNINDEXED_COMMIT_CLASS_A_FLOOR).toBe(1);
-      expect(counting.puts).toBe(UNINDEXED_COMMIT_CLASS_A_FLOOR);
+      expect(COMMIT_CLASS_A_FLOOR).toBe(1);
+      expect(counting.puts).toBe(COMMIT_CLASS_A_FLOOR);
       expect(counting.deletes).toBe(0);
       expect(counting.lists).toBe(0);
     });

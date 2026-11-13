@@ -238,20 +238,18 @@ export const CF_CACHE_API_MAX_CALLS: number = 3;
  *
  * Without room for both, a create that landed but lost its reply cannot be
  * resolved and becomes `AmbiguousCommit`, and a won create skips the
- * delete-floor check. Everything else after the create (the pre-image
- * walk, stale index-marker DELETEs, the write tick) is best effort and is
- * not reserved.
+ * delete-floor check. Everything else after the create (the write tick) is
+ * best effort and is not reserved.
  *
  * Each slot's attempt runs under a request-ledger hold
  * (`RequestLedger.hold`) of
- * `STORAGE_RETRY_MAX_ATTEMPTS * (newIndexMarkers + 1) + COMMIT_RESOLUTION_RESERVE`
- * requests: each additive index-marker PUT and the create itself at full
- * retries, plus this reserve. Other work in the invocation (a
- * `ctx.waitUntil` write tick) cannot spend held requests. The writer
- * refuses with `CapacityExceeded`, before it writes anything, when the
- * ledger's room cannot cover the hold. After a lost create race it takes a
- * new hold (markers only when the re-decided post-image needs new ones)
- * before the next create.
+ * `STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE` = 9 requests: the
+ * create at full retries, plus this reserve. The create is the commit's only
+ * write, so the hold is the same for every collection, whatever indexes it
+ * declares. Other work in the invocation (a `ctx.waitUntil` write tick)
+ * cannot spend held requests. The writer refuses with `CapacityExceeded`,
+ * before it writes anything, when the ledger's room cannot cover the hold.
+ * After a lost create race it takes a new hold before the next create.
  *
  * The arithmetic assumes the default adapter retry policy; an adapter
  * configured with more retries can need more than it reserves.
@@ -293,81 +291,28 @@ export const MAX_PARALLEL_LOG_READS: number = 16;
 export const LOG_FORWARD_PROBE_CAP: number = 100_000;
 
 /**
- * Descent budget on the writer's backwards pre-image walk
- * (`Writer#readPreImage`): max `log/<seq>` GETs below the committing
- * seq before the walk gives up and reports "pre-image unknown".
+ * Sequence distance retained below `log_seq_start` before `log/<seq>.json`
+ * objects become retirable: a rate limit on how fast retirement approaches the
+ * live floor.
  *
- * The walk MUST be 404-tolerant — a folded-and-swept entry and a peer
- * mid-CAS are indistinguishable from a missing object — so it cannot
- * use a hole as a stop signal, and `seq` grows monotonically forever.
- * Without this budget the walk is O(seq): once GC sweeps a doc's last
- * I/U past the {@link GC_GRACE_PERIOD_MILLIS} grace, every later
- * `U` / `D` on that doc issues one SEQUENTIAL GET per seq down to 0,
- * then returns "unknown" and deletes nothing. That is unbounded
- * opportunistic work on the request path — the shape
- * `docs/contributing/conventions/change-discipline.md` rules out.
- *
- * Deliberately NOT floored at `log_seq_start`: sub-floor entries
- * survive the 7-day GC grace, so a post-fold `U` / `D` can still find
- * its pre-image below the floor. The budget is anchored at the
- * committing seq instead, which makes the cost unconditional.
- *
- * **Sized by latency, CPU and retention, not by a request cap.** The
- * walk is strictly SEQUENTIAL and runs inline before the response: each
- * step is one storage round trip (about 75 ms per R2 binding call
- * measured from a Worker, so 8 steps is about 0.6 s) and, on Workers Free,
- * about 0.25 ms of a 10 ms CPU budget. {@link LOG_RETENTION_SEQ_WINDOW} is
- * this value times 128, so raising it also widens the log objects kept
- * below the floor. Every GET is charged to the invocation's request
- * ledger, and the walk runs after the commit has resolved, outside the
- * commit's hold: a refused GET ends the walk, the commit stays
- * acknowledged, and `db.write.post_commit_refused_total` records it. On
- * Workers Free with storage over `fetch` (45 calls a request) the walk is
- * part of the measured worst-case update (`15 + t + 2I` in
- * `request-counts.json`); see {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES}.
- *
- * **What that budget actually covers.** The pre-image sits roughly
- * one working-set of seqs back, so 8 reaches a doc rewritten within
- * the last few log entries — a form re-save, a retry, a two-phase
- * update — and nothing colder. On a collection with more than ~8
- * actively-written docs the walk normally gives up. That is accepted:
- * the residual is a benign extra index key (a false positive dropped
- * by `matchesWire`, never a missing candidate — see
- * `docs/spec/sync-protocol.md` invariant 7); reads never consult
- * markers. The give-up is deliberately NOT counted: at this budget it is the
- * common path, not an anomaly, so a counter would be noise rather
- * than signal.
- *
- * A per-tier budget on `MaintenanceProfile` (free 8, Node / CF-paid
- * far higher, where the same commit leaves most of a 9,000-call ledger
- * limit) would buy real coverage back on the larger tiers. Not built: it
- * widens the profile surface for a best-effort cleanup path whose
- * backstop already exists.
- *
- * @see packages/server/src/writer.ts (`Writer#readPreImage`)
- */
-export const PREIMAGE_SCAN_MAX_GETS: number = 8;
-
-/**
- * Sequence-distance safety window retained below `log_seq_start` before
- * `log/<seq>.json` objects become retirable.
- *
- * `Writer#readPreImage` is the only production reader deliberately allowed
- * below the manifest floor it observed. Its reach is capped by
- * {@link PREIMAGE_SCAN_MAX_GETS}; the 128x multiplier gives the current 8-GET
- * reach a 1024-sequence window while keeping that relationship explicit if the
- * pre-image budget changes.
+ * Folded entries stay readable below the floor for this long, which is what a
+ * windowed commit (`Writer#readFoldedWindow`, for an insert guard or an
+ * admission re-check whose read predates a fold) needs to finish rather than
+ * refuse with `WriteConflict`; it reads at most the entries a fold absorbed
+ * between two reads in one request, far fewer than 1024. The value is a
+ * literal: it carries no derivation, and shrinking it is a measured change of
+ * its own.
  *
  * **This window is NOT a paused-writer fence, and no safety property may be
- * derived from it.** It is a pre-image cost margin and a rate limit on how fast
+ * derived from it.** It is a cost margin and a rate limit on how fast
  * retirement approaches the live floor — nothing more. The withdrawn argument
  * was that a certified-deleted slot needs `log_seq_start` to advance by more
  * than this window "during one in-flight commit". The arithmetic is correct and
  * the quantifier is vacuous: one in-flight commit bounds no wall-clock and no
  * commit count, so this is a rate x duration assumption expressed in sequences,
  * the same class as `GC_GRACE_PERIOD_MILLIS` in seconds. Lowering the value on
- * cost grounds costs pre-image coverage and retirement smoothness; it does not
- * weaken a safety proof, because there was never one here.
+ * cost grounds costs windowed-commit headroom and retirement smoothness; it
+ * does not weaken a safety proof, because there was never one here.
  *
  * Withdrawing the claim does not leave the schedule open, because the commit
  * path closes it directly. After the committing `log/<seq>` create resolves,
@@ -383,7 +328,7 @@ export const PREIMAGE_SCAN_MAX_GETS: number = 8;
  * @see docs/spec/sync-protocol.md invariant 12
  * @see docs/adr/002-ephemeral-coordination.md § Closed paths
  */
-export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
+export const LOG_RETENTION_SEQ_WINDOW: number = 1024;
 
 /**
  * Maximum log-object DELETEs a retention pass may attempt on one write tick.
@@ -771,28 +716,31 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
  * the tail passes ~41.
  *
  * **Derivation of 7.** From `request-counts.json` (100-doc snapshot, live
- * tail `t`, `I >= 1` indexes): an insert costs `7 + t + I`. An update can
- * spend all 8 pre-image GETs AND find an old image, deleting `I` stale
- * markers as well as PUTting `I` new markers: `15 + t + 2I`. A cold update
- * spends the same GETs but finds no image, so it misses those DELETEs.
- * A fold of `e` entries costs `6 + e`. A fold and GC never share a tick
- * (`phasesPerTick: "single"`), so a request costs its route plus one of:
+ * tail `t`): an insert, an update and a delete each cost `7 + t`, whatever
+ * indexes the collection declares; the commit's only write is its log
+ * create. A fold of `e` entries costs `6 + e`. A fold and GC never share a
+ * tick (`phasesPerTick: "single"`), so a request costs its route plus one
+ * of:
  *
  * - the fold, triggered at tail `T`, or `T + 1` when the hard-GC guard
- *   pre-empts it: at most `22 + 2T + 2I`, 42 at `T = 7`, `I = 3`;
+ *   pre-empts it: at most `14 + 2T`, 28 at `T = 7`;
  * - a GC slice sweeping `D` = {@link CF_FREE_FETCH_GC_MAX_SWEEPS} due
  *   snapshots, plus log retirement, including a write whose tail reaches
  *   `T + 1` while the hard-GC guard pre-empts the fold.
  *
  * Plus one Cache API `delete` (which shares the subrequest quota) on a
- * PATCH or DELETE. The `free-fetch:*` cells measure cold updates and
- * rotations at every pre-image scan depth, through a full cycle of fold
- * and GC phases with every GC slice sweeping its cap. At `I = 3` the
- * worst is 44 + 1 = 45 at `T = 7`, `D = 3`. `T = 8`, `D = 2` also fits
- * but only matches snapshot creation at the guaranteed GC cadence;
- * `T = 7`, `D = 3` leaves sweep throughput headroom.
- * The longest live tail a read then sees is `T + 1` = 8: any read, indexed
- * or not (`$in` included), costs 11, plus 2 Cache API calls for a GET by id.
+ * PATCH or DELETE. The `free-fetch:*` cells measure inserts, cold updates
+ * and a mixed rotation through a full cycle of fold and GC phases with
+ * every GC slice sweeping its cap; the worst is 30 + 1 = 31 at `T = 7`,
+ * `D = 3`, set by the GC arm. `T = 8`, `D = 2` would only match snapshot
+ * creation at the guaranteed GC cadence; `T = 7`, `D = 3` leaves sweep
+ * throughput headroom. The 14 calls of room left are deliberately unspent:
+ * a later fold trigger moves the snapshot-creation rate, the GC throughput
+ * argument on {@link CF_FREE_FETCH_GC_MAX_SWEEPS} and the documented Free +
+ * S3 envelope, so raising `T` is a measured change of its own.
+ * The longest live tail a read then sees is `T + 1` = 8: any read, with or
+ * without declared indexes (`$in` included), costs 11, plus 2 Cache API
+ * calls for a GET by id.
  * Retried calls (up to `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this
  * budget: that host is best effort.
  *
@@ -811,9 +759,11 @@ export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 7;
  * when storage is reached through `fetch`; replaces
  * {@link WRITE_TICK_GC_MAX_SWEEPS} (10) there. Each DELETE is one of the
  * request's external subrequests, and a full 10-delete slice on top of the
- * write that dispatched it exceeds the 45-call budget. 3 is the largest
- * sweep for which every `free-fetch:*` cell fits at
- * {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} (derivation there).
+ * write that dispatched it exceeds the 45-call budget at the tail lengths a
+ * write tick folds from. At 3 every `free-fetch:*` cell fits with room to
+ * spare at {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} (derivation there);
+ * the sweep stays at 3 because it is sized by the throughput argument below,
+ * which a larger sweep only widens.
  *
  * **Sweep throughput must outrun the fold rate.** Every landed fold
  * replaces one snapshot, so a collection produces at most one sweep
@@ -1212,18 +1162,18 @@ export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Pre-provisioned, unindexed, first-attempt Class A commit floor.
+ * Pre-provisioned, first-attempt Class A commit floor, whatever indexes the
+ * collection declares.
  *
  * The floor is the sole committing `log/<seq>` create
- * (`If-None-Match: "*"`). It is not a ceiling: provisioning, additive
- * and stale index-marker mutations, contention/retries, and in-band
- * maintenance can add Class A operations.
+ * (`If-None-Match: "*"`). It is not a ceiling: provisioning,
+ * contention/retries, and in-band maintenance can add Class A operations.
  *
  * @see tests/integration/http-cost-shape.test.ts
  * @see packages/server/src/writer.test.ts
  * @see tests/integration/write-amp.test.ts
  */
-export const UNINDEXED_COMMIT_CLASS_A_FLOOR: number = 1;
+export const COMMIT_CLASS_A_FLOOR: number = 1;
 
 /**
  * Canonical auth posture identifiers consumed by `BaerlyAppConfig.auth`,
