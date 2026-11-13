@@ -88,8 +88,8 @@ const insertBodyFor = (id: string, k: number): DocumentData => ({
 
 /**
  * Indexes covering every op's predicate: `_id` for the by-id verbs and
- * `status` for the batch ops. Pass them to run the workload with every
- * write maintaining markers that a read must not trust for membership.
+ * `status` for the batch ops. Pass them to run the workload on a `Db` that
+ * declares them; declared indexes must change no verb's selection.
  */
 export const RMW_INDEXES: readonly IndexDefinition[] = [
   { name: "by_id", on: "_id" },
@@ -394,7 +394,7 @@ export const assertEvalPlanQualHistory = async (
       rows: Object.fromEntries(live),
     },
   );
-  // Reads on a `Db` declaring `indexes` see the same fold, whatever markers survived.
+  // Reads on a `Db` declaring `indexes` see the same fold.
   const indexed = collectionOn(storage, indexes);
   const byPredicate = await indexed.where(BATCH_WHERE).all();
   const byId = await Promise.all(RMW_IDS.map((id) => indexed.get(id)));

@@ -3,10 +3,10 @@ import { createCurrentJson, MemoryStorage, type Storage } from "@baerly/protocol
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { loadMaterialisedView } from "../../packages/cli/src/export/index.ts";
-import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
+import { legacyIndexMarkerKeys, seedLegacyIndexMarkers } from "../fixtures/legacy-index-markers.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
-test("copying a legacy row to a fresh NFC id preserves its index after deleting the original", async () => {
+test("copying a legacy row to a fresh NFC id keeps it queryable after deleting the original", async () => {
   // Model R2's canonical-equivalent object keys without requiring credentials.
   const base = new MemoryStorage({ ephemeral: true });
   const storage: Storage = {
@@ -20,11 +20,10 @@ test("copying a legacy row to a fresh NFC id preserves its index after deleting 
   const legacyId = "legacy-n\u0303";
   const body = { _id: legacyId, kind: "same" };
   await createCurrentJson(storage, `${prefix}/current.json`, logStateCurrentJson());
-  // Seed bytes from the release that still allowed non-NFC writes.
+  // Seed bytes from the release that still allowed non-NFC writes, its
+  // (now inert) index marker included.
   await seedLogEntry(storage, prefix, 0, { collection: "rows", doc_id: legacyId, after: body });
-  for (const key of allIndexKeysFor(prefix, indexes, body, legacyId)) {
-    await storage.put(key, new Uint8Array());
-  }
+  await seedLegacyIndexMarkers(storage, legacyIndexMarkerKeys(prefix, indexes, body, legacyId));
   const rows = Db.create({
     storage,
     app: "app",
@@ -32,7 +31,7 @@ test("copying a legacy row to a fresh NFC id preserves its index after deleting 
     config: { collections: { rows: { indexes } } },
   }).collection("rows");
   const saved = (await rows.get(legacyId))!;
-  // Omit the old id so the UUID cannot share its canonical marker key.
+  // Omit the old id so the copy gets a fresh SDK-minted one.
   const { _id: oldId, ...copy } = saved;
   const { _id: migratedId } = await rows.insert(copy);
   expect(oldId).toBe(legacyId);

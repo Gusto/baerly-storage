@@ -284,14 +284,6 @@ describe("Db.create config derivation", () => {
     // Every row is validated before any commits, so row "a" is untouched.
     await expect(tickets.get("a")).resolves.toMatchObject({ title: "keep" });
   });
-
-  test("derives indexes from config — visible on the collectionReadContext", () => {
-    const config: BaerlyConfig = {
-      collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
-    };
-    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
-    expect(db.collectionReadContext("tickets").indexes.map((i) => i.name)).toEqual(["by_status"]);
-  });
 });
 
 describe("Db → per-request metrics emission", () => {

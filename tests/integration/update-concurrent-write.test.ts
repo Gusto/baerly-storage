@@ -10,7 +10,7 @@
  * `_id`, then releases it, so the peer's entry lands in the verb's commit
  * window `[read tail, own seq)`. Two pause points cover both places the
  * writer re-decides: the verb's own `current.json` read at the start of
- * `Writer.commit` (the window is read before any index marker), and the
+ * `Writer.commit` (the window is read before the first create), and the
  * committing `log/<seq>` create (the peer wins the slot, so the decision
  * re-runs on the lost-race path).
  *
@@ -27,7 +27,6 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import {
   APP,
@@ -38,6 +37,7 @@ import {
   TABLE_PREFIX,
   TENANT,
 } from "../fixtures/maintenance-harness.ts";
+import { listIndexObjects } from "../fixtures/legacy-index-markers.ts";
 import {
   assertEvalPlanQualHistory,
   jitterStorage,
@@ -49,7 +49,7 @@ import {
 } from "../fixtures/same-id-rmw.ts";
 
 const BY_STATUS: IndexDefinition = { name: "by_status", on: "status" };
-/** Projects a key only a rebased post-image carries: the peer's `status` with this write's `n`. */
+/** Matches only a rebased post-image: the peer's `status` with this write's `n`. */
 const BY_STATUS_N: IndexDefinition = { name: "by_status_n", on: ["status", "n"] };
 const INDEXES = [BY_STATUS, BY_STATUS_N];
 
@@ -380,19 +380,13 @@ for (const variant of makeVariants("baerly-update-race-")) {
       });
     });
 
-    // Before its markers, the rebase writes only the rebased post-image's
-    // markers. On the lost create race the markers of the abandoned
-    // post-image are already down and stay as benign orphans (never a
-    // DELETE: it could remove a marker a later writer re-PUT).
-    for (const [label, pause, orphans] of [
-      ["before its index markers", atCommitStart, []],
-      [
-        "on the lost create race",
-        atLogCreate,
-        allIndexKeysFor(TABLE_PREFIX, [BY_STATUS_N], { _id: "r1", n: 1, status: "open" }, "r1"),
-      ],
+    // Declared indexes change nothing: the rebased post-image is read back
+    // under the concurrently changed value, and no index object is written.
+    for (const [label, pause] of [
+      ["at commit start", atCommitStart],
+      ["on the lost create race", atLogCreate],
     ] as const) {
-      test(`a rebased post-image is indexed under the concurrently changed value (${label})`, async () => {
+      test(`a rebased post-image is read under the concurrently changed value (${label})`, async () => {
         await quiet(async () => {
           const { storage, coll } = await setup(true);
           const gated = pause(storage);
@@ -401,10 +395,8 @@ for (const variant of makeVariants("baerly-update-race-")) {
           await coll(storage).update("r1", { status: "closed" });
           gated.release();
           await expect(upd).resolves.toEqual({ ok: { modified: 1 } });
-          // Read through the indexes (the planner picks one for these
-          // equalities), and check the bucket holds the live rows' markers,
-          // the `(closed, 1)` key only the rebased post-image projects
-          // included.
+          // Read through a Db declaring the indexes, the `(closed, 1)`
+          // equality only the rebased post-image matches included.
           await expect(coll(storage).where({ status: "closed" }).all()).resolves.toEqual([
             { _id: "r1", n: 1, status: "closed" },
           ]);
@@ -416,20 +408,12 @@ for (const variant of makeVariants("baerly-update-race-")) {
             "r2",
             "r3",
           ]);
-          const markers: string[] = [];
-          for await (const entry of storage.list(`${TABLE_PREFIX}/index/`)) {
-            markers.push(entry.key);
-          }
-          const live = await coll(storage).all();
-          const expected = live.flatMap((row) =>
-            allIndexKeysFor(TABLE_PREFIX, INDEXES, row, row["_id"] as string),
-          );
-          expect(markers.toSorted()).toEqual([...expected, ...orphans].toSorted());
+          await expect(listIndexObjects(storage, TABLE_PREFIX)).resolves.toEqual([]);
         });
       });
     }
 
-    test("a repeated rebase restores an index marker a peer removed between create attempts", async () => {
+    test("a repeated rebase re-applies the patch over a peer's intervening updates", async () => {
       await quiet(async () => {
         const { storage, coll } = await setup(true);
         const first = atLogCreate(storage);
@@ -443,14 +427,12 @@ for (const variant of makeVariants("baerly-update-race-")) {
         await coll(storage).update("r1", { status: "closed" });
         first.release();
 
-        // The first rebase emitted (closed, 1). A peer uses that same
-        // marker, then removes it before this attempt loses its slot too.
+        // The first rebase targeted (closed, 1). A peer reaches that same
+        // value, then moves off it before this attempt loses its slot too.
         await second.paused;
         await coll(storage).update("r1", { n: 1 });
         await coll(storage).update("r1", { n: 0 });
         const expected = { _id: "r1", n: 1, status: "closed" };
-        const [marker] = allIndexKeysFor(TABLE_PREFIX, [BY_STATUS_N], expected, "r1");
-        await expect(storage.get(marker!)).resolves.toBeNull();
         second.release();
 
         await expect(upd).resolves.toEqual({ ok: { modified: 1 } });

@@ -8,7 +8,6 @@ import {
   type CurrentJsonRead,
   decodeJsonBytes,
   type DocumentData,
-  type IndexDefinition,
   logDeleteFloorOf,
   logObjectKey,
   type LogEntry,
@@ -94,28 +93,17 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * {@link collectionsToMaps} at {@link Db.create} time.
    */
   readonly #schemas: ReadonlyMap<string, SchemaValidator>;
-  /**
-   * Per-collection {@link IndexDefinition}s threaded onto every
-   * {@link CollectionReadContext} this `Db` mints. Only the writer
-   * sees them; reads always fold the complete snapshot and log.
-   *
-   * Derived from `config.collections[*].indexes` via
-   * {@link collectionsToMaps} at {@link Db.create} time.
-   */
-  readonly #indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
 
   private constructor(
     app: string,
     tenant: string,
     storage: Storage,
     schemas: ReadonlyMap<string, SchemaValidator>,
-    indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>,
   ) {
     this.app = app;
     this.tenant = tenant;
     this.#storage = storage;
     this.#schemas = schemas;
-    this.#indexes = indexes;
   }
 
   /**
@@ -155,9 +143,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
      *    via {@link collectionsToMaps} — no second hand-off step.
      *    Declared `indexes` are validated here (a malformed one throws
      *    `SchemaError` or `InvalidConfig`) but do not speed up reads
-     *    or change their results. Until the writer stops emitting
-     *    index markers, a write whose row holds an array in an
-     *    indexed field throws `SchemaError`.
+     *    or change their results or costs.
      *
      * @example
      * ```ts
@@ -181,18 +167,12 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     for (const name of Object.keys(config.config?.collections ?? {})) {
       assertKeySegment(name, "collection", "Db.create");
     }
-    // Always derive runtime maps from `config.collections`. Absent
-    // config ⇒ empty maps (no schemas, no indexes); the kernel
-    // behaves the same as a config with `collections: {}`.
+    // Always derive runtime maps from `config.collections` (which also
+    // validates every index declaration). Absent config ⇒ no schemas;
+    // the kernel behaves the same as a config with `collections: {}`.
     const derived =
       config.config !== undefined ? collectionsToMaps(config.config.collections) : undefined;
-    return new Db<TConfig>(
-      app,
-      tenant,
-      storage,
-      derived?.schemas ?? new Map(),
-      derived?.indexes ?? new Map(),
-    );
+    return new Db<TConfig>(app, tenant, storage, derived?.schemas ?? new Map());
   }
 
   /**
@@ -256,7 +236,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       storage: this.#storage,
       collectionPrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       collectionName: name,
-      indexes: this.#indexes.get(name) ?? [],
       ...(schema !== undefined ? { schema } : {}),
     };
   }

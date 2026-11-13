@@ -50,7 +50,6 @@ const seedRows = async (storage: Storage, count: number): Promise<void> => {
   const writer = new Writer({
     storage,
     currentJsonKey: CURRENT_JSON_KEY,
-    options: { indexes: [{ name: "by_status", on: "status" }] },
   });
   for (let i = 0; i < count; i++) {
     await writer.commit({

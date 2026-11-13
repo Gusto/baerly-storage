@@ -24,6 +24,10 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
+import {
+  legacyIndexMarkerKeys,
+  seedLegacyIndexMarkers,
+} from "../../../tests/fixtures/legacy-index-markers.ts";
 import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
@@ -348,9 +352,8 @@ describe("insert: the first I for an _id wins", () => {
   });
 
   test("an index on _id does not move the check read off the full fold", async () => {
-    // On the index-walk path the read LISTs markers before it probes the
-    // tail, so an insert landing between the two sits below the reported
-    // tail without being folded. The insert check must not trust that tail.
+    // A peer's insert lands while the check read's tail probe is parked;
+    // the commit-time window still sees it, whatever indexes are declared.
     const inner = new MemoryStorage();
     const config = { collections: { [COLL]: { indexes: [{ name: "by_id", on: "_id" }] } } };
     const aGate = gatedStorage(inner);
@@ -369,38 +372,25 @@ describe("insert: the first I for an _id wins", () => {
     await expect(opsFor(inner)).resolves.toEqual(["I"]);
   });
 
-  test("a live row whose _id marker a raced stale-marker DELETE removed still blocks an insert", async () => {
-    // Index completeness is not guaranteed: A's delete of the row DELETEs
-    // its `by_id` marker after committing, and that DELETE lands after B's
-    // re-insert re-PUT the same marker (swallowed as a 412, the marker
-    // still existed). The re-inserted row is live with no marker, so an
-    // index-routed check read would miss it and a third insert would
-    // commit a second live `I`. The check folds the log instead.
+  test("legacy _id markers that miss a live row do not let a second insert commit", async () => {
+    // A bucket upgraded from a release that wrote index markers: the live
+    // row has no `by_id` marker and a ghost id has one. The check folds the
+    // log, so the legacy corpus changes nothing.
     const inner = new MemoryStorage();
     const config = { collections: { [COLL]: { indexes: [{ name: "by_id", on: "_id" }] } } };
-    const aGate = gatedStorage(inner);
-    const a = Db.create({ storage: aGate.storage, app: APP, tenant: TENANT, config });
     const b = Db.create({ storage: inner, app: APP, tenant: TENANT, config });
     await insert(b, { _id: ID, by: "B1" });
-    const held = aGate.hold((op, key) => op === "delete" && key.includes("/index/by_id/"));
+    await seedLegacyIndexMarkers(
+      inner,
+      legacyIndexMarkerKeys(PREFIX, config.collections[COLL].indexes, { _id: "ghost" }, "ghost"),
+    );
 
-    const deleting = runWithContext(MAINTENANCE_OFF, () => a.collection(COLL).delete(ID));
-    await held.reached;
-    await insert(b, { _id: ID, by: "B2" });
-    held.release();
-    await deleting;
-    const markers: string[] = [];
-    for await (const item of inner.list(`${PREFIX}/index/by_id/`)) {
-      markers.push(item.key);
-    }
-    expect(markers).toEqual([]);
-    await expect(opsFor(inner)).resolves.toEqual(["I", "D", "I"]);
-
-    await expect(insert(b, { _id: ID, by: "B3" })).rejects.toMatchObject({
+    await expect(insert(b, { _id: ID, by: "B2" })).rejects.toMatchObject({
       code: "AlreadyExists",
       _id: ID,
     });
-    await expect(opsFor(inner)).resolves.toEqual(["I", "D", "I"]);
+    await expect(insert(b, { _id: "ghost" })).resolves.toEqual({ _id: "ghost" });
+    await expect(opsFor(inner)).resolves.toEqual(["I"]);
   });
 
   test("an insert after a delete of the _id lands", async () => {
