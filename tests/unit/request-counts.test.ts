@@ -19,7 +19,13 @@ import {
   requestCountingStorage,
   totalCalls,
 } from "../fixtures/request-counting-storage.ts";
-import { MemoryStorage } from "@baerly/protocol";
+import {
+  CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+  CF_FREE_FETCH_GC_MAX_SWEEPS,
+  GC_STARVATION_GUARD,
+  MemoryStorage,
+  WRITE_TICK_GC_INTERVAL,
+} from "@baerly/protocol";
 
 describe("request-counts.json", () => {
   test("every grid cell issues exactly its committed storage calls", async () => {
@@ -33,6 +39,11 @@ describe("request-counts.json", () => {
 });
 
 describe("Workers Free with storage over fetch", () => {
+  test("guaranteed GC sweep throughput exceeds snapshot creation", () => {
+    expect(CF_FREE_FETCH_GC_MAX_SWEEPS * CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES).toBeGreaterThan(
+      WRITE_TICK_GC_INTERVAL * GC_STARVATION_GUARD,
+    );
+  });
   // Each `free-fetch:*` cell is a whole request, route plus the tick it
   // dispatches; the Worker's Cache API calls share the same quota.
   test.each(INDEX_COUNTS)(

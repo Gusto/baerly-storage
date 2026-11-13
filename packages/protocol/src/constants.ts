@@ -568,28 +568,31 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  * alone costs 57 calls, so the fold never fits and every read fails once
  * the tail passes ~41.
  *
- * **Derivation of 9.** From `request-counts.json` (100-doc snapshot, live
- * tail `t`, `I >= 1` indexes): an insert costs `7 + t + I`, the update
- * worst case (pre-image outside the 8-GET walk) `15 + t + I`, and a fold of
- * `e` entries `6 + e`. A fold and a GC slice never share a tick
+ * **Derivation of 7.** From `request-counts.json` (100-doc snapshot, live
+ * tail `t`, `I >= 1` indexes): an insert costs `7 + t + I`. An update can
+ * spend all 8 pre-image GETs AND find an old image, deleting `I` stale
+ * markers as well as PUTting `I` new markers: `15 + t + 2I`. A cold update
+ * spends the same GETs but finds no image, so it misses those DELETEs.
+ * A fold of `e` entries costs `6 + e`. A fold and GC never share a tick
  * (`phasesPerTick: "single"`), so a request costs its route plus one of:
  *
- * - the fold, triggered by the write that brings the tail to `T`:
- *   `(15 + (T - 1) + I) + (6 + T) = 20 + 2T + I`, 41 at `T = 9`, `I = 3`;
+ * - the fold, triggered at tail `T`, or `T + 1` when the hard-GC guard
+ *   pre-empts it: at most `22 + 2T + 2I`, 42 at `T = 7`, `I = 3`;
  * - a GC slice sweeping `D` = {@link CF_FREE_FETCH_GC_MAX_SWEEPS} due
- *   snapshots, plus log retirement, on a write whose tail the hard-GC guard
- *   let reach `T + 1` by pre-empting the fold.
+ *   snapshots, plus log retirement, including a write whose tail reaches
+ *   `T + 1` while the hard-GC guard pre-empts the fold.
  *
  * Plus one Cache API `delete` (which shares the subrequest quota) on a
- * PATCH or DELETE. The `free-fetch:*` cells in `request-counts.json`
- * measure the whole request through a full cycle of fold and GC phases,
- * with every GC slice sweeping its full cap. At `I = 3` the worst is
- * 44 + 1 = 45 at `T = 9`, `D = 4`; at `T = 10` the fold alone already
- * exceeds 45, so 9 is the largest trigger that fits. The longest live tail
- * a read then sees is `T + 1` = 10: a GET by id costs 13 + 2 Cache API
- * calls, an indexed `$in` of 16 values 29. Retried calls (up to
- * `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this budget: that host is
- * best effort.
+ * PATCH or DELETE. The `free-fetch:*` cells measure cold updates and
+ * rotations at every pre-image scan depth, through a full cycle of fold
+ * and GC phases with every GC slice sweeping its cap. At `I = 3` the
+ * worst is 44 + 1 = 45 at `T = 7`, `D = 3`. `T = 8`, `D = 2` also fits
+ * but only matches snapshot creation at the guaranteed GC cadence;
+ * `T = 7`, `D = 3` leaves sweep throughput headroom.
+ * The longest live tail a read then sees is `T + 1` = 8: a GET by id
+ * costs 11 + 2 Cache API calls, an indexed `$in` of 16 values 27.
+ * Retried calls (up to `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this
+ * budget: that host is best effort.
  *
  * Changing this value, a fold or GC cost, or the GC cadence moves the
  * `free-fetch:*` cells; `tests/unit/request-counts.test.ts` asserts they
@@ -599,14 +602,14 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  * @see tests/fixtures/request-count-free-fetch.ts
  * @see https://developers.cloudflare.com/workers/platform/limits/#subrequests
  */
-export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 9;
+export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 7;
 
 /**
  * Most replaced snapshots one write-tick GC slice deletes on Workers Free
  * when storage is reached through `fetch`; replaces
  * {@link WRITE_TICK_GC_MAX_SWEEPS} (10) there. Each DELETE is one of the
  * request's external subrequests, and a full 10-delete slice on top of the
- * write that dispatched it exceeds the 45-call budget. 4 is the largest
+ * write that dispatched it exceeds the 45-call budget. 3 is the largest
  * sweep for which every `free-fetch:*` cell fits at
  * {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} (derivation there).
  *
@@ -618,15 +621,15 @@ export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 9;
  * `WRITE_TICK_GC_INTERVAL * GC_STARVATION_GUARD` = 16 commits, so the
  * guaranteed sweep rate alone must cover it:
  *
- *     D / 16 >= 1 / T,  i.e.  D >= 16 / T = 1.8 at T = 9.
+ *     D / 16 > 1 / T,  i.e.  D > 16 / T = 2.3 at T = 7.
  *
- * `D = 4` clears that with more than 2x margin before counting the cadence
+ * `D = 3` clears that with about 31% margin before counting the cadence
  * GC ticks folds do not pre-empt. This sizes the sweep only; it assumes
  * marking keeps pace with the fold rate.
  *
  * @see packages/adapter-cloudflare/src/worker.ts (`cfMaintenanceDispatch`)
  */
-export const CF_FREE_FETCH_GC_MAX_SWEEPS: number = 4;
+export const CF_FREE_FETCH_GC_MAX_SWEEPS: number = 3;
 
 /**
  * `runScheduledMaintenance`'s own `minEntriesToCompact` floor, applied when the

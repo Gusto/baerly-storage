@@ -40,6 +40,7 @@ import {
   type IndexDefinition,
   MAINTENANCE_PROFILE_CF_FREE,
   MemoryStorage,
+  PREIMAGE_SCAN_MAX_GETS,
   GC_STARVATION_GUARD,
   type Storage,
   WRITE_TICK_GC_INTERVAL,
@@ -99,8 +100,13 @@ export const FREE_FETCH_TICK_OPTIONS: InternalBoundedMaintenanceOptions = {
   foldAtTailEntries: CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
 };
 
-export type FreeFetchWrite = "insert" | "update" | "mixed";
-export const FREE_FETCH_WRITES: readonly FreeFetchWrite[] = ["insert", "update", "mixed"];
+export type FreeFetchWrite = "insert" | "update" | "update-rotation" | "mixed";
+export const FREE_FETCH_WRITES: readonly FreeFetchWrite[] = [
+  "insert",
+  "update",
+  "update-rotation",
+  "mixed",
+];
 
 export type FreeFetchRead = "get" | "indexed-query" | "in-query";
 export const FREE_FETCH_READS: readonly FreeFetchRead[] = ["get", "indexed-query", "in-query"];
@@ -202,7 +208,15 @@ export const measureFreeFetchRun = async (
       : (foldAtTailEntries ?? undefined),
   );
   const reads = {} as Record<FreeFetchRead, CallCounts>;
-  for (const kind of FREE_FETCH_WRITES) {
+  // A successful pre-image scan can spend its full GET budget AND delete
+  // every old index marker. Cover every scan depth, including the last
+  // readable entry; cold updates alone never pay those DELETEs.
+  const workloads = FREE_FETCH_WRITES.flatMap<{ kind: FreeFetchWrite; rotation: number }>((kind) =>
+    kind === "update-rotation"
+      ? Array.from({ length: PREIMAGE_SCAN_MAX_GETS }, (_, i) => ({ kind, rotation: i + 1 }))
+      : [{ kind, rotation: SNAPSHOT_DOCS - 1 }],
+  );
+  for (const { kind, rotation } of workloads) {
     const storage = await seed(indexes);
     /**
      * One write request: the route, then its queued tick, both counted.
@@ -256,10 +270,15 @@ export const measureFreeFetchRun = async (
     };
     for (let i = 0; i < writesPerRun; i++) {
       const patch = { f0: `w${i}`, f1: `w${i}`, f2: `w${i}`, n: -i };
-      // A doc not written since its fold: its pre-image is outside the
-      // post-commit walk, the update worst case.
-      const cold = snapId(1 + (i % (SNAPSHOT_DOCS - 1)));
-      const fixedStep: Record<FreeFetchWrite, number> = { insert: 0, update: 1, mixed: i % 4 };
+      // Cold updates exhaust the pre-image scan without a match. Rotating
+      // updates find a prior image and also delete its stale index markers.
+      const target = snapId(1 + (i % rotation));
+      const fixedStep: Record<FreeFetchWrite, number> = {
+        insert: 0,
+        update: 1,
+        "update-rotation": 1,
+        mixed: i % 4,
+      };
       const step = fixedStep[kind];
       const counts = await request(
         (c) => {
@@ -267,12 +286,12 @@ export const measureFreeFetchRun = async (
             return c.insert(docBody(undefined, i));
           }
           if (step === 1) {
-            return c.update(cold, patch);
+            return c.update(target, patch);
           }
           // `mixed` also rewrites one hot doc, whose pre-image is one entry
           // back so its stale markers are DELETEd, and deletes cold docs, so
           // folds and GC ticks land on every kind of write.
-          return step === 2 ? c.update(snapId(0), patch) : c.delete(cold);
+          return step === 2 ? c.update(snapId(0), patch) : c.delete(target);
           // Reads are measured on the `mixed` run only: the trigger, not the
           // write kind, sets the tail a read replays.
         },
@@ -302,6 +321,7 @@ export const FREE_FETCH_BUDGET = 45;
 export const FREE_FETCH_CACHE_API_CALLS: Record<FreeFetchWrite | FreeFetchRead, number> = {
   insert: 0,
   update: 1,
+  "update-rotation": 1,
   mixed: 1,
   get: 2,
   "indexed-query": 0,

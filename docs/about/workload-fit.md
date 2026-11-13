@@ -191,24 +191,24 @@ but the ~10 ms budget is not a guarantee
 `fetch`, and the free plan allows 50 per request, so this host gets a
 lower request envelope than the R2 binding. It is not first-class: no
 zero-config guarantee and no tuning work. The Worker detects this host
-from the storage it is given, folds once 9 writes are pending, and
-deletes at most 4 replaced snapshots per GC slice, so a write and the
+from the storage it is given, folds once 7 writes are pending, and
+deletes at most 3 replaced snapshots per GC slice, so a write and the
 maintenance it triggers fit in one request. The envelope is collections
-up to ~500 documents (512 KiB) with about 1 write per minute sustained
-per collection (~900 per day; bursts are fine), below the ~30/min the R2
-binding and the other hosts take. The request limits, measured with no
+up to ~500 documents (512 KiB) with about 900 writes per day sustained
+per collection (bursts are fine), below the ~30/min the R2 binding and
+the other hosts take. The request limits, measured with no
 retries and 45 calls of the 50 budgeted, are:
 
 | Bound | Free + S3 limit |
 | --- | --- |
 | Indexes per write | 3 |
 | Largest `$in` | 16 values |
-| Pending tail length | 10 entries |
+| Pending tail length | 8 entries |
 
-The write rate comes from GC. Each fold rewrites the snapshot, one per ~9
+The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
 writes, and GC reclaims about 1,000 replaced snapshots per collection per
-7-day grace period. At ~900 writes per day, about 100 folds a day leave
-~700 replaced snapshots in the bucket, at most ~350 MiB for 512 KiB
+7-day grace period. At ~900 writes per day, about 129 folds a day leave
+~900 replaced snapshots in the bucket, at most ~450 MiB for 512 KiB
 snapshots; above that rate, replaced snapshots accumulate.
 
 A read that must replay a longer pending tail, such as one racing a write
