@@ -488,7 +488,7 @@ describe("longPollSince — under a request ledger", () => {
     });
 
   /** A provisioned collection with `rows` unfolded log entries, written with no ledger. */
-  const seeded = async (rows: number): Promise<MemoryStorage> => {
+  const seeded = async (rows: number, tailHint = 0): Promise<MemoryStorage> => {
     const { db, storage } = makeDb();
     await provision(storage);
     await runWithContext(
@@ -499,8 +499,26 @@ describe("longPollSince — under a request ledger", () => {
         }
       },
     );
+    if (tailHint > 0) {
+      // A hint lagging the true tail, as between maintenance refreshes.
+      const cj = await storage.get(currentJsonKey());
+      const parsed = JSON.parse(new TextDecoder().decode(cj!.body)) as CurrentJson;
+      await storage.put(
+        currentJsonKey(),
+        new TextEncoder().encode(JSON.stringify({ ...parsed, tail_hint: tailHint })),
+      );
+    }
     return storage;
   };
+
+  /** The cursor a client holds after reading the entry at `seq`. */
+  const cursorAt = async (storage: MemoryStorage, seq: number): Promise<string> => {
+    const { db } = makeDb(storage);
+    const all = await listEventsSince({ db, collection: TABLE, cursor: "" });
+    return formatCursor(LOG_STATE_GENERATION, all[seq]!.lsn);
+  };
+
+  const seqs = (polled: Polled): number[] => polled.result!.events.map((e) => e.seq);
 
   interface Polled {
     readonly result: SinceResponse | undefined;
@@ -588,7 +606,8 @@ describe("longPollSince — under a request ledger", () => {
     expect(idle.result).toEqual({ events: [], next_cursor: cursor });
     // It held for most of the budget, not one cycle.
     expect(idle.elapsedMs).toBeGreaterThanOrEqual(20_000);
-    expect(idle.ledger.charged.external).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+    // 22 cycles of two: the ledger, not the 25 s timeout, ends it.
+    expect(idle.issued).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT - 1);
     expect(idle.ledger.charged.external).toBe(idle.issued);
 
     // And it keeps syncing: the next request delivers a new write.
@@ -612,6 +631,8 @@ describe("longPollSince — under a request ledger", () => {
     const idle = await poll(storage, cursor, { pool: "internal", stepMs: 500 });
     expect(idle.result).toEqual({ events: [], next_cursor: cursor });
     expect(idle.elapsedMs).toBeGreaterThanOrEqual(25_000);
+    // 26 cycles of two (t = 0, 1, …, 25 s), far inside the 900.
+    expect(idle.issued).toBe(52);
     expect(idle.ledger.charged.internal).toBe(idle.issued);
     expect(idle.ledger.charged.external).toBe(0);
   });
@@ -696,5 +717,69 @@ describe("longPollSince — under a request ledger", () => {
     expect(polled.elapsedMs).toBeGreaterThanOrEqual(1_000);
     expect(polled.issued).toBe(3);
     expect(polled.ledger.charged.external).toBe(3);
+  });
+
+  test("a refusal on the probe's last slot still delivers the entries read before it", async () => {
+    // One throttled GET on the first probe slot spends a retry, so the
+    // probe's last planned slot is refused by the ledger.
+    const inner = await seeded(60);
+    let failed = false;
+    const throttled: MemoryStorage = Object.assign(Object.create(inner) as MemoryStorage, {
+      get: (key: string, opts?: Parameters<MemoryStorage["get"]>[1]) => {
+        if (!failed && key.endsWith("/log/0.json")) {
+          failed = true;
+          return Promise.reject(new BaerlyError("NetworkError", "injected"));
+        }
+        return inner.get(key, opts);
+      },
+    });
+    const first = await poll(throttled, "");
+    expect(first.error).toBeUndefined();
+    expect(failed).toBe(true);
+    // current.json, two attempts at slot 0, slots 1..42: 45 calls.
+    expect(first.issued).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+    expect(seqs(first)).toEqual(Array.from({ length: 43 }, (_, i) => i));
+    // The next request resumes exactly at the refused slot.
+    const next = await poll(inner, first.result!.next_cursor);
+    expect(seqs(next)[0]).toBe(43);
+  });
+
+  test.each([
+    ["behind", 4, Array.from({ length: 25 }, (_, i) => 5 + i), 1 + 5 + 20 + 1],
+    ["ahead of", 20, Array.from({ length: 9 }, (_, i) => 21 + i), 1 + 9 + 1],
+  ])(
+    "a cursor %s a lagging tail_hint gets every later entry, each read once",
+    async (_label, cursorSeq, expected, calls) => {
+      const storage = await seeded(30, 10);
+      const polled = await poll(storage, await cursorAt(storage, cursorSeq));
+      expect(seqs(polled)).toEqual(expected);
+      // Entries below the hint by seq, then the probe from the later of
+      // the hint and the cursor, then the empty slot that ends it.
+      expect(polled.issued).toBe(calls);
+      expect(polled.ledger.charged.external).toBe(calls);
+    },
+  );
+
+  test("an idle poll ahead of a lagging tail_hint costs two calls per cycle", async () => {
+    const storage = await seeded(30, 10);
+    const cursor = await cursorAt(storage, 29);
+    const idle = await poll(storage, cursor, { stepMs: 100 });
+    expect(idle.result).toEqual({ events: [], next_cursor: cursor });
+    // 22 cycles of two, as with the hint at the tail.
+    expect(idle.issued).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT - 1);
+  });
+
+  test("a busy poll behind a lagging tail_hint resumes exactly across requests", async () => {
+    const rows = 100;
+    const storage = await seeded(rows, 37);
+    const seen: number[] = [];
+    let cursor = "";
+    while (seen.length < rows) {
+      const polled = await poll(storage, cursor);
+      expect(polled.issued).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+      seen.push(...seqs(polled));
+      cursor = polled.result!.next_cursor;
+    }
+    expect(seen).toEqual(Array.from({ length: rows }, (_, i) => i));
   });
 });

@@ -45,6 +45,15 @@ export const forwardProbeCap = (pool: RequestPool = "internal"): ForwardProbeCap
     : { slots: LOG_FORWARD_PROBE_CAP, bound: "runaway" };
 };
 
+/**
+ * A storage call refused before it was sent: the request ledger's
+ * `CapacityExceeded`, or a platform subrequest-limit refusal (both carry
+ * `cause.refused`). Nothing was read or changed by the refused call.
+ */
+export const isStorageRefusal = (error: unknown): boolean =>
+  error instanceof BaerlyError &&
+  (error.cause as { refused?: boolean } | undefined)?.refused === true;
+
 export type TailProbeChunk =
   | {
       readonly kind: "exact";
@@ -65,6 +74,11 @@ export type TailProbeChunk =
  * Decode failures throw by default. With tolerant occupancy probing,
  * malformed slots remain occupied, `complete` becomes false, and probing
  * continues to the first missing slot or cap.
+ *
+ * With `stopOnRefusal`, a slot GET refused before it was sent (see
+ * {@link isStorageRefusal}) ends the chunk instead of throwing: an
+ * "at least" chunk whose `lowerBound` is the refused slot, carrying the
+ * entries read before it, so a caller delivering prefixes keeps them.
  */
 export const probeTailChunk = async (
   storage: Storage,
@@ -76,6 +90,8 @@ export const probeTailChunk = async (
     tolerateMalformed?: boolean;
     /** Called with each occupied slot's stored body length before it is decoded; may throw to stop the probe. */
     onBody?: (bytes: number) => void;
+    /** End the chunk at a refused slot GET rather than throw. */
+    stopOnRefusal?: boolean;
   },
 ): Promise<TailProbeChunk> => {
   const cap = opts?.cap ?? LOG_FORWARD_PROBE_CAP;
@@ -85,7 +101,15 @@ export const probeTailChunk = async (
   for (let i = 0; i < cap; i++) {
     const seq = hint + i;
     const key = logObjectKey(logPrefix, seq);
-    const got = await storage.get(key, getOpts);
+    let got;
+    try {
+      got = await storage.get(key, getOpts);
+    } catch (error) {
+      if (opts?.stopOnRefusal === true && isStorageRefusal(error)) {
+        return { kind: "at-least", lowerBound: seq, entries, complete };
+      }
+      throw error;
+    }
     if (got === null) {
       return { kind: "exact", tail: seq, entries, complete };
     }

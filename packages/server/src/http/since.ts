@@ -52,11 +52,11 @@ import {
   MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
   NO_GENERATION,
   parseCursor,
-  type RequestLedger,
   type RequestPool,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
+import { forwardProbeCap, isStorageRefusal } from "../log-tail.ts";
 
 /**
  * Validation regex for an opaque LSN cursor. Matches the shape minted
@@ -183,7 +183,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
   // Room for at least an idle cycle, or the request refuses: an empty
   // 200 here would come back at once and a client re-polling it would
   // spin. The next request has a fresh ledger.
-  const budget = pollBudget(currentRequestLedger());
+  const budget = pollBudget();
   if (budget.left() < IDLE_POLL_CALLS) {
     throw new BaerlyError(
       "MaintenancePending",
@@ -312,40 +312,38 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  * free — `seq` is monotonic across writer sessions.
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
- * collection without erroring). Cursor inside `[0, log_seq_start)`, or
+ * collection without erroring). Under a request ledger that runs out,
+ * the result is a prefix of the entries past the cursor. Cursor inside `[0, log_seq_start)`, or
  * minted in a truncated generation → `BaerlyError{code:"SchemaError"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
-  const polled = await pollOnce(opts, undefined);
+  const polled = await pollOnce(opts, pollBudget());
   return polled.events;
 }
 
 /**
- * The request ledger's room for the long-poll's storage calls. The pool
- * the storage charges is not known up front (the R2 binding charges
- * `internal`, `fetch` storage `external` as well), so until a poll has
- * made a call the room is the smaller of the two; after it, the room in
- * whichever pool that call charged.
+ * The request ledger's room for the long-poll's storage calls, read
+ * through {@link forwardProbeCap}, the same cap every read path sizes its
+ * tail probe with. The pool the storage charges is not known up front
+ * (the R2 binding charges `internal`, `fetch` storage `external` as
+ * well), so until a poll has made a call the room is `external`'s, the
+ * smaller of the two; after it, the room in whichever pool that call
+ * charged. With no ledger, or one that never refuses (Node), the room is
+ * the runaway cap `LOG_FORWARD_PROBE_CAP`, far above any cycle.
  */
 interface PollBudget {
-  /** Calls still allowed. `Infinity` with no ledger or an unlimited one. */
+  /** Calls still allowed this request. */
   left(): number;
   /** Run `fn`, learning the storage's pool from what it charges. */
   observe<T>(fn: () => Promise<T>): Promise<T>;
 }
 
-const pollBudget = (ledger: RequestLedger | undefined): PollBudget => {
+const pollBudget = (): PollBudget => {
   let pool: RequestPool | undefined;
   return {
-    left: (): number => {
-      if (ledger === undefined) {
-        return Infinity;
-      }
-      return pool === undefined
-        ? Math.min(ledger.remaining("internal"), ledger.remaining("external"))
-        : ledger.remaining(pool);
-    },
+    left: (): number => forwardProbeCap(pool ?? "external").slots,
     observe: async <T>(fn: () => Promise<T>): Promise<T> => {
+      const ledger = currentRequestLedger();
       if (ledger === undefined || pool !== undefined) {
         return fn();
       }
@@ -365,15 +363,6 @@ const pollBudget = (ledger: RequestLedger | undefined): PollBudget => {
 };
 
 /**
- * A storage call refused before it was sent: the request ledger's
- * `CapacityExceeded`, or a platform subrequest-limit refusal. Nothing was
- * read or changed, so a budgeted poll ends its cycle with what it has.
- */
-const isRefusal = (error: unknown): boolean =>
-  error instanceof BaerlyError &&
-  (error.cause as { refused?: boolean } | undefined)?.refused === true;
-
-/**
  * The body of {@link listEventsSince}, additionally surfacing the
  * manifest `generation` the poll read.
  *
@@ -388,14 +377,13 @@ const isRefusal = (error: unknown): boolean =>
  * (no events either, so it is never consumed) or when the manifest
  * predates the field.
  *
- * With a `budget`, entry reads and the probe are capped by its room and
- * a refused storage call ends the cycle: the entries read so far come
- * back as a prefix, in order. Without one (the public
- * {@link listEventsSince}) nothing is capped and a refusal throws.
+ * Entry reads and the probe are capped by the budget's room, and a
+ * refused storage call ends the cycle: the entries read so far come back
+ * as a prefix, in order, which a cursor minted from the last one resumes.
  */
 async function pollOnce(
   opts: ListEventsSinceOptions,
-  budget: PollBudget | undefined,
+  budget: PollBudget,
 ): Promise<{ events: LogEntry[]; generation: string | undefined }> {
   const { db, collection, cursor, signal } = opts;
 
@@ -404,9 +392,7 @@ async function pollOnce(
   const entries: LogEntry[] = [];
   let generation: string | undefined;
   try {
-    const read = await (budget === undefined
-      ? db.getCurrentJson(collection, signalOpt(signal))
-      : budget.observe(() => db.getCurrentJson(collection, signalOpt(signal))));
+    const read = await budget.observe(() => db.getCurrentJson(collection, signalOpt(signal)));
     if (read === null) {
       // No collection provisioned yet. Clients polling for a collection that
       // doesn't exist see an empty stream, NOT an error.
@@ -462,7 +448,6 @@ async function pollOnce(
     // At most `DEFAULT_MAX_EVENTS` per cycle (hard ceiling per the
     // module docstring), and at most what the budget has room for.
     const endSeq = startSeq + DEFAULT_MAX_EVENTS;
-    const room = (): number => (budget === undefined ? Infinity : budget.left());
 
     // Entries below the hint the cursor has not seen: GET each by seq.
     // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
@@ -470,7 +455,7 @@ async function pollOnce(
     // memory bounded under pathological workloads.
     let s = startSeq;
     for (; s < Math.min(hint, endSeq); s++) {
-      if (room() < 1) {
+      if (budget.left() < 1) {
         return { events: entries, generation };
       }
       const entry = await db.getLogEntry(collection, s, read.json, signalOpt(signal));
@@ -486,9 +471,10 @@ async function pollOnce(
     // taking each entry the probe passes. Starting at the cursor rather
     // than the hint skips re-reading entries the client already has, so
     // an idle poll costs one probe GET however far the hint lags. An
-    // "at least" chunk (the cap was reached before the tail) is a
-    // delivered prefix; the next poll resumes after its last entry.
-    const cap = Math.min(endSeq - s, room());
+    // "at least" chunk (the cap was reached, or a slot GET was refused,
+    // before the tail) is a delivered prefix; the next poll resumes
+    // after its last entry.
+    const cap = Math.min(endSeq - s, budget.left());
     if (cap >= 1) {
       const chunk = await db.probeLogChunk(collection, s, read.json, {
         cap,
@@ -497,7 +483,7 @@ async function pollOnce(
       entries.push(...chunk.entries);
     }
   } catch (error) {
-    if (budget !== undefined && isRefusal(error)) {
+    if (isStorageRefusal(error)) {
       return { events: entries, generation };
     }
     throw error;
