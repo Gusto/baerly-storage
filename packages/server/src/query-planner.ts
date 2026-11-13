@@ -295,17 +295,10 @@ export const planQuery = (
     return { kind: "full-scan", reason: "predicate-uses-operators-only" };
   }
 
-  // Enumerate every viable candidate over the declared indexes,
-  // then sort with the cost-bias tie-break:
-  //
-  //  (1) Implied filter — a filtered index whose
-  //      `predicateImplies(def.predicate, queryWire)` is `true`
-  //      outranks an unfiltered alternative (sparser key range →
-  //      smaller LIST). An unfiltered index outranks a filtered one
-  //      whose `predicateImplies` is `false` — walking the smaller
-  //      set would miss matching docs.
-  //  (2) Longest total consumed length wins among ties on (1).
-  //  (3) Definition order among ties on (1) and (2).
+  // Enumerate every viable candidate over the declared indexes
+  // (filtered indexes only when the query implies their filter), then
+  // sort: implied-filter indexes first (sparser key range → smaller
+  // LIST), longest consumed length next, definition order last.
   interface Candidate {
     readonly def: IndexDefinition;
     readonly defIndex: number;
@@ -347,6 +340,11 @@ export const planQuery = (
     if (candidateLen === 0) {
       continue;
     }
+    // A filtered index holds only rows inside its filter; walking it
+    // for a query that does not imply the filter would miss matches.
+    if (def.predicate !== undefined && !predicateImplies(def.predicate, wire)) {
+      continue;
+    }
     candidates.push({
       def,
       defIndex,
@@ -359,25 +357,11 @@ export const planQuery = (
     return { kind: "full-scan", reason: "no-matching-index" };
   }
 
-  // Cost-bias rank: 0 = filtered + implied (best), 1 = unfiltered
-  // (mid), 2 = filtered + NOT implied (worst). A filtered candidate
-  // whose filter is NOT implied is STILL eligible — but only as a
-  // last resort. The post-fetch `matchesWire(wire, ...)` re-check
-  // would still drop the rows that fall outside the filter, so the
-  // index walk is unsound for the query (it would silently miss
-  // matching rows that fell outside the filter), and only the
-  // sort order keeps it last.
-  const rank = (c: Candidate): number => {
-    if (c.def.predicate === undefined) {
-      return 1;
-    }
-    return predicateImplies(c.def.predicate, wire) ? 0 : 2;
-  };
   candidates.sort((a, b) => {
-    const aRank = rank(a);
-    const bRank = rank(b);
-    if (aRank !== bRank) {
-      return aRank - bRank;
+    const aFiltered = a.def.predicate !== undefined ? 0 : 1;
+    const bFiltered = b.def.predicate !== undefined ? 0 : 1;
+    if (aFiltered !== bFiltered) {
+      return aFiltered - bFiltered;
     }
     if (b.prefixLen !== a.prefixLen) {
       return b.prefixLen - a.prefixLen;
