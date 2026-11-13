@@ -216,12 +216,13 @@ Two consequences of that budget are accepted on this host:
   update has already spent reading, 9 indexes at a 5-entry tail need
   10 + 36 = 46 calls, one more than 45.
 - **Past a pending tail of about 9 entries, a worst-case update cannot
-  fold.** A tail that long, for example after a burst of concurrent
-  writes, leaves an update that finds and replaces an old index image too
-  few calls for the fold its write tick starts, so the fold is refused
-  partway and lands nothing; the tail does not shorten on that tick.
-  Inserts and cheaper writes still fold it up to a tail of about 14. The
-  R2 binding has the request headroom to fold it.
+  fold.** A fold of an `e`-entry tail costs 6 + `e` calls. A tail that
+  long, for example after a burst of concurrent writes, leaves an update
+  that finds and replaces an old index image (15 + tail + 2 × indexes
+  calls) too few calls for it, so its write tick skips the fold and the
+  tail does not shorten on that tick. Inserts (7 + tail + indexes) and
+  cheaper writes still fold it up to a tail of about 14. The R2 binding
+  has the request headroom to fold it.
 
 The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
 writes, and GC reclaims about 1,000 replaced snapshots per collection per

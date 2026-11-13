@@ -599,6 +599,63 @@ describe.each(POOLS)("a multi-row indexed update under the request ledger (%s po
     expect(dispatchedHolds).toEqual([undefined, undefined]);
     await expect(statuses(lossy)).resolves.toEqual({ a: "closed", b: "closed" });
   });
+
+  test("a write tick running in waitUntil sizes its fold net of the next row's reserve", async () => {
+    const ledger = new RequestLedger(limitsFor(pool, 1000));
+    const ticks: Array<() => Promise<void>> = [];
+    const ctx = createObservabilityContext({
+      ledger,
+      maintenance: {
+        dispatch: (task) => {
+          const from = getCurrentContext()!;
+          ticks.push(async () => {
+            await runWithContext(from, task);
+          });
+        },
+        options: { foldAtTailEntries: 1 } as InternalBoundedMaintenanceOptions,
+      },
+    });
+    let creates = 0;
+    let armed = false;
+    let heldDuringTick: number | undefined;
+    let heldAfterTick: number | undefined;
+    class TickDuringRowB extends MemoryStorage {
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (armed && isLogCreate(key, opts) && key.includes("/log/") && ++creates === 2) {
+          // Row b's create, under its hold: leave 5 requests outside it, so
+          // the gross room fits row a's fold but the room net of the hold
+          // (4 after the tick's manifest read) does not.
+          drain(ledger, pool, 5);
+          heldDuringTick = ledger.held;
+          for (const tick of ticks.splice(0)) {
+            await tick();
+          }
+          heldAfterTick = ledger.held;
+        }
+        return super.put(key, body, opts);
+      }
+    }
+    const inner = await seededTickets(new TickDuringRowB());
+    armed = true;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await closeAll(ledgeredStorage(inner, pool), ctx);
+
+    errorLog.mockRestore();
+    expect(result).toEqual({ modified: 2 });
+    // The hold outweighs the fold's shortfall, so only net sizing skips it.
+    expect(heldDuringTick).toBeGreaterThanOrEqual(COMMIT_RESOLUTION_RESERVE + 2);
+    expect(sumCounter(ctx, "db.maintenance.request_budget_skipped_total", "fold")).toBe(1);
+    expect(sumCounter(ctx, "db.maintenance.request_budget_refused_total")).toBe(0);
+    expect(sumCounter(ctx, "db.maintenance.unexpected_error_total")).toBe(0);
+    // The tick spent nothing of row b's reserve.
+    expect(heldAfterTick).toBe(heldDuringTick);
+    await expect(statuses(inner)).resolves.toEqual({ a: "closed", b: "closed" });
+  });
 });
 
 describe("index-count limit on Workers Free over fetch", () => {
