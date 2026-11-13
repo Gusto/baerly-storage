@@ -511,20 +511,27 @@ limits follow the Workers maintenance profile:
 **Commit-resolution reserve.** Once its committing create is sent, a write
 may still need one occupant readback and the delete-floor `current.json`
 read to know its fate; without room for them, a create that landed but lost
-its reply becomes `AmbiguousCommit`. So before it PUTs any additive index
-marker, the writer requires the ledger to allow
+its reply becomes `AmbiguousCommit`. So each slot's attempt (its additive
+index markers, the create, the readback and the floor read) runs under a
+ledger **hold** of
 `STORAGE_RETRY_MAX_ATTEMPTS × (markers + 1) + COMMIT_RESOLUTION_RESERVE`
-more storage requests (each marker PUT and the create at full retries,
-plus 6 for the readback and the floor read), and refuses with
-`CapacityExceeded`, nothing written, otherwise. After a lost create race the
-forward probe has spent requests, so the same sum (counting markers only
-for a re-decided post-image) is checked again before the next create; a
-refusal there is equally clean, since the foreign occupant proves this
-commit's only send did not land. The reserve is a check, not a hold: work
-running concurrently in the same invocation (a `ctx.waitUntil` tick) can
-still spend it, and the paths above stay safe when it does. Post-commit
-steps (the floor read, the pre-image walk, stale-marker DELETEs, the write
-tick) swallow a refusal and leave the commit acknowledged.
+requests (each marker PUT and the create at full retries, plus 6 for the
+readback and the floor read). The writer takes the hold only if the
+ledger's room, net of other holds, covers it, and otherwise refuses with
+`CapacityExceeded`, nothing written. Only calls made in the attempt's own
+async context draw on the hold; every other call in the invocation, a
+`ctx.waitUntil` write tick of an earlier row included, sees the room net of
+it, so concurrent work cannot spend the reserve. After a lost create race
+the hold is released (the foreign occupant proves this commit's only send
+did not land, so a refusal from there is clean), the forward probe runs,
+and the next slot takes a new hold, counting markers only for a re-decided
+post-image. Only a call outside every hold that the ledger cannot refuse
+(the read cache's post-write invalidation) or a platform cap below the
+ledger's limit can still cut into a hold; then the create resolves as
+described above (`CapacityExceeded` when the create was never sent,
+`AmbiguousCommit` when a sent create cannot be read back). Post-commit
+steps (the pre-image walk, stale-marker DELETEs, the write tick) run
+after the hold and swallow a refusal, leaving the commit acknowledged.
 
 A multi-row update or delete commits row by row, so a refusal part-way
 keeps the rows already committed, commits neither the refused row nor any

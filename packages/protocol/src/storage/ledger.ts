@@ -10,6 +10,48 @@ import { BaerlyError } from "../errors.ts";
  */
 export type RequestPool = "internal" | "external";
 
+/**
+ * Capacity a caller holds on a {@link RequestLedger} for calls it is about
+ * to issue (from {@link RequestLedger.hold}). Calls made with the hold
+ * active (passed to {@link RequestLedger.acquire}; `retryStorageCall` passes
+ * {@link currentRequestHold}) draw on it first; every other call in the
+ * invocation sees the ledger's room net of it, so concurrent work cannot
+ * spend it. Release it once the holder's calls are done; the unspent part
+ * returns to the ledger.
+ */
+export class RequestHold {
+  readonly #ledger: RequestLedger;
+  #left: number;
+
+  /** @internal Created by {@link RequestLedger.hold}. */
+  constructor(ledger: RequestLedger, amount: number) {
+    this.#ledger = ledger;
+    this.#left = amount;
+  }
+
+  /** Held requests not yet spent. */
+  get left(): number {
+    return this.#left;
+  }
+
+  /** @internal `true` when this hold is on `ledger` and has room left. */
+  covers(ledger: RequestLedger): boolean {
+    return this.#ledger === ledger && this.#left > 0;
+  }
+
+  /** @internal Spend one held request. */
+  spend(): void {
+    this.#left -= 1;
+  }
+
+  /** Return the unspent part to the ledger. Idempotent. */
+  release(): void {
+    const left = this.#left;
+    this.#left = 0;
+    this.#ledger.unhold(left);
+  }
+}
+
 /** Per-pool request limits. `Infinity` counts without ever refusing. */
 export interface RequestLedgerLimits {
   readonly internal: number;
@@ -51,6 +93,8 @@ export class RequestLedger {
   // The strictest pool an `acquire` has charged: storage calls run through
   // one adapter per invocation, so this is the pool they draw on.
   #storagePool: RequestPool | undefined;
+  // Unspent requests of every active `RequestHold`.
+  #held = 0;
 
   constructor(limits: RequestLedgerLimits = UNLIMITED_REQUESTS) {
     this.limits = limits;
@@ -61,8 +105,37 @@ export class RequestLedger {
     return { internal: this.#internal, external: this.#external, cache: this.#cache };
   }
 
-  /** Requests still allowed on `pool`. An external request also needs room in `internal`. */
+  /**
+   * Requests still allowed on `pool` to a caller without a hold: the room
+   * left, net of active holds. An external request also needs room in
+   * `internal`.
+   */
   remaining(pool: RequestPool): number {
+    return this.#room(pool) - this.#held;
+  }
+
+  /** Requests held by active holds, not yet spent. */
+  get held(): number {
+    return this.#held;
+  }
+
+  /**
+   * Hold `amount` requests for the caller's next calls; see
+   * {@link RequestHold}. The caller checks {@link storageRemaining} first:
+   * a hold never refuses, and one larger than the room left only blocks
+   * other callers sooner.
+   */
+  hold(amount: number): RequestHold {
+    this.#held += amount;
+    return new RequestHold(this, amount);
+  }
+
+  /** @internal Return `amount` unspent held requests (`RequestHold.release`). */
+  unhold(amount: number): void {
+    this.#held -= amount;
+  }
+
+  #room(pool: RequestPool): number {
     const internal = this.limits.internal - this.#internal;
     return pool === "internal"
       ? internal
@@ -70,8 +143,8 @@ export class RequestLedger {
   }
 
   /**
-   * Requests still allowed on the pool this invocation's storage calls
-   * draw on: `external` once any storage call charged it, else `internal`
+   * Requests still allowed, net of active holds, on the pool this
+   * invocation's storage calls draw on: `external` once any storage call charged it, else `internal`
    * once one charged that, else `Infinity` (no storage call has been
    * charged, so the storage in use does not charge this ledger). A caller
    * that must keep room for its next calls, such as the writer's
@@ -83,16 +156,19 @@ export class RequestLedger {
   }
 
   /**
-   * Charge one request to `pool`, or refuse it before it is sent.
+   * Charge one request to `pool`, or refuse it before it is sent. With an
+   * active `hold` on this ledger the request draws on it (it needs only
+   * room left in `pool`); otherwise it needs room net of active holds.
    *
    * @throws BaerlyError code="CapacityExceeded", cause `{ refused: true }`,
    *   when `pool` has no room. Nothing is charged.
    */
-  acquire(pool: RequestPool): void {
+  acquire(pool: RequestPool, hold?: RequestHold): void {
     if (this.#storagePool !== "external") {
       this.#storagePool = pool;
     }
-    if (this.remaining(pool) < 1) {
+    const held = hold?.covers(this) === true;
+    if ((held ? this.#room(pool) : this.remaining(pool)) < 1) {
       const limit = pool === "internal" ? this.limits.internal : this.limits.external;
       throw new BaerlyError(
         "CapacityExceeded",
@@ -100,6 +176,10 @@ export class RequestLedger {
         // The HTTP envelope fills in the code's canonical resolution.
         { cause: { refused: true, pool, limit } },
       );
+    }
+    if (held) {
+      hold!.spend();
+      this.#held -= 1;
     }
     this.#charge(pool);
   }
@@ -143,3 +223,18 @@ export const setRequestLedgerResolver = (resolver: () => RequestLedger | undefin
 
 /** The ledger of the active invocation, or `undefined` outside one (nothing is charged). */
 export const currentRequestLedger = (): RequestLedger | undefined => resolveLedger();
+
+let resolveHold: () => RequestHold | undefined = () => undefined;
+
+/**
+ * Register how {@link currentRequestHold} finds the active hold, as
+ * {@link setRequestLedgerResolver} does for the ledger. The server scopes a
+ * hold to the async context of the work it covers, so work started outside
+ * that context (a `ctx.waitUntil` tick) never draws on it.
+ */
+export const setRequestHoldResolver = (resolver: () => RequestHold | undefined): void => {
+  resolveHold = resolver;
+};
+
+/** The hold active in this async context, if any; `retryStorageCall` charges against it. */
+export const currentRequestHold = (): RequestHold | undefined => resolveHold();

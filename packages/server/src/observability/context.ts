@@ -40,7 +40,12 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { type RequestLedger, setRequestLedgerResolver } from "@baerly/protocol";
+import {
+  type RequestHold,
+  type RequestLedger,
+  setRequestHoldResolver,
+  setRequestLedgerResolver,
+} from "@baerly/protocol";
 // Type-only import — `maintenance.ts` imports this module's runtime
 // values (`getCurrentContext`), so a value import here would form a
 // runtime cycle. A type-only edge erases at build time, so tsgo /
@@ -85,6 +90,13 @@ export interface ObservabilityContext {
    * does not fit is refused before it is sent. Absent ⇒ nothing is charged.
    */
   readonly ledger?: RequestLedger;
+  /**
+   * A hold on `ledger` that storage calls in this context draw on first.
+   * Set only by the writer, on a child context scoped to one commit slot's
+   * calls (`Writer#withCommitHold`); work dispatched from outside that
+   * scope never sees it.
+   */
+  readonly hold?: RequestHold;
 }
 
 /**
@@ -136,6 +148,7 @@ const als = new AsyncLocalStorage<ObservabilityContext>();
 // Adapters import only `@baerly/protocol`, so `retryStorageCall` finds the
 // active invocation's ledger through this resolver.
 setRequestLedgerResolver(() => als.getStore()?.ledger);
+setRequestHoldResolver(() => als.getStore()?.hold);
 
 /**
  * Run `fn` with `ctx` active as the current observability context.

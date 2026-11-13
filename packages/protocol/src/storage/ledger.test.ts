@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CF_CACHE_API_MAX_CALLS } from "../constants.ts";
 import { BaerlyError } from "../errors.ts";
-import { RequestLedger, currentRequestLedger, setRequestLedgerResolver } from "./ledger.ts";
+import {
+  RequestLedger,
+  currentRequestLedger,
+  setRequestHoldResolver,
+  setRequestLedgerResolver,
+} from "./ledger.ts";
 import { retryStorageCall } from "./retry.ts";
 
 const noSleep = async (): Promise<void> => {};
@@ -211,5 +216,54 @@ describe("RequestLedger.storageRemaining", () => {
     const ledger = new RequestLedger({ internal: 0, external: 0 });
     expect(() => ledger.acquire("internal")).toThrow(BaerlyError);
     expect(ledger.storageRemaining()).toBe(0);
+  });
+});
+
+describe("RequestLedger.hold", () => {
+  test("held requests are spendable only through the hold", () => {
+    const ledger = new RequestLedger({ internal: 5, external: Infinity });
+    ledger.acquire("internal");
+    const hold = ledger.hold(3);
+    expect(ledger.storageRemaining()).toBe(1);
+    ledger.acquire("internal");
+    expect(() => ledger.acquire("internal")).toThrow(BaerlyError);
+    ledger.acquire("internal", hold);
+    ledger.acquire("internal", hold);
+    ledger.acquire("internal", hold);
+    expect(hold.left).toBe(0);
+    expect(() => ledger.acquire("internal", hold)).toThrow(BaerlyError);
+  });
+
+  test("release returns the unspent part, once", () => {
+    const ledger = new RequestLedger({ internal: 10, external: 10 });
+    const hold = ledger.hold(4);
+    ledger.acquire("external", hold);
+    expect(ledger.remaining("external")).toBe(6);
+    hold.release();
+    hold.release();
+    expect(ledger.held).toBe(0);
+    expect(ledger.remaining("external")).toBe(9);
+  });
+
+  test("a hold on another ledger does not lift this one's holds", () => {
+    const ledger = new RequestLedger({ internal: 2, external: 2 });
+    const other = new RequestLedger({ internal: 2, external: 2 }).hold(2);
+    ledger.hold(2);
+    expect(() => ledger.acquire("external", other)).toThrow(BaerlyError);
+  });
+
+  test("retryStorageCall charges the active hold, and an optional cache call cannot dip into it", async () => {
+    const ledger = new RequestLedger({ internal: 3, external: 3 });
+    active = ledger;
+    const hold = ledger.hold(3);
+    expect(ledger.chargeCacheCall()).toBe(false);
+    setRequestHoldResolver(() => hold);
+    try {
+      await retryStorageCall(async () => "ok");
+    } finally {
+      setRequestHoldResolver(() => undefined);
+    }
+    expect(hold.left).toBe(2);
+    expect(ledger.charged.external).toBe(1);
   });
 });

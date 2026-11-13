@@ -39,9 +39,9 @@
  *     `collection` and `phase` (`delete-floor-check` / `pre-image-read` /
  *     `stale-delete`). The request ledger refused a storage call of a step
  *     that runs after a known commit; the step was skipped and the commit
- *     stands. The commit-resolution reserve covers the floor check, so a
- *     `delete-floor-check` rate means concurrent work in the same
- *     invocation spent it.
+ *     stands. The floor check runs inside the commit's ledger hold, so a
+ *     `delete-floor-check` count means a call outside every hold, or a
+ *     platform cap below the ledger's limit, cut into it.
  *   - `db.write.unresolved_create_total` — counter, labelled by
  *     `collection`. A rejected committing create could not be resolved by
  *     readback, so the commit failed with `AmbiguousCommit`.

@@ -102,7 +102,7 @@ import { findLogTail, probeTailFrom } from "./log-tail.ts";
 import { tryAdoptOwnSessionLogEntry } from "./log-conflict-adoption.ts";
 import { dispatchWriteTick, shouldFireMaintenance } from "./maintenance.ts";
 import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
-import { getCurrentContext } from "./observability/context.ts";
+import { getCurrentContext, runWithContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 import { isOwnCollection } from "./collection-alias.ts";
 
@@ -779,12 +779,12 @@ export class Writer {
       }
       await Promise.all(parallelPuts);
     };
-    // The commit-resolution reserve (`COMMIT_RESOLUTION_RESERVE`): refuse
-    // here, with nothing written, unless the request ledger can still
-    // afford every marker PUT, the create, and the calls that resolve it.
-    const firstKeys = newKeysFor(body);
-    this.#assertCommitBudget(firstKeys.length, errorPrefix);
-    await putNewKeys(firstKeys);
+    // The commit-resolution reserve (`COMMIT_RESOLUTION_RESERVE`): each
+    // slot's attempt below (its new markers, the create, the readback, and
+    // on a resolved commit the Step 5a floor check) runs under a request
+    // ledger hold of everything it may spend, taken only if it fits;
+    // otherwise `CapacityExceeded`, with nothing of the attempt sent.
+    let slotKeys: readonly string[] = newKeysFor(body);
 
     // ── Step 5. Create the commit: PUT log/<seq> via If-None-Match. ─
     // The numbered log create IS the commit (single-write commit). No
@@ -809,7 +809,7 @@ export class Writer {
     //     because an absent slot cannot prove an in-flight send won't land.
     // A lost ack resolves without a resend: the adapter's own next attempt
     // sees the landed object as a 412, or the readback finds it.
-    let committedEntry: LogEntry = entry;
+    let committedEntry: LogEntry;
     let probes = 0;
     const ambiguous = (cause: unknown): BaerlyError => {
       ctxMetrics().counter("db.write.unresolved_create_total", 1, {
@@ -822,71 +822,106 @@ export class Writer {
       );
     };
     for (;;) {
-      const logEntryKey = logObjectKey(logPrefix, seq);
-      assertKeyWithinLimit(logEntryKey);
-      // Encoded outside the try: an unencodable entry is the caller's
-      // error, and no send was made that a readback would need to resolve.
-      const entryBody = encodeJsonBytes(entry);
-      let createFailure: unknown;
-      let notApplied = false;
-      try {
-        await this.#storage.put(logEntryKey, entryBody, {
-          ifNoneMatch: "*",
-          contentType: APPLICATION_JSON,
-        });
-        committedEntry = entry;
+      const outcome = await this.#withCommitHold(
+        slotKeys.length,
+        errorPrefix,
+        async (): Promise<{ committed: LogEntry } | { foreign: LogEntry }> => {
+          await putNewKeys(slotKeys);
+          const logEntryKey = logObjectKey(logPrefix, seq);
+          assertKeyWithinLimit(logEntryKey);
+          // Encoded outside the try: an unencodable entry is the caller's
+          // error, and no send was made that a readback would need to resolve.
+          const entryBody = encodeJsonBytes(entry);
+          let resolved: LogEntry | undefined;
+          let createFailure: unknown;
+          let notApplied = false;
+          try {
+            await this.#storage.put(logEntryKey, entryBody, {
+              ifNoneMatch: "*",
+              contentType: APPLICATION_JSON,
+            });
+            resolved = entry;
+          } catch (error) {
+            createFailure = error;
+            this.#observe429(error, entry.collection);
+            if (isWriteConflict(error)) {
+              ctxMetrics().counter("db.r2.put.412_total", 1, {
+                collection: entry.collection,
+                step: "log-put",
+              });
+              // Even a visible 412 can be our entry: the adapter may have
+              // retried a landed send internally.
+            } else if (isDefinitiveCreateRejection(error)) {
+              // `Storage.put` contract: no attempt of this call was applied,
+              // and this is the slot's only send, so nothing of ours is at
+              // `seq`.
+              throw error;
+            } else if (isCreateNotApplied(error)) {
+              // A throttle can hide a lost race (R2 can answer a same-key
+              // create race with a 429, not a 412), so the readback still
+              // tells a peer's slot from an empty one.
+              notApplied = true;
+            }
+          }
+          if (resolved === undefined) {
+            let occupant: LogEntry;
+            let decision: ReturnType<typeof tryAdoptOwnSessionLogEntry>;
+            try {
+              occupant = await this.#readLogOccupant(logEntryKey);
+              decision = tryAdoptOwnSessionLogEntry({ self: entry, existing: occupant });
+            } catch (error) {
+              if (notApplied) {
+                // The adapter guarantees no attempt applied or can still
+                // apply. An empty, unreadable, or malformed slot cannot make
+                // retry unsafe.
+                throw createFailure;
+              }
+              throw ambiguous(
+                new AggregateError(
+                  [createFailure, error],
+                  "The create and its readback could not be resolved",
+                ),
+              );
+            }
+            if (!decision.adopt) {
+              return { foreign: occupant };
+            }
+            // Own crashed/lost-ack commit already durable at `seq`. Adopt it
+            // (byte-identical to the attempted `entry`, INCLUDING
+            // `commit_ts` — adoption compares the full entry) — the logical
+            // write lands at EXACTLY `seq`, never duplicated. Step 5b still
+            // runs: the adopted attempt may have died after the create but
+            // before the stale-key cleanup, so the (idempotent) cleanup must
+            // still run.
+            resolved = decision.entry;
+          }
+          // ── Step 5a. Refuse a create that re-filled a retired hole. ─────
+          // Both resolved paths above land here with the resolved committing
+          // `seq`: the fresh win and the own-session adoption. This check
+          // runs BEFORE Step 5b on purpose — an invisible commit must not
+          // get to delete the OLD value's index keys, because the doc's
+          // live value may still BE that old value, and de-indexing it
+          // would be the one failure the hybrid emission polarity exists to
+          // prevent (invariant 7).
+          await this.#assertCommitAboveDeleteFloor(
+            logPrefix,
+            seq,
+            input.collection,
+            input.docId,
+            errorPrefix,
+          );
+          return { committed: resolved };
+        },
+      );
+      if ("committed" in outcome) {
+        committedEntry = outcome.committed;
         break;
-      } catch (error) {
-        createFailure = error;
-        this.#observe429(error, entry.collection);
-        if (isWriteConflict(error)) {
-          ctxMetrics().counter("db.r2.put.412_total", 1, {
-            collection: entry.collection,
-            step: "log-put",
-          });
-          // Even a visible 412 can be our entry: the adapter may have
-          // retried a landed send internally.
-        } else if (isDefinitiveCreateRejection(error)) {
-          // `Storage.put` contract: no attempt of this call was applied, and
-          // this is the slot's only send, so nothing of ours is at `seq`.
-          throw error;
-        } else if (isCreateNotApplied(error)) {
-          // A throttle can hide a lost race (R2 can answer a same-key create
-          // race with a 429, not a 412), so the readback still tells a
-          // peer's slot from an empty one.
-          notApplied = true;
-        }
       }
-      let occupant: LogEntry;
-      let decision: ReturnType<typeof tryAdoptOwnSessionLogEntry>;
-      try {
-        occupant = await this.#readLogOccupant(logEntryKey);
-        decision = tryAdoptOwnSessionLogEntry({ self: entry, existing: occupant });
-      } catch (error) {
-        if (notApplied) {
-          // The adapter guarantees no attempt applied or can still apply.
-          // An empty, unreadable, or malformed slot cannot make retry unsafe.
-          throw createFailure;
-        }
-        throw ambiguous(
-          new AggregateError(
-            [createFailure, error],
-            "The create and its readback could not be resolved",
-          ),
-        );
-      }
-      if (decision.adopt) {
-        // Own crashed/lost-ack commit already durable at `seq`. Adopt it
-        // (byte-identical to the attempted `entry`, INCLUDING `commit_ts`
-        // — adoption compares the full entry) — the logical write lands at
-        // EXACTLY `seq`, never duplicated. Fall through to Step 5b: the
-        // adopted attempt may have died after the create but before the
-        // stale-key cleanup, so the (idempotent) cleanup must still run.
-        committedEntry = decision.entry;
-        break;
-      }
+      const occupant = outcome.foreign;
       // Foreign session (or wrong seq) — re-probe forward from seq+1 and
-      // create at the new first-empty slot, re-minting seq + LSN.
+      // create at the new first-empty slot, re-minting seq + LSN. The hold
+      // is released: the occupant proves nothing of this commit landed, so
+      // a refusal from here to the next hold is clean.
       if (++probes > LOG_FORWARD_PROBE_CAP) {
         throw new BaerlyError(
           "Internal",
@@ -895,10 +930,7 @@ export class Writer {
       }
       if (commitWindow === undefined) {
         seq = await findLogTail(this.#storage, logPrefix, seq + 1);
-        // The probe spent requests: re-check the reserve before the next
-        // create. A refusal is clean, as the occupant proved nothing of
-        // this commit landed.
-        this.#assertCommitBudget(0, errorPrefix);
+        slotKeys = [];
       } else {
         // Windowed commit: the occupant and every entry the forward probe
         // passes join the window, and the window decisions re-run before
@@ -924,31 +956,11 @@ export class Writer {
         await decide(commitWindow, probe.tail);
         seq = probe.tail;
         // A rebased post-image: its markers go down before its create, as
-        // Step 4's did for the body it replaces. The probe spent requests,
-        // so the reserve is re-checked first, markers included; a refusal
-        // is clean for the same reason as a window refusal above.
-        const rebasedKeys = body === bodyBefore ? [] : newKeysFor(body);
-        this.#assertCommitBudget(rebasedKeys.length, errorPrefix);
-        await putNewKeys(rebasedKeys);
+        // Step 4's did for the body it replaces; the next hold covers them.
+        slotKeys = body === bodyBefore ? [] : newKeysFor(body);
       }
       entry = mintEntry(seq);
     }
-
-    // ── Step 5a. Refuse a create that re-filled a retired hole. ─────
-    // Both break paths above land here with the resolved committing
-    // `seq`: the fresh win and the own-session adoption. This check
-    // runs BEFORE Step 5b on purpose — an invisible commit must not
-    // get to delete the OLD value's index keys, because the doc's
-    // live value may still BE that old value, and de-indexing it
-    // would be the one failure the hybrid emission polarity exists to
-    // prevent (invariant 7).
-    await this.#assertCommitAboveDeleteFloor(
-      logPrefix,
-      seq,
-      input.collection,
-      input.docId,
-      errorPrefix,
-    );
     const committedEntries: readonly LogEntry[] = [committedEntry];
 
     // ── Step 5b. DELETE stale secondary-index keys (AFTER the commit). ─
@@ -1440,31 +1452,48 @@ export class Writer {
   }
 
   /**
-   * Refuse the commit before its next write unless the active request
-   * ledger can still afford `markers` additive index-marker PUTs and the
-   * committing create, each at full retries, plus
-   * {@link COMMIT_RESOLUTION_RESERVE} for the readback and delete-floor
-   * check that resolve the create. Called before Step 4 and again before
-   * each create that follows a lost race. No create of this commit has
-   * landed or can land when it throws: before Step 4 nothing was sent, and
-   * after a lost race a foreign occupant holds the slot this commit's only
-   * send targeted (markers already PUT stay as benign orphans). A host without request limits (Node, or no ledger)
-   * never refuses.
+   * Run one commit slot's attempt, `fn` (its `markers` additive
+   * index-marker PUTs, the committing create, and the calls that resolve
+   * it), under a hold on the active request ledger of everything it may
+   * spend: the markers and the create at full retries, plus
+   * {@link COMMIT_RESOLUTION_RESERVE} for the readback and the delete-floor
+   * check. `fn` runs in a child observability context carrying the hold, so
+   * only its own storage calls draw on it; work outside that context (a
+   * `ctx.waitUntil` write tick of an earlier row, the read cache) sees the
+   * ledger net of it and cannot spend it. The hold is released when `fn`
+   * settles.
+   *
+   * Refuses, before `fn` sends anything, when the ledger's room is short
+   * of the hold. No create of this commit has landed or can land then:
+   * before the first slot nothing was sent, and before a later one a
+   * foreign occupant holds the slot this commit's only send targeted
+   * (markers already PUT stay as benign orphans). A host without request
+   * limits (Node, or no ledger) never refuses and takes no hold.
    *
    * @throws BaerlyError code="CapacityExceeded", cause `{ refused: true }`.
    */
-  #assertCommitBudget(markers: number, errorPrefix: string): void {
-    const remaining = getCurrentContext()?.ledger?.storageRemaining() ?? Infinity;
-    const needed = STORAGE_RETRY_MAX_ATTEMPTS * (markers + 1) + COMMIT_RESOLUTION_RESERVE;
-    if (remaining >= needed) {
-      return;
+  async #withCommitHold<T>(markers: number, errorPrefix: string, fn: () => Promise<T>): Promise<T> {
+    const ctx = getCurrentContext();
+    const ledger = ctx?.ledger;
+    const remaining = ledger?.storageRemaining() ?? Infinity;
+    if (ctx === undefined || ledger === undefined || remaining === Infinity) {
+      return await fn();
     }
-    throw new BaerlyError(
-      "CapacityExceeded",
-      `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit on ${this.#currentJsonKey} may need (its ${String(markers)} index markers and the committing create, with retries, plus resolving the create), so nothing was committed; the work this request needs does not fit in one request on this host`,
-      // The HTTP envelope fills in the code's canonical resolution.
-      { cause: { refused: true, needed, remaining } },
-    );
+    const needed = STORAGE_RETRY_MAX_ATTEMPTS * (markers + 1) + COMMIT_RESOLUTION_RESERVE;
+    if (remaining < needed) {
+      throw new BaerlyError(
+        "CapacityExceeded",
+        `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit on ${this.#currentJsonKey} may need (its ${String(markers)} index markers and the committing create, with retries, plus resolving the create), so nothing was committed; the work this request needs does not fit in one request on this host`,
+        // The HTTP envelope fills in the code's canonical resolution.
+        { cause: { refused: true, needed, remaining } },
+      );
+    }
+    const hold = ledger.hold(needed);
+    try {
+      return await runWithContext({ ...ctx, hold }, fn);
+    } finally {
+      hold.release();
+    }
   }
 
   /**
