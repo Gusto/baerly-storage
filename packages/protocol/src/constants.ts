@@ -333,9 +333,8 @@ export const LOG_FORWARD_PROBE_CAP: number = 100_000;
  * actively-written docs the walk normally gives up. That is accepted:
  * the residual is a benign extra index key (a false positive dropped
  * by `matchesWire`, never a missing candidate — see
- * `docs/spec/sync-protocol.md` invariant 7), and `rebuildIndex` /
- * `baerly admin fsck --indexes` is the authoritative reconciler. The
- * give-up is deliberately NOT counted: at this budget it is the
+ * `docs/spec/sync-protocol.md` invariant 7); reads never consult
+ * markers. The give-up is deliberately NOT counted: at this budget it is the
  * common path, not an anomaly, so a counter would be noise rather
  * than signal.
  *

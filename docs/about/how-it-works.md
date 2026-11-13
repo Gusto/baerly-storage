@@ -53,7 +53,7 @@ collection's key namespace in the bucket. Inside that prefix:
 | Legacy content objects | Side objects emitted by legacy writers. Inert: no reader opens one and GC never touches the prefix. |
 | Numbered log entries | Append-only records containing the authoritative `LogEntry.after` post-image for inserts and updates: "at this sequence, this row was inserted, updated, or deleted." The log uses `log/0.json`, `log/1.json`, and so on. The _tail_ is the first missing number after committed entries. |
 | Snapshot objects | Rolled-up older history, created by maintenance so reads do not replay the whole log forever. |
-| Index objects | Small marker artifacts maintained by writers and reconciled by `rebuildIndex`; reads do not use them for membership. |
+| Index objects | Small marker artifacts written by writers. No read, mutation, or tool consults them. |
 | `current.json` | A per-collection _compaction bookmark_. It is **not** the authority on the collection's state. It names the current snapshot, records how far the log has been folded into that snapshot (`log_seq_start`), and carries `tail_hint`, a lower-bound starting point for finding the live tail. |
 
 The numbered log decides commit order. A snapshot is a cached fold of old
@@ -190,8 +190,8 @@ objects that step leaves behind:
   unreferenced.
 - **Garbage collection** sweeps objects no live snapshot or log entry
   still references: superseded snapshots and compacted-away log
-  entries. Orphaned index markers do not affect reads and can be
-  repaired by `rebuildIndex`.
+  entries. Orphaned index markers do not affect reads, and nothing
+  repairs them.
 - **Legacy `content/<sha>.json` side objects** are different again. GC
   never touches that prefix, so an object a legacy writer left behind
   sits inert and costs only storage. Nothing needs migrating; an

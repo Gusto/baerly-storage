@@ -90,7 +90,7 @@ export interface CollectionDefinition {
 /**
  * The full `baerly.config.ts` runtime shape. Re-exported from
  * `baerly-storage` and consumed by the day-1 `npm create baerly`
- * scaffold + the `baerly admin rebuild-index` CLI.
+ * scaffold and the `baerly` CLI.
  *
  * The two-tier shape — collections namespaced under `collections`,
  * reserved keys at the top level — is deliberate. Flattening collection

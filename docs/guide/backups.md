@@ -217,15 +217,11 @@ The safe cutover shape is:
    `runScheduledMaintenance` calls, and wait for in-flight compaction and
    GC passes to finish.
 2. Restore into a separate recovery bucket or tenant prefix.
-3. Run `baerly admin fsck` on the recovered collection.
-4. For indexed collections, run `baerly admin fsck --indexes
-   --config=<compiled baerly config>` on the recovered collection. Plain
-   restore imports rows; it does not rebuild secondary index markers. If
-   the index check reports drift, run it with `--fix` or run
-   `baerly admin rebuild-index` for each index before cutover.
-5. Point the app at the recovered bucket/prefix. This direct route
+3. Run `baerly admin fsck` on the recovered collection. Restore
+   writes no index markers and needs none: no read consults them.
+4. Point the app at the recovered bucket/prefix. This direct route
    cutover is preferred, and it is the only route that rewrites no keys.
-6. If infrastructure requires a raw object copy instead, copy into a
+5. If infrastructure requires a raw object copy instead, copy into a
    separate bucket or storage namespace at the **identical
    bucket-relative collection path**. `current.snapshot` and every
    `gc/pending.json` candidate store complete bucket-relative keys, so a
@@ -248,18 +244,16 @@ The safe cutover shape is:
    - Copy `current.json` **last** — after the snapshot it names (when
      non-null) and every live log object exist at the destination. If
      `current.json` lands first, readers can reference missing objects.
-     Index artifacts can be rebuilt independently; reads do not depend
-     on their completeness.
+     Skip `index/`: no read depends on index markers.
    - No kernel reader depends on content side objects, and GC does not
      touch them. Copy `content/` only when preserving a legacy or
      mixed-version bucket for legacy writers or tooling. Otherwise skip
      it. See [Legacy content cleanup](#legacy-content-cleanup) to reclaim
      the source bytes safely.
-7. Run `baerly admin fsck` (plus `--indexes` for indexed collections)
-   against the final destination — the exact route the app will read —
-   before enabling reads. Step 3 checked the recovery prefix, not the
-   copy.
-8. Resume writers only after a successful authenticated read against
+6. Run `baerly admin fsck` against the final destination — the exact
+   route the app will read — before enabling reads. Step 3 checked the
+   recovery prefix, not the copy.
+7. Resume writers only after a successful authenticated read against
    the recovered route.
 
 ### Legacy content cleanup
@@ -315,20 +309,6 @@ baerly admin fsck \
   --app=acme \
   --tenant=t1-restore-drill \
   --collection=tickets
-```
-
-For indexed collections, add index reconciliation to the drill before
-testing indexed routes:
-
-```sh
-baerly admin fsck \
-  --bucket=s3://baerly-restore-drill \
-  --app=acme \
-  --tenant=t1-restore-drill \
-  --collection=tickets \
-  --indexes \
-  --fix \
-  --config=./dist/baerly.config.mjs
 ```
 
 For byte-level confidence, dump the restored collection and compare:

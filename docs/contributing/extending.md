@@ -399,24 +399,8 @@ not bound fold I/O or memory. See the
 
 ### Adding an index to an existing deployment
 
-Run one of these forms:
-
-```sh
-pnpm build && pnpm baerly admin rebuild-index \
-  --bucket=<uri> --collection=<collection> --index=<name> --on=<field>
-
-pnpm build && pnpm baerly admin rebuild-index \
-  --bucket=<uri> --collection=<collection> --index=<name> --config=<compiled-js-mjs-or-json>
-```
-
-The command also accepts `--app` and `--tenant`; when omitted, they default from
-`baerly.config.ts`. Use `--on` only for a single-field unfiltered index. Use
-`--config` with a compiled `.js`, `.mjs`, or `.json` config to resolve the
-matching declared index; the current CLI resolves the index's `on` field only,
-so do not use it as the source of truth for filtered-index predicates. The
-writer emits forward entries on every commit; pre-existing rows are not
-back-projected until rebuild runs. This affects marker completeness only;
-reads remain complete before rebuilding.
+Declare it and deploy. No backfill or reconciliation step exists, because
+no read consults markers.
 
 ### Verify
 
@@ -624,11 +608,11 @@ and stable; their JSDoc is the canonical reference.
   (`packages/server/src/snapshot.ts`) — load a content-addressed
   snapshot, verify its SHA-256 against the filename, and return the
   docs as a `Map<_id, body>`. Used internally by the compactor,
-  reader, rebuild-index, export, and fsck paths. Prefer this over
+  reader, export, and fsck paths. Prefer this over
   hand-rolling a snapshot reader — the function bakes in the hash
   check, schema-version gate, and collection-mismatch guard.
 
-Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
+Other utilities (e.g. `compact`, `runGc`) are
 end-to-end orchestrators rather than helpers; their entry points are
 documented in [architecture.md](../architecture.md) under "Where
 invariants live."

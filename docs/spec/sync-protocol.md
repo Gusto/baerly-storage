@@ -641,9 +641,8 @@ independently of index markers.
 Marker maintenance is not atomic with the log. A delayed stale-key DELETE
 can erase a marker that a concurrent same-id reinsertion needs, even on
 strongly consistent storage. Extra or missing markers do not affect reads
-or mutation selection because neither uses marker membership.
-`rebuildIndex` reconciles these artifacts; it is not a prerequisite for
-read correctness.
+or mutation selection because neither uses marker membership. Nothing
+reconciles markers.
 
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
@@ -949,8 +948,7 @@ These are the load-bearing rules.
    backwards pre-image walk is capped at `PREIMAGE_SCAN_MAX_GETS` log
    GETs, because the walk is sequential and runs on the write path, so a
    doc not rewritten within that many log entries keeps its stale key.
-   `rebuildIndex` / `baerly admin fsck --indexes` is the authoritative
-   backstop, not merely an operator convenience.
+   No read consults markers, so the residual is never repaired.
 8. **Reads are pure.** Reads load state; they never compact, GC, or
    tick maintenance. The tail forward-probe is Class B (GETs), so the
    idle-reader cost bound is untouched.

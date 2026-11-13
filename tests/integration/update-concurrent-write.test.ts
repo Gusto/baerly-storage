@@ -26,7 +26,8 @@ import {
   type IndexDefinition,
   type Storage,
 } from "@baerly/protocol";
-import { allIndexKeysFor, Db } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import {
   APP,

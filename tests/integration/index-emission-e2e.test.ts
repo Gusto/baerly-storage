@@ -33,7 +33,8 @@ import {
   MemoryStorage,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { allIndexKeysFor, Db } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
 
 const APP = "test";
 const TENANT = "t";

@@ -141,7 +141,7 @@ IDs from being confused at protocol boundaries. See the
 ## Secondary indexes
 
 Indexes are declared under `BaerlyConfig.collections[*].indexes`.
-Writers maintain their markers and `rebuildIndex` reconciles them.
+Writers still emit their markers, and nothing reconciles them.
 Reads always fold the authoritative snapshot and log; index declarations
 do not accelerate reads or affect query membership. There is no
 manual-hint API on `Query<T>`.
@@ -192,7 +192,6 @@ full fold cost; reads issue no index LISTs.
 ### Pointers
 
 - Marker projection: [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts).
-- Reconciliation: [`packages/server/src/rebuild-index.ts`](../../packages/server/src/rebuild-index.ts).
 - Reads and mutation selection: [`packages/server/src/query.ts`](../../packages/server/src/query.ts).
 - Regression coverage: [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts),
   [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts).
@@ -317,8 +316,7 @@ unless `--force` truncates first.
 Read-only consistency walk for one collection. Verifies
 `current.json` parses, the snapshot body's content hash matches
 its filename hash, the trusted log range `[log_seq_start, tail_hint)`
-has no holes, and (with `--indexes` + `--config=`) reports
-orphan index keys without rebuilding. Exit 4 on any finding —
+has no holes. It never reads the `index/` prefix. Exit 4 on any finding —
 distinguished from exit 2 ("command itself failed") so CI can
 wire `fsck` as a regression gate.
 

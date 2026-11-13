@@ -590,8 +590,8 @@ export class Writer {
    * A crash before the create leaves orphan additive index keys only. A crash
    * AFTER the create is a durable, committed write at `seq` whose index
    * `newKeys` are already present; the only residual
-   * is a possibly-undeleted stale OLD-value key, cleaned by a later write /
-   * `rebuild-index`. Reads fold authoritative data without consulting markers.
+   * is a possibly-undeleted stale OLD-value key, cleaned only by a later
+   * write of the same doc. Reads fold authoritative data without consulting markers.
    * De-indexing a committed doc is never produced by a crash; only the concurrent
    * delete-after-commit ABA at `#readPreImage` produces it.
    */
@@ -971,8 +971,7 @@ export class Writer {
     // load-bearing polarity (ADR-004 Q4): a crash here leaves the OLD
     // value's marker lingering — benign, reads fold the doc's NEW
     // committed value without consulting markers; the lingering
-    // key is cleaned by a later same-doc write or operator
-    // `rebuild-index`. The inverse — de-indexing a committed doc with no
+    // key is cleaned only by a later same-doc write. The inverse — de-indexing a committed doc with no
     // log entry to drive repair — cannot come from a crash, since the
     // DELETE is strictly after the commit. It can come from a race: this
     // DELETE landing after a peer's same-doc write re-PUT the same marker
@@ -1250,9 +1249,8 @@ export class Writer {
    * That is the accepted trade, not a silent failure. Giving up is
    * benign by construction: the caller computes no stale keys, and an
    * extra index key cannot affect reads, which fold authoritative
-   * state without consulting markers. `rebuildIndex` (`./rebuild-index.ts`)
-   * and `baerly admin fsck --indexes` are the authoritative
-   * reconcilers. The give-up is deliberately NOT counted on
+   * state without consulting markers, and nothing reconciles markers.
+   * The give-up is deliberately NOT counted on
    * `db.write.index_cleanup_errors_total`: at this budget it is the
    * common path, so it would swamp the two entries on that counter
    * that do mean something went wrong (`"pre-image-read"` — the read
@@ -1282,9 +1280,7 @@ export class Writer {
         // A hole — either the entry was folded and swept, or a peer
         // is mid-CAS on a write we don't see yet. Indistinguishable
         // from here, so a hole cannot be a stop signal: keep
-        // descending until the budget runs out. The rebuild command
-        // (`rebuildIndex`) handles holes by re-projecting from the
-        // snapshot.
+        // descending until the budget runs out.
         continue;
       }
       let entry: LogEntry;

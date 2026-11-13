@@ -102,7 +102,7 @@ describe("probeTailFrom", () => {
   test("cap exhausted: THROWS Internal instead of silently truncating", async () => {
     // A dense run longer than the cap means the true tail is past the cap.
     // Returning `hint+cap` would silently truncate every downstream read
-    // (since.ts / query.ts / GC / export / rebuild-index) — so the probe
+    // (since.ts / query.ts / GC / export) — so the probe
     // must THROW, mirroring findLogTail's cap-exhaustion guard. Under HR-2
     // the compactor keeps `tail_hint` within REFRESH_INTERVAL of the true
     // tail, so this throw is a pure runaway alarm that never fires in

@@ -6,7 +6,6 @@
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
  *   --collection Required. Collection name.
- *   --config   Optional path to baerly.config.{js,mjs,json} for index info.
  *   --profile  Optional host profile (cf-free | cf-paid | node) for the
  *              fold_gate verdict. Default: report all three.
  *   --json     JSON envelope.
@@ -31,7 +30,6 @@
  *     `fold_deferred` warning (gate `rebuild`) is that case's signal.
  *   - writer_fence (epoch, owner, claimed_at).
  *   - materialised row count (via export/loadMaterialisedView).
- *   - per-declared-index key count (when --config supplied).
  *   - well-formed status: "ok" or "error" with an `errors` array.
  *
  * For projected monthly Class A / $ trajectories, use
@@ -43,7 +41,6 @@
  *   1 GET current.json
  *   + 1 GET snapshot (if any)
  *   + N GETs log tail (= tail_hint - log_seq_start)
- *   + K LISTs (one per declared index, when --config supplied)
  *   + 1 LIST snapshot/ prefix (orphan detection)
  *
  * Never mutates anything.
@@ -74,7 +71,6 @@ import {
   parseMaintenanceEnv,
 } from "@baerly/server/maintenance";
 import { loadMaterialisedView } from "./export/index.ts";
-import { loadCollectionIndexes } from "./config.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "./output.ts";
 import {
@@ -92,13 +88,6 @@ const INSPECT_ARGS = {
   app: APP_ARG,
   tenant: TENANT_ARG,
   collection: COLLECTION_ARG,
-  config: {
-    type: "string",
-    required: false,
-    description:
-      "Path to baerly.config.{js,mjs,json}; pulls declared indexes for key-count probes.",
-    valueHint: "path",
-  },
   profile: {
     type: "enum",
     options: ["cf-free", "cf-paid", "node"],
@@ -233,7 +222,6 @@ interface InspectResult {
   maintenance: "enabled" | "disabled" | "invalid-config";
   writer_fence: CurrentJson["writer_fence"];
   materialised_rows: number;
-  indexes: { name: string; count: number }[];
   status: "ok" | "error";
   errors: string[];
 }
@@ -260,12 +248,6 @@ const renderText = (r: InspectResult, collection: string): string => {
     `  writer_fence:        epoch=${r.writer_fence.epoch} owner=${JSON.stringify(r.writer_fence.owner)} claimed_at=${JSON.stringify(r.writer_fence.claimed_at)}`,
   );
   lines.push(`  materialised_rows:   ${r.materialised_rows}`);
-  if (r.indexes.length > 0) {
-    const formatted = r.indexes.map((i) => `${i.name} (count=${i.count})`).join(", ");
-    lines.push(`  indexes:             ${formatted}`);
-  } else {
-    lines.push(`  indexes:             (none declared)`);
-  }
   lines.push(`  status:              ${r.status}`);
   if (r.errors.length > 0) {
     for (const e of r.errors) {
@@ -340,16 +322,6 @@ const bundle = defineBaerlySubcommand({
       }
     }
 
-    const indexes: { name: string; count: number }[] = [];
-    if (typeof args.config === "string" && args.config.length > 0) {
-      const defs = await loadCollectionIndexes(args.config, args.collection, "baerly inspect");
-      for (const def of defs) {
-        const prefix = `${collectionPrefix}/index/${def.name}/`;
-        const { count } = await countListEntries(bucket.storage, prefix);
-        indexes.push({ name: def.name, count });
-      }
-    }
-
     const liveLogTail = discoveredTail - log_seq_start;
     const { maxFoldBytes, maintenance } = readInspectMaintenanceEnv((k) => process.env[k]);
     const profileNames: readonly HostProfileName[] =
@@ -375,7 +347,6 @@ const bundle = defineBaerlySubcommand({
       maintenance,
       writer_fence: cur.writer_fence,
       materialised_rows: materialisedRows,
-      indexes,
       status: errors.length === 0 ? "ok" : "error",
       errors,
     };

@@ -17,12 +17,12 @@ counterpart is [`docs/guide/observability.md`](../../guide/observability.md).
 **Every HTTP request emits one canonical line.** The kernel emits it
 on the request boundary; you don't.
 
-Maintenance ticks (compactor, GC, `rebuildIndex`, `runScheduledMaintenance`)
+Maintenance ticks (compactor, GC, `runScheduledMaintenance`)
 emit NO canonical line — there's no human reading cron-tick logs on a
 15-user app, and errors throw to the platform (Cloudflare dashboard,
 Node process logs). Their per-emission metrics still flow into the
 canonical line when called from within an HTTP scope (e.g. an admin
-route that triggers `rebuildIndex`); outside any HTTP scope each emit
+route that triggers `compact`); outside any HTTP scope each emit
 site falls through to `noopMetricsRecorder` — operators don't wire
 their own `MetricsRecorder`, the canonical line on stdout is the
 operator's view of kernel emissions.
@@ -103,9 +103,9 @@ operator-run batches, maintenance ticks) call the kernel primitives
 directly:
 
 ```ts
-import { rebuildIndex } from "@gusto/baerly-storage/maintenance";
+import { compact } from "@gusto/baerly-storage/maintenance";
 
-await rebuildIndex(storage, currentJsonKey, def);
+await compact({ storage, currentJsonKey });
 ```
 
 Errors propagate to the platform's process / Worker log. Metric
@@ -126,7 +126,7 @@ import { createObservabilityContext, runWithContext } from "../observability";
 
 const ctx = createObservabilityContext();
 await runWithContext(ctx, async () => {
-  await rebuildIndex(storage, currentJsonKey, def);
+  await compact({ storage, currentJsonKey });
 });
 console.log(ctx.recorder.snapshot());
 ```

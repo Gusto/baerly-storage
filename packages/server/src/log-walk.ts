@@ -186,8 +186,7 @@ export const walkLogRangeWithBytes = async (
  * Entries whose `collection` does not match `opts.collection`, or
  * whose `doc_id` is `undefined`, are skipped.
  *
- * This is the canonical fold used by the read path
- * (`query.ts`) and the index reconciler (`rebuild-index.ts`).
+ * This is the canonical fold used by the read path (`query.ts`).
  * Centralising it keeps the
  * "straight `set` on I/U; tombstone on D" protocol invariant in one place.
  *
