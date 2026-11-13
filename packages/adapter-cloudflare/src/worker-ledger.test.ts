@@ -80,6 +80,19 @@ describe("cfRequestLedger", () => {
     });
     expect(CF_PAID_REQUEST_LIMIT).toBe(9000);
   });
+
+  test.each(["cf_paid", "CF-PAID", "cf-paid ", "garbage"])(
+    "an invalid profile %j gets the free limits without throwing",
+    (profile) => {
+      const ledger = cfRequestLedger((k) =>
+        k === "BAERLY_MAINTENANCE_PROFILE" ? profile : undefined,
+      );
+      expect(ledger.limits).toEqual({
+        internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+        external: CF_FREE_EXTERNAL_REQUEST_LIMIT,
+      });
+    },
+  );
 });
 
 describe("a Worker request runs under one ledger", () => {

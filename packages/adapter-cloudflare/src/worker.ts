@@ -184,18 +184,24 @@ const envReader =
 
 /**
  * A fresh request ledger for one Worker invocation (a `fetch` or a
- * `scheduled` call), with the limits of the profile
- * {@link resolveCfMaintenanceProfile} selects. The profile, not the
- * account's billing plan, selects them: `cf-free` (the default) allows
- * {@link CF_FREE_INTERNAL_REQUEST_LIMIT} storage calls, of which at most
- * {@link CF_FREE_EXTERNAL_REQUEST_LIMIT} leave through `fetch` or the
- * Cache API; `cf-paid` allows {@link CF_PAID_REQUEST_LIMIT} of either. A
- * storage call past the limit is refused with `CapacityExceeded` before
- * it is sent, where the platform would otherwise throw on it.
+ * `scheduled` call), with the limits of the `BAERLY_MAINTENANCE_PROFILE`
+ * tier. The profile, not the account's billing plan, selects them:
+ * `cf-free` (the default) allows {@link CF_FREE_INTERNAL_REQUEST_LIMIT}
+ * storage calls, of which at most {@link CF_FREE_EXTERNAL_REQUEST_LIMIT}
+ * leave through `fetch` or the Cache API; `cf-paid` allows
+ * {@link CF_PAID_REQUEST_LIMIT} of either. A storage call past the limit
+ * is refused with `CapacityExceeded` before it is sent, where the
+ * platform would otherwise throw on it.
+ *
+ * Never throws. Only the exact value `"cf-paid"` raises the limits; any
+ * other value, valid or not, gets the free limits, which are safe on
+ * every plan. Validation stays with {@link resolveCfMaintenanceProfile}
+ * at the maintenance dispatch build, so an invalid value fails API
+ * requests there and does not reach a cron callback that never reads it.
  */
 export const cfRequestLedger = (readEnv: (key: string) => string | undefined): RequestLedger =>
   new RequestLedger(
-    resolveCfMaintenanceProfile(readEnv) === MAINTENANCE_PROFILE_CF_PAID
+    readEnv("BAERLY_MAINTENANCE_PROFILE") === "cf-paid"
       ? { internal: CF_PAID_REQUEST_LIMIT, external: CF_PAID_REQUEST_LIMIT }
       : { internal: CF_FREE_INTERNAL_REQUEST_LIMIT, external: CF_FREE_EXTERNAL_REQUEST_LIMIT },
   );
