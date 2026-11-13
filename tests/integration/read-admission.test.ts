@@ -7,12 +7,11 @@
  * it whole with the capacity code, and serves every in-envelope read with
  * the same answer on every host (P1).
  *
- * No admission mechanism exists yet. Each target is a `test.fails` over a
- * {@link Scenario}: build it, assert its precondition, read under an
- * envelope that tightens exactly one bound, assert the refusal. Every
- * scenario also has a plain-`test` twin asserting the same precondition, so
- * a fixture that stops tripping its bound goes red instead of hiding behind
- * `test.fails`. Envelope values are test scaffolding, not proposed limits.
+ * Each target runs over a {@link Scenario}: build it, assert its
+ * precondition, read under an envelope that tightens exactly one bound,
+ * assert the refusal. Every scenario also has a precondition test of its
+ * own, so a fixture that stops tripping its bound goes red on its own
+ * line. Envelope values are test scaffolding, not shipped limits.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -24,12 +23,14 @@ import {
   type DocumentData,
   MemoryStorage,
   readCurrentJson,
+  RequestLedger,
   retryStorageCall,
   type Storage,
   type StorageListEntry,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
+import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { compact } from "../../packages/server/src/compactor.ts";
 import { encodeIndexValue } from "../../packages/server/src/indexes.ts";
@@ -52,8 +53,9 @@ type Item = DocumentData;
 
 /**
  * A host's read envelope, one field per bound main-2 Task 3 names. Local to
- * this file: no production limits are approved, and these numbers only size
- * the fixtures around them.
+ * this file: these numbers only size the fixtures around them.
+ * `maxStorageCalls` becomes the request ledger's limit; the rest become the
+ * kernel's `ReadEnvelope`.
  */
 interface TestEnvelope {
   readonly maxSnapshotBytes: number;
@@ -65,9 +67,7 @@ interface TestEnvelope {
   readonly maxMaterializedRows: number;
   /** Rows in the answer. */
   readonly maxOutputRows: number;
-  /** Index entries the read examines, stale markers included (the work bound, not the output bound). */
-  readonly maxIndexEntriesExamined: number;
-  /** Storage requests actually issued, retries and LIST pages included. */
+  /** Storage requests actually issued, retries included. */
   readonly maxStorageCalls: number;
 }
 
@@ -80,7 +80,6 @@ const SMALL_ENVELOPE: TestEnvelope = {
   maxTailBytes: 32 * 1024,
   maxMaterializedRows: 64,
   maxOutputRows: 32,
-  maxIndexEntriesExamined: 16,
   maxStorageCalls: 40,
 };
 
@@ -91,7 +90,6 @@ const LARGE_ENVELOPE: TestEnvelope = {
   maxTailBytes: Number.MAX_SAFE_INTEGER,
   maxMaterializedRows: Number.MAX_SAFE_INTEGER,
   maxOutputRows: Number.MAX_SAFE_INTEGER,
-  maxIndexEntriesExamined: Number.MAX_SAFE_INTEGER,
   maxStorageCalls: Number.MAX_SAFE_INTEGER,
 };
 
@@ -102,7 +100,6 @@ const BOUNDS: readonly Bound[] = [
   "maxTailBytes",
   "maxMaterializedRows",
   "maxOutputRows",
-  "maxIndexEntriesExamined",
   "maxStorageCalls",
 ];
 
@@ -122,22 +119,29 @@ type ReadOutcome<T> =
   | { readonly kind: "refused"; readonly error: unknown };
 
 /**
- * Run `read` as a host with `envelope`. No admission seam exists, so the
- * envelope does not reach the kernel today and every read is served; main-2
- * Task 4 must make the envelope the host's admission profile here.
+ * Run `read` as a host with `envelope`, the way an adapter runs a request:
+ * inside an observability context carrying the host's request ledger
+ * (`maxStorageCalls`, charged per issued attempt by `retryStorageCall`)
+ * and read envelope (every other bound).
  */
 const readUnder = async <T>(
-  _envelope: TestEnvelope,
+  envelope: TestEnvelope,
   read: () => Promise<T>,
 ): Promise<ReadOutcome<T>> => {
+  const { maxStorageCalls, ...readEnvelope } = envelope;
+  const ctx = createObservabilityContext({
+    ledger: new RequestLedger({ internal: maxStorageCalls, external: maxStorageCalls }),
+    // The adapter stack charges retryStorageCall's default pool.
+    readEnvelope: { ...readEnvelope, requestPool: "external" },
+  });
   try {
-    return { kind: "served", value: await read() };
+    return { kind: "served", value: await runWithContext(ctx, read) };
   } catch (error) {
     return { kind: "refused", error };
   }
 };
 
-/** The proposed capacity code (main-7); the name is still open. */
+/** The capacity code (main-7). */
 const isCapacityRefusal = (err: unknown): boolean =>
   (err as { code?: unknown }).code === "CapacityExceeded";
 
@@ -196,29 +200,24 @@ const isSnapshotKey = (key: string): boolean => key.includes("/snapshot/");
 /**
  * What one read runs through. `kernel` counts the calls the kernel makes;
  * `issued` counts the requests that reach the bucket (equal unless an
- * adapter retries or pages underneath); `getKeys` lists every bucket GET;
- * `indexEntriesListed` counts index entries LIST returned to the kernel.
+ * adapter retries or pages underneath); `getKeys` lists every bucket GET.
  */
 interface ReadStack {
   readonly storage: Storage;
   readonly kernel: CountingStorage;
   readonly issued: CountingStorage;
   readonly getKeys: readonly string[];
-  readonly indexEntriesListed: () => number;
 }
 
 interface Recorded {
   readonly storage: Storage;
   readonly keys: string[];
-  readonly indexEntries: () => number;
 }
 
 const recordReads = (inner: Storage): Recorded => {
   const keys: string[] = [];
-  let indexEntries = 0;
   return {
     keys,
-    indexEntries: () => indexEntries,
     storage: {
       get: (key, opts) => {
         keys.push(key);
@@ -226,14 +225,7 @@ const recordReads = (inner: Storage): Recorded => {
       },
       put: (key, body, opts) => inner.put(key, body, opts),
       delete: (key, opts) => inner.delete(key, opts),
-      list: async function* (prefix, opts) {
-        for await (const entry of inner.list(prefix, opts)) {
-          if (entry.key.includes("/index/")) {
-            indexEntries += 1;
-          }
-          yield entry;
-        }
-      },
+      list: (prefix, opts) => inner.list(prefix, opts),
     },
   };
 };
@@ -246,7 +238,6 @@ const plainStack = (base: Storage): ReadStack => {
     kernel: counting,
     issued: counting,
     getKeys: recorded.keys,
-    indexEntriesListed: recorded.indexEntries,
   };
 };
 
@@ -258,9 +249,9 @@ const plainStack = (base: Storage): ReadStack => {
  * fresh per stack, so two stacks with the same options issue the same
  * requests for the same read.
  *
- * The `retryStorageCall` attempt below is the charge point: main-2 Task 4
- * charges every issued call where it is issued (each retry attempt, each
- * LIST page), not at the kernel's `Storage` call.
+ * The `retryStorageCall` attempt below is the charge point: the request
+ * ledger charges every issued call where it is issued (each retry attempt,
+ * each LIST page), not at the kernel's `Storage` call.
  */
 const adapterStack = (
   base: Storage,
@@ -314,7 +305,6 @@ const adapterStack = (
     kernel,
     issued,
     getKeys: recorded.keys,
-    indexEntriesListed: recorded.indexEntries,
   };
 };
 
@@ -449,7 +439,6 @@ const measure = async (p: Prepared): Promise<Measured> => {
       maxTailBytes: work.tailBytes,
       maxMaterializedRows: work.snapshotRows + work.tailEntries,
       maxOutputRows: outputRows,
-      maxIndexEntriesExamined: stack.indexEntriesListed(),
       maxStorageCalls: callsOf(stack.issued),
     },
   };
@@ -662,32 +651,25 @@ for (const variant of VARIANTS) {
       await expectPrecondition(s, await s.build(fresh));
     });
 
-    // flip to test() when main-2 Task 2 lands (head `snapshot_rows` early rejection)
-    test.fails("tiny documents in the snapshot: refused on snapshot rows from the head", () =>
+    test("tiny documents in the snapshot: refused on snapshot rows from the head", () =>
       expectRefusal(SCENARIOS.tinySnapshot, fresh));
 
-    // flip to test() when main-2 Task 3 lands (aggregate tail-entry bound)
-    test.fails("tiny documents in the tail: refused on tail entries", () =>
+    test("tiny documents in the tail: refused on tail entries", () =>
       expectRefusal(SCENARIOS.tinyTail, fresh));
 
-    // flip to test() when main-2 Task 2 lands (head `snapshot_bytes` early rejection)
-    test.fails("oversized objects in the snapshot: refused on snapshot bytes from the head", () =>
+    test("oversized objects in the snapshot: refused on snapshot bytes from the head", () =>
       expectRefusal(SCENARIOS.oversizedSnapshot, fresh));
 
-    // flip to test() when main-2 Task 3 lands (aggregate tail-byte bound, body length before decode)
-    test.fails("oversized objects in the tail: refused on tail bytes", () =>
+    test("oversized objects in the tail: refused on tail bytes", () =>
       expectRefusal(SCENARIOS.oversizedTail, fresh));
 
-    // flip to test() when main-2 Task 3 lands (output bound; Task 4 no-partial rule)
-    test.fails("output bound: an over-wide answer is refused whole, not truncated", () =>
+    test("output bound: an over-wide answer is refused whole, not truncated", () =>
       expectRefusal(SCENARIOS.wideOutput, fresh));
 
-    // flip to test() when main-2 Task 3 lands (current-layout only: full-scan sort materializes every row)
-    test.fails("materialization bound: a sorted limit(5) is refused on materialized rows", () =>
+    test("materialization bound: a sorted limit(5) is refused on materialized rows", () =>
       expectRefusal(SCENARIOS.sortedLimit, fresh));
 
-    // flip to test() when main-2 Task 4 lands (charge each `retryStorageCall` attempt at issue)
-    test.fails("retries: retried storage requests count toward the call bound", () =>
+    test("retries: retried storage requests count toward the call bound", () =>
       expectRefusal(SCENARIOS.retriedGets, fresh));
 
     test("declared indexes issue no LIST pages, even through a small-page adapter", async () => {
@@ -707,11 +689,16 @@ for (const variant of VARIANTS) {
     });
 
     test("stale markers consume no read work and do not change output", async () => {
-      const { storage, liveX } = await seedStaleMarkers(fresh);
+      const { storage, liveX, xMarkers } = await seedStaleMarkers(fresh);
       const measured = await measure(plain(storage, readTagX, liveX));
       expect(measured.value).toEqual(liveX);
-      expect(measured.usage.maxIndexEntriesExamined).toBe(0);
       expect(measured.stack.issued.lists).toBe(0);
+      // More stale markers than the small host's tail bound still fit it.
+      expect(xMarkers).toBeGreaterThan(SMALL_ENVELOPE.maxTailEntries);
+      await expect(readUnder(SMALL_ENVELOPE, () => readTagX(storage))).resolves.toEqual({
+        kind: "served",
+        value: liveX,
+      });
     });
 
     // ── Same head, different tail ─────────────────────────────────────
@@ -769,8 +756,7 @@ for (const variant of VARIANTS) {
       expect(exceededBounds(SAME_HEAD_ENVELOPE, longRun.usage)).toEqual(["maxTailEntries"]);
     });
 
-    // flip to test() when main-2 Task 3 lands (stage bounds decide, not `tail_hint` / `mean_entry_bytes`)
-    test.fails("same head, different tail: admission decides from staged work", async () => {
+    test("same head, different tail: admission decides from staged work", async () => {
       const { short, long } = await seedSameHeadDifferentTail();
       const shortHead = await readCurrentJson(short.base, HEAD_KEY);
       await expect(readCurrentJson(long.base, HEAD_KEY)).resolves.toEqual({
@@ -787,6 +773,10 @@ for (const variant of VARIANTS) {
     });
 
     // ── Stale index markers ───────────────────────────────────────────
+    //
+    // An index-covered read takes membership from the fold, not from a
+    // marker LIST, so stale markers cost it nothing: there is no
+    // index-specific work bound (I1 is the full-fold bounds).
 
     test("stale index markers: index reads neither return stale rows nor over-count", async () => {
       const { storage, liveX, xMarkers } = await seedStaleMarkers(fresh);
@@ -801,7 +791,6 @@ for (const variant of VARIANTS) {
       );
     });
 
-    // Markers are not read; the output bound counts only live matching rows.
     test("stale index markers: the output bound counts returned rows, not markers", async () => {
       const { storage, liveX, xMarkers } = await seedStaleMarkers(fresh);
       const envelope = tighten("maxOutputRows");

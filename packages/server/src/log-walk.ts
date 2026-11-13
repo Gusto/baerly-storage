@@ -34,6 +34,16 @@ import {
 } from "@baerly/protocol";
 import { isOwnCollection } from "./collection-alias.ts";
 
+/** Options for the log-walk reads. */
+export interface LogWalkOptions {
+  readonly signal?: AbortSignal;
+  /**
+   * Called with each entry's stored body length before it is decoded. A
+   * throw rejects the walk: the read path's admission budget charges here.
+   */
+  readonly onBody?: (bytes: number) => void;
+}
+
 /**
  * Fetch a single log entry. Centralises the "missing entry inside the
  * visible log range is a protocol-invariant violation" rule used by
@@ -71,7 +81,7 @@ export const readLogEntry = async (
 const readLogEntryWithBytes = async (
   storage: Storage,
   key: string,
-  opts?: { signal?: AbortSignal },
+  opts?: LogWalkOptions,
 ): Promise<{ entry: LogEntry; bytes: number }> => {
   const got = await storage.get(
     key,
@@ -83,6 +93,7 @@ const readLogEntryWithBytes = async (
       `log-walk: missing log entry at ${key}; protocol invariant violation`,
     );
   }
+  opts?.onBody?.(got.body.byteLength);
   try {
     return { entry: decodeJsonBytes<LogEntry>(got.body), bytes: got.body.byteLength };
   } catch (error) {
@@ -116,7 +127,7 @@ export const walkLogRange = async (
   logPrefix: string,
   fromSeq: number,
   toSeqExclusive: number,
-  opts?: { signal?: AbortSignal },
+  opts?: LogWalkOptions,
 ): Promise<LogEntry[]> => {
   const withBytes = await walkLogRangeWithBytes(storage, logPrefix, fromSeq, toSeqExclusive, opts);
   return withBytes.map((r) => r.entry);
@@ -138,7 +149,7 @@ export const walkLogRangeWithBytes = async (
   logPrefix: string,
   fromSeq: number,
   toSeqExclusive: number,
-  opts?: { signal?: AbortSignal },
+  opts?: LogWalkOptions,
 ): Promise<Array<{ entry: LogEntry; bytes: number }>> => {
   if (fromSeq >= toSeqExclusive) {
     return [];

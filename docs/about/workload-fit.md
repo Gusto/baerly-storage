@@ -212,8 +212,9 @@ writes, and GC reclaims about 1,000 replaced snapshots per collection per
 snapshots; above that rate, replaced snapshots accumulate.
 
 A read that must replay a longer pending tail, such as one racing a write
-burst, can exceed the 50-call limit and fail, and so can a request whose
-storage calls are retried. Past the envelope, expect more
+burst, can need more than the 45 calls a request may make, and so can a
+request whose storage calls are retried; such a read is refused whole with
+`CapacityExceeded`, never answered with missing rows. Past the envelope, expect more
 `CapacityExceeded` and `MaintenancePending`; data is never lost. For more
 request headroom use the R2 binding; for guaranteed CPU, use Paid.
 

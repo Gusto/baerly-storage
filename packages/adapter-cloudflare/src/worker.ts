@@ -28,6 +28,7 @@ import {
   type ObservabilityConfig,
   configureObservability,
   createObservabilityContext,
+  type ReadEnvelope,
   deriveOutcome,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
@@ -205,6 +206,18 @@ export const cfRequestLedger = (readEnv: (key: string) => string | undefined): R
       ? { internal: CF_PAID_REQUEST_LIMIT, external: CF_PAID_REQUEST_LIMIT }
       : { internal: CF_FREE_INTERNAL_REQUEST_LIMIT, external: CF_FREE_EXTERNAL_REQUEST_LIMIT },
   );
+
+/**
+ * The Worker's read envelope: the request pool its storage charges, so a
+ * read the ledger certainly cannot fit is refused from `current.json`
+ * alone (the R2 binding charges `internal`; anything else, reached through
+ * `fetch`, charges `external`). The data bounds (snapshot, tail, output)
+ * are left unbounded on every profile until cold CPU measurements size
+ * them; the ledger bounds every read's storage calls today.
+ */
+export const cfReadEnvelope = (storage: Storage): ReadEnvelope => ({
+  requestPool: isR2BindingStorage(storage) ? "internal" : "external",
+});
 
 /**
  * Write-tick options on the free profile for storage reached through
@@ -672,6 +685,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // and the `ctx.waitUntil` tick and invalidation it dispatches
         // (both started inside this context) charge the same ledger.
         ledger: cfRequestLedger(readEnv),
+        readEnvelope: cfReadEnvelope(baseStorage),
       });
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
