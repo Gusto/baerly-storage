@@ -39,7 +39,7 @@
 import { type Readable, type Writable } from "node:stream";
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs, type CommandDef } from "citty";
 import { BaerlyError } from "@baerly/protocol";
-import { assertPathSegment } from "@baerly/server/_internal/testing";
+import { assertNameSegment, assertPathSegment } from "@baerly/server/_internal/testing";
 import { loadAppConfig } from "./config.ts";
 import { emitError, setJsonMode, errorToExitCode } from "./output.ts";
 
@@ -164,6 +164,26 @@ export interface SubcommandBundle<TArgs extends ArgsDef> {
  */
 export const assertCollectionArg = (collection: string, verb: string): void => {
   assertPathSegment(collection, "collection", verb);
+};
+
+/**
+ * Guard the names a WRITING verb (`admin restore`, `admin rebuild-index`,
+ * `admin fsck --indexes --fix`) is about to write under: the server's
+ * SDK name rule, which adds Unicode Normalization Form C to the
+ * key-segment rule. Read-only verbs keep the bare key-segment rule
+ * ({@link assertCollectionArg} plus `resolveAppTenant`), so a legacy
+ * non-NFC name stays readable and exportable but is never a write
+ * target.
+ *
+ * @throws BaerlyError code="InvalidConfig" — a name is not NFC.
+ */
+export const assertWritableNames = (
+  names: { readonly app: string; readonly tenant: string; readonly collection: string },
+  verb: string,
+): void => {
+  assertNameSegment(names.app, "app", verb);
+  assertNameSegment(names.tenant, "tenant", verb);
+  assertNameSegment(names.collection, "collection", verb);
 };
 
 /**

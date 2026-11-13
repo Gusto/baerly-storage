@@ -75,6 +75,7 @@ import { emitSuccess } from "../output.ts";
 import {
   APP_ARG,
   assertCollectionArg,
+  assertWritableNames,
   defineBaerlySubcommand,
   JSON_ARG,
   TENANT_ARG,
@@ -135,6 +136,7 @@ const bundle = defineBaerlySubcommand({
     const bucket = await parseBucketUri(args.bucket);
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     assertCollectionArg(args.collection, "baerly admin restore");
+    assertWritableNames({ app, tenant, collection: args.collection }, "baerly admin restore");
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
     const collectionPrefix = collectionPrefixOf(currentJsonKey);
     const pendingKey = gcPendingKey(collectionPrefix);
