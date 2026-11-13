@@ -428,6 +428,38 @@ for (const variant of makeVariants("baerly-update-race-")) {
       });
     }
 
+    test("a repeated rebase restores an index marker a peer removed between create attempts", async () => {
+      await quiet(async () => {
+        const { storage, coll } = await setup(true);
+        const first = atLogCreate(storage);
+        const second = pauseAt(
+          first.storage,
+          (op, key) => op === "put" && key.startsWith(`${TABLE_PREFIX}/log/`),
+          2,
+        );
+        const upd = settle(coll(second.storage).update("r1", { n: 1 }));
+        await first.paused;
+        await coll(storage).update("r1", { status: "closed" });
+        first.release();
+
+        // The first rebase emitted (closed, 1). A peer uses that same
+        // marker, then removes it before this attempt loses its slot too.
+        await second.paused;
+        await coll(storage).update("r1", { n: 1 });
+        await coll(storage).update("r1", { n: 0 });
+        const expected = { _id: "r1", n: 1, status: "closed" };
+        const [marker] = allIndexKeysFor(TABLE_PREFIX, [BY_STATUS_N], expected, "r1");
+        await expect(storage.get(marker!)).resolves.toBeNull();
+        second.release();
+
+        await expect(upd).resolves.toEqual({ ok: { modified: 1 } });
+        await expect(coll(storage).get("r1")).resolves.toEqual(expected);
+        await expect(coll(storage).where({ status: "closed", n: 1 }).all()).resolves.toEqual([
+          expected,
+        ]);
+      });
+    });
+
     test(
       "storm: concurrent single-row and batch read-modify-writes on shared _ids",
       { timeout: 120_000 },

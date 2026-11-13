@@ -724,9 +724,7 @@ export class Writer {
 
     // ── Step 4. PUT additive index `newKeys` (BEFORE the commit). ───
     // Additive index `newKeys` (the markers for the doc's NEW value)
-    // ALSO go down here, before the committing create. `newKeys`
-    // depend only on `body` + `docId` (NOT on `seq`), so they're
-    // stable across the forward re-probe — emit them once. Emitting
+    // ALSO go down here, before the committing create. Emitting
     // BEFORE the commit means no crash leaves a committed row unindexed
     // (no crash-made false-negative; the concurrent delete-after-commit
     // ABA at `#readPreImage` is the one exception). A crash after a `newKey` PUT but
@@ -739,10 +737,10 @@ export class Writer {
     // See ADR-004 Q4 + `index-emit-order.test.ts`.
     //
     // A verdict that replaces the body on the lost-race path (Step 5) runs
-    // this again for the new body before the next create; keys already
-    // PUT by this attempt are not re-sent.
+    // this again for the new body before the next create. Re-emit even
+    // previously PUT keys: a peer may have used and deleted them while
+    // winning an intervening slot.
     let newKeysClassA = 0;
-    const putKeys = new Set<string>();
     const putNewKeys = async (image: DocumentData | undefined): Promise<void> => {
       // Additive index keys for the NEW value — emitted before the
       // commit on I/U (a D has no new value). `op:"D"` and a missing
@@ -752,11 +750,7 @@ export class Writer {
       }
       const parallelPuts: Array<Promise<unknown>> = [];
       for (const k of allIndexKeysFor(logPrefix, this.#indexes, image, input.docId)) {
-        if (putKeys.has(k)) {
-          continue;
-        }
         assertKeyWithinLimit(k);
-        putKeys.add(k);
         newKeysClassA++;
         parallelPuts.push(
           this.#storage
