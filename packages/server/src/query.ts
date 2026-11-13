@@ -185,7 +185,7 @@ export const serializeManifestPointer = (json: CurrentJson, tail = json.tail_hin
  * — the public seam (`.where(p)` accepting `PredicateArg<T>`) routes
  * incoming object-form / callback-form predicates through
  * `normalizePredicateArg` before they reach this state, so every
- * downstream consumer (planner, executor, post-filter) reads the
+ * downstream consumer (executor, post-filter) reads the
  * same shape.
  *
  * @internal

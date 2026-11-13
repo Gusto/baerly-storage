@@ -1,4 +1,3 @@
-export { deepEqualDocumentValue } from "./_internals.ts";
 export {
   type PredicateArg,
   type PredicateBuilder,
