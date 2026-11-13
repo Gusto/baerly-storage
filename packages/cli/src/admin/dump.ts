@@ -195,7 +195,7 @@ const warnLegacy = (
   }
   for (const group of legacy.twin_ids) {
     lines.push(
-      `canonically-equivalent twin _ids ${JSON.stringify(group)} share index markers on R2: ${LEGACY_ID_MIGRATION}`,
+      `canonically-equivalent twin _ids ${JSON.stringify(group)} have one NFC spelling, which the SDK accepts for only one row: ${LEGACY_ID_MIGRATION}`,
     );
   }
   for (const line of lines) {

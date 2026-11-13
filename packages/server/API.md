@@ -455,9 +455,8 @@ read back the `_id` the server returns; design cross-collection writes
 parent-first with cleanup, not by pre-minting ids.
 
 Do not declare `indexes`: they are validated at `Db.create` but never
-speed up or change a read, which folds the whole snapshot and log. Until
-the writer stops emitting index markers, a write whose row holds an
-array in an indexed field throws `SchemaError`.
+speed up or change a read, which folds the whole snapshot and log, and
+change no storage call a write makes.
 
 ## `createBaerlyClient` (browser / Node HTTP client)
 

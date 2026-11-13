@@ -81,15 +81,12 @@ part-way, it keeps the rows it already committed.
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
 **Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC,
-such as `"cafe\u0301"` (NFD) instead of `"caf\u00e9"`. R2 stores
-canonically-equivalent keys as one object, so two such ids would share an
-index marker.
+such as `"cafe\u0301"` (NFD) instead of `"caf\u00e9"`. Each `_id` has
+one spelling, because R2 stores canonically-equivalent keys as one object.
 **Fix:** pass `id.normalize("NFC")`. A row an earlier release stored under
 a non-NFC `_id` still reads and deletes; to keep it writable, insert a copy
 under a fresh NFC id that is not canonically equivalent to the original
-(for example, omit `_id` for a UUID), then delete the original. On R2,
-copying to the normalized original id before deleting it would remove the
-copy's index markers.
+(for example, omit `_id` for a UUID), then delete the original.
 
 ### `app`/`tenant`/`collection must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
@@ -113,7 +110,7 @@ baerly admin restore --bucket=$B --app=app --tenant=t --collection=$'caf\u00e9-v
 The normalized original name is not a safe target: on R2 it addresses the
 legacy objects. Run `baerly admin fsck` first: it flags non-NFC names.
 `baerly admin dump` also flags non-NFC `_id`s and canonically-equivalent
-twin `_id`s, which restore refuses or which share index markers on R2;
+twin `_id`s, which restore refuses or which have only one NFC spelling;
 give each a fresh NFC `_id` in the NDJSON before restoring.
 
 The alias guard checks stored collection names, not app or tenant identity.

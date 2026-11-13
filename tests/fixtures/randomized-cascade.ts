@@ -873,11 +873,9 @@ export const runMultiDocCascade = async (opts: {
 
 /**
  * Doc shape consumed by the range-walk parity cascade. `priority`
- * is a string-typed field intentionally — `encodeIndexValue` is
- * value-order-preserving across every supported type, so numeric
- * ranges would also route through the index, but pinning priorities
- * to short string tokens keeps the cascade's surface stable across
- * tickets and makes the in-memory full-scan baseline easy to read.
+ * is a string-typed field intentionally: pinning priorities to short
+ * string tokens keeps the cascade's surface stable and makes the
+ * in-memory full-scan baseline easy to read.
  */
 interface ParityDoc extends DocumentData {
   readonly _id: string;

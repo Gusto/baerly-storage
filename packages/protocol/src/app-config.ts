@@ -54,12 +54,8 @@ export interface CollectionDefinition {
    *
    * `Db.create` validates each entry and throws on a malformed one
    * (see {@link IndexDefinition}), so names and shapes stay reserved
-   * for a future index-aware storage format. In this release each
-   * declared index still adds a small marker PUT to a write whose row
-   * sets the indexed field; no read consults those markers.
-   *
-   * Until the writer stops emitting index markers, a write whose row
-   * holds an array in an indexed field throws `SchemaError`.
+   * for a future index-aware storage format. A declared index changes
+   * no storage call: writes cost what they cost without it.
    */
   readonly indexes?: ReadonlyArray<IndexDefinition>;
   /**

@@ -17,9 +17,9 @@
  *      intentionally omitted to keep the op count O(LIST pages); the
  *      read path validates entry shape at fold time.
  *
- * fsck never reads or writes the legacy `index/` prefix: the writer's
- * index markers are not consulted by any read, so they cannot drift
- * into a wrong answer. It also has no repair mode.
+ * fsck never reads or writes the legacy `index/` prefix: writers before
+ * 0.7 left index markers there, but no read consults them, so they cannot
+ * drift into a wrong answer. It also has no repair mode.
  *
  * Exit codes:
  *   0 — all checks pass.

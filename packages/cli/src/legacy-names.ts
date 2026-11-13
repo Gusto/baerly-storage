@@ -5,8 +5,9 @@
  * reports {@link nonNfcNames} and `admin dump` reports every helper.
  *
  * R2 stores canonically-equivalent keys as one object, so a non-NFC name
- * shares its key prefix with the NFC spelling there, and two rows whose
- * `_id`s are canonically equivalent ("twins") share index markers.
+ * shares its key prefix with the NFC spelling there. Two rows whose `_id`s
+ * are canonically equivalent ("twins") are distinct rows the SDK can no
+ * longer write, since it accepts only the NFC spelling of an `_id`.
  */
 
 /** A name role a bucket key interpolates. */
