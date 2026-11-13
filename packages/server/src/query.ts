@@ -75,6 +75,7 @@ import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { type CommitAdmission, type CommitVerdict, Writer } from "./writer.ts";
+import { isOwnCollection } from "./collection-alias.ts";
 
 const PATCH_ID_RESOLUTION = "Omit `_id` from the patch, or pass the row's own `_id`.";
 
@@ -481,7 +482,7 @@ const newestVersion = (
 ): DocumentData | "gone" | undefined => {
   let newest: DocumentData | undefined;
   for (const entry of entries) {
-    if (entry.collection !== collection || entry.doc_id !== docId) {
+    if (!isOwnCollection(entry.collection, collection) || entry.doc_id !== docId) {
       continue;
     }
     if (entry.op === "D" || entry.after === undefined) {
@@ -678,7 +679,7 @@ const withLiveBefore = (
   }
   for (let i = tail.length - 1; i >= 0; i--) {
     const entry = tail[i]!;
-    if (entry.collection === collection && entry.doc_id === write.docId) {
+    if (isOwnCollection(entry.collection, collection) && entry.doc_id === write.docId) {
       const { before: _stale, ...rest } = write;
       return entry.op === "D" || entry.after === undefined
         ? rest

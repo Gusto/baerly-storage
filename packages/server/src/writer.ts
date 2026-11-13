@@ -102,6 +102,7 @@ import { dispatchWriteTick, shouldFireMaintenance } from "./maintenance.ts";
 import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
+import { isOwnCollection } from "./collection-alias.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
@@ -1259,7 +1260,7 @@ export class Writer {
         // as the protocol violation. Skip.
         continue;
       }
-      if (entry.collection !== collection || entry.doc_id !== docId) {
+      if (!isOwnCollection(entry.collection, collection) || entry.doc_id !== docId) {
         continue;
       }
       if (entry.op === "D") {
@@ -1634,7 +1635,7 @@ const decideInsertTarget = (
 ): LogEntry | undefined => {
   for (let i = window.length - 1; i >= 0; i--) {
     const e = window[i]!;
-    if (e.collection !== input.collection || e.doc_id !== input.docId) {
+    if (!isOwnCollection(e.collection, input.collection) || e.doc_id !== input.docId) {
       continue;
     }
     if (e.op === "D") {

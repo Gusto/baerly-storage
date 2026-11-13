@@ -59,6 +59,7 @@ import {
   type SnapshotBody,
   snapshotKey,
 } from "./snapshot.ts";
+import { isOwnCollection } from "./collection-alias.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
@@ -427,7 +428,7 @@ export const compact = async (
   let applied = 0;
   for (const { entry } of fetched) {
     if (
-      entry.collection === collectionName &&
+      isOwnCollection(entry.collection, collectionName) &&
       entry.doc_id !== undefined &&
       entry.op !== "D" &&
       entry.after !== undefined &&
@@ -438,7 +439,7 @@ export const compact = async (
       break;
     }
     applied++;
-    if (entry.collection !== collectionName) {
+    if (!isOwnCollection(entry.collection, collectionName)) {
       continue;
     }
     if (entry.doc_id === undefined) {

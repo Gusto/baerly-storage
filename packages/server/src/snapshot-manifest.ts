@@ -15,6 +15,7 @@ import {
   parseArtifactKey,
 } from "./snapshot-codec.ts";
 import { compareDocIds } from "./snapshot-doc-id.ts";
+import { isOwnCollection } from "./collection-alias.ts";
 
 const SNAPSHOT_MANIFEST_SCHEMA_VERSION = 2;
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -254,7 +255,7 @@ export const decodeSnapshotManifest = async (
       return value;
     },
   );
-  if (canonical.collection !== expectedCollection) {
+  if (!isOwnCollection(canonical.collection, expectedCollection)) {
     invalid("InvalidResponse", "body collection does not match the expected collection");
   }
   if (canonical.log_seq_start !== expectedLogSeqStart) {
