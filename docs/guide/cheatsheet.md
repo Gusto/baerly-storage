@@ -115,6 +115,13 @@ when the current live row matches; a different current body yields
 `AlreadyExists`. Deletion permits reinsertion. Calling `insert(doc)` again
 is a new operation and mints a new auto-ID.
 
+A body is plain JSON, so raw-HTTP callers cannot express `NaN`,
+`±Infinity`, `undefined` members, or `Date` / `Map` / class instances:
+`JSON.stringify` has already turned them into `null`, dropped them, or
+reshaped them before the request is sent. `Db` and the JS SDK refuse
+those values with `InvalidConfig` before serializing; a raw caller must
+check them itself.
+
 Read modifiers are JSON-encoded query params on `GET /v1/c/:collection`,
 all optional and composable — always
 `encodeURIComponent(JSON.stringify(spec))`:
