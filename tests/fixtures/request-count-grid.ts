@@ -33,7 +33,7 @@ import {
   runWithContext,
 } from "../../packages/server/src/observability/context.ts";
 import { chargedStorage } from "./ledgered-storage.ts";
-import { freeFetchCells } from "./request-count-free-fetch.ts";
+import { FREE_FETCH_INDEXES, freeFetchCells } from "./request-count-free-fetch.ts";
 import { sinceCells } from "./request-count-since.ts";
 import type { CallCounts } from "./request-counting-storage.ts";
 
@@ -45,11 +45,15 @@ const CURRENT_JSON_KEY = `${PREFIX}/current.json`;
 
 /** Unfolded log entries past the snapshot. */
 export const TAIL_LENGTHS = [0, 50, 200] as const;
-/** Declared single-field indexes; every write touches all of them. */
-export const INDEX_COUNTS = [0, 1, 3] as const;
+/**
+ * Declared single-field indexes. Only 0: a declaration changes no storage
+ * call, which `tests/unit/declared-indexes-inert.test.ts` pins for every
+ * verb and read, so the axis stays in the cell names at one value.
+ */
+export const INDEX_COUNTS = [0] as const;
 /** Docs folded into the snapshot before the tail is written. */
 export const SNAPSHOT_DOCS = [0, 100] as const;
-/** `$in` list sizes for the indexed `$in` rows. */
+/** `$in` list sizes for the `$in` rows. */
 export const IN_SIZES = [1, 2, 4, 8] as const;
 
 /** The commit interval at which a write tick runs GC ahead of any fold. */
@@ -213,13 +217,12 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
 
         await route("insert", true, (s) => coll(s).insert(docBody(undefined, 7)));
         await route("insert-with-id", true, (s) => coll(s).insert(docBody("new", 7)));
-        // Rewrites every indexed field, so each index needs a new marker.
+        // Rewrites every field a declaring collection would index.
         const patch = { f0: "w", f1: "w", f2: "w" };
         await route("update", true, (s) => coll(s).update(id, patch));
         await route("delete", true, (s) => coll(s).delete(id));
         if (tail > 0) {
-          // The newest doc: its pre-image is one log entry back, inside the
-          // post-commit pre-image walk, so the stale markers are DELETEd.
+          // The newest doc, whose prior entry is the last one in the tail.
           const latest = `t${String(tail - 1).padStart(3, "0")}`;
           await route("update-latest", true, (s) => coll(s).update(latest, patch));
           await route("delete-latest", true, (s) => coll(s).delete(latest));
@@ -229,15 +232,13 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
         await route("indexed-miss", false, (s) => coll(s).where({ f0: "absent" }).all());
         await route("scan", false, (s) => coll(s).where({ n: 3 }).all());
 
-        if (indexes > 0) {
-          for (const k of IN_SIZES) {
-            const values = Array.from({ length: k }, (_, i) => `v${i}`);
-            await route(`in-query[${k}]`, false, (s) =>
-              coll(s)
-                .where((q) => q.in("f0", values))
-                .all(),
-            );
-          }
+        for (const k of IN_SIZES) {
+          const values = Array.from({ length: k }, (_, i) => `v${i}`);
+          await route(`in-query[${k}]`, false, (s) =>
+            coll(s)
+              .where((q) => q.in("f0", values))
+              .all(),
+          );
         }
 
         const read = await readCurrentJson(base, CURRENT_JSON_KEY);
@@ -275,7 +276,7 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
         await tick("tick:gc", (s) => gcTick(s));
         if (tail > 0) {
           await tick("tick:fold", foldTick);
-          // After a fold: GC marks the replaced snapshot and folded markers.
+          // After a fold: GC marks the replaced snapshot.
           await tick("tick:gc-mark", (s) => gcTick(s), foldTick);
           // Same, with the grace period elapsed, so the slice also sweeps.
           await tick("tick:gc-sweep", (s) => gcTick(s, 0), foldTick);
@@ -284,10 +285,8 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
     }
   }
   // Whole requests on Workers Free with storage reached through `fetch`.
-  for (const indexes of INDEX_COUNTS) {
-    for (const cell of await freeFetchCells(indexes)) {
-      out[cell.name] = cell.counts;
-    }
+  for (const cell of await freeFetchCells(FREE_FETCH_INDEXES)) {
+    out[cell.name] = cell.counts;
   }
   // `GET /v1/since` long-polls on the Workers Free hosts.
   for (const cell of await sinceCells()) {
