@@ -40,6 +40,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { type RequestLedger, setRequestLedgerResolver } from "@baerly/protocol";
 // Type-only import — `maintenance.ts` imports this module's runtime
 // values (`getCurrentContext`), so a value import here would form a
 // runtime cycle. A type-only edge erases at build time, so tsgo /
@@ -76,6 +77,14 @@ export interface ObservabilityContext {
    * dispatch point. Absent ⇒ inline dispatch + CF-free-safe caps.
    */
   readonly maintenance?: MaintenanceDispatch;
+  /**
+   * The invocation's storage request budget. Set by the adapter that owns
+   * the invocation (an HTTP request, a Workers cron tick) with its host's
+   * limits. Every storage attempt run inside this context, `waitUntil`
+   * work included, is charged to it by `retryStorageCall`, and one that
+   * does not fit is refused before it is sent. Absent ⇒ nothing is charged.
+   */
+  readonly ledger?: RequestLedger;
 }
 
 /**
@@ -96,6 +105,8 @@ export interface ObservabilityContextInit {
   readonly recorder?: RequestScopedMetricsRecorder;
   /** Write-tick maintenance dispatch config. See {@link ObservabilityContext.maintenance}. */
   readonly maintenance?: MaintenanceDispatch;
+  /** Storage request budget. See {@link ObservabilityContext.ledger}. */
+  readonly ledger?: RequestLedger;
 }
 
 /**
@@ -112,6 +123,7 @@ export const createObservabilityContext = (
   fields: new Map(),
   recorder: init.recorder ?? new RequestScopedMetricsRecorder(),
   ...(init.maintenance !== undefined && { maintenance: init.maintenance }),
+  ...(init.ledger !== undefined && { ledger: init.ledger }),
 });
 
 /**
@@ -120,6 +132,10 @@ export const createObservabilityContext = (
  * per-request scope, so cross-request bleed is impossible there.
  */
 const als = new AsyncLocalStorage<ObservabilityContext>();
+
+// Adapters import only `@baerly/protocol`, so `retryStorageCall` finds the
+// active invocation's ledger through this resolver.
+setRequestLedgerResolver(() => als.getStore()?.ledger);
 
 /**
  * Run `fn` with `ctx` active as the current observability context.

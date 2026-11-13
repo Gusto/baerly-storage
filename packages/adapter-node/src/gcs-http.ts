@@ -105,6 +105,8 @@ export class GcsHttpStorage implements Storage {
       ...(this.#retries !== undefined && { retries: this.#retries }),
       ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
       conditionalCreate,
+      // Every request leaves through `fetch`: the ledger's external pool.
+      pool: "external",
     });
   }
 

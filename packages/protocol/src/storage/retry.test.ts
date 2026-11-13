@@ -237,6 +237,19 @@ describe("retryStorageCall with conditionalCreate", () => {
     expect(calls()).toBe(1);
   });
 
+  test("notApplied keeps the refusal's resolution", async () => {
+    const withResolution = new BaerlyError("CapacityExceeded", "budget", {
+      cause: { refused: true },
+      resolution: "shrink the request",
+    });
+    const { fn } = sequence([withResolution]);
+    await expect(run(fn)).resolves.toMatchObject({
+      code: "CapacityExceeded",
+      resolution: "shrink the request",
+      cause: { refused: true, notApplied: true },
+    });
+  });
+
   test("a refusal after only throttled attempts reports notApplied", async () => {
     const { fn, calls } = sequence([throttled(), refused()]);
     await expect(run(fn)).resolves.toMatchObject({ cause: { notApplied: true } });

@@ -176,6 +176,53 @@ export const STORAGE_RETRY_THROTTLE_BASE_MILLIS: number = 1000;
 export const STORAGE_RETRY_MAX_DELAY_MILLIS: number = 20_000;
 
 /**
+ * Request-ledger limit on the `internal` pool on Workers Free (the
+ * `cf-free` maintenance profile): every storage call one invocation may
+ * issue, R2 binding calls and `fetch` calls alike. Cloudflare documents
+ * 1,000 subrequests to internal services per Free invocation
+ * (https://developers.cloudflare.com/workers/platform/limits/); 900 keeps
+ * a 10% margin for calls the ledger cannot see but the platform counts:
+ * app code in the same Worker, redirects, and any per-call multiplier on
+ * the binding. The 1,000 is documented, not observed (a Free probe saw 60
+ * binding calls succeed); the R2 adapter's "Too many subrequests" refusal
+ * is the backstop if the real cap is lower.
+ *
+ * @see packages/protocol/src/storage/ledger.ts (`RequestLedger`)
+ */
+export const CF_FREE_INTERNAL_REQUEST_LIMIT: number = 900;
+
+/**
+ * Request-ledger limit on the `external` pool on Workers Free: storage
+ * calls that leave through `fetch` (S3 over HTTP, GCS) plus Cache API
+ * calls. Free allows 50 external subrequests per invocation, and a
+ * `fetch` past the 50th throws before it is sent (observed at exactly
+ * call 51). 45 keeps 5 for calls outside the ledger: the verifier's JWKS
+ * fetch on a cold isolate and a write's cache invalidation.
+ * `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and `CF_FREE_FETCH_GC_MAX_SWEEPS`
+ * are sized so a whole request fits it.
+ */
+export const CF_FREE_EXTERNAL_REQUEST_LIMIT: number = 45;
+
+/**
+ * Request-ledger limit on both pools on Workers Paid (the `cf-paid`
+ * maintenance profile): Paid's default 10,000 subrequests per invocation
+ * less a 10% margin. An operator who lowers `limits.subrequests` in the
+ * Wrangler config is invisible to the Worker, so `cf-paid` assumes the
+ * default.
+ */
+export const CF_PAID_REQUEST_LIMIT: number = 9000;
+
+/**
+ * Most Cache API calls (`match` / `put` / `delete`) the Worker's read
+ * cache spends per invocation. They share the subrequest quota, so each
+ * is charged to the ledger's `external` pool. The read cache issues at
+ * most `match` + `put` on a cacheable GET and one `delete` after a write;
+ * a `match` or `put` without room in the ledger is skipped and the
+ * request is served from storage, never refused.
+ */
+export const CF_CACHE_API_MAX_CALLS: number = 3;
+
+/**
  * Maximum concurrent log-entry GETs issued by a single `walkLogRange`
  * call. Bounds Class-B fan-out per read and per CAS attempt — without
  * a bound, a reader on a collection whose compactor has fallen behind

@@ -230,7 +230,9 @@ class R2BindingStorageImpl implements Storage {
           throw new BaerlyError("NetworkError", `${op}: ${msg}`, { cause: error });
         }
       },
-      { conditionalCreate },
+      // Binding calls are subrequests to an internal service: charged to
+      // the request ledger's `internal` pool only.
+      { conditionalCreate, pool: "internal" },
     );
   }
 }

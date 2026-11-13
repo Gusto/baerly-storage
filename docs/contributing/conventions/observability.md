@@ -2,7 +2,7 @@
 title: Conventions for observability code
 audience: coder
 summary: One canonical line per unit-of-work, field attachment, DEBUG vs INFO, test patterns.
-last-reviewed: 2026-06-13
+last-reviewed: 2026-11-13
 tags: [conventions, observability]
 related: ["../../guide/observability.md", "tests.md"]
 ---
@@ -111,6 +111,12 @@ await rebuildIndex(storage, currentJsonKey, def);
 Errors propagate to the platform's process / Worker log. Metric
 emissions fall through to `noopMetricsRecorder` outside any
 `runWithContext` scope.
+
+One exception: the Cloudflare adapter runs a user `scheduled` handler
+inside its own context, because a cron invocation has its own subrequest
+limit and so its own request ledger (`ObservabilityContext.ledger`). That
+context emits no canonical line; metrics recorded inside it are dropped
+with it.
 
 If you need per-emission visibility during local testing, construct
 an `ObservabilityContext` and wrap the work in `runWithContext`:
