@@ -558,6 +558,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         whole batch before any row commits, and again at a row's commit
    *         if a concurrent write landed since; rows before that one are
    *         then already applied. Not retriable unchanged; see RECIPES.md.
+   *         Also thrown when the request runs out of storage calls
+   *         part-way: rows before the refused one are applied, it and the
+   *         rows after it are not; re-running the call on a new request is
+   *         safe (it re-reads and re-matches).
    * @throws BaerlyError{code: "MaintenancePending"} — maintenance is behind
    *         on this collection; the refused row and the rows after it were
    *         not committed. Retriable: wait `err.retryAfter` seconds, then
@@ -617,6 +621,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         whole batch before any row commits, and again at a row's commit
    *         if a concurrent write landed since; rows before that one are
    *         then already applied. Not retriable unchanged; see RECIPES.md.
+   *         Also thrown when the request runs out of storage calls
+   *         part-way: rows before the refused one are tombstoned, it and
+   *         the rows after it are not; re-running the call on a new request
+   *         is safe.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked for every matched row before any

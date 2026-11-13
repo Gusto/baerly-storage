@@ -189,3 +189,27 @@ describe("retryStorageCall charges the active ledger", () => {
     expect(active.charged.external).toBe(5);
   });
 });
+
+describe("RequestLedger.storageRemaining", () => {
+  test("is unbounded until a storage call is charged, then follows that call's pool", () => {
+    const ledger = new RequestLedger({ internal: 10, external: 4 });
+    ledger.chargeCacheCall();
+    expect(ledger.storageRemaining()).toBe(Infinity);
+    ledger.acquire("internal");
+    // A cache call also charged `internal`: 10 - 2.
+    expect(ledger.storageRemaining()).toBe(8);
+  });
+
+  test("an external storage call makes the stricter external pool the one that counts", () => {
+    const ledger = new RequestLedger({ internal: 10, external: 4 });
+    ledger.acquire("external");
+    ledger.acquire("internal");
+    expect(ledger.storageRemaining()).toBe(3);
+  });
+
+  test("a refused storage call still names its pool", () => {
+    const ledger = new RequestLedger({ internal: 0, external: 0 });
+    expect(() => ledger.acquire("internal")).toThrow(BaerlyError);
+    expect(ledger.storageRemaining()).toBe(0);
+  });
+});

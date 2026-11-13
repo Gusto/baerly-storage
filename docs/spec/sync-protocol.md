@@ -508,6 +508,28 @@ limits follow the Workers maintenance profile:
 | `cf-paid` | `CF_PAID_REQUEST_LIMIT` (9,000) | `CF_PAID_REQUEST_LIMIT` (9,000) |
 | Node | counted, never refused | counted, never refused |
 
+**Commit-resolution reserve.** Once its committing create is sent, a write
+may still need one occupant readback and the delete-floor `current.json`
+read to know its fate; without room for them, a create that landed but lost
+its reply becomes `AmbiguousCommit`. So before it PUTs any additive index
+marker, the writer requires the ledger to allow
+`STORAGE_RETRY_MAX_ATTEMPTS × (markers + 1) + COMMIT_RESOLUTION_RESERVE`
+more storage requests (each marker PUT and the create at full retries,
+plus 6 for the readback and the floor read), and refuses with
+`CapacityExceeded`, nothing written, otherwise. After a lost create race the
+forward probe has spent requests, so the same sum (counting markers only
+for a re-decided post-image) is checked again before the next create; a
+refusal there is equally clean, since the foreign occupant proves this
+commit's only send did not land. The reserve is a check, not a hold: work
+running concurrently in the same invocation (a `ctx.waitUntil` tick) can
+still spend it, and the paths above stay safe when it does. Post-commit
+steps (the floor read, the pre-image walk, stale-marker DELETEs, the write
+tick) swallow a refusal and leave the commit acknowledged.
+
+A multi-row update or delete commits row by row, so a refusal part-way
+keeps the rows already committed, commits neither the refused row nor any
+after it, and surfaces the `CapacityExceeded`; nothing is ambiguous.
+
 Each limit keeps a margin under the platform cap (1,000 internal and 50
 external on Free, 10,000 on Paid) for calls the ledger does not see, such
 as the verifier's JWKS fetch. The Worker's read cache charges each Cache API
