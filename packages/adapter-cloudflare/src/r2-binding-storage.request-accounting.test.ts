@@ -144,7 +144,7 @@ describe("r2BindingStorage request accounting", () => {
     );
   });
 
-  test("a same-key rate limit (10058) on every attempt of a conditional create reports notApplied", async () => {
+  test("a same-key rate limit (10058) on every attempt preserves conditional-create uncertainty", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     const { bucket, calls } = mkBucket([], R2_SAME_KEY_RATE_LIMIT);
     const storage = r2BindingStorage(bucket);
@@ -152,7 +152,8 @@ describe("r2BindingStorage request accounting", () => {
       .put("k", new Uint8Array([1]), { ifNoneMatch: "*" })
       .catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(NETWORK_ERROR);
-    expect(err.cause).toMatchObject({ throttled: true, notApplied: true });
+    expect(err.cause).toMatchObject({ throttled: true, mayHaveApplied: true });
+    expect(err.cause).not.toHaveProperty("notApplied");
     expect(calls.put).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
   });
 
@@ -226,7 +227,9 @@ type LogPutFault =
   | "pass"
   | "throw"
   | "land-then-throw"
+  | "land-then-throttle"
   | "deny"
+  | "invalid-config"
   | "throttle"
   | "peer-then-throttle"
   | "subrequest-limit";
@@ -287,6 +290,9 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
       if (fault === "throw") {
         return Promise.reject(new Error("internal error"));
       }
+      if (fault === "invalid-config") {
+        return Promise.reject(new Error("no such bucket"));
+      }
       if (fault === "deny") {
         return Promise.reject(new Error("permission denied"));
       }
@@ -313,6 +319,9 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
         return Promise.resolve(null);
       }
       const result = store(key, value);
+      if (fault === "land-then-throttle") {
+        return Promise.reject(new Error(R2_SAME_KEY_RATE_LIMIT));
+      }
       return fault === "land-then-throw"
         ? Promise.reject(new Error("internal error"))
         : Promise.resolve(result);
@@ -378,17 +387,29 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
     expect(counted.gets).toBe(3);
   });
 
-  test("every log put hits the same-key rate limit — 3 binding PUTs, one readback of the empty slot; retriable NetworkError", async () => {
+  test("every log put hits the same-key rate limit — 3 binding PUTs, one readback of the empty slot; AmbiguousCommit", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     const { counted, calls, commit } = await setupWriter(() => "throttle");
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
-    expect(err.code).toBe(NETWORK_ERROR);
-    expect(err.retriable).toBe(true);
-    expect(err.cause).toMatchObject({ notApplied: true });
+    expect(err.code).toBe(AMBIGUOUS_COMMIT);
+    expect(err.retriable).toBe(false);
     expect(counted.puts).toBe(1);
     expect(calls.logPuts).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
   });
+
+  test.each(["deny", "invalid-config", "subrequest-limit", "pass"] as const)(
+    "a create reporting 10058 after landing is adopted when the next attempt is %s",
+    async (next) => {
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      // R2 does not promise that 10058 proves an unapplied write. A later
+      // definitive rejection must not hide an earlier durable attempt.
+      const { calls, commit } = await setupWriter((n) => (n === 0 ? "land-then-throttle" : next));
+      await expect(commit()).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
+      expect(calls.logPuts).toBe(2);
+      expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
+    },
+  );
 
   test("a race loser throttled at a peer's slot reads it back and commits at the next slot", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);

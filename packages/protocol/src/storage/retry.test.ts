@@ -243,6 +243,17 @@ describe("retryStorageCall with conditionalCreate", () => {
     expect(calls()).toBe(2);
   });
 
+  test("a refusal after a throttle with unknown create fate does not report notApplied", async () => {
+    const uncertainThrottle = new BaerlyError("NetworkError", "10058", {
+      cause: { throttled: true, mayHaveApplied: true },
+    });
+    const { fn, calls } = sequence([uncertainThrottle, refused()]);
+    const failure = (await run(fn)) as BaerlyError;
+    expect(failure).toMatchObject({ code: "NetworkError", cause: { refused: true } });
+    expect(failure.cause).not.toHaveProperty("notApplied");
+    expect(calls()).toBe(2);
+  });
+
   test("a refusal after an uncertain attempt does not report notApplied", async () => {
     const { fn, calls } = sequence([transient(), refused()]);
     const failure = (await run(fn)) as BaerlyError;

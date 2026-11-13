@@ -725,9 +725,8 @@ export class Writer {
     // multiply that policy's attempts (retry at one layer). The outcome of
     // that one call decides the next step:
     //   - success ⇒ committed at `seq`;
-    //   - `cause.notApplied` (every attempt throttled or refused) ⇒ one
-    //     occupant readback, because a throttle may hide a lost race and
-    //     a store may not document that its throttle is unapplied: own
+    //   - `cause.notApplied` (every attempt provably unapplied) ⇒ one
+    //     occupant readback, because a throttle may hide a lost race: own
     //     entry ⇒ adopt; foreign ⇒ forward-probe; an observed empty slot
     //     ⇒ the retriable `NetworkError` propagates; unreadable ⇒
     //     `AmbiguousCommit`;
@@ -1033,8 +1032,8 @@ export class Writer {
     try {
       return await createCurrentJson(this.#storage, this.#currentJsonKey, initial);
     } catch (error) {
-      // A create refused unapplied is usually a peer provisioning the same
-      // key (R2's same-key throttle), so it recovers by re-read like a 412.
+      // A provably unapplied create may hide a peer provisioning the same
+      // key, so it recovers by re-read like a 412.
       if (!isWriteConflict(error) && !isCreateNotApplied(error)) {
         throw error;
       }
