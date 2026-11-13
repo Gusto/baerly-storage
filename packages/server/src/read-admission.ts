@@ -83,14 +83,35 @@ export const currentReadEnvelope = (): ReadEnvelope => getCurrentContext()?.read
 export const remainingStorageCalls = (pool: RequestPool = "internal"): number =>
   currentRequestLedger()?.remaining(pool) ?? Infinity;
 
-const refuseRead = (collection: string, why: string, remedy: string): BaerlyError =>
+/**
+ * Which admission check refused a read, carried on the refusal's
+ * `cause.bound`. A request-ledger refusal at issue carries the ledger's own
+ * cause (`refused: true`) instead.
+ */
+export type ReadRefusalBound =
+  | "snapshotBytes"
+  | "snapshotRows"
+  | "tailEntries"
+  | "tailBytes"
+  | "materializedRows"
+  | "outputRows"
+  | "headStorageCalls"
+  | "probeStorageCalls";
+
+const refuseRead = (
+  collection: string,
+  bound: ReadRefusalBound,
+  why: string,
+  remedy: string,
+): BaerlyError =>
   new BaerlyError(
     "CapacityExceeded",
     `this read of collection ${JSON.stringify(collection)} ${why}, more than one request can ` +
       `do on this host, so it was refused and returned no rows. ${remedy}`,
-    { resolution: CODE_RESOLUTIONS.CapacityExceeded },
+    { resolution: CODE_RESOLUTIONS.CapacityExceeded, cause: { bound } },
   );
 
+/** Only for the output bound: a narrower predicate or a limit shrinks the answer, not the load. */
 const NARROW = "Narrow the predicate or add a limit.";
 const TAIL =
   "The pending log folds into the snapshot as writes run maintenance; until then this read is refused.";
@@ -140,8 +161,9 @@ export class ReadBudget {
     if (calls > left) {
       throw refuseRead(
         this.#collection,
+        "headStorageCalls",
         `must issue at least ${calls} storage calls, over the ${left} this request has left`,
-        `${TAIL} ${NARROW}`,
+        TAIL,
       );
     }
   }
@@ -159,6 +181,7 @@ export class ReadBudget {
     if (head.snapshot_bytes > (env.maxSnapshotBytes ?? Infinity)) {
       throw refuseRead(
         this.#collection,
+        "snapshotBytes",
         `must load a ${head.snapshot_bytes}-byte snapshot, over the ${env.maxSnapshotBytes} bytes it may load`,
         OUTGROWN,
       );
@@ -166,6 +189,7 @@ export class ReadBudget {
     if (head.snapshot_rows > (env.maxSnapshotRows ?? Infinity)) {
       throw refuseRead(
         this.#collection,
+        "snapshotRows",
         `must decode ${head.snapshot_rows} snapshot rows, over the ${env.maxSnapshotRows} it may decode`,
         OUTGROWN,
       );
@@ -190,6 +214,7 @@ export class ReadBudget {
     if (this.#tailBytes > (env.maxTailBytes ?? Infinity)) {
       throw refuseRead(
         this.#collection,
+        "tailBytes",
         `must load more than ${env.maxTailBytes} bytes of pending log entries`,
         TAIL,
       );
@@ -204,8 +229,9 @@ export class ReadBudget {
   readonly probeRefusal = (): BaerlyError =>
     refuseRead(
       this.#collection,
+      "probeStorageCalls",
       `must probe more pending log entries than this request has storage calls left`,
-      `${TAIL} ${NARROW}`,
+      TAIL,
     );
 
   /**
@@ -218,6 +244,7 @@ export class ReadBudget {
     if (rows > max) {
       throw refuseRead(
         this.#collection,
+        "outputRows",
         `returns ${rows} rows, over the ${max} it may return`,
         NARROW,
       );
@@ -230,8 +257,9 @@ export class ReadBudget {
     if (rows > max) {
       throw refuseRead(
         this.#collection,
+        "materializedRows",
         `must decode at least ${rows} rows before filtering, over the ${max} it may decode`,
-        `${NARROW} ${TAIL}`,
+        `${TAIL} ${OUTGROWN}`,
       );
     }
   }
@@ -239,6 +267,7 @@ export class ReadBudget {
   #tailEntriesRefusal(entries: number): BaerlyError {
     return refuseRead(
       this.#collection,
+      "tailEntries",
       `must load at least ${entries} pending log entries, over the ${this.#envelope.maxTailEntries} it may load`,
       TAIL,
     );

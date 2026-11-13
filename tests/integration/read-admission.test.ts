@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   BaerlyError,
+  casUpdateCurrentJson,
   createCurrentJson,
   type DocumentData,
   MemoryStorage,
@@ -146,18 +147,43 @@ const isCapacityRefusal = (err: unknown): boolean =>
   (err as { code?: unknown }).code === "CapacityExceeded";
 
 /**
+ * The mechanism that refused: an admission check's `cause.bound`
+ * (`ReadRefusalBound`), or `"ledger"` for the request ledger refusing a
+ * call at issue (`cause.refused`).
+ */
+type RefusedBy =
+  | "snapshotBytes"
+  | "snapshotRows"
+  | "tailEntries"
+  | "tailBytes"
+  | "materializedRows"
+  | "outputRows"
+  | "headStorageCalls"
+  | "probeStorageCalls"
+  | "ledger";
+
+const refusedBy = (err: unknown): string => {
+  const cause = (err as { cause?: { bound?: unknown; refused?: unknown } }).cause;
+  if (typeof cause?.bound === "string") {
+    return cause.bound;
+  }
+  return cause?.refused === true ? "ledger" : "unknown";
+};
+
+/**
  * The target outcome of every out-of-envelope read: no rows at all (a
  * truncated answer is a served outcome, so it fails here), the capacity
  * code (which rules out the backpressure code: a read cannot advance
- * maintenance), and not retriable.
+ * maintenance), not retriable, and refused by the expected mechanism.
  */
-const expectWholeCapacityRefusal = (outcome: ReadOutcome<unknown>): void => {
+const expectWholeCapacityRefusal = (outcome: ReadOutcome<unknown>, by: RefusedBy): void => {
   expect(outcome.kind, "an out-of-envelope read must refuse whole, never serve").toBe("refused");
   if (outcome.kind !== "refused") {
     return;
   }
   expect(isCapacityRefusal(outcome.error), `refused with ${String(outcome.error)}`).toBe(true);
   expect((outcome.error as { retriable?: unknown }).retriable).toBe(false);
+  expect(refusedBy(outcome.error), `refused with ${String(outcome.error)}`).toBe(by);
 };
 
 // ── Measured staged work ────────────────────────────────────────────────
@@ -447,6 +473,8 @@ const measure = async (p: Prepared): Promise<Measured> => {
 interface Scenario {
   /** The one bound this fixture trips. */
   readonly bound: Bound;
+  /** The mechanism that must refuse it. */
+  readonly refusedBy: RefusedBy;
   readonly envelope: TestEnvelope;
   /** The neighbouring bound the fixture stays inside on SMALL_ENVELOPE (tiny vs oversized). */
   readonly contrast?: Bound;
@@ -470,6 +498,7 @@ const SCENARIOS = {
   /** 100 tiny folded rows: snapshot rows trip, snapshot bytes stay small. */
   tinySnapshot: {
     bound: "maxSnapshotRows",
+    refusedBy: "snapshotRows",
     envelope: tighten("maxSnapshotRows"),
     contrast: "maxSnapshotBytes",
     headOnly: true,
@@ -483,6 +512,7 @@ const SCENARIOS = {
   /** 40 tiny live-tail entries: tail entries trip, tail bytes stay small. */
   tinyTail: {
     bound: "maxTailEntries",
+    refusedBy: "tailEntries",
     envelope: tighten("maxTailEntries"),
     contrast: "maxTailBytes",
     build: async (fresh) => {
@@ -494,6 +524,7 @@ const SCENARIOS = {
   /** 3 folded ~30 KiB rows: snapshot bytes trip, snapshot rows stay few. */
   oversizedSnapshot: {
     bound: "maxSnapshotBytes",
+    refusedBy: "snapshotBytes",
     envelope: tighten("maxSnapshotBytes"),
     contrast: "maxSnapshotRows",
     headOnly: true,
@@ -511,6 +542,7 @@ const SCENARIOS = {
   /** 2 live-tail ~24 KiB entries: tail bytes trip, tail entries stay few. */
   oversizedTail: {
     bound: "maxTailBytes",
+    refusedBy: "tailBytes",
     envelope: tighten("maxTailBytes"),
     contrast: "maxTailEntries",
     build: async (fresh) => {
@@ -526,6 +558,7 @@ const SCENARIOS = {
   /** 48 folded rows read whole: the answer trips the output bound. */
   wideOutput: {
     bound: "maxOutputRows",
+    refusedBy: "outputRows",
     envelope: tighten("maxOutputRows"),
     contrast: "maxMaterializedRows",
     build: async (fresh) => {
@@ -541,6 +574,7 @@ const SCENARIOS = {
    */
   sortedLimit: {
     bound: "maxMaterializedRows",
+    refusedBy: "materializedRows",
     envelope: tighten("maxMaterializedRows"),
     contrast: "maxOutputRows",
     build: async (fresh) => {
@@ -563,6 +597,7 @@ const SCENARIOS = {
    */
   retriedGets: {
     bound: "maxStorageCalls",
+    refusedBy: "ledger",
     envelope: tighten("maxStorageCalls"),
     extraPrecondition: (m, envelope) => {
       expect(callsOf(m.stack.kernel)).toBeLessThanOrEqual(envelope.maxStorageCalls);
@@ -580,6 +615,45 @@ const SCENARIOS = {
         read: fullScan,
         expected: sortedById(docs),
       };
+    },
+  },
+  /**
+   * 5 folded rows plus 40 live-tail entries with `tail_hint` stamped at the
+   * tail, read through storage the ledger does not charge: the strict range
+   * alone needs more calls than the ledger allows, so only the head check
+   * can refuse it.
+   */
+  headStorageCalls: {
+    bound: "maxStorageCalls",
+    refusedBy: "headStorageCalls",
+    envelope: tighten("maxStorageCalls", 20),
+    headOnly: true,
+    build: async (fresh) => {
+      const storage = await fresh();
+      const db = dbFor(storage);
+      const docs = await insertMany(db, 5, (i) => ({ _id: `h-${pad2(i)}`, n: i }));
+      await foldAll(storage);
+      docs.push(...(await insertMany(db, 40, (i) => ({ _id: `h-${pad2(5 + i)}`, n: 5 + i }))));
+      await casUpdateCurrentJson(storage, HEAD_KEY, (head) => ({
+        ...head,
+        tail_hint: head.log_seq_start + 40,
+      }));
+      return plain(storage, fullScan, sortedById(docs));
+    },
+  },
+  /**
+   * 30 live-tail entries with a stale `tail_hint`, read through storage the
+   * ledger does not charge: the head fits, and only the forward-probe cap
+   * sized from the ledger's remainder can refuse it.
+   */
+  probeStorageCalls: {
+    bound: "maxStorageCalls",
+    refusedBy: "probeStorageCalls",
+    envelope: tighten("maxStorageCalls", 20),
+    build: async (fresh) => {
+      const storage = await fresh();
+      const docs = await insertMany(dbFor(storage), 30, (i) => ({ _id: `q-${pad2(i)}`, n: i }));
+      return plain(storage, fullScan, sortedById(docs));
     },
   },
 } satisfies Record<string, Scenario>;
@@ -617,7 +691,7 @@ const expectRefusal = async (s: Scenario, fresh: Fresh): Promise<void> => {
   const p = await s.build(fresh);
   await expectPrecondition(s, p);
   const stack = p.stack();
-  expectWholeCapacityRefusal(await readUnder(s.envelope, () => p.read(stack.storage)));
+  expectWholeCapacityRefusal(await readUnder(s.envelope, () => p.read(stack.storage)), s.refusedBy);
   expect({ puts: stack.issued.puts, deletes: stack.issued.deletes }).toEqual({
     puts: 0,
     deletes: 0,
@@ -701,6 +775,12 @@ for (const variant of VARIANTS) {
       });
     });
 
+    test("head: a strict range the ledger cannot fit is refused before the snapshot GET", () =>
+      expectRefusal(SCENARIOS.headStorageCalls, fresh));
+
+    test("forward probe: a tail past the ledger's remainder is refused at the probe cap", () =>
+      expectRefusal(SCENARIOS.probeStorageCalls, fresh));
+
     // ── Same head, different tail ─────────────────────────────────────
 
     /**
@@ -769,6 +849,7 @@ for (const variant of VARIANTS) {
 
       expectWholeCapacityRefusal(
         await readUnder(SAME_HEAD_ENVELOPE, () => long.read(long.stack().storage)),
+        "tailEntries",
       );
     });
 
