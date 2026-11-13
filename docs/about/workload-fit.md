@@ -205,6 +205,24 @@ retries and 45 calls of the 50 budgeted, are:
 | Largest `$in` | 16 values |
 | Pending tail length | 8 entries |
 
+Two consequences of that budget are accepted on this host:
+
+- **An update that changes 9 or more indexed fields is refused** with
+  `CapacityExceeded` once 5 or more writes are pending (11 or more on an
+  empty tail, 8 or more at the longest 8-entry tail). Before it writes
+  anything, a commit checks that it can still afford 3 × (index markers +
+  1) + 6 calls: its new index markers and the committing create at full
+  retries, plus 6 to resolve the create. With the 5 + tail calls the
+  update has already spent reading, 9 indexes at a 5-entry tail need
+  10 + 36 = 46 calls, one more than 45.
+- **Past a pending tail of about 9 entries, a worst-case update cannot
+  fold.** A tail that long, for example after a burst of concurrent
+  writes, leaves an update that finds and replaces an old index image too
+  few calls for the fold its write tick starts, so the fold is refused
+  partway and lands nothing; the tail does not shorten on that tick.
+  Inserts and cheaper writes still fold it up to a tail of about 14. The
+  R2 binding has the request headroom to fold it.
+
 The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
 writes, and GC reclaims about 1,000 replaced snapshots per collection per
 7-day grace period. At ~900 writes per day, about 129 folds a day leave

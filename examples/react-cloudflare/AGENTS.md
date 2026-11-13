@@ -539,8 +539,11 @@ graduate once a collection is large. See docs/spec/scale-ceilings.md for the per
 envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator
 env vars (you almost never need them).
 
-Operator opt-in is not required for steady-state operation. On Cloudflare Free, run
-exactly one collection and one phase per invocation, alternating the direct primitives:
+Operator opt-in is not required for steady-state operation. A scheduled pass on
+Cloudflare processes one collection per invocation. With the R2 binding, Free or Paid,
+one `runScheduledMaintenance(args, CLOUDFLARE_FREE_TIER)` (or `CLOUDFLARE_PAID_TIER`)
+call fits. On Free with storage over `fetch` (S3 over HTTP), run one phase per
+invocation, alternating the direct primitives:
 
 ```ts
 import { CLOUDFLARE_FREE_TIER, compact, runGc } from "@gusto/baerly-storage/maintenance";
@@ -553,9 +556,8 @@ if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
 }
 ```
 
-Do not loop tenants or collections in one Free invocation; shard the schedule or persist
-a collection cursor across invocations. Reserve `runScheduledMaintenance()` (both
-phases) for Cloudflare Paid or Node, within that host's invocation budget.
+Do not loop tenants or collections in one Cloudflare invocation; shard the schedule or
+persist a collection cursor across invocations.
 
 On Node, the canonical scheduled pass folds whatever live tail
 exists — `runScheduledMaintenance`'s own `minEntriesToCompact` default is 1 (a
