@@ -1,13 +1,7 @@
 /**
  * Shared comparator helpers for the predicate algebra. `./satisfiable.ts`
- * is the only module that consumes the comparator primitives.
- *
- * Only {@link deepEqualDocumentValue} is part of the public surface —
- * it's also re-exported from `./index.ts` and reaches
- * `packages/server/src/query-planner-implies.ts` through the
- * `@baerly/protocol` barrel. The comparator primitives (`compareScalar`,
- * `sameComparableType`, `formatPath`) are internal to the protocol
- * package.
+ * is the only module that consumes them; none is re-exported from
+ * `./index.ts`.
  */
 
 import type { DocumentValue } from "../json.ts";
@@ -41,10 +35,9 @@ export const formatPath = (path: ReadonlyArray<string>): string =>
   path.length === 0 ? "<root>" : path.map((p) => JSON.stringify(p)).join(".");
 
 /**
- * Recursive structural equality for `DocumentValue` values. Lifted to
- * `export` so the filtered-index implication checker (in
- * `@baerly/server`'s query planner) and other callers can reuse the
- * same comparison rule the validator + merger already trust. Two
+ * Recursive structural equality for `DocumentValue` values. Exported so
+ * `./satisfiable.ts` and other callers reuse the same comparison rule
+ * the validator + merger already trust. Two
  * values `a` and `b` are equal iff:
  *
  *  - they are reference-equal (covers primitives and object identity);

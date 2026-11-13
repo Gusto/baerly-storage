@@ -234,9 +234,7 @@ const encodeBytes = (v: unknown): Uint8Array => {
  *     `JSON.stringify`-insertion-order dependent).
  *
  * Numbers ARE range-safe under this encoder — `9` sorts below `10`
- * as expected. The query planner's old
- * `numeric-range-on-byte-encoder` guard has been removed; range
- * walks and `$in` walks over numeric fields are routed normally.
+ * as expected.
  *
  * `NaN` throws `BaerlyError{code:"SchemaError"}` at write time —
  * the byte encoding has no order-preserving slot for it, and a
