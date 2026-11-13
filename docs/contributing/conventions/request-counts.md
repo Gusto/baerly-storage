@@ -64,6 +64,15 @@ measured under workerd by
 `packages/adapter-cloudflare/src/worker-maintenance.test.ts`. The fixture is
 `tests/fixtures/request-count-free-fetch.ts`.
 
+The `free-fetch:since-*` and `free-r2:since-*` cells are `GET /v1/since`
+long-polls under the ledger's Free limits, `external` (45) over `fetch` and
+`internal` (900) on the R2 binding. `since-idle` is a poll that finds
+nothing, with a deadline no budget outlasts, so the cell is every call the
+route spends holding it; `since-busy` is the first request over a
+200-entry unfolded tail. `tests/unit/request-counts.test.ts` asserts that
+each stays within its host's limit. The fixture is
+`tests/fixtures/request-count-since.ts`.
+
 Every state publishes `tail_hint` at the true tail, so a read replays exactly
 `tail` entries and pays no forward probe over a stale hint.
 

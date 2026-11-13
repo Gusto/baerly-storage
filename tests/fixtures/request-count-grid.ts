@@ -34,6 +34,7 @@ import {
 } from "../../packages/server/src/observability/context.ts";
 import { chargedStorage } from "./ledgered-storage.ts";
 import { freeFetchCells } from "./request-count-free-fetch.ts";
+import { sinceCells } from "./request-count-since.ts";
 import type { CallCounts } from "./request-counting-storage.ts";
 
 const APP = "rc";
@@ -287,6 +288,10 @@ export const measureRequestCounts = async (): Promise<Record<string, CallCounts>
     for (const cell of await freeFetchCells(indexes)) {
       out[cell.name] = cell.counts;
     }
+  }
+  // `GET /v1/since` long-polls on the Workers Free hosts.
+  for (const cell of await sinceCells()) {
+    out[cell.name] = cell.counts;
   }
   return out;
 };
