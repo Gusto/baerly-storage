@@ -534,11 +534,15 @@ describe.each(POOLS)("a multi-row indexed update under the request ledger (%s po
     // `ctx.waitUntil`: each tick runs in the context it was dispatched
     // from, concurrently with the request's later work.
     const ticks: Array<() => Promise<void>> = [];
+    const dispatchedHolds: unknown[] = [];
     const ctx = createObservabilityContext({
       ledger,
       maintenance: {
         dispatch: (task) => {
           const from = getCurrentContext()!;
+          // Dispatched outside the commit hold, so the tick's own calls
+          // never draw on the next row's reserve.
+          dispatchedHolds.push(from.hold);
           ticks.push(async () => {
             await runWithContext(from, task);
             // Whatever the fold left, other work outside the hold takes.
@@ -585,7 +589,11 @@ describe.each(POOLS)("a multi-row indexed update under the request ledger (%s po
     expect(ticksRun).toBe(1);
     // The tick and the work behind it left nothing outside row b's hold.
     expect(unheldAfterTick).toBe(0);
-    expect(creates).toBeGreaterThanOrEqual(2);
+    // Row a's create, row b's create, and the adapter's one retry of b's
+    // lost-ack create (answered 412 by the landed entry), then the readback.
+    expect(creates).toBe(3);
+    // One dispatch per row, none from inside a commit hold.
+    expect(dispatchedHolds).toEqual([undefined, undefined]);
     await expect(statuses(lossy)).resolves.toEqual({ a: "closed", b: "closed" });
   });
 });
