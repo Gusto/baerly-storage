@@ -18,6 +18,7 @@ import {
   type CurrentJson,
   GC_STARVATION_GUARD,
   logDeleteFloorOf,
+  logObjectKey,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
@@ -1931,8 +1932,9 @@ describe("runBoundedMaintenance — sized from the request ledger's remainder", 
       { profile: MAINTENANCE_PROFILE_CF_FREE },
     );
     expect(skipped(recorder, "gc")).toBe(1);
-    // The runner GET, then retirement's gate GET (nothing retirable yet).
-    expect(charged).toBe(2);
+    // The runner GET only: retirement, sized for every attempt, is skipped too.
+    expect(charged).toBe(1);
+    expect(skipped(recorder, "retire")).toBe(1);
     await expect(pendingEtag()).resolves.toBe(pendingBefore);
     await expect(snapshotCount(inner)).resolves.toBe(4);
     expectNoErrors(recorder);
@@ -1941,16 +1943,140 @@ describe("runBoundedMaintenance — sized from the request ledger's remainder", 
   test("a retirement pass that fits only in part retires a shorter range", async () => {
     const inner = new MemoryStorage();
     const tail = await seedFoldedRounds(inner, 4);
-    // Runner GET 1 + retirement base 3 + 2 DELETEs; no fold, no GC due.
+    // Runner GET 1 + retirement's pre-floor worst case 7 + 2 DELETEs at 3
+    // attempts each; no fold, no GC due.
     const { recorder } = await tickWithBudget(
       inner,
-      6,
+      14,
       { prevSeq: tail, observedTail: tail },
       { logRetention: { window: 0 } },
     );
     const read = await readCurrentJson(inner, KEY);
     expect(read === null ? -1 : logDeleteFloorOf(read.json)).toBe(2);
     expectNoErrors(recorder);
+  });
+
+  /** `inner`, except the first `times` `op` calls whose key matches each fail once with a retriable 503. */
+  const failOnce = (
+    inner: Storage,
+    op: "get" | "delete",
+    match: (key: string) => boolean,
+    times = 1,
+  ): Storage => {
+    let failures = 0;
+    const trip = (key: string): void => {
+      if (failures < times && match(key)) {
+        failures += 1;
+        throw new BaerlyError("NetworkError", `injected 503 on ${op} ${key}`, {
+          cause: { status: 503 },
+        });
+      }
+    };
+    return {
+      get: async (key, opts) => {
+        if (op === "get") {
+          trip(key);
+        }
+        return inner.get(key, opts);
+      },
+      put: (key, body, opts) => inner.put(key, body, opts),
+      delete: async (key, opts) => {
+        if (op === "delete") {
+          trip(key);
+        }
+        return inner.delete(key, opts);
+      },
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+  };
+
+  const LOG_PREFIX = `${COLLECTION_PREFIX}/log/`;
+
+  test("a retried DELETE under a tight ledger leaks no log object below the floor", async () => {
+    const inner = new MemoryStorage();
+    const tail = await seedFoldedRounds(inner, 4);
+    // 10 left after the runner GET. Sized as remainder - 3, the pass would
+    // move the floor to 7 and then lose its last DELETE to the retry.
+    const { recorder } = await tickWithBudget(
+      failOnce(inner, "delete", (key) => key.startsWith(LOG_PREFIX)),
+      11,
+      { prevSeq: tail, observedTail: tail },
+      { logRetention: { window: 0 } },
+    );
+    const read = await readCurrentJson(inner, KEY);
+    const floor = read === null ? -1 : logDeleteFloorOf(read.json);
+    expect(floor).toBe(1);
+    for (let seq = 0; seq < floor; seq++) {
+      await expect(inner.get(logObjectKey(COLLECTION_PREFIX, seq))).resolves.toBeNull();
+    }
+    expectNoErrors(recorder);
+  });
+
+  test("a fold refused part-way publishes nothing, and the next tick folds", async () => {
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, FOLD_TAIL);
+    // The fold fits its estimate (26) and issues 25 (no prior snapshot);
+    // two retried log GETs push its closing CAS past the ledger, which
+    // refuses it before it is sent.
+    const first = await tickWithBudget(
+      failOnce(inner, "get", (key) => key.startsWith(LOG_PREFIX), 2),
+      26,
+      foldTick,
+      foldOptions,
+    );
+    expect(counterTotal(first.recorder, "db.maintenance.request_budget_refused_total")).toBe(1);
+    expect(counterTotal(first.recorder, "db.maintenance.unexpected_error_total")).toBe(0);
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(0);
+
+    const next = await tickWithBudget(inner, 26, foldTick, foldOptions);
+    await expect(readSeqStart(inner, KEY)).resolves.toBe(FOLD_TAIL);
+    expectNoErrors(next.recorder);
+  });
+
+  test("a forced fold that does not fit is skipped like any other fold", async () => {
+    // forceFold bypasses Gate 1's ratio and floor, not the request budget:
+    // runner GET 1 + fold 5 + 5 entries = 11.
+    for (const [left, folded] of [
+      [10, 0],
+      [11, 5],
+    ] as const) {
+      const inner = new MemoryStorage();
+      await seedLog(inner, KEY, COLL, 5);
+      // Ratio cold, snapshot within C: only forceFold trips Gate 1.
+      await patchCurrent(inner, KEY, { mean_entry_bytes: 64, snapshot_bytes: 256 * 1024 });
+      const { recorder } = await tickWithBudget(inner, left, {
+        prevSeq: 5,
+        observedTail: 5,
+        forceFold: true,
+      });
+      await expect(readSeqStart(inner, KEY)).resolves.toBe(folded);
+      expect(skipped(recorder, "fold")).toBe(folded === 0 ? 1 : 0);
+      expectNoErrors(recorder);
+    }
+  });
+
+  test("a CapacityExceeded the ledger did not raise stays an unexpected error", async () => {
+    const inner = new MemoryStorage();
+    await seedLog(inner, KEY, COLL, FOLD_TAIL);
+    const failing: Storage = {
+      ...inner,
+      get: async () => {
+        throw new BaerlyError("CapacityExceeded", "not a ledger refusal");
+      },
+      put: (key, body, opts) => inner.put(key, body, opts),
+      delete: (key, opts) => inner.delete(key, opts),
+      list: (prefix, opts) => inner.list(prefix, opts),
+    };
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const recorder = await withRecorder(() =>
+        runBoundedMaintenance({ storage: failing, currentJsonKey: KEY, ...foldTick }, foldOptions),
+      );
+      expect(counterTotal(recorder, "db.maintenance.unexpected_error_total")).toBe(1);
+      expect(counterTotal(recorder, "db.maintenance.request_budget_refused_total")).toBe(0);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   test("a call the ledger refuses ends the tick quietly, not as an unexpected error", async () => {

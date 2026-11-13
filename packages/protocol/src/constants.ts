@@ -724,18 +724,22 @@ export const MAINTENANCE_FOLD_BASE_REQUESTS: number = 5;
 export const MAINTENANCE_GC_BASE_REQUESTS: number = 6;
 
 /**
- * Storage requests a log-retirement pass issues besides its DELETEs: the
- * advisory `current.json` GET and the floor CAS (GET + PUT). A pass that
- * retires `D` log objects costs `3 + D`; one with nothing to retire costs 1.
+ * Most storage requests a log-retirement pass can be charged before its
+ * floor CAS lands: the advisory `current.json` GET and the CAS's own GET,
+ * each up to {@link STORAGE_RETRY_MAX_ATTEMPTS} attempts, plus the CAS PUT,
+ * which an If-Match PUT sends once. 7 at 3 attempts.
  *
- * `runBoundedMaintenance` lowers the pass's delete cap to what the
- * invocation's request ledger has left after this, and skips the pass
- * when that leaves no DELETE. The range not retired stays retirable.
+ * `retireLogRange` moves `log_delete_floor` past the range BEFORE it
+ * DELETEs it, and the next pass starts at the floor, so a DELETE refused
+ * after the CAS leaks that log object for good. `runBoundedMaintenance`
+ * therefore caps the pass at `(remaining - this) / STORAGE_RETRY_MAX_ATTEMPTS`
+ * DELETEs, so every DELETE can spend all its attempts, and skips the pass
+ * when that leaves none. The range not retired stays retirable.
  *
  * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
  * @see packages/server/src/log-retention.ts (`retireLogRange`)
  */
-export const MAINTENANCE_RETIRE_BASE_REQUESTS: number = 3;
+export const MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS: number = 2 * STORAGE_RETRY_MAX_ATTEMPTS + 1;
 
 /**
  * Storage requests the write tick's `tail_hint` refresh issues: one
