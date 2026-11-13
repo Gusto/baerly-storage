@@ -21,7 +21,7 @@ import {
 } from "@baerly/protocol";
 import { collectionsToMaps } from "./config.ts";
 import { probeTailFrom } from "./log-tail.ts";
-import { assertPathSegment } from "./path-segment.ts";
+import { assertNameSegment } from "./path-segment.ts";
 import type { CollectionReadContext } from "./query.ts";
 import { makeCollection } from "./collection.ts";
 
@@ -121,13 +121,15 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * Build a tenant-scoped `Db`. Throws
    * `BaerlyError{code:"InvalidConfig"}` if either `app` or `tenant`
    * is empty, contains `/`, is `"."` or `".."`, contains control
-   * characters, starts with the reserved `"_"` prefix, or exceeds
-   * 256 bytes.
+   * characters, starts with the reserved `"_"` prefix, exceeds
+   * 256 bytes, or is not in Unicode Normalization Form C
+   * (`name !== name.normalize("NFC")`). Names are never normalized for
+   * you: pass `name.normalize("NFC")`.
    *
    * @throws BaerlyError code="InvalidConfig" when `app` or `tenant` is
    *   empty, contains `/`, is `"."` or `".."`, contains control
-   *   characters, starts with the reserved `"_"` prefix, or exceeds
-   *   256 bytes.
+   *   characters, starts with the reserved `"_"` prefix, exceeds
+   *   256 bytes, or is not NFC.
    *
    * @example
    * ```ts
@@ -190,7 +192,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *
    * @throws BaerlyError code="InvalidConfig" when `name` is empty,
    *   contains `/`, is `"."` or `".."`, contains control characters,
-   *   starts with the reserved `"_"` prefix, or exceeds 256 bytes.
+   *   starts with the reserved `"_"` prefix, exceeds 256 bytes, or is
+   *   not in Unicode Normalization Form C.
    *
    * @example
    * ```ts
@@ -232,7 +235,8 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    *
    * @throws BaerlyError code="InvalidConfig" when `name` is empty,
    *   contains `/`, is `"."` or `".."`, contains control characters,
-   *   starts with the reserved `"_"` prefix, or exceeds 256 bytes.
+   *   starts with the reserved `"_"` prefix, exceeds 256 bytes, or is
+   *   not in Unicode Normalization Form C.
    * @internal
    */
   collectionReadContext(name: string): CollectionReadContext {
@@ -268,7 +272,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     // Defensive at the db layer so ALL callers are covered — including
     // the `/v1/since` handler, whose only inline screen catches empty /
     // `/` and lets `..` / control bytes through into this key.
-    assertPathSegment(collection, "collection");
+    assertNameSegment(collection, "collection");
     const key = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}/current.json`;
     return readCurrentJson(this.#storage, key, opts);
   }
@@ -307,7 +311,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     // rationale as `getCurrentJson`; the `/v1/since` poll reaches here.
     // Path validation runs FIRST: a traversal attempt is a security
     // boundary and must not be reclassified as an invariant violation.
-    assertPathSegment(collection, "collection");
+    assertNameSegment(collection, "collection");
     assertAtOrAboveLogFloor("getLogEntry", seq, current);
     const key = logObjectKey(
       `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`,
@@ -351,7 +355,7 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     current: CurrentJson,
     opts?: { signal?: AbortSignal },
   ): Promise<number> {
-    assertPathSegment(collection, "collection");
+    assertNameSegment(collection, "collection");
     assertAtOrAboveLogFloor("probeLogTail", hint, current);
     const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
     const { tail } = await probeTailFrom(this.#storage, logPrefix, hint, opts);
@@ -429,11 +433,13 @@ const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson
 };
 
 /**
- * Guard a string used as a path-segment in the bucket-key encoding.
- * Routes through the single shared {@link assertPathSegment} rule
- * (empty / `"/"` / `"."`|`".."` / C0-C1 control / leading `"_"` (ADR-003) /
- * overlong), all as `BaerlyError{code:"InvalidConfig"}`. `role` and `verb`
- * are baked into the message so the caller doesn't need to format their own.
+ * Guard an app, tenant, or collection name used as a path-segment in the
+ * bucket-key encoding. Routes through {@link assertNameSegment}: the
+ * shared {@link assertPathSegment} rule (empty / `"/"` / `"."`|`".."` /
+ * C0-C1 control / leading `"_"` (ADR-003) / overlong) plus Unicode
+ * Normalization Form C, all as `BaerlyError{code:"InvalidConfig"}`.
+ * `role` and `verb` are baked into the message so the caller doesn't
+ * need to format their own.
  *
  * Used by {@link Db.create} (twice — `app`, `tenant`) and
  * {@link Db.collectionReadContext} (once — `name`).
@@ -441,5 +447,5 @@ const assertAtOrAboveLogFloor = (seam: string, seq: number, current: CurrentJson
  * @internal
  */
 const assertKeySegment = (value: string, role: string, verb: string): void => {
-  assertPathSegment(value, role, verb);
+  assertNameSegment(value, role, verb);
 };
