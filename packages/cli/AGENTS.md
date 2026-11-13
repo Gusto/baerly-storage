@@ -43,6 +43,13 @@ and `admin dump` report non-NFC names, and `admin dump` reports non-NFC and
 canonically-equivalent `_id`s, as the migration preflight
 (`src/legacy-names.ts`).
 
+`admin dump --recover-legacy-names` opts into exact collection-name
+matching for a mixed legacy log. Only the CLI export loader accepts this
+mode; live reads, writes, and maintenance retain the alias guard. Snapshot
+identity, hash, and dense-log checks remain strict. A mismatched snapshot
+is refused because recovery cannot reconstruct rows earlier compaction
+discarded. Recovery reports that historical completeness is not guaranteed.
+
 Two citty (`^0.2.2`) quirks this package works around — the camelCase
 alias it auto-injects for kebab-case flags, and `runCommand` not
 intercepting `--help`/`--version` the way `runMain` does — are

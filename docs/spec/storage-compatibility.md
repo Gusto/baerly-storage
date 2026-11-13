@@ -82,15 +82,30 @@ and binding) declare normalization distinctness unsupported
 that each spelling reads back its own body or the last-written one.
 
 Data an earlier release stored under a non-NFC name or `_id` predates the
-rule. Non-NFC names are read-only: the SDK and HTTP router refuse them,
-the read-only CLI verbs (`inspect`, `export`, `admin dump`, `admin fsck`)
-still read them, and the writing verbs (`admin restore`,
+rule. The SDK and HTTP router refuse non-NFC names. The read-only CLI
+verbs (`inspect`, `export`, `admin dump`, `admin fsck`) still accept them,
+and the writing verbs (`admin restore`,
 `admin rebuild-index`, `admin fsck --indexes --fix`) refuse them. A
 migration dumps the collection and restores it under an NFC name that is
 not canonically equivalent to the legacy one; on R2 the normalized
 original name addresses the legacy objects. `admin fsck` flags non-NFC
 names, and `admin dump` flags non-NFC `_id`s and canonically-equivalent
 twin `_id`s, before the migration.
+
+The collection alias guard checks names in log and snapshot bodies;
+these records do not identify the app or tenant. Normalized aliases of
+legacy app or tenant names can still access and modify the same data.
+Migrate those namespaces to fresh names rather than relying on refusal.
+
+For mixed legacy collection spellings in one R2 log, `admin dump
+--recover-legacy-names` selects one exact stored spelling without merging
+the other spelling's rows, updates, or deletes. Recover each spelling
+separately into a different fresh NFC collection. Recovery requires a
+matching snapshot or no snapshot and retains snapshot hash and dense-log
+validation; it refuses a snapshot for the other spelling instead of
+assuming an empty base. Stop writes and maintenance and preserve a source
+copy first: rows discarded by earlier compaction cannot be reconstructed,
+and recovery does not guarantee historical completeness.
 
 The dot-segment rule is a **portability invariant, not a vendor quirk.**
 RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant

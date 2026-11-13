@@ -60,7 +60,7 @@ export const assertPathSegment = (value: string, role: string, verb = ""): void 
  * CLI, and is migrated by export and restore under a new name.
  */
 const NAME_NFC_RESOLUTION =
-  'Pass name.normalize("NFC") for a new app, tenant, or collection name. Data an earlier release stored under a non-NFC name is read-only: export it with `baerly admin dump` and restore it with `baerly admin restore` under an NFC name that is not canonically equivalent to the original. The normalized original name is not a safe target, because R2 stores canonically-equivalent keys as one object.';
+  'Pass name.normalize("NFC") for a new app, tenant, or collection name. The SDK refuses non-NFC names. Export legacy data with `baerly admin dump` and restore it with `baerly admin restore` under an NFC name that is not canonically equivalent to the original. The normalized original name is not a safe target, because R2 stores canonically-equivalent keys as one object.';
 
 /**
  * Require `value` to be in Unicode Normalization Form C

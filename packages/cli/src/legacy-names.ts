@@ -53,7 +53,7 @@ export const legacyIdReport = (ids: Iterable<string>): LegacyIdReport => {
  * Resolution text shared by the fsck finding and the dump warning.
  */
 export const LEGACY_NAME_MIGRATION =
-  "data under a non-NFC name is read-only; migrate it with `baerly admin dump` then `baerly admin restore` under an NFC name that is not canonically equivalent to the original";
+  "the SDK refuses non-NFC names; migrate legacy data with `baerly admin dump` then `baerly admin restore` under an NFC name that is not canonically equivalent to the original";
 
 export const LEGACY_ID_MIGRATION =
   "before `baerly admin restore`, give each listed row a fresh NFC _id that is not canonically equivalent to any original";

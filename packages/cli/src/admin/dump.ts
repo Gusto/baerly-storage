@@ -31,6 +31,9 @@
  *   --app      Required (or via baerly.config.ts).
  *   --tenant   Required (or via baerly.config.ts).
  *   --collection Required. Collection name.
+ *   --recover-legacy-names Select only this exact stored collection
+ *              spelling in a mixed legacy log. Snapshot validation
+ *              remains strict; historical completeness is not guaranteed.
  *   --json     JSON envelope (on stdout). Its `legacy` field is the
  *              migration preflight: `non_nfc_names` (roles),
  *              `non_nfc_ids`, and `twin_ids` (groups of canonically-
@@ -76,6 +79,11 @@ const DUMP_ARGS = {
   app: APP_ARG,
   tenant: TENANT_ARG,
   collection: COLLECTION_ARG,
+  "recover-legacy-names": {
+    type: "boolean",
+    description:
+      "Recover one exact collection spelling from a mixed legacy log; requires a matching snapshot and cannot recover previously discarded data.",
+  },
   json: JSON_ARG,
 } as const satisfies ArgsDef;
 
@@ -190,6 +198,7 @@ const bundle = defineBaerlySubcommand({
       storage: bucket.storage,
       currentJsonKey,
       collection: args.collection,
+      recoverLegacyNames: args["recover-legacy-names"] === true,
     });
     if (view === null) {
       throw new BaerlyError(
@@ -208,6 +217,11 @@ const bundle = defineBaerlySubcommand({
     };
     if (!isJsonMode()) {
       warnLegacy(legacy);
+      if (args["recover-legacy-names"] === true) {
+        process.stderr.write(
+          "baerly admin dump: warning: recovery selects only the exact stored collection spelling; historical completeness is not guaranteed. Rows discarded by earlier compaction cannot be recovered. Keep a copy of the source bucket.\n",
+        );
+      }
     }
     emitSuccess({
       command: "admin.dump",
@@ -215,6 +229,9 @@ const bundle = defineBaerlySubcommand({
       collection: args.collection,
       dumped: count,
       legacy,
+      ...(args["recover-legacy-names"] === true && {
+        recovery: { collection_match: "exact", historical_completeness: "not_guaranteed" },
+      }),
     });
     return 0;
   },
