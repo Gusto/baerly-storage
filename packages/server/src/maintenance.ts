@@ -874,12 +874,15 @@ export const runBoundedMaintenance = async (
           if (foldRes.written) {
             tailHintPublished = true;
           }
-          // REBUILD-GATE DEFER: the stored snapshot passed the projection but
-          // the rebuilt one is over `C` / `E`. The capacity check refuses
-          // every write whose fold pass would rebuild past the ceiling, so a
-          // write tick lands here only on log entries that check never saw
-          // (another host's writes); scheduled runs also reach it on a
-          // partial last pass. Same signal as the pre-fold defer below.
+          // REBUILD-GATE DEFER: the stored snapshot passed the pre-fold gate,
+          // but no prefix of this pass rebuilds within `C` / `E` (compact()
+          // folds the longest one that does). Two ways here: log entries the
+          // capacity check never saw (another host's writes, a direct
+          // `Writer` commit), or a tail that ends in a run of entries over
+          // `C` shorter than a pass, which the check leaves open so a delete
+          // or shrink can end it, holding the writes it accepted behind the
+          // over-`C` entry until one does. Same signal as the pre-fold defer
+          // below.
           if (foldRes.deferral !== undefined) {
             await signalFoldDeferred({
               gate: "rebuild",

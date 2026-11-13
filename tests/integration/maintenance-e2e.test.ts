@@ -583,7 +583,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
   );
 
   test(
-    "ceiling honored: a low maxFoldBytes DEFERS the fold; the default ceiling FOLDS",
+    "ceiling honored: a maxFoldBytes below one row DEFERS the fold; one above it folds the fitting prefix; the default ceiling FOLDS",
     { timeout: ciTimeout(30_000) },
     async () => {
       // Two arms over the same seed on a fresh memory bucket. On a FRESH
@@ -640,7 +640,20 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       // tail_hint only advances on a fold, and every fold deferred here.
       expect(deferred.discoveredTail - deferred.log_seq_start).toBeGreaterThanOrEqual(50);
 
-      // Arm 2: default ceiling (512 KiB) comfortably fits the ~100KB
+      // Arm 2: ceiling between one ~2KB row and a 20-entry pass (~40KB of
+      // distinct rows). compact() folds the longest prefix of the pass that
+      // fits, so a snapshot lands within C and the entries past it stay in
+      // the tail (a whole-pass check would defer every tick).
+      const C_PARTIAL = 16 * 1024;
+      const partial = await drive(C_PARTIAL);
+      expect(partial.snapshot, "a ceiling above one row folds the prefix that fits").not.toBeNull();
+      expect(partial.snapshot_bytes).toBeLessThanOrEqual(C_PARTIAL);
+      expect(partial.snapshot_rows).toBeGreaterThan(0);
+      expect(partial.snapshot_rows).toBeLessThan(WORKING_SET);
+      expect(partial.log_seq_start).toBeGreaterThan(0);
+      expect(partial.discoveredTail - partial.log_seq_start).toBeGreaterThan(0);
+
+      // Arm 3: default ceiling (512 KiB) comfortably fits the ~100KB
       // snapshot → a fold lands.
       const folded = await drive(undefined);
       expect(
