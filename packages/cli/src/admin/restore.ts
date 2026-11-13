@@ -61,6 +61,7 @@ import { createInterface } from "node:readline";
 import { type ArgsDef } from "citty";
 import {
   assertCurrentJsonTransition,
+  assertDocumentValues,
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -408,10 +409,20 @@ const bundle = defineBaerlySubcommand({
           );
         }
         seenIds.set(id, lineNo);
-        // HOOK(rel-input-validation): plug the document-value validator in
-        // here as a single call over `row` that throws InvalidConfig naming
-        // `lineNo` and `id` (append `committedNote()` to the message).
-        // Nothing validates the body today.
+        // Document-value domain: JSON.parse can still yield a value the
+        // write path refuses (`1e999` parses to Infinity).
+        try {
+          assertDocumentValues(row, "restore");
+        } catch (error) {
+          if (error instanceof BaerlyError) {
+            throw new BaerlyError(
+              "InvalidConfig",
+              `baerly admin restore: line ${lineNo} (_id ${JSON.stringify(id)}) has an invalid document: ${error.message}${committedNote()}${error.resolution === undefined ? "" : `. ${error.resolution}`}`,
+              { cause: error, resolution: error.resolution },
+            );
+          }
+          throw error;
+        }
 
         // Pass the full object as the body — `_id` is part of the
         // body in the doc shape, and the writer keys on `docId`
@@ -426,7 +437,13 @@ const bundle = defineBaerlySubcommand({
           });
         } catch (error) {
           if (error instanceof Error) {
-            error.message += `; line ${lineNo} was not committed${committedNote()}`;
+            if ((error as { code?: unknown }).code === "AmbiguousCommit") {
+              // The committing create's fate is unresolved: line N may
+              // already be durable, so the count is a range, not a figure.
+              error.message += `; line ${lineNo} may or may not be committed (between ${count} and ${count + 1} rows are in the target); restore again with --force to get an exact copy of the dump`;
+            } else {
+              error.message += `; line ${lineNo} was not committed${committedNote()}`;
+            }
           }
           throw error;
         }
@@ -455,10 +472,21 @@ const bundle = defineBaerlySubcommand({
         );
         const stamped: CurrentJson = { ...afterLoad.json, tail_hint: clampedTail };
         assertCurrentJsonTransition(afterLoad.json, stamped, currentJsonKey);
-        await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
-          ifMatch: afterLoad.etag,
-          contentType: "application/json",
-        });
+        try {
+          await bucket.storage.put(currentJsonKey, encodeJsonBytes(stamped), {
+            ifMatch: afterLoad.etag,
+            contentType: "application/json",
+          });
+        } catch (error) {
+          // No retry: the If-Match stop-rule holds. All rows are durable;
+          // only the read-efficiency hint is missing, and a rerun with
+          // --force truncates the collection and restores it cleanly.
+          throw new BaerlyError(
+            error instanceof BaerlyError ? error.code : "NetworkError",
+            `baerly admin restore: all ${count} row${count === 1 ? "" : "s"} were committed, but stamping tail_hint on current.json failed: ${(error as Error).message}. Rerun restore with --force to truncate and restore the dump again.`,
+            { cause: error },
+          );
+        }
       }
     }
     emitSuccess({
