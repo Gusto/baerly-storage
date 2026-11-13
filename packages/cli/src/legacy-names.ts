@@ -77,7 +77,7 @@ export const LEGACY_ID_MIGRATION =
   "before `baerly admin restore`, give each listed row a fresh NFC _id that is not canonically equivalent to any original";
 
 export const LEGACY_ILL_FORMED_NAME_MIGRATION =
-  "the SDK refuses names with an unpaired UTF-16 surrogate, and the CLI cannot pass one; with the code that wrote the data, still on a release that accepts the name, copy each row to a collection under a well-formed NFC name";
+  "the SDK refuses names with an unpaired UTF-16 surrogate, and the CLI cannot pass one; with the code that wrote the data, still on a release that accepts the name, copy each row to a collection under a fresh well-formed NFC name, not name.toWellFormed(), which can address the original objects on R2";
 
 export const LEGACY_ILL_FORMED_ID_MIGRATION =
   "before `baerly admin restore`, give each listed row a well-formed _id (no unpaired UTF-16 surrogate)";

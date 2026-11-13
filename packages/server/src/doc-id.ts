@@ -16,7 +16,7 @@ const DOC_ID_NFC_RESOLUTION =
  * is migrated by copy.
  */
 const DOC_ID_WELL_FORMED_RESOLUTION =
-  "Pass an _id with no unpaired UTF-16 surrogate (id.isWellFormed() is true), or omit _id for a UUID. To migrate a stored row with such an _id, read it by _id, insert a copy under a well-formed _id, then delete the original.";
+  "Pass an _id with no unpaired UTF-16 surrogate (id.isWellFormed() is true), or omit _id for a UUID. To migrate a stored row with such an _id, read it by _id, remove _id from the copy so insert generates a fresh UUID, then delete the original. Do not use id.toWellFormed() as the new _id: on R2 it shares the original's index markers, which deleting the original would remove.";
 
 /**
  * Resolution for a point read whose id no row can be stored under.
