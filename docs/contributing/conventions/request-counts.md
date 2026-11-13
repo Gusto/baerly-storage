@@ -23,8 +23,12 @@ under a host's budget. This gate makes every such change visible in review.
 
 Each cell is `<op> tail=<n> idx=<n> snap=<n>`: the operation, the number of
 unfolded log entries past the snapshot (0 / 50 / 200), the number of
-declared single-field indexes the write touches (0 / 1 / 3), and the number
-of documents folded into the snapshot (0 / 100). The value counts calls by
+declared single-field indexes (always 0 in the route grid), and the number
+of documents folded into the snapshot (0 / 100). A declared index changes
+no storage call: `tests/unit/declared-indexes-inert.test.ts` asserts that a
+collection declaring 3 indexes issues exactly an undeclared one's calls for
+every write verb, the write tick and every read, so the grid measures the
+undeclared collection only. The value counts calls by
 kind: `get`, `put`, `delete`, and `listPage`. `listPage` counts one LIST
 request per 1,000 keys pulled, the page size S3 and R2 use. The `Storage`
 interface has no HEAD.
@@ -32,11 +36,11 @@ interface has no HEAD.
 | op | what runs |
 | --- | --- |
 | `insert`, `insert-with-id` | `insert`, with an SDK-minted or a caller `_id` |
-| `update`, `delete` | by id on a snapshot doc, else the oldest tail doc, else a missing id; the pre-image is outside the post-commit walk, so no stale marker is deleted |
-| `update-latest`, `delete-latest` | by id on the newest tail doc; the stale index markers are DELETEd |
+| `update`, `delete` | by id on a snapshot doc, else the oldest tail doc, else a missing id |
+| `update-latest`, `delete-latest` | by id on the newest tail doc |
 | `get` | `get(id)` |
-| `indexed-query`, `scan` | `where` on an indexed field, and on an unindexed one |
-| `in-query[k]` | `where(q => q.in(field, k values))` on an indexed field |
+| `indexed-query`, `indexed-miss`, `scan` | `where` equality matching 1 in 10 docs, matching none, and on a unique field |
+| `in-query[k]` | `where(q => q.in(field, k values))` |
 | `tick:fold` | the forced write-tick fold (one pass of at most `WRITE_TICK_FOLD_ENTRIES_PER_PASS`) |
 | `tick:gc`, `tick:gc-mark`, `tick:gc-sweep` | the hard-GC write tick (GC slice plus log retirement) on the seeded state, after a fold, and after a fold with the grace period elapsed |
 
@@ -47,16 +51,14 @@ it dispatches.
 
 The `free-fetch:*` cells are whole requests on Workers Free with storage
 reached through `fetch`, where every call is one of the 50 external
-subrequests. Each runs one write kind (`insert`, cold or rotating updates, a
-`mixed` rotation) from a 100-doc snapshot through a full cycle of fold and GC
-phases, with the tick options the Cloudflare adapter builds for that host. GC
-runs with the production grace period over a seeded backlog of due
-snapshots, so every GC slice deletes its full sweep cap, and log retirement
-is live. Updates cover cold documents and rotations at every pre-image
-scan depth, including the full GET scan plus stale-marker DELETEs. A
-`<kind>+tick` cell is the most expensive write, route plus tick; a
-read cell is the most expensive read at any state a `mixed` write left,
-before its tick ran. `tests/unit/request-counts.test.ts` also asserts that
+subrequests. Each runs one write kind (`insert`, cold `update`s, a `mixed`
+rotation) from a 100-doc snapshot, on a collection declaring 3 indexes,
+through a full cycle of fold and GC phases, with the tick options the
+Cloudflare adapter builds for that host. GC runs with the production grace
+period over a seeded backlog of due snapshots, so every GC slice deletes its
+full sweep cap, and log retirement is live. A `<kind>+tick` cell is the
+most expensive write, route plus tick; a read cell is the most expensive
+read at any state a `mixed` write left, before its tick ran. `tests/unit/request-counts.test.ts` also asserts that
 every such cell, plus the Worker's Cache API calls, stays within 45 calls,
 the budget `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and
 `CF_FREE_FETCH_GC_MAX_SWEEPS` are derived from. The Cache API counts are
