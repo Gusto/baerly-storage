@@ -365,9 +365,12 @@ describe("Writer create fate", () => {
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}1.json`]);
   });
 
-  test("a create refused unapplied whose readback fails stays AmbiguousCommit", async () => {
+  test("a create refused unapplied stays retriable when its readback is unavailable", async () => {
     class ThrottledUnreadableStorage extends MemoryStorage {
       readonly attempts: string[] = [];
+      readonly refusal = new BaerlyError("NetworkError", "every create attempt throttled", {
+        cause: { status: 429, throttled: true, notApplied: true },
+      });
       failedReadbacks = 0;
       #refused = false;
 
@@ -379,9 +382,7 @@ describe("Writer create fate", () => {
         if (isLogCreate(key, opts)) {
           this.attempts.push(key);
           this.#refused = true;
-          throw new BaerlyError("NetworkError", "throttled", {
-            cause: { status: 429, throttled: true, notApplied: true },
-          });
+          throw this.refusal;
         }
         return super.put(key, body, opts);
       }
@@ -398,15 +399,15 @@ describe("Writer create fate", () => {
     await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
     const ctx = createObservabilityContext();
 
-    // A store need not document that its throttle is unapplied, so only a
-    // slot read back as empty confirms it; an unreadable slot confirms nothing.
-    await expect(runWithContext(ctx, () => insert(makeWriter(storage)))).rejects.toMatchObject({
-      code: "AmbiguousCommit",
-      _id: "one",
-      retriable: false,
-    });
+    // Unlike an uncertain R2 throttle, notApplied guarantees no attempt
+    // applied or can still apply, so a GET outage cannot make retry unsafe.
+    const failure = await Promise.resolve(
+      runWithContext(ctx, () => insert(makeWriter(storage))),
+    ).catch((error: unknown) => error);
+    expect(failure).toBe(storage.refusal);
+    expect(failure).toMatchObject({ code: "NetworkError", retriable: true });
     expect(storage.failedReadbacks).toBe(1);
-    expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(1);
+    expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
   });
 

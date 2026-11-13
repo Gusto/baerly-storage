@@ -570,8 +570,8 @@ export class Writer {
    * earlier sends. When the call reports every attempt refused unapplied
    * (`cause.notApplied`), the same readback runs because a throttle can hide
    * a lost race: a foreign occupant forward-probes, a slot read back as
-   * empty propagates the retriable `NetworkError`, and an unreadable slot
-   * is `AmbiguousCommit` as for any other failed create.
+   * empty or unreadable propagates the retriable `NetworkError`: the
+   * adapter already guarantees no attempt applied or can still apply.
    * Unresolved creates throw non-retriable `AmbiguousCommit`; failures
    * before the create propagate.
    *
@@ -784,8 +784,7 @@ export class Writer {
     //   - `cause.notApplied` (every attempt provably unapplied) ⇒ one
     //     occupant readback, because a throttle may hide a lost race: own
     //     entry ⇒ adopt; foreign ⇒ forward-probe; an observed empty slot
-    //     ⇒ the retriable `NetworkError` propagates; unreadable ⇒
-    //     `AmbiguousCommit`;
+    //     or unreadable ⇒ the retriable `NetworkError` propagates;
     //   - `AccessDenied` / `InvalidConfig` ⇒ definitive under the
     //     `Storage.put` contract; propagates as-is;
     //   - a 412, or any other failure (an uncertain send — e.g. a dropped
@@ -849,10 +848,9 @@ export class Writer {
         occupant = await this.#readLogOccupant(logEntryKey);
         decision = tryAdoptOwnSessionLogEntry({ self: entry, existing: occupant });
       } catch (error) {
-        if (notApplied && error instanceof BaerlyError && error.code === "NotFound") {
-          // The readback saw the slot empty, which confirms the adapter's
-          // not-applied report: the retriable refusal stands. An unreadable
-          // or malformed slot confirms nothing, so it stays ambiguous.
+        if (notApplied) {
+          // The adapter guarantees no attempt applied or can still apply.
+          // An empty, unreadable, or malformed slot cannot make retry unsafe.
           throw createFailure;
         }
         throw ambiguous(

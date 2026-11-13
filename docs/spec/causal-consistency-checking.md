@@ -324,12 +324,17 @@ drives the real R2 adapter, retry helper, and Writer with an injected binding:
 - an applied create reporting `10058` is adopted by readback after a later
   denial, invalid configuration, subrequest refusal, or precondition failure;
 - an empty readback after exhausted R2 throttles remains `AmbiguousCommit`;
+- a create refused by an invocation-wide subrequest limit stays retriable
+  even when that same limit refuses its readback;
 - a foreign occupant reached through throttles advances to the next slot;
 - index-marker throttles retain the throttle backoff and can recover.
 
 These schedules exercise admitted unknown outcomes; they are not captured
 production R2 traces. `packages/protocol/src/storage/retry.test.ts` separately
 checks that a later refusal cannot erase earlier throttle uncertainty.
+`packages/server/src/writer-create-fate.test.ts` checks that a provably
+unapplied throttled create preserves its original retriable error when
+the readback is unavailable.
 
 ## Deterministic delete-floor coverage
 

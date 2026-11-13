@@ -232,6 +232,7 @@ type LogPutFault =
   | "invalid-config"
   | "throttle"
   | "peer-then-throttle"
+  | "invocation-subrequest-limit"
   | "subrequest-limit";
 
 /**
@@ -245,6 +246,7 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
   let markerThrottlesLeft = markerThrottles;
   let version = 0;
   let armed = false;
+  let invocationExhausted = false;
   const isLog = (key: string) => key.startsWith(LOG_PREFIX);
   const meta = (key: string, etag: string) => ({ key, etag, uploaded: new Date(0) });
   const store = (key: string, value: Uint8Array) => {
@@ -258,6 +260,9 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
         calls.logGets++;
       } else {
         calls.otherGets++;
+      }
+      if (invocationExhausted) {
+        return Promise.reject(new Error(SUBREQUEST_LIMIT));
       }
       const obj = objects.get(key);
       if (obj === undefined) {
@@ -302,6 +307,10 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
       if (fault === "subrequest-limit") {
         return Promise.reject(new Error(SUBREQUEST_LIMIT));
       }
+      if (fault === "invocation-subrequest-limit") {
+        invocationExhausted = true;
+        return Promise.reject(new Error(SUBREQUEST_LIMIT));
+      }
       if (fault === "peer-then-throttle") {
         // A peer's create wins the key; ours is refused by the same-key limit.
         if (!objects.has(key)) {
@@ -335,6 +344,7 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
   return {
     bucket,
     calls,
+    logKeys: () => [...objects.keys()].filter(isLog),
     arm() {
       armed = true;
       Object.assign(calls, { logGets: 0, logPuts: 0, otherGets: 0, otherPuts: 0, markerPuts: 0 });
@@ -365,7 +375,7 @@ const setupWriter = async (
       docId: "one",
       body: { _id: "one", status: "open" },
     });
-  return { counted, calls: mem.calls, commit, storage };
+  return { counted, calls: mem.calls, commit, storage, logKeys: mem.logKeys };
 };
 
 describe("Writer commit over r2BindingStorage: binding calls behind the log create", () => {
@@ -444,6 +454,39 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
     expect(calls.logPuts).toBe(1);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
   });
+
+  test("an invocation-wide subrequest refusal stays retriable when its readback is refused too", async () => {
+    const { counted, calls, commit, logKeys } = await setupWriter(
+      () => "invocation-subrequest-limit",
+    );
+    const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
+    expect(err).toMatchObject({
+      code: NETWORK_ERROR,
+      retriable: true,
+      cause: { refused: true, notApplied: true },
+    });
+    expect(counted.puts).toBe(1);
+    expect(calls.logPuts).toBe(1);
+    expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
+    expect(logKeys()).toEqual([]);
+  });
+
+  test.each(["throttle", "land-then-throttle"] as const)(
+    "an uncertain %s before invocation exhaustion stays ambiguous when readback is refused",
+    async (first) => {
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      const { calls, commit, logKeys } = await setupWriter((n) =>
+        n === 0 ? first : "invocation-subrequest-limit",
+      );
+      await expect(commit()).rejects.toMatchObject({
+        code: AMBIGUOUS_COMMIT,
+        retriable: false,
+      });
+      expect(calls.logPuts).toBe(2);
+      expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
+      expect(logKeys()).toEqual(first === "land-then-throttle" ? [`${LOG_PREFIX}0.json`] : []);
+    },
+  );
 
   test("lost ack (lands, then throws) — the adapter's own resend is refused by the precondition, readback adopts; outer 1 put, 2 binding PUTs", async () => {
     const { counted, calls, commit } = await setupWriter((n) =>

@@ -443,18 +443,18 @@ so the writer reports
 and propagate as-is. The `Storage.put` contract makes them definitive for a
 create-only put: an adapter that retries internally reports a rejection that
 follows an attempt of unknown outcome as `NetworkError` instead. A
-`NetworkError` whose `cause.notApplied` is `true` reports that no attempt of
-that call was applied: the adapters set it when every internal attempt was
-provably throttled before applying (`429` or S3's `503 SlowDown`) or refused
-before issue (the Workers subrequest limit, which the R2 adapter does not
-retry). An adapter builds it as
+`NetworkError` whose `cause.notApplied` is `true` guarantees that no attempt of
+that call was applied or can still apply: the adapters set it when every
+internal attempt was provably throttled before applying (`429` or S3's
+`503 SlowDown`) or refused before issue (the Workers subrequest limit,
+which the R2 adapter does not retry). An adapter builds it as
 `new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`.
 The writer still reads the slot back once, since a throttle can hide a create
 race lost with a `429` instead of a `412`. An own-entry occupant is adopted
 and an identified foreign occupant advances the writer to the next slot, as
-above. A slot read back as empty propagates the `NetworkError` as-is. An
-unreadable or malformed occupant is `AmbiguousCommit`, as for any other
-failed create.
+above. An empty, unreadable, malformed, or otherwise unidentifiable slot
+propagates the original retriable `NetworkError`: the adapter's guarantee
+already proves that retrying cannot duplicate this create.
 
 R2 error `10058` uses the throttle backoff but retains an unknown create
 outcome (`cause.mayHaveApplied`), since Cloudflare does not document that it
