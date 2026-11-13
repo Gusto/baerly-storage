@@ -16,9 +16,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 354340,
-      "gz": 113312,
-      "minGz": 29341,
+      "raw": 357923,
+      "gz": 114538,
+      "minGz": 29592,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
@@ -37,30 +37,30 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 573124,
-      "gz": 175339,
-      "minGz": 56134,
+      "raw": 576754,
+      "gz": 176613,
+      "minGz": 56426,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 98937,
-      "gz": 32561,
-      "minGz": 11948,
+      "raw": 101663,
+      "gz": 33381,
+      "minGz": 12129,
       "note": "Worker-safe S3 entry, so consumer-facing. Demonstrated catch: fast-xml-parser is pinned at 5.8.0 because 5.9.3 inflated this closure ~25%."
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 93460,
-      "gz": 31122,
-      "minGz": 10134,
+      "raw": 96186,
+      "gz": 31944,
+      "minGz": 10316,
       "note": "Worker-safe GCS entry, so consumer-facing. Smaller than s3.js because the GOOG4 signer is lighter than aws4fetch."
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 488156,
-      "gz": 148695,
-      "minGz": 47174,
+      "raw": 491739,
+      "gz": 149940,
+      "minGz": 47450,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
@@ -72,16 +72,16 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 183065,
-      "gz": 58786,
-      "minGz": 14691,
+      "raw": 185825,
+      "gz": 59669,
+      "minGz": 14861,
       "note": "operator-side; reached from the cloudflare.js closure."
     },
     "observability.js": {
       "tier": "shipped",
-      "raw": 116969,
-      "gz": 32420,
-      "minGz": 14516,
+      "raw": 119729,
+      "gz": 33267,
+      "minGz": 14706,
       "note": "operator-side. LogTape accounts for the bulk."
     },
     "app-config.js": {
@@ -102,12 +102,12 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 747354,
+      "raw": 750984,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 756247,
+      "raw": 759877,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }

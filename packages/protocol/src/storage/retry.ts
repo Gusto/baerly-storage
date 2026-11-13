@@ -6,7 +6,7 @@ import {
 } from "../constants.ts";
 import { BaerlyError, isWriteConflict, type BaerlyErrorCode } from "../errors.ts";
 import { delay } from "../time.ts";
-import { currentRequestLedger, type RequestPool } from "./ledger.ts";
+import { currentRequestHold, currentRequestLedger, type RequestPool } from "./ledger.ts";
 
 /**
  * Permanent {@link BaerlyError} codes that end `retryStorageCall` at
@@ -162,7 +162,7 @@ export const retryStorageCall = async <T>(
   let uncertain = false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      ledger?.acquire(pool);
+      ledger?.acquire(pool, currentRequestHold());
       return await fn();
     } catch (error) {
       if (error instanceof BaerlyError && PERMANENT_STORAGE_ERROR_CODES.has(error.code)) {

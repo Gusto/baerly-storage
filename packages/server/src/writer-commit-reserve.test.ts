@@ -17,6 +17,8 @@ import {
   RequestLedger,
   type RequestPool,
   type Storage,
+  type StorageGetOptions,
+  type StorageGetResult,
   type StoragePutOptions,
   type StoragePutResult,
   STORAGE_RETRY_MAX_ATTEMPTS,
@@ -26,8 +28,10 @@ import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 import type { IndexDefinition } from "./indexes.ts";
+import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
 import {
   createObservabilityContext,
+  getCurrentContext,
   type ObservabilityContext,
   runWithContext,
 } from "./observability/context.ts";
@@ -47,6 +51,17 @@ const isLogCreate = (key: string, opts?: StoragePutOptions): boolean =>
 const drain = (ledger: RequestLedger, pool: RequestPool, keep = 0): void => {
   while (ledger.remaining(pool) > keep) {
     ledger.acquire(pool);
+  }
+};
+
+/**
+ * Spend every request the ledger has left, held ones included, as a call
+ * outside every hold would (a required cache invalidation, or a platform
+ * cap lower than the ledger's limit).
+ */
+const exhaust = (ledger: RequestLedger, pool: RequestPool): void => {
+  while (ledger.remaining(pool) + ledger.held > 0) {
+    ledger.chargeCacheCall(true);
   }
 };
 
@@ -137,12 +152,12 @@ describe.each(POOLS)("Writer create under the request ledger (%s pool)", (pool) 
     await createCurrentJson(inner, CURRENT_KEY, logStateCurrentJson());
     const ledger = new RequestLedger(limitsFor(pool, 1000));
     const ledgered = ledgeredStorage(inner, pool);
-    // Concurrent work spends the budget just before the create is sent.
+    // A call outside the hold spends the budget just before the create.
     const storage: Storage = {
       ...ledgered,
       put: (key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> => {
         if (isLogCreate(key, opts)) {
-          drain(ledger, pool);
+          exhaust(ledger, pool);
         }
         return ledgered.put(key, body, opts);
       },
@@ -168,10 +183,10 @@ describe.each(POOLS)("Writer create under the request ledger (%s pool)", (pool) 
         if (!isLogCreate(key, opts)) {
           return super.put(key, body, opts);
         }
-        // The create lands, its acknowledgement is lost, and concurrent
-        // work spends the rest of the budget before the adapter's resend.
+        // The create lands, its acknowledgement is lost, and a call outside
+        // the hold spends the rest of the budget before the adapter's resend.
         await super.put(key, body, opts);
-        drain(ledger, pool);
+        exhaust(ledger, pool);
         throw new BaerlyError("NetworkError", "lost create acknowledgement");
       }
     }
@@ -332,10 +347,79 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
     await expect(inner.get(`${LOG_PREFIX}1.json`)).resolves.toBeNull();
   });
 
-  test("an acknowledged commit survives refused post-commit steps and a refused tick", async () => {
+  test("an uncertain create with full retries on its readback and floor read resolves within the reserve, despite concurrent work", async () => {
+    // Unindexed: the hold is the create's 3 attempts plus the reserve's 6.
+    const before = await (async () => {
+      const measure = await provisioned();
+      const measureLedger = new RequestLedger();
+      measure.ledger = measureLedger;
+      await commitInsert(ledgeredStorage(measure, pool), measureLedger);
+      return measure.chargedBeforeFirstPut!;
+    })();
+    expect(STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE).toBe(9);
+    const ledger = new RequestLedger(limitsFor(pool, before + 9));
+    const transient = (what: string): BaerlyError =>
+      new BaerlyError("NetworkError", `${what}: 500`, { cause: { status: 500 } });
+    class EveryCallRetried extends MemoryStorage {
+      creates = 0;
+      readbacks = 0;
+      floorReads = 0;
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (!isLogCreate(key, opts)) {
+          return super.put(key, body, opts);
+        }
+        this.creates++;
+        if (this.creates === 1) {
+          // Concurrent work in the invocation spends all it may.
+          drain(ledger, pool);
+          throw transient("create");
+        }
+        if (this.creates === 2) {
+          // Lands, but the reply is lost.
+          await super.put(key, body, opts);
+          throw transient("create");
+        }
+        // The third attempt meets the landed create as a 412.
+        return super.put(key, body, opts);
+      }
+      override async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
+        if (key === LOG_0 && this.creates > 0 && ++this.readbacks < 3) {
+          throw transient("readback");
+        }
+        if (key === CURRENT_KEY && this.readbacks > 0 && ++this.floorReads < 3) {
+          throw transient("floor read");
+        }
+        return super.get(key, opts);
+      }
+    }
+    const inner = new EveryCallRetried();
+    await createCurrentJson(inner, CURRENT_KEY, logStateCurrentJson());
+    const ctx = createObservabilityContext({ ledger });
+
+    const result = await commitInsert(ledgeredStorage(inner, pool), ledger, { ctx });
+
+    expect(result).toMatchObject({ entry: { seq: 0, doc_id: "one" } });
+    expect([inner.creates, inner.readbacks, inner.floorReads]).toEqual([3, 3, 3]);
+    expect(sumCounter(ctx, "db.write.delete_floor_check_skipped_total")).toBe(0);
+    expect(ledger.storageRemaining()).toBe(0);
+  });
+
+  test("steps after the commit run outside the hold: a refusal there leaves the commit acknowledged", async () => {
     const inner = await provisioned();
+    const seed = new Writer({ storage: inner, currentJsonKey: CURRENT_KEY, options: { indexes } });
+    await seed.commit({
+      op: "I",
+      collection: "tickets",
+      docId: "one",
+      body: { _id: "one", status: "open", owner: "ada" },
+    });
     const ledger = new RequestLedger(limitsFor(pool, 1000));
     const ledgered = ledgeredStorage(inner, pool);
+    let committed = false;
     const storage: Storage = {
       ...ledgered,
       put: async (
@@ -344,36 +428,75 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
         opts?: StoragePutOptions,
       ): Promise<StoragePutResult> => {
         const result = await ledgered.put(key, body, opts);
-        if (isLogCreate(key, opts)) {
-          // Concurrent work spends the reserve right after the commit.
+        committed ||= isLogCreate(key, opts);
+        return result;
+      },
+      get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
+        if (committed && key === LOG_0) {
+          // The pre-image walk's first read: concurrent work has spent
+          // everything outside the (now released) hold.
           drain(ledger, pool);
         }
-        return result;
+        return ledgered.get(key, opts);
       },
     };
     const ctx = createObservabilityContext({ ledger });
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY, options: { indexes } });
 
-    const result = await commitInsert(storage, ledger, { ctx, force: true });
+    const result = await runWithContext(ctx, () =>
+      writer.commit({
+        op: "U",
+        collection: "tickets",
+        docId: "one",
+        body: { _id: "one", status: "closed", owner: "ada" },
+        forceMaintenance: true,
+      }),
+    );
 
     errorLog.mockRestore();
-    expect(result).toMatchObject({ entry: { seq: 0, doc_id: "one" } });
-    await expect(inner.get(LOG_0)).resolves.not.toBeNull();
-    expect(sumCounter(ctx, "db.write.post_commit_refused_total", "delete-floor-check")).toBe(1);
-    expect(sumCounter(ctx, "db.write.delete_floor_check_skipped_total")).toBe(1);
+    expect(result).toMatchObject({ entry: { seq: 1, op: "U" } });
+    expect(sumCounter(ctx, "db.write.post_commit_refused_total", "pre-image-read")).toBe(1);
+    expect(sumCounter(ctx, "db.write.delete_floor_check_skipped_total")).toBe(0);
   });
 });
 
-describe.each(POOLS)("a multi-row update stopped by the request ledger (%s pool)", (pool) => {
-  test("keeps the rows before the refused one and commits nothing after it", async () => {
-    const inner = new MemoryStorage();
-    const seedDb = Db.create({ storage: inner, app: "test", tenant: "t" });
-    await seedDb.collection("tickets").insert({ _id: "a", status: "open" });
-    await seedDb.collection("tickets").insert({ _id: "b", status: "open" });
+const ticketsConfig = { collections: { tickets: { indexes: [BY_STATUS, BY_OWNER] } } };
 
+/** Seed rows `a` and `b`, open and indexed, outside any ledger. */
+const seededTickets = async <S extends MemoryStorage>(inner: S): Promise<S> => {
+  const seedDb = Db.create({ storage: inner, app: "test", tenant: "t", config: ticketsConfig });
+  await seedDb.collection("tickets").insert({ _id: "a", status: "open", owner: "ada" });
+  await seedDb.collection("tickets").insert({ _id: "b", status: "open", owner: "bob" });
+  return inner;
+};
+
+const statuses = async (inner: MemoryStorage): Promise<Record<string, unknown>> => {
+  const db = Db.create({ storage: inner, app: "test", tenant: "t", config: ticketsConfig });
+  const rows = await db.collection("tickets").where({}).all();
+  return Object.fromEntries(rows.map((r) => [r["_id"], r["status"]]));
+};
+
+const closeAll = async (storage: Storage, ctx: ObservabilityContext): Promise<unknown> => {
+  const db = Db.create({ storage, app: "test", tenant: "t", config: ticketsConfig });
+  return await runWithContext(ctx, async () => {
+    try {
+      return await db.collection("tickets").where({ status: "open" }).update({ status: "closed" });
+    } catch (error) {
+      return error;
+    }
+  });
+};
+
+describe.each(POOLS)("a multi-row indexed update under the request ledger (%s pool)", (pool) => {
+  test("stopped by the budget, keeps the rows before the refused one and commits nothing after it", async () => {
+    const inner = await seededTickets(new MemoryStorage());
     const ledger = new RequestLedger(limitsFor(pool, 1000));
     const ledgered = ledgeredStorage(inner, pool);
+    // Row b's two markers and its create, with retries, plus the reserve.
+    const rowNeeds = 3 * STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
     let creates = 0;
+    let manifestReads = 0;
     const storage: Storage = {
       ...ledgered,
       put: async (
@@ -382,31 +505,87 @@ describe.each(POOLS)("a multi-row update stopped by the request ledger (%s pool)
         opts?: StoragePutOptions,
       ): Promise<StoragePutResult> => {
         const result = await ledgered.put(key, body, opts);
-        if (isLogCreate(key, opts) && ++creates === 1) {
-          // After the first row commits, leave less than the next row's
-          // create plus its reserve.
-          drain(ledger, pool, STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE - 1);
+        if (isLogCreate(key, opts) && key.includes("/log/")) {
+          creates++;
         }
         return result;
       },
+      get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
+        // After row a's create: its floor check, then row b's Step 1 read.
+        if (key === CURRENT_KEY && creates === 1 && ++manifestReads === 2) {
+          // Row b's manifest read and tail probe leave one short of its hold.
+          drain(ledger, pool, 2 + rowNeeds - 1);
+        }
+        return ledgered.get(key, opts);
+      },
     };
-    const db = Db.create({ storage, app: "test", tenant: "t" });
 
-    const err = await runWithContext(createObservabilityContext({ ledger }), async () => {
-      try {
-        await db.collection("tickets").where({ status: "open" }).update({ status: "closed" });
-        return undefined;
-      } catch (error) {
-        return error;
-      }
-    });
+    const err = await closeAll(storage, createObservabilityContext({ ledger }));
 
     expect(err).toBeInstanceOf(BaerlyError);
     expect((err as BaerlyError).code).toBe("CapacityExceeded");
     expect((err as BaerlyError).retriable).toBe(false);
     expect(creates).toBe(1);
-    const rows = await seedDb.collection("tickets").where({}).all();
-    const byId = Object.fromEntries(rows.map((r) => [r["_id"], r["status"]]));
-    expect(byId).toEqual({ a: "closed", b: "open" });
+    await expect(statuses(inner)).resolves.toEqual({ a: "closed", b: "open" });
+  });
+
+  test("a write tick running in waitUntil cannot spend the next row's reserve into AmbiguousCommit", async () => {
+    const ledger = new RequestLedger(limitsFor(pool, 1000));
+    // `ctx.waitUntil`: each tick runs in the context it was dispatched
+    // from, concurrently with the request's later work.
+    const ticks: Array<() => Promise<void>> = [];
+    const ctx = createObservabilityContext({
+      ledger,
+      maintenance: {
+        dispatch: (task) => {
+          const from = getCurrentContext()!;
+          ticks.push(async () => {
+            await runWithContext(from, task);
+            // Whatever the fold left, other work outside the hold takes.
+            runWithContext(from, () => drain(ledger, pool));
+          });
+        },
+        // Fold after every write, as Free + S3's early fold does.
+        // An adapter-only trigger, as `maintenance.ts` reads it.
+        options: { foldAtTailEntries: 1 } as InternalBoundedMaintenanceOptions,
+      },
+    });
+    let creates = 0;
+    let ticksRun = 0;
+    let unheldAfterTick: number | undefined;
+    let armed = false;
+    class LostAckOnRowB extends MemoryStorage {
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (!armed || !isLogCreate(key, opts) || !key.includes("/log/") || ++creates !== 2) {
+          return super.put(key, body, opts);
+        }
+        // Row b's create: row a's tick runs now, then the create lands
+        // and its reply is lost, so resolving it needs the readback.
+        for (const tick of ticks.splice(0)) {
+          await tick();
+          ticksRun++;
+          unheldAfterTick = ledger.remaining(pool);
+        }
+        await super.put(key, body, opts);
+        throw new BaerlyError("NetworkError", "lost create acknowledgement");
+      }
+    }
+    const lossy = await seededTickets(new LostAckOnRowB());
+    armed = true;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await closeAll(ledgeredStorage(lossy, pool), ctx);
+
+    errorLog.mockRestore();
+    expect(result).toEqual({ modified: 2 });
+    expect(ticksRun).toBe(1);
+    // The tick and the work behind it left nothing outside row b's hold.
+    expect(unheldAfterTick).toBe(0);
+    expect(creates).toBeGreaterThanOrEqual(2);
+    await expect(statuses(lossy)).resolves.toEqual({ a: "closed", b: "closed" });
   });
 });

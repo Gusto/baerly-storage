@@ -23,9 +23,12 @@ export {
 } from "./retry.ts";
 export type { StorageRetryOptions } from "./retry.ts";
 export {
+  RequestHold,
   RequestLedger,
   UNLIMITED_REQUESTS,
+  currentRequestHold,
   currentRequestLedger,
+  setRequestHoldResolver,
   setRequestLedgerResolver,
 } from "./ledger.ts";
 export type { RequestLedgerCharges, RequestLedgerLimits, RequestPool } from "./ledger.ts";
