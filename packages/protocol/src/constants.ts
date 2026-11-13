@@ -225,6 +225,39 @@ export const CF_PAID_REQUEST_LIMIT: number = 9000;
 export const CF_CACHE_API_MAX_CALLS: number = 3;
 
 /**
+ * Storage requests a commit keeps on the request ledger for resolving its
+ * committing `log/<seq>` create: `2 * STORAGE_RETRY_MAX_ATTEMPTS` = 6.
+ *
+ * Once the create is sent, the writer may still need, each retried up to
+ * `STORAGE_RETRY_MAX_ATTEMPTS` times by the adapter:
+ *
+ * - one occupant readback GET of the slot, when the create fails (a 412, a
+ *   send of unknown outcome, or a throttle that can hide a lost race), and
+ * - the `current.json` GET of the delete-floor check, after a win or an
+ *   adopted lost-ack create.
+ *
+ * Without room for both, a create that landed but lost its reply cannot be
+ * resolved and becomes `AmbiguousCommit`, and a won create skips the
+ * delete-floor check. Everything else after the create (the pre-image
+ * walk, stale index-marker DELETEs, the write tick) is best effort and is
+ * not reserved.
+ *
+ * The writer refuses a commit with `CapacityExceeded`, before it writes
+ * anything, unless the ledger still allows
+ * `STORAGE_RETRY_MAX_ATTEMPTS * (newIndexMarkers + 1) + COMMIT_RESOLUTION_RESERVE`
+ * storage requests: each additive index-marker PUT and the create itself at
+ * full retries, plus this reserve. After a lost create race it re-checks the
+ * same sum (markers only when the re-decided post-image needs new ones)
+ * before the next create, since the forward probe spent requests.
+ *
+ * The arithmetic assumes the default adapter retry policy; an adapter
+ * configured with more retries can need more than it reserves.
+ *
+ * @see packages/server/src/writer.ts (`#assertCommitBudget`)
+ */
+export const COMMIT_RESOLUTION_RESERVE: number = 2 * STORAGE_RETRY_MAX_ATTEMPTS;
+
+/**
  * Maximum concurrent log-entry GETs issued by a single `walkLogRange`
  * call. Bounds Class-B fan-out per read and per CAS attempt — without
  * a bound, a reader on a collection whose compactor has fallen behind

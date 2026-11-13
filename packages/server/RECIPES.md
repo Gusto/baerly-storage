@@ -67,6 +67,11 @@ part-way, it keeps the rows it already committed.
   pending fold pass would rebuild past the byte ceiling. The
   collection has outgrown this host: export it with `baerly admin dump`, or
   have the operator move it to a larger host. Reads keep working either way.
+- **Request limit** ("does not fit in one request on this host"): the request
+  ran out of storage calls, and the refused write sent nothing. A multi-row
+  `update()` / `delete()` keeps the rows before the refused one; re-run it as
+  a new request (it re-reads and re-matches), or narrow it with `where` /
+  `limit` so each request does less.
 
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
