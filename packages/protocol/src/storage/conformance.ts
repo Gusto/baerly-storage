@@ -29,14 +29,27 @@ export interface ConformanceOptions {
   /**
    * When false, generated key arbitraries must yield case-insensitively
    * distinct keys (some object stores fold case), and the fixed-vector
-   * "keys differing only by case or Unicode normalization are distinct
-   * objects" case is skipped. Defaults to `true`; every in-tree adapter
-   * keeps keys byte-exact — `LocalFsStorage` included, which escapes
-   * keys on disk so a case- or normalization-folding filesystem cannot
-   * merge them. Real R2 does not: it folds canonically-equivalent keys
-   * (see docs/spec/storage-compatibility.md "Key namespace").
+   * "keys differing only by case are distinct objects" case is skipped.
+   * Defaults to `true`; every in-tree adapter keeps case — `LocalFsStorage`
+   * included, which escapes keys on disk so a case-folding filesystem
+   * cannot merge them. R2 keeps case too.
    */
   readonly caseSensitiveKeys?: boolean;
+  /**
+   * Whether keys that differ only by Unicode normalization (NFC `é` and
+   * NFD `e` + U+0301) are distinct objects. Defaults to `true`: Memory,
+   * LocalFs (which escapes keys on disk so a normalization-folding
+   * filesystem cannot merge them), S3, Minio and GCS keep them distinct,
+   * and the suite asserts it. Set `false` to declare that distinctness
+   * unsupported, as R2 does over both the S3 API and the binding: R2
+   * stores canonically-equivalent keys as one object. The suite then
+   * asserts the weaker contract the kernel relies on instead of
+   * skipping: each spelling reads back either its own body (distinct) or
+   * the last-written body (folded into one object), never anything else.
+   * The kernel copes with folding by requiring NFC `_id`s and names (see
+   * docs/spec/storage-compatibility.md "Key namespace").
+   */
+  readonly normalizationDistinctKeys?: boolean;
   /** Override the default key arbitrary. Default: printable-ASCII non-slash, len 1..32. */
   readonly keyArb?: fc.Arbitrary<string>;
   /** Override the default body arbitrary. Default: Uint8Array, len 0..4096. */
@@ -319,6 +332,7 @@ export function defineStorageConformanceSuite(
   const opts: Required<ConformanceOptions> = {
     supportsAbort: options.supportsAbort ?? true,
     caseSensitiveKeys: options.caseSensitiveKeys ?? true,
+    normalizationDistinctKeys: options.normalizationDistinctKeys ?? true,
     keyArb: options.keyArb ?? DEFAULT_KEY_ARB,
     bodyArb: options.bodyArb ?? DEFAULT_BODY_ARB,
     prefixCharArb: options.prefixCharArb ?? fc.constantFrom(...KEY_CHARS.split("")),
@@ -880,27 +894,24 @@ export function defineStorageConformanceSuite(
       });
 
       // Keys are byte-exact: distinct UTF-8 byte sequences are distinct
-      // objects, including spellings that differ only by case or Unicode
-      // normalization. Index markers embed caller `_id`s and collection
-      // names raw, so a backend that folds either one silently merges rows.
-      // A filesystem-backed store on a folding filesystem (default macOS
-      // APFS) is the realistic offender; `keyArb` is too narrow to find it.
+      // objects, including spellings that differ only by case. Index
+      // markers embed caller `_id`s and collection names raw, so a backend
+      // that folds case silently merges rows. A filesystem-backed store on
+      // a folding filesystem (default macOS APFS) is the realistic
+      // offender; `keyArb` is too narrow to find it.
       // @see docs/spec/storage-compatibility.md "Key namespace".
       test.skipIf(!opts.caseSensitiveKeys)(
-        "keys differing only by case or Unicode normalization are distinct objects",
+        "keys differing only by case are distinct objects",
         async () => {
           const enc = new TextEncoder();
-          const NFC = "é"; // é, precomposed
-          const NFD = "é"; // é, e + combining acute
-          expect(NFC.normalize("NFD")).toBe(NFD); // canonically equivalent
-          const keys = [NFC, NFD, "A", "a"];
+          const keys = ["A", "a", "\u00c9", "\u00e9"];
           for (const k of keys) {
             await s.put(k, enc.encode(`body:${k}`));
           }
-          // UTF-8 byte order: "A" 0x41 < "a" 0x61 < "é" 0x65.. < "é" 0xC3..
+          // UTF-8 byte order: "A" 0x41 < "a" 0x61 < "É" 0xC3 0x89 < "é" 0xC3 0xA9.
           await expectEventuallyEqual(
             () => collect(s.list("")).then((l) => l.map((e) => e.key)),
-            ["A", "a", NFD, NFC],
+            keys,
             settle,
           );
           const dec = new TextDecoder();
@@ -909,6 +920,76 @@ export function defineStorageConformanceSuite(
             expect(got, `get(${JSON.stringify(k)})`).not.toBeNull();
             expect(dec.decode(got!.body)).toBe(`body:${k}`);
           }
+        },
+      );
+
+      // Canonically-equivalent spellings (NFC "é" precomposed, NFD "e" +
+      // combining acute). Byte-exact backends keep them distinct; R2
+      // declares that unsupported (`normalizationDistinctKeys: false`)
+      // because it stores them as one object.
+      const NFC = "\u00e9";
+      const NFD = "e\u0301";
+      test.runIf(opts.normalizationDistinctKeys)(
+        "keys differing only by Unicode normalization are distinct objects",
+        async () => {
+          const enc = new TextEncoder();
+          expect(NFC.normalize("NFD")).toBe(NFD);
+          for (const k of [NFC, NFD]) {
+            await s.put(k, enc.encode(`body:${k}`));
+          }
+          // UTF-8 byte order: NFD "e" 0x65.. < NFC "é" 0xC3..
+          await expectEventuallyEqual(
+            () => collect(s.list("")).then((l) => l.map((e) => e.key)),
+            [NFD, NFC],
+            settle,
+          );
+          const dec = new TextDecoder();
+          for (const k of [NFC, NFD]) {
+            const got = await s.get(k);
+            expect(got, `get(${JSON.stringify(k)})`).not.toBeNull();
+            expect(dec.decode(got!.body)).toBe(`body:${k}`);
+          }
+        },
+      );
+
+      // The declared-unsupported contract: the backend either keeps the
+      // two spellings distinct or folds them into ONE object holding the
+      // last write. Anything else (a lost write, a mixed body, an error)
+      // fails. Miniflare's R2 keeps them distinct; real R2 folds.
+      test.runIf(!opts.normalizationDistinctKeys)(
+        "keys differing only by Unicode normalization: distinctness declared unsupported; each spelling reads its own body or the last-written one",
+        async () => {
+          const enc = new TextEncoder();
+          const dec = new TextDecoder();
+          await s.put(NFC, enc.encode("first"));
+          await s.put(NFD, enc.encode("second"));
+          const isOutcome = (keys: string[]): boolean =>
+            jsonEq(keys, [NFD, NFC]) || jsonEq(keys, [NFC]) || jsonEq(keys, [NFD]);
+          const listed = await pollUntil(
+            () => collect(s.list("")).then((l) => l.map((e) => e.key)),
+            isOutcome,
+            settle,
+          );
+          expect(isOutcome(listed), `list("") returned ${JSON.stringify(listed)}`).toBe(true);
+          const folded = listed.length === 1;
+          const nfc = await s.get(NFC);
+          const nfd = await s.get(NFD);
+          expect(nfd, "get(NFD)").not.toBeNull();
+          expect(dec.decode(nfd!.body)).toBe("second");
+          expect(nfc, "get(NFC)").not.toBeNull();
+          expect(dec.decode(nfc!.body), `get(NFC) with folded=${folded}`).toBe(
+            folded ? "second" : "first",
+          );
+          // Folded: deleting one spelling removes the one object.
+          // Distinct: the other spelling survives.
+          await s.delete(NFC);
+          await expectEventuallyEqual(
+            () => collect(s.list("")).then((l) => l.map((e) => e.key)),
+            folded ? [] : [NFD],
+            settle,
+          );
+          const nfdGone = (await s.get(NFD)) === null;
+          expect(nfdGone, `get(NFD) is null after delete(NFC), folded=${folded}`).toBe(folded);
         },
       );
 

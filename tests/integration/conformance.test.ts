@@ -148,6 +148,9 @@ describe("conformance", () => {
         conformanceOptions = {
           remoteNetwork: true,
           eventuallyConsistentList: isR2,
+          // R2 stores canonically-equivalent keys (NFC / NFD) as one
+          // object; the suite asserts the declared-unsupported contract.
+          ...(isR2 && { normalizationDistinctKeys: false }),
           // GCS's version token is an int64 `generation`, not an ETag: a
           // quoted-hex CAS value is a *malformed* precondition (400
           // InvalidArgument), so feed a well-formed-but-stale generation that

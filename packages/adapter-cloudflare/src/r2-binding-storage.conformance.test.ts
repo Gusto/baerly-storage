@@ -18,6 +18,11 @@ import { r2BindingStorage } from "./r2-binding-storage.ts";
  *
  * Capability flags pinned for this adapter:
  *  - `caseSensitiveKeys: true` — R2 preserves key case verbatim.
+ *  - `normalizationDistinctKeys: false` — real R2 stores
+ *    canonically-equivalent keys (NFC / NFD) as one object, so the
+ *    binding declares that distinctness unsupported. Miniflare keeps them
+ *    distinct; the declared case's weaker contract accepts either
+ *    outcome, so it is checked here and proven on real R2 separately.
  *  - `supportsAbort: true` — every method threads the signal to
  *    its first awaited line. The R2 binding does not honor the
  *    signal mid-flight; the suite only asserts that a *pre-aborted*
@@ -36,5 +41,5 @@ defineStorageConformanceSuite(
   },
   // CAS (ifMatch / ifNoneMatch:"*", mapped to R2PutOptions.onlyIf) is a
   // mandatory protocol prerequisite — the suite always exercises it.
-  { caseSensitiveKeys: true, supportsAbort: true },
+  { caseSensitiveKeys: true, normalizationDistinctKeys: false, supportsAbort: true },
 );
