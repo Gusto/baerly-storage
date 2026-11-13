@@ -279,8 +279,8 @@ describe("operation journal", () => {
     await storage.get("o");
     await storage.put("o", enc("y"), { ifMatch: '"e"', contentType: "application/json" });
     await storage.put("o2", enc("y"), { ifNoneMatch: "*" });
-    await storage.get("o", { versionId: "v7", signal: live.signal });
-    await storage.get("o", { ifNoneMatch: '"e"', signal: dead.signal });
+    await storage.get("o", { signal: live.signal });
+    await storage.get("o", { signal: dead.signal });
     for await (const _entry of storage.list("o", { startAfter: "o", maxKeys: 5 })) {
       /* drain */
     }
@@ -289,11 +289,9 @@ describe("operation journal", () => {
     expect(ops[1]?.options).toEqual({ if_match: '"e"', content_type: "application/json" });
     expect(ops[2]?.options).toEqual({ if_none_match: "*" });
     expect(ops[3]?.options).toEqual({
-      version_id: "v7",
       signal: { id: "writer-signal", present: true, aborted_at_dispatch: false },
     });
     expect(ops[4]?.options).toEqual({
-      if_none_match: '"e"',
       signal: { id: "cancelled-signal", present: true, aborted_at_dispatch: true },
     });
     expect(ops[5]?.options).toEqual({ start_after: "o", max_keys: 5 });

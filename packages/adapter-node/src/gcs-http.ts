@@ -75,16 +75,12 @@ export class GcsHttpStorage implements Storage {
     this.#backoffMs = options.backoffMs;
   }
 
-  #objectUrl(key: string, generation?: string): string {
+  #objectUrl(key: string): string {
     // Choke point for every key-addressing verb — reject unaddressable
     // `.`/`..`/empty keys before URL normalization turns them into a
     // bucket-root 403. @see storage-compatibility.md "Key namespace".
     assertValidStorageKey(key);
-    const base = `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
-    // GCS's native equivalent of S3 ?versionId= is ?generation=. Not
-    // exercised by the kernel (which never pins a historical version),
-    // but threaded for parity with the Storage interface.
-    return generation !== undefined ? `${base}?generation=${encodeURIComponent(generation)}` : base;
+    return `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
   }
 
   async #dispatch(req: Request): Promise<Response> {
@@ -115,21 +111,7 @@ export class GcsHttpStorage implements Storage {
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
-    const url = this.#objectUrl(key, opts?.versionId);
-    // DELTA 4: no conditional read. GCS's native XML API has no
-    // generation-based conditional GET. `x-goog-if-generation-{match,
-    // not-match}` ARE honored against the `generation` this adapter carries
-    // as the opaque etag — but only as write-style CAS preconditions that
-    // 412 on failure, never as a 304-when-unchanged read. Empirically
-    // confirmed on a real bucket under GOOG4 signing:
-    // `if-generation-match: <stale>` → 412, and
-    // `if-generation-not-match: <live-gen>` → 200 with the full body (not
-    // 304); no header combination yields a conditional-read 304.
-    // `opts.ifNoneMatch` is therefore intentionally ignored; the conformance
-    // suite opts GCS out via `supportsConditionalGet: false`. Safe for
-    // baerly: the kernel never issues a conditional read — every
-    // `ifNoneMatch` it sends is `put(…, { ifNoneMatch: "*" })`
-    // create-if-absent.
+    const url = this.#objectUrl(key);
     return this.#retry(async () => {
       const res = await this.#dispatch(
         new Request(url, { method: "GET", signal: opts?.signal ?? null }),
@@ -147,7 +129,6 @@ export class GcsHttpStorage implements Storage {
           const body = new Uint8Array(await res.arrayBuffer());
           return { body, etag };
         }
-        case 304:
         case 404: {
           return null;
         }
