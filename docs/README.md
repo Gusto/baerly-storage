@@ -151,6 +151,7 @@ For people changing the code in this repo.
   - [`contributing/conventions/change-discipline.md`](contributing/conventions/change-discipline.md)
   - [`contributing/conventions/versioning.md`](contributing/conventions/versioning.md)
   - [`contributing/conventions/bundle-budgets.md`](contributing/conventions/bundle-budgets.md)
+  - [`contributing/conventions/request-counts.md`](contributing/conventions/request-counts.md)
 
 ## Protocol & decisions
 
