@@ -71,7 +71,6 @@ import {
   insertReplaysRow,
   recordInsertReplay,
 } from "./doc-id.ts";
-import { type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeReadTail } from "./log-tail.ts";
 import { dispatchWriteTick } from "./maintenance.ts";
@@ -116,20 +115,6 @@ export interface CollectionReadContext {
    * @internal
    */
   readonly schema?: SchemaValidator;
-  /**
-   * Per-collection {@link IndexDefinition}s maintained by the Writer.
-   * Reads take membership from the complete snapshot plus log fold.
-   * Empty array means no indexes declared.
-   *
-   * Mirrors the shape callers build when flattening
-   * `BaerlyConfig.collections[*].indexes` into a map keyed by name
-   * before constructing the `Db`; we keep the `Db` itself library-
-   * agnostic by accepting the pre-flattened map (not the full
-   * `BaerlyConfig`).
-   *
-   * @internal
-   */
-  readonly indexes: ReadonlyArray<IndexDefinition>;
 }
 
 /**
@@ -367,9 +352,6 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
   new Writer({
     storage: ctx.storage,
     currentJsonKey: `${ctx.collectionPrefix}/current.json`,
-    options: {
-      indexes: ctx.indexes,
-    },
   });
 
 /**
@@ -523,7 +505,7 @@ const EMPTY_HEAD = { snapshot_rows: 0, snapshot_bytes: 0, log_seq_start: 0 } as 
  *   committed after the read touched (in this window, or in an earlier
  *   row's window of the same batch) is re-decided from the newest version,
  *   or skipped; see {@link VerbWrite}. A rebased post-image is the verdict's `body`,
- *   so the writer indexes and commits it.
+ *   so the writer commits it.
  * - **Capacity (main-10 G5-race).** An empty window with no rebase means
  *   nothing intervened, so the decision stands as made and nothing is
  *   recomputed. Otherwise the decision re-runs over the read's tail plus
@@ -1021,9 +1003,9 @@ const runUpdate = async <T extends DocumentData>(
     const doc = row.doc;
     const docId = storedRowId(row, "update");
     assertPatchKeepsId(patch, docId);
-    // The commit re-writes index markers under `docId`, so a row an
-    // earlier release stored under a non-NFC id is refused here, before
-    // schema validation; it stays readable and deletable.
+    // An update re-mints the row under `docId`, which must be NFC, so a
+    // row an earlier release stored under a non-NFC id is refused here,
+    // before schema validation; it stays readable and deletable.
     assertDocId(docId);
     const merged = await mergeAndValidate(ctx, doc as DocumentData, patch);
     planned.push({ docId, before: doc as DocumentData, merged });
@@ -1110,7 +1092,7 @@ export const runReplaceById = async <T extends DocumentData>(
   doc: T,
 ): Promise<void> => {
   // Guard the caller-supplied id before it becomes a written key
-  // segment (index keys, log `doc_id`). Same boundary as `runInsert`.
+  // segment (log `doc_id`). Same boundary as `runInsert`.
   callerFacingCheck(() => assertDocId(id));
   callerFacingCheck(() => assertDocumentValues(doc, "replace"));
   const wire: PredicateWire = {
@@ -1282,7 +1264,7 @@ const runReadRows = async <T extends DocumentData>(
    * The log tail this read folded through: the first empty slot its
    * probe found, or `0` when the collection is not provisioned. Before
    * predicate, order and limit are applied, the fold contains every live
-   * row through this tail; markers do not restrict membership.
+   * row through this tail.
    */
   readonly tail: number;
   /** The folded state, for the write verbs' capacity check. */
@@ -1305,10 +1287,6 @@ const runReadRows = async <T extends DocumentData>(
   if (head === null) {
     return { rows: [], manifestPointer: "m1:0000000000000", fresh, tail: 0 };
   }
-
-  // Markers cannot establish membership: post-commit cleanup can remove
-  // a reinserted row's marker, and a LIST can precede a commit that the
-  // tail probe includes. Fold authoritative state before filtering.
 
   // Load the snapshot, if any. `compact()` guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is

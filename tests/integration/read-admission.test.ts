@@ -34,8 +34,12 @@ import { Db } from "@baerly/server";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { compact } from "../../packages/server/src/compactor.ts";
-import { encodeIndexValue } from "../../packages/server/src/indexes.ts";
 import { type CountingStorage, wrapCountingStorage } from "../fixtures/counting-storage.ts";
+import {
+  legacyIndexMarkerKeys,
+  legacyIndexValueSegment,
+  seedLegacyIndexMarkers,
+} from "../fixtures/legacy-index-markers.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -388,41 +392,36 @@ const byId = (a: Item, b: Item): number => idOf(a).localeCompare(idOf(b));
 const sortedById = (rows: readonly Item[]): Item[] => rows.toSorted(byId);
 const pad2 = (i: number): string => String(i).padStart(2, "0");
 
-/**
- * Drops index-marker DELETEs, as a crash between a commit and its
- * stale-marker cleanup would. Seeding through it leaves stale markers.
- */
-const keepStaleMarkers = (inner: Storage): Storage => ({
-  get: (key, opts) => inner.get(key, opts),
-  put: (key, body, opts) => inner.put(key, body, opts),
-  delete: async (key, opts) => {
-    if (!key.includes("/index/")) {
-      await inner.delete(key, opts);
-    }
-  },
-  list: (prefix, opts) => inner.list(prefix, opts),
-});
-
 // ── Scenarios ───────────────────────────────────────────────────────────
 
 type Fresh = () => Promise<Storage>;
 
 /**
- * 36 docs inserted with `tag: "x"`, 34 then moved to `tag: "y"` while
- * marker DELETEs are dropped: the `x` prefix lists 36 markers, 2 live.
+ * 36 docs inserted with `tag: "x"`, 34 then moved to `tag: "y"`, over the
+ * legacy markers a pre-0.7 writer whose stale-marker DELETEs were lost
+ * would have left: the `x` prefix lists 36 markers, 2 live.
  */
 const seedStaleMarkers = async (
   fresh: Fresh,
 ): Promise<{ storage: Storage; liveX: Item[]; xMarkers: number }> => {
   const storage = await fresh();
-  const seeding = dbFor(keepStaleMarkers(storage), true);
+  const seeding = dbFor(storage, true);
   const docs = await insertMany(seeding, 36, (i) => ({ _id: `s-${pad2(i)}`, n: i, tag: "x" }));
   for (const doc of docs.slice(2)) {
     await items(seeding).update(idOf(doc), { tag: "y" });
   }
   await foldAll(storage);
+  for (const [i, doc] of docs.entries()) {
+    const id = idOf(doc);
+    await seedLegacyIndexMarkers(storage, [
+      ...legacyIndexMarkerKeys(PREFIX, INDEXES, doc, id),
+      ...(i < 2 ? [] : legacyIndexMarkerKeys(PREFIX, INDEXES, { ...doc, tag: "y" }, id)),
+    ]);
+  }
   let xMarkers = 0;
-  for await (const _entry of storage.list(`${PREFIX}/index/by_tag/${encodeIndexValue("x")}/`)) {
+  for await (const _entry of storage.list(
+    `${PREFIX}/index/by_tag/${legacyIndexValueSegment("x")}/`,
+  )) {
     xMarkers += 1;
   }
   return { storage, liveX: sortedById(docs.slice(0, 2)), xMarkers };

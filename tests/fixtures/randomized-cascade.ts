@@ -210,9 +210,8 @@ const readLatest = async (
  * Declared-index invariant — when the filtered index is declared, a
  * read through a `Db` that declares it returns exactly what the log
  * says is live: the doc iff its latest value satisfies the index's
- * filter. Reads take membership from the fold, so the markers the
- * contended writers left behind (orphans from CAS retries included)
- * must not change the answer.
+ * filter. Reads take membership from the fold, and a declaration
+ * changes no read.
  *
  * The cascade is single-key (`COLLECTION === docId`) so the live
  * set is at most one row.
@@ -255,10 +254,7 @@ const FILTERED_INDEX: IndexDefinition = {
   predicate: { clauses: [{ op: "eq", field: "sender", value: 0 }] },
 };
 
-const buildInstances = async (
-  storages: Storage[],
-  indexes: ReadonlyArray<IndexDefinition>,
-): Promise<Instance[]> => {
+const buildInstances = async (storages: Storage[]): Promise<Instance[]> => {
   // Pick a deterministic tenant for the CAS-shared current.json so all
   // N writers contend on the same key. (`Db.create` enforces a "/"-free
   // tenant; tests use a fresh suffix per cascade.)
@@ -279,11 +275,7 @@ const buildInstances = async (
       tenant: sharedTenant,
     });
     void i;
-    const writer = new Writer({
-      storage,
-      currentJsonKey: sharedCurrentKey,
-      ...(indexes.length > 0 && { options: { indexes } }),
-    });
+    const writer = new Writer({ storage, currentJsonKey: sharedCurrentKey });
     return {
       db,
       writer,
@@ -454,10 +446,7 @@ export const runCausalConsistencyCascade = (opts: {
         // append-only and entries are immutable, so the freshest matching
         // slot only grows).
         const lastObservedSeq: number[] = Array.from({ length: N }, () => -1);
-        const declaredIndexes: ReadonlyArray<IndexDefinition> = opts.injectFilteredIndex
-          ? [FILTERED_INDEX]
-          : [];
-        const instances = await buildInstances(opts.storages, declaredIndexes);
+        const instances = await buildInstances(opts.storages);
         const system = new CentralisedOfflineFirstCausalSystem();
 
         let testFailed = false;
@@ -781,7 +770,7 @@ export const runMultiDocCascade = async (opts: {
   const docIds = opts.docIds ?? [COLLECTION];
   const commitsPerDoc = opts.commitsPerDoc ?? 8;
   const N = opts.storages.length;
-  const instances = await buildInstances(opts.storages, []);
+  const instances = await buildInstances(opts.storages);
 
   const writtenPerDoc: Record<string, string[]> = {};
   for (const docId of docIds) {
@@ -896,8 +885,8 @@ interface ParityDoc extends DocumentData {
 }
 
 /**
- * Seed N random docs into the collection via a single Writer
- * with the `by_priority` index declared. Returns the seeded docs
+ * Seed N random docs into the collection via a single Writer.
+ * Returns the seeded docs
  * so the caller can compute the expected (full-scan) result in
  * memory.
  */
@@ -906,17 +895,12 @@ const seedParityDocs = async (
   app: string,
   tenant: string,
   collection: string,
-  indexes: ReadonlyArray<IndexDefinition>,
   count: number,
   priorityAlphabet: ReadonlyArray<string>,
 ): Promise<ParityDoc[]> => {
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`;
   await ensureCurrent(storage, currentJsonKey);
-  const writer = new Writer({
-    storage,
-    currentJsonKey,
-    options: { indexes },
-  });
+  const writer = new Writer({ storage, currentJsonKey });
   const docs: ParityDoc[] = [];
   for (let i = 0; i < count; i++) {
     const priority = priorityAlphabet[i % priorityAlphabet.length]!;
@@ -926,8 +910,7 @@ const seedParityDocs = async (
     // unacknowledged commit (a Toxiproxy dead window outlasting the
     // adapter's retries on node-minio) is re-issued until one is acked.
     // Re-issuing is safe even when the earlier attempt landed: the body is
-    // identical, so a second `I` entry folds to the same row and the same
-    // index marker. The parity check itself then proves all `count` docs
+    // identical, so a second `I` entry folds to the same row. The parity check itself then proves all `count` docs
     // are visible.
     await withNetworkRetry(
       () => writer.commit({ op: "I", collection, docId: doc._id, body: doc }),
@@ -982,15 +965,7 @@ export const runRangeWalkParityCascade = async (opts: {
   // meaningful, narrow enough that the cascade stays under a
   // second on memory.
   const priorityAlphabet = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"];
-  const seeded = await seedParityDocs(
-    opts.storage,
-    app,
-    tenant,
-    collection,
-    indexes,
-    72,
-    priorityAlphabet,
-  );
+  const seeded = await seedParityDocs(opts.storage, app, tenant, collection, 72, priorityAlphabet);
   // Seeding runs under faults; the planner-vs-full-scan reads run healed.
   // Every seed was acked, and the reads below prove all of them durable.
   await opts.healNetwork?.();

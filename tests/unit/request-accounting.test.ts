@@ -86,9 +86,8 @@ describe("in-process adapters: one list() call is one pass, no paging layer", ()
 
 const CURRENT_KEY = "app/test/tenant/t/manifests/tickets/current.json";
 const LOG_PREFIX = "app/test/tenant/t/manifests/tickets/log/";
-const INDEX_PREFIX = "app/test/tenant/t/manifests/tickets/index/";
 
-type KeyClass = "current" | "log" | "index" | "other";
+type KeyClass = "current" | "log" | "other";
 const classify = (key: string): KeyClass => {
   if (key === CURRENT_KEY) {
     return "current";
@@ -96,7 +95,7 @@ const classify = (key: string): KeyClass => {
   if (key.startsWith(LOG_PREFIX)) {
     return "log";
   }
-  return key.startsWith(INDEX_PREFIX) ? "index" : "other";
+  return "other";
 };
 
 /** What the fault hook decides for one HTTP request. */
@@ -188,11 +187,7 @@ const setup = async (opts: {
   await createCurrentJson(s3.storage, CURRENT_KEY, logStateCurrentJson());
   s3.reset();
   const counted = wrapCountingStorage(s3.storage);
-  const writer = new Writer({
-    storage: counted.storage,
-    currentJsonKey: CURRENT_KEY,
-    options: { indexes: [{ name: "by_status", on: "status" }] },
-  });
+  const writer = new Writer({ storage: counted.storage, currentJsonKey: CURRENT_KEY });
   const commit = () =>
     writer.commit({
       op: "I",
@@ -204,20 +199,19 @@ const setup = async (opts: {
 };
 
 describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests", () => {
-  // Unfaulted hot path for an indexed insert: GET current.json (Step 1),
-  // GET log/0 (404 tail probe), PUT index marker, PUT log/0 (the commit),
-  // GET current.json (delete-floor check). One request per outer call.
+  // Unfaulted hot path for an insert: GET current.json (Step 1), GET log/0
+  // (404 tail probe), PUT log/0 (the commit), GET current.json (delete-floor
+  // check). One request per outer call.
   const HOT_PATH = {
     "GET current": 2,
     "GET log": 1,
-    "PUT index": 1,
     "PUT log": 1,
   } as const;
 
   test("no faults — outer count equals issued count", async () => {
     const { counted, issued, commit } = await setup({ fault: () => PASS });
     await expect(commit()).resolves.toMatchObject({ entry: { seq: 0 } });
-    expect(outerShape(counted)).toEqual({ gets: 3, puts: 2, lists: 0 });
+    expect(outerShape(counted)).toEqual({ gets: 3, puts: 1, lists: 0 });
     expect(Object.fromEntries(issued)).toEqual(HOT_PATH);
   });
 
@@ -229,7 +223,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
       fault: (n) => (n < throttled ? slowDown503() : PASS),
     });
     await expect(commit()).resolves.toMatchObject({ entry: { seq: 0 } });
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
+    expect(counted.puts).toBe(1);
     expect(issued.get("PUT log")).toBe(throttled + 1);
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"]);
   });
@@ -241,7 +235,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(err.code).toBe(NETWORK_ERROR);
     expect(err.retriable).toBe(true);
     expect(err.cause).toMatchObject({ notApplied: true });
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
+    expect(counted.puts).toBe(1);
     expect(issued.get("PUT log")).toBe(1 + retries);
     // The one occupant readback tells a lost race from an empty slot.
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
@@ -253,7 +247,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(err.code).toBe(NETWORK_ERROR);
     expect(err.retriable).toBe(true);
     expect(err.cause).toMatchObject({ notApplied: true });
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
+    expect(counted.puts).toBe(1);
     expect(issued.get("PUT log")).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
     expect(issued.get("PUT log")).toBe(3);
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
@@ -267,7 +261,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     const err = (await commit().catch((error: unknown) => error)) as BaerlyError;
     expect(err.code).toBe(AMBIGUOUS_COMMIT);
     expect(err.retriable).toBe(false);
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
+    expect(counted.puts).toBe(1);
     expect(issued.get("PUT log")).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
     expect(issued.get("PUT log")).toBe(3);
     // The slot reads back empty (404, a success response), so the one
@@ -285,10 +279,10 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     await expect(commit()).resolves.toMatchObject({ entry: { seq: 0 } });
     // The adapter's second attempt hits the landed object (412); Writer
     // never sees the 500, only the 412, and adopts by occupant readback.
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
+    expect(counted.puts).toBe(1);
     expect(issued.get("PUT log")).toBe(2);
     expect(issued.get("GET log")).toBe(HOT_PATH["GET log"] + 1);
-    expect(outerShape(counted)).toEqual({ gets: 4, puts: 2, lists: 0 });
+    expect(outerShape(counted)).toEqual({ gets: 4, puts: 1, lists: 0 });
   });
 
   // Readback cost. Log GET ordinal 0 is the tail probe; readbacks follow.
@@ -310,7 +304,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(issued.get("GET log")).toBe(TAIL_PROBE_GETS + STORAGE_RETRY_MAX_ATTEMPTS);
     // GET current.json, tail probe, one readback.
     expect(counted.gets).toBe(3);
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 1);
+    expect(counted.puts).toBe(1);
     expect(counted.lists).toBe(0);
   });
 
@@ -329,7 +323,7 @@ describe("Writer commit over S3HttpStorage: outer storage calls vs HTTP requests
     expect(err.code).toBe(AMBIGUOUS_COMMIT);
     // log/0: 1 (412). log/1: STORAGE_RETRY_MAX_ATTEMPTS, never resent.
     expect(issued.get("PUT log")).toBe(1 + STORAGE_RETRY_MAX_ATTEMPTS);
-    expect(counted.puts).toBe(HOT_PATH["PUT index"] + 2);
+    expect(counted.puts).toBe(2);
     // tail probe + log/0 readback (2 SlowDowns + success, inside one
     // outer get) + forward probe of log/1 + one log/1 readback (404).
     expect(issued.get("GET log")).toBe(TAIL_PROBE_GETS + (readbackFailures + 1) + 1 + 1);

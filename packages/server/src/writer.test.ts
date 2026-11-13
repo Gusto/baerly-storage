@@ -9,7 +9,6 @@ import {
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MemoryStorage,
   BaerlyError,
-  PREIMAGE_SCAN_MAX_GETS,
   resetMemoryStorage,
   str2uintDesc,
   type StoragePutOptions,
@@ -19,7 +18,6 @@ import {
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
-import { allIndexKeysFor, encodeIndexValue, type IndexDefinition } from "./indexes.ts";
 import type { MaintenanceDispatch } from "./maintenance.ts";
 import {
   createObservabilityContext,
@@ -579,7 +577,7 @@ describe("Writer", () => {
       });
     });
 
-    // An unindexed first-attempt commit is the one committing log create.
+    // A first-attempt commit is the one committing log create.
     expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([1]);
     // Collection label travels.
     const hist = ctx.recorder
@@ -588,7 +586,7 @@ describe("Writer", () => {
     expect(hist?.labels).toEqual({ collection: COLL });
   });
 
-  test("unindexed I, U, and D all have a one-log-create floor", async () => {
+  test("I, U, and D each cost one log create", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
@@ -609,7 +607,7 @@ describe("Writer", () => {
       await writer.commit({ op: "D", collection: COLL, docId: "doc-d" });
     });
 
-    // Each unindexed commit has one committing log create and no current.json CAS.
+    // Each commit is one committing log create and no current.json CAS.
     const samples = histogramValues(ctx, "db.write.class_a_ops_per_logical_write");
     expect(samples).toEqual([1, 1, 1]);
   });
@@ -657,8 +655,8 @@ describe("Writer", () => {
         body: Uint8Array,
         opts?: StoragePutOptions,
       ): Promise<StoragePutResult> {
-        // Throttle the first additive index PUT only.
-        if (!this.thrown && /\/index\//.test(key)) {
+        // Throttle the committing log create only.
+        if (!this.thrown && /\/log\/\d+\.json$/.test(key)) {
           this.thrown = true;
           throw new BaerlyError("NetworkError", `S3: throttled on ${key}`, {
             cause: { status: 429 },
@@ -667,14 +665,9 @@ describe("Writer", () => {
         return super.put(key, body, opts);
       }
     }
-    const by_status = { name: "by_status", on: "status" } satisfies IndexDefinition;
     const storage = new ThrottlingStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { indexes: [by_status] },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
     const ctx = createObservabilityContext();
     let thrown: unknown;
@@ -690,10 +683,11 @@ describe("Writer", () => {
         thrown = error;
       }
     });
-    // Commit propagates the NetworkError — but the 429 counter
-    // bumped on the way through the catch arm.
+    // A throttled create of unknown outcome reads its slot back, finds it
+    // empty, and cannot prove the send will not land: AmbiguousCommit. The
+    // 429 counter bumped on the way through the catch arm.
     expect(thrown).toBeInstanceOf(BaerlyError);
-    expect((thrown as BaerlyError).code).toBe("NetworkError");
+    expect((thrown as BaerlyError).code).toBe("AmbiguousCommit");
     expect(sumCounter(ctx, "db.r2.put.429_total")).toBe(1);
   });
 
@@ -714,8 +708,7 @@ describe("Writer", () => {
     // Every other seq assertion in this file is an exact literal
     // (`toBe(0)`, `toBe(1)`, …) against a floor that never moves DOWN. Not
     // "a floor of 0" — the `[log_seq_start, tail_hint)` walk test asserts
-    // a seq under a static floor of 2, and the `FLOOR = 300` tests further
-    // down assert index keys rather than seqs. The point is narrower: in
+    // a seq under a static floor of 2. The point is narrower: in
     // all of them the commit lands at or above a floor that only ever rose,
     // so none can observe a commit landing BENEATH the floor. This states
     // the relation instead, against the one manifest shape in the system
@@ -885,338 +878,6 @@ describe("Writer — writer fence", () => {
     expect(seqs).toEqual([0]);
     const persistedEntry = decodeJson<LogEntry>((await storage.get(`${LOG_PREFIX}/0.json`))!.body);
     expect(persistedEntry.doc_id).toBe("doc-fence-bumped");
-  });
-});
-
-describe("Writer — filtered index", () => {
-  /**
-   * The four U-quadrants are the load-bearing correctness gate of
-   * T4. Each named test exercises ONE quadrant; collapsing them
-   * would localise a regression to "filtered index broken" instead
-   * of "filtered index broken in the miss→match arm." The
-   * `allIndexKeysFor` short-circuit handles all four arms via the
-   * writer's existing diff path (`oldKeys` vs `newKeys`) — see the
-   * JSDoc above the index-emission block in `writer.ts`.
-   */
-  const FILTERED_CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
-  const FILTERED_LOG_PREFIX = `app/test/tenant/t/manifests/${COLL}`;
-  const open_only: IndexDefinition = {
-    name: "open_only",
-    on: "assignee",
-    predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] },
-  };
-
-  class PostCommitIndexCleanupFailureStorage extends MemoryStorage {
-    failPreImageRead = false;
-    failIndexDelete = false;
-    private armedAfterLogCreate = false;
-    private preImageReadThrown = false;
-
-    arm(): void {
-      this.armedAfterLogCreate = false;
-      this.preImageReadThrown = false;
-    }
-
-    override async put(
-      key: string,
-      body: Uint8Array,
-      opts?: StoragePutOptions,
-    ): Promise<StoragePutResult> {
-      const result = await super.put(key, body, opts);
-      if (key.includes("/log/") && key.endsWith(".json") && opts?.ifNoneMatch !== undefined) {
-        this.armedAfterLogCreate = true;
-      }
-      return result;
-    }
-
-    override async get(
-      key: string,
-      opts?: { signal?: AbortSignal },
-    ): Promise<{ body: Uint8Array; etag: string } | null> {
-      if (
-        this.armedAfterLogCreate &&
-        this.failPreImageRead &&
-        !this.preImageReadThrown &&
-        key.endsWith("/log/0.json")
-      ) {
-        this.preImageReadThrown = true;
-        throw new BaerlyError("NetworkError", `simulated pre-image read failure on ${key}`);
-      }
-      return super.get(key, opts);
-    }
-
-    override async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
-      if (this.armedAfterLogCreate && this.failIndexDelete && /\/index\//.test(key)) {
-        throw new BaerlyError("NetworkError", `simulated index delete failure on ${key}`);
-      }
-      return super.delete(key, opts);
-    }
-  }
-
-  beforeEach(() => {
-    resetMemoryStorage();
-  });
-
-  const listFilteredKeys = async (storage: MemoryStorage): Promise<string[]> => {
-    const out: string[] = [];
-    for await (const entry of storage.list(`${FILTERED_LOG_PREFIX}/index/${open_only.name}/`)) {
-      out.push(entry.key);
-    }
-    return out.toSorted();
-  };
-
-  const newFilteredWriter = async (): Promise<{ storage: MemoryStorage; writer: Writer }> => {
-    const storage = new MemoryStorage();
-    await createCurrentJson(storage, FILTERED_CURRENT_KEY, seedCurrent());
-    const writer = new Writer({
-      storage,
-      currentJsonKey: FILTERED_CURRENT_KEY,
-      options: { indexes: [open_only] },
-    });
-    return { storage, writer };
-  };
-
-  const newCleanupFailureWriter = async (): Promise<{
-    storage: PostCommitIndexCleanupFailureStorage;
-    writer: Writer;
-  }> => {
-    const storage = new PostCommitIndexCleanupFailureStorage();
-    await createCurrentJson(storage, FILTERED_CURRENT_KEY, seedCurrent());
-    const writer = new Writer({
-      storage,
-      currentJsonKey: FILTERED_CURRENT_KEY,
-      options: { indexes: [open_only] },
-    });
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "alice" },
-    });
-    storage.arm();
-    return { storage, writer };
-  };
-
-  test("I: filter-match emits one key", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "alice" },
-    });
-    const keys = await listFilteredKeys(storage);
-    expect(keys).toHaveLength(1);
-    expect(keys[0]).toContain(`/${open_only.name}/`);
-    expect(keys[0]!.endsWith("/t-1.json")).toBe(true);
-  });
-
-  test("I: filter-miss emits zero keys", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "closed", assignee: "alice" },
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-  });
-
-  test("U: filter-match → filter-match diffs keys as today", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "alice" },
-    });
-    const before = await listFilteredKeys(storage);
-    expect(before).toHaveLength(1);
-
-    // Both pre-image and post-image match the filter; the diff path
-    // DELETEs the old `alice` key and PUTs the new `bob` key.
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "bob" },
-    });
-    const after = await listFilteredKeys(storage);
-    expect(after).toHaveLength(1);
-    expect(after[0]).not.toBe(before[0]); // assignee changed
-    expect(after[0]!.endsWith("/t-1.json")).toBe(true);
-  });
-
-  test("U: post-commit pre-image read failure records a metric and does not reject commit", async () => {
-    const { storage, writer } = await newCleanupFailureWriter();
-    storage.failPreImageRead = true;
-    const ctx = createObservabilityContext();
-
-    const result = await runWithContext(ctx, () =>
-      writer.commit({
-        op: "U",
-        collection: COLL,
-        docId: "t-1",
-        body: { _id: "t-1", status: "open", assignee: "bob" },
-      }),
-    );
-
-    expect(result.entry.seq).toBe(1);
-    expect(result.entry.doc_id).toBe("t-1");
-    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
-    expect(sumCounter(ctx, "db.write.index_cleanup_errors_total")).toBe(1);
-    const cleanupCounter = ctx.recorder
-      .snapshot()
-      .counters.find((c) => c.name === "db.write.index_cleanup_errors_total");
-    expect(cleanupCounter?.labels).toEqual({ collection: COLL, step: "pre-image-read" });
-  });
-
-  test("U: post-commit stale-index delete failure records a metric and does not reject commit", async () => {
-    const { storage, writer } = await newCleanupFailureWriter();
-    storage.failIndexDelete = true;
-    const ctx = createObservabilityContext();
-
-    const result = await runWithContext(ctx, () =>
-      writer.commit({
-        op: "U",
-        collection: COLL,
-        docId: "t-1",
-        body: { _id: "t-1", status: "open", assignee: "bob" },
-      }),
-    );
-
-    expect(result.entry.seq).toBe(1);
-    expect(result.entry.doc_id).toBe("t-1");
-    await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
-    expect(sumCounter(ctx, "db.write.index_cleanup_errors_total")).toBe(1);
-    const cleanupCounter = ctx.recorder
-      .snapshot()
-      .counters.find((c) => c.name === "db.write.index_cleanup_errors_total");
-    expect(cleanupCounter?.labels).toEqual({ collection: COLL, step: "delete" });
-  });
-
-  test("U: filter-match → filter-miss DELETEs all old keys, emits no PUTs", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "alice" },
-    });
-    await expect(listFilteredKeys(storage)).resolves.toHaveLength(1);
-
-    // Post-image transitions OUT of the filter — all old keys gone,
-    // zero new keys land.
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "closed", assignee: "alice" },
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-  });
-
-  test("U: filter-miss → filter-match emits all PUTs, no DELETEs", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    // I doc with status:"closed" → outside the filter, no keys.
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "closed", assignee: "alice" },
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-
-    // U that transitions INTO the filter → one PUT, zero DELETEs.
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "alice" },
-    });
-    const keys = await listFilteredKeys(storage);
-    expect(keys).toHaveLength(1);
-    expect(keys[0]).toContain(`/${open_only.name}/`);
-    expect(keys[0]!.endsWith("/t-1.json")).toBe(true);
-  });
-
-  test("U: filter-miss → filter-miss is a no-op for the filtered index", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    const ctx = createObservabilityContext();
-    await runWithContext(ctx, async () => {
-      // I doc with status:"closed" → outside the filter, no keys, no
-      // histogram emission for the filtered index.
-      await writer.commit({
-        op: "I",
-        collection: COLL,
-        docId: "t-1",
-        body: { _id: "t-1", status: "closed", assignee: "alice" },
-      });
-      const indexHistogramsAfterI = ctx.recorder
-        .snapshot()
-        .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
-      expect(indexHistogramsAfterI).toEqual([]);
-
-      // U keeps the doc outside the filter — still no keys, still no
-      // histogram. The writer's guard
-      // `newKeys.length + staleKeys.length > 0` must fire.
-      await writer.commit({
-        op: "U",
-        collection: COLL,
-        docId: "t-1",
-        body: { _id: "t-1", status: "wip", assignee: "bob" },
-      });
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-    const indexHistograms = ctx.recorder
-      .snapshot()
-      .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
-    expect(indexHistograms).toEqual([]);
-  });
-
-  test("D: filter-match pre-image DELETEs the keys", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "open", assignee: "alice" },
-    });
-    await expect(listFilteredKeys(storage)).resolves.toHaveLength(1);
-
-    await writer.commit({
-      op: "D",
-      collection: COLL,
-      docId: "t-1",
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-  });
-
-  test("D: filter-miss pre-image is a no-op", async () => {
-    const { storage, writer } = await newFilteredWriter();
-    await writer.commit({
-      op: "I",
-      collection: COLL,
-      docId: "t-1",
-      body: { _id: "t-1", status: "closed", assignee: "alice" },
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-
-    // Wrap only the D commit so its observations are the only ones
-    // visible to the assertion.
-    const ctx = createObservabilityContext();
-    await runWithContext(ctx, async () => {
-      await writer.commit({
-        op: "D",
-        collection: COLL,
-        docId: "t-1",
-      });
-    });
-    await expect(listFilteredKeys(storage)).resolves.toEqual([]);
-    const indexHistograms = ctx.recorder
-      .snapshot()
-      .histograms.filter((h) => h.name === "db.write.index_ops_per_logical_write");
-    expect(indexHistograms).toEqual([]);
   });
 });
 
@@ -1536,7 +1197,7 @@ describe("Writer — write-tick maintenance dispatch", () => {
     // `Writer.commit` runs `assertDocId(input.docId)` as its first
     // statement so every commit caller (the public write path AND a
     // direct caller like `baerly admin restore`) is covered. A `".."`
-    // docId would otherwise write a traversal-shaped index/log key —
+    // docId would otherwise write a traversal-shaped log key —
     // reject it EARLY as InvalidConfig, before any PUT lands.
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
@@ -1666,235 +1327,9 @@ describe("Writer — post-image identity", () => {
   });
 });
 
-describe("Writer — pre-image scan depth", () => {
-  /**
-   * `#readPreImage` walks the log backwards from the committing seq to
-   * find the doc's prior post-image, so Step 5b can DELETE the index
-   * keys that image produced. The walk is 404-tolerant by necessity (a
-   * folded-and-swept entry and a peer mid-CAS are indistinguishable),
-   * which means it cannot use a missing object as a stop signal.
-   *
-   * Without an explicit budget that makes the walk O(seq): once GC has
-   * swept a doc's last I/U (7-day grace, `GC_GRACE_PERIOD_MILLIS`),
-   * every later `U`/`D` on that doc issues one SEQUENTIAL GET per seq
-   * all the way to 0 — then returns `undefined` and deletes nothing.
-   * That is the only unbounded log walk in the kernel and it runs
-   * inline on the write path, after the commit.
-   *
-   * These tests pin the budget from both sides: the exact GET count it
-   * spends on swept history (the cost bound is the whole point of the
-   * fix, so it is asserted as an equality — a self-referential
-   * `<= PREIMAGE_SCAN_MAX_GETS` would stay green if the constant were
-   * raised back to an unsafe value), and the depth it still reaches,
-   * including the last seq inside the budget and the first one outside.
-   */
-  const SCAN_CURRENT_KEY = `app/test/tenant/t/manifests/${COLL}/current.json`;
-  const SCAN_LOG_PREFIX = `app/test/tenant/t/manifests/${COLL}`;
-  const by_assignee: IndexDefinition = { name: "by_assignee", on: "assignee" };
-
-  /** Counts `/log/` GETs issued after the committing log create. */
-  class PostCommitLogGetCountingStorage extends MemoryStorage {
-    postCommitLogGets = 0;
-    #armed = false;
-
-    override async put(
-      key: string,
-      body: Uint8Array,
-      opts?: StoragePutOptions,
-    ): Promise<StoragePutResult> {
-      const result = await super.put(key, body, opts);
-      if (key.includes("/log/") && key.endsWith(".json") && opts?.ifNoneMatch !== undefined) {
-        this.#armed = true;
-      }
-      return result;
-    }
-
-    override async get(
-      key: string,
-      opts?: { signal?: AbortSignal },
-    ): Promise<{ body: Uint8Array; etag: string } | null> {
-      if (this.#armed && key.includes("/log/")) {
-        this.postCommitLogGets++;
-      }
-      return super.get(key, opts);
-    }
-  }
-
-  /**
-   * PUT the index keys a prior post-image would have left on the
-   * bucket. Without this the stale-key assertions are vacuous: seeding
-   * only a `log/<seq>` entry gives the walk something to FIND but
-   * nothing to DELETE, so "the old key is gone" passes whether or not
-   * the walk ever ran. Mirrors the writer's own emission at
-   * `writer.ts:531` (empty body, `application/json`).
-   */
-  const seedPreImageIndexKeys = async (
-    storage: MemoryStorage,
-    body: DocumentData,
-    docId: string,
-  ): Promise<void> => {
-    for (const key of allIndexKeysFor(SCAN_LOG_PREFIX, [by_assignee], body, docId)) {
-      await storage.put(key, new Uint8Array(), { contentType: "application/json" });
-    }
-  };
-
-  const listAssigneeKeys = async (storage: MemoryStorage): Promise<string[]> => {
-    const out: string[] = [];
-    for await (const entry of storage.list(`${SCAN_LOG_PREFIX}/index/${by_assignee.name}/`)) {
-      out.push(entry.key);
-    }
-    return out.toSorted();
-  };
-
-  test("bounds the backwards walk when the doc's last entry was folded and swept", async () => {
-    // Post-sweep steady state: the floor has advanced to 400 and every
-    // sub-floor `log/<seq>.json` is gone, so no entry for this doc
-    // survives anywhere on the bucket.
-    const FLOOR = 400;
-    const storage = new PostCommitLogGetCountingStorage();
-    await createCurrentJson(
-      storage,
-      SCAN_CURRENT_KEY,
-      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
-    );
-    const writer = new Writer({
-      storage,
-      currentJsonKey: SCAN_CURRENT_KEY,
-      options: { indexes: [by_assignee] },
-    });
-
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "d-old",
-      body: { _id: "d-old", assignee: "bob" },
-    });
-
-    // Asserted as a LITERAL, not against `PREIMAGE_SCAN_MAX_GETS`.
-    // The constant's value is the fix — it is sized on the walk's
-    // sequential latency, Workers Free CPU and the retention window tied
-    // to it, and the worst-case update on Free over `fetch` spends all 8.
-    // A self-referential assertion would stay green if someone raised it
-    // without re-deriving those, which is exactly the regression this
-    // test exists to catch. Before the cap this walk cost 400 GETs.
-    expect(storage.postCommitLogGets).toBe(8);
-  });
-
-  test("reaches an entry at exactly the deepest seq inside the budget", async () => {
-    // The walk covers `[S - PREIMAGE_SCAN_MAX_GETS, S - 1]`, so the
-    // deepest reachable seq is `S - PREIMAGE_SCAN_MAX_GETS`. Pins the
-    // off-by-one in the `Math.max(0, currentNextSeq - N)` floor.
-    const FLOOR = 300;
-    const storage = new MemoryStorage();
-    await createCurrentJson(
-      storage,
-      SCAN_CURRENT_KEY,
-      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
-    );
-    await seedLogEntry(storage, SCAN_LOG_PREFIX, FLOOR - PREIMAGE_SCAN_MAX_GETS, {
-      op: "I",
-      collection: COLL,
-      doc_id: "d-old",
-      after: { _id: "d-old", assignee: "amy" },
-    });
-    await seedPreImageIndexKeys(storage, { _id: "d-old", assignee: "amy" }, "d-old");
-    const writer = new Writer({
-      storage,
-      currentJsonKey: SCAN_CURRENT_KEY,
-      options: { indexes: [by_assignee] },
-    });
-
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "d-old",
-      body: { _id: "d-old", assignee: "bob" },
-    });
-
-    const keys = await listAssigneeKeys(storage);
-    expect(keys.some((k) => k.includes(`/${encodeIndexValue("amy")}/`))).toBe(false);
-  });
-
-  test("leaves the stale key when the pre-image is one seq past the budget", async () => {
-    // The accepted trade, pinned so it is a deliberate choice rather
-    // than a surprise: one seq deeper than the budget and the old key
-    // survives. That is benign — an extra index key is a false
-    // positive the read path never consults.
-    const FLOOR = 300;
-    const storage = new MemoryStorage();
-    await createCurrentJson(
-      storage,
-      SCAN_CURRENT_KEY,
-      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
-    );
-    await seedLogEntry(storage, SCAN_LOG_PREFIX, FLOOR - PREIMAGE_SCAN_MAX_GETS - 1, {
-      op: "I",
-      collection: COLL,
-      doc_id: "d-old",
-      after: { _id: "d-old", assignee: "amy" },
-    });
-    await seedPreImageIndexKeys(storage, { _id: "d-old", assignee: "amy" }, "d-old");
-    const writer = new Writer({
-      storage,
-      currentJsonKey: SCAN_CURRENT_KEY,
-      options: { indexes: [by_assignee] },
-    });
-
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "d-old",
-      body: { _id: "d-old", assignee: "bob" },
-    });
-
-    const keys = await listAssigneeKeys(storage);
-    expect(keys.some((k) => k.includes(`/${encodeIndexValue("amy")}/`))).toBe(true);
-    expect(keys.some((k) => k.includes(`/${encodeIndexValue("bob")}/`))).toBe(true);
-  });
-
-  test("still reaches a surviving entry just below log_seq_start", async () => {
-    // Normal post-fold, pre-GC-sweep state: the floor advanced past the
-    // doc's last write, but the object is still on the bucket during the
-    // 7-day grace. The walk must reach it, or the stale index key leaks.
-    const FLOOR = 300;
-    const storage = new MemoryStorage();
-    await createCurrentJson(
-      storage,
-      SCAN_CURRENT_KEY,
-      logStateCurrentJson({ tail_hint: FLOOR, log_seq_start: FLOOR }),
-    );
-    await seedLogEntry(storage, SCAN_LOG_PREFIX, FLOOR - 5, {
-      op: "I",
-      collection: COLL,
-      doc_id: "d-old",
-      after: { _id: "d-old", assignee: "amy" },
-    });
-    await seedPreImageIndexKeys(storage, { _id: "d-old", assignee: "amy" }, "d-old");
-    const writer = new Writer({
-      storage,
-      currentJsonKey: SCAN_CURRENT_KEY,
-      options: { indexes: [by_assignee] },
-    });
-
-    await writer.commit({
-      op: "U",
-      collection: COLL,
-      docId: "d-old",
-      body: { _id: "d-old", assignee: "bob" },
-    });
-
-    const keys = await listAssigneeKeys(storage);
-    expect(keys.filter((k) => k.endsWith("/d-old.json"))).toHaveLength(1);
-    expect(keys.some((k) => k.includes(`/${encodeIndexValue("amy")}/`))).toBe(false);
-    expect(keys.some((k) => k.includes(`/${encodeIndexValue("bob")}/`))).toBe(true);
-  });
-});
-
 describe("Writer — insert guard (first insert wins)", () => {
   const MANIFEST = `app/test/tenant/t/manifests/${COLL}`;
   const DOC = "guarded";
-  const by_title: IndexDefinition = { name: "by_title", on: "title" };
-
   const guardedInsert = (writer: Writer, absentBelowSeq: number, title = "mine") =>
     writer.commit({
       op: "I",
@@ -1904,10 +1339,13 @@ describe("Writer — insert guard (first insert wins)", () => {
       insertGuard: { absentBelowSeq },
     });
 
-  const titleMarkers = async (storage: MemoryStorage): Promise<string[]> => {
+  /** Every object under the collection besides `current.json` and the log. */
+  const sideObjects = async (storage: MemoryStorage): Promise<string[]> => {
     const keys: string[] = [];
-    for await (const entry of storage.list(`${MANIFEST}/index/${by_title.name}/`)) {
-      keys.push(entry.key);
+    for await (const entry of storage.list(`${MANIFEST}/`)) {
+      if (!entry.key.endsWith("/current.json") && !entry.key.includes("/log/")) {
+        keys.push(entry.key);
+      }
     }
     return keys;
   };
@@ -1923,18 +1361,14 @@ describe("Writer — insert guard (first insert wins)", () => {
       doc_id: DOC,
       after: { _id: DOC, title: "peer" },
     });
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { indexes: [by_title] },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
     const err = await guardedInsert(writer, 1).catch((error: unknown) => error);
     expect(err).toBeInstanceOf(BaerlyError);
     expect(err).toMatchObject({ code: "AlreadyExists", _id: DOC, retriable: false });
     await expect(durableLogSeqs(storage)).resolves.toEqual([0, 1]);
-    // Refused before Step 4: no additive marker for the losing body.
-    await expect(titleMarkers(storage)).resolves.toEqual([]);
+    // Refused before the create: nothing of the losing insert is written.
+    await expect(sideObjects(storage)).resolves.toEqual([]);
   });
 
   test("a later U for the doc in the window also blocks the insert", async () => {
@@ -2027,7 +1461,7 @@ describe("Writer — insert guard (first insert wins)", () => {
     },
   );
 
-  test("a foreign same-doc I won at the probed slot: AlreadyExists, the markers stay", async () => {
+  test("a foreign same-doc I won at the probed slot: AlreadyExists, nothing else is written", async () => {
     // The peer's I lands at the slot this writer probed empty, between its
     // probe and its create. The readback finds the foreign occupant, and the
     // re-run window decision refuses the insert instead of moving forward.
@@ -2052,21 +1486,14 @@ describe("Writer — insert guard (first insert wins)", () => {
     }
     const storage = new PeerWinsSlot();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { indexes: [by_title] },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
     await expect(guardedInsert(writer, 0)).rejects.toMatchObject({ code: "AlreadyExists" });
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
     const occupant = decodeJson<LogEntry>((await storage.get(`${LOG_PREFIX}/0.json`))!.body);
     expect(occupant.session).toBe("peerss");
-    // The Step 4 marker for the losing body is an orphan the read path drops;
-    // the writer never deletes it.
-    await expect(titleMarkers(storage)).resolves.toEqual(
-      allIndexKeysFor(MANIFEST, [by_title], { _id: DOC, title: "mine" }, DOC),
-    );
+    // The losing insert wrote nothing: the create was its only write.
+    await expect(sideObjects(storage)).resolves.toEqual([]);
   });
 
   describe("replayIdentical", () => {
@@ -2090,14 +1517,10 @@ describe("Writer — insert guard (first insert wins)", () => {
       });
     };
 
-    test("an identical live row in the window: returns it, no slot, no marker PUT", async () => {
+    test("an identical live row in the window: returns it, no slot, no PUT", async () => {
       const storage = new MemoryStorage();
       const original = await seedLiveIdentical(storage);
-      const writer = new Writer({
-        storage,
-        currentJsonKey: CURRENT_KEY,
-        options: { indexes: [by_title] },
-      });
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
       const putSpy = vi.spyOn(storage, "put");
       const ctx = createObservabilityContext();
 
@@ -2107,7 +1530,7 @@ describe("Writer — insert guard (first insert wins)", () => {
       // A replay is not a logical write: no write-amplification sample.
       expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([]);
       await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
-      await expect(titleMarkers(storage)).resolves.toEqual([]);
+      await expect(sideObjects(storage)).resolves.toEqual([]);
     });
 
     test("the same setup without replayIdentical throws AlreadyExists", async () => {
@@ -2133,7 +1556,7 @@ describe("Writer — insert guard (first insert wins)", () => {
       await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
     });
 
-    test("an identical foreign occupant at the probed slot replays; the markers stay", async () => {
+    test("an identical foreign occupant at the probed slot replays; nothing else is written", async () => {
       class PeerWinsSlot extends MemoryStorage {
         armed = true;
         override async put(
@@ -2155,21 +1578,15 @@ describe("Writer — insert guard (first insert wins)", () => {
       }
       const storage = new PeerWinsSlot();
       await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-      const writer = new Writer({
-        storage,
-        currentJsonKey: CURRENT_KEY,
-        options: { indexes: [by_title] },
-      });
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
 
       const ctx = createObservabilityContext();
       const result = await runWithContext(ctx, () => replayInsert(writer, true));
       expect(result.entry).toMatchObject({ seq: 0, session: "peerss" });
-      // The orphan marker PUT is not billed as a logical write either.
+      // The lost create is not billed as a logical write either.
       expect(histogramValues(ctx, "db.write.class_a_ops_per_logical_write")).toEqual([]);
       await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
-      await expect(titleMarkers(storage)).resolves.toEqual(
-        allIndexKeysFor(MANIFEST, [by_title], { _id: DOC, title: "mine" }, DOC),
-      );
+      await expect(sideObjects(storage)).resolves.toEqual([]);
     });
   });
 
@@ -2192,7 +1609,6 @@ describe("Writer — insert guard (first insert wins)", () => {
 describe("Writer — admission (commit-time re-check)", () => {
   const MANIFEST = `app/test/tenant/t/manifests/${COLL}`;
   const DOC = "admitted";
-  const by_title: IndexDefinition = { name: "by_title", on: "title" };
   const refusal = new BaerlyError("CapacityExceeded", "refused by the test admission");
 
   /** An admission recording each `check` call; it refuses when `refuse` says so. */
@@ -2216,10 +1632,13 @@ describe("Writer — admission (commit-time re-check)", () => {
     };
   };
 
-  const titleMarkers = async (storage: MemoryStorage): Promise<string[]> => {
+  /** Every object under the collection besides `current.json` and the log. */
+  const sideObjects = async (storage: MemoryStorage): Promise<string[]> => {
     const keys: string[] = [];
-    for await (const entry of storage.list(`${MANIFEST}/index/${by_title.name}/`)) {
-      keys.push(entry.key);
+    for await (const entry of storage.list(`${MANIFEST}/`)) {
+      if (!entry.key.endsWith("/current.json") && !entry.key.includes("/log/")) {
+        keys.push(entry.key);
+      }
     }
     return keys;
   };
@@ -2258,15 +1677,11 @@ describe("Writer — admission (commit-time re-check)", () => {
     expect(calls).toEqual([{ seqs: [1, 2], tail: 3 }]);
   });
 
-  test("a refusal before the create commits nothing and PUTs no marker", async () => {
+  test("a refusal before the create commits nothing and writes nothing", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
     await seedLogEntry(storage, MANIFEST, 0, { collection: COLL, doc_id: "peer" });
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { indexes: [by_title] },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
     const { admission } = recordingAdmission(0, (window) => window.length > 0);
 
     await expect(
@@ -2279,10 +1694,10 @@ describe("Writer — admission (commit-time re-check)", () => {
       }),
     ).rejects.toBe(refusal);
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
-    await expect(titleMarkers(storage)).resolves.toEqual([]);
+    await expect(sideObjects(storage)).resolves.toEqual([]);
   });
 
-  test("a peer wins the probed slot: check re-runs with the occupant, a refusal commits nothing and leaves the markers", async () => {
+  test("a peer wins the probed slot: check re-runs with the occupant, a refusal commits nothing and writes nothing", async () => {
     class PeerWinsSlot extends MemoryStorage {
       armed = true;
       override async put(
@@ -2303,11 +1718,7 @@ describe("Writer — admission (commit-time re-check)", () => {
     }
     const storage = new PeerWinsSlot();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { indexes: [by_title] },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
     const { calls, admission } = recordingAdmission(0, (window) => window.length > 0);
 
     await expect(
@@ -2324,10 +1735,8 @@ describe("Writer — admission (commit-time re-check)", () => {
       { seqs: [0], tail: 1 },
     ]);
     await expect(durableLogSeqs(storage)).resolves.toEqual([0]);
-    // The Step 4 marker is an orphan the read path drops, as for a lost insert.
-    await expect(titleMarkers(storage)).resolves.toEqual(
-      allIndexKeysFor(MANIFEST, [by_title], { _id: DOC, title: "mine" }, DOC),
-    );
+    // The refused commit wrote nothing, as for a lost insert.
+    await expect(sideObjects(storage)).resolves.toEqual([]);
   });
 
   test("with an insert guard, a peer's live row is AlreadyExists before check runs", async () => {
@@ -2372,14 +1781,10 @@ describe("Writer — admission (commit-time re-check)", () => {
     expect(getSpy).not.toHaveBeenCalled();
   });
 
-  test("a verdict body replaces a U's post-image, and only its markers go down", async () => {
+  test("a verdict body replaces a U's post-image, and only it is written", async () => {
     const storage = new MemoryStorage();
     await createCurrentJson(storage, CURRENT_KEY, seedCurrent());
-    const writer = new Writer({
-      storage,
-      currentJsonKey: CURRENT_KEY,
-      options: { indexes: [by_title] },
-    });
+    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
     const rebased = { _id: DOC, title: "rebased" };
 
     const result = await writer.commit({
@@ -2390,9 +1795,7 @@ describe("Writer — admission (commit-time re-check)", () => {
       admission: { fromSeq: 0, check: () => ({ body: rebased }) },
     });
     expect(result.entry.after).toEqual(rebased);
-    await expect(titleMarkers(storage)).resolves.toEqual(
-      allIndexKeysFor(MANIFEST, [by_title], rebased, DOC),
-    );
+    await expect(sideObjects(storage)).resolves.toEqual([]);
   });
 
   test.each([

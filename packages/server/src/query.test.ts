@@ -609,7 +609,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status", on: "status" }] },
     });
     await writer.commit({
       op: "I",
@@ -640,7 +639,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status", on: "status" }] },
     });
     await writer.commit({
       op: "I",
@@ -660,7 +658,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status", on: "status" }] },
     });
     await writer.commit({
       op: "I",
@@ -684,7 +681,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status", on: "status" }] },
     });
     for (let i = 0; i < 5; i++) {
       await writer.commit({
@@ -706,7 +702,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
     });
     await writer.commit({
       op: "I",
@@ -738,7 +733,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status_priority", on: ["status", "priority"] }] },
     });
     await writer.commit({
       op: "I",
@@ -780,7 +774,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_a_b_c", on: ["a", "b", "c"] }] },
     });
     const docs: Array<{ id: string; a: number; b: number; c: number }> = [
       // (a=1, b=2) group — three docs that share the walk's [1,2]
@@ -824,7 +817,6 @@ describe("reads on a collection with declared indexes: equality predicates", () 
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status", on: "status" }] },
     });
     await writer.commit({
       op: "I",
@@ -1030,7 +1022,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_priority", on: "priority" }] },
     });
     for (let i = 1; i <= 9; i++) {
       await writer.commit({
@@ -1053,7 +1044,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_priority", on: "priority" }] },
     });
     for (let i = 1; i <= 5; i++) {
       await writer.commit({
@@ -1077,7 +1067,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_priority", on: "priority" }] },
     });
     for (let i = 1; i <= 5; i++) {
       await writer.commit({
@@ -1106,7 +1095,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
     });
     const seedDocs = [
       { id: "a1", tenant: "acme", age: "012" },
@@ -1141,7 +1129,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_status", on: "status" }] },
     });
     const seed = [
       { id: "t-1", status: "open" },
@@ -1179,7 +1166,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_priority", on: "priority" }] },
     });
     await writer.commit({
       op: "I",
@@ -1214,7 +1200,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_tenant_age", on: ["tenant", "age"] }] },
     });
     const seed = [
       { id: "a1", tenant: "acme", age: "012" },
@@ -1249,7 +1234,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_age", on: "age" }] },
     });
     for (const age of [9, 10, 15, 18, 22, 30, 100]) {
       await writer.commit({
@@ -1285,7 +1269,6 @@ describe("reads on a collection with declared indexes: range and $in predicates"
     const writer = new Writer({
       storage,
       currentJsonKey: currentJsonKey(COLL),
-      options: { indexes: [{ name: "by_team", on: "team" }] },
     });
     for (const [id, team] of [
       ["a", "platform"],

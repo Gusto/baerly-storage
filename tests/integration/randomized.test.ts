@@ -52,6 +52,7 @@ import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
 import { type Op, opArbOver } from "../../packages/server/src/_internal/randomized-model.ts";
 import { foldLogEntriesOnto } from "../../packages/server/src/log-walk.ts";
 import { Writer } from "../../packages/server/src/writer.ts";
+import { legacyIndexMarkerKeys, seedLegacyIndexMarkers } from "../fixtures/legacy-index-markers.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { bootstrap as bootstrapHarness } from "../fixtures/maintenance-harness.ts";
@@ -713,12 +714,10 @@ describe("randomized (Db + Writer)", () => {
         },
       );
 
-      // The same workload with an index on `_id` and on the batch
-      // predicate, so markers lost to a delete/re-insert race or a
-      // commit after a LIST cannot hide a row from a verb's read. The
-      // scheduler reaches the lost-marker interleaving only by chance;
-      // `packages/server/src/index-read-completeness.test.ts` forces it
-      // for reads and for each verb.
+      // The same workload on a Db declaring an index on `_id` and on the
+      // batch predicate: declared indexes change no verb's selection.
+      // `packages/server/src/index-read-completeness.test.ts` pins reads
+      // and each verb over a wrong legacy marker corpus.
       test.skipIf(variant.label !== "memory" && variant.label !== "local-fs")(
         "indexed same-_id read-modify-writes act on every live matching row",
         { timeout: GLOBAL_RUNS > 1_000 ? 600_000 : 60_000 },
@@ -784,29 +783,37 @@ fcTest.prop({
     }),
     { minLength: 1, maxLength: 15 },
   ),
+  legacy: fc.array(
+    fc.record({ id: fc.integer({ min: 0, max: 6 }), rank: fc.integer({ min: 0, max: 20 }) }),
+    { maxLength: 10 },
+  ),
 })(
-  "snapshot-plus-log reads and mutation selection survive missing index markers",
-  async ({ changes }) => {
+  "snapshot-plus-log reads and mutation selection ignore legacy index markers",
+  async ({ changes, legacy }) => {
     const storage = new MemoryStorage();
     const app = "marker-membership";
     const tenant = "t";
     const collection = "c";
     const prefix = `app/${app}/tenant/${tenant}/manifests/${collection}`;
+    const indexes = [
+      { name: "by_id", on: "_id" },
+      { name: "by_rank", on: "rank" },
+    ];
     const db = Db.create({
       storage,
       app,
       tenant,
-      config: {
-        collections: {
-          [collection]: {
-            indexes: [
-              { name: "by_id", on: "_id" },
-              { name: "by_rank", on: "rank" },
-            ],
-          },
-        },
-      },
+      config: { collections: { [collection]: { indexes } } },
     });
+    // Markers a pre-0.7 writer could have left, unrelated to the rows the
+    // changes below commit: stale ranks, ghost ids, none for most rows.
+    for (const marker of legacy) {
+      const id = `r${marker.id}`;
+      await seedLegacyIndexMarkers(
+        storage,
+        legacyIndexMarkerKeys(prefix, indexes, { _id: id, rank: marker.rank }, id),
+      );
+    }
     const rows = db.collection(collection);
     const model = new Map<string, DocumentData>();
     await runWithContext(
@@ -831,11 +838,6 @@ fcTest.prop({
                 minEntriesToCompact: 1,
               },
             );
-          }
-          // Represents marker loss after the stale-delete/reinsert race. Losing
-          // markers cannot erase rows in either the folded base or live tail.
-          for await (const marker of storage.list(`${prefix}/index/`)) {
-            await storage.delete(marker.key);
           }
           const expected = [...model.values()].toSorted(
             (a, b) =>
