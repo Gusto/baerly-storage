@@ -47,12 +47,14 @@ it dispatches.
 
 The `free-fetch:*` cells are whole requests on Workers Free with storage
 reached through `fetch`, where every call is one of the 50 external
-subrequests. Each runs one write kind (`insert`, the `update` worst case, a
+subrequests. Each runs one write kind (`insert`, cold or rotating updates, a
 `mixed` rotation) from a 100-doc snapshot through a full cycle of fold and GC
 phases, with the tick options the Cloudflare adapter builds for that host. GC
 runs with the production grace period over a seeded backlog of due
 snapshots, so every GC slice deletes its full sweep cap, and log retirement
-is live. A `<kind>+tick` cell is the most expensive write, route plus tick; a
+is live. Updates cover cold documents and rotations at every pre-image
+scan depth, including the full GET scan plus stale-marker DELETEs. A
+`<kind>+tick` cell is the most expensive write, route plus tick; a
 read cell is the most expensive read at any state a `mixed` write left,
 before its tick ran. `tests/unit/request-counts.test.ts` also asserts that
 every such cell, plus the Worker's Cache API calls, stays within 45 calls,
