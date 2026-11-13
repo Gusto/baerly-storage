@@ -365,7 +365,7 @@ describe("Writer create fate", () => {
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`, `${LOG_PREFIX}1.json`]);
   });
 
-  test("a create refused unapplied whose readback fails propagates the retriable NetworkError, not AmbiguousCommit", async () => {
+  test("a create refused unapplied whose readback fails stays AmbiguousCommit", async () => {
     class ThrottledUnreadableStorage extends MemoryStorage {
       readonly attempts: string[] = [];
       failedReadbacks = 0;
@@ -398,14 +398,83 @@ describe("Writer create fate", () => {
     await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
     const ctx = createObservabilityContext();
 
-    // No attempt landed, so an unreadable slot leaves nothing to resolve.
+    // A store need not document that its throttle is unapplied, so only a
+    // slot read back as empty confirms it; an unreadable slot confirms nothing.
     await expect(runWithContext(ctx, () => insert(makeWriter(storage)))).rejects.toMatchObject({
-      code: "NetworkError",
-      retriable: true,
-      cause: { notApplied: true },
+      code: "AmbiguousCommit",
+      _id: "one",
+      retriable: false,
     });
     expect(storage.failedReadbacks).toBe(1);
-    expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
+    expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(1);
+    expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
+  });
+
+  test.each([true, false])(
+    "provisioning current.json refused unapplied (peer landed: %s) recovers by re-read or stays a retriable NetworkError",
+    async (peerLanded) => {
+      class ThrottledProvisionStorage extends MemoryStorage {
+        currentCreates = 0;
+
+        override async put(
+          key: string,
+          body: Uint8Array,
+          opts?: StoragePutOptions,
+        ): Promise<StoragePutResult> {
+          if (key === CURRENT_KEY && opts?.ifNoneMatch === "*") {
+            this.currentCreates++;
+            if (peerLanded) {
+              await super.put(key, body, opts);
+            }
+            throw new BaerlyError("NetworkError", "throttled", {
+              cause: { status: 429, throttled: true, notApplied: true },
+            });
+          }
+          return super.put(key, body, opts);
+        }
+      }
+      const storage = new ThrottledProvisionStorage();
+      const outcome = insert(makeWriter(storage));
+      if (peerLanded) {
+        await expect(outcome).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
+      } else {
+        await expect(outcome).rejects.toMatchObject({
+          code: "NetworkError",
+          retriable: true,
+          cause: { notApplied: true },
+        });
+      }
+      expect(storage.currentCreates).toBe(1);
+    },
+  );
+
+  test("a create reported unapplied whose own entry is read back is adopted at its slot", async () => {
+    // Models a throttle the store did apply: the readback, not the
+    // adapter's report, decides the fate.
+    class AppliedThrottleStorage extends MemoryStorage {
+      readonly attempts: string[] = [];
+
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (!isLogCreate(key, opts)) {
+          return super.put(key, body, opts);
+        }
+        this.attempts.push(key);
+        await super.put(key, body, opts);
+        throw new BaerlyError("NetworkError", "throttled", {
+          cause: { status: 429, throttled: true, notApplied: true },
+        });
+      }
+    }
+    const storage = new AppliedThrottleStorage();
+    await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
+
+    await expect(insert(makeWriter(storage))).resolves.toMatchObject({
+      entry: { seq: 0, doc_id: "one" },
+    });
     expect(storage.attempts).toEqual([`${LOG_PREFIX}0.json`]);
   });
 

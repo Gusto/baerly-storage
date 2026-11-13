@@ -449,11 +449,13 @@ throttled (`429`, S3's `503 SlowDown`, or R2 error `10058`, its
 one-write-per-second-per-key limit) or refused before issue (the Workers
 subrequest limit, which the R2 adapter does not retry). An adapter builds it as
 `new BaerlyError("NetworkError", msg, { cause: { notApplied: true } })`.
-The writer still reads the slot back once, because on R2 a same-key create
-race can lose with a `429` instead of a `412`: an identified foreign occupant
-advances the writer to the next slot, as above, and a missing or unreadable
-occupant propagates the `NetworkError` as-is, since nothing of the call can
-land. This contract is scoped to failed committing-create calls;
+Cloudflare does not document that either R2 case is unapplied, so the writer
+still reads the slot back once, which also catches a same-key create race lost
+with a `429` instead of a `412`. An own-entry occupant is adopted and an
+identified foreign occupant advances the writer to the next slot, as above. A
+slot read back as empty propagates the `NetworkError` as-is. An unreadable or
+malformed occupant is `AmbiguousCommit`, as for any other failed create. This
+contract is scoped to failed committing-create calls;
 earlier read, configuration, and index-write errors keep their ordinary error behavior. The same code also covers the
 certified-delete-floor case described in invariant 5: a create may have
 landed beneath every reader's floor, and durable state cannot establish
