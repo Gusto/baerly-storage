@@ -49,6 +49,7 @@ import { type ArgsDef } from "citty";
 import { BaerlyError, decodeJsonBytes, type LogEntry, type Storage } from "@baerly/protocol";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { loadAppConfig } from "../config.ts";
+import { LEGACY_NAME_MIGRATION, legacyIdReport } from "../legacy-names.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
 import { APP_ARG, defineBaerlySubcommand, JSON_ARG, TENANT_ARG } from "../subcommand.ts";
 
@@ -381,6 +382,12 @@ export const runUsageScan = async (
   findings: UsageFinding[],
 ): Promise<void> => {
   let collections: readonly string[];
+  // Migration preflight: the app and tenant the scan addresses.
+  for (const role of ["app", "tenant"] as const) {
+    if (context[role] !== context[role].normalize("NFC")) {
+      findings.push(nonNfcNameFinding(role, context[role]));
+    }
+  }
   try {
     collections = await discoverCollections(storage, context.app, context.tenant);
   } catch (error) {
@@ -398,6 +405,20 @@ export const runUsageScan = async (
       message: `no collections found under app/${context.app}/tenant/${context.tenant}/manifests/; nothing to scan.`,
     });
     return;
+  }
+  // Migration preflight: discovers the collection names `fsck` / `dump`
+  // can only check when told them.
+  for (const c of collections) {
+    if (c !== c.normalize("NFC")) {
+      findings.push(nonNfcNameFinding("collection", c));
+    }
+  }
+  for (const group of legacyIdReport(collections).twin_ids) {
+    findings.push({
+      severity: "warning",
+      check: "names",
+      message: `collections ${JSON.stringify(group)} have canonically-equivalent names and share one key prefix on R2: ${LEGACY_NAME_MIGRATION}`,
+    });
   }
   for (const c of collections) {
     try {
@@ -417,6 +438,12 @@ export const runUsageScan = async (
     }
   }
 };
+
+const nonNfcNameFinding = (role: string, name: string): UsageFinding => ({
+  severity: "warning",
+  check: "names",
+  message: `${role} name ${JSON.stringify(name)} is not NFC: ${LEGACY_NAME_MIGRATION}`,
+});
 
 // ---------------------------------------------------------------------------
 // CLI surface — `baerly admin usage`
