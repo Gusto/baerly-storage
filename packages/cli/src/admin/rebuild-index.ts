@@ -47,6 +47,7 @@ import { emitSuccess } from "../output.ts";
 import {
   APP_ARG,
   assertCollectionArg,
+  assertWritableNames,
   BUCKET_ARG,
   COLLECTION_ARG,
   defineBaerlySubcommand,
@@ -123,6 +124,7 @@ const bundle = defineBaerlySubcommand({
     }
     const def: IndexDefinition = { name: args.index, on };
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
+    assertWritableNames({ app, tenant, collection: args.collection }, "baerly admin rebuild-index");
     const currentJsonKey = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}/current.json`;
     const result = await rebuildIndex(bucket.storage, currentJsonKey, def);
     emitSuccess({

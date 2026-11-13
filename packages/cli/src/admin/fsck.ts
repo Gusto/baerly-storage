@@ -40,7 +40,7 @@
  *       (Internal / InvalidResponse) — distinguished from exit 4
  *       so CI can wire fsck as a regression gate.
  *   4 — One or more findings (orphan / hole / hash-mismatch /
- *       index drift). Unique to this command; the other
+ *       index drift / a non-NFC app, tenant, or collection name). Unique to this command; the other
  *       `baerly admin` subcommands reserve 0–3.
  */
 
@@ -56,10 +56,12 @@ import {
 import { loadSnapshotAsMap } from "@baerly/server";
 import { rebuildIndex } from "@baerly/server/maintenance";
 import { parseBucketUri } from "../bucket-uri.ts";
+import { LEGACY_NAME_MIGRATION, nonNfcNames } from "../legacy-names.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
 import {
   APP_ARG,
   assertCollectionArg,
+  assertWritableNames,
   BUCKET_ARG,
   COLLECTION_ARG,
   defineBaerlySubcommand,
@@ -253,11 +255,21 @@ const bundle = defineBaerlySubcommand({
     }
     const { app, tenant } = await ctx.resolveAppTenant({ app: args.app, tenant: args.tenant });
     assertCollectionArg(args.collection, "baerly admin fsck");
+    const names = { app, tenant, collection: args.collection };
+    if (fixMode) {
+      assertWritableNames(names, "baerly admin fsck --fix");
+    }
     const bucket = await parseBucketUri(args.bucket);
     const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}`;
     const currentJsonKey = `${collectionPrefix}/current.json`;
 
-    const findings: Finding[] = [];
+    // Migration preflight: a legacy non-NFC name is readable here but
+    // refused by the SDK and by every writing verb.
+    const findings: Finding[] = nonNfcNames(names).map((role) => ({
+      severity: "warning",
+      check: "names",
+      message: `${role} name ${JSON.stringify(names[role])} is not NFC: ${LEGACY_NAME_MIGRATION}`,
+    }));
 
     if (indexMode) {
       // ── Index drift mode. ──────────────────────────────────────────
