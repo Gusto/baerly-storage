@@ -56,6 +56,14 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * Fetch one document by primary key. Returns `undefined` when the
    * id is unknown — does not throw `NotFound`.
    *
+   * `id` need not be NFC, so a row an earlier release stored under a
+   * non-NFC id stays readable.
+   *
+   * @throws BaerlyError{code: "InvalidConfig"} — `id` is not a valid
+   *         `_id`: empty, over 256 UTF-8 bytes, containing `/` or a
+   *         control character, a leading `_`, or `.` / `..` (HTTP 400).
+   *         No row can be stored under such an id; nothing was read.
+   *
    * @example
    * ```ts
    * const ticket = await db.collection("tickets").get(id);
@@ -101,18 +109,21 @@ export interface Collection<T extends DocumentData = DocumentData> {
   limit(n: number): Query<T>;
 
   /**
-   * Insert a new document. UUIDv7 auto-id on `_id`; caller can
-   * supply `_id` and the server honours it. Returns the new id.
+   * Insert a new document. UUIDv7 auto-id when `_id` is absent,
+   * `undefined` or `""`; caller can supply `_id` and the server honours
+   * it. Returns the new id.
    *
-   * A supplied `_id` must be a non-empty string of at most 256 UTF-8
+   * A supplied `_id` must be a string; any other present value (`null`,
+   * a number, a boolean, an object) throws rather than being replaced
+   * by a generated id. A non-empty one must be of at most 256 UTF-8
    * bytes with no `/`, no control characters, no leading `_`, not `.` or
    * `..`, and in Unicode Normalization Form C
    * (`id === id.normalize("NFC")`). Ids that differ only by case are
    * distinct.
    *
    * @throws BaerlyError{code: "InvalidConfig"} — the supplied `_id`
-   *         breaks one of those rules; nothing was written. Pass
-   *         `id.normalize("NFC")` for a non-NFC id.
+   *         is not a string or breaks one of those rules; nothing was
+   *         written. Pass `id.normalize("NFC")` for a non-NFC id.
    * @throws BaerlyError{code: "AlreadyExists"} — caller-supplied `_id`
    *         is held by a live row, including one a concurrent insert
    *         committed first: of concurrent inserts of one `_id`, exactly

@@ -21,6 +21,7 @@ import {
   type OrderSpec,
   type PredicateWire,
 } from "@baerly/protocol";
+import { assertReadDocId } from "./doc-id.ts";
 import { makeQuery, runInsert, runReplaceById, type CollectionReadContext } from "./query.ts";
 
 /**
@@ -66,13 +67,24 @@ export const makeCollection = <T extends DocumentData>(
     first: () => makeQuery<T>(ctx, seed).first(),
     all: () => makeQuery<T>(ctx, seed).all(),
     count: () => makeQuery<T>(ctx, seed).count(),
-    get: (id) => makeQuery<T>(ctx, byId(id)).first(),
+    /**
+     * Read the row at `id`. `id` is checked by the stored-id rule (not the
+     * NFC write rule) before any I/O, so a row an earlier release stored
+     * under a non-NFC id stays readable.
+     *
+     * @throws BaerlyError code="InvalidConfig" — `id` breaks the key-segment
+     *   rule; no row can be stored under it. Nothing was read.
+     */
+    get: async (id) => {
+      assertReadDocId(id);
+      return await makeQuery<T>(ctx, byId(id)).first();
+    },
     where: (p) => makeQuery<T>(ctx, seed).where(p),
     order: (s) => makeQuery<T>(ctx, { ...seed, order: s }),
     limit: (n) => makeQuery<T>(ctx, { ...seed, limit: n }),
     /**
-     * Insert one document. UUIDv7 auto-id when `_id` is absent or
-     * empty; otherwise the caller-supplied `_id` is honoured. The first
+     * Insert one document. UUIDv7 auto-id when `_id` is absent,
+     * `undefined` or `""`; otherwise the caller-supplied `_id` is honoured. The first
      * insert of an `_id` wins: a pre-commit existence check surfaces
      * `AlreadyExists` for a row already committed, and the writer's insert
      * guard surfaces it for one a concurrent insert committed after that
@@ -96,8 +108,9 @@ export const makeCollection = <T extends DocumentData>(
      *   of failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — from the per-collection
      *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
-     * @throws BaerlyError code="InvalidConfig" — the supplied `_id` breaks
-     *   the key-segment rule or is not NFC. Nothing was written.
+     * @throws BaerlyError code="InvalidConfig" — the supplied `_id` is not a
+     *   string (`null` included), or breaks the key-segment rule or is not
+     *   NFC. Nothing was written.
      */
     insert: (doc) => runInsert<T>(ctx, doc),
     /**

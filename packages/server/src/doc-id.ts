@@ -1,4 +1,5 @@
 import { BaerlyError, CODE_RESOLUTIONS, type DocumentData, jsonValueEqual } from "@baerly/protocol";
+import { markCallerFacing } from "./caller-facing-error.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { assertPathSegment } from "./path-segment.ts";
 
@@ -8,6 +9,12 @@ import { assertPathSegment } from "./path-segment.ts";
  */
 const DOC_ID_NFC_RESOLUTION =
   'Pass id.normalize("NFC") for a new _id. To migrate a stored non-NFC row, insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit _id for a UUID), then delete the original. On R2, copying to the normalized original id before deleting it would remove the copy\'s index markers.';
+
+/**
+ * Resolution for a point read whose id no row can be stored under.
+ */
+const READ_ID_RESOLUTION =
+  'Pass the _id string of a stored row. A valid _id is non-empty, at most 256 UTF-8 bytes, has no "/" or control characters, does not start with "_", and is not "." or "..".';
 
 /**
  * Guard an `_id` a write is about to store a row under: an insert, a
@@ -46,6 +53,37 @@ export const assertDocId = (id: string): void => {
  */
 export const assertStoredDocId = (id: string): void => {
   assertPathSegment(id, "_id");
+};
+
+/**
+ * Guard the `id` of a point read (`Collection.get`, `GET
+ * /v1/c/:collection/:id`) before any I/O. Applies the stored-id rule
+ * ({@link assertStoredDocId}), not the NFC write rule, so a row an earlier
+ * release stored under a non-NFC id stays readable. The error is marked
+ * caller-facing so HTTP returns its message with the 400.
+ *
+ * @throws BaerlyError code="InvalidConfig" — `id` is not a string or breaks
+ *   the key-segment rule.
+ */
+export const assertReadDocId = (id: string): void => {
+  let message: string | undefined;
+  if (typeof id !== "string") {
+    message = `get: _id must be a string, got ${typeof id}`;
+  } else {
+    try {
+      assertPathSegment(id, "_id", "get");
+    } catch (error) {
+      if (!(error instanceof BaerlyError)) {
+        throw error;
+      }
+      message = error.message;
+    }
+  }
+  if (message !== undefined) {
+    throw markCallerFacing(
+      new BaerlyError("InvalidConfig", message, { resolution: READ_ID_RESOLUTION }),
+    );
+  }
 };
 
 /**

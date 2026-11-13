@@ -1,4 +1,4 @@
-import type { BaerlyError } from "@baerly/protocol";
+import { BaerlyError } from "@baerly/protocol";
 
 /**
  * Errors whose message is written for the caller of the public API rather
@@ -17,3 +17,19 @@ export const markCallerFacing = <E extends BaerlyError>(err: E): E => {
 
 /** True when `err` was marked with {@link markCallerFacing}. */
 export const isCallerFacing = (err: BaerlyError): boolean => CALLER_FACING_ERRORS.has(err);
+
+/**
+ * Run a caller-input check, marking any `BaerlyError` it throws with
+ * {@link markCallerFacing}. For shared checks (from `@baerly/protocol`)
+ * that cannot mark their own errors.
+ */
+export const callerFacingCheck = (check: () => void): void => {
+  try {
+    check();
+  } catch (error) {
+    if (error instanceof BaerlyError) {
+      markCallerFacing(error);
+    }
+    throw error;
+  }
+};

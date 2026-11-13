@@ -3,6 +3,7 @@ export * from "./auth-resolution.ts";
 export * from "./code-resolution.ts";
 export * from "./bytes.ts";
 export * from "./constants.ts";
+export * from "./document-input.ts";
 export {
   type CurrentJson,
   type CurrentJsonRead,
