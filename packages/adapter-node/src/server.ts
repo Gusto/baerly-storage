@@ -1,6 +1,7 @@
 import {
   type BaerlyConfig,
   MAINTENANCE_PROFILE_NODE,
+  RequestLedger,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
@@ -218,6 +219,9 @@ export function createFetchHandler(
     const obsCtx = createObservabilityContext({
       request_id: requestId,
       maintenance,
+      // Node has no per-request storage call cap: the ledger counts every
+      // attempt and never refuses one.
+      ledger: new RequestLedger(),
     });
 
     // The verifier runs inside the request context so work it does (e.g. a

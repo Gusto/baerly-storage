@@ -28,7 +28,19 @@
  *    nothing to bust. Best-effort — failures are swallowed.
  *  - No `Cache-Control` header is added on the wire. We rely on
  *    explicit invalidation, not TTLs.
+ *  - Cache API calls share the invocation's subrequest quota, so each
+ *    is charged to the request ledger's `external` pool. A `match` or
+ *    `put` that does not fit (see `CF_CACHE_API_MAX_CALLS`) is skipped
+ *    and the request is served from storage; a request is never refused
+ *    for lack of cache budget. The `delete` after a write is always
+ *    issued, inside the ledger's margin, so a write never leaves a stale
+ *    entry behind.
  */
+
+import { currentRequestLedger } from "@baerly/protocol";
+
+/** Charge one optional Cache API call; `false` means skip it. */
+const chargeOptionalCacheCall = (): boolean => currentRequestLedger()?.chargeCacheCall() ?? true;
 
 /**
  * Methods we treat as mutating for invalidation purposes. Keep this
@@ -101,7 +113,8 @@ function bypassesCache(url: URL): boolean {
  *  - `"miss"`   — the request was cacheable but the cache had no
  *                 entry; the handler ran and (when the response was
  *                 cacheable) its output was stored.
- *  - `"bypass"` — the request never consulted the cache (non-GET,
+ *  - `"bypass"` — the request never consulted the cache (no room for
+ *                 a cache call in the request ledger, non-GET,
  *                 LIST URL, a path under {@link BYPASS_PREFIXES}, or
  *                 a path outside `/v1/c/`).
  */
@@ -149,6 +162,9 @@ export async function withReadCache(
   // need. miniflare provides the real binding at runtime.
   const cache = (caches as unknown as { default: Cache }).default;
   const key = cacheKeyFor(req, tenantPrefix);
+  if (!chargeOptionalCacheCall()) {
+    return { response: await handler(), cache_status: "bypass" };
+  }
   const cached = await cache.match(key);
   if (cached !== undefined) {
     const etag = cached.headers.get("etag");
@@ -186,7 +202,7 @@ export async function withReadCache(
   // Only cache stable 200 responses with a non-empty body. The Cache
   // API silently rejects responses with `Set-Cookie`; baerly never
   // sets cookies, but the guard is cheap insurance.
-  if (fresh.status === 200 && !fresh.headers.has("set-cookie")) {
+  if (fresh.status === 200 && !fresh.headers.has("set-cookie") && chargeOptionalCacheCall()) {
     // workerd's `caches.default.put` silently no-ops on responses
     // without a cacheable `Cache-Control` directive. We synthesize
     // one ONLY on the response we hand the cache — the response we
@@ -231,5 +247,6 @@ export async function invalidateOnWrite(
   // doesn't expose it, so we cast through `unknown` to the shape we
   // need. miniflare provides the real binding at runtime.
   const cache = (caches as unknown as { default: Cache }).default;
+  currentRequestLedger()?.chargeCacheCall(true);
   await cache.delete(cacheKeyFor(req, tenantPrefix));
 }

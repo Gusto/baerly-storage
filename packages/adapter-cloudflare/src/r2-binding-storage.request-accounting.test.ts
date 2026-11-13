@@ -15,11 +15,13 @@
 import {
   type BaerlyError,
   createCurrentJson,
+  RequestLedger,
   STORAGE_RETRY_MAX_ATTEMPTS,
   STORAGE_RETRY_THROTTLE_BASE_MILLIS,
   storageRetryDelayMillis,
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
+import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
@@ -520,5 +522,55 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
     expect(counted.puts).toBe(1);
     expect(calls.logPuts).toBe(2);
     expect(calls.logGets).toBe(TAIL_PROBE_GETS + 1);
+  });
+});
+
+describe("r2BindingStorage charges the request ledger", () => {
+  const inLedger = <T>(ledger: RequestLedger, fn: () => Promise<T>): Promise<T> =>
+    Promise.resolve(runWithContext(createObservabilityContext({ ledger }), fn));
+
+  test("every binding call, retries included, is charged to the internal pool only", async () => {
+    const ledger = new RequestLedger({ internal: 100, external: 0 });
+    const { bucket, calls } = mkBucket([], true);
+    const storage = r2BindingStorage(bucket);
+    await inLedger(ledger, () => storage.get("k").catch(() => null));
+    expect(calls.get).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
+    expect(ledger.charged).toEqual({
+      internal: STORAGE_RETRY_MAX_ATTEMPTS,
+      external: 0,
+      cache: 0,
+    });
+  });
+
+  test("a 3-page list is refused before page 3 when the ledger holds 2", async () => {
+    const pages = [
+      { keys: ["p/a"], truncated: true },
+      { keys: ["p/b"], truncated: true },
+      { keys: ["p/c"], truncated: false },
+    ];
+    const { bucket, calls } = mkBucket(pages);
+    const storage = r2BindingStorage(bucket);
+    const seen: string[] = [];
+    const err = await inLedger(new RequestLedger({ internal: 2, external: 2 }), async () => {
+      for await (const e of storage.list("p/")) {
+        seen.push(e.key);
+      }
+    }).catch((error: unknown) => error);
+    expect(err).toMatchObject({ code: "CapacityExceeded", cause: { refused: true } });
+    expect(seen).toEqual(["p/a", "p/b"]);
+    expect(calls.list).toHaveLength(2);
+  });
+
+  test("a call past the limit never reaches the binding", async () => {
+    const { bucket, calls } = mkBucket();
+    const storage = r2BindingStorage(bucket);
+    const ledger = new RequestLedger({ internal: 1, external: 1 });
+    await inLedger(ledger, async () => {
+      await storage.get("k");
+      await expect(storage.put("k", new Uint8Array([1]))).rejects.toMatchObject({
+        code: "CapacityExceeded",
+      });
+    });
+    expect([calls.get, calls.put]).toEqual([1, 0]);
   });
 });

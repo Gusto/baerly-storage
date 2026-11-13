@@ -7,11 +7,15 @@ import { type DevLandingOptions, renderDevLanding } from "@baerly/dev/dev-landin
 import {
   type BaerlyAppConfig,
   BaerlyError,
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_FETCH_GC_MAX_SWEEPS,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
+  CF_PAID_REQUEST_LIMIT,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
+  RequestLedger,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
@@ -169,6 +173,32 @@ export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | u
     `BAERLY_MAINTENANCE_PROFILE must be one of "", "cf-free", "cf-paid", got ${JSON.stringify(raw)}`,
   );
 };
+
+/** Read a string var off the `env` binding (CF `vars` are always strings). */
+const envReader =
+  (env: BaerlyEnv) =>
+  (key: string): string | undefined => {
+    const value = (env as unknown as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  };
+
+/**
+ * A fresh request ledger for one Worker invocation (a `fetch` or a
+ * `scheduled` call), with the limits of the profile
+ * {@link resolveCfMaintenanceProfile} selects. The profile, not the
+ * account's billing plan, selects them: `cf-free` (the default) allows
+ * {@link CF_FREE_INTERNAL_REQUEST_LIMIT} storage calls, of which at most
+ * {@link CF_FREE_EXTERNAL_REQUEST_LIMIT} leave through `fetch` or the
+ * Cache API; `cf-paid` allows {@link CF_PAID_REQUEST_LIMIT} of either. A
+ * storage call past the limit is refused with `CapacityExceeded` before
+ * it is sent, where the platform would otherwise throw on it.
+ */
+export const cfRequestLedger = (readEnv: (key: string) => string | undefined): RequestLedger =>
+  new RequestLedger(
+    resolveCfMaintenanceProfile(readEnv) === MAINTENANCE_PROFILE_CF_PAID
+      ? { internal: CF_PAID_REQUEST_LIMIT, external: CF_PAID_REQUEST_LIMIT }
+      : { internal: CF_FREE_INTERNAL_REQUEST_LIMIT, external: CF_FREE_EXTERNAL_REQUEST_LIMIT },
+  );
 
 /**
  * Write-tick options on the free profile for storage reached through
@@ -628,16 +658,14 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       // ack) with the CF-free caps + `phasesPerTick: "single"`; the
       // ops-plane vars are read off the `env` binding (strings). Built
       // per request so a hot-swapped `env` is observed at call time.
+      const readEnv = envReader(env);
       const obsCtx = createObservabilityContext({
         request_id: requestId,
-        maintenance: cfMaintenanceDispatch(
-          ctx,
-          (k) => {
-            const value = (env as unknown as Record<string, unknown>)[k];
-            return typeof value === "string" ? value : undefined;
-          },
-          baseStorage,
-        ),
+        maintenance: cfMaintenanceDispatch(ctx, readEnv, baseStorage),
+        // One budget for the whole invocation: the route, the read cache,
+        // and the `ctx.waitUntil` tick and invalidation it dispatches
+        // (both started inside this context) charge the same ledger.
+        ledger: cfRequestLedger(readEnv),
       });
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
@@ -739,7 +767,8 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
 
     async scheduled(event, env, ctx): Promise<void> {
       const { options } = await ensureResolved(env);
-      if (options.scheduled !== undefined) {
+      const handler = options.scheduled;
+      if (handler !== undefined) {
         // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, reserve
         // `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` for
         // "cf-paid" — it folds whatever live tail exists, bounded by
@@ -751,7 +780,11 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // `@gusto/baerly-storage/maintenance`, and use
         // `resolveCfMaintenanceProfile((k) => env[k])` here to select the
         // paid recipe when configured.
-        await options.scheduled(event, env, ctx);
+        // A cron invocation has its own subrequest limit, so it gets its
+        // own context carrying a fresh ledger. It emits no canonical line;
+        // metrics recorded inside it are dropped.
+        const cronCtx = createObservabilityContext({ ledger: cfRequestLedger(envReader(env)) });
+        await runWithContext(cronCtx, () => handler(event, env, ctx));
       }
     },
   };

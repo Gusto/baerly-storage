@@ -3,7 +3,7 @@ title: Sync protocol
 audience: spec
 doc_type: current-contract
 summary: Atomic document writes over object storage via single-write commit — the numbered log append is the commit (one linearizable If-None-Match create); current.json is compactor-owned compaction state with a non-authoritative tail_hint; readers discover the tail by forward-probe.
-last-reviewed: 2026-11-12
+last-reviewed: 2026-11-13
 tags: [protocol, sync, current-json, causal-consistency]
 related:
   [
@@ -479,6 +479,37 @@ exactly-once execution across calls, restarts, or lost responses; a replayed
 post-image can still overwrite a concurrent change. For multi-row operations,
 rows committed before the ambiguous row remain applied; the operation does not
 return its partial-progress count.
+
+### Per-invocation request budget
+
+Each invocation (an HTTP request, a Workers cron tick) carries one request
+ledger, set by the adapter on the observability context. The retry policy
+charges it before every attempt, so adapter retries and `list` pages are
+charged as they are issued, and work in `ctx.waitUntil` charges the
+ledger of the request that dispatched it. An attempt the ledger has no room
+for is never sent: it fails with
+`BaerlyError{code:"CapacityExceeded"}` whose cause carries `refused: true`,
+which ends the retry loop. A committing create refused before any attempt
+of uncertain outcome carries `notApplied`; after one, it is a `NetworkError`
+with an unknown fate, which the writer resolves by readback as above.
+
+The ledger has two pools: `internal`, charged for every storage call, and
+`external`, charged as well for a call that leaves through `fetch` (S3 over
+HTTP, GCS) or the Cache API. The R2 binding charges `internal` only. The
+limits follow the Workers maintenance profile:
+
+| Profile | `internal` | `external` |
+| --- | --- | --- |
+| `cf-free` (default) | `CF_FREE_INTERNAL_REQUEST_LIMIT` (900) | `CF_FREE_EXTERNAL_REQUEST_LIMIT` (45) |
+| `cf-paid` | `CF_PAID_REQUEST_LIMIT` (9,000) | `CF_PAID_REQUEST_LIMIT` (9,000) |
+| Node | counted, never refused | counted, never refused |
+
+Each limit keeps a margin under the platform cap (1,000 internal and 50
+external on Free, 10,000 on Paid) for calls the ledger does not see, such
+as the verifier's JWKS fetch. The Worker's read cache charges each Cache API
+call to `external`, at most `CF_CACHE_API_MAX_CALLS` per invocation; a cache
+`match` or `put` without room is skipped and the request is served from
+storage, and the invalidation after a write is always sent.
 
 ### Crash safety
 

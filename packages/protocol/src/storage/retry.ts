@@ -6,6 +6,7 @@ import {
 } from "../constants.ts";
 import { BaerlyError, isWriteConflict, type BaerlyErrorCode } from "../errors.ts";
 import { delay } from "../time.ts";
+import { currentRequestLedger, type RequestPool } from "./ledger.ts";
 
 /**
  * Permanent {@link BaerlyError} codes that end `retryStorageCall` at
@@ -54,6 +55,13 @@ export interface StorageRetryOptions {
    * `mayHaveApplied: true` because the adapter cannot prove its outcome.
    */
   readonly conditionalCreate?: boolean;
+  /**
+   * The {@link RequestPool} each attempt is charged to on the active
+   * invocation's request ledger. `"internal"` for a call that stays
+   * inside the host (the R2 binding); `"external"`, the default, for one
+   * that leaves through `fetch`.
+   */
+  readonly pool?: RequestPool;
   /** Jitter source in `[0, 1)`. Test seam; defaults to `Math.random`. */
   readonly random?: () => number;
   /** Backoff sleep. Test seam; defaults to `delay`. */
@@ -117,6 +125,11 @@ export const storageRetryDelayMillis = (
  * page — in exactly one `retryStorageCall`, so a failing call costs at
  * most `retries + 1` requests. Callers above the `Storage` boundary must
  * not add their own blind resend loop on top.
+ *
+ * Each attempt is charged to the active invocation's request ledger
+ * ({@link currentRequestLedger}) on `opts.pool` before it is sent. An
+ * attempt the ledger refuses is never sent: the refusal (`CapacityExceeded`,
+ * `cause.refused`) ends the loop like any refusal.
  */
 export const retryStorageCall = async <T>(
   fn: () => Promise<T>,
@@ -132,10 +145,13 @@ export const retryStorageCall = async <T>(
     );
   }
   const sleep = opts.sleep ?? delay;
+  const ledger = currentRequestLedger();
+  const pool = opts.pool ?? "external";
   // Set once an attempt of a conditional create ends with an unknown outcome.
   let uncertain = false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      ledger?.acquire(pool);
       return await fn();
     } catch (error) {
       if (error instanceof BaerlyError && PERMANENT_STORAGE_ERROR_CODES.has(error.code)) {
@@ -159,13 +175,26 @@ export const retryStorageCall = async <T>(
       // path. Only a create whose every attempt was provably unapplied
       // reports `notApplied`; a throttle may retain an unknown outcome.
       if (attempt >= retries || refused) {
-        if (opts.conditionalCreate === true && !uncertain && error instanceof BaerlyError) {
-          throw new BaerlyError(error.code, error.message, {
-            cause: {
-              ...(error.cause as object),
-              notApplied: true,
-            },
-          });
+        if (opts.conditionalCreate === true && error instanceof BaerlyError) {
+          if (!uncertain) {
+            throw new BaerlyError(error.code, error.message, {
+              cause: {
+                ...(error.cause as object),
+                notApplied: true,
+              },
+              ...(error.resolution !== undefined && { resolution: error.resolution }),
+            });
+          }
+          if (refused && error.code !== "NetworkError") {
+            // A ledger refusal proves only that THIS attempt was not sent;
+            // an earlier uncertain one may have landed, so the create's
+            // fate is unknown, as for a permanent rejection above.
+            throw new BaerlyError(
+              "NetworkError",
+              `${error.message} (an earlier attempt of this conditional create may have landed)`,
+              { cause: error.cause },
+            );
+          }
         }
         throw error;
       }
