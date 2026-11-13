@@ -17,6 +17,7 @@ import {
   SNAPSHOT_SCHEMA_VERSION,
   type Storage,
 } from "@baerly/protocol";
+import { isOwnCollection } from "./collection-alias.ts";
 
 /**
  * Single-level snapshot at L9; the level prefix is forward-compatible
@@ -169,7 +170,7 @@ export const loadSnapshotAsMap = async (
       `compact: snapshot ${key} has unsupported schema_version ${String(body.schema_version)}`,
     );
   }
-  if (body.collection !== expectedCollection) {
+  if (!isOwnCollection(body.collection, expectedCollection)) {
     throw new BaerlyError(
       "InvalidResponse",
       `compact: snapshot ${key} carries collection ${body.collection}, expected ${expectedCollection}`,
