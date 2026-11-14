@@ -97,17 +97,17 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 89217,
+      "raw": 89282,
       "note": "dev-only; never enters a consumer bundle. At the 2% shipped rate it produced 12 of 32 historical trips for no safety benefit."
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 756580,
+      "raw": 756645,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 765538,
+      "raw": 765603,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }
