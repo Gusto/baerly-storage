@@ -53,12 +53,14 @@ import { Db } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import {
   configureObservability,
-  createObservabilityContext,
   flushCanonicalLine,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
-import { logMaintenanceWarning } from "@baerly/server/_internal/observability";
+import {
+  createObservabilityContext,
+  logMaintenanceWarning,
+} from "@baerly/server/_internal/observability";
 
 const APP = "app";
 const TENANT = "tenant";

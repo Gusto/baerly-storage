@@ -75,15 +75,6 @@ export interface ObservabilityContext {
    */
   readonly recorder: RequestScopedMetricsRecorder;
   /**
-   * Per-request write-tick maintenance dispatch config. Set by the
-   * adapter (NOT `Db.create`) so the inherently-per-request
-   * `dispatch = ctx.waitUntil` and the env-var-derived caps ride the
-   * same scope the kernel write-tick reads from. The {@link Writer}
-   * consults `getCurrentContext()?.maintenance` at the post-commit
-   * dispatch point. Absent ⇒ inline dispatch + CF-free-safe caps.
-   */
-  readonly maintenance?: MaintenanceDispatch;
-  /**
    * The invocation's storage request budget. Set by the adapter that owns
    * the invocation (an HTTP request, a Workers cron tick) with its host's
    * limits. Every storage attempt run inside this context, `waitUntil`
@@ -98,6 +89,27 @@ export interface ObservabilityContext {
    * scope never sees it.
    */
   readonly hold?: RequestHold;
+}
+
+/**
+ * {@link ObservabilityContext} plus the adapter-set host wiring the kernel
+ * reads: the write-tick maintenance dispatch and the read envelope. The
+ * kernel's {@link createObservabilityContext} / {@link getCurrentContext}
+ * use this type; the published `/observability` entry re-exports them
+ * typed with the narrower public context.
+ *
+ * @internal
+ */
+export interface InternalObservabilityContext extends ObservabilityContext {
+  /**
+   * Per-request write-tick maintenance dispatch config. Set by the
+   * adapter (NOT `Db.create`) so the inherently-per-request
+   * `dispatch = ctx.waitUntil` and the env-var-derived caps ride the
+   * same scope the kernel write-tick reads from. The `Writer`
+   * consults `getCurrentContext()?.maintenance` at the post-commit
+   * dispatch point. Absent ⇒ inline dispatch + CF-free-safe caps.
+   */
+  readonly maintenance?: MaintenanceDispatch;
   /**
    * The host's read envelope, set by the adapter with its host's bounds.
    * A read whose staged work falls outside it is refused whole with
@@ -123,11 +135,20 @@ export interface ObservabilityContext {
 export interface ObservabilityContextInit {
   readonly request_id?: string;
   readonly recorder?: RequestScopedMetricsRecorder;
-  /** Write-tick maintenance dispatch config. See {@link ObservabilityContext.maintenance}. */
-  readonly maintenance?: MaintenanceDispatch;
   /** Storage request budget. See {@link ObservabilityContext.ledger}. */
   readonly ledger?: RequestLedger;
-  /** Read envelope. See {@link ObservabilityContext.readEnvelope}. */
+}
+
+/**
+ * {@link ObservabilityContextInit} plus the adapter-set host wiring of
+ * {@link InternalObservabilityContext}.
+ *
+ * @internal
+ */
+export interface InternalObservabilityContextInit extends ObservabilityContextInit {
+  /** Write-tick maintenance dispatch config. See {@link InternalObservabilityContext.maintenance}. */
+  readonly maintenance?: MaintenanceDispatch;
+  /** Read envelope. See {@link InternalObservabilityContext.readEnvelope}. */
   readonly readEnvelope?: ReadEnvelope;
 }
 
@@ -138,8 +159,8 @@ export interface ObservabilityContextInit {
  * surprises around `instanceof` across realms (Workers vs Node).
  */
 export const createObservabilityContext = (
-  init: ObservabilityContextInit = {},
-): ObservabilityContext => ({
+  init: InternalObservabilityContextInit = {},
+): InternalObservabilityContext => ({
   request_id: init.request_id ?? crypto.randomUUID(),
   started_at: performance.now(),
   fields: new Map(),
@@ -154,7 +175,7 @@ export const createObservabilityContext = (
  * Runtime's `nodejs_compat` flag wires `node:async_hooks` to a
  * per-request scope, so cross-request bleed is impossible there.
  */
-const als = new AsyncLocalStorage<ObservabilityContext>();
+const als = new AsyncLocalStorage<InternalObservabilityContext>();
 
 // Adapters import only `@baerly/protocol`, so `retryStorageCall` finds the
 // active invocation's ledger through this resolver.
@@ -180,4 +201,4 @@ export const runWithContext = <T>(
 ): T | Promise<T> => als.run(ctx, fn);
 
 /** Returns the currently-active context, or `undefined` outside one. */
-export const getCurrentContext = (): ObservabilityContext | undefined => als.getStore();
+export const getCurrentContext = (): InternalObservabilityContext | undefined => als.getStore();

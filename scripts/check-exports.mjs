@@ -279,6 +279,24 @@ export const leaked = db.getCurrentJson("tickets");
 `,
   },
   {
+    name: "negative-read-envelope-from-observability",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import type { ReadEnvelope } from "@gusto/baerly-storage/observability";
+export type Leaked = ReadEnvelope;
+`,
+  },
+  {
+    name: "negative-maintenance-on-observability-context",
+    expect: "fails",
+    codes: ["TS2353"],
+    source: `
+import { createObservabilityContext } from "@gusto/baerly-storage/observability";
+export const leaked = createObservabilityContext({ maintenance: { disabled: true } });
+`,
+  },
+  {
     name: "negative-internal-kernel-subpath",
     expect: "fails",
     codes: ["TS2307"],

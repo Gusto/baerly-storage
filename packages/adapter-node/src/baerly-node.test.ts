@@ -10,7 +10,8 @@ import {
   SHARED_SECRET_MISSING_MESSAGE,
   type Verifier,
 } from "@baerly/protocol";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import { Writer } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { baerlyNode, type BaerlyNodeHandle } from "./baerly-node.ts";

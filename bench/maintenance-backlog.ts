@@ -126,7 +126,8 @@ import {
 } from "@baerly/protocol";
 import { type MaintenanceProfile, runScheduledMaintenance } from "@baerly/server/maintenance";
 import { type BoundedMaintenanceOptions, isFoldViable } from "@baerly/server/_internal/maintenance";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import { type InternalMaintenanceOptions, Writer } from "@baerly/server/_internal/testing";
 import { seedLegacyContentForBody } from "../tests/fixtures/legacy-content.ts";
 

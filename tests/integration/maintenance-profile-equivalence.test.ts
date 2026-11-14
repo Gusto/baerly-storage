@@ -48,7 +48,8 @@ import {
 import { Db } from "@baerly/server";
 import { type MaintenanceProfile } from "@baerly/server/maintenance";
 import { runBoundedMaintenance } from "@baerly/server/_internal/maintenance";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import { type InternalBoundedMaintenanceOptions, Writer } from "@baerly/server/_internal/testing";
 import {
   APP,

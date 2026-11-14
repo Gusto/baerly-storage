@@ -27,7 +27,8 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import {
   APP,
   bootstrap,

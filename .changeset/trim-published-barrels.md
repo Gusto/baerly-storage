@@ -6,7 +6,7 @@
 
 - `@gusto/baerly-storage` no longer exports `SnapshotBody`, `encodeSnapshotBody`, `snapshotKey`, `loadSnapshotAsMap`, `walkLogRange`, `probeTailFrom`, `resolveVerifier`, `collectionsToMaps` or `validateOrThrow`. `SchemaIssue` and `SchemaValidator` stay.
 - `@gusto/baerly-storage/maintenance` no longer exports `runBoundedMaintenance`, `BoundedMaintenanceOptions`, `dispatchWriteTick`, `dispatchInlineAwaited`, `MaintenanceDispatch`, `parseMaintenanceEnv`, `isFoldViable`, `resolveFoldCeilings`, `FoldCeilings`, `estimateTailBytes`, `shouldFireMaintenance` or `crossesGcBoundary`. `runScheduledMaintenance`, `compact`, `runGc`, the tier profiles and their option/result types stay.
-- `@gusto/baerly-storage/observability` no longer exports `logMaintenanceWarning` or `flushUnauthorizedAndRespond` (adapter wiring).
+- `@gusto/baerly-storage/observability` no longer exports `logMaintenanceWarning`, `flushUnauthorizedAndRespond` (adapter wiring) or the `ReadEnvelope` type, and `ObservabilityContext` / `ObservabilityContextInit` drop the adapter-set `maintenance` and `readEnvelope` fields. Work inside a context you create runs write-tick maintenance inline at the default caps, with no read envelope; `baerlyWorker` / `baerlyNode` set the host values.
 - `Db` loses the `@internal` read seams `collectionReadContext`, `getCurrentJson`, `getLogEntry`, `probeLogTail` and `probeLogChunk`, so `CurrentJson` and `TailProbeChunk` leave the public types. Use the collection API (`db.collection(name)`) and `/v1/since` instead.
 - `CompactResult` drops `previousSnapshotKey` and `newSnapshotKey`. Use `written`, `entriesFolded`, `logSeqStartBefore` and `logSeqStartAfter`.
 
