@@ -19,11 +19,8 @@ import {
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import type { MaintenanceDispatch } from "./maintenance.ts";
-import {
-  createObservabilityContext,
-  type ObservabilityContext,
-  runWithContext,
-} from "./observability/index.ts";
+import { type ObservabilityContext, runWithContext } from "./observability/index.ts";
+import { createObservabilityContext } from "./observability/context.ts";
 import { Writer } from "./writer.ts";
 
 const histogramValues = (ctx: ObservabilityContext, name: string): number[] =>

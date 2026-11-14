@@ -46,7 +46,8 @@ import { Db } from "@baerly/server";
 import { probeTailFrom } from "@baerly/server/_internal/kernel";
 import { compact, runGc, runScheduledMaintenance } from "@baerly/server/maintenance";
 import { type BoundedMaintenanceOptions } from "@baerly/server/_internal/maintenance";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import {
   type InternalCompactOptions,
   type InternalMaintenanceOptions,

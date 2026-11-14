@@ -24,14 +24,29 @@
  * separately; this barrel is the observability seam only.
  */
 
+import {
+  type ObservabilityContext,
+  type ObservabilityContextInit,
+  createObservabilityContext as createContext,
+  getCurrentContext as currentContext,
+} from "./context.ts";
+
 export {
   type ObservabilityContext,
   type ObservabilityContextInit,
-  createObservabilityContext,
   runWithContext,
-  getCurrentContext,
 } from "./context.ts";
-export type { ReadEnvelope } from "../read-admission.ts";
+
+/**
+ * Build a per-unit-of-work {@link ObservabilityContext}. Pass it to
+ * {@link runWithContext}; every kernel emission inside reaches its
+ * recorder.
+ */
+export const createObservabilityContext: (init?: ObservabilityContextInit) => ObservabilityContext =
+  createContext;
+
+/** Returns the currently-active context, or `undefined` outside one. */
+export const getCurrentContext: () => ObservabilityContext | undefined = currentContext;
 export {
   type CategoryName,
   type FriendlyLogLevel,

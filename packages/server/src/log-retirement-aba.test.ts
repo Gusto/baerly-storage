@@ -30,11 +30,8 @@ import {
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { retireLogRange } from "./log-retention.ts";
-import {
-  createObservabilityContext,
-  type ObservabilityContext,
-  runWithContext,
-} from "./observability/index.ts";
+import { type ObservabilityContext, runWithContext } from "./observability/index.ts";
+import { createObservabilityContext } from "./observability/context.ts";
 import { Writer } from "./writer.ts";
 
 const sumCounter = (ctx: ObservabilityContext, name: string): number =>

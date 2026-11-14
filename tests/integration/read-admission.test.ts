@@ -31,7 +31,8 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { compact } from "../../packages/server/src/compactor.ts";
 import { type CountingStorage, wrapCountingStorage } from "../fixtures/counting-storage.ts";

@@ -15,7 +15,8 @@ import {
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { collectionReadContext } from "./db-read-seams.ts";
-import { createObservabilityContext, runWithContext } from "./observability/index.ts";
+import { runWithContext } from "./observability/index.ts";
+import { createObservabilityContext } from "./observability/context.ts";
 import { runAllWithMeta, serializeManifestPointer } from "./query.ts";
 
 const APP = "a";
