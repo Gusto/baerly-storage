@@ -40,8 +40,7 @@ jobs:
       # (mirrors the `ci` job's two-enable pattern).
       - run: corepack enable
 
-      # sqlite3 CLI: test:export-round-trip auto-skips (runIf) without it —
-      # the one silent-skip vector the compose healthchecks can't cover.
+      # sqlite3 CLI: test:export-round-trip skips without it.
       - name: Install sqlite3
         run: sudo apt-get update && sudo apt-get install -y sqlite3
 
@@ -54,23 +53,23 @@ jobs:
       - name: Start storage stack
         run: pnpm dev:storage
 
-      # The suites gate on describe.runIf(...), which SILENTLY SKIPS (green)
-      # when its condition is false. But test:adapter-node self-sets MINIO=1
-      # and test:export-smoke self-sets EXPORT_SMOKE=1 (both in their npm
-      # scripts), and `--wait` above already guaranteed the containers —
-      # so the ONLY remaining silent-skip vector is a missing sqlite3.
-      # Assert just that; the rest of a full preflight would be theater.
-      - name: Preflight (sqlite3 present)
-        run: command -v sqlite3 >/dev/null || { echo "::error::sqlite3 missing — export round-trip would silently skip"; exit 1; }
-
+      # Gated suites skip green when their environment is missing. Each step
+      # names the gate it exists to exercise in BAERLY_REQUIRED_GATES, so
+      # the gate manifest (tests/setup/gate-manifest.ts) fails the step if
+      # that suite skipped or was never collected.
       - name: Test (adapter-node S3 conformance vs Minio)
+        env:
+          BAERLY_REQUIRED_GATES: minio
         run: pnpm test:adapter-node
 
-      # test:export-smoke self-sets EXPORT_SMOKE=1 in its npm script.
       - name: Test (export smoke → Postgres)
+        env:
+          BAERLY_REQUIRED_GATES: postgres
         run: pnpm test:export-smoke
 
       - name: Test (export round-trip → SQLite)
+        env:
+          BAERLY_REQUIRED_GATES: sqlite
         run: pnpm test:export-round-trip
 
       - name: Stop storage stack

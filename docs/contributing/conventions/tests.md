@@ -99,6 +99,25 @@ only a runtime test surfaces it.
   `credentials/` (gitignored). It's excluded from the default test
   glob; opt in with `pnpm test:conformance`.
 
+## Gated suites report through `gate()`
+
+A suite that skips when its environment is missing must decide that through
+`gate()` from `tests/setup/gates.ts`, never a bare `process.env` check:
+
+```ts
+const minioEnabled = gate("minio"); // readiness = the gate's opt-in env
+describe.runIf(gate("conformance-aws", creds !== null))("aws", () => {});
+```
+
+Add a new gate (id, skip reason, opt-in env) to `GATES` in
+`tests/setup/gate-manifest.ts`. At the end of a default-project run, the
+global setup fails the run if a gate it expected skipped: a gate is expected
+when its opt-in env is set (`CONFORMANCE=1` with `credentials/aws.json`
+missing is red), or when it is named in `BAERLY_REQUIRED_GATES`, which CI
+sets per step and which also fails a required gate no collected file
+reported. A bare `pnpm test` expects nothing. Adapter-capability skips in
+shared cascades (`supportsCAS`, …) are not gates.
+
 ## Cross-adapter parity gate
 
 The four storage adapters — `MemoryStorage`, `LocalFsStorage`, `S3HttpStorage`

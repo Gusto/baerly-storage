@@ -46,6 +46,7 @@
 
 import { AwsClient } from "aws4fetch";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { gate } from "../../tests/setup/gates.ts";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import {
@@ -65,7 +66,7 @@ const TENANT = process.env["TENANT"] ?? "minimal-demo";
 // its body; this prefix only scopes the latency / long-poll probes.
 const RUN_PREFIX = `e2e-${Date.now()}`;
 
-describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
+describe.runIf(gate("deploy-cloudflare", CF_URL !== undefined && SECRET !== undefined))(
   "real-deploy: cloudflare worker",
   () => {
     const baseUrl = CF_URL!;
@@ -211,78 +212,81 @@ describe.runIf(CF_URL !== undefined && SECRET !== undefined)(
     const cascadeReady =
       R2_ENDPOINT !== undefined && R2_ACCESS !== undefined && R2_SECRET !== undefined;
 
-    describe.runIf(cascadeReady)("conformance cascade (via R2 S3-compat)", () => {
-      // Deferred so `new AwsClient(...)` / `new S3HttpStorage(...)` are
-      // never called when `cascadeReady` is false — the describe callback
-      // is still invoked by vitest's collector even for skipped suites.
-      let aws: AwsClient;
-      let storage: Storage;
-      beforeAll(() => {
-        aws = new AwsClient({
-          accessKeyId: R2_ACCESS!,
-          secretAccessKey: R2_SECRET!,
-          region: "auto",
-          service: "s3",
-        });
-        storage = new S3HttpStorage({
-          endpoint: R2_ENDPOINT!,
-          bucket: R2_BUCKET,
-          sign: (req) => aws.sign(req),
-        });
-      });
-
-      // The cascade builds requests against `http://test.local/v1/...`
-      // and sends `Authorization: Bearer ${bearerToken}` (we pass
-      // `SECRET` as `bearerToken` below, so the header is already
-      // e2e-correct). Rewrite the URL host onto the deploy URL and
-      // forward verbatim.
-      const e2eFetch: HttpFetch = async (req) => {
-        const url = new URL(req.url);
-        const rewritten = `${baseUrl}${url.pathname}${url.search}`;
-        const headers = new Headers(req.headers);
-        // `Request` body is one-shot per consume; serialize once for
-        // non-GET/HEAD methods. GET/HEAD have null bodies, so a
-        // sentinel `undefined` is safe.
-        const body =
-          req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
-        return fetch(rewritten, {
-          method: req.method,
-          headers,
-          body,
-          signal: req.signal,
-        });
-      };
-
-      runHttpConformanceCascade({
-        name: "cloudflare-real-deploy",
-        fetch: e2eFetch,
-        provisionTable: async (table) => {
-          const key = `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
-          await createCurrentJson(storage, key, {
-            schema_version: CURRENT_JSON_SCHEMA_VERSION,
-            snapshot: null,
-            tail_hint: 0,
-            log_seq_start: 0,
-            writer_fence: {
-              epoch: 0,
-              owner: "manual-e2e-cf",
-              claimed_at: "",
-            },
-            snapshot_bytes: 0,
-            snapshot_rows: 0,
+    describe.runIf(gate("deploy-cloudflare-r2-cascade", cascadeReady))(
+      "conformance cascade (via R2 S3-compat)",
+      () => {
+        // Deferred so `new AwsClient(...)` / `new S3HttpStorage(...)` are
+        // never called when `cascadeReady` is false — the describe callback
+        // is still invoked by vitest's collector even for skipped suites.
+        let aws: AwsClient;
+        let storage: Storage;
+        beforeAll(() => {
+          aws = new AwsClient({
+            accessKeyId: R2_ACCESS!,
+            secretAccessKey: R2_SECRET!,
+            region: "auto",
+            service: "s3",
           });
-        },
-        options: {
-          // Real CF deploy doesn't emit ETag headers either; CAS
-          // skip stays the default. Cache API is in play (ticket 27)
-          // but the cascade tolerates 200 fall-through.
-          supportsCacheApi: true,
-          // Real fetch on a real deploy carries AbortSignal cleanly;
-          // keep the default `supportsAbort: true`.
-          bearerToken: SECRET!,
-          tenantPrefix: TENANT,
-        },
-      });
-    });
+          storage = new S3HttpStorage({
+            endpoint: R2_ENDPOINT!,
+            bucket: R2_BUCKET,
+            sign: (req) => aws.sign(req),
+          });
+        });
+
+        // The cascade builds requests against `http://test.local/v1/...`
+        // and sends `Authorization: Bearer ${bearerToken}` (we pass
+        // `SECRET` as `bearerToken` below, so the header is already
+        // e2e-correct). Rewrite the URL host onto the deploy URL and
+        // forward verbatim.
+        const e2eFetch: HttpFetch = async (req) => {
+          const url = new URL(req.url);
+          const rewritten = `${baseUrl}${url.pathname}${url.search}`;
+          const headers = new Headers(req.headers);
+          // `Request` body is one-shot per consume; serialize once for
+          // non-GET/HEAD methods. GET/HEAD have null bodies, so a
+          // sentinel `undefined` is safe.
+          const body =
+            req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
+          return fetch(rewritten, {
+            method: req.method,
+            headers,
+            body,
+            signal: req.signal,
+          });
+        };
+
+        runHttpConformanceCascade({
+          name: "cloudflare-real-deploy",
+          fetch: e2eFetch,
+          provisionTable: async (table) => {
+            const key = `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
+            await createCurrentJson(storage, key, {
+              schema_version: CURRENT_JSON_SCHEMA_VERSION,
+              snapshot: null,
+              tail_hint: 0,
+              log_seq_start: 0,
+              writer_fence: {
+                epoch: 0,
+                owner: "manual-e2e-cf",
+                claimed_at: "",
+              },
+              snapshot_bytes: 0,
+              snapshot_rows: 0,
+            });
+          },
+          options: {
+            // Real CF deploy doesn't emit ETag headers either; CAS
+            // skip stays the default. Cache API is in play (ticket 27)
+            // but the cascade tolerates 200 fall-through.
+            supportsCacheApi: true,
+            // Real fetch on a real deploy carries AbortSignal cleanly;
+            // keep the default `supportsAbort: true`.
+            bearerToken: SECRET!,
+            tenantPrefix: TENANT,
+          },
+        });
+      },
+    );
   },
 );

@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "./s3-http.ts";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
+import { gate } from "../../../tests/setup/gates.ts";
 import {
   MINIO_ACCESS_KEY,
   MINIO_ENDPOINT,
@@ -21,7 +22,7 @@ import { minioStorage } from "./storage-factories.ts";
 const MINIO_REGION = "us-east-1";
 const BUCKET = "baerly-conformance-adapter-node";
 
-const minioEnabled = process.env["MINIO"] === "1";
+const minioEnabled = gate("minio");
 
 const signer = new AwsClient({
   accessKeyId: MINIO_ACCESS_KEY,
