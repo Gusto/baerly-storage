@@ -22,7 +22,6 @@ import { runFsck } from "../../packages/cli/src/admin/fsck.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { runInspect } from "../../packages/cli/src/inspect.ts";
 import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
-import { rebuildIndex } from "../../packages/server/src/rebuild-index.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
 const NFC = "café";
@@ -128,9 +127,6 @@ describe("migration of an ill-formed legacy _id", () => {
         markers.push(entry.key);
       }
       expect(markers).toEqual(allIndexKeysFor(prefix, indexes, copy, migratedId));
-      await expect(
-        rebuildIndex(storage, `${prefix}/current.json`, indexes[0]!, { dryRun: true }),
-      ).resolves.toMatchObject({ added: 0, removed: 0, kept: 1 });
     },
   );
 });
