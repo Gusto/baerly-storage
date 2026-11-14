@@ -2,17 +2,25 @@
 "@gusto/baerly-storage": minor
 ---
 
-**Breaking:** the published barrels drop undocumented kernel internals. None of these names was in `API.md`; they are snapshot-format and write-tick-runner internals that the snapshot format change will reshape.
+**Breaking:** the published barrels drop undocumented kernel internals, and `CompactResult` no longer carries snapshot storage keys. None of these names was in `API.md`; they are snapshot-format and write-tick-runner internals that the snapshot format change will reshape.
 
 - `@gusto/baerly-storage` no longer exports `SnapshotBody`, `encodeSnapshotBody`, `snapshotKey`, `loadSnapshotAsMap`, `walkLogRange`, `probeTailFrom`, `resolveVerifier`, `collectionsToMaps` or `validateOrThrow`. `SchemaIssue` and `SchemaValidator` stay.
 - `@gusto/baerly-storage/maintenance` no longer exports `runBoundedMaintenance`, `BoundedMaintenanceOptions`, `dispatchWriteTick`, `dispatchInlineAwaited`, `MaintenanceDispatch`, `parseMaintenanceEnv`, `isFoldViable`, `resolveFoldCeilings`, `FoldCeilings`, `estimateTailBytes`, `shouldFireMaintenance` or `crossesGcBoundary`. `runScheduledMaintenance`, `compact`, `runGc`, the tier profiles and their option/result types stay.
 - `@gusto/baerly-storage/observability` no longer exports `logMaintenanceWarning` or `flushUnauthorizedAndRespond` (adapter wiring).
+- `CompactResult` drops `previousSnapshotKey` and `newSnapshotKey`. Use `written`, `entriesFolded`, `logSeqStartBefore` and `logSeqStartAfter`.
 
 The write-tick runner, dispatch, and env parsing are wired by `baerlyWorker` / `baerlyNode`; in-band maintenance needs no import. Scheduled maintenance keeps using `runScheduledMaintenance`.
 
 **Migration — agents: if you wrote the LEFT, use the RIGHT:**
 
 ```ts
+// before
+const res = await compact({ storage, currentJsonKey });
+if (res.written) console.log("snapshot", res.newSnapshotKey);
+// after
+const res = await compact({ storage, currentJsonKey });
+if (res.written) console.log("folded", res.entriesFolded, "entries");
+
 // before
 import { runBoundedMaintenance } from "@gusto/baerly-storage/maintenance";
 await runBoundedMaintenance(/* ... */);

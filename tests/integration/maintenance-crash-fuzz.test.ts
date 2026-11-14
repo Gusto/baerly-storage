@@ -59,6 +59,7 @@ import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
 import {
+  compactInternal,
   type InternalCompactOptions,
   type InternalRunGcOptions,
   retireLogRange,
@@ -544,10 +545,13 @@ describe("Lost-fold orphan snapshot reclaimed under contention", () => {
           return inner.put(k, b, o);
         },
       };
-      const lostFold = await compact({ storage: racingStorage, currentJsonKey: CURRENT_JSON_KEY }, {
-        minEntriesToCompact: 5,
-        maxEntriesPerRun: numInserts,
-      } as InternalCompactOptions);
+      const lostFold = await compactInternal(
+        { storage: racingStorage, currentJsonKey: CURRENT_JSON_KEY },
+        {
+          minEntriesToCompact: 5,
+          maxEntriesPerRun: numInserts,
+        } as InternalCompactOptions,
+      );
       // The fold must have lost the CAS and written an orphan snapshot.
       expect(lostFold.written).toBe(false);
       expect(lostFold.skippedReason).toBe("cas-lost");

@@ -49,7 +49,11 @@ export async function assertFailClosed(
   );
 }
 
-export type { InternalCompactOptions } from "../compactor.ts";
+export {
+  type InternalCompactOptions,
+  type InternalCompactResult,
+  compactInternal,
+} from "../compactor.ts";
 export type { InternalRunGcOptions } from "../gc.ts";
 export type {
   InternalBoundedMaintenanceOptions,

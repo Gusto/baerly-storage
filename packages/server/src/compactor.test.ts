@@ -23,7 +23,9 @@ import {
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
-import { compact, type InternalCompactOptions } from "./compactor.ts";
+// `compactInternal` is `compact` typed to expose the snapshot keys these
+// tests assert on.
+import { compactInternal as compact, type InternalCompactOptions } from "./compactor.ts";
 import { loadSnapshotAsMap, snapshotKey } from "./snapshot.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { runGc } from "./gc.ts";
