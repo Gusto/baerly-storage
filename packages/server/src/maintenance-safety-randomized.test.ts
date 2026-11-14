@@ -14,7 +14,7 @@ import {
 } from "./_internal/randomized-model.ts";
 import { compact } from "./compactor.ts";
 import type { InternalMaintenanceOptions } from "./maintenance-options.ts";
-import { runScheduledMaintenance } from "./maintenance.ts";
+import { runMaintenancePass } from "./maintenance.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
@@ -34,7 +34,7 @@ const maintenanceOpts: InternalMaintenanceOptions = {
   logRetention: { window: 0, maxDeletes: 64 },
 };
 
-describe("runScheduledMaintenance — never deletes a live object", () => {
+describe("runMaintenancePass — never deletes a live object", () => {
   test.prop({
     ops1: fc.array(opArb, { minLength: 1, maxLength: 20 }),
     ops2: fc.array(opArb, { minLength: 1, maxLength: 20 }),
@@ -56,7 +56,7 @@ describe("runScheduledMaintenance — never deletes a live object", () => {
       // retirement with the default 1024-seq window — either one would
       // perturb state the explicit pass below is supposed to own. With
       // maintenance disabled here, the explicit
-      // `runScheduledMaintenance` call is the sole maintenance pass and
+      // `runMaintenancePass` call is the sole maintenance pass and
       // fully controls every mark, sweep, and retirement.
       await runWithContext(
         createObservabilityContext({ maintenance: { disabled: true } }),
@@ -86,7 +86,7 @@ describe("runScheduledMaintenance — never deletes a live object", () => {
       // The pass: compact + GC + retirement, grace bypassed so GC marks
       // become due immediately and the retention window erased so
       // retirement reaches the whole certified-stale prefix.
-      await runScheduledMaintenance({ storage, currentJsonKey: CURRENT_JSON_KEY }, maintenanceOpts);
+      await runMaintenancePass({ storage, currentJsonKey: CURRENT_JSON_KEY }, maintenanceOpts);
 
       // (1) Reader view is byte-for-byte identical.
       const viewAfter = await reconstructView(storage);

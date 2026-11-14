@@ -98,21 +98,28 @@ describe("@gusto/baerly-storage/http", () => {
 // ---------------------------------------------------------------------------
 // @gusto/baerly-storage/maintenance
 // ---------------------------------------------------------------------------
-import {
-  CLOUDFLARE_FREE_TIER,
-  CLOUDFLARE_PAID_TIER,
-  compact,
-  runGc,
-  runScheduledMaintenance,
-} from "@gusto/baerly-storage/maintenance";
+import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
 
 describe("@gusto/baerly-storage/maintenance", () => {
   test("imports resolve", () => {
     expect(typeof runScheduledMaintenance).toBe("function");
-    expect(typeof CLOUDFLARE_FREE_TIER).toBe("object");
-    expect(typeof CLOUDFLARE_PAID_TIER).toBe("object");
-    expect(typeof compact).toBe("function");
-    expect(typeof runGc).toBe("function");
+  });
+
+  test("exports only the scheduled pass, not its phases or host tiers", async () => {
+    const root: Record<string, unknown> = await import("@gusto/baerly-storage");
+    const maintenance: Record<string, unknown> = await import("@gusto/baerly-storage/maintenance");
+    expect(Object.keys(maintenance)).toEqual(["runScheduledMaintenance"]);
+    const internals = [
+      "CLOUDFLARE_FREE_TIER",
+      "CLOUDFLARE_PAID_TIER",
+      "MAINTENANCE_PROFILE_CF_FREE",
+      "MAINTENANCE_PROFILE_CF_PAID",
+      "MAINTENANCE_PROFILE_NODE",
+      "compact",
+      "runGc",
+      "runMaintenancePass",
+    ];
+    expect(internals.filter((name) => name in root)).toEqual([]);
   });
 
   test("does not export index-marker tooling", async () => {
@@ -168,17 +175,17 @@ describe("@gusto/baerly-storage/observability", () => {
 // ---------------------------------------------------------------------------
 // @gusto/baerly-storage/cloudflare
 // ---------------------------------------------------------------------------
-import {
-  baerlyWorker,
-  r2BindingStorage,
-  resolveCfMaintenanceProfile,
-} from "@gusto/baerly-storage/cloudflare";
+import { baerlyWorker, r2BindingStorage } from "@gusto/baerly-storage/cloudflare";
 
 describe("@gusto/baerly-storage/cloudflare", () => {
   test("imports resolve", () => {
     expect(typeof r2BindingStorage).toBe("function");
     expect(typeof baerlyWorker).toBe("function");
-    expect(typeof resolveCfMaintenanceProfile).toBe("function");
+  });
+
+  test("does not export the maintenance profile resolver", async () => {
+    const cloudflare: Record<string, unknown> = await import("@gusto/baerly-storage/cloudflare");
+    expect(cloudflare).not.toHaveProperty("resolveCfMaintenanceProfile");
   });
 });
 

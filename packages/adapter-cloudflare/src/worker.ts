@@ -114,7 +114,7 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     on top of whichever profile resolves; `E` has no var, so the
  *     profile switch is the ONLY way to raise the row arm on Cloudflare.
  *     Must be set consistently on BOTH the write-tick path and the cron
- *     path (use {@link resolveCfMaintenanceProfile} in your
+ *     path (pass it as `runScheduledMaintenance`'s `tier` in your
  *     {@link WorkerScheduledHandler}).
  */
 export interface BaerlyEnv {
@@ -170,10 +170,10 @@ const parseCfProfileTier = (raw: string | undefined): "cf-free" | "cf-paid" | un
  * zero-config behavior is unchanged. `cf-paid` raises the per-pass caps
  * to exploit the paid 10,000-subrequest budget AND the snapshot ceilings
  * to `C` = 8 MiB / `E` = 32,768, measured against the paid isolate's own
- * memory wall rather than free's CPU wall. Used by BOTH the write-tick
- * dispatch and the cron path so the two maintenance triggers stay
- * coherent when the operator wires the recipe below into their
- * scheduled handler.
+ * memory wall rather than free's CPU wall. Used by the write-tick
+ * dispatch and the request ledger; a cron handler passes the same value
+ * as `runScheduledMaintenance`'s `tier`. Unpublished: in-repo callers
+ * import it from `@baerly/adapter-cloudflare/worker`.
  *
  * @throws {BaerlyError} `InvalidConfig` for any other value (`"cf_paid"`,
  * `"CF-PAID"`, `"cf-paid "`): a misspelled opt-in would otherwise leave a
@@ -327,9 +327,8 @@ export const cfMaintenanceDispatch = (
       // A CPU-limited free isolate does ONE phase per request.
       phasesPerTick: "single",
       // Write-tick profile. The cron path (user-supplied `scheduled` callback)
-      // resolves the profile via the SAME `resolveCfMaintenanceProfile` export
-      // so the two maintenance triggers stay coherent when the operator wires
-      // the recipe below into their `scheduled` handler.
+      // passes the same `BAERLY_MAINTENANCE_PROFILE` value as
+      // `runScheduledMaintenance`'s `tier`, so the two triggers stay coherent.
       ...(fetchBudgeted ? CF_FREE_FETCH_TICK : { profile }),
     },
   };
@@ -340,13 +339,13 @@ export const cfMaintenanceDispatch = (
  * declared `triggers.crons` in `wrangler.jsonc` AND passed this
  * option. The body owns its own subrequest budget — wrap any
  * outlasting work in `ctx.waitUntil(...)`; it runs under its own request
- * ledger. Process one `current.json` key per invocation and shard cron
+ * ledger. Maintain one collection per invocation and shard cron
  * triggers or persist a collection cursor instead of looping tenants /
- * collections. With the R2 binding, Free and Paid may call
- * {@link runScheduledMaintenance} once per invocation (with
- * `CLOUDFLARE_FREE_TIER` or `CLOUDFLARE_PAID_TIER`). On Free with storage
- * over `fetch`, run one direct `compact()` or `runGc()` phase per
- * invocation and alternate them.
+ * collections. With the R2 binding, Free and Paid may run one whole
+ * `runScheduledMaintenance(target, { tier })` pass per invocation, `tier`
+ * being the `BAERLY_MAINTENANCE_PROFILE` value. On Free with storage over
+ * `fetch`, alternate `phase: "compact"` and `phase: "gc"` across
+ * invocations.
  */
 export type WorkerScheduledHandler = (
   event: ScheduledController,
@@ -811,18 +810,9 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       const { options } = await ensureResolved(env);
       const handler = options.scheduled;
       if (handler !== undefined) {
-        // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, pass
-        // `CLOUDFLARE_PAID_TIER` to `runScheduledMaintenance(args, …)` on
-        // "cf-paid" and `CLOUDFLARE_FREE_TIER` on the Free default with
-        // the R2 binding, one collection per invocation. On Free with
-        // storage over `fetch`, alternate direct
-        // `compact(args, CLOUDFLARE_FREE_TIER.compact)` and
-        // `runGc(args, CLOUDFLARE_FREE_TIER.gc)` calls, one phase per
-        // invocation. Shard or persist a collection cursor instead of
-        // looping. Import those entry points from
-        // `@gusto/baerly-storage/maintenance`, and use
-        // `resolveCfMaintenanceProfile((k) => env[k])` here to select the
-        // paid recipe when configured.
+        // The handler calls `runScheduledMaintenance` (see
+        // WorkerScheduledHandler) with `tier` set from
+        // BAERLY_MAINTENANCE_PROFILE, one collection per invocation.
         // A cron invocation has its own subrequest limit, so it gets its
         // own context carrying a fresh ledger. It emits no canonical line;
         // metrics recorded inside it are dropped.

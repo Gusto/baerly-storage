@@ -22,7 +22,7 @@
  *     keep up with orphan production. This is the HEADLINE trigger.
  *
  *   - **scheduled / cron** (opt-in, models ~1 tick per simulated minute):
- *     `runScheduledMaintenance`, alternating compact / GC phases per tick
+ *     `runMaintenancePass`, alternating compact / GC phases per tick
  *     (the CF even/odd-minute cron pattern). A compact tick folds ~20
  *     entries; at 30 writes/min producing ~30 entries/min while folding
  *     ~20 every OTHER minute, this is the trigger where free-rate counts
@@ -33,7 +33,7 @@
  * that maps to `rate` writes (NO wall-clock claim — the bench runs in a
  * few seconds). One simulated minute = `rate` real `Db.collection()`
  * writes driven through the real `Writer` commit path. For the SCHEDULED
- * arm, exactly one `runScheduledMaintenance` tick fires per simulated
+ * arm, exactly one `runMaintenancePass` tick fires per simulated
  * minute (the cron cadence); for the IN-BAND arm, maintenance ticks on
  * every write (the write-tick cadence) so the per-minute count is the
  * trajectory sample point, not a maintenance cadence.
@@ -124,8 +124,12 @@ import {
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { type MaintenanceProfile, runScheduledMaintenance } from "@baerly/server/maintenance";
-import { type BoundedMaintenanceOptions, isFoldViable } from "@baerly/server/_internal/maintenance";
+import {
+  type BoundedMaintenanceOptions,
+  isFoldViable,
+  type MaintenanceProfile,
+  runMaintenancePass,
+} from "@baerly/server/_internal/maintenance";
 import { runWithContext } from "@baerly/server/observability";
 import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import { type InternalMaintenanceOptions, Writer } from "@baerly/server/_internal/testing";
@@ -335,7 +339,7 @@ const runInBand = async (
 
 /**
  * Drive writes with the in-band tick DISABLED, then fire exactly one
- * `runScheduledMaintenance` tick per simulated minute — alternating
+ * `runMaintenancePass` tick per simulated minute — alternating
  * compact (even minute) and GC (odd minute), the CF even/odd-minute cron
  * pattern. The compact tick is capped at the profile's
  * `maxFoldEntriesPerPass`; GC at the profile's mark/sweep caps. This is
@@ -384,7 +388,7 @@ const runScheduled = async (
                   graceMillis: 0,
                 },
               };
-        await runScheduledMaintenance({ storage, currentJsonKey: CURRENT_JSON_KEY }, opts);
+        await runMaintenancePass({ storage, currentJsonKey: CURRENT_JSON_KEY }, opts);
         samples.push(await sampleBacklog(storage, minute, cursor, profile));
       }
     },
@@ -579,7 +583,7 @@ const main = async (): Promise<number> => {
       in_band:
         "every commit ticks runBoundedMaintenance at the profile; phasesPerTick matches each host's PRODUCTION policy — cf-free 'single' (worker.ts), node 'both' (server.ts)",
       scheduled:
-        "in-band disabled; one runScheduledMaintenance tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
+        "in-band disabled; one runMaintenancePass tick per simulated minute, alternating compact (even) / GC (odd) — the CF even/odd-minute cron pattern",
       tail_verdict:
         "live_tail_entries axis: bounded = last-third mean not > 1.5x first-third mean AND grew <= one fold slice (converged sawtooth); growing = climbs past both. First-vs-last is sound here because the tail starts near steady state (no cold-bucket ramp).",
       objects_verdict:

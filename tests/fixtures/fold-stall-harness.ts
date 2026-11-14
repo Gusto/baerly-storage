@@ -27,8 +27,10 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { probeTailFrom } from "@baerly/server/_internal/kernel";
-import { type MaintenanceProfile } from "@baerly/server/maintenance";
-import { runBoundedMaintenance } from "@baerly/server/_internal/maintenance";
+import {
+  type MaintenanceProfile,
+  runBoundedMaintenance,
+} from "@baerly/server/_internal/maintenance";
 import { runWithContext } from "@baerly/server/observability";
 import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import { Writer } from "@baerly/server/_internal/testing";

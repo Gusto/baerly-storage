@@ -124,7 +124,7 @@ import { getCurrentContext } from "./observability/context.ts";
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
- * Public tunables for {@link runGc}. All optional; the engine works
+ * Base options for {@link runGc}, unpublished like `runGc` itself. All optional; the engine works
  * unbounded by default. Opt into per-run caps via the
  * `CLOUDFLARE_FREE_TIER` profile (from `./maintenance.ts`) or by
  * reaching for {@link InternalRunGcOptions} via the
@@ -229,7 +229,7 @@ const zeroGcResult = (): RunGcResult => ({
  *
  * @example
  * ```ts
- * import { runGc } from "@gusto/baerly-storage";
+ * import { runGc } from "@baerly/server/_internal/maintenance";
  *
  * const r = await runGc({ storage, currentJsonKey });
  * console.log(`marked ${r.marked.orphan_snapshot} orphan snapshots, swept ${r.swept}`);

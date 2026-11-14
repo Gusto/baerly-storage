@@ -13,7 +13,8 @@ import { createCurrentJson, MemoryStorage, readCurrentJson, type Storage } from 
 import { Db } from "@baerly/server";
 import { getLogEntry } from "@baerly/server/_internal/kernel";
 import { listEventsSince } from "@baerly/server/http";
-import { compact, runScheduledMaintenance } from "@baerly/server/maintenance";
+import { compact } from "@baerly/server/_internal/maintenance";
+import { runScheduledMaintenance } from "@baerly/server/maintenance";
 import { loadMaterialisedView } from "../../packages/cli/src/export/index.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
@@ -103,9 +104,9 @@ describe("an NFC name that aliases a legacy NFD collection on R2", () => {
     await expect(
       compact({ storage, currentJsonKey }, { minEntriesToCompact: 1 }),
     ).rejects.toMatchObject(ALIASED);
-    await expect(runScheduledMaintenance({ storage, currentJsonKey })).rejects.toMatchObject(
-      ALIASED,
-    );
+    await expect(
+      runScheduledMaintenance({ storage, app: "app", tenant: "tenant", collection: NFC }),
+    ).rejects.toMatchObject(ALIASED);
     await expect(logKeys(base)).resolves.toHaveLength(ROWS.length);
     const head = await readCurrentJson(storage, currentJsonKey);
     expect(head?.json.snapshot).toBeNull();
