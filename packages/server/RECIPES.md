@@ -45,7 +45,10 @@ at most one commits and the others throw `AlreadyExists`, committing nothing
 **Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
 or change the stored row with `update` / `replace`. After a same-`_id` retry
 following `AmbiguousCommit`, the stored row may be your first attempt: re-read
-it instead (see below).
+it instead (see below). The same holds for an insert that omitted `_id`: the
+client resends it under its minted `_id`, so this error can mean your first
+attempt landed and the row changed since. Re-read it; do not insert again
+without an `_id`, which mints a second row.
 
 ### `BaerlyError code="CapacityExceeded"` (HTTP 409)
 
@@ -67,17 +70,29 @@ part-way, it keeps the rows it already committed.
   fold pass's worth of pending changes in a row each leave the snapshot past
   the byte ceiling. The
   collection has outgrown this host: export it with `baerly admin dump`, or
-  have the operator move it to a larger host. Reads keep working either way.
+  have the operator move it to a larger host. Reads within the read bounds
+  keep working either way.
 - **Request limit** ("does not fit in one request on this host"): the request
   ran out of storage calls, and the refused write sent nothing. A multi-row
   `update()` / `delete()` keeps the rows before the refused one; re-run it as
   a new request (it re-reads and re-matches), or narrow it with `where` /
   `limit` so each request does less.
+- **Read refused** ("this read of collection ... was refused and returned no
+  rows"): the read needs more work than one request does on this host. It
+  returned no rows, never a truncated answer, and wrote nothing.
+  `err.resolution` names the remedy for the bound it hit: narrow the predicate
+  or add a limit, delete or shrink rows, or retry once maintenance has absorbed
+  pending writes.
 
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
 **Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (typically after the collection moved from a host with a larger ceiling, with deletes still pending). The write ran one bounded fold and was refused without committing (a batch refused part-way keeps the rows it already committed). `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
 **Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working. `createBaerlyClient` already does this on every verb: it resends the identical request (an auto-ID insert keeps its minted `_id`) up to 3 attempts in total, waiting each hint of at most 10 s, so the error reaches your code only once those run out. The React subscription poll waits at least `retryAfter` before re-polling. Resending is safe because the refusal committed nothing and each HTTP write is one row. In-process, a multi-row `update` refused part-way keeps the rows before it; re-running it is safe, since a merge patch re-applied to a row it already changed leaves that row as it is.
+
+### `BaerlyError code="CursorExpired"` (HTTP 410)
+
+**Cause:** a `/v1/since` cursor can no longer resume: the changes after it are no longer retained, or `baerly admin restore --force` truncated the generation it was minted in. `retriable` is `false`; the same cursor never succeeds again. A malformed cursor is `SchemaError` (400) instead.
+**Fix:** re-read the rows you show, then resume with `cursor=` (empty); the changes between the dead cursor and the restart are not replayed. Back off before the restart so a cursor that expires on every lap cannot become a hot loop. The React hooks do this for you.
 
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 

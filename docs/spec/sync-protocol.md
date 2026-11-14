@@ -1028,8 +1028,9 @@ These are the load-bearing rules.
     and the cursor the server hands a long-poll client is
     `<generation>.<lsn>` whenever that nonce is present. On resume, a
     generation that does not match the manifest's is rejected with
-    `BaerlyError{code:"SchemaError"}` (HTTP 400) and the client must
-    re-bootstrap.
+    `BaerlyError{code:"CursorExpired"}` (HTTP 410) and the client must
+    re-bootstrap. A cursor below `log_seq_start` is rejected the same
+    way; a malformed cursor is `SchemaError` (HTTP 400).
 
     A manifest with no `generation` keeps handing out a **bare** LSN
     rather than `-.<lsn>`. Both decode to the same sentinel, so the

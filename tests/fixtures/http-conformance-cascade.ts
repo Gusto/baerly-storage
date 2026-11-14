@@ -31,6 +31,8 @@ import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
   type DocumentData,
+  formatCursor,
+  parseCursor,
   uuidv7,
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
@@ -1119,6 +1121,27 @@ export const runHttpConformanceCascade = (opts: {
         expect(res.status).toBe(400);
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("SchemaError");
+      });
+
+      test("a cursor from a generation that no longer exists returns 410 CursorExpired", async () => {
+        const table = await mintTable("lp-expired");
+        await postDoc(table, { seed: 1 });
+        const first = await doFetch(authedRequest("GET", `/v1/since?collection=${table}&cursor=`));
+        expect(first.status).toBe(200);
+        const { next_cursor } = (await first.json()) as { readonly next_cursor: string };
+        // Same LSN, different generation: the cursor is well-formed, but
+        // the history it was minted in is gone (what `restore --force`
+        // leaves behind). That is expiry, not a malformed input.
+        const { generation, lsn } = parseCursor(next_cursor);
+        const stale = formatCursor(generation === "0" ? "1" : "0", lsn);
+        const res = await doFetch(
+          authedRequest("GET", `/v1/since?collection=${table}&cursor=${encodeURIComponent(stale)}`),
+        );
+        expect(res.status).toBe(410);
+        const env = (await res.json()) as ErrorEnvelope;
+        expect(env.error?.code).toBe("CursorExpired");
+        expect(env.error?.retriable).toBe(false);
+        expect(env.error?.resolution).toContain('cursor: ""');
       });
 
       // Idle-poll wire shape: with no writes between two back-to-back

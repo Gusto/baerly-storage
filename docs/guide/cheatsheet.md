@@ -92,6 +92,7 @@ boundaries), never `instanceof` chains.
 | `NotFound`               | 404  | Row by id not found                                                    |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB                                                           |
 | `UnsatisfiablePredicate` | 400  | Well-formed predicate that contradicts itself                          |
+| `CursorExpired`          | 410  | `/v1/since` cursor can no longer resume; restart with `cursor=`        |
 | `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                                  |
 | `InvalidResponse`        | 502  | Server returned unparseable body                                       |
 | `Internal`               | 500  | Invariant violation — file a bug                                       |
@@ -137,10 +138,10 @@ you; reach for raw URLs only when scripting.
 
 `/v1/since`'s `cursor` is opaque — echo `next_cursor` back verbatim and
 never parse it. Start with `cursor=` (empty) to read from the
-collection's log floor. A `400 SchemaError` means the cursor is
-permanently dead (folded away, or its collection was truncated by
-`restore --force`); restart with an empty cursor rather than retrying,
-which would loop forever. The React hooks do this for you.
+collection's log floor. A `410 CursorExpired` means the cursor is
+permanently dead (its changes are no longer retained, or its collection
+was truncated by `restore --force`); restart with an empty cursor rather
+than retrying, which would loop forever. The React hooks do this for you.
 
 ## Where to look next
 

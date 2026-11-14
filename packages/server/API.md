@@ -357,8 +357,9 @@ try {
 | `WriteConflict`          | 409  | Lost a write race; re-read, then retry           |
 | `AlreadyExists`          | 409  | `insert` `_id` taken, or `restore` target exists |
 | `AmbiguousCommit`        | 409  | Commit may be durable; outcome unresolved        |
-| `CapacityExceeded`       | 409  | Write refused at the host's fold ceiling         |
+| `CapacityExceeded`       | 409  | Too much work for one request on this host       |
 | `MaintenancePending`     | 503  | Maintenance behind; wait `retryAfter` seconds    |
+| `CursorExpired`          | 410  | `/v1/since` cursor dead; restart with `cursor=`  |
 | `Unauthorized`           | 401  | Verifier returned no identity                    |
 | `NotFound`               | 404  | Row by id not found                              |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |
@@ -553,10 +554,10 @@ section) instead of poking `/v1/since` by hand; hand-rolled
 subscribers in other frameworks `fetch` it directly. The wire shape
 above is the public contract; there is no cursor-tailing helper.
 
-**Handle `400 SchemaError` or your loop will spin.** On resume it
-means the cursor is permanently dead — folded into a snapshot and
-GC'd, or truncated by `restore --force`. It never clears on retry:
-back off, then restart with `cursor=` (empty).
+**Handle `410 CursorExpired` or your loop will spin.** On resume it
+means the cursor is permanently dead: its changes are no longer
+retained, or `restore --force` truncated them. It never clears on
+retry: back off, re-read, then restart with `cursor=` (empty).
 
 ## React: `createBaerlyReact`
 

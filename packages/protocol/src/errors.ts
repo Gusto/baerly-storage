@@ -80,24 +80,31 @@ export type BaerlyErrorCode =
    */
   | "AmbiguousCommit"
   /**
-   * The collection is at the fold ceiling of the host serving this request,
-   * so this write was refused and not committed; `retriable` is
-   * `false`. A batch refused part-way (a concurrent write filled the room
-   * between its check and a row's commit) keeps the rows it already
-   * committed. The refusal is decided per request from the collection's
-   * current state and clears by itself once that state changes.
+   * The work this request needs is more than the host serving it does in
+   * one request, so the request was refused whole; `retriable` is `false`.
+   * The refusal is decided per request from the collection's current
+   * state and clears by itself once that state changes. Reads and writes
+   * both raise it.
    *
-   * Two cases. Near the ceiling, only growth is refused (an insert, or an
-   * update that makes a row larger): deletes and same-size or shrinking
-   * updates still commit, and once the in-band fold drains them, growth is
-   * accepted again. When the stored snapshot is already past the ceiling
-   * (for example a collection folded on a larger host and now served by a
-   * smaller one), or a pending insert cannot fold onto an `E`-row
-   * snapshot, no fold can make progress on this host, so every write is
-   * refused until the collection moves to a larger host or is exported
-   * with `baerly admin dump`. Moving hosts is a deployment decision, not
-   * an app setting. Reads stay served. HTTP maps this code to 409 and
-   * keeps the message, which names the collection and the case.
+   * A refused write commits nothing; a batch refused part-way (a
+   * concurrent write filled the room between its check and a row's
+   * commit) keeps the rows it already committed. Near the limit only
+   * growth is refused (an insert, or an update that makes a row larger):
+   * deletes and same-size or shrinking updates still commit, and once
+   * maintenance absorbs them, growth is accepted again. When the
+   * collection is already more than this host can maintain (for example
+   * one grown on a larger host and now served by a smaller one), every
+   * write is refused until the collection moves to a larger host or is
+   * exported with `baerly admin dump`. Moving hosts is a deployment
+   * decision, not an app setting.
+   *
+   * A refused read returns no rows, never a truncated answer, and writes
+   * nothing. Its `resolution` names the remedy for the bound it hit:
+   * narrow the predicate or add a limit when the answer is too wide;
+   * delete or shrink rows when the collection is too large to read in one
+   * request; or retry once maintenance has absorbed pending writes. HTTP
+   * maps this code to 409 and keeps the message, which names the
+   * collection and the case.
    */
   | "CapacityExceeded"
   /**
@@ -110,6 +117,18 @@ export type BaerlyErrorCode =
    * the message.
    */
   | "MaintenancePending"
+  /**
+   * A `/v1/since` cursor can no longer resume, so the long-poll was
+   * refused; `retriable` is `false`, because the same cursor never
+   * succeeds again. Either the changes after it are no longer retained
+   * (maintenance retired them), or it was minted in a generation that
+   * `baerly admin restore --force` has since truncated. Re-read the rows
+   * the subscriber shows, then resume with `cursor: ""`: the changes
+   * between the dead cursor and the restart are not replayed. A
+   * malformed cursor is `SchemaError` instead. HTTP maps this code to 410
+   * and keeps the message.
+   */
+  | "CursorExpired"
   /**
    * `Verifier` returned no identity. HTTP server maps to 401.
    * Code is reserved here so the union locks.
@@ -210,6 +229,7 @@ export const ERROR_CODES = [
   "NotFound",
   "PayloadTooLarge",
   "UnsatisfiablePredicate",
+  "CursorExpired",
   "UseQueryAwaitedRecorder",
   "UnexpectedWriteInQuery",
   "MutationFailed",

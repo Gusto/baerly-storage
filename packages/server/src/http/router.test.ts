@@ -142,6 +142,7 @@ describe("mapError", () => {
       AmbiguousCommit: { status: 409, retriable: false },
       CapacityExceeded: { status: 409, retriable: false },
       MaintenancePending: { status: 503, retriable: true },
+      CursorExpired: { status: 410, retriable: false },
       Unauthorized: { status: 401, retriable: false },
       NotFound: { status: 404, retriable: false },
       PayloadTooLarge: { status: 413, retriable: false },

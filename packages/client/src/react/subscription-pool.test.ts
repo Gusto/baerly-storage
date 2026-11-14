@@ -22,7 +22,7 @@ const sinceOk = (nextCursor = ""): Response =>
   });
 
 const sinceError = (
-  code: "SchemaError" | "Unauthorized",
+  code: "CursorExpired" | "SchemaError" | "Unauthorized",
   status: number,
   retriable: boolean,
 ): Response =>
@@ -696,13 +696,13 @@ describe("subscription-pool", () => {
     }
   });
 
-  test("SchemaError re-bootstraps the cursor instead of retrying it", async () => {
-    // `/v1/since` returns SchemaError (400) for two permanent cursor
-    // states: the entry was folded into a snapshot and GC'd, or the
-    // cursor was minted in a generation `restore --force` truncated.
-    // Neither clears on retry, so the pool must drop the cursor and
-    // re-bootstrap. Before this behaviour existed the loop retried the
-    // same rejected cursor at 1 req/s forever with the table frozen.
+  test("CursorExpired re-bootstraps the cursor instead of retrying it", async () => {
+    // `/v1/since` returns CursorExpired (410) for two permanent cursor
+    // states: the entries past it are no longer retained, or the cursor
+    // was minted in a generation `restore --force` truncated. Neither
+    // clears on retry, so the pool must drop the cursor and re-bootstrap.
+    // Before this behaviour existed the loop retried the same rejected
+    // cursor at 1 req/s forever with the table frozen.
     const cursors: (string | null)[] = [];
     let servedEvent = false;
     const mock = new MockFetch();
@@ -714,9 +714,13 @@ describe("subscription-pool", () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              error: { code: "SchemaError", message: "cursor … generation that no longer exists" },
+              error: {
+                code: "CursorExpired",
+                message: "cursor … generation that no longer exists",
+                retriable: false,
+              },
             }),
-            { status: 400, headers: { "content-type": "application/json" } },
+            { status: 410, headers: { "content-type": "application/json" } },
           ),
         );
       }
@@ -752,7 +756,7 @@ describe("subscription-pool", () => {
 
       await waitMicrotasks(40);
 
-      // The rejected cursor must not be retried: after the 400 the pool
+      // The rejected cursor must not be retried: after the 410 the pool
       // goes back to "" rather than sending `deadbeef.…` a second time.
       expect(cursors.filter((c) => c === "deadbeef.aaa_bbb_ccc")).toHaveLength(1);
 
@@ -766,12 +770,49 @@ describe("subscription-pool", () => {
     }
   });
 
+  test("SchemaError on a resumed cursor parks the poll instead of re-bootstrapping", async () => {
+    // A malformed cursor is a caller bug, not an expired one: only
+    // CursorExpired drops the cursor. Any other non-retriable code parks
+    // the poll until `refetch`.
+    const cursors: (string | null)[] = [];
+    const mock = new MockFetch();
+    mock.on("GET", "/v1/since", (req: Request) => {
+      const cursor = new URL(req.url).searchParams.get("cursor");
+      cursors.push(cursor);
+      if (cursor !== null && cursor.length > 0) {
+        return Promise.resolve(sinceError("SchemaError", 400, false));
+      }
+      return sinceOk("deadbeef.aaa_bbb_ccc");
+    });
+    vi.useFakeTimers();
+    try {
+      const client = makeClient(mock);
+      const pool = poolFor(client);
+      const unsubscribe = pool.attach(
+        "malformed",
+        ["notes"],
+        new Set(["notes"]),
+        vi.fn<() => Promise<unknown>>().mockResolvedValue([]),
+        vi.fn<() => void>(),
+      );
+      await waitMicrotasks(40);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(cursors).toEqual(["", "deadbeef.aaa_bbb_ccc"]);
+      expect(pool.getSnapshot("malformed")).toMatchObject({
+        status: "error",
+        error: { code: "SchemaError" },
+      });
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("a repeatedly rejected replacement cursor retains backoff across bootstrap success", async () => {
-    // The shape a mixed-version fleet produces mid-rolling-deploy: one
-    // replica hands back a cursor the other refuses. The
+    // A cursor that expires again before it is used: "" succeeds,
+    // adopts a cursor, that cursor 410s, repeat. The
     // `poll.cursor !== ""` guard bounds a same-iteration respin but NOT
-    // this two-iteration oscillation — "" succeeds, adopts a cursor,
-    // that cursor 400s, repeat. So the SchemaError path must fall
+    // this two-iteration oscillation. So the CursorExpired path must fall
     // through to the retry backoff rather than `continue` past it. The
     // successful bootstrap only supplies a candidate replacement; it
     // must not reset backoff until that replacement cursor succeeds.
@@ -782,10 +823,10 @@ describe("subscription-pool", () => {
       const cursor = new URL(req.url).searchParams.get("cursor");
       if (cursor !== null && cursor.length > 0) {
         return Promise.resolve(
-          new Response(JSON.stringify({ error: { code: "SchemaError", message: "dead cursor" } }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          }),
+          new Response(
+            JSON.stringify({ error: { code: "CursorExpired", message: "dead cursor" } }),
+            { status: 410, headers: { "content-type": "application/json" } },
+          ),
         );
       }
       // Bootstrap always succeeds, and always hands back a doomed cursor.
@@ -842,7 +883,7 @@ describe("subscription-pool", () => {
         return sinceOk("deadbeef.aaa_bbb_ccc");
       }
       if (call === 2) {
-        return sinceError("SchemaError", 400, false);
+        return sinceError("CursorExpired", 410, false);
       }
       if (call === 3) {
         return sinceOk("");

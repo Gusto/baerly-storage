@@ -15,6 +15,7 @@ describe("CODE_RESOLUTIONS", () => {
       "Unauthorized",
       "AccessDenied",
       "NotFound",
+      "CursorExpired",
     ] as const) {
       expect(CODE_RESOLUTIONS[code]).toBeTypeOf("string");
       expect(CODE_RESOLUTIONS[code]!.length).toBeGreaterThan(0);
@@ -25,6 +26,17 @@ describe("CODE_RESOLUTIONS", () => {
     const text = CODE_RESOLUTIONS.MaintenancePending!;
     expect(text).toMatch(/retry/i);
     expect(text).not.toMatch(/BAERLY_|PROFILE|env|cf-paid|wrangler/i);
+  });
+
+  test("CursorExpired says to restart the cursor, never to fix the input or retry it", () => {
+    const text = CODE_RESOLUTIONS.CursorExpired!;
+    expect(text).toContain('cursor: ""');
+    expect(text).toMatch(/do not retry/i);
+    expect(text).not.toMatch(/BAERLY_|PROFILE|env|cf-paid|wrangler/i);
+  });
+
+  test("AlreadyExists warns against re-minting after a minted-id resend", () => {
+    expect(CODE_RESOLUTIONS.AlreadyExists).toMatch(/do not re-mint/i);
   });
 
   test("omits transient/opaque and context-dependent codes", () => {
