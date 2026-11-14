@@ -30,6 +30,13 @@
  *      leaked below an already-published floor are the documented
  *      fail-safe, never corruption.
  *
+ * Every faulted step is also judged by the physical oracle
+ * (`tests/fixtures/physical-oracle.ts`): the bucket's key set and
+ * per-object SHA-256 may differ from the pre-fault image only as the step's
+ * rules allow, the residue is limited to orphan snapshots, log leaked below
+ * `log_delete_floor` and the seeded pre-0.7 objects, and any surfaced
+ * error's `code` is on the step's allow-list.
+ *
  * Runs under default `FC_NUM_RUNS=100` on `pnpm test`. The cranked
  * variant `pnpm test:fuzz-maintenance` (`FC_NUM_RUNS=10000`) is the
  * intended thorough sweep.
@@ -66,6 +73,8 @@ import {
 } from "@baerly/server/_internal/testing";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 import { logStateCurrentJson } from "../fixtures/log-state.ts";
+import { type ObservedStep, observeStep, type OracleStep } from "../fixtures/physical-oracle.ts";
+import { makeValidDocIdArb } from "../fixtures/scalar-doc-id-arbitraries.ts";
 
 // Every suite in this file injects storage faults (`abortingStorage`).
 // The maintenance runner's intentional operator-facing stack dump
@@ -96,12 +105,51 @@ const TABLE_PREFIX = "app/a/tenant/t/manifests/c";
 const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
 const COLLECTION = "c";
 
+/**
+ * Inert pre-0.7 objects seeded into every bucket: a declared-index marker
+ * and a legacy `content/` side object. Nothing in 0.7 may read, rewrite or
+ * delete them, which the physical oracle checks on every step.
+ */
+const LEGACY_KEYS = [
+  `${TABLE_PREFIX}/content/0123456789abcdef0123456789abcdef.json`,
+  `${TABLE_PREFIX}/index/by_n/00000000/legacy-doc.json`,
+] as const;
+
 const provision = async (storage: Storage): Promise<void> => {
   await createCurrentJson(
     storage,
     CURRENT_JSON_KEY,
     logStateCurrentJson({ writer_fence: { epoch: 0, owner: "maintenance-fuzz", claimed_at: "" } }),
   );
+  await storage.put(LEGACY_KEYS[0], encodeJsonBytes({ _id: "legacy-doc" }));
+  await storage.put(LEGACY_KEYS[1], new Uint8Array(0));
+};
+
+/**
+ * Short `_id`s the write path admits. A refused id never reaches storage,
+ * so generating one would make a crash case vacuous (and the oracle
+ * rejects its `InvalidConfig` as outside the write allow-list).
+ */
+const shortWritableDocIdArb = (maxCodePoints: number): fc.Arbitrary<string> =>
+  makeValidDocIdArb({ maxCodePoints, longBand: false }).map((id) => id.normalize("NFC"));
+
+/** Run one step on `inner` (through any armed proxy) and judge it physically. */
+const observe = (
+  inner: Storage,
+  step: OracleStep,
+  run: () => Promise<unknown>,
+): Promise<ObservedStep> =>
+  observeStep({ storage: inner, collectionPrefix: TABLE_PREFIX, step, run });
+
+/**
+ * The physical half of every crash contract: no rule violation, no torn
+ * snapshot (these arms abort, they never tear), and the legacy objects
+ * still present byte for byte.
+ */
+const expectPhysicallyClean = (observed: ObservedStep): void => {
+  expect(observed.violations).toEqual([]);
+  expect(observed.residue.tornSnapshots).toEqual([]);
+  expect(observed.residue.legacy).toEqual([...LEGACY_KEYS]);
 };
 
 interface Row extends DocumentData {
@@ -167,17 +215,16 @@ describe("Writer empty-tail abort at the committing log PUT", () => {
     // Op 1 is the provisioned current.json GET; op 2 is the empty
     // log/0.json tail probe; op 3 is the committing log PUT.
     handle.armAt(3);
-    let caught: unknown;
-    try {
-      await writer.commit({
+    const observed = await observe(inner, "write", () =>
+      writer.commit({
         op: "I",
         collection: COLLECTION,
         docId: "empty-tail",
         body: { _id: "empty-tail" },
-      });
-    } catch (error) {
-      caught = error;
-    }
+      }),
+    );
+    expectPhysicallyClean(observed);
+    const caught = observed.error;
 
     // The harness traps before dispatch, but Writer cannot distinguish
     // that from an adapter aborting after an earlier durable send.
@@ -194,7 +241,7 @@ describe("Writer crash never leaves readable phantom row", () => {
   propTest.prop({
     abortAfter: fc.integer({ min: 1, max: 8 }),
     numInsertsBefore: fc.integer({ min: 0, max: 30 }),
-    docId: fc.string({ minLength: 1, maxLength: 8 }),
+    docId: shortWritableDocIdArb(8),
   })(
     "Db.commit() with mid-op abort: insert is fully absent OR fully landed",
     async ({ abortAfter, numInsertsBefore, docId }) => {
@@ -227,19 +274,18 @@ describe("Writer crash never leaves readable phantom row", () => {
       });
       handle.armAt(abortAfter);
 
-      let postCrashCommitted = false;
-      try {
-        await crashWriter.commit({
+      // An injected abort or a CAS `WriteConflict` is expected; the
+      // post-state invariants and the physical oracle are the gate.
+      const observed = await observe(inner, "write", () =>
+        crashWriter.commit({
           op: "I",
           collection: COLLECTION,
           docId,
           body: { _id: docId, kind: "post-crash" },
-        });
-        postCrashCommitted = true;
-      } catch {
-        // Expected — we injected an abort, OR `MemoryStorage` raised
-        // a CAS `WriteConflict`. The post-state invariant is the gate.
-      }
+        }),
+      );
+      expectPhysicallyClean(observed);
+      const postCrashCommitted = observed.completed;
 
       // INVARIANT: a fresh reader sees a consistent view.
       const ids = await readAllRowIds(inner);
@@ -302,15 +348,15 @@ describe("Compactor crash never leaves readable corrupt snapshot", () => {
       // Run a compaction with an abort armed at op K.
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
-      try {
-        await compact({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+      // Abort or `WriteConflict` expected. Either way the bucket must still
+      // surface the original row set and pass the physical oracle.
+      const observed = await observe(inner, "compact", () =>
+        compact({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
           minEntriesToCompact: 10,
           maxEntriesPerRun: numInserts,
-        } as InternalCompactOptions);
-      } catch {
-        // Expected — abort or `WriteConflict`. Either way, the bucket must
-        // still surface the original row set to a fresh reader.
-      }
+        } as InternalCompactOptions),
+      );
+      expectPhysicallyClean(observed);
 
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
@@ -348,15 +394,15 @@ describe("GC crash never deletes a still-referenced key", () => {
 
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
-      try {
-        await runGc({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+      // Abort or `WriteConflict` expected; the reader contract and the
+      // physical oracle are the gate.
+      const observed = await observe(inner, "gc", () =>
+        runGc({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
           graceMillis: 0,
           maxSweepsPerRun: 200,
-        } as InternalRunGcOptions);
-      } catch {
-        // Expected — abort or `WriteConflict`. The reader contract is the
-        // gate.
-      }
+        } as InternalRunGcOptions),
+      );
+      expectPhysicallyClean(observed);
 
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
@@ -398,15 +444,16 @@ describe("Retirement crash never deletes a live log", () => {
 
       const handle = abortingStorage(inner);
       handle.armAt(abortAfter);
-      try {
-        await retireLogRange(handle.storage, CURRENT_JSON_KEY, {
+      // The injected abort (or the CAS `WriteConflict` it can surface as)
+      // is expected; the reader contract and the physical oracle are the
+      // gate. A log entry left below the published floor is residue.
+      const observed = await observe(inner, "retire", () =>
+        retireLogRange(handle.storage, CURRENT_JSON_KEY, {
           window: 0,
           maxDeletes: numInserts,
-        });
-      } catch {
-        // Expected — the injected abort (or the CAS `WriteConflict` it can
-        // surface as). Either way the reader contract is the gate.
-      }
+        }),
+      );
+      expectPhysicallyClean(observed);
 
       // INVARIANT: the reader view is unchanged. Every slot retirement
       // may delete sits below `log_seq_start` — already folded into the
@@ -449,15 +496,16 @@ describe("Write-tick fold crash preserves the reader view after GC", () => {
       // outcome is acceptable input to the GC step below.
       const foldHandle = abortingStorage(inner);
       foldHandle.armAt(abortAfter);
-      try {
-        await compact({ storage: foldHandle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
-          minEntriesToCompact: 10,
-          maxEntriesPerRun: numInserts,
-        } as InternalCompactOptions);
-      } catch {
-        // Expected — injected abort or CAS WriteConflict. The post-state is
-        // the gate.
-      }
+      // Injected abort or CAS WriteConflict expected; the post-state is the
+      // gate.
+      expectPhysicallyClean(
+        await observe(inner, "compact", () =>
+          compact({ storage: foldHandle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+            minEntriesToCompact: 10,
+            maxEntriesPerRun: numInserts,
+          } as InternalCompactOptions),
+        ),
+      );
 
       // Drain GC with the grace bypassed so any due candidate is swept
       // in-pass. Several passes under a tight per-pass mark cap;
@@ -465,11 +513,15 @@ describe("Write-tick fold crash preserves the reader view after GC", () => {
       // live object, so the invariant below still holds regardless of how far
       // the log cursor advances.
       for (let pass = 0; pass < 5; pass++) {
-        await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
-          graceMillis: 0,
-          maxMarksPerRun: 8,
-          maxSweepsPerRun: 200,
-        } as InternalRunGcOptions);
+        const observed = await observe(inner, "gc", () =>
+          runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+            graceMillis: 0,
+            maxMarksPerRun: 8,
+            maxSweepsPerRun: 200,
+          } as InternalRunGcOptions),
+        );
+        expect(observed.completed).toBe(true);
+        expectPhysicallyClean(observed);
       }
 
       // The reader view is unchanged — no live row lost.
@@ -598,7 +650,7 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
             fc.oneof(
               fc.record({
                 kind: fc.constant("write" as const),
-                id: fc.string({ minLength: 1, maxLength: 6 }),
+                id: shortWritableDocIdArb(6),
               }),
               fc.record({
                 kind: fc.constant("compact" as const),
@@ -623,75 +675,61 @@ describe("Long-running fuzzer (many tick + crash cycles)", () => {
               currentJsonKey: CURRENT_JSON_KEY,
             });
             const expectedIds = new Set<string>();
+            // Run `op` through a fresh abort proxy when it is armed.
+            const via = (abortAfter: number | undefined): Storage => {
+              if (abortAfter === undefined) {
+                return inner;
+              }
+              const handle = abortingStorage(inner);
+              handle.armAt(abortAfter);
+              return handle.storage;
+            };
             for (const op of ops) {
-              try {
+              if (op.kind === "write") {
+                // Writes are never faulted here (a raw `Writer` insert of a
+                // repeated id commits again), so every write completes.
+                const observed = await observe(inner, "write", () =>
+                  writer.commit({
+                    op: "I",
+                    collection: COLLECTION,
+                    docId: op.id,
+                    body: { _id: op.id, kind: "live" },
+                  }),
+                );
+                expectPhysicallyClean(observed);
+                expect(observed.completed).toBe(true);
+                expectedIds.add(op.id);
+                continue;
+              }
+              const storage = via(op.abortAfter);
+              const run = (): Promise<unknown> => {
                 switch (op.kind) {
-                  case "write": {
-                    await writer.commit({
-                      op: "I",
-                      collection: COLLECTION,
-                      docId: op.id,
-                      body: { _id: op.id, kind: "live" },
-                    });
-                    expectedIds.add(op.id);
-                    break;
-                  }
                   case "compact": {
-                    if (op.abortAfter === undefined) {
-                      await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
-                        minEntriesToCompact: 5,
-                        maxEntriesPerRun: 200,
-                      } as InternalCompactOptions);
-                    } else {
-                      const handle = abortingStorage(inner);
-                      handle.armAt(op.abortAfter);
-                      await compact({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
-                        minEntriesToCompact: 5,
-                        maxEntriesPerRun: 200,
-                      } as InternalCompactOptions);
-                    }
-                    break;
+                    return compact({ storage, currentJsonKey: CURRENT_JSON_KEY }, {
+                      minEntriesToCompact: 5,
+                      maxEntriesPerRun: 200,
+                    } as InternalCompactOptions);
                   }
                   case "gc": {
-                    if (op.abortAfter === undefined) {
-                      await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
-                        graceMillis: 0,
-                        maxSweepsPerRun: 200,
-                      } as InternalRunGcOptions);
-                    } else {
-                      const handle = abortingStorage(inner);
-                      handle.armAt(op.abortAfter);
-                      await runGc({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
-                        graceMillis: 0,
-                        maxSweepsPerRun: 200,
-                      } as InternalRunGcOptions);
-                    }
-                    break;
+                    return runGc({ storage, currentJsonKey: CURRENT_JSON_KEY }, {
+                      graceMillis: 0,
+                      maxSweepsPerRun: 200,
+                    } as InternalRunGcOptions);
                   }
                   case "retire": {
                     // Same seams as the dedicated retirement arm above:
                     // `window: 0` so the pass has real sub-floor work at
-                    // this scale, abort-armed per the generated op.
-                    if (op.abortAfter === undefined) {
-                      await retireLogRange(inner, CURRENT_JSON_KEY, {
-                        window: 0,
-                        maxDeletes: 20,
-                      });
-                    } else {
-                      const handle = abortingStorage(inner);
-                      handle.armAt(op.abortAfter);
-                      await retireLogRange(handle.storage, CURRENT_JSON_KEY, {
-                        window: 0,
-                        maxDeletes: 20,
-                      });
-                    }
-                    break;
+                    // this scale.
+                    return retireLogRange(storage, CURRENT_JSON_KEY, {
+                      window: 0,
+                      maxDeletes: 20,
+                    });
                   }
                 }
-              } catch {
-                // Aborts and `WriteConflict`s are expected; the post-loop
-                // reader view is the only gate.
-              }
+              };
+              // Aborts and `WriteConflict`s are expected; each step must pass
+              // the physical oracle, and the reader view is checked at the end.
+              expectPhysicallyClean(await observe(inner, op.kind, run));
             }
             // Post-loop INVARIANT: every successful write is
             // reachable; no phantom rows.
@@ -1016,15 +1054,20 @@ describe("single-write commit — win-or-lose-cleanly", () => {
         const handle = abortingStorage(storage);
         const crashWriter = new Writer({ storage: handle.storage, currentJsonKey });
         handle.armAt(abortAfter);
-        try {
-          await crashWriter.commit({
+        const crash = (): Promise<unknown> =>
+          crashWriter.commit({
             op: "I",
             collection: COLLECTION,
             docId: "crash-doc",
             body: { _id: "crash-doc" },
           });
-        } catch {
-          // Expected on most arming points.
+        // An abort is expected on most arming points. The physical oracle
+        // runs on memory only: hashing the bucket twice per case pushes the
+        // local-fs arm toward its timeout at `FC_NUM_RUNS=10000`.
+        if (variant.label === "memory") {
+          expectPhysicallyClean(await observe(storage, "write", crash));
+        } else {
+          await crash().catch(() => {});
         }
         await w.commit({
           op: "I",
