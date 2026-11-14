@@ -2,7 +2,9 @@
  * Migration preflight for data an earlier release stored under names or
  * `_id`s that are not in Unicode Normalization Form C, or under names or
  * `_id`s with an unpaired UTF-16 surrogate. Pure; `admin fsck`
- * reports {@link nonNfcNames} and `admin dump` reports every helper.
+ * reports {@link nonNfcNames}, {@link illFormedNames}, and the
+ * `ill_formed_ids` of {@link legacyIdReport} over its snapshot, and
+ * `admin dump` reports every helper over the live row set.
  *
  * R2 stores canonically-equivalent keys as one object, so a non-NFC name
  * shares its key prefix with the NFC spelling there. Two rows whose `_id`s
