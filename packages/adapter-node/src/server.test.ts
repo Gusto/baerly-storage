@@ -646,14 +646,16 @@ describe("createFetchHandler", () => {
     const key = "app/t/tenant/acme/manifests/c/current.json";
     // An empty stored snapshot (so the write is not refused) under a
     // foldable-length tail of 60 rows, with a mean that trips the ratio
-    // gate. A 512-byte `C` from the env is far below those 60 rows' rebuilt
-    // snapshot, so the tick's fold defers at the rebuild gate.
+    // gate. Each row is past a 512-byte `C` from the env on its own, so no
+    // prefix of the pass fits and the tick's fold defers at the rebuild gate.
     await createCurrentJson(
       storage,
       key,
       logStateCurrentJson({ mean_entry_bytes: MAINTENANCE_MIN_LIVE_BYTES }),
     );
-    await seedLogEntries(storage, "app/t/tenant/acme/manifests/c", 0, 60);
+    await seedLogEntries(storage, "app/t/tenant/acme/manifests/c", 0, 60, (seq) => ({
+      after: { _id: `d${seq}`, pad: "x".repeat(600) },
+    }));
     const maxFoldBytes = 512;
     vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", String(maxFoldBytes));
     vi.spyOn(console, "warn").mockImplementation(() => {});

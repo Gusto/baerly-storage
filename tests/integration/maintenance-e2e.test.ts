@@ -583,7 +583,7 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
   );
 
   test(
-    "ceiling honored: a low maxFoldBytes DEFERS the fold; the default ceiling FOLDS",
+    "ceiling honored: a maxFoldBytes below one row DEFERS the fold; one above it folds the fitting prefix; the default ceiling FOLDS",
     { timeout: ciTimeout(30_000) },
     async () => {
       // Two arms over the same seed on a fresh memory bucket. On a FRESH
@@ -591,12 +591,11 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       // (maintenance.ts:318) is vacuously TRUE — `snapshot` is null so
       // `snapshot_bytes === 0` and `0 <= 4096` holds, the runner lets the
       // fold proceed. The defer fires one level down, at the COMPACTOR's
-      // rebuilt-snapshot ceiling (compactor.ts:318): `maxFoldBytes` is
-      // threaded in as `ceilingBytes`, and the rebuilt body
-      // (`bodyBytes.byteLength`, ~100KB for one working-set's worth of
-      // rows) exceeds a low C, so `compact()` returns deferred BEFORE the
-      // PUT/CAS — the snapshot pointer never leaves null and the tail keeps
-      // growing. The default C clears the rebuilt body, so a fold lands.
+      // rebuilt-snapshot ceiling: `maxFoldBytes` is threaded in as
+      // `ceilingBytes`, and when even the first entry's rebuilt body
+      // exceeds a low C, `compact()` returns deferred BEFORE the PUT/CAS —
+      // the snapshot pointer never leaves null and the tail keeps growing.
+      // The default C clears the rebuilt body, so a fold lands.
       const drive = async (maxFoldBytes: number | undefined) => {
         const storage = new MemoryStorage();
         await bootstrap(storage);
@@ -628,10 +627,10 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
         return { ...read!.json, discoveredTail: tailProbe.tail };
       };
 
-      // Arm 1: ceiling far below the first snapshot the writer would
-      // rebuild (~50 docs × ~2KB ≈ 100KB). 4 KiB can never fit even one
-      // working-set's worth of rows, so EVERY fold defers → snapshot null.
-      const deferred = await drive(4 * 1024);
+      // Arm 1: ceiling below a single ~2KB row. compact() folds the longest
+      // prefix that fits, and 1 KiB fits none, so EVERY fold defers →
+      // snapshot null.
+      const deferred = await drive(1024);
       expect(
         deferred.snapshot,
         "a fold ceiling below the live snapshot size must DEFER — snapshot stays null",
@@ -641,7 +640,20 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       // tail_hint only advances on a fold, and every fold deferred here.
       expect(deferred.discoveredTail - deferred.log_seq_start).toBeGreaterThanOrEqual(50);
 
-      // Arm 2: default ceiling (512 KiB) comfortably fits the ~100KB
+      // Arm 2: ceiling between one ~2KB row and a 20-entry pass (~40KB of
+      // distinct rows). compact() folds the longest prefix of the pass that
+      // fits, so a snapshot lands within C and the entries past it stay in
+      // the tail (a whole-pass check would defer every tick).
+      const C_PARTIAL = 16 * 1024;
+      const partial = await drive(C_PARTIAL);
+      expect(partial.snapshot, "a ceiling above one row folds the prefix that fits").not.toBeNull();
+      expect(partial.snapshot_bytes).toBeLessThanOrEqual(C_PARTIAL);
+      expect(partial.snapshot_rows).toBeGreaterThan(0);
+      expect(partial.snapshot_rows).toBeLessThan(WORKING_SET);
+      expect(partial.log_seq_start).toBeGreaterThan(0);
+      expect(partial.discoveredTail - partial.log_seq_start).toBeGreaterThan(0);
+
+      // Arm 3: default ceiling (512 KiB) comfortably fits the ~100KB
       // snapshot → a fold lands.
       const folded = await drive(undefined);
       expect(

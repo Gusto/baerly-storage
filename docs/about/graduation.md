@@ -132,8 +132,8 @@ committed. Reads, deletes, and same-size or shrinking updates keep
 working, and once the write-tick fold drains them, growth is accepted
 again. If the stored snapshot is already past the ceiling (for example
 after a larger host folded it), a pending insert cannot fold onto an
-`E`-row snapshot, or a full fold pass of the pending tail would rebuild
-past `C`, no fold can make progress on this host, so every write
+`E`-row snapshot, or a fold pass's worth of pending changes in a row each
+leave the snapshot past `C`, no fold can make progress on this host, so every write
 is refused until you move it to a larger host or export
 it. The refusal is recomputed on every request; nothing is stored, so it
 clears on its own when the state or the host changes.

@@ -64,7 +64,8 @@ part-way, it keeps the rows it already committed.
 - **Every write refused** ("no fold can make progress here"): the stored
   snapshot is already past this host's ceiling, typically after a larger host
   folded it, a pending insert cannot fold onto an `E`-row snapshot, or a
-  pending fold pass would rebuild past the byte ceiling. The
+  fold pass's worth of pending changes in a row each leave the snapshot past
+  the byte ceiling. The
   collection has outgrown this host: export it with `baerly admin dump`, or
   have the operator move it to a larger host. Reads keep working either way.
 - **Request limit** ("does not fit in one request on this host"): the request

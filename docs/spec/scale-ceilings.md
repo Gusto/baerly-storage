@@ -249,8 +249,13 @@ pure and never trigger maintenance. For folding, three gates matter:
   fallback before the first compactor-stamped mean exists. Default
   `MAINTENANCE_TARGET_RATIO = 1.0`, so the ratio arm starts when the
   estimated tail equals the snapshot.
-- **Static byte ceiling (`C`).** Once dispatched, the rebuild defers if
-  `snapshot_bytes > C`. `C` is per host profile: 512 KB on cf-free
+- **Static byte ceiling (`C`).** The runner dispatches the fold while
+  stored `snapshot_bytes <= C`. `compact()` then sizes the rebuilt
+  snapshot entry by entry and folds the longest prefix of the slice that
+  stays within `C`, so a byte-heavy entry ends the fold before it and the
+  next slice starts there, where a delete or shrink behind it can bring
+  the snapshot back within `C`. A slice with no such prefix is the bytes
+  rebuild-gate defer. `C` is per host profile: 512 KB on cf-free
   (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT`), 8 MiB on cf-paid, 32 MiB on
   node. Operators can raise it out-of-band with
   `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; see

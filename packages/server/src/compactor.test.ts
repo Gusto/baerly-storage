@@ -756,6 +756,70 @@ describe("compact", () => {
     expect((await readCurrentJson(s, KEY))!.json).toMatchObject({ snapshot_rows: 5 });
   });
 
+  describe("ceilingBytes folds the longest prefix that fits", () => {
+    const BIG = { _id: "big", pad: "x".repeat(500) };
+    /** Three small rows folded unbounded; `C` leaves 100 bytes of room over them. */
+    const seeded = async () => {
+      const s = new MemoryStorage();
+      await bootstrap(s, KEY);
+      const writer = new Writer({ storage: s, currentJsonKey: KEY });
+      for (let i = 0; i < 3; i++) {
+        await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
+      }
+      await compact({ storage: s, currentJsonKey: KEY }, { minEntriesToCompact: 1 });
+      const stored = (await readCurrentJson(s, KEY))!.json;
+      const ceilingBytes = stored.snapshot_bytes + 100;
+      const opts = (maxEntriesPerRun: number) =>
+        ({ minEntriesToCompact: 1, maxEntriesPerRun, ceilingBytes }) as InternalCompactOptions;
+      return { s, writer, ceilingBytes, opts };
+    };
+
+    test("a byte-heavy entry ends the pass's fold before it, and the next pass folds it with its delete", async () => {
+      const { s, writer, ceilingBytes, opts } = await seeded();
+      await writer.commit({ op: "U", collection: COLL, docId: "d0", body: { _id: "d0", n: 1 } });
+      await writer.commit({ op: "U", collection: COLL, docId: "d1", body: { _id: "d1", n: 1 } });
+      await writer.commit({ op: "I", collection: COLL, docId: "big", body: BIG });
+      await writer.commit({ op: "U", collection: COLL, docId: "d0", body: { _id: "d0", n: 2 } });
+      await writer.commit({ op: "D", collection: COLL, docId: "big" });
+      // Pass [U, U, I big] rebuilds past C as a whole; its first two entries fit.
+      await expect(compact({ storage: s, currentJsonKey: KEY }, opts(3))).resolves.toMatchObject({
+        written: true,
+        entriesFolded: 2,
+        logSeqStartAfter: 5,
+      });
+      const mid = (await readCurrentJson(s, KEY))!.json;
+      expect(mid.snapshot_bytes).toBeLessThanOrEqual(ceilingBytes);
+      // Pass [I big, U, D big]: only the whole pass fits.
+      await expect(compact({ storage: s, currentJsonKey: KEY }, opts(3))).resolves.toMatchObject({
+        written: true,
+        entriesFolded: 3,
+        logSeqStartAfter: 8,
+      });
+      const end = (await readCurrentJson(s, KEY))!.json;
+      expect(end).toMatchObject({ snapshot_rows: 3 });
+      expect(end.snapshot_bytes).toBeLessThanOrEqual(ceilingBytes);
+      const map = await loadSnapshotAsMap(s, end.snapshot!, COLL);
+      expect(map.get("d0")).toEqual({ _id: "d0", n: 2 });
+      expect(map.has("big")).toBe(false);
+    });
+
+    test("a pass with no prefix within C defers without a PUT and reports its longest rebuild", async () => {
+      const { s, writer, ceilingBytes, opts } = await seeded();
+      await writer.commit({ op: "I", collection: COLL, docId: "big", body: BIG });
+      await writer.commit({ op: "U", collection: COLL, docId: "d0", body: { _id: "d0", n: 1 } });
+      const beforeRaw = await s.get(KEY);
+      const res = await compact({ storage: s, currentJsonKey: KEY }, opts(2));
+      expect(res).toMatchObject({
+        written: false,
+        skippedReason: "deferred",
+        entriesFolded: 0,
+        deferral: { dimension: "bytes", snapshotRows: 4 },
+      });
+      expect(res.deferral!.snapshotBytes).toBeGreaterThan(ceilingBytes);
+      expect((await s.get(KEY))!.body).toEqual(beforeRaw!.body);
+    });
+  });
+
   test("a rebuild defer reports the tripped dimension and rebuilt size, and leaves the metric to the caller", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);

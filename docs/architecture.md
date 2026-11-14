@@ -430,7 +430,10 @@ The bounded pass splits that work across three primitives:
   gated by a **static two-way ceiling** (`snapshot_bytes <= C` AND
   `snapshot_rows <= E`); `compact()` counts real rows as it applies the
   slice and stops before the first entry that would add a row past `E`,
-  so update and delete tails keep folding at the ceiling. The byte ceiling is
+  so update and delete tails keep folding at the ceiling. Within that
+  row-exact prefix it sizes the rebuilt snapshot entry by entry and folds
+  the longest prefix that stays within `C`, so a byte-heavy entry starts
+  the next pass instead of pinning the entries before it. The byte ceiling is
   overridable by `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the row ceiling is
   a kernel constant.
 - `retireLogRange()` (`packages/server/src/log-retention.ts`) reclaims
