@@ -82,7 +82,7 @@ boundaries), never `instanceof` chains.
 
 | `code`                   | HTTP | When                                                                   |
 | ------------------------ | ---- | ---------------------------------------------------------------------- |
-| `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate)                         |
+| `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate, document > 1 MiB)       |
 | `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
 | `WriteConflict`          | 409  | Lost a write race; re-read, then retry (`retriable`)                   |
 | `AlreadyExists`          | 409  | `insert` `_id` collision (duplicate `_id`); never retry                |

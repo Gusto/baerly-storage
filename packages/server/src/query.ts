@@ -33,6 +33,7 @@
  */
 
 import {
+  assertDocumentSize,
   assertDocumentValues,
   assertInsertIdType,
   type CurrentJson,
@@ -720,7 +721,9 @@ const withLiveBefore = (
  *   committed before or concurrently with this call (and, with
  *   `mintedId`, its body differs). `err._id` is the `_id`. Not retriable.
  * @throws BaerlyError code="InvalidConfig" — `doc` holds a value JSON
- *   cannot store as written (see `assertDocumentValues`), the supplied
+ *   cannot store as written (see `assertDocumentValues`), the post-image
+ *   `{ ...doc, _id }` encodes to more than `MAX_DOCUMENT_BYTES` (see
+ *   `assertDocumentSize`), the supplied
  *   `_id` is present and not a string (`null` included), the resolved `_id` fails
  *   {@link assertDocId} (key-segment rule, an unpaired surrogate, or not NFC), or `opts.mintedId`
  *   is set and is not the resolved `_id`. Checked before I/O.
@@ -773,6 +776,7 @@ export const runInsert = async <T extends DocumentData>(
   // but doesn't add `undefined` to the runtime shape). Cast through
   // the runtime-authoritative half.
   const body: DocumentData = { ...(doc as DocumentData), _id };
+  callerFacingCheck(() => assertDocumentSize(body, "insert"));
 
   // Schema validation against the post-image. Runs BEFORE the
   // pre-commit collision check and before the writer round-trip so
@@ -889,7 +893,8 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  * collection's schema.
  *
  * @throws BaerlyError code="InvalidConfig" — the post-image holds a value
- *   JSON cannot store as written (see `assertDocumentValues`).
+ *   JSON cannot store as written (see `assertDocumentValues`), or encodes
+ *   to more than `MAX_DOCUMENT_BYTES` (see `assertDocumentSize`).
  * @throws BaerlyError code="SchemaError" — the merge produced `undefined`,
  *   or the schema rejected the post-image.
  */
@@ -912,6 +917,9 @@ const mergeAndValidate = async <T extends DocumentData>(
   // write. An `undefined` member is absent, as it is in the HTTP form of
   // the patch, which `JSON.stringify` dropped it from.
   callerFacingCheck(() => assertDocumentValues(merged, "update", { undefinedMembersAbsent: true }));
+  // The post-image, not the patch, is size-checked: a small patch can grow
+  // a row past the cap, and a row stored over it may still shrink.
+  callerFacingCheck(() => assertDocumentSize(merged, "update"));
   // Validate the merged post-image, not the incoming patch.
   // Patches are partial by design — validating the patch itself
   // would reject valid updates against schemas that require fields
@@ -965,7 +973,9 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   already applied.
  * @throws BaerlyError code="InvalidConfig" — the patch (checked before
  *   I/O) or a merged post-image holds a value JSON cannot store as written
- *   (see `assertDocumentValues`; an `undefined` member is absent), or the
+ *   (see `assertDocumentValues`; an `undefined` member is absent), a merged
+ *   post-image encodes to more than `MAX_DOCUMENT_BYTES` (see
+ *   `assertDocumentSize`; a row stored larger may still shrink), or the
  *   patch names an `_id` other than the row's (see {@link assertPatchKeepsId}), or the row's
  *   `_id` holds an unpaired surrogate or is not NFC (see {@link assertDocId}). Checked for every matched
  *   row, with schema validation, before any row commits.
@@ -1075,8 +1085,9 @@ const runUpdate = async <T extends DocumentData>(
  *   one a concurrent delete removed after this call's read.
  * @throws BaerlyError code="InvalidConfig" — `id` fails
  *   {@link assertDocId} (key-segment rule, an unpaired surrogate, or not NFC), or `doc` holds a
- *   value JSON cannot store as written (see `assertDocumentValues`).
- *   Checked before I/O.
+ *   value JSON cannot store as written (see `assertDocumentValues`), or
+ *   `{ ...doc, _id: id }` encodes to more than `MAX_DOCUMENT_BYTES` (see
+ *   `assertDocumentSize`). Checked before I/O.
  * @throws BaerlyError code="SchemaError" — post-image rejected by
  *   the collection's bound validator.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
@@ -1095,6 +1106,8 @@ export const runReplaceById = async <T extends DocumentData>(
   // segment (log `doc_id`). Same boundary as `runInsert`.
   callerFacingCheck(() => assertDocId(id));
   callerFacingCheck(() => assertDocumentValues(doc, "replace"));
+  const body: DocumentData = { ...(doc as DocumentData), _id: id };
+  callerFacingCheck(() => assertDocumentSize(body, "replace"));
   const wire: PredicateWire = {
     clauses: [{ op: "eq", field: "_id", value: id }],
   };
@@ -1108,7 +1121,6 @@ export const runReplaceById = async <T extends DocumentData>(
   if (current === undefined) {
     throw new BaerlyError("NotFound", `No such row: ${id}`);
   }
-  const body: DocumentData = { ...(doc as DocumentData), _id: id };
   // Schema validation runs against the post-image — same shape as
   // `runInsert`. An invalid replace throws before the commit fires.
   if (ctx.schema !== undefined) {

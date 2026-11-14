@@ -125,6 +125,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @throws BaerlyError{code: "InvalidConfig"} — the supplied `_id`
    *         is not a string or breaks one of those rules; nothing was
    *         written. Pass `id.normalize("NFC")` for a non-NFC id.
+   * @throws BaerlyError{code: "InvalidConfig"} — the document, with its
+   *         `_id`, encodes to more than 1 MiB (1,048,576 bytes) of JSON;
+   *         nothing was written. Split large or growing data into rows
+   *         of their own.
    * @throws BaerlyError{code: "AlreadyExists"} — caller-supplied `_id`
    *         is held by a live row, including one a concurrent insert
    *         committed first: of concurrent inserts of one `_id`, exactly
@@ -206,6 +210,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         copy under a fresh NFC id that is not canonically equivalent
    *         to the original (for example, omit `_id` for a UUID), then
    *         delete the original.
+   * @throws BaerlyError{code: "InvalidConfig"} — the merged row would
+   *         encode to more than 1 MiB of JSON; nothing was committed. A
+   *         row already stored larger (by an earlier release) can still
+   *         be read, deleted, or updated down under the cap.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id`. Repair it with
    *         `replace(id, doc)`.
@@ -250,6 +258,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         rules on {@link Collection.insert}, including NFC and
    *         well-formed UTF-16; nothing
    *         was written.
+   * @throws BaerlyError{code: "InvalidConfig"} — `doc`, with `_id: id`,
+   *         encodes to more than 1 MiB of JSON; nothing was written.
    *
    * @example
    * ```ts
@@ -573,6 +583,10 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         `_id` (`null` included), or a matched row's `_id` is not
    *         NFC or not well-formed (see {@link Collection.update}). Checked for every
    *         matched row before any row commits.
+   * @throws BaerlyError{code: "InvalidConfig"} — a matched row's merged
+   *         post-image would encode to more than 1 MiB of JSON (see
+   *         {@link Collection.update}). Checked for every matched row
+   *         before any row commits.
    * @throws BaerlyError{code: "InvalidResponse"} — a matched stored
    *         row's `_id` is not the string it is stored under (left by
    *         an older release). Checked for every matched row before any

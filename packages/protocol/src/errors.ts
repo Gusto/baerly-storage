@@ -4,7 +4,7 @@
  * pattern-match with grep-friendly equality.
  */
 export type BaerlyErrorCode =
-  /** Caller-provided config or input is invalid (bad bucket, unsupported credential type, malformed URL, bucket not version-enabled when versioning was requested). */
+  /** Caller-provided config or input is invalid (bad bucket, unsupported credential type, malformed URL, bucket not version-enabled when versioning was requested, a write whose document would encode to more than `MAX_DOCUMENT_BYTES` = 1 MiB). HTTP maps this code to 400. */
   | "InvalidConfig"
   /** Generic S3/HTTP transport failure (5xx, unexpected status, retries exhausted). */
   | "NetworkError"

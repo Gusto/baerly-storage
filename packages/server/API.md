@@ -348,7 +348,7 @@ try {
 
 | `code`                   | HTTP | When                                             |
 | ------------------------ | ---- | ------------------------------------------------ |
-| `InvalidConfig`          | 400  | Bad caller config/input (bucket, predicate, …)   |
+| `InvalidConfig`          | 400  | Bad input (bucket, predicate, doc > 1 MiB)       |
 | `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)            |
 | `AccessDenied`           | 403  | S3 403 or bucket policy denied                   |
 | `InvalidResponse`        | 502  | Server returned unparseable body                 |

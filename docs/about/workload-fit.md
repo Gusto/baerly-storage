@@ -145,6 +145,7 @@ table fixes it. Only one dimension moves with the host.
 | Documents in one collection² | ~100–500 | ~1,600–8,200 | ~6,500–32,800 | A fold rebuilds the whole snapshot in one pass; the ceiling is where that stops fitting the host |
 | Writes to one collection³ | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
 | Collections per tenant⁴ | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
+| Size of one document⁵ | 1 MiB of JSON | Same | Same | Enforced on every write, in-process and over HTTP; a larger document belongs in rows of its own or outside the database |
 
 ¹ A paid Worker keeps the **free-tier** budgets until you set
 `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
@@ -168,6 +169,13 @@ grades each collection against.
 
 ⁴ Derivation:
 [scale-ceilings.md § Collection fan-out](../spec/scale-ceilings.md#collection-fan-out).
+
+⁵ 1,048,576 bytes of the row's JSON, `_id` included (`MAX_DOCUMENT_BYTES`).
+An insert, `replace`, or `update` whose resulting row is larger fails with
+`InvalidConfig` and writes nothing, so a small patch that would grow a row
+past the limit is refused too. A row stored larger by an earlier release
+stays readable and deletable, and an update that shrinks it under the limit
+commits.
 
 **Every host runs the same protocol; a bigger host buys a bigger snapshot
 per fold.** On Workers the free-tier profile is the default whether or
