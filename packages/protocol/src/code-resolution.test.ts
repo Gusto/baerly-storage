@@ -27,6 +27,10 @@ describe("CODE_RESOLUTIONS", () => {
     expect(text).not.toMatch(/BAERLY_|PROFILE|env|cf-paid|wrangler/i);
   });
 
+  test("AlreadyExists warns against re-minting after a minted-id resend", () => {
+    expect(CODE_RESOLUTIONS.AlreadyExists).toMatch(/do not re-mint/i);
+  });
+
   test("omits transient/opaque and context-dependent codes", () => {
     for (const code of [
       "NetworkError",

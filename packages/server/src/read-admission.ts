@@ -34,7 +34,6 @@
 
 import {
   BaerlyError,
-  CODE_RESOLUTIONS,
   type CurrentJson,
   currentRequestLedger,
   type RequestPool,
@@ -108,21 +107,31 @@ const refuseRead = (
     "CapacityExceeded",
     `this read of collection ${JSON.stringify(collection)} ${why}, more than one request can ` +
       `do on this host, so it was refused and returned no rows. ${remedy}`,
-    { resolution: CODE_RESOLUTIONS.CapacityExceeded, cause: { bound } },
+    { resolution: remedy, cause: { bound } },
   );
 
+// Each refusal's remedy closes its message and is its `resolution`: the
+// code's canonical resolution is the write remedy, which is wrong for a
+// read. State plus an app-side remedy, never a host setting.
+
 /** Only for the output bound: a narrower predicate or a limit shrinks the answer, not the load. */
-const NARROW = "Narrow the predicate or add a limit.";
+const NARROW = "Do not retry unchanged: narrow the predicate or add a limit.";
 const TAIL =
-  "The pending log folds into the snapshot as writes run maintenance; until then this read is refused.";
+  "Retry once maintenance has absorbed the pending writes: later writes run it as they commit, " +
+  "and so does a scheduled runScheduledMaintenance call. Until then this read is refused.";
 const OUTGROWN =
-  "Delete or shrink rows to make room, or export the collection with baerly admin dump.";
+  "Do not retry unchanged: delete or shrink rows, or export the collection with baerly admin dump.";
+const MATERIALIZED =
+  "Delete or shrink rows, or retry once maintenance has absorbed the pending writes (later writes " +
+  "and scheduled runScheduledMaintenance calls run it). Otherwise export the collection with " +
+  "baerly admin dump.";
 
 /**
  * One read's admission state. Built after the read GETs `current.json`;
  * {@link admitHead} runs before any other storage call, and the other
  * methods as the read stages its work. A refusal is always
- * `CapacityExceeded`, not retriable, with the code's canonical resolution.
+ * `CapacityExceeded`, not retriable, whose `resolution` is the remedy for
+ * the bound it hit.
  */
 export class ReadBudget {
   readonly #collection: string;
@@ -259,7 +268,7 @@ export class ReadBudget {
         this.#collection,
         "materializedRows",
         `must decode at least ${rows} rows before filtering, over the ${max} it may decode`,
-        `${TAIL} ${OUTGROWN}`,
+        MATERIALIZED,
       );
     }
   }

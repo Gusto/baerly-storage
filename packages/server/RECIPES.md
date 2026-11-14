@@ -45,7 +45,10 @@ at most one commits and the others throw `AlreadyExists`, committing nothing
 **Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
 or change the stored row with `update` / `replace`. After a same-`_id` retry
 following `AmbiguousCommit`, the stored row may be your first attempt: re-read
-it instead (see below).
+it instead (see below). The same holds for an insert that omitted `_id`: the
+client resends it under its minted `_id`, so this error can mean your first
+attempt landed and the row changed since. Re-read it; do not insert again
+without an `_id`, which mints a second row.
 
 ### `BaerlyError code="CapacityExceeded"` (HTTP 409)
 
@@ -67,12 +70,19 @@ part-way, it keeps the rows it already committed.
   fold pass's worth of pending changes in a row each leave the snapshot past
   the byte ceiling. The
   collection has outgrown this host: export it with `baerly admin dump`, or
-  have the operator move it to a larger host. Reads keep working either way.
+  have the operator move it to a larger host. Reads within the read bounds
+  keep working either way.
 - **Request limit** ("does not fit in one request on this host"): the request
   ran out of storage calls, and the refused write sent nothing. A multi-row
   `update()` / `delete()` keeps the rows before the refused one; re-run it as
   a new request (it re-reads and re-matches), or narrow it with `where` /
   `limit` so each request does less.
+- **Read refused** ("this read of collection ... was refused and returned no
+  rows"): the read needs more work than one request does on this host. It
+  returned no rows, never a truncated answer, and wrote nothing.
+  `err.resolution` names the remedy for the bound it hit: narrow the predicate
+  or add a limit, delete or shrink rows, or retry once maintenance has absorbed
+  pending writes.
 
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
