@@ -147,6 +147,18 @@ export interface BaerlyEnv {
 }
 
 /**
+ * Non-throwing parse of a `BAERLY_MAINTENANCE_PROFILE` value: the tier it
+ * names (`undefined` and `""` mean `cf-free`), or `undefined` when the
+ * value is not a recognized selector.
+ */
+const parseCfProfileTier = (raw: string | undefined): "cf-free" | "cf-paid" | undefined => {
+  if (raw === undefined || raw === "" || raw === "cf-free") {
+    return "cf-free";
+  }
+  return raw === "cf-paid" ? "cf-paid" : undefined;
+};
+
+/**
  * Resolve the maintenance profile from the opt-in operator env var.
  * Unset, `""`, and `"cf-free"` select the CPU-limited CF-free profile, so
  * zero-config behavior is unchanged. `cf-paid` raises the per-pass caps
@@ -163,10 +175,11 @@ export interface BaerlyEnv {
  */
 export const resolveCfMaintenanceProfile = (readEnv: (key: string) => string | undefined) => {
   const raw = readEnv("BAERLY_MAINTENANCE_PROFILE");
-  if (raw === undefined || raw === "" || raw === "cf-free") {
+  const tier = parseCfProfileTier(raw);
+  if (tier === "cf-free") {
     return MAINTENANCE_PROFILE_CF_FREE;
   }
-  if (raw === "cf-paid") {
+  if (tier === "cf-paid") {
     return MAINTENANCE_PROFILE_CF_PAID;
   }
   throw new BaerlyError(
@@ -202,7 +215,7 @@ const envReader =
  */
 export const cfRequestLedger = (readEnv: (key: string) => string | undefined): RequestLedger =>
   new RequestLedger(
-    readEnv("BAERLY_MAINTENANCE_PROFILE") === "cf-paid"
+    parseCfProfileTier(readEnv("BAERLY_MAINTENANCE_PROFILE")) === "cf-paid"
       ? { internal: CF_PAID_REQUEST_LIMIT, external: CF_PAID_REQUEST_LIMIT }
       : { internal: CF_FREE_INTERNAL_REQUEST_LIMIT, external: CF_FREE_EXTERNAL_REQUEST_LIMIT },
   );
