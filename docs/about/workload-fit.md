@@ -2,9 +2,9 @@
 title: Workload fit
 audience: product
 summary: A qualitative shape test for deciding whether an app fits baerly-storage before sizing the workload.
-last-reviewed: 2026-11-12
+last-reviewed: 2026-11-13
 tags: [positioning, product, workload]
-related: [thesis.md, cost-model.md, graduation.md]
+related: [thesis.md, cost-model.md, graduation.md, "../spec/scale-ceilings.md"]
 ---
 
 # Workload fit
@@ -43,7 +43,7 @@ screen have a natural collection it belongs to?"
 | Axis | When to decide it | Question |
 | --- | --- | --- |
 | Shape fit | While designing the product | Can the workload decompose into independent collections, or is the core screen assembled across many collections, tenants, users, or organizations? |
-| Size fit | After the product is working | Did one collection get too hot, did a tenant store too much, or did the cost line cross the published envelope? See [cost-model.md](cost-model.md) and [graduation.md](graduation.md). |
+| Size fit | After the product is working | Did one collection get too hot, did a tenant store too much, or did the cost line cross the published envelope? See [scale-ceilings.md](../spec/scale-ceilings.md#the-published-envelope) and [cost-model.md](cost-model.md). |
 
 A thriving prototype that outgrows its tier has graduated. A product
 whose core screen spans collections, tenants, users, or organizations
@@ -120,141 +120,12 @@ holding one product truth, with no shared transaction boundary.
 
 ## If shape fits
 
-Once the one-collection test passes, use
-[cost-model.md](cost-model.md) for the dollar and operation envelope, and
-[graduation.md](graduation.md) for the compute and maintenance envelope.
-The system is built around many small collections; fan-out and size
-limits are covered in those pages. This page decides whether to start
-here; those pages decide when a working app should graduate.
-
-## Scale at a glance
-
-baerly-storage is built for production apps that live within a defined
-workload envelope: internal tools, admin panels, dashboards, and
-low-to-moderate-traffic line-of-business apps, up to roughly
-~30 writes/min/collection, ~10 GB/tenant stored, and ~100
-collections/tenant. Crossing one of those lines is a scale event, not a
-maturity one; [graduation.md](graduation.md) is what you do about it.
-
-Below are the numbers a builder needs before writing the first line of
-code. Shape comes first — if the fit test above failed, no host on this
-table fixes it. Only one dimension moves with the host.
-
-| Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Why |
-| --- | --- | --- | --- | --- |
-| Documents in one collection² | ~100–500 | ~1,600–8,200 | ~6,500–32,800 | A fold rebuilds the whole snapshot in one pass; the ceiling is where that stops fitting the host |
-| Writes to one collection³ | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
-| Collections per tenant⁴ | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
-
-¹ A paid Worker keeps the **free-tier** budgets until you set
-`BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
-Node adapter selects its profile automatically.
-
-² At 1–5 KB per document. Each host caps how large a snapshot one fold
-may rebuild — in bytes (`C`) and in rows (`E`). Bytes bind at documents
-this size. Rows bind first for small documents: under ~256 B on
-Cloudflare, where the fold stops at 2,048 documents (free) or 32,768
-(paid), and under ~512 B on Node, where it stops at 65,536. Neither row
-ceiling has an env override. On Node the cap
-scales with available heap, and the column gives the measured floor on a
-512 MB container. Per-host caps and their derivation:
-[scale-ceilings.md § The auto-maintained snapshot ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling).
-
-³ Per collection, not account-wide. It is a contention ceiling from the
-CAS-livelock regime, hard-coded as
-`M_SIZE_WRITES_PER_MIN_PER_COLLECTION = 30` in
-`packages/cli/src/admin/usage.ts`, which is what `baerly admin usage`
-grades each collection against.
-
-⁴ Derivation:
-[scale-ceilings.md § Collection fan-out](../spec/scale-ceilings.md#collection-fan-out).
-
-**Every host runs the same protocol; a bigger host buys a bigger snapshot
-per fold.** On Workers the free-tier profile is the default whether or
-not you are paying. Hosts fall into three support tiers:
-
-| Host | Support |
-| --- | --- |
-| Workers Paid, S3 or R2 | First guaranteed tier |
-| Workers Free + R2 binding | Supported floor; CPU is best effort |
-| Workers Free + S3 over HTTP | Best effort, with a low ceiling (below) |
-| Serverful Node | First-class; bounded by host memory and CPU |
-
-Both Free hosts share the same data ceiling (the Cloudflare free column
-above). The R2 binding buys request headroom — a longer pending tail,
-room for retries — not a bigger collection. Free CPU is best effort: a CPU kill hasn't been observed,
-but the ~10 ms budget is not a guarantee
-([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)).
-
-**Workers Free + S3 over HTTP (best effort).** Every storage call is a
-`fetch`, and the free plan allows 50 per request, so this host gets a
-lower request envelope than the R2 binding. It is not first-class: no
-zero-config guarantee and no tuning work. The Worker detects this host
-from the storage it is given, folds once 7 writes are pending, and
-deletes at most 3 replaced snapshots per GC slice, so a write and the
-maintenance it triggers fit in one request. The envelope is collections
-up to ~500 documents (512 KiB) with about 900 writes per day sustained
-per collection (bursts are fine), below the ~30/min the R2 binding and
-the other hosts take. The request limits, measured with no
-retries and 45 calls of the 50 budgeted, are:
-
-| Bound | Free + S3 limit |
-| --- | --- |
-| Pending tail length | 8 entries |
-
-A write costs 7 + tail calls and its worst request, write plus
-maintenance, 31 (30 storage calls plus one Cache API call); any read at the longest 8-entry tail costs 11, an `$in`
-of any size included. Declared indexes change none of these. One
-consequence of the budget is accepted on this host:
-
-- **Past a pending tail of 15 entries, a write cannot fold.** A write at
-  tail `t` costs 7 + `t` calls and a fold of its `t + 1` entries 6 more
-  than that, so a write at a 15-entry tail plus its fold is 44 calls and
-  at 16 the write tick skips the fold. A tail that long, for example after
-  a burst of concurrent writes, then does not shorten on a write tick, and
-  from 32 pending entries a write is refused with `CapacityExceeded`
-  before it writes anything: its reads plus the 9 calls a commit keeps to
-  resolve its create pass 45. The R2 binding has the request headroom to
-  fold it.
-
-The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
-writes, and GC reclaims about 1,000 replaced snapshots per collection per
-7-day grace period. At ~900 writes per day, about 129 folds a day leave
-~900 replaced snapshots in the bucket, at most ~450 MiB for 512 KiB
-snapshots; above that rate, replaced snapshots accumulate.
-
-A read that must replay a longer pending tail, such as one racing a write
-burst, can need more than the 45 calls a request may make, and so can a
-request whose storage calls are retried; such a read is refused whole with
-`CapacityExceeded`, never answered with missing rows. The `/v1/since`
-change feed is the exception: it stops polling when its calls run out, so
-an idle long-poll returns after about 22 seconds instead of 25 and a busy
-one returns part of the backlog, which the next poll continues. Past the
-envelope, expect more
-`CapacityExceeded` and `MaintenancePending`; data is never lost. For more
-request headroom use the R2 binding; for guaranteed CPU, use Paid.
-
-At the ceiling, growth is refused with `CapacityExceeded`: reads,
-deletes and shrinking updates keep working, and the refusal clears once
-they fold. A collection already past the ceiling on its host refuses
-every write until it moves to a larger host or is exported. See
-[graduation.md § The symptom](graduation.md#the-symptom-writes-are-refused-not-data-loss).
-
-**Stored bytes are not on this table because they are not a fit limit.**
-Nothing in baerly-storage measures or enforces per-tenant storage; a
-tenant is only a key prefix. Above ~10 GB/tenant it becomes a cost line —
-the R2 free-tier storage boundary, where billing starts — and
-[cost-model.md](cost-model.md) owns that figure.
-
-Cost is not a shape question either. For the dollar envelope and the
-per-operation crossover against D1, Supabase, Neon, and Firestore, see
-[cost-model.md](cost-model.md);
-[scale-ceilings.md § Per-tier bounds](../spec/scale-ceilings.md#per-tier-bounds)
-owns the per-host derivations.
-
-**How solid these are.** The document ceilings are measured
-(`pnpm bench:fold-ceiling`). The ~30 writes/min contention ceiling is
-still a model pending real-infra measurement against R2, and ~100
-collections is bench-grounded but unenforced. Revisit either if you
-observe persistent fold deferrals (`db.compaction.deferred_total`) or
-CAS-retry storms.
+Once the one-collection test passes, size the workload against
+[scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope):
+documents per collection on each host, writes per collection, and
+collections per tenant. Shape comes first — if the fit test above failed,
+no host on that table fixes it. Use [cost-model.md](cost-model.md) for
+the dollar and operation envelope, and [graduation.md](graduation.md)
+for what to do when a working app crosses a line. This page decides
+whether to start here; those pages decide when a working app should
+graduate.

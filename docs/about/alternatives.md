@@ -85,9 +85,9 @@ Two axes disqualify it, each with its own page:
 - **Shape doesn't fit** — core screens need cross-collection joins,
   aggregations, or full-text search. See [workload-fit.md](workload-fit.md).
 - **Scale exceeds the envelope** — sustained single-collection write
-  contention (roughly above ~30 writes/min, an estimate pending
-  real-infra measurement) or high-throughput workloads. See
-  [graduation.md](graduation.md).
+  contention past
+  [the published envelope](../spec/scale-ceilings.md#the-published-envelope)
+  or high-throughput workloads. See [graduation.md](graduation.md).
 
 For real-time push to many clients, Firebase or Convex have better
 primitives — baerly-storage offers per-collection long-poll, not a

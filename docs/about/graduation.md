@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: Operator runbook for a collection at or past a limit — map the symptom, pick the graduation path, and set the env var or move hosts.
-last-reviewed: 2026-08-27
+last-reviewed: 2026-11-13
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md", "../adr/002-ephemeral-coordination.md"]
 ---
@@ -11,8 +11,8 @@ related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md"
 
 Graduation is what you do when a collection or workload crosses one of
 the documented bounds of the workload envelope — a scale event, not a
-maturity one. [workload-fit.md](workload-fit.md#scale-at-a-glance)
-defines that envelope; this page is the runbook for acting on it.
+maturity one. [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
+defines that envelope and owns its figures; this page is the runbook for acting on it.
 
 The threshold concept is **the fold**: the moment maintenance turns many
 small committed writes into one refreshed snapshot. That makes reads
@@ -32,17 +32,15 @@ or `db.compaction.deferred_rows_total`, and emits a rate-limited
 remedy.
 
 Two of the triggers below are cost lines rather than capacity ones: an
-advisory at sustained ~100 writes/min account-wide, surfaced by
-`baerly cost`, and a hard trigger at 50M Class A ops/mo sustained over
-7 days. Both appear in the decision table with the values to compare
-against;
+advisory surfaced by `baerly cost`, and a hard trigger on monthly
+Class A ops.
 [cost-model.md § Cost-side graduation signals](cost-model.md#cost-side-graduation-signals)
-owns the meters and the dollar figures behind them.
+owns their thresholds and the dollar figures behind them.
 
 Those two are **account-wide aggregate** write rates, because Class A is
 billed per account. They are distinct from the per-collection
-~30 writes/min contention ceiling in
-[the workload envelope](workload-fit.md#scale-at-a-glance).
+write-contention ceiling in
+[the workload envelope](../spec/scale-ceilings.md#the-published-envelope).
 
 ## Decision table
 
@@ -64,12 +62,12 @@ baerly admin usage \
 
 | Symptom | Check | Threshold | Action |
 | --- | --- | --- | --- |
-| `fold_deferred` warning or `db.compaction.deferred_total` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `fold_gate (cf-free): closed:bytes` or `closed:rows` | `snapshot_bytes > C`, or `snapshot_rows` at `E` with the next log entry adding a row (cf-free: `C = 512 KiB`, `E = 2048`) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to 32,768. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
-| Same defer on Node | Warning text plus `fold_gate (node)` from `baerly inspect` | Node ships `C = 32 MiB`, `E = 65,536`; check the host has RAM for old snapshot + new snapshot + tail | If bytes tripped, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above 32 MiB, sized by `C ≈ heap / 10`; expect one inline write-latency spike. If rows tripped, Node already has the largest shipped `E` and there is no env override — split or graduate the collection. |
+| `fold_deferred` warning or `db.compaction.deferred_total` on Cloudflare free | Warning names bytes vs. rows; `baerly inspect` reports `fold_gate (cf-free): closed:bytes` or `closed:rows` | `snapshot_bytes > C`, or `snapshot_rows` at `E` with the next log entry adding a row ([cf-free values](../spec/scale-ceilings.md#the-published-envelope)) | If bytes tripped, upgrade to Workers Paid and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to the cf-paid value; raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` past that only to a cap the isolate can rebuild. If rows tripped, the same profile switch moves `E` to the cf-paid value. `E` has no env override, but it is per host profile, so moving to a larger profile raises it. |
+| Same defer on Node | Warning text plus `fold_gate (node)` from `baerly inspect` | Node ships its own [`C` and `E`](../spec/scale-ceilings.md#the-published-envelope); check the host has RAM for old snapshot + new snapshot + tail | If bytes tripped, raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above the node `C`, sized by `C ≈ heap / 10`; expect one inline write-latency spike. If rows tripped, Node already has the largest shipped `E` and there is no env override — split or graduate the collection. |
 | GC-managed object count grows while writes are steady | Prefix inventory + logs + `admin fsck` | Stale-log/orphan-snapshot sweep throughput no longer keeps up with their production | Reduce contention, split the hot collection, or graduate the workload. Growth under `content/` is diagnosed separately: stop legacy writers, then dispose of the inert prefix manually. |
-| Sustained hot collection | `admin usage` | ~30 logical writes/min/collection | Graduate to D1/Postgres; this is the workload ceiling. |
-| Tenant data keeps growing | `admin usage` / bucket inventory | >10 GB/tenant (R2 free-tier storage line; see [cost-model.md](cost-model.md)) or ~100 collections/tenant (soft fan-out guideline; see [workload-fit.md](workload-fit.md#scale-at-a-glance)) | Review graduation cost; neither line is enforced by the protocol. |
-| `baerly cost` prints advisory note | `baerly cost` | ~100 writes/min account-wide (provider-agnostic; 8.64M Class A/mo / ~$34/mo R2 object-storage ops, 12.96M / ~$65/mo S3), advisory only; see [cost-model.md](cost-model.md#ops-vs-cost-tradeoff) | Compare object storage's low operator burden against a managed DB. Hard trigger: 50M/mo (~580 writes/min / ~$221/mo R2; ~460 writes/min on Node). |
+| Sustained hot collection | `admin usage` | The [per-collection write line](../spec/scale-ceilings.md#the-published-envelope) | Graduate to D1/Postgres; this is the workload ceiling. |
+| Tenant data keeps growing | `admin usage` / bucket inventory | The R2 free-tier storage line ([cost-model.md](cost-model.md#cost-side-graduation-signals)) or the soft [collections-per-tenant guideline](../spec/scale-ceilings.md#the-published-envelope) | Review graduation cost; neither line is enforced by the protocol. |
+| `baerly cost` prints advisory note | `baerly cost` | The account-wide advisory write rate, advisory only; see [cost-model.md](cost-model.md#cost-side-graduation-signals) | Compare object storage's low operator burden against a managed DB ([ops vs. cost](cost-model.md#ops-vs-cost-tradeoff)). The hard trigger on monthly Class A ops is in the same section. |
 
 ### How to read the output
 
@@ -90,7 +88,7 @@ the adapters refuse API requests with `InvalidConfig` until the value is
 fixed. Exit code is 0
 whatever the verdict.
 `baerly admin usage` reports writes/min against the M-size ceiling: the
-~30 writes/min/collection workload line.
+[per-collection write line](../spec/scale-ceilings.md#the-published-envelope).
 
 For compaction, compare the **snapshot**, not the tail:
 
@@ -260,13 +258,13 @@ violating the drain-rate invariants above.
 Map the signal before acting:
 
 - **Cloudflare free byte defer:** upgrade tier and set
-  `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to 8 MiB. Only
-  override `C` beyond that if you have sized it to memory.
+  `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to the cf-paid
+  value. Only override `C` beyond that if you have sized it to memory.
 - **Node byte defer:** raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above
-  the 32 MiB node default, sized by `C ≈ heap / 10`.
+  the node default, sized by `C ≈ heap / 10`.
 - **Row defer:** `E` has no env override, but it is per host profile —
-  move to a larger profile (2,048 → 32,768 → 65,536) to raise it. At
-  node's 65,536, split or graduate.
+  move to a larger profile (cf-free → cf-paid → node;
+  [values](../spec/scale-ceilings.md#the-published-envelope)) to raise it. At node's `E`, split or graduate.
 - **Hot collection or tenant-scale signal:** graduate the workload to
   D1/Postgres.
 
@@ -280,9 +278,8 @@ A deferred fold alone does not mean "move to Postgres."
 
 ### 1. Off Cloudflare free → Cloudflare paid
 
-**Threshold:** the auto-maintained snapshot ceiling at the cf-free
-values: ~512 KiB snapshot / ~100-500 docs, or `E = 2048` rows, whichever
-trips first —
+**Threshold:** the auto-maintained snapshot ceiling at the
+[cf-free values](../spec/scale-ceilings.md#the-published-envelope), bytes or rows, whichever trips first —
 `snapshot_bytes > C`, or `snapshot_rows` at `E` with a row-adding entry
 next in the log.
 
@@ -292,11 +289,11 @@ naming bytes vs. rows.
 
 **What to do:** upgrade to Cloudflare Workers Paid (about $5/mo; 30 s
 CPU vs. free's ~10 ms), then set `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
-That alone moves `C` to 8 MiB and `E` to 32,768 and compaction resumes;
+That alone moves `C` and `E` to the cf-paid values and compaction resumes;
 there is no env override to set for the common case. On paid, CPU stops
 being the binding cost and Worker memory (~128 MB) becomes the limit —
-which is why the paid ceiling is 8 MiB rather than "tens of MB"
-([why that number](../spec/scale-ceilings.md#per-tier-bounds)). If you
+which is why the paid byte ceiling is single-digit MiB rather than
+"tens of MB" ([why that number](../spec/scale-ceilings.md#per-tier-bounds)). If you
 override `C` past the profile value, size it to memory, not CPU; see
 [Operations plane](#operations-plane-env-vars).
 
@@ -304,28 +301,28 @@ override `C` past the profile value, size it to memory, not CPU; see
 
 When the warning names bytes, this is not a tier graduation. A Node host
 has no per-request CPU wall, so the byte ceiling is host RAM, and the
-node profile already ships `C = 32 MiB` — the top of the measured grid,
-not a measured wall, so a host with headroom can go further. Rows are a
-separate ceiling that RAM does not move: `E = 65,536`, which a
-collection of documents under ~512 B reaches before it reaches `C`. Raise
+node profile already ships the largest [`C`](../spec/scale-ceilings.md#the-published-envelope) — the top of the
+measured grid, not a measured wall, so a host with headroom can go
+further. Rows are a separate ceiling that RAM does not move: node's `E`,
+which a collection of small documents reaches before it reaches `C`. Raise
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, scaling by `C ≈ heap / 10`
 ([where that rule comes from](../spec/scale-ceilings.md#what-is-shipped-vs-estimated));
 the fold completes on the next write, with one inline
 write-latency spike. If the warning names
 rows, the env var will not help: `E` has no override, and node already
-runs the largest shipped value (65,536).
+runs the largest shipped value.
 
 ### 3. Paid serverless → serverful Node
 
-**Threshold:** a snapshot approaches the cf-paid ceiling — **8 MiB** of
-snapshot, or 32,768 rows.
+**Threshold:** a snapshot approaches the
+[cf-paid ceiling](../spec/scale-ceilings.md#the-published-envelope), in bytes or rows.
 
 **What you'll observe:** on paid Cloudflare, folds start running into
 the ~128 MB Worker memory limit. The fold cannot hold the old snapshot,
 new snapshot, and log tail resident at once. CPU is still fine.
 
 **What to do:** move the collection to a long-lived Node host, which
-selects the node profile automatically (`C = 32 MiB`, `E = 65,536`),
+selects the node profile and its larger `C`/`E` automatically,
 then raise the env cap as above if the host has the heap for it. The
 current snapshot format is single-level: one L9 snapshot replaces the
 prior. A chunked replacement is in development, but plan around the Node
@@ -340,8 +337,8 @@ Under the prior unsliceable-fold model, that large tail could trip the
 ceiling. It no longer does.
 
 The tail is sliced by `maxFoldEntriesPerPass`, so a large tail drains
-over many write ticks. Each CF-free pass folds about 20 entries into the
-small snapshot, and the snapshot stays small. Tail length alone does
+over many write ticks. Each CF-free pass folds a small slice
+(`WRITE_TICK_FOLD_ENTRIES_PER_PASS`) into the small snapshot, and the snapshot stays small. Tail length alone does
 not defer; only the snapshot axis (`C` bytes / `E` rows) defers.
 
 ### 4. Off baerly-storage → Postgres: the workload envelope
@@ -349,11 +346,11 @@ not defer; only the snapshot axis (`C` bytes / `E` rows) defers.
 Triggers 1-3 ask whether one collection's fold fits one host. This asks
 whether write throughput or total scale still belongs on baerly-storage.
 
-**Threshold:** any envelope axis crossed — ~30 logical
-writes/min/collection, >10 GB/tenant stored, or ~100 collections/tenant.
-[workload-fit.md § Scale at a glance](workload-fit.md#scale-at-a-glance)
-defines the envelope and what each axis means; none of the three is
-enforced by the protocol.
+**Threshold:** any envelope axis crossed — writes per collection,
+collections per tenant, or the stored-bytes cost line.
+[scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
+owns the figures and what each axis means; none of them is enforced by
+the protocol.
 
 **What you'll observe:** `baerly admin usage` grades each collection
 against the write line. The other two axes have no runtime signal — a
@@ -381,13 +378,13 @@ Maintenance has two configuration planes:
 
 | Env var | Effect | When to set it |
 | --- | --- | --- |
-| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides static snapshot ceiling `C`, whatever the active profile's value is (512 KiB cf-free, 8 MiB cf-paid, 32 MiB node). Raises `S_max = C`, letting larger snapshot rebuilds pass the gate. Must be a plain positive decimal integer byte count (e.g. `8388608`), untrimmed: zero, negatives, `"8mb"`, `"1e6"`, `"0x400"`, `"1.5"`, and surrounding whitespace throw `InvalidConfig` on every API request instead of being silently accepted. Unset or `""` keeps the profile default. On Node and Cloudflare alike, `/v1/healthz`, `/v1/spec`, and dev routes stay up. | On a large Node host, after confirming the host can rebuild that snapshot (`C ≈ heap / 10`). On Cloudflare, prefer the profile switch first. |
-| `BAERLY_MAINTENANCE_PROFILE` | Cloudflare-only. Accepts `cf-free` (default; also unset or `""`) or `cf-paid`, case-sensitive; any other value, including surrounding whitespace, throws `InvalidConfig` on API requests (healthz, spec, and dev routes stay up). `cf-paid` raises fold-entry and GC cadence/mark/sweep caps to Node values, using the paid 10,000-subrequest budget, **and** selects the paid ceilings `C = 8 MiB` / `E = 32,768`. This is the only way to raise `E` on Cloudflare. | On Cloudflare Paid, after upgrading the plan tier, to recover per-pass throughput and the paid ceilings. Do not set on Node; Node selects its own profile, and its ceilings, automatically. |
+| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` | Overrides static snapshot ceiling `C`, whatever the active profile's value is ([per-profile values](../spec/scale-ceilings.md#the-published-envelope)). Raises `S_max = C`, letting larger snapshot rebuilds pass the gate. Must be a plain positive decimal integer byte count (e.g. `8388608`), untrimmed: zero, negatives, `"8mb"`, `"1e6"`, `"0x400"`, `"1.5"`, and surrounding whitespace throw `InvalidConfig` on every API request instead of being silently accepted. Unset or `""` keeps the profile default. On Node and Cloudflare alike, `/v1/healthz`, `/v1/spec`, and dev routes stay up. | On a large Node host, after confirming the host can rebuild that snapshot (`C ≈ heap / 10`). On Cloudflare, prefer the profile switch first. |
+| `BAERLY_MAINTENANCE_PROFILE` | Cloudflare-only. Accepts `cf-free` (default; also unset or `""`) or `cf-paid`, case-sensitive; any other value, including surrounding whitespace, throws `InvalidConfig` on API requests (healthz, spec, and dev routes stay up). `cf-paid` raises fold-entry and GC cadence/mark/sweep caps to Node values, using the paid 10,000-subrequest budget, **and** selects the paid `C` / `E` ceilings. This is the only way to raise `E` on Cloudflare. | On Cloudflare Paid, after upgrading the plan tier, to recover per-pass throughput and the paid ceilings. Do not set on Node; Node selects its own profile, and its ceilings, automatically. |
 | `BAERLY_MAINTENANCE_DISABLE` | Kill switch; disables in-band fold/GC phases while preserving bounded `tail_hint` refresh. Accepts a closed, case-insensitive vocabulary only: `""` / `"0"` / `"false"` (not disabled, the default) or `"1"` / `"true"` (disabled). Any other value throws on every request that reads it instead of being silently accepted — on Node and Cloudflare alike, `/v1/healthz` and `/v1/spec` are unaffected since they're served before this var is read. | Diagnostics, or to stop fold attempts on a deferring collection while you plan graduation. |
 
 There is no env var for `E`. It is a kernel constant, not
-adapter-threaded — but there are three of them, one per profile (2,048 /
-32,768 / 65,536), so the profile in effect is what sets it. Selecting a
+adapter-threaded — but there are three of them, one per profile
+([values](../spec/scale-ceilings.md#the-published-envelope)), so the profile in effect is what sets it. Selecting a
 larger profile is the supported way to raise `E`.
 
 **Cloudflare caveat: size the cap to the isolate.** Raising
@@ -407,8 +404,8 @@ On the free profile, the CF adapter `console.warn`s once at handler init
 when `BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES`
 (1 MiB) — the point past which one fold stops fitting the free tier's CPU
 budget. Free CPU is best effort on either storage path; Paid is the first
-tier with a guaranteed CPU budget. It stays silent on `cf-paid`, whose own ceiling is already 8x
-that bound and whose binding cost is memory rather than CPU. Either way
+tier with a guaranteed CPU budget. It stays silent on `cf-paid`, whose own ceiling is already
+well past that bound and whose binding cost is memory rather than CPU. Either way
 there is no runtime metric: watch the snapshot key and object count from
 `baerly inspect`; a snapshot key that never advances while
 `live_log_tail` grows is a rebuild that keeps not landing.
@@ -420,7 +417,7 @@ Safe remedies, in order:
   than the 30 s CPU budget. Any further override is sized to memory too.
 - **Serverful Node:** no per-request CPU/subrequest cap; bounded by host
   RAM, and the node profile is selected automatically. Raise the env cap
-  above 32 MiB only with heap to spare.
+  above the node `C` only with heap to spare.
 - **Chunked snapshots:** a chunked replacement for the single-level
   snapshot would avoid holding the whole snapshot resident. Not shipped;
   it lands as a pre-1.0 format cut rather than an in-place upgrade, and
@@ -431,9 +428,9 @@ Safe remedies, in order:
 
 | Limit | How to raise it | Notes |
 | --- | --- | --- |
-| Static fold-byte ceiling `C` (512 KiB cf-free / 8 MiB cf-paid / 32 MiB node) | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var | Set out-of-band in the deploy environment; takes effect on the next write tick. Size to what the host can rebuild — `C ≈ heap / 10`. |
-| Static fold-row ceiling `E` (2,048 cf-free / 32,768 cf-paid / 65,536 node) | Move to a larger host profile: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Cloudflare, or a Node host (automatic) | No env var sets `E` directly. Node's 65,536 is the largest shipped value; past it, split or graduate the collection. |
-| Cloudflare free CPU budget (~10 ms, economic and best effort) and, for S3 over HTTP only, the 50-`fetch` subrequest limit (hard; R2 binding calls don't count) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past 8 MiB. A finer-grained per-platform `cpuLimit` declaration was evaluated and judged unnecessary — as a design assertion, not a measurement: `C` and `E` already sit well inside the free CPU budget, so a separate knob would add operator surface without changing which folds pass the gate. |
+| Static fold-byte ceiling `C` ([per profile](../spec/scale-ceilings.md#the-published-envelope)) | `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` env var | Set out-of-band in the deploy environment; takes effect on the next write tick. Size to what the host can rebuild — `C ≈ heap / 10`. |
+| Static fold-row ceiling `E` ([per profile](../spec/scale-ceilings.md#the-published-envelope)) | Move to a larger host profile: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Cloudflare, or a Node host (automatic) | No env var sets `E` directly. Node's is the largest shipped value; past it, split or graduate the collection. |
+| Cloudflare free CPU budget (~10 ms, economic and best effort) and, for S3 over HTTP only, the 50-`fetch` subrequest limit (hard; R2 binding calls don't count) | Cloudflare plan upgrade (free → paid), then `BAERLY_MAINTENANCE_PROFILE=cf-paid` | Paid raises CPU to 30 s default (up to 5 min); subrequest limit lifts to 10,000/request by default, raisable to 10M, changed 2026-02-11. The profile switch also moves `C`/`E` to the paid ceilings, so `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` is only needed to go past the cf-paid `C`. A finer-grained per-platform `cpuLimit` declaration was evaluated and judged unnecessary — as a design assertion, not a measurement: `C` and `E` already sit well inside the free CPU budget, so a separate knob would add operator surface without changing which folds pass the gate. |
 | Per-collection commit scope (one ordered log per collection; no cross-collection atomicity) | Cannot be increased; protocol invariant | The write hotspot is the next numbered `log/<seq>` create for one collection. Cross-collection atomicity is not offered. |
 | Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were never runtime-verified; the objects are now inert and nothing reads or reclaims them, so the truncation carries no remaining safety obligation. |
 
@@ -443,14 +440,14 @@ it.
 
 ## See also
 
-- [workload-fit.md](workload-fit.md#scale-at-a-glance) — the published
-  envelope this page triggers on, and whether the app fitted in the
+- [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope) — the
+  figures this page triggers on.
+- [workload-fit.md](workload-fit.md) — whether the app fitted in the
   first place.
 - [cost-model.md](cost-model.md) — Class A ops, write-amp, stored bytes,
   and the cost meters behind the two cost triggers.
-- [scale-ceilings.md](../spec/scale-ceilings.md) — why `C`, `E`, and the
-  per-tier walls are the numbers they are. Read it when a threshold here
-  is challenged rather than acted on.
+- [scale-ceilings.md](../spec/scale-ceilings.md) — also why `C`, `E`,
+  and the per-tier walls are the numbers they are.
 - [thesis.md](thesis.md#workload-ceiling) — why the envelope is named
   and why graduation is the success path.
 - [adr/002-ephemeral-coordination.md](../adr/002-ephemeral-coordination.md)
