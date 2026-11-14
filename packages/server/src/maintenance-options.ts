@@ -47,8 +47,10 @@ export interface MaintenanceResult {
   /** Writes folded into the collection's compacted state. `0` when the pass did not compact. */
   readonly folded: number;
   /**
-   * Present when there was work to fold but this pass folded none of it.
-   * Nothing is lost; the next pass retries. `"contention"`: a concurrent
+   * Present when contention or a probe budget prevented folding. Omitted
+   * for `"cf-free"` tails below its 20-entry fold floor, which stay unfolded
+   * until more writes arrive. Nothing is lost; the next pass retries after
+   * contention or a probe-budget deferral. `"contention"`: a concurrent
    * write or pass won the race. `"budget"`: the pass ran out of its
    * per-invocation budget while locating the latest writes; it saved its
    * progress, so later passes get further.

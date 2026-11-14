@@ -6,7 +6,7 @@
 
 - Removed from `@gusto/baerly-storage/maintenance`: `compact`, `runGc`, `CompactOptions`, `CompactResult`, `RunGcOptions`, `RunGcResult`, `MaintenanceArgs`, `MaintenanceProfile`, `MAINTENANCE_PROFILE_CF_FREE`, `MAINTENANCE_PROFILE_CF_PAID`, `MAINTENANCE_PROFILE_NODE`, `CLOUDFLARE_FREE_TIER` and `CLOUDFLARE_PAID_TIER`. `MaintenanceOptions` and `MaintenanceResult` keep their names with the new shapes; `MaintenanceTarget` is new.
 - Removed from `@gusto/baerly-storage/cloudflare`: `resolveCfMaintenanceProfile`. Pass the `BAERLY_MAINTENANCE_PROFILE` value as `tier`.
-- `minEntriesToCompact` is no longer an option. A scheduled pass folds any pending write (one 20-entry slice at a time under `"cf-free"`).
+- `minEntriesToCompact` is no longer an option. Node and `"cf-paid"` scheduled passes fold any pending write. Under `"cf-free"`, a pass folds one 20-entry slice only when at least 20 entries are pending; a remaining tail of 1–19 entries stays unfolded until more writes arrive.
 - Invalid `app` / `tenant` / `collection` names, and unknown `tier` / `phase` values, throw `InvalidConfig` before any storage call.
 
 In-band maintenance is unchanged and still needs no import; a schedule stays optional.
