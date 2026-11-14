@@ -444,8 +444,10 @@ const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
 await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
 ```
 
-A pass folds every pending write (one bounded slice per pass on Cloudflare), so a
-low-write collection drains to zero.
+Node and Cloudflare Paid scheduled passes fold any pending write, so repeated
+passes drain a low-write collection to zero. Cloudflare Free folds only when at
+least 20 entries are pending, one 20-entry slice per pass; a remaining tail of
+1–19 entries stays unfolded until more writes arrive.
 
 <!-- pattern-d:end -->
 
