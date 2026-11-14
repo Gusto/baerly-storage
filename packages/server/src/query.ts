@@ -107,7 +107,7 @@ export interface CollectionReadContext {
    * `{ path, message }` entries. `undefined` means no validation
    * (today's behaviour — zero overhead).
    *
-   * Threaded in by {@link Db.collectionReadContext} from the per-collection
+   * Threaded in by `collectionReadContext` from the per-collection
    * map handed to {@link Db.create}; the boundary calls happen in
    * `query.ts`, not `writer.ts`, so schemas plug in at the
    * read/write API surface rather than at the writer layer.
@@ -731,7 +731,7 @@ const withLiveBefore = (
  *   durable, but its outcome could not be resolved. The row may or may not
  *   have been inserted. Not retriable-by-default; see `Writer.commit`.
  * @throws BaerlyError code="SchemaError" — from the per-collection
- *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
+ *   `SchemaValidator` threaded via `collectionReadContext`.
  *
  * @internal — exported for `Collection.insert` in `./collection.ts` to delegate
  *             without duplicating the auto-id / collision-check /

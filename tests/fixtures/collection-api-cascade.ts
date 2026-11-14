@@ -38,6 +38,7 @@ import { Db } from "@baerly/server";
 import { compact, runGc } from "@baerly/server/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import {
+  compactInternal,
   type InternalCompactOptions,
   type InternalRunGcOptions,
   Writer,
@@ -747,7 +748,7 @@ const runCompactionCascade = async (
   expect(before).toHaveLength(30);
 
   // Compact: minEntriesToCompact below our N so the run lands.
-  const res = await compact(
+  const res = await compactInternal(
     {
       storage,
       currentJsonKey: `app/${app}/tenant/${tenant}/manifests/${t}/current.json`,

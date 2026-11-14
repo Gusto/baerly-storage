@@ -55,6 +55,7 @@ import {
   type RequestPool,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
+import { getCurrentJson, getLogEntry, probeLogChunk } from "../db-read-seams.ts";
 import type { SinceResponse } from "../contract.ts";
 import { forwardProbeCap, isStorageRefusal } from "../log-tail.ts";
 
@@ -392,7 +393,7 @@ async function pollOnce(
   const entries: LogEntry[] = [];
   let generation: string | undefined;
   try {
-    const read = await budget.observe(() => db.getCurrentJson(collection, signalOpt(signal)));
+    const read = await budget.observe(() => getCurrentJson(db, collection, signalOpt(signal)));
     if (read === null) {
       // No collection provisioned yet. Clients polling for a collection that
       // doesn't exist see an empty stream, NOT an error.
@@ -458,7 +459,7 @@ async function pollOnce(
       if (budget.left() < 1) {
         return { events: entries, generation };
       }
-      const entry = await db.getLogEntry(collection, s, read.json, signalOpt(signal));
+      const entry = await getLogEntry(db, collection, s, read.json, signalOpt(signal));
       if (entry === null) {
         // Race: the GC sweeper deleted this entry between
         // `getCurrentJson` and the GET. Skip; don't error.
@@ -476,7 +477,7 @@ async function pollOnce(
     // after its last entry.
     const cap = Math.min(endSeq - s, budget.left());
     if (cap >= 1) {
-      const chunk = await db.probeLogChunk(collection, s, read.json, {
+      const chunk = await probeLogChunk(db, collection, s, read.json, {
         cap,
         ...(signal !== undefined && { signal }),
       });

@@ -9,7 +9,8 @@
 import { describe, expect, test } from "vitest";
 import { MemoryStorage, type Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import type { InternalBoundedMaintenanceOptions } from "../../packages/server/src/maintenance-options.ts";
 import { listIndexObjects } from "../fixtures/legacy-index-markers.ts";
 

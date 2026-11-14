@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { Storage } from "@baerly/protocol";
 // oxlint-disable-next-line no-duplicate-imports
 import { snapshotHash } from "@baerly/protocol";
-import { encodeSnapshotBody } from "@baerly/server";
+import { encodeSnapshotBody } from "@baerly/server/_internal/kernel";
 import worker, { type WorkloadCeilingWorkerEnv } from "./index.ts";
 
 vi.mock("@baerly/adapter-cloudflare", () => ({

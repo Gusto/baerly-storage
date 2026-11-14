@@ -175,38 +175,6 @@ void runScheduledMaintenance;
 `,
   },
   {
-    name: "positive-public-log-helper-surface",
-    expect: "compiles",
-    source: `
-import {
-  probeTailFrom,
-  type Storage,
-  walkLogRange,
-} from "@gusto/baerly-storage";
-
-declare const storage: Storage;
-declare const signal: AbortSignal;
-
-const walkSignature: (
-  storage: Storage,
-  logPrefix: string,
-  fromSeq: number,
-  toSeqExclusive: number,
-  opts?: { signal?: AbortSignal },
-) => Promise<Array<{ seq: number }>> = walkLogRange;
-
-const probeSignature: (
-  storage: Storage,
-  logPrefix: string,
-  hint: number,
-  opts?: { signal?: AbortSignal; cap?: number },
-) => Promise<{ tail: number; entries: Array<{ seq: number }> }> = probeTailFrom;
-
-void walkSignature(storage, "app/a/tenant/t/manifests/c", 5, 9, { signal });
-void probeSignature(storage, "app/a/tenant/t/manifests/c", 9, { signal, cap: 32 });
-`,
-  },
-  {
     name: "negative-internal-compact-options-from-root",
     expect: "fails",
     codes: ["TS2305", "TS2724"],
@@ -252,6 +220,89 @@ export type Leaked = InternalRunGcOptions;
     source: `
 import { compactInternal } from "@gusto/baerly-storage/maintenance";
 export const leaked = compactInternal;
+`,
+  },
+  {
+    name: "negative-log-walk-from-root",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import { walkLogRange } from "@gusto/baerly-storage";
+export const leaked = walkLogRange;
+`,
+  },
+  {
+    name: "negative-snapshot-codec-from-root",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import type { SnapshotBody } from "@gusto/baerly-storage";
+export type Leaked = SnapshotBody;
+`,
+  },
+  {
+    name: "negative-write-tick-runner-from-maintenance",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import { runBoundedMaintenance } from "@gusto/baerly-storage/maintenance";
+export const leaked = runBoundedMaintenance;
+`,
+  },
+  {
+    name: "negative-maintenance-dispatch-from-maintenance",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import type { MaintenanceDispatch } from "@gusto/baerly-storage/maintenance";
+export type Leaked = MaintenanceDispatch;
+`,
+  },
+  {
+    name: "negative-snapshot-key-on-compact-result",
+    expect: "fails",
+    codes: ["TS2339"],
+    source: `
+import type { CompactResult } from "@gusto/baerly-storage/maintenance";
+declare const res: CompactResult;
+export const leaked = res.newSnapshotKey;
+`,
+  },
+  {
+    name: "negative-db-read-seam",
+    expect: "fails",
+    codes: ["TS2339"],
+    source: `
+import { Db, MemoryStorage } from "@gusto/baerly-storage";
+const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+export const leaked = db.getCurrentJson("tickets");
+`,
+  },
+  {
+    name: "negative-read-envelope-from-observability",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import type { ReadEnvelope } from "@gusto/baerly-storage/observability";
+export type Leaked = ReadEnvelope;
+`,
+  },
+  {
+    name: "negative-maintenance-on-observability-context",
+    expect: "fails",
+    codes: ["TS2353"],
+    source: `
+import { createObservabilityContext } from "@gusto/baerly-storage/observability";
+export const leaked = createObservabilityContext({ maintenance: { disabled: true } });
+`,
+  },
+  {
+    name: "negative-internal-kernel-subpath",
+    expect: "fails",
+    codes: ["TS2307"],
+    source: `
+import { walkLogRange } from "@gusto/baerly-storage/_internal/kernel";
+export const leaked = walkLogRange;
 `,
   },
   {

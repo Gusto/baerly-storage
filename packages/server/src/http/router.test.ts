@@ -639,7 +639,7 @@ describe("collection-segment validation closes the traversal bypass", () => {
 
   // `GET /v1/since?collection=..` — the handler's inline reject only
   // catches empty / `/`; `..` slips past it into `longPollSince` →
-  // `db.getCurrentJson` / `db.getLogEntry`. Without the db-layer guard
+  // `getCurrentJson` / `getLogEntry`. Without the db-layer guard
   // this reaches storage with an unvalidated traversal segment. The
   // synchronous `assertPathSegment` throw fires before any poll, so no
   // timeout wiring is needed.
@@ -678,7 +678,7 @@ describe("collection-segment validation closes the traversal bypass", () => {
   // are the real regression pins: confirm the HTTP layer doesn't mangle
   // the segment into something that bypasses `assertKeySegment`. Each
   // is rejected InvalidConfig by Task 1's strengthened guard inside
-  // `db.collectionReadContext`, and the route surfaces that rejection.
+  // `collectionReadContext`, and the route surfaces that rejection.
   // (Already GREEN after Task 1; kept here as a regression pin.)
   test.each([
     ["http://localhost/v1/c/%2e%2e%2fx?where=%7B%22clauses%22%3A%5B%5D%7D", ".. → ../x"],

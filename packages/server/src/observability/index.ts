@@ -12,8 +12,8 @@
  *    for standalone callers that don't have an adapter-managed
  *    scope) and runs the work under {@link runWithContext}.
  * 3. The adapter calls {@link flushCanonicalLine} at end-of-request;
- *    verifier-rejected requests call
- *    {@link flushUnauthorizedAndRespond} instead.
+ *    verifier-rejected requests call `flushUnauthorizedAndRespond`
+ *    (adapter wiring on `@baerly/server/_internal/observability`).
  * 4. Kernel emissions (Writer histograms, compactor / GC gauges,
  *    storage decorator counters) reach the per-request recorder via
  *    the ALS lookup inside emission sites
@@ -24,14 +24,29 @@
  * separately; this barrel is the observability seam only.
  */
 
+import {
+  type ObservabilityContext,
+  type ObservabilityContextInit,
+  createObservabilityContext as createContext,
+  getCurrentContext as currentContext,
+} from "./context.ts";
+
 export {
   type ObservabilityContext,
   type ObservabilityContextInit,
-  createObservabilityContext,
   runWithContext,
-  getCurrentContext,
 } from "./context.ts";
-export type { ReadEnvelope } from "../read-admission.ts";
+
+/**
+ * Build a per-unit-of-work {@link ObservabilityContext}. Pass it to
+ * {@link runWithContext}; every kernel emission inside reaches its
+ * recorder.
+ */
+export const createObservabilityContext: (init?: ObservabilityContextInit) => ObservabilityContext =
+  createContext;
+
+/** Returns the currently-active context, or `undefined` outside one. */
+export const getCurrentContext: () => ObservabilityContext | undefined = currentContext;
 export {
   type CategoryName,
   type FriendlyLogLevel,
@@ -39,12 +54,10 @@ export {
   CATEGORY,
   configureObservability,
   getLogger,
-  logMaintenanceWarning,
 } from "./logger.ts";
 export {
   type FlushCanonicalLineOptions,
   flushCanonicalLine,
-  flushUnauthorizedAndRespond,
   withHttpObservability,
 } from "./canonical.ts";
 export { observableStorage } from "./storage.ts";

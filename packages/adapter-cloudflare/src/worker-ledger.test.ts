@@ -22,11 +22,11 @@ import {
   RequestLedger,
   type Verifier,
 } from "@baerly/protocol";
+import { runWithContext } from "@baerly/server/observability";
 import {
   createObservabilityContext,
   getCurrentContext,
-  runWithContext,
-} from "@baerly/server/observability";
+} from "@baerly/server/_internal/observability";
 import { Writer } from "@baerly/server/_internal/testing";
 import { describe, expect, test } from "vitest";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";

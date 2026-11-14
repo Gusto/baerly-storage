@@ -41,6 +41,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
+import { collectionReadContext } from "./db-read-seams.ts";
 import { runInsert } from "./query.ts";
 
 const APP = "test";
@@ -178,7 +179,7 @@ describe("insert: SDK-minted replay (runInsert mintedId)", () => {
   };
 
   test("an identical minted insert returns the original { _id } and commits nothing", async () => {
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const id = uuidv7();
     const doc = { _id: id, title: "t", status: "open" };
     await expect(runInsert(ctx, doc, { mintedId: id })).resolves.toEqual({ _id: id });
@@ -188,7 +189,7 @@ describe("insert: SDK-minted replay (runInsert mintedId)", () => {
   });
 
   test("a minted replay with permuted keys still matches the stored row", async () => {
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const id = uuidv7();
     await runInsert(ctx, { _id: id, title: "t", nested: { a: 1, b: [1, 2] } }, { mintedId: id });
     await expect(
@@ -198,7 +199,7 @@ describe("insert: SDK-minted replay (runInsert mintedId)", () => {
   });
 
   test("an identical caller-supplied insert stays AlreadyExists", async () => {
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const id = uuidv7();
     const doc = { _id: id, title: "t" };
     await runInsert(ctx, doc, { mintedId: id });
@@ -210,7 +211,7 @@ describe("insert: SDK-minted replay (runInsert mintedId)", () => {
   });
 
   test("a minted insert with a different body is AlreadyExists", async () => {
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const id = uuidv7();
     await runInsert(ctx, { _id: id, title: "t" }, { mintedId: id });
     await expect(
@@ -220,7 +221,7 @@ describe("insert: SDK-minted replay (runInsert mintedId)", () => {
   });
 
   test("a minted replay after an update to a different body is AlreadyExists", async () => {
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const id = uuidv7();
     const doc = { _id: id, title: "t" };
     await runInsert(ctx, doc, { mintedId: id });
@@ -232,7 +233,7 @@ describe("insert: SDK-minted replay (runInsert mintedId)", () => {
   });
 
   test("a mintedId that is not the doc _id throws InvalidConfig before I/O", async () => {
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     await expect(
       runInsert(ctx, { _id: uuidv7(), title: "t" }, { mintedId: uuidv7() }),
     ).rejects.toMatchObject({ code: "InvalidConfig" });

@@ -44,7 +44,7 @@ export default defineConfig({
     index: "packages/server/src/index.ts",
     auth: "packages/server/src/auth/index.ts",
     http: "packages/server/src/http/index.ts",
-    maintenance: "packages/server/src/maintenance.ts",
+    maintenance: "packages/server/src/maintenance-entry.ts",
     observability: "packages/server/src/observability/index.ts",
     "app-config": "packages/protocol/src/app-config.ts",
     cloudflare: "packages/adapter-cloudflare/src/index.ts",

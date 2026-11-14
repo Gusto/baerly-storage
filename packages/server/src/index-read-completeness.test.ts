@@ -14,7 +14,9 @@ import {
 } from "../../../tests/fixtures/legacy-index-markers.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
-import { createObservabilityContext, runWithContext } from "./observability/index.ts";
+import { collectionReadContext } from "./db-read-seams.ts";
+import { runWithContext } from "./observability/index.ts";
+import { createObservabilityContext } from "./observability/context.ts";
 import { runAllWithMeta, serializeManifestPointer } from "./query.ts";
 
 const APP = "a";
@@ -81,7 +83,7 @@ describe("reads return every live matching row with declared indexes", () => {
       limit: undefined,
     };
 
-    const reading = runAllWithMeta(reader.collectionReadContext(COLL), openRows);
+    const reading = runAllWithMeta(collectionReadContext(reader, COLL), openRows);
     await readerGate.reached;
     await offTick(() => b.collection(COLL).insert({ _id: "x", status: "open" }));
     readerGate.release();

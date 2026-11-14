@@ -1,5 +1,5 @@
 import { BaerlyError, readCurrentJson, type DocumentValue, type Storage } from "@baerly/protocol";
-import { loadSnapshotAsMap, probeTailFrom, walkLogRange } from "@baerly/server";
+import { loadSnapshotAsMap, probeTailFrom, walkLogRange } from "@baerly/server/_internal/kernel";
 import { isOwnCollection } from "@baerly/server/_internal/testing";
 import type { ColumnPlan, ExportPlan, ExportRow, SqlTarget, SqlType } from "./types.ts";
 import { quoteIdentifier } from "./sql-escape.ts";

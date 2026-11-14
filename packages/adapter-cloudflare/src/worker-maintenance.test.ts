@@ -48,12 +48,13 @@ import {
   WRITE_TICK_GC_MAX_MARKS,
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
-import { compact, runBoundedMaintenance } from "@baerly/server/maintenance";
+import { compact } from "@baerly/server/maintenance";
+import { runBoundedMaintenance } from "@baerly/server/_internal/maintenance";
+import { runWithContext } from "@baerly/server/observability";
 import {
   createObservabilityContext,
   getCurrentContext,
-  runWithContext,
-} from "@baerly/server/observability";
+} from "@baerly/server/_internal/observability";
 import { Writer } from "@baerly/server/_internal/testing";
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";

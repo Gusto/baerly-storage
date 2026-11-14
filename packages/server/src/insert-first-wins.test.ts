@@ -31,12 +31,10 @@ import {
 import { seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
+import { collectionReadContext } from "./db-read-seams.ts";
 import { retireLogRange } from "./log-retention.ts";
-import {
-  createObservabilityContext,
-  type ObservabilityContext,
-  runWithContext,
-} from "./observability/index.ts";
+import { type ObservabilityContext, runWithContext } from "./observability/index.ts";
+import { createObservabilityContext } from "./observability/context.ts";
 import { runInsert } from "./query.ts";
 
 const APP = "a";
@@ -160,7 +158,7 @@ const mintedInsert = async (
   obs: ObservabilityContext = MAINTENANCE_OFF,
 ) =>
   await runWithContext(obs, () =>
-    runInsert(db.collectionReadContext(COLL), body, { mintedId: body._id }),
+    runInsert(collectionReadContext(db, COLL), body, { mintedId: body._id }),
   );
 
 /** A fresh maintenance-off context, so a test can read its own counters. */

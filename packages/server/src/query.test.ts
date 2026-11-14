@@ -25,6 +25,7 @@ import {
 import { beforeEach, describe, expect, test } from "vitest";
 import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
+import { collectionReadContext } from "./db-read-seams.ts";
 import { runAllWithMeta, serializeManifestPointer, singleIdFromPredicate } from "./query.ts";
 
 const wireOf = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
@@ -451,7 +452,7 @@ describe("Db.collection read terminals", () => {
       body: { _id: "doc-1", title: "hello" },
     });
 
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const baseState = {
       wire: undefined,
       order: undefined,
@@ -503,7 +504,7 @@ describe("Db.collection read terminals", () => {
       await storage.put(logKey(COLL, seq), new TextEncoder().encode(JSON.stringify(entry)));
     }
 
-    const ctx = db.collectionReadContext(COLL);
+    const ctx = collectionReadContext(db, COLL);
     const res = await runAllWithMeta<DocumentData>(ctx, {
       wire: undefined,
       order: undefined,
