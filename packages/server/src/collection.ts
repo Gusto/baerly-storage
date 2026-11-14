@@ -107,7 +107,7 @@ export const makeCollection = <T extends DocumentData>(
      *   not have been inserted. Re-read by a stable `_id`; absence is not proof
      *   of failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — from the per-collection
-     *   `SchemaValidator` threaded via {@link Db.collectionReadContext}.
+     *   `SchemaValidator` threaded via `collectionReadContext`.
      * @throws BaerlyError code="InvalidConfig" — the supplied `_id` is not a
      *   string (`null` included), or breaks the key-segment rule, holds an
      *   unpaired UTF-16 surrogate, or is not NFC. Nothing was written.

@@ -11,6 +11,12 @@ import {
 import { describe, expect, test } from "vitest";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
+import {
+  collectionReadContext,
+  getCurrentJson,
+  getLogEntry,
+  probeLogTail,
+} from "./db-read-seams.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 
 /**
@@ -103,18 +109,18 @@ describe("Db.create", () => {
   );
 
   test.each(["..", "with\u0000null"])(
-    "db.getCurrentJson(%j) rejects InvalidConfig (no unvalidated traversal)",
+    "getCurrentJson(db, %j) rejects InvalidConfig (no unvalidated traversal)",
     async (bad) => {
       const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
-      await expect(db.getCurrentJson(bad)).rejects.toMatchObject({ code: "InvalidConfig" });
+      await expect(getCurrentJson(db, bad)).rejects.toMatchObject({ code: "InvalidConfig" });
     },
   );
 
   test.each(["..", "with\u0000null"])(
-    "db.getLogEntry(%j) rejects InvalidConfig (no unvalidated traversal)",
+    "getLogEntry(db, %j) rejects InvalidConfig (no unvalidated traversal)",
     async (bad) => {
       const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
-      await expect(db.getLogEntry(bad, 0, FLOOR_ZERO)).rejects.toMatchObject({
+      await expect(getLogEntry(db, bad, 0, FLOOR_ZERO)).rejects.toMatchObject({
         code: "InvalidConfig",
       });
     },
@@ -160,13 +166,13 @@ describe("app, tenant and collection names must be NFC", () => {
 
   test.each(NON_NFC)("db.collection and collectionReadContext reject %j", (bad) => {
     expect(() => db().collection(bad)).toThrow(expect.objectContaining(NFC_ERROR));
-    expect(() => db().collectionReadContext(bad)).toThrow(expect.objectContaining(NFC_ERROR));
+    expect(() => collectionReadContext(db(), bad)).toThrow(expect.objectContaining(NFC_ERROR));
   });
 
   test.each(NON_NFC)("the /v1/since seams reject collection %j", async (bad) => {
-    await expect(db().getCurrentJson(bad)).rejects.toMatchObject(NFC_ERROR);
-    await expect(db().getLogEntry(bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
-    await expect(db().probeLogTail(bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
+    await expect(getCurrentJson(db(), bad)).rejects.toMatchObject(NFC_ERROR);
+    await expect(getLogEntry(db(), bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
+    await expect(probeLogTail(db(), bad, 0, FLOOR_ZERO)).rejects.toMatchObject(NFC_ERROR);
   });
 
   test.each(NON_NFC)("Db.create rejects a config collection key %j", (bad) => {
@@ -347,7 +353,7 @@ describe("Db → per-request metrics emission", () => {
 });
 
 // Required pin 2 of the log-retention safety contract: the two log-read
-// seams on the public `Db` are floored at `log_seq_start`. Before this,
+// seams over a `Db` are floored at `log_seq_start`. Before this,
 // `getLogEntry` took an arbitrary `seq` with no floor of any kind and
 // `probeLogTail` an unvalidated `hint`; the only production caller
 // (`http/since.ts`) floored correctly, but the floor lived entirely in
@@ -376,7 +382,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     for (let i = 0; i < count; i++) {
       await db.collection(TABLE).insert({ title: `row ${i}` });
     }
-    const read = await db.getCurrentJson(TABLE);
+    const read = await getCurrentJson(db, TABLE);
     if (read === null) {
       throw new Error("test setup: current.json missing after insert");
     }
@@ -397,12 +403,12 @@ describe("Db log-read seams are floored at log_seq_start", () => {
 
   test("getLogEntry reads an entry at the floor", async () => {
     const { db, current } = await seedEntries();
-    await expect(db.getLogEntry(TABLE, 0, current)).resolves.toMatchObject({ op: "I", seq: 0 });
+    await expect(getLogEntry(db, TABLE, 0, current)).resolves.toMatchObject({ op: "I", seq: 0 });
   });
 
   test("getLogEntry throws Internal below the floor", async () => {
     const { db, current } = await seedEntries();
-    await expect(db.getLogEntry(TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
+    await expect(getLogEntry(db, TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
       code: "Internal",
     });
   });
@@ -413,7 +419,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
   // real floor with a folded entry beneath it and must still read.
   test("getLogEntry reads an entry at a raised floor", async () => {
     const { db, current } = await seedEntries(2);
-    await expect(db.getLogEntry(TABLE, 1, raiseFloor(current, 1))).resolves.toMatchObject({
+    await expect(getLogEntry(db, TABLE, 1, raiseFloor(current, 1))).resolves.toMatchObject({
       op: "I",
       seq: 1,
     });
@@ -425,7 +431,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
   // `false`) and resolve `null` off a `log/NaN.json` GET.
   test("getLogEntry throws Internal on a seq below a zero floor", async () => {
     const { db, current } = await seedEntries();
-    await expect(db.getLogEntry(TABLE, -1, current)).rejects.toMatchObject({
+    await expect(getLogEntry(db, TABLE, -1, current)).rejects.toMatchObject({
       code: "Internal",
       // The FOLD-floor wording, not the certified-delete-floor one. An absent
       // `log_delete_floor` decodes to 0, so a negative seq sorts below it
@@ -441,26 +447,26 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     // Both guards would fire. The path-segment guard is the security
     // boundary, so it must win — a traversal attempt is never
     // reclassified as an internal invariant violation.
-    await expect(db.getLogEntry("..", 0, raiseFloor(FLOOR_ZERO, 5))).rejects.toMatchObject({
+    await expect(getLogEntry(db, "..", 0, raiseFloor(FLOOR_ZERO, 5))).rejects.toMatchObject({
       code: "InvalidConfig",
     });
   });
 
   test("probeLogTail probes from the floor", async () => {
     const { db, current } = await seedEntries();
-    await expect(db.probeLogTail(TABLE, 0, current)).resolves.toBe(1);
+    await expect(probeLogTail(db, TABLE, 0, current)).resolves.toBe(1);
   });
 
   // Same reason as the raised-floor read above: the probe must still find
   // the true tail when it starts at a non-zero floor.
   test("probeLogTail probes from a raised floor", async () => {
     const { db, current } = await seedEntries(2);
-    await expect(db.probeLogTail(TABLE, 1, raiseFloor(current, 1))).resolves.toBe(2);
+    await expect(probeLogTail(db, TABLE, 1, raiseFloor(current, 1))).resolves.toBe(2);
   });
 
   test("probeLogTail throws Internal on a sub-floor hint", async () => {
     const { db, current } = await seedEntries();
-    await expect(db.probeLogTail(TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
+    await expect(probeLogTail(db, TABLE, 0, raiseFloor(current, 5))).rejects.toMatchObject({
       code: "Internal",
     });
   });
@@ -483,7 +489,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     test("getLogEntry names the certified delete floor below it", async () => {
       const { db, current } = await seedEntries(4);
       const manifest = withDeleteFloor(raiseFloor(current, 3), 2);
-      await expect(db.getLogEntry(TABLE, 1, manifest)).rejects.toMatchObject({
+      await expect(getLogEntry(db, TABLE, 1, manifest)).rejects.toMatchObject({
         code: "Internal",
         message: expect.stringContaining("below the certified delete floor 2"),
       });
@@ -492,7 +498,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     test("probeLogTail names the certified delete floor below it", async () => {
       const { db, current } = await seedEntries(4);
       const manifest = withDeleteFloor(raiseFloor(current, 3), 2);
-      await expect(db.probeLogTail(TABLE, 1, manifest)).rejects.toMatchObject({
+      await expect(probeLogTail(db, TABLE, 1, manifest)).rejects.toMatchObject({
         code: "Internal",
         message: expect.stringContaining("below the certified delete floor 2"),
       });
@@ -508,7 +514,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     test("a seq between the two floors keeps the fold-floor wording", async () => {
       const { db, current } = await seedEntries(4);
       const manifest = withDeleteFloor(raiseFloor(current, 3), 1);
-      await expect(db.getLogEntry(TABLE, 2, manifest)).rejects.toMatchObject({
+      await expect(getLogEntry(db, TABLE, 2, manifest)).rejects.toMatchObject({
         code: "Internal",
         message: expect.stringContaining("below the fold floor log_seq_start=3"),
       });
@@ -523,7 +529,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     test("clamps an out-of-bound delete floor to log_seq_start", async () => {
       const { db, current } = await seedEntries(2);
       const manifest = withDeleteFloor(raiseFloor(current, 1), 5);
-      await expect(db.getLogEntry(TABLE, 1, manifest)).resolves.toMatchObject({
+      await expect(getLogEntry(db, TABLE, 1, manifest)).resolves.toMatchObject({
         op: "I",
         seq: 1,
       });
@@ -536,7 +542,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     test("reports the stored floor alongside the clamped one", async () => {
       const { db, current } = await seedEntries(4);
       const manifest = withDeleteFloor(raiseFloor(current, 3), 5);
-      await expect(db.getLogEntry(TABLE, 1, manifest)).rejects.toMatchObject({
+      await expect(getLogEntry(db, TABLE, 1, manifest)).rejects.toMatchObject({
         code: "Internal",
         message: expect.stringContaining(
           "below the certified delete floor 3 (stored log_delete_floor=5, clamped to log_seq_start=3)",
@@ -549,7 +555,7 @@ describe("Db log-read seams are floored at log_seq_start", () => {
     test("stays silent when no deleted prefix is certified", async () => {
       const { db, current } = await seedEntries(2);
       await expect(
-        db.getLogEntry(TABLE, -1, withDeleteFloor(raiseFloor(current, 1), 0)),
+        getLogEntry(db, TABLE, -1, withDeleteFloor(raiseFloor(current, 1), 0)),
       ).rejects.toMatchObject({
         code: "Internal",
         message: expect.stringContaining("below the fold floor log_seq_start=1"),

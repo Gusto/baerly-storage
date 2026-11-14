@@ -48,6 +48,17 @@ describe("@gusto/baerly-storage", () => {
     ];
     expect(internals.filter((name) => name in root)).toEqual([]);
   });
+
+  test("Db carries no manifest or log read seams", () => {
+    const seams = [
+      "collectionReadContext",
+      "getCurrentJson",
+      "getLogEntry",
+      "probeLogChunk",
+      "probeLogTail",
+    ];
+    expect(seams.filter((name) => name in Db.prototype)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

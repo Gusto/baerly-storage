@@ -269,6 +269,16 @@ export const leaked = res.newSnapshotKey;
 `,
   },
   {
+    name: "negative-db-read-seam",
+    expect: "fails",
+    codes: ["TS2339"],
+    source: `
+import { Db, MemoryStorage } from "@gusto/baerly-storage";
+const db = Db.create({ storage: new MemoryStorage(), app: "a", tenant: "t" });
+export const leaked = db.getCurrentJson("tickets");
+`,
+  },
+  {
     name: "negative-internal-kernel-subpath",
     expect: "fails",
     codes: ["TS2307"],

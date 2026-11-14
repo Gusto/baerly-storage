@@ -39,6 +39,7 @@ import {
 import { CAPACITY_WARNING_FIELD } from "../capacity.ts";
 import { isCallerFacing, markCallerFacing } from "../caller-facing-error.ts";
 import type { Db } from "../db.ts";
+import { collectionReadContext } from "../db-read-seams.ts";
 import {
   errorEnvelope,
   type HttpErrorEnvelope,
@@ -112,7 +113,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   app.get("/v1/c/:collection/:id", async (c) => {
     const { collection, id } = c.req.param();
     const { rows, manifestPointer, fresh } = await runByIdWithMeta(
-      db.collectionReadContext(collection),
+      collectionReadContext(db, collection),
       id,
     );
     const row = rows[0];
@@ -135,7 +136,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const order = parseOrder(c.req.query("order"));
     const limit = parseLimit(c.req.query("limit"));
     const { rows, manifestPointer, fresh } = await runAllWithMeta(
-      db.collectionReadContext(collection),
+      collectionReadContext(db, collection),
       {
         wire,
         order,
@@ -161,7 +162,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const doc = assertJsonBodyField(body, "doc");
     const mintedId = readMintedId(body, doc);
     const { _id } = await runInsert(
-      db.collectionReadContext(collection),
+      collectionReadContext(db, collection),
       doc as Partial<DocumentData> & DocumentData,
       mintedId === undefined ? undefined : { mintedId },
     );
@@ -223,7 +224,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     }
     const wire = parseWhereParam(c);
     const { rows, manifestPointer, fresh } = await runAllWithMeta(
-      db.collectionReadContext(collection),
+      collectionReadContext(db, collection),
       {
         wire,
         order: undefined,
