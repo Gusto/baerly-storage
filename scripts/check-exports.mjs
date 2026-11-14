@@ -165,13 +165,103 @@ const CONSUMER_FIXTURES = [
     name: "positive-public-maintenance-surface",
     expect: "compiles",
     source: `
-import type { CompactOptions, MaintenanceOptions } from "@gusto/baerly-storage/maintenance";
+import type {
+  MaintenanceOptions,
+  MaintenanceResult,
+  MaintenanceTarget,
+} from "@gusto/baerly-storage/maintenance";
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
+import { MemoryStorage } from "@gusto/baerly-storage";
 
-const compactOptions: CompactOptions = { minEntriesToCompact: 100 };
-const options: MaintenanceOptions = { compact: compactOptions };
-void options;
-void runScheduledMaintenance;
+const target: MaintenanceTarget = {
+  storage: new MemoryStorage(),
+  app: "a",
+  tenant: "t",
+  collection: "tickets",
+};
+const options: MaintenanceOptions = { tier: "cf-free", phase: "gc" };
+export const run = async (): Promise<number> => {
+  const res: MaintenanceResult = await runScheduledMaintenance(target, options);
+  return res.folded + res.gcDeleted + res.pending + (res.deferred?.reason.length ?? 0);
+};
+`,
+  },
+  ...[
+    ["compact", "compact"],
+    ["run-gc", "runGc"],
+    ["cloudflare-free-tier", "CLOUDFLARE_FREE_TIER"],
+    ["cloudflare-paid-tier", "CLOUDFLARE_PAID_TIER"],
+    ["maintenance-profile-cf-free", "MAINTENANCE_PROFILE_CF_FREE"],
+    ["maintenance-profile-cf-paid", "MAINTENANCE_PROFILE_CF_PAID"],
+    ["maintenance-profile-node", "MAINTENANCE_PROFILE_NODE"],
+  ].map(([slug, name]) => ({
+    name: `negative-${slug}-from-maintenance`,
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import { ${name} } from "@gusto/baerly-storage/maintenance";
+export const leaked = ${name};
+`,
+  })),
+  ...[
+    ["compact-options", "CompactOptions"],
+    ["compact-result", "CompactResult"],
+    ["run-gc-options", "RunGcOptions"],
+    ["run-gc-result", "RunGcResult"],
+    ["maintenance-args", "MaintenanceArgs"],
+    ["maintenance-profile", "MaintenanceProfile"],
+  ].map(([slug, name]) => ({
+    name: `negative-${slug}-from-maintenance`,
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import type { ${name} } from "@gusto/baerly-storage/maintenance";
+export type Leaked = ${name};
+`,
+  })),
+  {
+    name: "negative-current-json-key-on-maintenance-target",
+    expect: "fails",
+    codes: ["TS2353", "TS2322"],
+    source: `
+import { MemoryStorage } from "@gusto/baerly-storage";
+import type { MaintenanceTarget } from "@gusto/baerly-storage/maintenance";
+
+const leaked: MaintenanceTarget = {
+  storage: new MemoryStorage(),
+  currentJsonKey: "app/a/tenant/t/manifests/c/current.json",
+};
+void leaked;
+`,
+  },
+  {
+    name: "negative-min-entries-on-maintenance-options",
+    expect: "fails",
+    codes: ["TS2353", "TS2322"],
+    source: `
+import type { MaintenanceOptions } from "@gusto/baerly-storage/maintenance";
+
+const leaked: MaintenanceOptions = { compact: { minEntriesToCompact: 10 } };
+void leaked;
+`,
+  },
+  {
+    name: "negative-phase-detail-on-maintenance-result",
+    expect: "fails",
+    codes: ["TS2339"],
+    source: `
+import type { MaintenanceResult } from "@gusto/baerly-storage/maintenance";
+declare const res: MaintenanceResult;
+export const leaked = res.compact;
+`,
+  },
+  {
+    name: "negative-resolve-cf-maintenance-profile-from-cloudflare",
+    expect: "fails",
+    codes: ["TS2305", "TS2724"],
+    source: `
+import { resolveCfMaintenanceProfile } from "@gusto/baerly-storage/cloudflare";
+export const leaked = resolveCfMaintenanceProfile;
 `,
   },
   {
@@ -256,16 +346,6 @@ export const leaked = runBoundedMaintenance;
     source: `
 import type { MaintenanceDispatch } from "@gusto/baerly-storage/maintenance";
 export type Leaked = MaintenanceDispatch;
-`,
-  },
-  {
-    name: "negative-snapshot-key-on-compact-result",
-    expect: "fails",
-    codes: ["TS2339"],
-    source: `
-import type { CompactResult } from "@gusto/baerly-storage/maintenance";
-declare const res: CompactResult;
-export const leaked = res.newSnapshotKey;
 `,
   },
   {

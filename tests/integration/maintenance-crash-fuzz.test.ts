@@ -57,7 +57,7 @@ import {
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
-import { compact, runGc } from "@baerly/server/maintenance";
+import { compact, runGc } from "@baerly/server/_internal/maintenance";
 import {
   compactInternal,
   type InternalCompactOptions,

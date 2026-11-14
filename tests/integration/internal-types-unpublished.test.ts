@@ -1,12 +1,12 @@
 /**
  * Anti-leak gate for the `Internal*Options` widenings.
  *
- * Each of `compact()` / `runGc()` / `runScheduledMaintenance()` takes a
- * narrow public options type, with an `Internal*Options` widening that
- * carries budget caps, clock seams, and the GC grace override. Those
- * widenings are meant to reach test fixtures and the CLI through the
- * `@baerly/server/_internal/testing` subpath, which is deliberately
- * absent from `publishConfig.exports`.
+ * `compact()` / `runGc()` and the whole-pass `runMaintenancePass()` take
+ * `Internal*Options` types that carry budget caps, clock seams, and the GC
+ * grace override. They reach test fixtures, the CLI and the adapters
+ * through the `@baerly/server/_internal/*` subpaths, which are
+ * deliberately absent from `publishConfig.exports`; the published
+ * `runScheduledMaintenance()` takes only `tier` / `phase` / `signal`.
  *
  * The failure this catches is subtle: a widening only has to be
  * `export`ed from a module that HAPPENS to be a published entry point
@@ -17,7 +17,7 @@
  *
  * ```ts
  * const o: InternalMaintenanceOptions = { gc: { graceMillis: 0 } };
- * await runScheduledMaintenance(args, o);
+ * await runMaintenancePass(args, o);
  * ```
  *
  * `graceMillis: 0` is the sharp edge. `GC_GRACE_PERIOD_MILLIS` states
@@ -45,7 +45,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { type MaintenanceArgs, runScheduledMaintenance } from "@baerly/server/maintenance";
+import { type MaintenanceTarget, runScheduledMaintenance } from "@baerly/server/maintenance";
 
 const pkgRoot = resolve(__dirname, "../..");
 const pkg = JSON.parse(readFileSync(resolve(pkgRoot, "package.json"), "utf8")) as {
@@ -160,17 +160,17 @@ describe("internal option widenings stay off the published type surface", () => 
     // The exact invariant, pinned at compile time rather than by name.
     // `@baerly/server/maintenance` and the published `./maintenance`
     // subpath resolve to the same module (`packages/server/src/
-    // maintenance.ts`), so this covers the shipped entry.
+    // maintenance-entry.ts`), so this covers the shipped entry.
     //
     // Never invoked — the assertion IS the `@ts-expect-error`. It fails
     // `tsgo --noEmit` if this stops being a type error, i.e. if
     // `graceMillis` becomes reachable from the published options type
     // again. The runtime `expect` below only keeps the binding used.
-    const reopenedLeak = (args: MaintenanceArgs) =>
+    const reopenedLeak = (target: MaintenanceTarget) =>
       runScheduledMaintenance(
-        args,
+        target,
         // @ts-expect-error — `graceMillis` is an `InternalRunGcOptions`
-        // knob; the published `RunGcOptions` is `{ signal? }` only.
+        // knob; the published options carry `tier` / `phase` / `signal` only.
         // GC_GRACE_PERIOD_MILLIS: production MUST NOT go below the default.
         { gc: { graceMillis: 0 } },
       );

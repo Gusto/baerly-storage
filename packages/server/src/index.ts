@@ -9,8 +9,8 @@
  *   `cloudflareAccess`, `sharedSecret`).
  * - `@gusto/baerly-storage/http` — `createRouter`, `mapError`,
  *   `listEventsSince`, `longPollSince`, body-size cap.
- * - `@gusto/baerly-storage/maintenance` — `compact`, `runGc`,
- *   `runScheduledMaintenance`, tuning profiles.
+ * - `@gusto/baerly-storage/maintenance` — `runScheduledMaintenance`,
+ *   the opt-in scheduled pass.
  * - `@gusto/baerly-storage/observability` — context, recorder,
  *   canonical-line helpers, logger config.
  *

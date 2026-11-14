@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import type { Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
-import { compact } from "@baerly/server/maintenance";
+import { compact } from "@baerly/server/_internal/maintenance";
 import {
   buildFixture,
   FOLD_CURRENT_JSON_KEY,
