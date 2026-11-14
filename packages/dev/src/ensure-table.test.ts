@@ -110,4 +110,30 @@ describe("ensureTable", () => {
     }
     expect(keys).toEqual([]);
   });
+  test("the pre-0.7 `table` key is refused with InvalidConfig naming `collection`", async () => {
+    const storage = new MemoryStorage();
+    // A plain-JS caller still on the old shape.
+    const legacy = { app: "a", tenant: "t", table: "rows" } as unknown as Parameters<
+      typeof ensureTable
+    >[1];
+    const err: unknown = await ensureTable(storage, legacy).catch((error: unknown) => error);
+    expect(err).toMatchObject({ code: "InvalidConfig" });
+    expect((err as Error).message).toContain("the `table` key is now `collection`");
+    const keys: string[] = [];
+    for await (const e of storage.list("")) {
+      keys.push(e.key);
+    }
+    expect(keys).toEqual([]);
+  });
+
+  test.each([undefined, 42, null])(
+    "a missing or non-string collection (%j) is refused with InvalidConfig",
+    async (collection) => {
+      const storage = new MemoryStorage();
+      const args = { app: "a", tenant: "t", collection } as unknown as Parameters<
+        typeof ensureTable
+      >[1];
+      await expect(ensureTable(storage, args)).rejects.toMatchObject({ code: "InvalidConfig" });
+    },
+  );
 });
