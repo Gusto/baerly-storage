@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { gate } from "../../../../tests/setup/gates.ts";
 import {
   goog4CanonicalRequest,
   goog4Signer,
@@ -298,7 +299,7 @@ describe("goog4Signer", () => {
   // real bucket in credentials/gcs.json to prove the four GOOG4 constants
   // are correct on the wire: a real GCS endpoint accepts the signature this
   // signer produces.
-  test.skipIf(process.env["GCS_LIVE"] !== "1")(
+  test.runIf(gate("gcs-live"))(
     "live: a signed conditional PUT/GET against a real bucket returns 200 and a round-trippable generation",
     async () => {
       // Relative to the repo root (vitest's cwd) — same convention as

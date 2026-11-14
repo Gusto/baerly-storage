@@ -228,6 +228,10 @@ export default defineConfig({
             "tests/fixtures/check-acceptance/**/*.test.ts",
           ],
           setupFiles: ["tests/setup/fast-check.ts"],
+          // Gate manifest: fails the run when a gated suite this run
+          // expected (opt-in env or `BAERLY_REQUIRED_GATES`) skipped.
+          // See `tests/setup/gate-manifest.ts`.
+          globalSetup: ["tests/setup/gate-ledger.ts"],
           testTimeout: vitestTestTimeoutMs,
           hookTimeout: vitestTestTimeoutMs,
           // Process isolation. Vitest 4's default `pool: 'threads'` with

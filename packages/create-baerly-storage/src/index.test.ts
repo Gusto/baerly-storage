@@ -25,6 +25,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { gate } from "../../../tests/setup/gates.ts";
 import type { GitRunner } from "./git.ts";
 import { runCreateBaerly } from "./runner.ts";
 import { captureStream } from "@baerly/cli/_internal/testing";
@@ -44,7 +45,7 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
  * git. CI runners and dev machines all have git, but it's worth being
  * explicit so the file passes on a barebones host.
  */
-const hasGit = spawnSync("git", ["--version"]).status === 0;
+const hasGit = gate("git", spawnSync("git", ["--version"]).status === 0);
 
 describe("create-baerly-storage runner (non-TTY)", () => {
   let outRoot: string;

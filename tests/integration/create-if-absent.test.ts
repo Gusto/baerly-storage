@@ -36,9 +36,10 @@ import { S3HttpStorage } from "@baerly/adapter-node";
 import { uuid } from "@baerly/protocol";
 
 import { createBucket } from "../fixtures/s3-fixtures.ts";
+import { gate } from "../setup/gates.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
-const MINIO = process.env["MINIO"] === "1";
+const MINIO = gate("minio");
 
 // Endpoint + creds mirror the `node-minio` arm of `conformance.test.ts`
 // and `randomized.test.ts` (and `docker-compose.yml`).

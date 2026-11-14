@@ -48,6 +48,7 @@
 
 import { AwsClient } from "aws4fetch";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { gate } from "../../tests/setup/gates.ts";
 import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson, type Storage } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
 import {
@@ -64,199 +65,207 @@ const TENANT = process.env["TENANT"] ?? "minimal-demo";
 
 const RUN_PREFIX = `e2e-${Date.now()}`;
 
-describe.runIf(NODE_URL !== undefined && SECRET !== undefined)("real-deploy: node host", () => {
-  const baseUrl = NODE_URL!;
-  const bearer = `Bearer ${SECRET!}`;
+describe.runIf(gate("deploy-node", NODE_URL !== undefined && SECRET !== undefined))(
+  "real-deploy: node host",
+  () => {
+    const baseUrl = NODE_URL!;
+    const bearer = `Bearer ${SECRET!}`;
 
-  const cleanupTables: string[] = [];
-  afterAll(async () => {
-    for (const table of cleanupTables) {
-      try {
-        const list = await fetch(`${baseUrl}/v1/c/${table}`, {
+    const cleanupTables: string[] = [];
+    afterAll(async () => {
+      for (const table of cleanupTables) {
+        try {
+          const list = await fetch(`${baseUrl}/v1/c/${table}`, {
+            headers: { authorization: bearer },
+          });
+          if (!list.ok) {
+            continue;
+          }
+          const { data } = (await list.json()) as {
+            readonly data: ReadonlyArray<{ readonly _id: string }>;
+          };
+          for (const row of data) {
+            await fetch(`${baseUrl}/v1/c/${table}/${row._id}`, {
+              method: "DELETE",
+              headers: { authorization: bearer },
+            }).catch(() => undefined);
+          }
+        } catch {
+          // Best-effort. See `manual-e2e/README.md` for the manual
+          // residual-data sweep.
+        }
+      }
+    });
+
+    test("unauthenticated request → 401 Unauthorized", async () => {
+      const res = await fetch(`${baseUrl}/v1/c/auth-missing`);
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as {
+        readonly error?: { readonly code?: string };
+      };
+      expect(body.error?.code).toBe("Unauthorized");
+    });
+
+    test("100-GET latency budget", async () => {
+      // Seed one ~1 KB doc through the public POST route, then GET
+      // its `_id` 100 times. Single-AZ `us-east-1` S3 budget is
+      // tighter than CF's because the request path is one network
+      // hop (test → Node container → S3) without the extra Worker
+      // edge layer.
+      const table = `${RUN_PREFIX}-latency`;
+      cleanupTables.push(table);
+      const payload = "x".repeat(1024);
+      const post = await fetch(`${baseUrl}/v1/c/${table}`, {
+        method: "POST",
+        headers: { authorization: bearer, "content-type": "application/json" },
+        body: JSON.stringify({ doc: { payload } }),
+      });
+      expect(post.status).toBe(201);
+      const { _id: id } = (await post.json()) as { readonly _id: string };
+
+      const samples: number[] = [];
+      for (let i = 0; i < 100; i += 1) {
+        const t0 = performance.now();
+        const res = await fetch(`${baseUrl}/v1/c/${table}/${id}`, {
           headers: { authorization: bearer },
         });
-        if (!list.ok) {
-          continue;
-        }
-        const { data } = (await list.json()) as {
-          readonly data: ReadonlyArray<{ readonly _id: string }>;
-        };
-        for (const row of data) {
-          await fetch(`${baseUrl}/v1/c/${table}/${row._id}`, {
-            method: "DELETE",
-            headers: { authorization: bearer },
-          }).catch(() => undefined);
-        }
-      } catch {
-        // Best-effort. See `manual-e2e/README.md` for the manual
-        // residual-data sweep.
+        expect(res.status).toBe(200);
+        await res.arrayBuffer();
+        samples.push(performance.now() - t0);
       }
-    }
-  });
+      samples.sort((a, b) => a - b);
+      const p50 = samples[49]!;
+      const p95 = samples[94]!;
+      const p99 = samples[98]!;
+      console.log(
+        `Node GET P50=${p50.toFixed(1)}ms P95=${p95.toFixed(1)}ms P99=${p99.toFixed(1)}ms`,
+      );
+      expect(p95).toBeLessThan(50);
+      expect(p99).toBeLessThan(500);
+    }, 60_000);
 
-  test("unauthenticated request → 401 Unauthorized", async () => {
-    const res = await fetch(`${baseUrl}/v1/c/auth-missing`);
-    expect(res.status).toBe(401);
-    const body = (await res.json()) as {
-      readonly error?: { readonly code?: string };
-    };
-    expect(body.error?.code).toBe("Unauthorized");
-  });
+    test("10 long-polls within 26s wall-clock", async () => {
+      const table = `${RUN_PREFIX}-longpoll`;
+      cleanupTables.push(table);
 
-  test("100-GET latency budget", async () => {
-    // Seed one ~1 KB doc through the public POST route, then GET
-    // its `_id` 100 times. Single-AZ `us-east-1` S3 budget is
-    // tighter than CF's because the request path is one network
-    // hop (test → Node container → S3) without the extra Worker
-    // edge layer.
-    const table = `${RUN_PREFIX}-latency`;
-    cleanupTables.push(table);
-    const payload = "x".repeat(1024);
-    const post = await fetch(`${baseUrl}/v1/c/${table}`, {
-      method: "POST",
-      headers: { authorization: bearer, "content-type": "application/json" },
-      body: JSON.stringify({ doc: { payload } }),
-    });
-    expect(post.status).toBe(201);
-    const { _id: id } = (await post.json()) as { readonly _id: string };
-
-    const samples: number[] = [];
-    for (let i = 0; i < 100; i += 1) {
-      const t0 = performance.now();
-      const res = await fetch(`${baseUrl}/v1/c/${table}/${id}`, {
-        headers: { authorization: bearer },
+      const seed = await fetch(`${baseUrl}/v1/c/${table}`, {
+        method: "POST",
+        headers: { authorization: bearer, "content-type": "application/json" },
+        body: JSON.stringify({ doc: { seed: true } }),
       });
-      expect(res.status).toBe(200);
-      await res.arrayBuffer();
-      samples.push(performance.now() - t0);
-    }
-    samples.sort((a, b) => a - b);
-    const p50 = samples[49]!;
-    const p95 = samples[94]!;
-    const p99 = samples[98]!;
-    console.log(`Node GET P50=${p50.toFixed(1)}ms P95=${p95.toFixed(1)}ms P99=${p99.toFixed(1)}ms`);
-    expect(p95).toBeLessThan(50);
-    expect(p99).toBeLessThan(500);
-  }, 60_000);
+      expect(seed.status).toBe(201);
 
-  test("10 long-polls within 26s wall-clock", async () => {
-    const table = `${RUN_PREFIX}-longpoll`;
-    cleanupTables.push(table);
-
-    const seed = await fetch(`${baseUrl}/v1/c/${table}`, {
-      method: "POST",
-      headers: { authorization: bearer, "content-type": "application/json" },
-      body: JSON.stringify({ doc: { seed: true } }),
-    });
-    expect(seed.status).toBe(201);
-
-    const longPolls = Array.from({ length: 10 }, async () => {
-      const t0 = performance.now();
-      const res = await fetch(`${baseUrl}/v1/since?collection=${table}&cursor=`, {
-        headers: { authorization: bearer },
+      const longPolls = Array.from({ length: 10 }, async () => {
+        const t0 = performance.now();
+        const res = await fetch(`${baseUrl}/v1/since?collection=${table}&cursor=`, {
+          headers: { authorization: bearer },
+        });
+        const wall = performance.now() - t0;
+        expect(res.status).toBe(200);
+        expect(wall).toBeLessThan(26_000);
+        return wall;
       });
-      const wall = performance.now() - t0;
-      expect(res.status).toBe(200);
-      expect(wall).toBeLessThan(26_000);
-      return wall;
-    });
 
-    await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 200));
 
-    await Promise.all(
-      Array.from({ length: 10 }, (_, i) =>
-        fetch(`${baseUrl}/v1/c/${table}`, {
-          method: "POST",
-          headers: { authorization: bearer, "content-type": "application/json" },
-          body: JSON.stringify({ doc: { lp: i } }),
-        }),
-      ),
-    );
+      await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          fetch(`${baseUrl}/v1/c/${table}`, {
+            method: "POST",
+            headers: { authorization: bearer, "content-type": "application/json" },
+            body: JSON.stringify({ doc: { lp: i } }),
+          }),
+        ),
+      );
 
-    const walls = await Promise.all(longPolls);
-    console.log(`Node long-poll walls: ${walls.map((w) => w.toFixed(0)).join(",")}ms`);
-  }, 30_000);
+      const walls = await Promise.all(longPolls);
+      console.log(`Node long-poll walls: ${walls.map((w) => w.toFixed(0)).join(",")}ms`);
+    }, 30_000);
 
-  // ── HTTP conformance cascade ────────────────────────────────────
-  //
-  // Gated on the AWS env vars. The cascade opens its own
-  // `S3HttpStorage` against the same bucket the container writes
-  // to so `provisionTable` can seed `current.json` per fresh
-  // table. Without these vars, the cascade is skipped; the
-  // latency / long-poll / 401 probes above still run.
-  const AWS_ACCESS = process.env["AWS_ACCESS_KEY_ID"];
-  const AWS_SECRET_KEY = process.env["AWS_SECRET_ACCESS_KEY"];
-  const AWS_REGION = process.env["AWS_REGION"] ?? "us-east-1";
-  const BUCKET = process.env["BUCKET"];
-  const S3_ENDPOINT = process.env["S3_ENDPOINT"] ?? `https://s3.${AWS_REGION}.amazonaws.com`;
+    // ── HTTP conformance cascade ────────────────────────────────────
+    //
+    // Gated on the AWS env vars. The cascade opens its own
+    // `S3HttpStorage` against the same bucket the container writes
+    // to so `provisionTable` can seed `current.json` per fresh
+    // table. Without these vars, the cascade is skipped; the
+    // latency / long-poll / 401 probes above still run.
+    const AWS_ACCESS = process.env["AWS_ACCESS_KEY_ID"];
+    const AWS_SECRET_KEY = process.env["AWS_SECRET_ACCESS_KEY"];
+    const AWS_REGION = process.env["AWS_REGION"] ?? "us-east-1";
+    const BUCKET = process.env["BUCKET"];
+    const S3_ENDPOINT = process.env["S3_ENDPOINT"] ?? `https://s3.${AWS_REGION}.amazonaws.com`;
 
-  const cascadeReady =
-    AWS_ACCESS !== undefined && AWS_SECRET_KEY !== undefined && BUCKET !== undefined;
+    const cascadeReady =
+      AWS_ACCESS !== undefined && AWS_SECRET_KEY !== undefined && BUCKET !== undefined;
 
-  describe.runIf(cascadeReady)("conformance cascade (via S3)", () => {
-    // Deferred so `new AwsClient(...)` / `new S3HttpStorage(...)` are
-    // never called when `cascadeReady` is false — the describe callback
-    // is still invoked by vitest's collector even for skipped suites.
-    let aws: AwsClient;
-    let storage: Storage;
-    beforeAll(() => {
-      aws = new AwsClient({
-        accessKeyId: AWS_ACCESS!,
-        secretAccessKey: AWS_SECRET_KEY!,
-        region: AWS_REGION,
-        service: "s3",
-      });
-      storage = new S3HttpStorage({
-        endpoint: S3_ENDPOINT,
-        bucket: BUCKET!,
-        sign: (req) => aws.sign(req),
-      });
-    });
+    describe.runIf(gate("deploy-node-s3-cascade", cascadeReady))(
+      "conformance cascade (via S3)",
+      () => {
+        // Deferred so `new AwsClient(...)` / `new S3HttpStorage(...)` are
+        // never called when `cascadeReady` is false — the describe callback
+        // is still invoked by vitest's collector even for skipped suites.
+        let aws: AwsClient;
+        let storage: Storage;
+        beforeAll(() => {
+          aws = new AwsClient({
+            accessKeyId: AWS_ACCESS!,
+            secretAccessKey: AWS_SECRET_KEY!,
+            region: AWS_REGION,
+            service: "s3",
+          });
+          storage = new S3HttpStorage({
+            endpoint: S3_ENDPOINT,
+            bucket: BUCKET!,
+            sign: (req) => aws.sign(req),
+          });
+        });
 
-    // Cascade builds requests against `http://test.local/v1/...`.
-    // Rewrite the host onto the deploy URL; the bearer is already
-    // e2e-correct via the `bearerToken` option below.
-    const e2eFetch: HttpFetch = async (req) => {
-      const url = new URL(req.url);
-      const rewritten = `${baseUrl}${url.pathname}${url.search}`;
-      const headers = new Headers(req.headers);
-      const body =
-        req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
-      return fetch(rewritten, {
-        method: req.method,
-        headers,
-        body,
-        signal: req.signal,
-      });
-    };
+        // Cascade builds requests against `http://test.local/v1/...`.
+        // Rewrite the host onto the deploy URL; the bearer is already
+        // e2e-correct via the `bearerToken` option below.
+        const e2eFetch: HttpFetch = async (req) => {
+          const url = new URL(req.url);
+          const rewritten = `${baseUrl}${url.pathname}${url.search}`;
+          const headers = new Headers(req.headers);
+          const body =
+            req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
+          return fetch(rewritten, {
+            method: req.method,
+            headers,
+            body,
+            signal: req.signal,
+          });
+        };
 
-    runHttpConformanceCascade({
-      name: "node-real-deploy",
-      fetch: e2eFetch,
-      provisionTable: async (table) => {
-        const key = `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
-        await createCurrentJson(storage, key, {
-          schema_version: CURRENT_JSON_SCHEMA_VERSION,
-          snapshot: null,
-          tail_hint: 0,
-          log_seq_start: 0,
-          writer_fence: {
-            epoch: 0,
-            owner: "manual-e2e-node",
-            claimed_at: "",
+        runHttpConformanceCascade({
+          name: "node-real-deploy",
+          fetch: e2eFetch,
+          provisionTable: async (table) => {
+            const key = `app/${APP}/tenant/${TENANT}/manifests/${table}/current.json`;
+            await createCurrentJson(storage, key, {
+              schema_version: CURRENT_JSON_SCHEMA_VERSION,
+              snapshot: null,
+              tail_hint: 0,
+              log_seq_start: 0,
+              writer_fence: {
+                epoch: 0,
+                owner: "manual-e2e-node",
+                claimed_at: "",
+              },
+              snapshot_bytes: 0,
+              snapshot_rows: 0,
+            });
           },
-          snapshot_bytes: 0,
-          snapshot_rows: 0,
+          options: {
+            bearerToken: SECRET!,
+            tenantPrefix: TENANT,
+            // Node listener has no `caches.default`; the conditional-
+            // GET block falls through to plain 200 + body as on the
+            // Minio variant.
+            supportsCacheApi: false,
+          },
         });
       },
-      options: {
-        bearerToken: SECRET!,
-        tenantPrefix: TENANT,
-        // Node listener has no `caches.default`; the conditional-
-        // GET block falls through to plain 200 + body as on the
-        // Minio variant.
-        supportsCacheApi: false,
-      },
-    });
-  });
-});
+    );
+  },
+);

@@ -65,6 +65,7 @@ import {
   seedRmwRows,
 } from "../fixtures/same-id-rmw.ts";
 import { type EndpointCreds, loadEndpointCreds } from "../fixtures/endpoint-creds.ts";
+import { gate } from "../setup/gates.ts";
 import {
   runCausalConsistencyCascade,
   runMultiDocCascade,
@@ -203,14 +204,14 @@ const stableConfig = {
 };
 const unstableConfig = { ...stableConfig, endpoint: TOXIPROXY_ENDPOINT };
 
-const minioEnabled = process.env["MINIO"] === "1";
+const minioEnabled = gate("minio");
 
 // Resolve at module top level — vitest collects suites synchronously, so
 // `describe` callbacks must not be `async`. Mirrors `conformance.test.ts`.
 // `EndpointCreds` is the shared credentials/*.json shape; the GCS path only
 // reads `bucket` + `credentials` (gcsStorage pins the native host).
 const gcsCreds: EndpointCreds | null = await loadEndpointCreds("gcs.json");
-const gcsEnabled = gcsCreds !== null && process.env["CONFORMANCE"] === "1";
+const gcsEnabled = gate("conformance-gcs", gcsCreds !== null && process.env["CONFORMANCE"] === "1");
 
 // Toxiproxy toggle — the new core has no `setOnline()` knob; we flip
 // the Minio proxy directly through Toxiproxy's HTTP admin API. No-op
