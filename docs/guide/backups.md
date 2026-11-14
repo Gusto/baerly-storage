@@ -313,13 +313,33 @@ aws s3 rm --recursive "$INDEX_PREFIX"
 indexed `where` took membership from these markers, and 0.7 writes create
 none. So a 0.6 instance reading a collection that a 0.7 instance has
 written to, during a rolling deploy or after a rollback, misses every row
-0.7 inserted or changed from every query it routes through an index. There is no version gate: 0.6 indexed reads
-could already miss live rows. To roll back, finish the rollback first,
-then run 0.6's `baerly admin rebuild-index` once per declared index of
-each affected collection; it rebuilds the markers from the snapshot and
-log. 0.6 writers in a mixed fleet keep creating markers, which 0.7
-ignores. Do not delete the `index/` prefix while a rollback is still
-possible, or a rollback must rebuild every index.
+0.7 inserted or changed from every query it routes through an index.
+There is no version gate: 0.6 indexed reads could already miss live rows.
+0.6 writers in a mixed fleet keep creating markers, which 0.7 ignores.
+
+0.6's `baerly admin rebuild-index` cannot repair every collection 0.7 has
+written. 0.7 accepts values that 0.6 refused in a declared index field:
+an array, or a value too long for a marker key (S3 and R2 cap a key at
+1024 bytes). A 0.6 rebuild that meets one aborts (`SchemaError` for an
+array), leaving that index incomplete.
+
+First stop every app writer and any scheduled maintenance
+(`runScheduledMaintenance`); the in-band write tick stops with the
+writers. Then roll back one of two ways:
+
+1. **Drop the indexes.** Remove `indexes` from each affected collection in
+   the 0.6 configuration. 0.6 then answers those queries with a full scan
+   of the snapshot and log, which needs no markers.
+2. **Keep the indexes.** While still on 0.7, rewrite every row that holds
+   such a value in a field an index you keep declares (`baerly admin dump`
+   lists every row). Then roll back and run 0.6's
+   `baerly admin rebuild-index` once per kept index of each affected
+   collection; it rebuilds the markers from the snapshot and log.
+
+Either way, finish the index repair and check that indexed queries return
+the rows `baerly admin dump` shows before reopening traffic to 0.6.
+Do not delete the `index/` prefix while a rollback that keeps indexes is
+still possible, or that rollback must rebuild every index.
 
 ## Restore Drill
 

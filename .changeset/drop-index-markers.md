@@ -15,7 +15,7 @@
 aws s3 rm --recursive --dryrun "s3://bucket/app/acme/tenant/t1/manifests/tickets/index/"
 ```
 
-**Rollback and mixed fleets.** A 0.6 instance takes an indexed query's rows from the markers, so while it reads a collection that 0.7 has written to (a rolling deploy, or after rolling back), its indexed queries miss every row 0.7 inserted or changed. After rolling back to 0.6, run 0.6's `baerly admin rebuild-index` once per declared index to repair them. 0.7 ignores markers a 0.6 writer keeps creating.
+**Rollback and mixed fleets.** A 0.6 instance takes an indexed query's rows from the markers, so while it reads a collection that 0.7 has written to (a rolling deploy, or after rolling back), its indexed queries miss every row 0.7 inserted or changed. 0.7 ignores markers a 0.6 writer keeps creating. 0.6's `baerly admin rebuild-index` aborts on a value 0.7 now accepts in a declared index field (an array, or a value too long for a marker key), leaving that index incomplete. First stop every app writer and any scheduled maintenance, then roll back one of two ways: remove `indexes` from the affected collections in the 0.6 configuration so 0.6 answers those queries with a full scan, or, while still on 0.7, rewrite every row holding such a value in a field an index you keep declares, then roll back and run 0.6's `baerly admin rebuild-index` once per kept index. Either way, finish the index repair and check indexed query results before reopening traffic. See "Legacy index markers" in `docs/guide/backups.md`.
 
 **Migration — agents: if you wrote the LEFT, use the RIGHT:**
 
