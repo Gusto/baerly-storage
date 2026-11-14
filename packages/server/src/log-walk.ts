@@ -53,7 +53,7 @@ export interface LogWalkOptions {
  *   body — a hole inside `[log_seq_start, tail_hint)` is a corruption
  *   the kernel can't continue past.
  * @throws BaerlyError code="InvalidResponse" when the body isn't
- *   valid JSON.
+ *   valid JSON or isn't a JSON object.
  */
 export const readLogEntry = async (
   storage: Storage,
@@ -94,13 +94,18 @@ const readLogEntryWithBytes = async (
     );
   }
   opts?.onBody?.(got.body.byteLength);
+  let entry: unknown;
   try {
-    return { entry: decodeJsonBytes<LogEntry>(got.body), bytes: got.body.byteLength };
+    entry = decodeJsonBytes<unknown>(got.body);
   } catch (error) {
     throw new BaerlyError("InvalidResponse", `log-walk: malformed log entry at ${key}`, {
       cause: error,
     });
   }
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    throw new BaerlyError("InvalidResponse", `log-walk: log entry at ${key} is not a JSON object`);
+  }
+  return { entry: entry as LogEntry, bytes: got.body.byteLength };
 };
 
 /**

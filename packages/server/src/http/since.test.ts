@@ -62,6 +62,19 @@ const provision = async (storage: MemoryStorage, table = TABLE): Promise<void> =
 };
 
 describe("longPollSince — cursor validation", () => {
+  test.each(["0_s_vvvvvvvvvvv", "0_s_80000000000"])(
+    "cursor %s whose seq is outside the safe range is a malformed-shape SchemaError",
+    async (cursor) => {
+      const { db, storage } = makeDb();
+      await provision(storage);
+      await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
+        name: "BaerlyError",
+        code: "SchemaError",
+        message: expect.stringContaining("invalid shape"),
+      });
+    },
+  );
+
   test("invalid cursor shape rejects with BaerlyError{SchemaError}", async () => {
     const { db } = makeDb();
     await expect(

@@ -81,6 +81,16 @@ const LSN_RE = new RegExp(`^[0-9a-v]+_[0-9a-v]+_[0-9a-v]{${SEQ_CHARS}}$`);
  */
 const GENERATION_RE = /^(?:[0-9a-f]+|-)$/;
 
+/** `LSN_RE` admits 55-bit seq tokens; `lsnParts` rejects those outside the safe range. */
+const hasSafeSeq = (lsn: string): boolean => {
+  try {
+    lsnParts(lsn);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Reject a malformed cursor before it reaches storage, and return its
  * decoded halves.
@@ -92,7 +102,7 @@ const GENERATION_RE = /^(?:[0-9a-f]+|-)$/;
  */
 const decodeCursor = (cursor: string): { generation: string; lsn: string } => {
   const parts = parseCursor(cursor);
-  if (!GENERATION_RE.test(parts.generation) || !LSN_RE.test(parts.lsn)) {
+  if (!GENERATION_RE.test(parts.generation) || !LSN_RE.test(parts.lsn) || !hasSafeSeq(parts.lsn)) {
     throw new BaerlyError(
       "SchemaError",
       `cursor: invalid shape (expected a cursor returned by a prior SinceResponse); got ${JSON.stringify(cursor)}`,

@@ -127,6 +127,9 @@ export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
 // `lsn` parsing runtime into their bundle closure (it added +3.8 KB raw to
 // `maintenance.js` when the helper lived here).
 
+/** Canonical seq token: the fixed width `countKey` emits. */
+const SEQ_TOKEN_RE = new RegExp(`^[0-9a-v]{${Math.ceil(COUNT_BIT_WIDTH / 5)}}$`);
+
 /**
  * Extract the `session` and `seq` embedded in an `lsn` of shape
  * `<base32-time>_<session>_<seq>`. The seq portion is decoded as a
@@ -137,8 +140,11 @@ export type ReplicaIdentity = "PATCH_ONLY" | "FULL";
  * `LogEntry` is in scope. When iterating `LogEntry` records, read
  * `entry.session` / `entry.seq` directly instead.
  *
- * Throws on malformed input; callers should pass only lsns minted
- * by `Writer.commit` (see
+ * Throws `BaerlyError{InvalidResponse}` on malformed input: a wrong
+ * segment count, or a seq token that is not exactly the canonical
+ * fixed-width base-32 string (`[0-9a-v]`, `ceil(COUNT_BIT_WIDTH / 5)`
+ * chars) decoding to a non-negative safe integer. Callers should pass
+ * only lsns minted by `Writer.commit` (see
  * `packages/server/src/writer.ts`).
  */
 export const lsnParts = (lsn: string): { session: string; seq: number } => {
@@ -146,8 +152,10 @@ export const lsnParts = (lsn: string): { session: string; seq: number } => {
   if (parts.length !== 3) {
     throw new BaerlyError("InvalidResponse", `invalid lsn shape: ${lsn}`);
   }
-  return {
-    session: parts[1]!,
-    seq: str2uintDesc(parts[2]!, COUNT_BIT_WIDTH),
-  };
+  const token = parts[2]!;
+  const seq = SEQ_TOKEN_RE.test(token) ? str2uintDesc(token, COUNT_BIT_WIDTH) : NaN;
+  if (!Number.isSafeInteger(seq) || seq < 0) {
+    throw new BaerlyError("InvalidResponse", `invalid lsn seq: ${lsn}`);
+  }
+  return { session: parts[1]!, seq };
 };

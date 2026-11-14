@@ -157,6 +157,21 @@ describe("walkLogRange", () => {
     });
   });
 
+  test.each(["null", "5", '"x"', "[]", "true"])(
+    "throws InvalidResponse on a non-object body %s",
+    async (body) => {
+      const inner = new MemoryStorage();
+      await inner.put(`${PREFIX}/log/0.json`, new TextEncoder().encode(body));
+      await expect(walkLogRange(inner, PREFIX, 0, 1)).rejects.toMatchObject({
+        name: "BaerlyError",
+        code: "InvalidResponse",
+      });
+      await expect(readLogEntry(inner, `${PREFIX}/log/0.json`)).rejects.toMatchObject({
+        code: "InvalidResponse",
+      });
+    },
+  );
+
   test("short-circuits on a pre-aborted signal without issuing GETs", async () => {
     const inner = new MemoryStorage();
     await seedRange(inner, 0, 5);
