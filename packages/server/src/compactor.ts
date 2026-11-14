@@ -185,16 +185,28 @@ export interface CompactResult {
     /** Row count of the rebuilt (unwritten) snapshot. */
     readonly snapshotRows: number;
   };
-  /** Prior snapshot key (`null` if no prior snapshot existed). */
-  readonly previousSnapshotKey: string | null;
-  /** New snapshot key (`undefined` if `written === false` and no PUT happened). */
-  readonly newSnapshotKey?: string;
   /** `log_seq_start` before the run. */
   readonly logSeqStartBefore: number;
   /** `log_seq_start` after the run. */
   readonly logSeqStartAfter: number;
   /** Number of log entries folded into the new snapshot. */
   readonly entriesFolded: number;
+}
+
+/**
+ * {@link CompactResult} plus the storage keys of the snapshot objects the
+ * run read and wrote. Returned by {@link compactInternal}; surfaced via
+ * the `@baerly/server/_internal/testing` subpath. The public
+ * {@link compact} return type omits these so the published result stays
+ * independent of the snapshot object layout.
+ *
+ * @internal
+ */
+export interface InternalCompactResult extends CompactResult {
+  /** Prior snapshot key (`null` if no prior snapshot existed). */
+  readonly previousSnapshotKey: string | null;
+  /** New snapshot key (`undefined` if `written === false` and no PUT happened). */
+  readonly newSnapshotKey?: string;
 }
 
 const DEFAULT_MAX_PER_RUN = Number.MAX_SAFE_INTEGER;
@@ -207,7 +219,7 @@ const APPLICATION_JSON = "application/json";
  * no-op (below-min-threshold).
  *
  * Single-attempt: on CAS conflict we return
- * `{written: false, skippedReason: "cas-lost", newSnapshotKey}` — the
+ * `{written: false, skippedReason: "cas-lost"}` — the
  * caller (the cron handler invoking `runScheduledMaintenance` from
  * `./maintenance.ts`) decides whether to schedule another run. The
  * orphan snapshot file just written will be swept by `runGc()`.
@@ -227,23 +239,39 @@ const APPLICATION_JSON = "application/json";
  *
  * @example
  * ```ts
- * import { compact } from "@gusto/baerly-storage";
+ * import { compact } from "@gusto/baerly-storage/maintenance";
  *
  * const res = await compact(
  *   { storage, currentJsonKey: "app/x/tenant/t/manifests/tickets/current.json" },
- *   { minEntriesToCompact: 100, maxEntriesPerRun: 40 },
+ *   { minEntriesToCompact: 100 },
  * );
- * if (res.written) console.log("snapshot landed at", res.newSnapshotKey);
+ * if (res.written) console.log("folded", res.entriesFolded, "entries");
  * ```
  */
-export const compact = async (
+export const compact: (
+  args: {
+    storage: Storage;
+    /** Full bucket-relative key of the CAS pointer. */
+    currentJsonKey: string;
+  },
+  options?: CompactOptions,
+) => Promise<CompactResult> = (args, options) => compactInternal(args, options);
+
+/**
+ * {@link compact}, typed to return the {@link InternalCompactResult}
+ * snapshot keys. Tests and in-repo tooling reach it via the
+ * `@baerly/server/_internal/testing` subpath.
+ *
+ * @internal
+ */
+export const compactInternal = async (
   args: {
     storage: Storage;
     /** Full bucket-relative key of the CAS pointer. */
     currentJsonKey: string;
   },
   options: CompactOptions = {},
-): Promise<CompactResult> => {
+): Promise<InternalCompactResult> => {
   const { storage, currentJsonKey } = args;
   // The internal cap fields ride on the same runtime object even
   // though the public `CompactOptions` doesn't surface them. The cast

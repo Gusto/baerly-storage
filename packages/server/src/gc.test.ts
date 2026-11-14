@@ -30,7 +30,9 @@ import {
 import { describe, expect, test } from "vitest";
 import { LOG_STATE_GENERATION, logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
-import { compact, type InternalCompactOptions } from "./compactor.ts";
+// `compactInternal` is `compact` typed to expose the snapshot keys these
+// tests assert on.
+import { compactInternal as compact, type InternalCompactOptions } from "./compactor.ts";
 import { type InternalRunGcOptions, runGc } from "./gc.ts";
 import { createObservabilityContext, runWithContext } from "./observability/index.ts";
 import { encodeSnapshotBody, snapshotKey } from "./snapshot.ts";
