@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { COUNT_BIT_WIDTH } from "./constants.ts";
+import { BaerlyError } from "./errors.ts";
 import { type LogEntry, lsnParts, type ReplicaIdentity } from "./log.ts";
 import { LOG_KEY_PREFIX, logObjectKey } from "./log-key.ts";
 import { countKey, str2uintDesc } from "./types.ts";
@@ -90,6 +91,28 @@ describe("lsnParts", () => {
       const lsn = `0fffff_sess_${encoded}`;
       expect(lsnParts(lsn).seq).toBe(n);
     }
+  });
+
+  test("throws a BaerlyError on a non-canonical or out-of-range seq token", () => {
+    const bad = [
+      "a_b_!", // not base-32
+      "a_b_", // empty
+      "a_b_vvvvvvvvvv", // 10 chars: short of the fixed width
+      "a_b_0vvvvvvvvvvv", // 12 chars: past the fixed width
+      "a_b_VVVVVVVVVVV", // uppercase is not canonical
+      "a_b_-0000000000", // sign
+      "0_s_vvvvvvvvvvv", // 55 bits: decodes to a negative seq
+      "0_s_80000000000", // 2^53: first value past the safe range
+    ];
+    for (const lsn of bad) {
+      expect(() => lsnParts(lsn)).toThrow(BaerlyError);
+      expect(() => lsnParts(lsn)).toThrow(expect.objectContaining({ code: "InvalidResponse" }));
+    }
+  });
+
+  test("accepts the extreme canonical seq tokens", () => {
+    expect(lsnParts("a_b_00000000000").seq).toBe(Number.MAX_SAFE_INTEGER);
+    expect(lsnParts(`a_b_${countKey(0)}`).seq).toBe(0);
   });
 
   test("throws on malformed lsn", () => {
