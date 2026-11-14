@@ -4,8 +4,9 @@
  * the read-only operator CLI still reads and exports them, the writing
  * CLI verbs refuse them as targets, and `admin dump` + `admin restore`
  * migrate the rows to an NFC name. `admin fsck` and `admin dump` flag
- * what a migration has to handle, including rows whose `_id`s are
- * canonically equivalent (legacy twins).
+ * what a migration has to handle, including names and `_id`s with an
+ * unpaired UTF-16 surrogate and rows whose `_id`s are canonically
+ * equivalent (legacy twins).
  */
 import { Readable, Writable } from "node:stream";
 import { describe, expect, test } from "vitest";
@@ -21,6 +22,7 @@ import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runFsck } from "../../packages/cli/src/admin/fsck.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { runInspect } from "../../packages/cli/src/inspect.ts";
+import { compact } from "../../packages/server/src/compactor.ts";
 import { listIndexObjects } from "../fixtures/legacy-index-markers.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
@@ -212,6 +214,74 @@ describe("a collection stored under a legacy non-NFC name", () => {
     const restored = await rows.where({}).all();
     expect(restored).toHaveLength(ROWS.length);
     expect(restored).toEqual(expect.arrayContaining(ROWS));
+  });
+});
+
+describe("admin fsck flags ill-formed (unpaired-surrogate) names and ids", () => {
+  type FsckEnvelope = {
+    result: { findings: { severity: string; check: string; message: string }[] };
+  };
+
+  test("flags every ill-formed name as a migration finding", async () => {
+    const { uri, storage } = freshBucket();
+    const names = { app: "app-\ud800", tenant: "tenant", collection: "rows-\udc00" };
+    await seedCollection(storage, names, ROWS);
+    const res = await captured(() =>
+      runFsck([
+        `--bucket=${uri}`,
+        `--app=${names.app}`,
+        "--tenant=tenant",
+        `--collection=${names.collection}`,
+        "--json",
+      ]),
+    );
+    expect(res.code).toBe(4);
+    const envelope = JSON.parse(res.stdout.trim()) as FsckEnvelope;
+    const nameFindings = envelope.result.findings.filter((f) => f.check === "names");
+    expect(nameFindings).toHaveLength(2);
+    expect(nameFindings.every((f) => f.severity === "warning")).toBe(true);
+    expect(nameFindings.map((f) => f.message.split(" ")[0])).toEqual(["app", "collection"]);
+    expect(nameFindings.every((f) => f.message.includes("unpaired UTF-16 surrogate"))).toBe(true);
+  });
+
+  test("flags ill-formed _ids in the snapshot, in text and JSON mode", async () => {
+    const { uri, storage } = freshBucket();
+    const names = { app: "app", tenant: "tenant", collection: "rows" };
+    const rows = [
+      { _id: "plain", kind: "x" },
+      { _id: "lone-\ud800", kind: "y" },
+      { _id: "lone-\udc00", kind: "z" },
+    ];
+    await seedCollection(storage, names, rows);
+    const currentJsonKey = "app/app/tenant/tenant/manifests/rows/current.json";
+    const folded = await compact({ storage, currentJsonKey }, { minEntriesToCompact: 1 });
+    expect(folded.written).toBe(true);
+    const flags = [`--bucket=${uri}`, "--app=app", "--tenant=tenant", "--collection=rows"];
+
+    const json = await captured(() => runFsck([...flags, "--json"]));
+    expect(json.code).toBe(4);
+    const envelope = JSON.parse(json.stdout.trim()) as FsckEnvelope;
+    const idFindings = envelope.result.findings.filter((f) => f.check === "ids");
+    expect(idFindings).toHaveLength(1);
+    expect(idFindings[0]!.severity).toBe("warning");
+    expect(idFindings[0]!.message).toContain(JSON.stringify(["lone-\ud800", "lone-\udc00"]));
+
+    const text = await captured(() => runFsck(flags));
+    expect(text.code).toBe(4);
+    expect(text.stdout).toContain("unpaired UTF-16 surrogate");
+  });
+
+  test("well-formed names and ids report no finding", async () => {
+    const { uri, storage } = freshBucket();
+    await seedCollection(storage, { app: "app", tenant: "tenant", collection: "rows" }, ROWS);
+    await compact(
+      { storage, currentJsonKey: "app/app/tenant/tenant/manifests/rows/current.json" },
+      { minEntriesToCompact: 1 },
+    );
+    const res = await captured(() =>
+      runFsck([`--bucket=${uri}`, "--app=app", "--tenant=tenant", "--collection=rows"]),
+    );
+    expect(res.code).toBe(0);
   });
 });
 

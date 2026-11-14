@@ -90,9 +90,10 @@ and the writing verb (`admin restore`) refuses them. A
 migration dumps the collection and restores it under an NFC name that is
 not canonically equivalent to the legacy one; on R2 the normalized
 original name addresses the legacy objects. `admin fsck` flags non-NFC
-names, and `admin dump` flags non-NFC `_id`s, `_id`s and names with an
-unpaired surrogate, and canonically-equivalent twin `_id`s, before the
-migration. A stored `_id` with an unpaired surrogate stays readable and
+names, names with an unpaired surrogate, and snapshot `_id`s with an
+unpaired surrogate. `admin dump` flags non-NFC `_id`s, `_id`s and names
+with an unpaired surrogate, and canonically-equivalent twin `_id`s
+across the whole live row set, before the migration. A stored `_id` with an unpaired surrogate stays readable and
 deletable but is not a write target.
 
 To migrate such a row in place, read it, remove `_id` from the copy,
