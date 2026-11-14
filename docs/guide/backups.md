@@ -198,10 +198,10 @@ prefix while writers are still active.
 Long-poll readers no longer need draining. A `--force` reseed re-mints
 the collection's `generation` nonce, and every `/v1/since` cursor
 carries the generation it was minted under, so a stale pre-restore
-cursor is rejected with a `SchemaError` (HTTP 400) telling the client to
+cursor is rejected with `CursorExpired` (HTTP 410) telling the client to
 re-bootstrap. The React client (`useQuery` subscriptions) acts on that
 automatically: it drops the cursor and resumes from the collection's log
-floor. A custom `/v1/since` consumer must handle the 400 the same way —
+floor. A custom `/v1/since` consumer must handle the 410 the same way —
 restart with an empty cursor rather than retrying the rejected one.
 
 This closes a real hazard rather than merely documenting it. A `--force`

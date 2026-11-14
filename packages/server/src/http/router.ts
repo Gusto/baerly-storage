@@ -461,6 +461,7 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["AmbiguousCommit", 409],
   ["CapacityExceeded", 409],
   ["MaintenancePending", 503],
+  ["CursorExpired", 410],
   ["PayloadTooLarge", 413],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
@@ -505,6 +506,9 @@ const ERROR_CODE_POLICY = {
     messagePolicy: "public",
   },
   MaintenancePending: {
+    messagePolicy: "public",
+  },
+  CursorExpired: {
     messagePolicy: "public",
   },
   AmbiguousCommit: {

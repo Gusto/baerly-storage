@@ -21,7 +21,7 @@
  * broken, which is the worst failure mode for a sync cursor.
  *
  * Pairing the LSN with the generation that minted it turns that silent
- * gap into a `SchemaError` telling the client to re-bootstrap.
+ * gap into a `CursorExpired` telling the client to re-bootstrap.
  *
  * The token is opaque on the wire: clients ack and echo it, never parse
  * it. `LogEntry.lsn` is unchanged — this shape exists only at the

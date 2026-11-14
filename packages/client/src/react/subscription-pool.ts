@@ -284,33 +284,37 @@ const createPool = (client: BaerlyClient): SubscriptionPool => {
             return;
           }
           let recoveredDeadCursor = false;
-          if (error instanceof BaerlyError && error.code === "SchemaError" && poll.cursor !== "") {
+          if (
+            error instanceof BaerlyError &&
+            error.code === "CursorExpired" &&
+            poll.cursor !== ""
+          ) {
             // The cursor is unrecoverable, not the request. `/v1/since`
             // returns this for exactly two states, both permanent: the
-            // entry was folded into a snapshot and GC'd, or the cursor
-            // was minted in a generation `restore --force` has since
-            // truncated. Retrying the same cursor can never clear
+            // changes after the cursor are no longer retained, or the
+            // cursor was minted in a generation `restore --force` has
+            // since truncated. Retrying the same cursor can never clear
             // either one, so without this the loop would retry it at
-            // exponential backoff forever with the table frozen.
+            // exponential backoff forever with the table frozen. A
+            // malformed cursor is `SchemaError` and parks below like any
+            // other non-retriable code.
             //
-            // Re-bootstrap: `""` restarts from `log_seq_start`, which
-            // is what the server's error text asks for. The invalidate
+            // Re-bootstrap: `""` restarts from the collection's log floor,
+            // which is what the code's resolution asks for. The invalidate
             // refetches the visible queries so subscribers converge on
-            // the post-restore state rather than sitting on pre-restore
-            // data.
+            // the current state, since the changes between the dead cursor
+            // and the floor are not replayed.
             //
             // We deliberately do NOT `continue` past the backoff below.
             // The `poll.cursor !== ""` guard bounds a same-iteration
-            // respin, but not a two-iteration oscillation: if the
-            // server rejects a cursor it just minted — a mixed-version
-            // fleet mid-rolling-deploy is the reachable case, where one
-            // replica issues a shape the other refuses — then `""`
-            // succeeds, hands back a fresh cursor, and that cursor is
-            // rejected again. Skipping the backoff would make that
-            // cycle run at network speed, with an `invalidateForTable`
-            // refetch storm on every lap. Falling through costs one
-            // backoff interval of recovery latency and bounds the
-            // pathological cycle.
+            // respin, but not a two-iteration oscillation: if the cursor
+            // `""` hands back has expired again by the time it is used,
+            // then `""` succeeds, hands back a fresh cursor, and that
+            // cursor is rejected again. Skipping the backoff would make
+            // that cycle run at network speed, with an
+            // `invalidateForTable` refetch storm on every lap. Falling
+            // through costs one backoff interval of recovery latency and
+            // bounds the pathological cycle.
             poll.cursor = "";
             deadCursorRecoveryPending = true;
             invalidateForTable(table);

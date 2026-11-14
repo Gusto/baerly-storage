@@ -84,12 +84,13 @@ export interface HttpErrorEnvelope {
  * `""` means "start from the collection's log floor" and is always
  * valid.
  *
- * A `400 SchemaError` on resume means the cursor is permanently dead —
- * the entry was folded into a snapshot and GC'd, or its generation was
+ * A `410 CursorExpired` on resume means the cursor is permanently dead:
+ * the changes after it are no longer retained, or its generation was
  * truncated by `baerly admin restore --force`. Neither clears on
- * retry: restart with `cursor: ""`. Retrying the rejected cursor loops
- * forever. Back off before re-bootstrapping so a cursor rejected on
- * every lap cannot become a hot loop.
+ * retry: re-read, then restart with `cursor: ""`. Retrying the rejected
+ * cursor loops forever. Back off before re-bootstrapping so a cursor
+ * rejected on every lap cannot become a hot loop. A malformed cursor is
+ * `400 SchemaError`.
  */
 export interface SinceResponse {
   readonly events: ReadonlyArray<LogEntry>;
