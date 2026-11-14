@@ -371,12 +371,12 @@ export function baerlyDev(opts: BaerlyDevOptions): Plugin {
 
         const app = config.app;
         const tenant = config.tenant;
-        const tables = Object.keys(config.collections);
+        const collections = Object.keys(config.collections);
         const storage = new LocalFsStorage({
           root: opts.dataDir ?? resolve(server.config.root, ".baerly-data"),
         });
-        for (const table of tables) {
-          await ensureTable(storage, { app, tenant, table });
+        for (const collection of collections) {
+          await ensureTable(storage, { app, tenant, collection });
         }
         if (opts.seed !== undefined) {
           const db = Db.create({ storage, app, tenant, config });
