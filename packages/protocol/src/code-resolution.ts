@@ -5,7 +5,7 @@ export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
   WriteConflict:
     "Another write changed this data first and this commit did not land. Re-read, then retry.",
   AlreadyExists:
-    "Do not retry. A row with this _id is already committed: insert with a different _id or omit _id to auto-generate one, or use update or replace to change the existing row; after an AmbiguousCommit retry, re-read that row instead.",
+    "Do not retry. A row with this _id is already committed: insert with a different _id or omit _id to auto-generate one, or use update or replace to change the existing row. If this insert omitted _id or followed an AmbiguousCommit, the row may be this insert's own earlier attempt: re-read it, and do not re-mint by inserting again without an _id.",
   AmbiguousCommit:
     "Do not retry automatically. Re-read the row named by the error's _id; absence does not prove the write failed. A deliberate retry may repeat logical work; retry an insert with the same _id, and treat AlreadyExists on that retry as a committed row to re-read.",
   CapacityExceeded:

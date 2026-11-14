@@ -5,7 +5,13 @@
  * end to end in `tests/integration/read-admission.test.ts`.
  */
 
-import { BaerlyError, LOG_FORWARD_PROBE_CAP, MemoryStorage, RequestLedger } from "@baerly/protocol";
+import {
+  BaerlyError,
+  CODE_RESOLUTIONS,
+  LOG_FORWARD_PROBE_CAP,
+  MemoryStorage,
+  RequestLedger,
+} from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
 import { forwardProbeCap, probeReadTail } from "./log-tail.ts";
@@ -119,5 +125,58 @@ describe("forwardProbeCap / probeReadTail", () => {
     ).rejects.toBe(stop);
     expect(seen).toHaveLength(2);
     expect(seen.every((n) => n > 0)).toBe(true);
+  });
+});
+
+describe("read refusal resolution", () => {
+  const head = logStateCurrentJson({
+    snapshot: `${PREFIX}/snapshot/L0/0-4-abc.json`,
+    log_seq_start: 5,
+    tail_hint: 5,
+    snapshot_rows: 5,
+    snapshot_bytes: 100,
+  });
+
+  const refusalOf = (fn: () => void): BaerlyError => {
+    try {
+      fn();
+    } catch (error) {
+      capacityRefusal(error);
+      return error as BaerlyError;
+    }
+    throw new Error("expected a refusal");
+  };
+
+  // One refusal per bound family. The write remedy (delete or shrink rows
+  // to make room for growth) is wrong for a read; each read refusal names
+  // its own bound's remedy instead.
+  const refusals = {
+    output: () => refusalOf(() => new ReadBudget("c", { maxOutputRows: 1 }).admitOutput(2)),
+    snapshot: () => refusalOf(() => new ReadBudget("c", { maxSnapshotRows: 1 }).admitHead(head)),
+    tail: () => refusalOf(() => new ReadBudget("c", { maxTailEntries: 0 }).chargeTailBody(10)),
+    materialized: () =>
+      refusalOf(() => new ReadBudget("c", { maxMaterializedRows: 1 }).admitHead(head)),
+  };
+
+  test("each bound passes its own remedy as the resolution, not the write remedy", () => {
+    const resolutions = Object.fromEntries(
+      Object.entries(refusals).map(([name, refuse]) => [name, refuse().resolution]),
+    );
+    for (const resolution of Object.values(resolutions)) {
+      expect(resolution).toBeTypeOf("string");
+      expect(resolution).not.toBe(CODE_RESOLUTIONS.CapacityExceeded);
+      expect(resolution).not.toMatch(/BAERLY_|PROFILE|cf-paid|cf-free|wrangler/);
+    }
+    expect(resolutions["output"]).toMatch(/narrow the predicate or add a limit/i);
+    expect(resolutions["snapshot"]).toMatch(/delete or shrink rows/i);
+    expect(resolutions["tail"]).not.toBe(resolutions["snapshot"]);
+    expect(resolutions["tail"]).not.toBe(resolutions["output"]);
+  });
+
+  test("the resolution is the remedy the message closes with", () => {
+    for (const refuse of Object.values(refusals)) {
+      const err = refuse();
+      expect(err.message.endsWith(err.resolution!)).toBe(true);
+    }
   });
 });

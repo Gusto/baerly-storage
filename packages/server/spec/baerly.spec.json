@@ -71,7 +71,7 @@
       "httpStatus": 409,
       "retriable": false,
       "messagePolicy": "public",
-      "summary": "The collection is at this host's fold ceiling; the write was refused and not committed (a batch refused part-way keeps its committed rows)."
+      "summary": "The request needs more work than this host does in one request and was refused whole: a read returns no rows, a write commits nothing (a batch refused part-way keeps its committed rows). Not retriable unchanged; follow the resolution."
     },
     {
       "code": "MaintenancePending",
@@ -166,22 +166,26 @@
     {
       "name": "first",
       "params": "",
-      "returns": "Promise<T | undefined>"
+      "returns": "Promise<T | undefined>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "all",
       "params": "",
-      "returns": "Promise<T[]>"
+      "returns": "Promise<T[]>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "count",
       "params": "",
-      "returns": "Promise<number>"
+      "returns": "Promise<number>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "get",
       "params": "id: string",
-      "returns": "Promise<T | undefined>"
+      "returns": "Promise<T | undefined>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "where",
@@ -262,17 +266,20 @@
     {
       "name": "first",
       "params": "",
-      "returns": "Promise<T | undefined>"
+      "returns": "Promise<T | undefined>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "all",
       "params": "",
-      "returns": "Promise<T[]>"
+      "returns": "Promise<T[]>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "count",
       "params": "",
-      "returns": "Promise<number>"
+      "returns": "Promise<number>",
+      "throws": ["CapacityExceeded"]
     },
     {
       "name": "update",
