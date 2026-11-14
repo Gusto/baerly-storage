@@ -21,7 +21,7 @@ import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runFsck } from "../../packages/cli/src/admin/fsck.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { runInspect } from "../../packages/cli/src/inspect.ts";
-import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
+import { listIndexObjects } from "../fixtures/legacy-index-markers.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
 const NFC = "café";
@@ -87,32 +87,21 @@ const ROWS = [
 
 describe("migration of an ill-formed legacy _id", () => {
   test.each(["bad-\ud800", "bad-\udc00"])(
-    "copying %j with a generated id preserves its index after deleting the original",
+    "copying %j to a generated id keeps it queryable after deleting the original",
     async (legacyId) => {
-      const base = new MemoryStorage({ ephemeral: true });
-      // R2 bindings convert lone surrogates in keys to U+FFFD. JSON log
-      // bodies retain the original id, so the row and its marker differ.
-      const storage: Storage = {
-        get: (key, opts) => base.get(key.toWellFormed(), opts),
-        put: (key, body, opts) => base.put(key.toWellFormed(), body, opts),
-        delete: (key, opts) => base.delete(key.toWellFormed(), opts),
-        list: (key, opts) => base.list(key.toWellFormed(), opts),
-      };
+      // No object key embeds `_id`, so R2's U+FFFD key mapping cannot
+      // couple the copy to the original; plain memory storage suffices.
+      const storage = new MemoryStorage({ ephemeral: true });
       const names = { app: "app", tenant: "tenant", collection: "rows" };
       const prefix = "app/app/tenant/tenant/manifests/rows";
-      const indexes = [{ name: "by_kind", on: "kind" }];
       const original = { _id: legacyId, kind: "x" };
       await seedCollection(storage, names, [original]);
-      const [legacyMarker] = allIndexKeysFor(prefix, indexes, original, legacyId);
-      await storage.put(legacyMarker!, new Uint8Array());
-      const [repairedMarker] = allIndexKeysFor(prefix, indexes, original, legacyId.toWellFormed());
-      await expect(storage.get(repairedMarker!)).resolves.not.toBeNull();
 
       const rows = Db.create({
         storage,
         app: names.app,
         tenant: names.tenant,
-        config: { collections: { rows: { indexes } } },
+        config: { collections: { rows: { indexes: [{ name: "by_kind", on: "kind" }] } } },
       }).collection("rows");
       const stored = await rows.get(legacyId);
       expect(stored).toEqual(original);
@@ -122,11 +111,10 @@ describe("migration of an ill-formed legacy _id", () => {
       await expect(rows.delete(legacyId)).resolves.toEqual({ deleted: 1 });
       await expect(rows.get(legacyId)).resolves.toBeUndefined();
       await expect(rows.get(migratedId)).resolves.toEqual({ _id: migratedId, kind: "x" });
-      const markers: string[] = [];
-      for await (const entry of storage.list(`${prefix}/index/by_kind/`)) {
-        markers.push(entry.key);
-      }
-      expect(markers).toEqual(allIndexKeysFor(prefix, indexes, copy, migratedId));
+      await expect(rows.where({ kind: "x" }).all()).resolves.toEqual([
+        { _id: migratedId, kind: "x" },
+      ]);
+      await expect(listIndexObjects(storage, prefix)).resolves.toEqual([]);
     },
   );
 });

@@ -457,10 +457,9 @@ const runLegacyNonNfcRow = async (storage: Storage, app: string, tenant: string)
  * A row whose `_id` holds an unpaired UTF-16 surrogate, written by a
  * release that accepted such ids. Seeded by committing a placeholder id and
  * rewriting the log entry body to the JSON escape of the ill-formed id,
- * which is what the older writer's `JSON.stringify` produced. The
- * collection is unindexed: an index marker key cannot hold the id on
- * local-fs, S3, or GCS. The row stays readable and deletable in-process;
- * `update` and `replace` refuse it.
+ * which is what the older writer's `JSON.stringify` produced. The row
+ * stays readable and deletable in-process; `update` and `replace` refuse
+ * it.
  */
 const runLegacyIllFormedIdRow = async (
   storage: Storage,
