@@ -52,6 +52,7 @@ import {
   encodeJsonBytes,
   MemoryStorage,
   readCurrentJson,
+  sha256Hex,
   type Storage,
   versionFromContent,
 } from "@baerly/protocol";
@@ -140,20 +141,60 @@ const listKeys = async (storage: Storage, prefix: string): Promise<string[]> => 
   return keys.toSorted();
 };
 
-describe("abortingStorage harness — fault-injection trap behavior", () => {
-  test("armAt(K) fires AbortError on the K-th underlying op", async () => {
+describe("prefix-targeted and torn-object faults", () => {
+  test("a log-create abort fails the commit while current.json traffic stays healthy", async () => {
     const inner = new MemoryStorage();
+    await provision(inner);
     const handle = abortingStorage(inner);
-    // op 1 = put, op 2 = get; arm op 2 — first put must succeed,
-    // first get must throw.
-    handle.armAt(2);
-    await handle.storage.put("k", new TextEncoder().encode("v"));
-    expect(handle.opCount()).toBe(1);
-    await expect(handle.storage.get("k")).rejects.toMatchObject({ name: "AbortError" });
-    // Trap resets after firing — the next op succeeds.
-    expect(handle.opCount()).toBe(2);
-    const got = await handle.storage.get("k");
-    expect(got).not.toBeNull();
+    const writer = new Writer({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY });
+    handle.armAt(1, { prefix: `${TABLE_PREFIX}/log/`, ops: ["put"] });
+    await expect(
+      writer.commit({ op: "I", collection: COLLECTION, docId: "x", body: { _id: "x" } }),
+    ).rejects.toMatchObject({ code: "AmbiguousCommit" });
+    expect(handle.faultsFired()).toBe(1);
+    await expect(listKeys(inner, `${TABLE_PREFIX}/log/`)).resolves.toEqual([]);
+    await expect(readAllRowIds(inner)).resolves.toEqual([]);
+  });
+
+  test("a torn snapshot PUT is never published, and the retried fold replaces it", async () => {
+    const inner = new MemoryStorage();
+    await provision(inner);
+    const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+    for (let i = 0; i < 12; i++) {
+      await writer.commit({
+        op: "I",
+        collection: COLLECTION,
+        docId: `d-${i}`,
+        body: { _id: `d-${i}` },
+      });
+    }
+    const before = await readAllRowIds(inner);
+
+    const handle = abortingStorage(inner);
+    handle.tearAt(1, { prefix: `${TABLE_PREFIX}/snapshot/` });
+    await expect(
+      compact({ storage: handle.storage, currentJsonKey: CURRENT_JSON_KEY }, {
+        minEntriesToCompact: 5,
+        maxEntriesPerRun: 50,
+      } as InternalCompactOptions),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    const [tornKey] = handle.tornKeys();
+    expect(tornKey).toBeDefined();
+    await expect(listKeys(inner, `${TABLE_PREFIX}/snapshot/`)).resolves.toEqual([tornKey]);
+    expect((await readCurrentJson(inner, CURRENT_JSON_KEY))!.json.snapshot).toBeNull();
+    await expect(readAllRowIds(inner)).resolves.toEqual(before);
+
+    // A retried fold over the same tail targets the same content-addressed
+    // key, so it must replace the torn bytes rather than adopt them.
+    const retry = await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+      minEntriesToCompact: 5,
+      maxEntriesPerRun: 50,
+    } as InternalCompactOptions);
+    expect(retry.written).toBe(true);
+    expect(retry.newSnapshotKey).toBe(tornKey);
+    const healed = await inner.get(tornKey!);
+    expect(tornKey!.endsWith(`-${await sha256Hex(healed!.body)}.json`)).toBe(true);
+    await expect(readAllRowIds(inner)).resolves.toEqual(before);
   });
 });
 
