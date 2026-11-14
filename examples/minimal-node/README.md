@@ -99,7 +99,7 @@ var, no tick, no `setInterval`, no operator scheduler. Two ops-plane
 env vars tune it: `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` raises the
 snapshot ceiling and `BAERLY_MAINTENANCE_DISABLE=1` is a kill switch.
 For an explicit out-of-band sweep, call `runScheduledMaintenance`
-from `@gusto/baerly-storage`.
+from `@gusto/baerly-storage/maintenance`.
 
 After `pnpm build`, `pnpm start` serves the Vite-built SPA from
 `dist/client/` on `http://localhost:8080/` and the baerly-storage HTTP

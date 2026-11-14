@@ -756,11 +756,11 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   `log_seq_start`; a stale read can delay collection but cannot make a live log
   stale.
 - A Cloudflare scheduled invocation processes one collection. With the R2
-  binding, Free or Paid, one combined `runScheduledMaintenance()` call with the
-  host's profile fits the request ledger; on Free with storage over `fetch` it
-  does not, so that host alternates direct bounded `compact()` and `runGc()`
-  calls, one phase per invocation. Fan-out must be sharded or driven by a
-  persisted collection cursor.
+  binding, Free or Paid, one whole `runScheduledMaintenance()` pass at the
+  host's `tier` fits the request ledger; on Free with storage over `fetch` it
+  does not, so that host alternates `phase: "compact"` and `phase: "gc"`, one
+  phase per invocation. Fan-out must be sharded or driven by a persisted
+  collection cursor.
 - Cloudflare can defer the tick past the response with
   `ctx.waitUntil`; Node runs inline unless the host wraps it
   differently.
@@ -778,22 +778,20 @@ defaults, deliberately:
 | Trigger | Floor | Why |
 | --- | --- | --- |
 | In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
-| Scheduled (`runScheduledMaintenance`, no `options.compact`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
-| Cloudflare Paid scheduled (`runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The library-provided scheduled profile exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
-| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. Pass it to `runScheduledMaintenance` only with the R2 binding; with storage over `fetch`, alternate its `.compact` / `.gc` halves. |
-| Direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; direct callers should pass a threshold sized to their trigger. |
+| Scheduled (`runScheduledMaintenance`, `tier` `"node"` or unset) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
+| Scheduled, `tier: "cf-paid"` (`CLOUDFLARE_PAID_TIER`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The tier exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
+| Scheduled, `tier: "cf-free"` (`CLOUDFLARE_FREE_TIER`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. A whole pass fits only with the R2 binding; with storage over `fetch`, alternate `phase: "compact"` / `"gc"`. |
+| Internal direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; in-repo callers pass a threshold sized to their trigger. |
 
 The scheduled floor drains the tail to zero so reads stay O(snapshot),
 not O(history). Every fold rewrites the entire snapshot, so at a
 5-minute cadence a threshold of 1 bounds snapshot rewrites to one per
 tick that actually received writes (an idle tick costs only the
-`current.json` GET + tail probe, no PUT). `CLOUDFLARE_PAID_TIER` uses
+`current.json` GET + tail probe, no PUT). `tier: "cf-paid"` uses
 that same floor of 1 with a 1,000-GET tail probe
-(`CF_PAID_COMPACT_TAIL_PROBE_GETS`); Free carries an explicit 20. A
-write-amplification-sensitive caller whose fold cost outweighs its
-per-entry read cost raises the floor explicitly via
-`options.compact.minEntriesToCompact`; the trade is a tail of up to
-`floor − 1` unfolded entries that every read replays at one GET apiece.
+(`CF_PAID_COMPACT_TAIL_PROBE_GETS`); Free carries an explicit 20. The
+floor is internal (`options.compact.minEntriesToCompact` on
+`runMaintenancePass`), not a `runScheduledMaintenance` option.
 The floor is a count, not a timestamp — the cron cadence already carries
 the timing signal, and behaviour stays identical on every backend.
 
