@@ -405,7 +405,7 @@ endpoint before relying on it.
 Free it counts against the plan's 50 subrequests per request; R2 binding
 calls do not. Workers Free + S3 over HTTP is therefore best effort with a
 low ceiling, not first-class: see
-[workload-fit.md § Scale at a glance](../about/workload-fit.md#scale-at-a-glance)
+[scale-ceilings.md § Workers Free + S3 over HTTP](scale-ceilings.md#workers-free--s3-over-http)
 for its envelope. Workers Paid raises the budget to 10,000 per request
 and is the first guaranteed tier for this path.
 

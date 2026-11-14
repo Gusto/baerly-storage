@@ -2,7 +2,7 @@
 title: Conventions for docs/
 audience: coder
 summary: Source-of-truth rules, markdown style, Mermaid usage, when to update which doc.
-last-reviewed: 2026-08-04
+last-reviewed: 2026-11-13
 tags: [conventions, docs]
 related: [tests.md, "../../README.md"]
 ---
@@ -94,10 +94,14 @@ characterizes the reader's _own_ software.
   a real database," or a stepping stone to a "serious" database.
   Internal tools are production systems; the small surface is
   deliberate.
-- **Do not invent scale numbers.** `docs/about/workload-fit.md`,
-  `docs/about/graduation.md`, and `docs/about/cost-model.md` are the
-  canonical owners of throughput, size, and cost figures. Front-door
-  copy links to those sources instead of restating their figures.
+- **Do not invent or restate scale numbers.** Each figure has one
+  owner, and every other page (including the `examples/*` README and
+  `AGENTS.md` files) links to it instead of repeating it:
+  `docs/spec/scale-ceilings.md` owns scale figures (writes per
+  collection, collections per tenant, documents per collection, and the
+  per-host `C`/`E` ceilings), with exact code values in the constants'
+  JSDoc; `docs/about/cost-model.md` owns dollar figures and cost lines
+  (including the stored-bytes line and the account-wide cost triggers).
 
 Consistency is of the _wording_, not byte-identical formatting: the
 copies are not identical today (e.g. some are bold and standalone,
