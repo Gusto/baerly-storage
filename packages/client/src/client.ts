@@ -20,7 +20,7 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { CLIENT_CONTEXT, CLIENT_SCOPE } from "./internal/context.ts";
-import { type Fetcher, type RequestContext, request } from "./request.ts";
+import { type BaerlyWarning, type Fetcher, type RequestContext, request } from "./request.ts";
 
 /**
  * Public options for {@link createBaerlyClient}.
@@ -84,6 +84,29 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    * logging examples above.
    */
   readonly headers?: Headers | Record<string, string>;
+  /**
+   * Optional. Called once for each successful response that carries a
+   * server warning; see {@link BaerlyWarning}. Today that is the
+   * capacity warning: a write that committed but left its collection at
+   * 90% or more of what the host can hold, so inserts and growing
+   * updates will soon be refused with `CapacityExceeded`. The write's
+   * own result is unchanged, and a callback that throws (or returns a
+   * rejected promise) cannot fail it. Without this option warnings are
+   * dropped.
+   *
+   * Cross-origin browser apps also need the server's CORS layer to list
+   * `Baerly-Capacity-Warning` in `Access-Control-Expose-Headers`, or the
+   * browser hides the header from the client.
+   *
+   * @example
+   * ```ts
+   * const client = createBaerlyClient({
+   *   baseUrl: "https://api.example.com",
+   *   onWarning: (w) => console.warn(`${w.method} ${w.path}: ${w.message}`),
+   * });
+   * ```
+   */
+  readonly onWarning?: (warning: BaerlyWarning) => void;
   /**
    * Optional. **Type-only** — the runtime client does not read this
    * field; it exists so `client.collection(name)` can narrow `name` to
@@ -265,6 +288,7 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
     baseUrl: options.baseUrl,
     fetch: options.fetch ?? ((req) => globalThis.fetch(req)),
     headers: new Headers(options.headers ?? {}),
+    onWarning: options.onWarning,
   };
   const build = (scope: RequestContext): BaerlyClient<TConfig> =>
     ({
