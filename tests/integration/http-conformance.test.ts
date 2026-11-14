@@ -50,6 +50,7 @@ import { withHttpObservability } from "@baerly/server/observability";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conformance-cascade.ts";
 import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
+import { gate } from "../setup/gates.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
 const APP = "http-conf";
@@ -60,7 +61,7 @@ const stableConfig = {
   credentials: { accessKeyId: MINIO_ACCESS_KEY, secretAccessKey: MINIO_SECRET_KEY },
 };
 
-const minioEnabled = process.env["MINIO"] === "1";
+const minioEnabled = gate("minio");
 
 interface Variant {
   readonly label: "memory" | "local-fs" | "node-minio";

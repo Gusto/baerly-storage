@@ -63,20 +63,24 @@ import {
 } from "../../packages/cli/src/export/index.ts";
 import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
+import { gate } from "../setup/gates.ts";
 
 const APP = "rt";
 const TENANT = "t";
 const COLL = "tickets";
 const CURRENT_JSON_KEY = `app/${APP}/tenant/${TENANT}/manifests/${COLL}/current.json`;
 
-const sqliteAvailable = ((): boolean => {
-  try {
-    const r = spawnSync("sqlite3", ["-version"], { stdio: "ignore" });
-    return r.status === 0;
-  } catch {
-    return false;
-  }
-})();
+const sqliteAvailable = gate(
+  "sqlite",
+  ((): boolean => {
+    try {
+      const r = spawnSync("sqlite3", ["-version"], { stdio: "ignore" });
+      return r.status === 0;
+    } catch {
+      return false;
+    }
+  })(),
+);
 
 /** Bootstrap a fresh `current.json` so the writer has somewhere to CAS. */
 const bootstrap = async (storage: Storage, owner: string): Promise<void> => {
