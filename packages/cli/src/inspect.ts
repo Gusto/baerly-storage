@@ -64,12 +64,9 @@ import {
   type Storage,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
-import { probeTailFrom } from "@baerly/server";
-import {
-  isFoldViable,
-  type MaintenanceProfile,
-  parseMaintenanceEnv,
-} from "@baerly/server/maintenance";
+import { probeTailFrom } from "@baerly/server/_internal/kernel";
+import { type MaintenanceProfile } from "@baerly/server/maintenance";
+import { isFoldViable, parseMaintenanceEnv } from "@baerly/server/_internal/maintenance";
 import { loadMaterialisedView } from "./export/index.ts";
 import { parseBucketUri } from "./bucket-uri.ts";
 import { emitSuccess, isJsonMode } from "./output.ts";

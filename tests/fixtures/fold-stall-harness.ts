@@ -25,8 +25,10 @@ import {
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { Db, probeTailFrom } from "@baerly/server";
-import { type MaintenanceProfile, runBoundedMaintenance } from "@baerly/server/maintenance";
+import { Db } from "@baerly/server";
+import { probeTailFrom } from "@baerly/server/_internal/kernel";
+import { type MaintenanceProfile } from "@baerly/server/maintenance";
+import { runBoundedMaintenance } from "@baerly/server/_internal/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { Writer } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "./counting-storage.ts";

@@ -33,7 +33,7 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
-import { runBoundedMaintenance } from "@baerly/server/maintenance";
+import { runBoundedMaintenance } from "@baerly/server/_internal/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { abortingStorage } from "../fixtures/aborting-storage.ts";
 import {

@@ -35,7 +35,7 @@
 
 import { type ArgsDef } from "citty";
 import { BaerlyError, readCurrentJson, type Storage } from "@baerly/protocol";
-import { loadSnapshotAsMap } from "@baerly/server";
+import { loadSnapshotAsMap } from "@baerly/server/_internal/kernel";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { LEGACY_NAME_MIGRATION, nonNfcNames } from "../legacy-names.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";

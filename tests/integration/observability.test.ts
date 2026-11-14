@@ -55,10 +55,10 @@ import {
   configureObservability,
   createObservabilityContext,
   flushCanonicalLine,
-  logMaintenanceWarning,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
+import { logMaintenanceWarning } from "@baerly/server/_internal/observability";
 
 const APP = "app";
 const TENANT = "tenant";

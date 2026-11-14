@@ -35,7 +35,11 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { S3HttpStorage } from "@baerly/adapter-node";
-import { encodeSnapshotBody, snapshotKey, type SnapshotBody } from "@baerly/server";
+import {
+  encodeSnapshotBody,
+  snapshotKey,
+  type SnapshotBody,
+} from "@baerly/server/_internal/kernel";
 import {
   encodeSnapshotChunk,
   snapshotChunkKey,

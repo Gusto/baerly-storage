@@ -35,7 +35,8 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { Db, probeTailFrom } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { probeTailFrom } from "@baerly/server/_internal/kernel";
 import { Writer } from "@baerly/server/_internal/testing";
 import {
   CentralisedOfflineFirstCausalSystem,

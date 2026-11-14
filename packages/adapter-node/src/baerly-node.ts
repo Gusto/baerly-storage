@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { serve } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
 import type { BaerlyAppConfig, Storage, Verifier } from "@baerly/protocol";
-import { resolveVerifier } from "@baerly/server";
+import { resolveVerifier } from "@baerly/server/_internal/kernel";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createApp } from "./app.ts";
 

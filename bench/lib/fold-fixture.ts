@@ -51,7 +51,11 @@ import {
   snapshotHash,
   timestamp,
 } from "@baerly/protocol";
-import { type SnapshotBody, encodeSnapshotBody, snapshotKey } from "@baerly/server";
+import {
+  type SnapshotBody,
+  encodeSnapshotBody,
+  snapshotKey,
+} from "@baerly/server/_internal/kernel";
 import { compact } from "@baerly/server/maintenance";
 import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
 

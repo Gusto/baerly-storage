@@ -265,8 +265,8 @@ const db = Db.create({ storage, app, tenant, config });
 
 The kernel derives the per-collection schema and index maps from
 `config.collections` internally via `collectionsToMaps`
-(re-exported from `@gusto/baerly-storage` for tests that want to
-construct the maps directly). When `config` is omitted, schema
+(re-exported from the unpublished `@baerly/server/_internal/kernel`
+subpath for tests that want to construct the maps directly). When `config` is omitted, schema
 validation is a no-op.
 
 The previous `schemas:` / `indexes:` overrides on `Db.create` are no longer

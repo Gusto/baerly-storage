@@ -414,22 +414,24 @@ layout 2 activates the formerly deferred axis as a required field in
 ADR-003's reserved namespace, per-artifact schema rules, no-upcaster rule, and
 operator-burden constraint remain in force.
 
-At the cut, remove `SnapshotBody`, `encodeSnapshotBody()`, and `snapshotKey()`
-from the public barrel because they can only manufacture the rejected
-monolithic format. Keep
-`loadSnapshotAsMap(storage, key, expectedCollection, signal?)` with its current
+The cut changes no public export. The 0.7.0 surface trim already removed
+`SnapshotBody`, `encodeSnapshotBody()`, `snapshotKey()`, and
+`loadSnapshotAsMap()` from the published barrel; they live on the unpublished
+`@baerly/server/_internal/kernel` subpath for the CLI, bench, and tests. At the
+cut, `SnapshotBody`, `encodeSnapshotBody()`, and `snapshotKey()` go away
+because they can only manufacture the rejected monolithic format, and
+`loadSnapshotAsMap(storage, key, expectedCollection, signal?)` keeps its
 signature as a direct-artifact materializing wrapper over the same strict
 manifest/chunk decoders; it never retains a legacy parser. That helper does not
 claim that a manifest covers a captured head. Production head-aware callers
 use the internal view input with required expected `log_seq_start` ownership.
 
 This ADR is the required supersession record and narrowly overrides the public
-API deprecation lifecycle for those three construction symbols: keeping them
-working through the cut would retain a public path to artifacts the only
-supported runtime must reject, while adapting their signatures would be a
-different breaking capability. The ordinary lifecycle remains unchanged for
-every other public capability. The removal and wrapper behavior are called out
-in the minor changeset and upgrade note.
+API deprecation lifecycle for those four symbols, which 0.7.0 removes from the
+published surface without a deprecation release: keeping them public would
+retain a path to artifacts the only supported runtime will reject, and none was
+documented in `API.md`. The ordinary lifecycle remains unchanged for every
+other public capability. The removal is called out in the 0.7.0 changeset.
 
 ## Closed Paths
 

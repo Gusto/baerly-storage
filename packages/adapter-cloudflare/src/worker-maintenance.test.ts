@@ -48,7 +48,8 @@ import {
   WRITE_TICK_GC_MAX_MARKS,
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
-import { compact, runBoundedMaintenance } from "@baerly/server/maintenance";
+import { compact } from "@baerly/server/maintenance";
+import { runBoundedMaintenance } from "@baerly/server/_internal/maintenance";
 import {
   createObservabilityContext,
   getCurrentContext,

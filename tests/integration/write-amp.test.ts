@@ -23,7 +23,7 @@ import {
   MAINTENANCE_PROFILE_NODE,
   MemoryStorage,
 } from "@baerly/protocol";
-import { type BoundedMaintenanceOptions } from "@baerly/server/maintenance";
+import { type BoundedMaintenanceOptions } from "@baerly/server/_internal/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import { Writer } from "@baerly/server/_internal/testing";
 import { wrapCountingStorage } from "../fixtures/counting-storage.ts";
