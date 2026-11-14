@@ -665,6 +665,23 @@ describe("LocalFsStorage — impl-specific", () => {
       expect(JSON.parse(readFileSync(join(root, MARKER), "utf8"))).toEqual({ key_encoding: 1 });
     });
 
+    test("a legacy tree holding a folded snapshot is refused, even with lowercase ids", async () => {
+      // The kernel's snapshot level segment `L9` is escaped to `%4c9`, so
+      // any pre-escaping tree a fold has written into is not adoptable.
+      const prefix = "app/a/tenant/t/manifests/users";
+      mkdirSync(join(root, prefix, "snapshot", "L9"), { recursive: true });
+      writeFileSync(join(root, prefix, "current.json"), "{}");
+      writeFileSync(join(root, prefix, "snapshot", "L9", "0-1-ab.json"), "{}");
+      const legacy = new LocalFsStorage({ root });
+      const err = await collect(legacy.list("")).then(
+        () => null,
+        (error: unknown) => error as { code?: string; message?: string },
+      );
+      expect(err?.code).toBe("InvalidConfig");
+      expect(err?.message).toContain(`${prefix}/snapshot/L9/0-1-ab.json`);
+      expect(existsSync(join(root, MARKER))).toBe(false);
+    });
+
     test("a legacy tree with a name the encoding reads differently is refused", async () => {
       mkdirSync(join(root, "p", "index"), { recursive: true });
       writeFileSync(join(root, "p", "index", "A.json"), "{}");

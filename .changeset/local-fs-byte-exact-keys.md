@@ -33,7 +33,10 @@ The data directory now carries a `.baerly-localfs.json` marker. An existing
 directory is adopted as-is only when every name in it, dot-prefixed names
 included, already reads the same under the new encoding: true of trees whose
 ids, collection, app, and tenant names are lowercase ASCII and do not start
-with `.`. Leftover `.baerly-tmp-*` staging files and `.DS_Store` /
+with `.`, and that hold no snapshot. Snapshot files live under
+`snapshot/L9/`, now stored as `snapshot/%4c9/`, so any directory where a
+collection has been folded needs the dump-and-restore recovery below.
+Leftover `.baerly-tmp-*` staging files and `.DS_Store` /
 `.gitkeep` files are ignored. Otherwise every operation refuses with
 `InvalidConfig`, listing the affected paths; a listed path that is a stray
 file rather than data can simply be moved out. To recover, dump the
