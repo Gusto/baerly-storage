@@ -16,6 +16,11 @@
  *      `op`/`collection`/`doc_id` fields. A full decode walk is
  *      intentionally omitted to keep the op count O(LIST pages); the
  *      read path validates entry shape at fold time.
+ *   4. Migration preflight: the app, tenant, and collection names are
+ *      NFC and hold no unpaired UTF-16 surrogate, and no `_id` in the
+ *      snapshot holds one. `_id`s committed since the last fold live
+ *      only in the log, which fsck does not decode; `admin dump --json`
+ *      reports every live `_id`.
  *
  * fsck never reads or writes the legacy `index/` prefix: writers before
  * 0.7 left index markers there, but no read consults them, so they cannot
@@ -29,7 +34,8 @@
  *       (Internal / InvalidResponse) — distinguished from exit 4
  *       so CI can wire fsck as a regression gate.
  *   4 — One or more findings (orphan / hole / hash-mismatch /
- *       a non-NFC app, tenant, or collection name). Unique to this command; the other
+ *       a non-NFC or ill-formed app, tenant, or collection name / an
+ *       ill-formed snapshot `_id`). Unique to this command; the other
  *       `baerly admin` subcommands reserve 0–3.
  */
 
@@ -37,7 +43,14 @@ import { type ArgsDef } from "citty";
 import { BaerlyError, readCurrentJson, type Storage } from "@baerly/protocol";
 import { loadSnapshotAsMap } from "@baerly/server";
 import { parseBucketUri } from "../bucket-uri.ts";
-import { LEGACY_NAME_MIGRATION, nonNfcNames } from "../legacy-names.ts";
+import {
+  illFormedNames,
+  LEGACY_ILL_FORMED_ID_MIGRATION,
+  LEGACY_ILL_FORMED_NAME_MIGRATION,
+  LEGACY_NAME_MIGRATION,
+  legacyIdReport,
+  nonNfcNames,
+} from "../legacy-names.ts";
 import { emitSuccess, isJsonMode } from "../output.ts";
 import {
   APP_ARG,
@@ -135,13 +148,20 @@ const bundle = defineBaerlySubcommand({
     const collectionPrefix = `${bucket.keyPrefix}app/${app}/tenant/${tenant}/manifests/${args.collection}`;
     const currentJsonKey = `${collectionPrefix}/current.json`;
 
-    // Migration preflight: a legacy non-NFC name is readable here but
-    // refused by the SDK and by every writing verb.
-    const findings: Finding[] = nonNfcNames(names).map((role) => ({
-      severity: "warning",
-      check: "names",
-      message: `${role} name ${JSON.stringify(names[role])} is not NFC: ${LEGACY_NAME_MIGRATION}`,
-    }));
+    // Migration preflight: a legacy non-NFC or ill-formed name is
+    // readable here but refused by the SDK and by every writing verb.
+    const findings: Finding[] = [
+      ...nonNfcNames(names).map((role) => ({
+        severity: "warning" as const,
+        check: "names",
+        message: `${role} name ${JSON.stringify(names[role])} is not NFC: ${LEGACY_NAME_MIGRATION}`,
+      })),
+      ...illFormedNames(names).map((role) => ({
+        severity: "warning" as const,
+        check: "names",
+        message: `${role} name ${JSON.stringify(names[role])} has an unpaired UTF-16 surrogate: ${LEGACY_ILL_FORMED_NAME_MIGRATION}`,
+      })),
+    ];
 
     // ── current.json + snapshot + log walks. ───────────────────────
     const read = await readCurrentJson(bucket.storage, currentJsonKey);
@@ -158,7 +178,18 @@ const bundle = defineBaerlySubcommand({
     // ── Snapshot hash verifies (loadSnapshotAsMap throws on mismatch). ──
     if (snapshotKey !== null) {
       try {
-        await loadSnapshotAsMap(bucket.storage, snapshotKey, args.collection);
+        const docs = await loadSnapshotAsMap(bucket.storage, snapshotKey, args.collection);
+        // Preflight over the rows fsck already holds; tail `_id`s need
+        // a log decode, which `admin dump` does.
+        const { ill_formed_ids: illFormedIds } = legacyIdReport(docs.keys());
+        if (illFormedIds.length > 0) {
+          findings.push({
+            severity: "warning",
+            check: "ids",
+            message: `${illFormedIds.length} snapshot _id(s) with an unpaired UTF-16 surrogate ${JSON.stringify(illFormedIds)}: ${LEGACY_ILL_FORMED_ID_MIGRATION}`,
+            key: snapshotKey,
+          });
+        }
       } catch (error) {
         if (
           error instanceof BaerlyError &&
