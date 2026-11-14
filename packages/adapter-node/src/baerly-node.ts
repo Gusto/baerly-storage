@@ -108,7 +108,7 @@ export interface BaerlyNodeHandle {
  * values are re-read for API/database requests that reach maintenance
  * dispatch; health/spec and configured dev/static short-circuits bypass
  * them. For an explicit out-of-band sweep, call
- * `runScheduledMaintenance` from `@gusto/baerly-storage` directly.
+ * `runScheduledMaintenance` from `@gusto/baerly-storage/maintenance`.
  *
  * @example
  * ```ts

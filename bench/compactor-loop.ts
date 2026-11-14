@@ -1,6 +1,6 @@
 /**
  * Compactor-vs-writer race driver. Calls
- * `runScheduledMaintenance` on a configurable cadence until the
+ * `runMaintenancePass` on a configurable cadence until the
  * abort signal fires. Returns counters about how many compactor +
  * GC passes ran and how many CAS-lost on `current.json`.
  *
@@ -11,7 +11,10 @@
  * a writer-vs-compactor race in the bench window.
  */
 
-import { runScheduledMaintenance, type MaintenanceResult } from "@baerly/server/maintenance";
+import {
+  runMaintenancePass,
+  type MaintenancePassResult,
+} from "@baerly/server/_internal/maintenance";
 import type { Storage } from "@baerly/protocol";
 
 export interface CompactorLoopCounters {
@@ -36,9 +39,9 @@ export async function runCompactorLoop(
     errors: 0,
   };
   while (!signal.aborted) {
-    let result: MaintenanceResult;
+    let result: MaintenancePassResult;
     try {
-      result = await runScheduledMaintenance({ storage, currentJsonKey }, {});
+      result = await runMaintenancePass({ storage, currentJsonKey }, {});
       counters.passes++;
       if (result.compact.written) {
         counters.compactsLanded++;

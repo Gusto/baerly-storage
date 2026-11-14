@@ -66,7 +66,7 @@ import { projectSnapshot } from "./snapshot-projection.ts";
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
- * Public configuration knobs for {@link compact}. All optional; the
+ * Base options for {@link compact}, unpublished like `compact` itself. All optional; the
  * engine works unbounded by default. Opt into a per-run cap via the
  * `CLOUDFLARE_FREE_TIER` profile (from `./maintenance.ts`) or by
  * reaching for {@link InternalCompactOptions} via the
@@ -239,7 +239,7 @@ const APPLICATION_JSON = "application/json";
  *
  * @example
  * ```ts
- * import { compact } from "@gusto/baerly-storage/maintenance";
+ * import { compact } from "@baerly/server/_internal/maintenance";
  *
  * const res = await compact(
  *   { storage, currentJsonKey: "app/x/tenant/t/manifests/tickets/current.json" },

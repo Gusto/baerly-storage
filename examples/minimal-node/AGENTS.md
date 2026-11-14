@@ -419,42 +419,33 @@ graduate once a collection is large. See docs/spec/scale-ceilings.md for the per
 envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator
 env vars (you almost never need them).
 
-Operator opt-in is not required for steady-state operation. A scheduled pass on
-Cloudflare processes one collection per invocation. With the R2 binding, Free or Paid,
-one `runScheduledMaintenance(args, CLOUDFLARE_FREE_TIER)` (or `CLOUDFLARE_PAID_TIER`)
-call fits. On Free with storage over `fetch` (S3 over HTTP), run one phase per
-invocation, alternating the direct primitives:
-
-```ts
-import { CLOUDFLARE_FREE_TIER, compact, runGc } from "@gusto/baerly-storage/maintenance";
-
-const args = { storage, currentJsonKey };
-if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
-  await compact(args, CLOUDFLARE_FREE_TIER.compact);
-} else {
-  await runGc(args, CLOUDFLARE_FREE_TIER.gc);
-}
-```
-
-Do not loop tenants or collections in one Cloudflare invocation; shard the schedule or
-persist a collection cursor across invocations.
-
-On Node, the canonical scheduled pass folds whatever live tail
-exists — `runScheduledMaintenance`'s own `minEntriesToCompact` default is 1 (a
-scheduler that fires has already decided it is time to work), so a low-write
-collection drains to zero instead of parking its tail below the old count floor.
-Cloudflare Paid callers who need per-pass caps pass `CLOUDFLARE_PAID_TIER` and still
-get floor 1.
+Operator opt-in is not required for steady-state operation. To also run maintenance on
+a schedule (useful for a collection served mostly read-only), call
+`runScheduledMaintenance` once per collection. `tier` is the
+`BAERLY_MAINTENANCE_PROFILE` value: `"cf-free"` or `"cf-paid"` caps the pass to fit one
+Workers invocation on that plan, and `"node"` (the default) is unbounded. Run one
+collection per Cloudflare invocation: shard the schedule or persist a collection cursor
+instead of looping tenants or collections.
 
 ```ts
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
 
-// Folds the entire live tail by default. Each fold rewrites the whole
-// snapshot; if that write amplification costs more than the per-entry read
-// GETs, pass an explicit floor and accept a tail of up to floor-1 entries:
-//   await runScheduledMaintenance(args, { compact: { minEntriesToCompact: 10 } });
-const res = await runScheduledMaintenance({ storage, currentJsonKey });
+const target = { storage, app, tenant, collection: "notes" };
+const res = await runScheduledMaintenance(target); // Node
+// res: { folded, deferred?: { reason }, gcDeleted, pending }
+await runScheduledMaintenance(target, { tier: "cf-paid" }); // a Workers Paid cron
 ```
+
+With the R2 binding, Free or Paid, one whole pass fits an invocation. On Free with
+storage over `fetch` (S3 over HTTP) it does not; alternate the two phases instead:
+
+```ts
+const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
+await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
+```
+
+A pass folds every pending write (one bounded slice per pass on Cloudflare), so a
+low-write collection drains to zero.
 
 <!-- pattern-d:end -->
 

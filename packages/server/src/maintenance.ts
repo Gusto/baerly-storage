@@ -1,21 +1,13 @@
 /**
- * `runScheduledMaintenance` — single-pass composition of `compact()` and
- * `runGc()` over one collection. It always runs both phases. With
- * {@link CLOUDFLARE_FREE_TIER} one invocation fits Workers Free with the R2
- * binding; with storage over `fetch` (S3 over HTTP) on Free it does not,
- * and schedulers there alternate direct `compact()` and `runGc()` calls
- * instead (budgets on {@link CLOUDFLARE_FREE_TIER}). Unbounded on Node.
+ * Maintenance passes over one collection. `runScheduledMaintenance` is the
+ * published opt-in scheduled pass (addressed by collection, sized by host
+ * tier); `runMaintenancePass` is the internal composition it resolves to,
+ * which the adapters, CLI, bench and tests drive with per-phase knobs;
+ * `runBoundedMaintenance` is the in-band write-tick runner.
  *
- * Single-attempt: returns the combined result. The caller (cron
- * handler) is responsible for scheduling the next invocation; this
- * function does not loop or retry. `compact()` and `runGc()` are
- * already CAS-protected single-attempts — a restart safely retries
- * next tick.
- *
- * Callers that want only one phase to fire this tick should invoke
- * the underlying primitive directly (`compact()` or `runGc()` from
- * this same module's re-exports). The even/odd-minute cron pattern
- * for Free with storage over `fetch` uses exactly that.
+ * Every pass is a single attempt: `compact()` and `runGc()` are
+ * CAS-protected, so a pass cut short is retried safely by the next one.
+ * The caller schedules the next pass; nothing here loops or retries.
  */
 
 import {
@@ -54,7 +46,10 @@ import type {
   InternalMaintenanceOptions,
   LogRetentionOptions,
   MaintenanceOptions,
+  MaintenanceResult,
+  MaintenanceTarget,
 } from "./maintenance-options.ts";
+import { assertNameSegment } from "./path-segment.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { retireLogRange } from "./log-retention.ts";
 import { getCurrentContext } from "./observability/context.ts";
@@ -63,20 +58,20 @@ const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopM
 
 export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
 export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
-// Public half only. `InternalMaintenanceOptions` is declared alongside
-// it but deliberately NOT re-exported here — this is a published entry,
-// and re-exporting the widening is exactly the leak being fixed.
-export type { MaintenanceOptions } from "./maintenance-options.ts";
 
+/** The internal pass's target: one collection, addressed by its `current.json` key. */
 export interface MaintenanceArgs {
   readonly storage: Storage;
   /** Full bucket-relative key of the CAS pointer for the target collection. */
   readonly currentJsonKey: string;
 }
 
-export interface MaintenanceResult {
+/** Per-phase results of one {@link runMaintenancePass}. */
+export interface MaintenancePassResult {
   readonly compact: CompactResult;
   readonly gc: RunGcResult;
+  /** Log objects retired. */
+  readonly retired: number;
 }
 
 /**
@@ -102,7 +97,7 @@ const retireLogs = async (
   storage: Storage,
   currentJsonKey: string,
   opts?: { logRetention?: LogRetentionOptions; signal?: AbortSignal },
-): Promise<void> => {
+): Promise<number> => {
   const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
   const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
   try {
@@ -113,123 +108,76 @@ const retireLogs = async (
     ctxMetrics().counter("db.log_retention.deleted_total", retired.deleted, {
       collection,
     });
+    return retired.deleted;
   } catch (error) {
     if (isWriteConflict(error)) {
-      return; // routine CAS contention — the next pass retries
+      return 0; // routine CAS contention — the next pass retries
     }
     throw error;
   }
 };
 
 /**
- * Single maintenance pass for one collection. Always runs `compact()` then
- * `runGc()` (in that order; the compactor's advance of `log_seq_start`
- * produces the stale-log candidates the GC then marks), then log
- * retirement. With {@link CLOUDFLARE_FREE_TIER} the whole pass is at most
- * 94 storage calls, 282 with every call retried, which fits the 900 a
- * Workers Free invocation may spend through the R2 binding. It does not fit
- * the 45 a Free invocation may spend through `fetch` (S3 over HTTP): there,
- * alternate direct `compact()` and `runGc()` calls, one per invocation, and
- * rely on the in-band write tick, which folds early on that host: a
- * scheduled compact there stalls once `tail_hint` is about 20 entries
- * stale (see {@link CLOUDFLARE_FREE_TIER}). The request ledger refuses any
- * call past the invocation's limit before it is sent, so a pass never
- * exceeds the limit.
+ * One maintenance pass over one collection, addressed by its `current.json`
+ * key: `compact()` then `runGc()` (in that order; the compactor's advance
+ * of `log_seq_start` produces the stale-log candidates the GC then marks),
+ * then log retirement. With {@link CLOUDFLARE_FREE_TIER} the whole pass is
+ * at most 94 storage calls, 282 with every call retried, which fits the 900
+ * a Workers Free invocation may spend through the R2 binding but not the 45
+ * it may spend through `fetch` (see {@link CLOUDFLARE_FREE_TIER}). The
+ * request ledger refuses any call past the invocation's limit before it is
+ * sent, so a pass never exceeds the limit.
  *
- * Defaults: `minEntriesToCompact` defaults to
- * {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT} (1) on THIS entry point only — a
+ * `minEntriesToCompact` defaults to {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT}
+ * (1) here, deliberately NOT `compact()`'s own default (100) or the
+ * write-tick floor ({@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT}, 50), both of
+ * which exist to keep an in-band write from thrashing snapshot rewrites. A
  * scheduler that fires has already decided it is time to work, so the
  * scheduled path drains the live tail to zero rather than parking it in a
  * dead zone between a count floor and the per-entry GET cost every read
- * pays. This is deliberately NOT `compact()`'s own default (100) or the
- * write-tick floor ({@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT}, 50), both
- * of which exist to keep an in-band write from thrashing snapshot
- * rewrites. Every fold rewrites the whole snapshot, so a caller whose
- * fold cost outweighs its tail-read cost can raise the floor explicitly
- * via `options.compact.minEntriesToCompact`. {@link CLOUDFLARE_PAID_TIER}
- * carries this same floor of 1 plus per-pass caps — pass it for those
- * caps, not for an in-band count floor. {@link CLOUDFLARE_FREE_TIER}
- * carries an explicit 20, which keeps `minEntriesToCompact <= P` for its
- * bounded tail probe (derivation on that constant).
+ * pays. An explicit `options.compact.minEntriesToCompact` suppresses this
+ * default; {@link CLOUDFLARE_FREE_TIER} carries 20, which keeps
+ * `minEntriesToCompact <= P` for its bounded tail probe.
  *
- * Errors propagate — the caller's cron handler is responsible for
- * logging them. The Cloudflare runtime ships uncaught Worker errors
- * to the dashboard; Node operators wrap their `node-cron` callbacks
- * themselves.
+ * Errors propagate; `WriteConflict` from retirement is swallowed as
+ * routine contention (see `retireLogs`).
  *
- * @example
- * ```ts
- * import {
- *   CLOUDFLARE_FREE_TIER,
- *   compact,
- *   runGc,
- *   runScheduledMaintenance,
- * } from "@gusto/baerly-storage/maintenance";
- *
- * // Node (unbounded — defaults fold the entire live tail):
- * const res = await runScheduledMaintenance(
- *   { storage, currentJsonKey: "app/x/tenant/t/manifests/tickets/current.json" },
- * );
- * console.log("compacted:", res.compact.entriesFolded, "swept:", res.gc.swept);
- *
- * // Write-amplification-sensitive: fold only once a tail has accumulated.
- * // Each fold rewrites the whole snapshot; the floor trades tail GETs on
- * // reads against snapshot PUTs on the schedule.
- * const res = await runScheduledMaintenance(
- *   { storage, currentJsonKey },
- *   { compact: { minEntriesToCompact: 10 } },
- * );
- *
- * // Cloudflare Free with the R2 binding: one bounded pass fits.
- * await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER);
- *
- * // Cloudflare Free with S3 over HTTP: alternate the direct phases.
- * if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
- *   await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
- * } else {
- *   await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
- * }
- * ```
+ * @internal
  */
-export const runScheduledMaintenance = async (
+export const runMaintenancePass = async (
   args: MaintenanceArgs,
-  options: MaintenanceOptions = {},
-): Promise<MaintenanceResult> => {
-  // The scheduled path owns its own fold floor. `compact()`'s own default
-  // (100) and the write-tick floor (WRITE_TICK_MIN_ENTRIES_TO_COMPACT, 50)
-  // exist for the IN-BAND tick, where a write is not a scheduling decision;
-  // inheriting either here parks a low-write collection's tail permanently
-  // in the dead zone between the floor and the per-entry GET cost every
-  // read pays. A scheduler that fires has already decided it is time to
-  // work — fold whatever tail exists. Callers that prefer to batch folds
-  // pass `options.compact.minEntriesToCompact` explicitly, which suppresses
-  // this default. `CLOUDFLARE_PAID_TIER` is built by
-  // `profileToScheduledOptions`, whose default floor is also
-  // SCHEDULED_MIN_ENTRIES_TO_COMPACT — callers pass it for per-pass caps.
-  // `CLOUDFLARE_FREE_TIER` carries an explicit 20 (its bounded probe).
-  const compactRes = await compact(args, {
+  options: InternalMaintenanceOptions = {},
+): Promise<MaintenancePassResult> => {
+  const compactRes = await compactPhase(args, options);
+  const gcRes = await gcPhase(args, options);
+  // Retire stale log objects. Cheap and bounded — a computed key range,
+  // no LIST — and placed after GC so it runs on every whole pass.
+  const retired = await retireLogs(args.storage, args.currentJsonKey, {
+    logRetention: options.logRetention,
+    ...(options.signal !== undefined && { signal: options.signal }),
+  });
+  return { compact: compactRes, gc: gcRes, retired };
+};
+
+/** The pass's `compact()` call, with the scheduled fold floor. */
+const compactPhase = (
+  args: MaintenanceArgs,
+  options: InternalMaintenanceOptions,
+): Promise<CompactResult> =>
+  compact(args, {
     ...options.compact,
     ...(options.compact?.minEntriesToCompact === undefined && {
       minEntriesToCompact: SCHEDULED_MIN_ENTRIES_TO_COMPACT,
     }),
     ...(options.signal !== undefined && { signal: options.signal }),
   });
-  const gcRes = await runGc(args, {
-    ...options.gc,
-    ...(options.signal !== undefined && { signal: options.signal }),
-  });
 
-  // Retire stale log objects. Cheap and bounded — a computed key range,
-  // no LIST — and placed after GC so it runs on every maintenance pass.
-  // `WriteConflict` is swallowed inside `retireLogs`; an unexpected error
-  // propagates like a compact()/runGc() error, per the contract above.
-  await retireLogs(args.storage, args.currentJsonKey, {
-    logRetention: (options as InternalMaintenanceOptions).logRetention,
-    ...(options.signal !== undefined && { signal: options.signal }),
-  });
-
-  return { compact: compactRes, gc: gcRes };
-};
+/** The pass's `runGc()` call. */
+const gcPhase = (
+  args: MaintenanceArgs,
+  options: InternalMaintenanceOptions,
+): Promise<RunGcResult> =>
+  runGc(args, { ...options.gc, ...(options.signal !== undefined && { signal: options.signal }) });
 
 /** Host-agnostic write-tick budgets (`maxFoldBytes`=`C`, `maxFoldRows`=`E`). Canonical shape; mirrors the protocol constants (typed there to avoid a cycle). */
 export interface MaintenanceProfile {
@@ -311,12 +259,12 @@ const profileToScheduledOptions = (
  * | write-tick GC + retirement | 48 | 144 |
  * | scheduled compact + GC + retirement | 94 | 282 |
  *
- * Every row fits 900, so on Free with the R2 binding one
- * {@link runScheduledMaintenance} call per invocation is safe. Free CPU is
+ * Every row fits 900, so on Free with the R2 binding one whole
+ * {@link runScheduledMaintenance} pass per invocation is safe. Free CPU is
  * the tighter limit there (about 0.25 ms per binding call against a 10 ms
  * budget), which is why the caps stay at their measured values. Through
  * `fetch` the compaction row alone can pass 45: a scheduler on that host
- * runs one direct `compact()` or `runGc()` phase per invocation, and even
+ * alternates `phase: "compact"` and `phase: "gc"` across invocations, and even
  * then a scheduled compact whose `tail_hint` is about 20 or more entries
  * stale stalls. Its probe and log GETs reach call 46 before it writes
  * anything, so the ledger refuses a log GET, nothing is checkpointed, and
@@ -340,7 +288,7 @@ const profileToScheduledOptions = (
  * `maintenance-budget.test.ts` pins the per-phase counts exactly and checks
  * each against the Free limit with retries.
  */
-export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOptions(
+export const CLOUDFLARE_FREE_TIER: InternalMaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_FREE,
   CF_FREE_COMPACT_TAIL_PROBE_GETS,
   MAINTENANCE_PROFILE_CF_FREE.maxFoldEntriesPerPass,
@@ -364,20 +312,133 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
  *
  * Fold floor is {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT} (1): this object
  * exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not for
- * an in-band count floor. Pass it to {@link runScheduledMaintenance} and
- * a live tail of any length folds, sliced by those caps.
- *
- * To honour `BAERLY_MAINTENANCE_PROFILE=cf-paid` on the cron path, pass this
- * constant to `runScheduledMaintenance` inside your
- * {@link WorkerScheduledHandler}; the worked recipe lives in the `scheduled`
- * handler docstring of `baerlyWorker` (`@gusto/baerly-storage/cloudflare`).
+ * an in-band count floor: under `tier: "cf-paid"` a live tail of any
+ * length folds, sliced by those caps.
  *
  * @see packages/server/src/maintenance-budget.test.ts
  */
-export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = profileToScheduledOptions(
+export const CLOUDFLARE_PAID_TIER: InternalMaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_PAID,
   CF_PAID_COMPACT_TAIL_PROBE_GETS,
 );
+
+const TIER_OPTIONS: Readonly<Record<string, InternalMaintenanceOptions>> = {
+  "cf-free": CLOUDFLARE_FREE_TIER,
+  "cf-paid": CLOUDFLARE_PAID_TIER,
+  node: {},
+};
+
+/**
+ * Run one opt-in scheduled maintenance pass over one collection: fold its
+ * recent writes, delete data nothing references any more, and retire old
+ * log entries. Optional: every write already runs bounded maintenance in
+ * band, so a collection that takes writes maintains itself. A schedule is
+ * for collections served mostly read-only, or to keep folding ahead of
+ * the write tick.
+ *
+ * One call does a bounded amount of work and returns; it never loops or
+ * retries, and it is safe to run concurrently with writes and with other
+ * passes. The caller schedules the next pass. Run one collection per
+ * Cloudflare invocation: shard the cron schedule or persist a collection
+ * cursor instead of looping tenants or collections in one invocation.
+ *
+ * `tier` sizes the pass for its host, in the `BAERLY_MAINTENANCE_PROFILE`
+ * vocabulary: `"cf-free"` fits one Workers Free invocation through the R2
+ * binding, `"cf-paid"` one Workers Paid invocation, and `"node"` (the
+ * default) is unbounded. On Workers Free with storage reached over
+ * `fetch` (S3 over HTTP) a whole pass does not fit one invocation;
+ * alternate `phase: "compact"` and `phase: "gc"` across invocations.
+ *
+ * Errors propagate; log them from the cron handler. On Cloudflare an
+ * uncaught error reaches the Workers dashboard.
+ *
+ * @throws BaerlyError code="InvalidConfig" when `app`, `tenant` or
+ *   `collection` is not a name `Db.create` / `db.collection` accepts, or
+ *   `tier` / `phase` is not one of the listed values.
+ *
+ * @example
+ * ```ts
+ * import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
+ *
+ * const target = { storage, app: "helpdesk", tenant: "acme", collection: "tickets" };
+ *
+ * // Node: one unbounded pass.
+ * const res = await runScheduledMaintenance(target);
+ * console.log("folded", res.folded, "deleted", res.gcDeleted);
+ *
+ * // Cloudflare, R2 binding: one bounded pass per invocation.
+ * await runScheduledMaintenance(target, { tier: "cf-paid" });
+ *
+ * // Cloudflare Free, S3 over HTTP: alternate the phases.
+ * const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
+ * await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
+ * ```
+ */
+export const runScheduledMaintenance = async (
+  target: MaintenanceTarget,
+  options: MaintenanceOptions = {},
+): Promise<MaintenanceResult> => {
+  const { storage, app, tenant, collection } = target;
+  assertNameSegment(app, "app", "runScheduledMaintenance");
+  assertNameSegment(tenant, "tenant", "runScheduledMaintenance");
+  assertNameSegment(collection, "collection", "runScheduledMaintenance");
+  const { tier = "node", phase, signal } = options;
+  const tierOptions = Object.hasOwn(TIER_OPTIONS, tier) ? TIER_OPTIONS[tier] : undefined;
+  if (tierOptions === undefined) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `runScheduledMaintenance: tier must be "cf-free", "cf-paid" or "node", got ${JSON.stringify(tier)}`,
+    );
+  }
+  if (phase !== undefined && phase !== "compact" && phase !== "gc") {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `runScheduledMaintenance: phase must be "compact" or "gc", got ${JSON.stringify(phase)}`,
+    );
+  }
+  // The same key layout `Db` writes under (`db-read-seams.ts`).
+  const args = {
+    storage,
+    currentJsonKey: `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`,
+  };
+  const passOptions = { ...tierOptions, ...(signal !== undefined && { signal }) };
+  if (phase === "gc") {
+    return summarize(undefined, await gcPhase(args, passOptions), 0);
+  }
+  if (phase === "compact") {
+    return summarize(await compactPhase(args, passOptions), undefined, 0);
+  }
+  const pass = await runMaintenancePass(args, passOptions);
+  return summarize(pass.compact, pass.gc, pass.retired);
+};
+
+/**
+ * Compaction skips that leave available work unfolded. The scheduled
+ * tiers set no snapshot ceiling, so the over-ceiling `"deferred"` skip
+ * cannot occur on this path.
+ */
+const DEFERRAL_REASONS: Readonly<
+  Record<string, NonNullable<MaintenanceResult["deferred"]>["reason"]>
+> = {
+  "cas-lost": "contention",
+  "probe-budget-checkpointed": "budget",
+};
+
+/** Format-neutral summary of the phases that ran. */
+const summarize = (
+  compactRes: CompactResult | undefined,
+  gcRes: RunGcResult | undefined,
+  retired: number,
+): MaintenanceResult => {
+  const reason = DEFERRAL_REASONS[compactRes?.skippedReason ?? ""];
+  return {
+    // A lost CAS reports the entries it would have folded; none landed.
+    folded: compactRes?.written === true ? compactRes.entriesFolded : 0,
+    ...(reason !== undefined && { deferred: { reason } }),
+    gcDeleted: (gcRes?.swept ?? 0) + retired,
+    pending: gcRes?.pendingDepth ?? 0,
+  };
+};
 
 // =====================================================================
 // Write-tick (in-band) maintenance — `runBoundedMaintenance`.

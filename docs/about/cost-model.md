@@ -190,8 +190,8 @@ The ceiling is a gate, not a target.
 counting proxy and gates on `expect(classAOps).toBeLessThan(1)` after
 1800 polls (one hour at 2 s cadence).
 `packages/server/src/maintenance.ts` carries the `CLOUDFLARE_FREE_TIER`
-bounded-tick arithmetic. Engine defaults are unbounded, so a Node caller
-just passes `{}`. `maintenance-budget.test.ts` pins the storage calls each Cloudflare
+bounded-tick arithmetic behind `runScheduledMaintenance`'s `tier: "cf-free"`.
+Engine defaults are unbounded, so a Node caller omits `tier`. `maintenance-budget.test.ts` pins the storage calls each Cloudflare
 free-tier compact or GC phase issues, and checks each against the Free
 request limit with every call retried.
 

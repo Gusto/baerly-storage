@@ -6,7 +6,7 @@
  * Synthetic 5000-entry end-to-end verification gate.
  *
  * The "verifies the cost model" gate:
- * write 5000 entries through `Writer`, run `runScheduledMaintenance`
+ * write 5000 entries through `Writer`, run `runMaintenancePass`
  * to quiescence, then assert
  *
  *   (a) every `find()` / `all()` / `where()` result is identical before
@@ -44,8 +44,12 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { probeTailFrom } from "@baerly/server/_internal/kernel";
-import { compact, runGc, runScheduledMaintenance } from "@baerly/server/maintenance";
-import { type BoundedMaintenanceOptions } from "@baerly/server/_internal/maintenance";
+import {
+  type BoundedMaintenanceOptions,
+  compact,
+  runGc,
+  runMaintenancePass,
+} from "@baerly/server/_internal/maintenance";
 import { runWithContext } from "@baerly/server/observability";
 import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import {
@@ -125,7 +129,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           // default), so a context-free 5000-commit loop would self-
           // compact mid-seed on every GC-cadence boundary: it re-folds the
           // growing tail O(N) times (≈O(N²) work) AND pre-shrinks the
-          // bucket before the explicit `runScheduledMaintenance` below,
+          // bucket before the explicit `runMaintenancePass` below,
           // confounding the "before vs after" object-count comparison.
           // Disabling the tick keeps the seed inert and O(N) — a fixed
           // read + one committing `log/<seq>` PUT per commit (no
@@ -184,7 +188,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           };
           let passes = 0;
           for (passes = 0; passes < 20; passes++) {
-            const res = await runScheduledMaintenance(
+            const res = await runMaintenancePass(
               { storage, currentJsonKey: CURRENT_JSON_KEY },
               QUIESCE_PROFILE,
             );
@@ -266,11 +270,11 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           }
           // Compact + GC so reads hit the snapshot path. Two passes:
           // pass 1 folds + marks, pass 2 sweeps under grace=0.
-          await runScheduledMaintenance(
+          await runMaintenancePass(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
             { gc: { graceMillis: 0 } as InternalRunGcOptions },
           );
-          await runScheduledMaintenance(
+          await runMaintenancePass(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
             { gc: { graceMillis: 0 } as InternalRunGcOptions },
           );
@@ -337,7 +341,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           );
 
           // Run scheduled maintenance with log retention
-          await runScheduledMaintenance(
+          await runMaintenancePass(
             { storage, currentJsonKey: CURRENT_JSON_KEY },
             {
               gc: { graceMillis: 0, maxSweepsPerRun: 100_000 } as InternalRunGcOptions,
@@ -351,7 +355,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
           const deleteFloor = current!.json.log_delete_floor ?? 0;
 
           // What only an e2e can show: retirement is actually wired into
-          // `runScheduledMaintenance` with the shipped defaults (no
+          // `runMaintenancePass` with the shipped defaults (no
           // `logRetention` seam passed), and its per-pass DELETE budget binds
           // rather than draining the whole 5000-entry backlog in one pass. The
           // range arithmetic itself is pinned in `log-retention.test.ts`.
@@ -376,7 +380,7 @@ describe("Synthetic 5000-entry end-to-end gate", () => {
 // dispatch point and runs `runBoundedMaintenance` inline. Driving real
 // `Writer.commit`s INSIDE a `runWithContext(createObservabilityContext({
 // maintenance: {...} }), ...)` scope therefore maintains the bucket with
-// NO `runScheduledMaintenance` call at all — that is the integration
+// NO `runMaintenancePass` call at all — that is the integration
 // proof of "writes alone maintain the bucket". (The kernel-unit form of
 // the same drain lives in `packages/server/src/maintenance-drain.test.ts`;
 // these are its 5000-seed-and-beyond e2e siblings.)
@@ -439,12 +443,12 @@ const countOrphanSnapshots = async (storage: Storage, currentJsonKey: string): P
   return orphans;
 };
 
-describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
+describe("write-tick in-band maintenance (no runMaintenancePass)", () => {
   test(
     "writes alone maintain the bucket: snapshot lands + log_seq_start advances",
     { timeout: ciTimeout(30_000) },
     async () => {
-      // NOTE: `runScheduledMaintenance` is NOT imported nor called inside
+      // NOTE: `runMaintenancePass` is NOT imported nor called inside
       // this test body. The ONLY maintenance trigger is the writer's
       // post-CAS dispatch, reached because we drive commits inside a
       // `runWithContext` maintenance scope. If the dispatch ever stops

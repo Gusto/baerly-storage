@@ -34,7 +34,7 @@ import {
   MAINTENANCE_PROFILE_NODE,
   type Storage,
 } from "@baerly/protocol";
-import type { MaintenanceProfile } from "@baerly/server/maintenance";
+import type { MaintenanceProfile } from "@baerly/server/_internal/maintenance";
 import {
   BIG_C,
   commit,
