@@ -8,7 +8,10 @@ import {
 import { Db } from "@baerly/server";
 import { createRouter, mapError } from "@baerly/server/http";
 import { handleSpecRequest } from "@baerly/server/spec";
-import { type MaintenanceDispatch, parseMaintenanceEnv } from "@baerly/server/maintenance";
+import {
+  type MaintenanceDispatch,
+  parseMaintenanceEnv,
+} from "@baerly/server/_internal/maintenance";
 import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
   type ObservabilityConfig,
@@ -16,11 +19,13 @@ import {
   createObservabilityContext,
   deriveOutcome,
   flushCanonicalLine,
-  flushUnauthorizedAndRespond,
-  logMaintenanceWarning,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
+import {
+  flushUnauthorizedAndRespond,
+  logMaintenanceWarning,
+} from "@baerly/server/_internal/observability";
 
 /**
  * Options for {@link createFetchHandler}.

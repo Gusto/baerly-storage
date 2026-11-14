@@ -69,8 +69,8 @@
       "import": "./packages/adapter-node/src/gcs.ts"
     },
     "./maintenance": {
-      "types": "./packages/server/src/maintenance.ts",
-      "import": "./packages/server/src/maintenance.ts"
+      "types": "./packages/server/src/maintenance-entry.ts",
+      "import": "./packages/server/src/maintenance-entry.ts"
     },
     "./observability": {
       "types": "./packages/server/src/observability/index.ts",

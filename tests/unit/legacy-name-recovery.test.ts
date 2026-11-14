@@ -9,7 +9,8 @@ import {
   snapshotHash,
   type Storage,
 } from "@baerly/protocol";
-import { Db, encodeSnapshotBody, snapshotKey } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { encodeSnapshotBody, snapshotKey } from "@baerly/server/_internal/kernel";
 import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import * as bucketUri from "../../packages/cli/src/bucket-uri.ts";
 import { loadMaterialisedView } from "../../packages/cli/src/export/index.ts";

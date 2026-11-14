@@ -42,7 +42,7 @@ import {
   type DocumentData,
   type LogEntry,
 } from "@baerly/protocol";
-import { encodeSnapshotBody } from "@baerly/server";
+import { encodeSnapshotBody } from "@baerly/server/_internal/kernel";
 import {
   encodeSnapshotChunk,
   snapshotChunkKey,

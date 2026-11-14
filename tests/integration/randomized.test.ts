@@ -45,7 +45,8 @@ import {
 } from "@baerly/protocol";
 import { S3HttpStorage, gcsStorage } from "@baerly/adapter-node";
 import { LocalFsStorage } from "@baerly/dev";
-import { Db, loadSnapshotAsMap, walkLogRange } from "@baerly/server";
+import { Db } from "@baerly/server";
+import { loadSnapshotAsMap, walkLogRange } from "@baerly/server/_internal/kernel";
 import { compact } from "@baerly/server/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
