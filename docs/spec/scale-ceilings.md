@@ -45,6 +45,7 @@ a scale event, not a maturity one;
 | Snapshot rows `E` | 2,048 | 32,768 | 65,536 | [Per-tier bounds](#per-tier-bounds) |
 | Writes to one collection³ | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
 | Collections per tenant⁴ | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
+| Size of one document⁵ | 1 MiB of JSON | Same | Same | Enforced on every write, in-process and over HTTP; a larger document belongs in rows of its own or outside the database |
 
 ¹ A paid Worker keeps the **free-tier** budgets until you set
 `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
@@ -69,6 +70,13 @@ cost triggers are a different quantity; see
 [cost-model.md § Cost-side graduation signals](../about/cost-model.md#cost-side-graduation-signals).
 
 ⁴ Derivation: [Collection fan-out](#collection-fan-out).
+
+⁵ 1,048,576 bytes of the row's JSON, `_id` included (`MAX_DOCUMENT_BYTES`).
+An insert, `replace`, or `update` whose resulting row is larger fails with
+`InvalidConfig` and writes nothing, so a small patch that would grow a row
+past the limit is refused too. A row stored larger by an earlier release
+stays readable and deletable, and an update that shrinks it under the limit
+commits.
 
 **Stored bytes are not on this table because they are not a fit limit.**
 Nothing in baerly-storage measures or enforces per-tenant storage; a

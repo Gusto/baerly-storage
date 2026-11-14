@@ -26,6 +26,7 @@ import {
   readGcPending,
   BaerlyError,
   type DocumentData,
+  MAX_DOCUMENT_BYTES,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
@@ -756,6 +757,15 @@ describe("baerly admin restore", () => {
       expect(err).toContain("1 row committed");
       // The remedy must reach stderr, not only the structured error.
       expect(err).toContain("Store a finite number or null");
+    });
+
+    test("a row over the per-document size cap is refused with line and count", async () => {
+      const big = JSON.stringify({ _id: "b", pad: "x".repeat(MAX_DOCUMENT_BYTES) });
+      const { code, err } = await run(`${row("a")}${big}\n`);
+      expect(code).toBe(1);
+      expect(err).toContain("InvalidConfig");
+      expect(err).toContain('line 2 (_id "b") has an invalid document');
+      expect(err).toContain("1 row committed");
     });
 
     test("a dump at the validators' edges restores and re-dumps byte-identical", async () => {
