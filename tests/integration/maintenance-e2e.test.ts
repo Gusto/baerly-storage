@@ -591,12 +591,11 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
       // (maintenance.ts:318) is vacuously TRUE — `snapshot` is null so
       // `snapshot_bytes === 0` and `0 <= 4096` holds, the runner lets the
       // fold proceed. The defer fires one level down, at the COMPACTOR's
-      // rebuilt-snapshot ceiling (compactor.ts:318): `maxFoldBytes` is
-      // threaded in as `ceilingBytes`, and the rebuilt body
-      // (`bodyBytes.byteLength`, ~100KB for one working-set's worth of
-      // rows) exceeds a low C, so `compact()` returns deferred BEFORE the
-      // PUT/CAS — the snapshot pointer never leaves null and the tail keeps
-      // growing. The default C clears the rebuilt body, so a fold lands.
+      // rebuilt-snapshot ceiling: `maxFoldBytes` is threaded in as
+      // `ceilingBytes`, and when even the first entry's rebuilt body
+      // exceeds a low C, `compact()` returns deferred BEFORE the PUT/CAS —
+      // the snapshot pointer never leaves null and the tail keeps growing.
+      // The default C clears the rebuilt body, so a fold lands.
       const drive = async (maxFoldBytes: number | undefined) => {
         const storage = new MemoryStorage();
         await bootstrap(storage);
@@ -628,10 +627,10 @@ describe("write-tick in-band maintenance (no runScheduledMaintenance)", () => {
         return { ...read!.json, discoveredTail: tailProbe.tail };
       };
 
-      // Arm 1: ceiling far below the first snapshot the writer would
-      // rebuild (~50 docs × ~2KB ≈ 100KB). 4 KiB can never fit even one
-      // working-set's worth of rows, so EVERY fold defers → snapshot null.
-      const deferred = await drive(4 * 1024);
+      // Arm 1: ceiling below a single ~2KB row. compact() folds the longest
+      // prefix that fits, and 1 KiB fits none, so EVERY fold defers →
+      // snapshot null.
+      const deferred = await drive(1024);
       expect(
         deferred.snapshot,
         "a fold ceiling below the live snapshot size must DEFER — snapshot stays null",

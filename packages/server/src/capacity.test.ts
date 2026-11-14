@@ -22,11 +22,12 @@ import {
 } from "@baerly/protocol";
 import { fc, test as propTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
-import { capacityDecision, type PlannedWrite, projectSnapshot } from "./capacity.ts";
-import { compact } from "./compactor.ts";
+import { capacityDecision, type PlannedWrite } from "./capacity.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { walkLogRange } from "./log-walk.ts";
 import { runBoundedMaintenance } from "./maintenance.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
+import { projectSnapshot } from "./snapshot-projection.ts";
 import { Writer } from "./writer.ts";
 
 const COLLECTION = "c";
@@ -371,7 +372,7 @@ describe("capacityDecision near the ceiling (G6)", () => {
     const limits = { maxFoldRows: 100, maxFoldBytes: p.bytes + 120 + 2 * CAPACITY_BYTES_MARGIN };
     const del: PlannedWrite = { op: "D", docId: "d0" };
 
-    test("a full pass that rebuilds past C is no progress: every write is refused", () => {
+    test("a pass-long run of seqs past C is no progress: every write is refused", () => {
       // [big insert, 2 same-size updates, its delete]; C fits the final state, not the pass.
       const tail = [
         entry(2, "I", "big", big),
@@ -402,12 +403,41 @@ describe("capacityDecision near the ceiling (G6)", () => {
       expect(d.refusal?.message).toMatch(/no fold can make progress/);
     });
 
-    test("a partial last pass past C is not no progress: a later delete lengthens it", () => {
+    test("a run past C shorter than a pass is not no progress: a later delete can end it", () => {
       const tail = [entry(2, "I", "big", big)];
       const pass5 = { ...limits, maxFoldEntriesPerPass: 5 };
       expect(decision(s, tail, [del], pass5)).toMatchObject({ refusal: undefined });
       // Growth is refused, and since that pass does not land, folding is not promised.
       expect(decision(s, tail, [insert], pass5)).toMatchObject({ foldFreesRoom: false });
+    });
+
+    test("a byte-heavy entry at a pass's end is not no progress: the prefix before it folds, then its delete", () => {
+      // Pass 1 = [4 same-size updates, big insert] rebuilds past C whole,
+      // but its first 4 entries fit, so the next pass is [big insert, its delete].
+      const tail = [
+        ...Array.from({ length: 4 }, (_, i) => entry(2 + i, "U", "d0")),
+        entry(6, "I", "big", big),
+        entry(7, "D", "big"),
+      ];
+      const pass5 = { ...limits, maxFoldEntriesPerPass: 5 };
+      for (const w of [del, same("d1")]) {
+        expect(decision(s, tail, [w], pass5)).toMatchObject({ refusal: undefined });
+      }
+      expect(decision(s, tail, [insert], pass5)).toMatchObject({ foldFreesRoom: true });
+    });
+
+    test("a write that would complete a pass-long run past C is refused; one that ends the run commits", () => {
+      // Seqs 3..5 sit past C (the big row is live); 2 more over seqs make a pass of 5.
+      const tail = [entry(2, "I", "big", big), entry(3, "U", "d0"), entry(4, "U", "d1")];
+      const pass5 = { ...limits, maxFoldEntriesPerPass: 5 };
+      expect(decision(s, tail, [same("d0")], pass5)).toMatchObject({ refusal: undefined });
+      const stranded = decision(s, tail, [same("d0"), same("d1")], pass5);
+      expect(stranded.refusal?.code).toBe("CapacityExceeded");
+      expect(stranded.refusal?.message).toMatch(/stuck there for good/);
+      expect(stranded).toMatchObject({ foldFreesRoom: false });
+      expect(decision(s, tail, [same("d0"), { op: "D", docId: "big" }], pass5)).toMatchObject({
+        refusal: undefined,
+      });
     });
 
     test("pressure: no forced tick while the tail's last pass would not land", () => {
@@ -584,6 +614,95 @@ describe("projectSnapshot matches the compactor's encoding", () => {
       expect(Math.abs(projection.bytes - folded.snapshot_bytes)).toBeLessThanOrEqual(
         CAPACITY_BYTES_MARGIN,
       );
+    },
+  );
+});
+
+describe("projectSnapshot predicts compact()'s bytes cut", () => {
+  propTest.prop({
+    first: fc.array(opArb, { maxLength: 12 }),
+    second: fc.array(opArb, { minLength: 1, maxLength: 12 }),
+    pass: fc.integer({ min: 1, max: 8 }),
+    room: fc.integer({ min: -40, max: 160 }),
+  })(
+    "a bounded fold publishes the longest prefix of its pass that the projection fits within C, byte for byte",
+    async ({ first, second, pass, room }) => {
+      const storage = new MemoryStorage();
+      await createCurrentJson(storage, KEY, {
+        schema_version: CURRENT_JSON_SCHEMA_VERSION,
+        snapshot: null,
+        tail_hint: 0,
+        log_seq_start: 0,
+        writer_fence: { epoch: 0, owner: "capacity-test", claimed_at: "" },
+        snapshot_bytes: 0,
+        snapshot_rows: 0,
+      });
+      const writer = new Writer({ storage, currentJsonKey: KEY });
+      const live = new Set<string>();
+      const run = async (ops: typeof first) => {
+        for (const { kind, id: n, pad } of ops) {
+          const id = `d${n}`;
+          let op: "I" | "U" | "D" = "I";
+          if (live.has(id)) {
+            op = kind === "I" ? "U" : kind;
+          }
+          await writer.commit({
+            op,
+            collection: COLLECTION,
+            docId: id,
+            ...(op !== "D" && { body: body(id, pad) }),
+          });
+          if (op === "D") {
+            live.delete(id);
+          } else {
+            live.add(id);
+          }
+        }
+      };
+      await run(first);
+      await compact({ storage, currentJsonKey: KEY }, { minEntriesToCompact: 1 });
+      const head = (await readCurrentJson(storage, KEY))!.json;
+      const base =
+        head.snapshot === null
+          ? new Map<string, DocumentData>()
+          : await loadSnapshotAsMap(storage, head.snapshot, COLLECTION);
+      await run(second);
+      const prefix = KEY.slice(0, KEY.lastIndexOf("/"));
+      const tail = await walkLogRange(
+        storage,
+        prefix,
+        head.log_seq_start,
+        head.log_seq_start + second.length,
+      );
+
+      // `C` near the stored snapshot, so spikes and drops cross it either way.
+      const ceilingBytes = Math.max(1, head.snapshot_bytes + room);
+      const projection = projectSnapshot(head, base, COLLECTION);
+      let cut = 0;
+      const sizes: number[] = [];
+      for (const [i, e] of tail.slice(0, pass).entries()) {
+        projection.apply(e.op, e.doc_id, e.after);
+        sizes.push(projection.bytesAt(head.log_seq_start + i + 1));
+        if (sizes[i]! <= ceilingBytes) {
+          cut = i + 1;
+        }
+      }
+
+      const res = await compact({ storage, currentJsonKey: KEY }, {
+        minEntriesToCompact: 1,
+        maxEntriesPerRun: pass,
+        ceilingBytes,
+      } as InternalCompactOptions);
+      const after = (await readCurrentJson(storage, KEY))!.json;
+      if (cut === 0) {
+        expect(res).toMatchObject({ written: false, deferral: { dimension: "bytes" } });
+        expect(after.log_seq_start).toBe(head.log_seq_start);
+        return;
+      }
+      expect(res).toMatchObject({ written: true, entriesFolded: cut });
+      expect(after.log_seq_start).toBe(head.log_seq_start + cut);
+      expect(after.snapshot_bytes).toBe(sizes[cut - 1]);
+      expect(after.snapshot_bytes).toBeLessThanOrEqual(ceilingBytes);
     },
   );
 });

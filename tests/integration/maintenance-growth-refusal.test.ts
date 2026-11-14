@@ -816,6 +816,28 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expect(state(storage)).resolves.toMatchObject({ start: 21, tail: 21, rows: 11 });
         });
 
+        test("bytes self-heal: a byte-heavy entry at a pass's end folds the prefix before it; its delete is accepted and the tail drains on the same host", async () => {
+          const { storage, host } = await bytesState("near");
+          // Seeded without enforcement, as a larger host could have written
+          // it: the pass [4 same-size updates, 3M insert] rebuilds past C
+          // whole, but its first PASS - 1 entries fit.
+          await commit(storage, [
+            ...Array.from({ length: PASS - 1 }, (_, i) => ({
+              op: "U" as const,
+              i,
+              n: 1,
+              pad: BYTE_ROW_PAD,
+            })),
+            { op: "I", i: 10, pad: GROW_PAD },
+          ]);
+          await expect(outcome(onHost(storage, host, deleteW(10)))).resolves.toBe("accepted");
+          await drainOn(storage, host);
+          await expect(state(storage)).resolves.toMatchObject({ start: 16, tail: 16, rows: 10 });
+          await expect(outcome(onHost(storage, host, insertW(11, SMALL_PAD)))).resolves.toBe(
+            "accepted",
+          );
+        });
+
         // Forced tick (R5, main-10 Task 4).
         test("in-band only: at E - 1, same-size updates fold through forced write ticks and the backlog stays bounded", async () => {
           const storage = await atEMinus1();
@@ -1001,10 +1023,10 @@ describe("main-10: growth refusal (target behavior)", () => {
           await expectRefusedAndInert(storage, SMALL_HOST, insertW(E - 1));
         });
 
-        test("bytes: a full pass that rebuilds past C is no progress, so even a delete is refused; backpressure when the pass lands", async () => {
+        test("bytes: PASS pending entries in a row past C are no progress, so even a delete is refused; backpressure when a pass crosses the run", async () => {
           // [3M insert, 4 same-size updates, its delete]: the final projection
-          // fits, but the first PASS entries rebuild past C, so that pass
-          // defers on every tick (G5).
+          // fits, but each of the first PASS entries leaves the snapshot past
+          // C, so no pass can reach a fitting end and every tick defers (G5).
           const split = await bytesState("near");
           await commit(split.storage, [
             { op: "I", i: 10, pad: GROW_PAD },
