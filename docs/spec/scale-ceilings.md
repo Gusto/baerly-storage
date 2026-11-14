@@ -2,29 +2,162 @@
 title: Scale ceilings
 audience: spec
 doc_type: verification
-summary: Where every published scale limit comes from — the fold cost model, the measured per-host snapshot ceilings C and E, and the storage-side throughput walls.
-last-reviewed: 2026-11-05
+summary: The single owner of every published scale figure — the workload envelope, the per-host snapshot ceilings C and E, the host support tiers — and where each number comes from.
+last-reviewed: 2026-11-13
 tags: [capacity, verification, fold, ceilings]
 related: ["../about/graduation.md", "../about/workload-fit.md", "../about/cost-model.md"]
 ---
 
 # Scale ceilings
 
-Why each published limit is the number it is.
+The published scale figures, and why each is the number it is.
 
-This page derives; it does not tell you what to do about a limit you are
-hitting. Route by the question you arrived with:
+This page owns every scale figure: writes per minute, collections per
+tenant, documents per collection, and the per-host `C`/`E` ceilings.
+Exact code values live in the JSDoc of the constants named below
+(`packages/protocol/src/constants.ts`, plus
+`M_SIZE_WRITES_PER_MIN_PER_COLLECTION` in
+`packages/cli/src/admin/usage.ts`). Dollar figures and cost lines,
+including the ~10 GB/tenant storage line and the account-wide cost
+triggers, belong to [cost-model.md](../about/cost-model.md). Other pages
+link here instead of restating these numbers, so a changed figure is
+edited in one place.
 
 | Question | Page |
 | --- | --- |
 | Should I build on this? | [workload-fit.md](../about/workload-fit.md) |
 | What will it cost? | [cost-model.md](../about/cost-model.md) |
 | Something's wrong — what do I do? | [graduation.md](../about/graduation.md) |
-| Why is that number that number? | this page |
+| How far does it scale, and why that number? | this page |
 
-Those pages own the figures a reader acts on. This page owns the
-provenance behind them, so a figure that is challenged has exactly one
-place to be checked.
+## The published envelope
+
+baerly-storage is built for production apps that live within a defined
+workload envelope: internal tools, admin panels, dashboards, and
+low-to-moderate-traffic line-of-business apps. Crossing a line below is
+a scale event, not a maturity one;
+[graduation.md](../about/graduation.md) is what you do about it.
+
+| Dimension | Cloudflare free | Cloudflare paid¹ | Serverful Node | Why |
+| --- | --- | --- | --- | --- |
+| Documents in one collection² | ~100–500 | ~1,600–8,200 | ~6,500–32,800 | A fold rebuilds the whole snapshot in one pass; the ceiling is where that stops fitting the host |
+| Snapshot bytes `C` | 512 KiB | 8 MiB | 32 MiB | [Per-tier bounds](#per-tier-bounds) |
+| Snapshot rows `E` | 2,048 | 32,768 | 65,536 | [Per-tier bounds](#per-tier-bounds) |
+| Writes to one collection³ | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
+| Collections per tenant⁴ | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
+
+¹ A paid Worker keeps the **free-tier** budgets until you set
+`BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The
+Node adapter selects its profile automatically.
+
+² At 1–5 KB per document. Bytes (`C`) bind at documents this size. Rows
+(`E`) bind first for small documents: under ~256 B on Cloudflare, and
+under ~512 B on Node. Neither row ceiling has an env override; `C` can be
+raised with `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`. On Node the cap scales
+with available heap, and the column gives the measured floor on a 512 MB
+container. The constants are `MAINTENANCE_MAX_FOLD_BYTES_DEFAULT` /
+`MAINTENANCE_MAX_FOLD_ROWS` (cf-free), `CF_PAID_MAINTENANCE_MAX_FOLD_*`
+(cf-paid), and `NODE_MAINTENANCE_MAX_FOLD_*` (node). Derivation:
+[the auto-maintained snapshot ceiling](#the-auto-maintained-snapshot-ceiling).
+
+³ Per collection, not account-wide. It is a contention ceiling from the
+CAS-livelock regime, hard-coded as
+`M_SIZE_WRITES_PER_MIN_PER_COLLECTION = 30` in
+`packages/cli/src/admin/usage.ts`, which is what `baerly admin usage`
+grades each collection against. The account-wide write rates behind the
+cost triggers are a different quantity; see
+[cost-model.md § Cost-side graduation signals](../about/cost-model.md#cost-side-graduation-signals).
+
+⁴ Derivation: [Collection fan-out](#collection-fan-out).
+
+**Stored bytes are not on this table because they are not a fit limit.**
+Nothing in baerly-storage measures or enforces per-tenant storage; a
+tenant is only a key prefix. Stored bytes become a cost line at the R2
+free-tier storage boundary, and [cost-model.md](../about/cost-model.md)
+owns that figure.
+
+At the ceiling, growth is refused with `CapacityExceeded`; reads,
+deletes and shrinking updates keep working. See
+[graduation.md § The symptom](../about/graduation.md#the-symptom-writes-are-refused-not-data-loss).
+
+### Host support tiers
+
+**Every host runs the same protocol; a bigger host buys a bigger snapshot
+per fold.** On Workers the free-tier profile is the default whether or
+not you are paying.
+
+| Host | Support |
+| --- | --- |
+| Workers Paid, S3 or R2 | First guaranteed tier |
+| Workers Free + R2 binding | Supported floor; CPU is best effort |
+| Workers Free + S3 over HTTP | Best effort, with a low ceiling (below) |
+| Serverful Node | First-class; bounded by host memory and CPU |
+
+Both Free hosts share the same data ceiling (the Cloudflare free column
+above). The R2 binding buys request headroom — a longer pending tail,
+room for retries — not a bigger collection. Free CPU is best effort: a
+CPU kill hasn't been observed, but the ~10 ms budget is not a guarantee
+([why](#is-the-free-cpu-limit-a-wall)).
+
+### Workers Free + S3 over HTTP
+
+Every storage call is a `fetch`, and the free plan allows 50 per
+request, so this host gets a lower request envelope than the R2 binding.
+It is not first-class: no zero-config guarantee and no tuning work. The
+Worker detects this host from the storage it is given, folds once 7
+writes are pending (`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES`), and deletes at
+most 3 replaced snapshots per GC slice (`CF_FREE_FETCH_GC_MAX_SWEEPS`), so
+a write and the maintenance it triggers fit in one request. The envelope
+is collections up to ~500 documents (512 KiB) with about 900 writes per
+day sustained per collection (bursts are fine), below the ~30/min the R2
+binding and the other hosts take. The request limits, measured with no
+retries and 45 calls of the 50 budgeted, are:
+
+| Bound | Free + S3 limit |
+| --- | --- |
+| Pending tail length | 8 entries |
+
+A write costs 7 + tail calls and its worst request, write plus
+maintenance, 31 (30 storage calls plus one Cache API call); any read at
+the longest 8-entry tail costs 11, an `$in` of any size included.
+Declared indexes change none of these. One consequence of the budget is
+accepted on this host:
+
+- **Past a pending tail of 15 entries, a write cannot fold.** A write at
+  tail `t` costs 7 + `t` calls and a fold of its `t + 1` entries 6 more
+  than that, so a write at a 15-entry tail plus its fold is 44 calls and
+  at 16 the write tick skips the fold. A tail that long, for example after
+  a burst of concurrent writes, then does not shorten on a write tick, and
+  from 32 pending entries a write is refused with `CapacityExceeded`
+  before it writes anything: its reads plus the 9 calls a commit keeps to
+  resolve its create pass 45. The R2 binding has the request headroom to
+  fold it.
+
+The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
+writes, and GC reclaims about 1,000 replaced snapshots per collection per
+7-day grace period. At ~900 writes per day, about 129 folds a day leave
+~900 replaced snapshots in the bucket, at most ~450 MiB for 512 KiB
+snapshots; above that rate, replaced snapshots accumulate.
+
+A read that must replay a longer pending tail, such as one racing a write
+burst, can need more than the 45 calls a request may make, and so can a
+request whose storage calls are retried; such a read is refused whole with
+`CapacityExceeded`, never answered with missing rows. The `/v1/since`
+change feed is the exception: it stops polling when its calls run out, so
+an idle long-poll returns after about 22 seconds instead of 25 and a busy
+one returns part of the backlog, which the next poll continues. Past the
+envelope, expect more `CapacityExceeded` and `MaintenancePending`; data
+is never lost. For more request headroom use the R2 binding; for
+guaranteed CPU, use Paid.
+
+### How solid these are
+
+The document ceilings are measured (`pnpm bench:fold-ceiling`). The
+~30 writes/min contention ceiling is still a model pending real-infra
+measurement against R2, and ~100 collections is bench-grounded but
+unenforced. Revisit either if you observe persistent fold deferrals
+(`db.compaction.deferred_total`) or CAS-retry storms. The rest of this
+page is the provenance behind each figure.
 
 ## What is shipped vs. estimated
 
@@ -255,7 +388,7 @@ pure and never trigger maintenance. For folding, three gates matter:
   stays within `C`, so a byte-heavy entry ends the fold before it and the
   next slice starts there, where a delete or shrink behind it can bring
   the snapshot back within `C`. A slice with no such prefix is the bytes
-  rebuild-gate defer. `C` is per host profile: 512 KB on cf-free
+  rebuild-gate defer. `C` is per host profile: 512 KiB on cf-free
   (`MAINTENANCE_MAX_FOLD_BYTES_DEFAULT`), 8 MiB on cf-paid, 32 MiB on
   node. Operators can raise it out-of-band with
   `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; see
@@ -274,7 +407,7 @@ pure and never trigger maintenance. For folding, three gates matter:
 `C` is conservative *on cf-free* because a fold that overruns cannot back
 off in-band — there is no adaptive retry, and the fold runs on a user's
 write. Cloudflare free's ~10 ms CPU budget can rebuild roughly a 1 MB
-snapshot; `C = 512 KB` leaves margin. That budget is economic rather than
+snapshot; `C = 512 KiB` leaves margin. That budget is economic rather than
 enforced at any measured duty cycle
 ([details](#is-the-free-cpu-limit-a-wall)). On CF free, setting
 `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above
@@ -288,15 +421,10 @@ Because the tail is sliced and the snapshot rebuild is the unsliced work:
 > **`S_max = C`** (subject to `snapshot_rows <= E`).
 
 `S_max` is therefore whatever `C` is on the host you are running, and
-that differs per profile:
+that differs per profile; the per-profile `C`, `E`, and document counts
+are in [the published envelope](#the-published-envelope).
 
-| Profile | `C` (`S_max`) | `E` | Documents at 1-5 KB/doc |
-| --- | --- | --- | --- |
-| cf-free | 512 KB | 2,048 | ~100-500 |
-| cf-paid | 8 MiB | 32,768 | ~1,600-8,200 |
-| node | 32 MiB | 65,536 | ~6,500-32,800 |
-
-For documents that size, bytes bind first on every host — the row
+For documents of 1-5 KB, bytes bind first on every host — the row
 ceiling is the backstop for snapshots made of many tiny documents, where
 `E` trips while `snapshot_bytes` is still small.
 
@@ -352,7 +480,7 @@ an override, not the normal path.
 
 Cloudflare free has a per-invocation request limit and one economic
 ceiling. Isolate memory (~128 MB) is a third hard limit, but at
-`C = 512 KB` it is nowhere near binding; it is what binds cf-paid and
+`C = 512 KiB` it is nowhere near binding; it is what binds cf-paid and
 Node.
 
 - **Subrequests: 50 `fetch` calls/request — hard, but only on the
@@ -361,7 +489,7 @@ Node.
   for its own services). So the 50 does not set `C`, `E`, or the snapshot
   format: the supported floor is Free + R2 binding, and Free + S3 over
   HTTP is a best-effort host with a lower request envelope
-  ([workload-fit.md § Scale at a glance](../about/workload-fit.md#scale-at-a-glance)).
+  ([Workers Free + S3 over HTTP](#workers-free--s3-over-http)).
   Per pass, the `maxFoldEntriesPerPass ≈ 20` tail slice keeps a fold at
   about `slice + 3` storage calls; GC's mark cap bounds LIST
   classification and ledger growth, and its sweep cap bounds DELETEs.
@@ -405,7 +533,7 @@ Two consequences:
 
 | Tier | Hardware walls | Binds on | What can actually fold |
 | --- | --- | --- | --- |
-| **Cloudflare free** | ~10 ms CPU/request (economic, best effort); 50 `fetch` subrequests/request (hard; R2 binding calls exempt) | CPU cost | profile `C = 512 KB` ⇒ ~512 KB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past ~1 MB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
+| **Cloudflare free** | ~10 ms CPU/request (economic, best effort); 50 `fetch` subrequests/request (hard; R2 binding calls exempt) | CPU cost | profile `C = 512 KiB` ⇒ ~512 KiB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past 1 MiB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
 | **Cloudflare paid** | 30 s CPU default (up to 5 min); ~128 MB Worker memory; 10,000 subrequests/request default, raisable to 10M, changed 2026-02-11; free wall stays 50 | memory | `C = 8 MiB` (`CF_PAID_MAINTENANCE_MAX_FOLD_BYTES`), `E = 32,768` rows (`CF_PAID_MAINTENANCE_MAX_FOLD_ROWS`), selected by `BAERLY_MAINTENANCE_PROFILE=cf-paid` — no `C` override needed to get there. CPU is not the wall; memory is: 8 MiB peaks at ~19.5 MB, which fits the 4x margin under ~128 MB; the next grid cell (16 MiB ⇒ 37.3 MB) does not. That margin is why the ceiling is not "tens of MB" |
 | **Serverful Node** | no per-request cap; process RAM; a fold blocks the event loop | host memory | `C = 32 MiB` (`NODE_MAINTENANCE_MAX_FOLD_BYTES`), `E = 65,536` rows (`NODE_MAINTENANCE_MAX_FOLD_ROWS`), selected automatically by the Node adapter. 32 MiB is the top of the measured grid, **not** the measured wall — the probe reports `grid-exhausted` for this profile at every margin and every heap from 704 MB up. Past the grid, scale by `C ≈ heap / 10`. Per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted) |
 

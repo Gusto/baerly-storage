@@ -507,13 +507,13 @@ const res = await runScheduledMaintenance({ storage, currentJsonKey });
 ## When to graduate
 
 baerly-storage is designed for the small-to-medium operating point.
-The cost model puts the soft ceiling at:
+The soft ceiling has three lines, none enforced by the protocol: writes
+per collection (a throughput estimate), collections per tenant (a soft
+fan-out guideline), and the R2 free-tier storage line (a cost signal).
+The figures live in one place:
+docs/spec/scale-ceilings.md § "The published envelope" in the baerly-storage repo.
 
-- **~30 writes / minute / collection** (throughput ceiling — model/estimate)
-- **>10 GB / tenant stored** (R2 free-tier storage line — a cost signal, not a protocol ceiling)
-- **~100 collections / tenant** (soft fan-out guideline — bench-grounded linear cost)
-
-At M-size (~30 writes/min), the projected cost is ~$12/mo on Cloudflare, including Workers Paid, and ~$19/mo on Node, excluding Node hosting. Past
+At the M-size operating point, the projected cost is ~$12/mo on Cloudflare, including Workers Paid, and ~$19/mo on Node, excluding Node hosting. Past
 those, per-class op pricing and fan-out scan cost start to dominate;
 you've outgrown the workload envelope — move to a database service (D1 / Postgres) suited to higher scale.
 Pick your graduation target:

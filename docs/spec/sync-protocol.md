@@ -1203,11 +1203,10 @@ It also means:
 - cross-document atomicity requires graduating to a database that
   owns a real transaction coordinator.
 
-The published envelope is roughly 30 sustained logical writes per
-minute per collection; ~100 collections per tenant (a soft fan-out
-guideline — cost grows linearly, not a protocol ceiling); and >10 GB per
-tenant stored (the R2 free-tier storage line, a cost signal, not a
-baerly-storage protocol constraint). Crossing those is a graduation
+The published envelope — writes per collection, collections per
+tenant, and documents per collection on each host — is in
+[scale-ceilings.md § The published envelope](scale-ceilings.md#the-published-envelope).
+None of its lines is a protocol constraint; crossing one is a graduation
 signal, not a protocol failure.
 
 ## Common misdescriptions

@@ -184,9 +184,12 @@ baerly-storage is designed for the small-to-medium operating point.
 Past these thresholds, S3 list-prefix latency and per-class operation
 pricing starts to dominate, and you've outgrown the workload envelope — move to a database service:
 
-- **~30 writes / minute / collection** — per-collection throughput estimate (CAS-livelock model)
-- **>10 GB / tenant** — R2 free-tier storage cost line (a billing signal, not a protocol ceiling)
-- **~100 collections / tenant** — soft fan-out guideline (linear cost, bench-grounded; nothing enforces it)
+- **Writes per collection** — per-collection throughput estimate (CAS-livelock model)
+- **Stored bytes per tenant** — R2 free-tier storage cost line (a billing signal, not a protocol ceiling)
+- **Collections per tenant** — soft fan-out guideline (linear cost, bench-grounded; nothing enforces it)
+
+The figures for each line live in
+docs/spec/scale-ceilings.md § "The published envelope" in the baerly-storage repo.
 
 When you cross these signals, graduation is mechanical:
 `baerly export --target=postgres` walks your log entries (already Debezium-style CDC change events) into a database service. If your
