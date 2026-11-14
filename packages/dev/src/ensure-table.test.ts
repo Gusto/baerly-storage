@@ -9,7 +9,7 @@ const keyFor = (app: string, tenant: string, table: string): string =>
 describe("ensureTable", () => {
   test("creates current.json with a valid CurrentJson shape on first call", async () => {
     const storage = new MemoryStorage();
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" });
 
     const read = await readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets"));
     expect(read).not.toBeNull();
@@ -26,16 +26,16 @@ describe("ensureTable", () => {
 
   test("is idempotent — a second call does not throw", async () => {
     const storage = new MemoryStorage();
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" });
     await expect(
-      ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" }),
+      ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" }),
     ).resolves.toBeUndefined();
   });
 
   test("preserves an existing manifest's state across re-entry", async () => {
     const storage = new MemoryStorage();
     const key = keyFor("helpdesk", "acme", "tickets");
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" });
 
     // Commit one mutation. Under single-write commit this lands log/0 but
     // does NOT advance the stored tail_hint (compactor-only). Advance the
@@ -56,7 +56,7 @@ describe("ensureTable", () => {
     expect(before?.json.log_seq_start).toBe(1);
 
     // Re-entry must not overwrite the advanced manifest.
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" });
     const after = await readCurrentJson(storage, key);
     expect(after?.json.tail_hint).toBe(1);
     expect(after?.json.log_seq_start).toBe(1);
@@ -64,7 +64,7 @@ describe("ensureTable", () => {
 
   test("Writer.commit succeeds end-to-end after ensureTable", async () => {
     const storage = new MemoryStorage();
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" });
 
     const writer = new Writer({
       storage,
@@ -79,11 +79,11 @@ describe("ensureTable", () => {
     expect(result.entry.seq).toBe(0);
   });
 
-  test("scopes per (app, tenant, table) — sibling tables do not collide", async () => {
+  test("scopes per (app, tenant, collection) — sibling collections do not collide", async () => {
     const storage = new MemoryStorage();
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "tickets" });
-    await ensureTable(storage, { app: "helpdesk", tenant: "acme", table: "users" });
-    await ensureTable(storage, { app: "helpdesk", tenant: "beta", table: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "tickets" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "acme", collection: "users" });
+    await ensureTable(storage, { app: "helpdesk", tenant: "beta", collection: "tickets" });
 
     await expect(
       readCurrentJson(storage, keyFor("helpdesk", "acme", "tickets")),
@@ -97,10 +97,10 @@ describe("ensureTable", () => {
   });
 
   test.each([
-    { app: "cafe\u0301", tenant: "t", table: "rows" },
-    { app: "a", tenant: "cafe\u0301", table: "rows" },
-    { app: "a", tenant: "t", table: "cafe\u0301" },
-    { app: "a", tenant: "t", table: "../x" },
+    { app: "cafe\u0301", tenant: "t", collection: "rows" },
+    { app: "a", tenant: "cafe\u0301", collection: "rows" },
+    { app: "a", tenant: "t", collection: "cafe\u0301" },
+    { app: "a", tenant: "t", collection: "../x" },
   ])("refuses a name the SDK refuses (%j) and writes nothing", async (names) => {
     const storage = new MemoryStorage();
     await expect(ensureTable(storage, names)).rejects.toMatchObject({ code: "InvalidConfig" });
