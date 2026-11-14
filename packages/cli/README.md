@@ -54,6 +54,12 @@ Every subcommand accepts `--json`. When set:
 Text mode stays quiet on success unless the command's primary output is
 stdout data, such as `admin dump`.
 
+`baerly inspect --json` is a storage-format diagnostic, not a stable
+contract. Its fields (`tail_hint`, `snapshot_bytes`, `fold_gate`,
+`writer_fence`, …) name storage-format internals and follow the format,
+so any release can rename, reshape, or drop them. Read it by eye or in
+one-off scripts; don't build automation on it.
+
 ## Environment
 
 Any `s3://` bucket URI requires:
