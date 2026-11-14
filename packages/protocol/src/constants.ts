@@ -591,8 +591,9 @@ export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
  * N=20 slice, the worst pass is 49 operations, 147 with every call
  * retried, inside the 900 a Free invocation may spend through the R2
  * binding ({@link CF_FREE_INTERNAL_REQUEST_LIMIT}). Through `fetch` (45)
- * the worst pass does not fit, and a pass about 20 or more entries behind
- * its `tail_hint` stalls there; see `CLOUDFLARE_FREE_TIER`. Kept at 25
+ * the pass lowers its probe to what the ledger leaves after the fold
+ * ({@link COMPACT_FOLD_WRITE_REQUESTS}), 21 GETs, and fits in 45; see
+ * `CLOUDFLARE_FREE_TIER`. Kept at 25
  * because Free CPU, not the request count, binds first on the binding,
  * and the maintenance-backlog baselines were measured at it.
  *
@@ -649,6 +650,21 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
  */
 export const MAINTENANCE_FOLD_BASE_REQUESTS: number = 5;
+
+/**
+ * Storage writes a folding `compact()` pass issues after its log GETs: the
+ * snapshot PUT and the `current.json` CAS PUT. A bounded scheduled compact
+ * (`maxTailProbeGets` set) reserves these, the prior-snapshot GET and its
+ * `maxEntriesPerRun` log GETs out of what the invocation's request ledger
+ * has left after its `current.json` GET, and probes the tail with the rest
+ * (at most `maxTailProbeGets`). On Workers Free over `fetch`
+ * ({@link CF_FREE_EXTERNAL_REQUEST_LIMIT} = 45, N = 20) that leaves a
+ * 21-GET probe, so a pass behind a stale `tail_hint` folds in 45 calls
+ * instead of being refused at call 46 before it writes anything.
+ *
+ * @see packages/server/src/compactor.ts
+ */
+export const COMPACT_FOLD_WRITE_REQUESTS: number = 2;
 
 /**
  * Storage requests a write-tick GC slice issues besides its sweep DELETEs,
