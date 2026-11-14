@@ -24,6 +24,7 @@
 import {
   BaerlyError,
   CF_FREE_COMPACT_TAIL_PROBE_GETS,
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_PAID_COMPACT_TAIL_PROBE_GETS,
   CF_PAID_REQUEST_LIMIT,
@@ -43,6 +44,8 @@ import {
   logDeleteFloorOf,
   MemoryStorage,
   readCurrentJson,
+  RequestLedger,
+  type RequestPool,
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test, vi } from "vitest";
@@ -66,7 +69,9 @@ import {
   CLOUDFLARE_PAID_TIER,
   crossesGcBoundary,
   runBoundedMaintenance,
+  runScheduledMaintenance,
 } from "./maintenance.ts";
+import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { snapshotKey } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
 
@@ -84,6 +89,7 @@ const FREE_R2_PASS_BUDGET = Math.floor(CF_FREE_INTERNAL_REQUEST_LIMIT / STORAGE_
  */
 const countingStorage = (
   inner: Storage,
+  pool: RequestPool = "internal",
 ): {
   storage: Storage;
   getOps: () => number;
@@ -102,7 +108,7 @@ const countingStorage = (
     },
   };
   return {
-    storage: ledgeredStorage(recording, "internal", tally),
+    storage: ledgeredStorage(recording, pool, tally),
     getOps: (): number => totalCalls(tally.read()),
     report: (): CallCounts => tally.read(),
     listedPrefixes: (): string[] => [...prefixes],
@@ -211,12 +217,12 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   });
 
   test("compact-only ticks converge from a stale-low tail_hint within budget", async () => {
-    // A scheduled compact phase alone. Checked against the Free + R2
-    // budget: the 48- and 49-call passes do NOT fit the 45 a Free
-    // invocation may spend over `fetch`, where a compact this far behind
-    // its `tail_hint` stalls (see the CLOUDFLARE_FREE_TIER JSDoc). The
-    // writer deliberately leaves tail_hint stale, so each invocation must
-    // bound discovery, checkpoint progress, and let later ticks resume.
+    // A scheduled compact phase alone, with no request ledger, so the
+    // probe runs at its full P: checked against the Free + R2 budget. Over
+    // `fetch` the ledger lowers the probe instead (the free-fetch test
+    // below). The writer deliberately leaves tail_hint stale, so each
+    // invocation must bound discovery, checkpoint progress, and let later
+    // ticks resume.
     const inner = new MemoryStorage();
     await seed(inner, KEY, COLL, 100);
 
@@ -266,9 +272,86 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(finalCurrent!.json).toMatchObject({ log_seq_start: 100, tail_hint: 100 });
   });
 
+  // Workers Free with storage over `fetch`: each invocation gets a fresh
+  // ledger whose `external` pool allows `externalLimit` calls. The
+  // scheduled compact sizes its tail probe from what the ledger has left
+  // after its `current.json` GET, net of the fold it may run, so a pass
+  // behind a stale `tail_hint` fits instead of being refused mid-fold.
+  const freeFetchCompactTicks = async (
+    externalLimit: number,
+  ): Promise<{
+    perPassOps: number[];
+    summaries: Array<{ folded: number; deferred?: { reason: string } }>;
+    states: Array<{ log_seq_start: number; tail_hint: number }>;
+  }> => {
+    const inner = new MemoryStorage();
+    await seed(inner, KEY, COLL, 100);
+    const perPassOps: number[] = [];
+    const summaries: Array<{ folded: number; deferred?: { reason: string } }> = [];
+    const states: Array<{ log_seq_start: number; tail_hint: number }> = [];
+    for (let invocation = 0; invocation < 20; invocation++) {
+      const counted = countingStorage(inner, "external");
+      const ledger = new RequestLedger({
+        internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+        external: externalLimit,
+      });
+      const res = await runWithContext(createObservabilityContext({ ledger }), () =>
+        runScheduledMaintenance(
+          { storage: counted.storage, app: "t", tenant: "x", collection: COLL },
+          { tier: "cf-free", phase: "compact" },
+        ),
+      );
+      perPassOps.push(counted.getOps());
+      summaries.push({
+        folded: res.folded,
+        ...(res.deferred !== undefined && { deferred: res.deferred }),
+      });
+      const current = await readCurrentJson(inner, KEY);
+      states.push({
+        log_seq_start: current!.json.log_seq_start,
+        tail_hint: current!.json.tail_hint,
+      });
+      if (current!.json.log_seq_start === 100) {
+        break;
+      }
+    }
+    for (let i = 1; i < states.length; i++) {
+      expect(states[i]!.log_seq_start).toBeGreaterThanOrEqual(states[i - 1]!.log_seq_start);
+      expect(states[i]!.tail_hint).toBeGreaterThanOrEqual(states[i - 1]!.tail_hint);
+    }
+    return { perPassOps, summaries, states };
+  };
+
+  test("scheduled compact over fetch drains a stale tail_hint within the 45-call ledger", async () => {
+    const { perPassOps, summaries, states } = await freeFetchCompactTicks(
+      CF_FREE_EXTERNAL_REQUEST_LIMIT,
+    );
+    // Pass 1 (no snapshot): 1 current + 22 probe + 20 log GETs + 2 PUTs.
+    // Passes 2-4: 1 current + 21 probe + 1 snapshot + 20 log + 2 PUTs.
+    // Pass 5 finds the empty slot at 100 after 15 occupied ones.
+    expect(perPassOps).toEqual([45, 45, 45, 45, 40]);
+    expect(Math.max(...perPassOps)).toBeLessThanOrEqual(CF_FREE_EXTERNAL_REQUEST_LIMIT);
+    expect(summaries.map((s) => s.folded)).toEqual([20, 20, 20, 20, 20]);
+    expect(states.at(-1)).toEqual({ log_seq_start: 100, tail_hint: 100 });
+  });
+
+  test("a scheduled compact the ledger cuts short reports a budget deferral and resumes", async () => {
+    // 30 calls leave a 7-GET probe after the fold's reserve, short of the
+    // 20-entry fold floor: the pass checkpoints its lower bound, and the
+    // next pass probes on from there until a fold's worth is certified.
+    const { perPassOps, summaries, states } = await freeFetchCompactTicks(30);
+    expect(Math.max(...perPassOps)).toBeLessThanOrEqual(30);
+    expect(summaries.slice(0, 3)).toEqual([
+      { folded: 0, deferred: { reason: "budget" } },
+      { folded: 0, deferred: { reason: "budget" } },
+      { folded: 20 },
+    ]);
+    expect(states.at(-1)).toEqual({ log_seq_start: 100, tail_hint: 100 });
+  });
+
   // Drives the real alternating scheduled phases end to end, checked
-  // against the Free + R2 budget (its first compact passes exceed the 45
-  // calls Free allows over `fetch`), rather than
+  // against the Free + R2 budget (no ledger, so the probe runs at its
+  // full P), rather than
   // priming `tail_hint` by hand — hand-priming hides the stale-hint catch-up
   // cost, which is exactly the cost that has to stay inside the budget. Every
   // invocation must stay bounded AND advance both manifest positions
