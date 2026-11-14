@@ -136,8 +136,9 @@ export interface DocumentValuesOptions {
  * `null`). The root itself may be any object; its own
  * enumerable fields are checked. A top-level `_id: undefined` counts as
  * absent, as on `insert`; with `undefinedMembersAbsent`, every
- * `undefined` object member does. No size, depth or `null` limits are
- * applied: those belong to the storage format.
+ * `undefined` object member does. No depth or `null` limits are applied.
+ * Size is checked separately, on the whole post-image a write commits
+ * (`assertDocumentSize`).
  *
  * The input graph must remain stable until the write completes. Ordinary
  * field getters are read during traversal; changing getters, proxies and

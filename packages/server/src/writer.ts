@@ -52,6 +52,7 @@
 
 import {
   CURRENT_JSON_SCHEMA_VERSION,
+  assertDocumentSize,
   CODE_RESOLUTIONS,
   COMMIT_RESOLUTION_RESERVE,
   type CurrentJson,
@@ -412,8 +413,10 @@ export class Writer {
    * @throws BaerlyError code="InvalidConfig" when `docId` breaks the
    *   key-segment rule, when an `I` / `U` `docId` is not NFC, when an
    *   `I` / `U` body is not a plain object whose own `_id` is the string
-   *   `docId`, or when `insertGuard` is set on a non-`I` op. Checked
-   *   before any I/O.
+   *   `docId`, when an `I` / `U` post-image encodes to more than
+   *   `MAX_DOCUMENT_BYTES`, or when `insertGuard` is set on a non-`I` op.
+   *   Checked before any I/O (an admission verdict's replacement
+   *   post-image is size-checked when it is returned).
    * @throws BaerlyError code="AlreadyExists" when `insertGuard` is set and
    *   the log window `[absentBelowSeq, seq)` holds a live `I` / `U` for
    *   this doc (unless `replayIdentical` is set and its `after` equals the
@@ -469,6 +472,11 @@ export class Writer {
     // `doc_id`, and later reads key that row by the wrong id.
     if (input.op !== "D") {
       assertPostImageIdentity(input.docId, input.body, "InvalidConfig");
+      // The committed post-image is bounded, whatever the write path: an
+      // in-process call has no body cap, and a merge-patch within one can
+      // still grow the row. A `D` is never checked, so a row stored larger
+      // by an earlier release stays deletable.
+      assertDocumentSize(input.body, "Writer");
     }
     if (input.insertGuard !== undefined) {
       assertInsertGuardShape(input);
@@ -595,6 +603,7 @@ export class Writer {
           );
         }
         assertPostImageIdentity(input.docId, verdict.body, "InvalidConfig");
+        assertDocumentSize(verdict.body, errorPrefix);
         body = verdict.body;
       }
     };

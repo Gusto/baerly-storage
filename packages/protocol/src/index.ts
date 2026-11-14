@@ -4,6 +4,7 @@ export * from "./code-resolution.ts";
 export * from "./bytes.ts";
 export * from "./constants.ts";
 export * from "./document-input.ts";
+export * from "./document-size.ts";
 export {
   type CurrentJson,
   type CurrentJsonRead,

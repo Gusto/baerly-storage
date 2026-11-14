@@ -16,15 +16,15 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 347315,
-      "gz": 110456,
-      "minGz": 29679,
+      "raw": 351132,
+      "gz": 111690,
+      "minGz": 29919,
       "note": "kernel barrel; every consumer pays. Must not pull the observability subgraph — see the dedicated test."
     },
     "client.js": {
       "tier": "shipped",
-      "raw": 38032,
-      "gz": 13494,
+      "raw": 38084,
+      "gz": 13517,
       "minGz": 4848,
       "note": "browser client; must stay tiny. No kernel modules in the closure."
     },
@@ -37,30 +37,30 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 580657,
-      "gz": 176917,
-      "minGz": 58076,
+      "raw": 584474,
+      "gz": 178154,
+      "minGz": 58319,
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 102497,
-      "gz": 33771,
-      "minGz": 12054,
+      "raw": 103528,
+      "gz": 34154,
+      "minGz": 12061,
       "note": "Worker-safe S3 entry, so consumer-facing. Demonstrated catch: fast-xml-parser is pinned at 5.8.0 because 5.9.3 inflated this closure ~25%."
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 97435,
-      "gz": 32359,
-      "minGz": 10298,
+      "raw": 98466,
+      "gz": 32745,
+      "minGz": 10302,
       "note": "Worker-safe GCS entry, so consumer-facing. Smaller than s3.js because the GOOG4 signer is lighter than aws4fetch."
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 498927,
-      "gz": 151314,
-      "minGz": 49034,
+      "raw": 502744,
+      "gz": 152560,
+      "minGz": 49267,
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
@@ -72,9 +72,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 164645,
-      "gz": 53836,
-      "minGz": 13249,
+      "raw": 165676,
+      "gz": 54229,
+      "minGz": 13253,
       "note": "operator-side; reached from the cloudflare.js closure."
     },
     "observability.js": {
@@ -97,17 +97,17 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 88360,
+      "raw": 89391,
       "note": "dev-only; never enters a consumer bundle. At the 2% shipped rate it produced 12 of 32 historical trips for no safety benefit."
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 752159,
+      "raw": 755976,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 761097,
+      "raw": 764914,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }

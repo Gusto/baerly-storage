@@ -15,6 +15,29 @@ export const DOCUMENT_ERROR_PATH_EDGE_SEGMENTS = 4;
 export const DOCUMENT_ERROR_PATH_KEY_CHARS = 64;
 
 /**
+ * Max encoded size of one committed document (UTF-8 bytes of
+ * `encodeJsonBytes(post-image)`, the bytes `LogEntry.after` is stored
+ * as): 1 MiB.
+ *
+ * The writer refuses an insert, update or replace whose post-image is
+ * larger, as `InvalidConfig` before any storage call. That bounds every
+ * write path the same way: in-process calls, which no HTTP body cap
+ * covers, and HTTP merge-patches, each of which fits `MAX_BODY_BYTES`
+ * but can grow a stored row past it. Only the post-image is checked, so
+ * a row stored larger by an earlier release stays readable, deletable,
+ * and shrinkable.
+ *
+ * 1 MiB matches `MAX_BODY_BYTES` (a document at the cap still fits one
+ * request body, with the envelope's few bytes of headroom lost) and
+ * ADR-007's 1 MiB per-document hard maximum, so a later snapshot format
+ * sizes its chunk to fit the row rather than shrinking this cap.
+ * Firestore's document limit is the same 1 MiB.
+ *
+ * @see docs/adr/007-chunked-snapshot-layout.md
+ */
+export const MAX_DOCUMENT_BYTES = 1_048_576;
+
+/**
  * Max total object-key length S3 and R2 accept (UTF-8 bytes). A key
  * over this fails the PUT with an opaque provider 400; baerly surfaces
  * it early as InvalidConfig. See docs/spec/storage-compatibility.md.
