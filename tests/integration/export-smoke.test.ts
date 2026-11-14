@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
+import { gate } from "../setup/gates.ts";
 import { POSTGRES_HOST_PORT } from "../setup/ports.ts";
 
 /**
@@ -277,7 +278,7 @@ const FIXTURES: LogEntry[] = [
   },
 ];
 
-const smokeEnabled = process.env["EXPORT_SMOKE"] === "1";
+const smokeEnabled = gate("postgres");
 
 describe.runIf(smokeEnabled)("LogEntry → Postgres round-trip", () => {
   let client: Client;

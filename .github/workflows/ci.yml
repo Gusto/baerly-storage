@@ -105,10 +105,13 @@ jobs:
 
       # Default vitest project: memory + local-fs suites under pool: forks.
       # Zero infra, no credentials. dist/ is already current from install's
-      # prepare build, so skip pretest's rebuild.
+      # prepare build, so skip pretest's rebuild. BAERLY_REQUIRED_GATES names
+      # the gated suites this runner can host; the gate manifest
+      # (tests/setup/gate-manifest.ts) fails the run if any of them skipped.
       - name: Test
         env:
           BAERLY_SKIP_BUILD: "1"
+          BAERLY_REQUIRED_GATES: git
         run: pnpm test
 
       # Cloudflare adapter tests under @cloudflare/vitest-plugin

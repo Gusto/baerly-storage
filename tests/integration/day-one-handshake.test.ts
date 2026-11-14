@@ -46,6 +46,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createBaerlyClient } from "@baerly/client";
+import { gate } from "../setup/gates.ts";
 
 const TARGETS = new Set(
   (process.env["DAY_ONE_TARGETS"] ?? "").split(",").filter((s) => s.length > 0),
@@ -66,7 +67,7 @@ function cryptoRandomSecret(): string {
     .join("");
 }
 
-describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
+describe.runIf(gate("day-one-node", RUN_NODE))("day-one handshake — node target", () => {
   let workdir: string;
   let serverHandle: ServerHandle | undefined;
   const stamps: { label: string; ms: number }[] = [];
@@ -163,118 +164,117 @@ describe.runIf(RUN_NODE)("day-one handshake — node target", () => {
   );
 });
 
-describe.runIf(RUN_CF && CF_API_TOKEN !== undefined && CF_ACCOUNT_ID !== undefined)(
-  "day-one handshake — cloudflare target",
-  () => {
-    let workdir: string;
-    let workerName: string | undefined;
-    const stamps: { label: string; ms: number }[] = [];
-    const t0 = performance.now();
-    const stamp = (label: string): void => {
-      const ms = performance.now() - t0;
-      stamps.push({ label, ms });
-      console.log(`  [+${ms.toFixed(0)} ms] ${label}`);
-    };
+describe.runIf(
+  gate("day-one-cloudflare", RUN_CF && CF_API_TOKEN !== undefined && CF_ACCOUNT_ID !== undefined),
+)("day-one handshake — cloudflare target", () => {
+  let workdir: string;
+  let workerName: string | undefined;
+  const stamps: { label: string; ms: number }[] = [];
+  const t0 = performance.now();
+  const stamp = (label: string): void => {
+    const ms = performance.now() - t0;
+    stamps.push({ label, ms });
+    console.log(`  [+${ms.toFixed(0)} ms] ${label}`);
+  };
 
-    beforeAll(async () => {
-      workdir = await mkdtemp(join(tmpdir(), "baerly-day-one-cf-"));
-    });
+  beforeAll(async () => {
+    workdir = await mkdtemp(join(tmpdir(), "baerly-day-one-cf-"));
+  });
 
-    afterAll(async () => {
-      if (workerName !== undefined) {
-        // Best-effort delete; do NOT fail the suite on cleanup error.
-        try {
-          await execa("wrangler", ["delete", workerName], {
-            cwd: join(workdir, "my-app"),
-            env: {
-              ...process.env,
-              CLOUDFLARE_API_TOKEN: CF_API_TOKEN,
-              CLOUDFLARE_ACCOUNT_ID: CF_ACCOUNT_ID,
-            },
-          });
-        } catch (error) {
-          console.warn(`wrangler delete ${workerName} failed:`, error);
-        }
-      }
-      await rm(workdir, { recursive: true, force: true });
-      console.log(
-        `SUMMARY day-one-cf ms=${(performance.now() - t0).toFixed(0)} stages=${stamps
-          .map((s) => `${s.label}:${s.ms.toFixed(0)}`)
-          .join(";")}`,
-      );
-    });
-
-    test(
-      "scaffold → deploy (CF) → first record < 5 min cold, no manual credential editing",
-      async () => {
-        stamp("start");
-        const appDir = join(workdir, "my-app");
-        workerName = `day-one-${Date.now()}`;
-
-        // SCAFFOLD with --target=cloudflare. The scaffold writes the
-        // worker name into wrangler.toml; we override via env so the
-        // gate's per-run name is unique and tear-down-able.
-        await execa(
-          "npm",
-          ["create", "baerly@latest", "--", "my-app", "--target=cloudflare", "--non-interactive"],
-          {
-            cwd: workdir,
-            env: {
-              ...process.env,
-              BAERLY_NONINTERACTIVE: "1",
-              BAERLY_WORKER_NAME: workerName,
-              SHARED_SECRET,
-            },
-          },
-        );
-        stamp("scaffold-complete");
-
-        await execa("pnpm", ["install"], { cwd: appDir });
-        stamp("install-complete");
-
-        // DEPLOY: `baerly deploy --target=cloudflare`. Ticket 39's
-        // command shells `wrangler --x-provision --x-auto-create
-        // deploy` and reads CLOUDFLARE_API_TOKEN +
-        // CLOUDFLARE_ACCOUNT_ID. The `SHARED_SECRET` is set inline
-        // via `wrangler secret put` — non-interactive variant.
-        await execa("pnpm", ["exec", "baerly", "deploy", "--target=cloudflare"], {
-          cwd: appDir,
+  afterAll(async () => {
+    if (workerName !== undefined) {
+      // Best-effort delete; do NOT fail the suite on cleanup error.
+      try {
+        await execa("wrangler", ["delete", workerName], {
+          cwd: join(workdir, "my-app"),
           env: {
             ...process.env,
             CLOUDFLARE_API_TOKEN: CF_API_TOKEN,
             CLOUDFLARE_ACCOUNT_ID: CF_ACCOUNT_ID,
-            SHARED_SECRET,
           },
         });
-        stamp("deploy-complete");
-
-        const deployUrl = await readDeployUrl(appDir);
-        stamp("deploy-url-resolved");
-
-        await assertNoManualEnvEdit(appDir);
-        stamp("no-manual-env-edit");
-
-        const client = createBaerlyClient({
-          baseUrl: deployUrl,
-          headers: { Authorization: `Bearer ${SHARED_SECRET}` },
-        });
-        const { _id } = await client.collection("tickets").insert({
-          title: "day-one gate cf",
-          status: "open",
-        });
-        stamp("first-write");
-        expect(_id).toMatch(/.+/);
-        const row = await client.collection("tickets").get(_id);
-        expect(row).toEqual({ _id, title: "day-one gate cf", status: "open" });
-        stamp("first-read");
-
-        const wall = performance.now() - t0;
-        expect(wall).toBeLessThan(BUDGET_CF_MS);
-      },
-      BUDGET_CF_MS + 60_000, // vitest timeout: budget + 60s buffer (CF cold start)
+      } catch (error) {
+        console.warn(`wrangler delete ${workerName} failed:`, error);
+      }
+    }
+    await rm(workdir, { recursive: true, force: true });
+    console.log(
+      `SUMMARY day-one-cf ms=${(performance.now() - t0).toFixed(0)} stages=${stamps
+        .map((s) => `${s.label}:${s.ms.toFixed(0)}`)
+        .join(";")}`,
     );
-  },
-);
+  });
+
+  test(
+    "scaffold → deploy (CF) → first record < 5 min cold, no manual credential editing",
+    async () => {
+      stamp("start");
+      const appDir = join(workdir, "my-app");
+      workerName = `day-one-${Date.now()}`;
+
+      // SCAFFOLD with --target=cloudflare. The scaffold writes the
+      // worker name into wrangler.toml; we override via env so the
+      // gate's per-run name is unique and tear-down-able.
+      await execa(
+        "npm",
+        ["create", "baerly@latest", "--", "my-app", "--target=cloudflare", "--non-interactive"],
+        {
+          cwd: workdir,
+          env: {
+            ...process.env,
+            BAERLY_NONINTERACTIVE: "1",
+            BAERLY_WORKER_NAME: workerName,
+            SHARED_SECRET,
+          },
+        },
+      );
+      stamp("scaffold-complete");
+
+      await execa("pnpm", ["install"], { cwd: appDir });
+      stamp("install-complete");
+
+      // DEPLOY: `baerly deploy --target=cloudflare`. Ticket 39's
+      // command shells `wrangler --x-provision --x-auto-create
+      // deploy` and reads CLOUDFLARE_API_TOKEN +
+      // CLOUDFLARE_ACCOUNT_ID. The `SHARED_SECRET` is set inline
+      // via `wrangler secret put` — non-interactive variant.
+      await execa("pnpm", ["exec", "baerly", "deploy", "--target=cloudflare"], {
+        cwd: appDir,
+        env: {
+          ...process.env,
+          CLOUDFLARE_API_TOKEN: CF_API_TOKEN,
+          CLOUDFLARE_ACCOUNT_ID: CF_ACCOUNT_ID,
+          SHARED_SECRET,
+        },
+      });
+      stamp("deploy-complete");
+
+      const deployUrl = await readDeployUrl(appDir);
+      stamp("deploy-url-resolved");
+
+      await assertNoManualEnvEdit(appDir);
+      stamp("no-manual-env-edit");
+
+      const client = createBaerlyClient({
+        baseUrl: deployUrl,
+        headers: { Authorization: `Bearer ${SHARED_SECRET}` },
+      });
+      const { _id } = await client.collection("tickets").insert({
+        title: "day-one gate cf",
+        status: "open",
+      });
+      stamp("first-write");
+      expect(_id).toMatch(/.+/);
+      const row = await client.collection("tickets").get(_id);
+      expect(row).toEqual({ _id, title: "day-one gate cf", status: "open" });
+      stamp("first-read");
+
+      const wall = performance.now() - t0;
+      expect(wall).toBeLessThan(BUDGET_CF_MS);
+    },
+    BUDGET_CF_MS + 60_000, // vitest timeout: budget + 60s buffer (CF cold start)
+  );
+});
 
 // ── helpers ────────────────────────────────────────────────────────
 

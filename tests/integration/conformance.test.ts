@@ -33,6 +33,8 @@ import {
 
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { type EndpointCreds, loadEndpointCreds } from "../fixtures/endpoint-creds.ts";
+import { type GateId } from "../setup/gate-manifest.ts";
+import { gate } from "../setup/gates.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
 
 // A bare `.` / `..` key is unaddressable over the S3 HTTP API on *every*
@@ -55,19 +57,21 @@ const MINIO_KEY_ARB = fc.string({
 });
 const MINIO_PREFIX_CHAR_ARB = fc.constantFrom(...MINIO_KEY_CHARS.split(""));
 
-const MINIO = process.env["MINIO"] === "1";
+const MINIO = gate("minio");
 const CONFORMANCE = process.env["CONFORMANCE"] === "1";
 
 interface Endpoint {
   name: string;
+  /** Manifest gate for the credentialed rows; the Minio row reports via `MINIO` above. */
+  gate?: GateId;
   file?: string;
   builtIn?: EndpointCreds;
 }
 
 const endpoints: Endpoint[] = [
-  { name: "aws", file: "aws.json" },
-  { name: "gcs", file: "gcs.json" },
-  { name: "cloudflare", file: "cloudflare.json" },
+  { name: "aws", file: "aws.json", gate: "conformance-aws" },
+  { name: "gcs", file: "gcs.json", gate: "conformance-gcs" },
+  { name: "cloudflare", file: "cloudflare.json", gate: "conformance-cloudflare" },
   // Minio under `pnpm dev:storage`. Endpoint + creds match every other
   // Minio-touching test in this repo (`randomized.test.ts`,
   // `s3-http.conformance.test.ts`, `docker-compose.yml`).
@@ -97,6 +101,9 @@ for (const ep of endpoints) {
     creds = ep.builtIn;
   } else if (ep.file && CONFORMANCE) {
     creds = await loadEndpointCreds(ep.file);
+  }
+  if (ep.gate !== undefined) {
+    gate(ep.gate, creds !== null);
   }
   resolvedEndpoints.push({ name: ep.name, creds });
 }

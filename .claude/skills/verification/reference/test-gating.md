@@ -4,7 +4,17 @@ Which suites are gated behind Minio, credentials, Postgres, or Workerd, and
 how the randomized cascade's four storage variants are wired.
 
 `pnpm test` runs green on a fresh checkout with zero infrastructure
-deps. Tests requiring Minio or credentials are gated by env:
+deps. Tests requiring Minio or credentials are gated by env.
+
+Every gate is listed, with its skip reason and opt-in env, in `GATES` in
+`tests/setup/gate-manifest.ts`. A gated skip is only green when nobody asked
+for it: setting a gate's opt-in env (`MINIO=1`, `CONFORMANCE=1`,
+`GCS_LIVE=1`, `EXPORT_SMOKE=1`, `DAY_ONE_TARGETS`, a deploy URL) or naming
+it in `BAERLY_REQUIRED_GATES=minio,sqlite,…` makes the run fail at teardown
+with `gate manifest: … expected gate(s) did not run`, naming the gate, the
+skipping files and the missing piece. Host-capability gates (`sqlite`,
+`git`) and the manual-e2e cascades have no opt-in env and are only expected
+through `BAERLY_REQUIRED_GATES`.
 
 - **Minio-required tests** (the `clock behavior` block of
   `tests/integration/time.test.ts`, and the `node-minio` variant of
