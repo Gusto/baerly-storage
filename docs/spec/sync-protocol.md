@@ -845,8 +845,8 @@ These are the load-bearing rules.
    **No reader depends on a log object below the floor.** Entries in
    `[0, log_seq_start)` are already represented in the snapshot and may
    be reclaimed at any time, so a sub-floor read is a protocol
-   violation, not a miss to tolerate. The two `Db` log-read seams —
-   `getLogEntry` and `probeLogTail` — take the `current.json` they are
+   violation, not a miss to tolerate. The log-read seams over a `Db` —
+   `getLogEntry`, `probeLogTail` and `probeLogChunk` — take the `current.json` they are
    floored against and throw `Internal` below it, so the floor is a
    property of the seam rather than a discipline each caller has to
    repeat. The one deliberate sub-floor read is a windowed commit's
