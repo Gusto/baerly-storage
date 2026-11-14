@@ -97,11 +97,9 @@ deletable but is not a write target.
 
 To migrate such a row in place, read it, remove `_id` from the copy,
 insert it so the SDK generates a fresh UUID, then delete the original.
-R2 bindings convert an unpaired surrogate in a key to U+FFFD, so using
-`id.toWellFormed()` as the destination shares the original's index
-markers; deleting the original would remove the copy's markers. Use fresh
-namespace names too: repairing a legacy app, tenant, or collection name
-with `toWellFormed()` can address the original objects on R2.
+Migrate a legacy app, tenant, or collection name to a fresh name: R2
+bindings convert an unpaired surrogate in a key to U+FFFD, so repairing
+the name with `toWellFormed()` can address the original objects on R2.
 
 The collection alias guard checks names in log and snapshot bodies;
 these records do not identify the app or tenant. Normalized aliases of
