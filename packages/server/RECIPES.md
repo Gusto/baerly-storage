@@ -211,6 +211,17 @@ returned; inspect the affected rows before deciding whether to resume.
 **Fix:** use `.where(...)` directly. Reads always fold the authoritative
 snapshot and log; declared `indexes` do not change how a read runs.
 
+### `compact` / `runGc` / `CLOUDFLARE_FREE_TIER` is not exported from `/maintenance`
+
+**Cause:** `@gusto/baerly-storage/maintenance` exports one function,
+`runScheduledMaintenance`, addressed by collection. Its phases, host tiers
+and `current.json` keys are internal.
+**Fix:** `runScheduledMaintenance({ storage, app, tenant, collection }, { tier })`,
+`tier` being the `BAERLY_MAINTENANCE_PROFILE` value (`"cf-free"`, `"cf-paid"`,
+or the unbounded default `"node"`). On Workers Free with storage over `fetch`,
+pass `phase: "compact"` and `phase: "gc"` on alternate invocations. A schedule
+is optional: every write already runs bounded maintenance.
+
 ### `BaerlyError code="InvalidConfig"` — `baerly: no auth configured`
 
 **Full message:** `baerly: no auth configured. Set \`auth\` in baerly.config.ts ("none", "shared-secret") or pass \`verifier\` on the adapter factory.`

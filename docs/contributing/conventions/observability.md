@@ -103,9 +103,9 @@ operator-run batches, maintenance ticks) call the kernel primitives
 directly:
 
 ```ts
-import { compact } from "@gusto/baerly-storage/maintenance";
+import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
 
-await compact({ storage, currentJsonKey });
+await runScheduledMaintenance({ storage, app, tenant, collection: "tickets" });
 ```
 
 Errors propagate to the platform's process / Worker log. Metric
@@ -126,7 +126,7 @@ import { createObservabilityContext, runWithContext } from "../observability";
 
 const ctx = createObservabilityContext();
 await runWithContext(ctx, async () => {
-  await compact({ storage, currentJsonKey });
+  await runScheduledMaintenance({ storage, app, tenant, collection: "tickets" });
 });
 console.log(ctx.recorder.snapshot());
 ```
