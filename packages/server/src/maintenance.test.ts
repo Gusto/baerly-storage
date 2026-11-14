@@ -2,7 +2,7 @@
    field on document shapes; the maintenance test seeds doc bodies with it. */
 
 /**
- * Maintenance — `runScheduledMaintenance()` composition of
+ * Maintenance — `runMaintenancePass()` composition of
  * `compact()` + `runGc()` under `MemoryStorage`, plus the write-tick
  * `runBoundedMaintenance()` runner and its pure gate helpers. The
  * adapter-side write-tick wiring (the per-request `MaintenanceDispatch`
@@ -19,6 +19,8 @@ import {
   GC_STARVATION_GUARD,
   logDeleteFloorOf,
   logObjectKey,
+  LOG_RETENTION_MAX_DELETES_PER_TICK,
+  LOG_RETENTION_SEQ_WINDOW,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
@@ -50,9 +52,11 @@ import {
   estimateTailBytes,
   parseMaintenanceEnv,
   runBoundedMaintenance,
+  runMaintenancePass,
   runScheduledMaintenance,
   shouldFireMaintenance,
 } from "./maintenance.ts";
+import { Db } from "./db.ts";
 import type {
   InternalBoundedMaintenanceOptions,
   InternalMaintenanceOptions,
@@ -80,7 +84,7 @@ const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => 
   });
 };
 
-describe("runScheduledMaintenance", () => {
+describe("runMaintenancePass", () => {
   test("runs both compact and gc by default", async () => {
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
@@ -93,7 +97,7 @@ describe("runScheduledMaintenance", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const r = await runScheduledMaintenance(
+    const r = await runMaintenancePass(
       { storage: s, currentJsonKey: KEY },
       // Bypass GC's 7-day grace so the sweep path actually runs in
       // one tick. Engine defaults are unbounded so a single pass folds
@@ -111,7 +115,7 @@ describe("runScheduledMaintenance", () => {
   test("runGc alone runs without compact", async () => {
     // Single-phase ticks (e.g. the CF free-tier even/odd-minute cron
     // pattern) invoke the primitive directly instead of
-    // `runScheduledMaintenance`.
+    // `runMaintenancePass`.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const r = await runGc({ storage: s, currentJsonKey: KEY });
@@ -120,7 +124,7 @@ describe("runScheduledMaintenance", () => {
 
   test("compact alone runs without gc", async () => {
     // Single-phase ticks invoke the primitive directly instead of
-    // `runScheduledMaintenance`.
+    // `runMaintenancePass`.
     const s = new MemoryStorage();
     await bootstrap(s, KEY);
     const writer = new Writer({ storage: s, currentJsonKey: KEY });
@@ -153,7 +157,7 @@ describe("runScheduledMaintenance", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const r = await runScheduledMaintenance({ storage: s, currentJsonKey: KEY });
+    const r = await runMaintenancePass({ storage: s, currentJsonKey: KEY });
     expect(r.compact.written).toBe(true);
     expect(r.compact.entriesFolded).toBe(3);
     await expect(readSeqStart(s, KEY)).resolves.toBe(3);
@@ -171,7 +175,7 @@ describe("runScheduledMaintenance", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const r = await runScheduledMaintenance(
+    const r = await runMaintenancePass(
       { storage: s, currentJsonKey: KEY },
       { compact: { minEntriesToCompact: 10 } },
     );
@@ -239,7 +243,7 @@ describe("runScheduledMaintenance", () => {
     expect(r.skippedReason).toBe("below-min-threshold");
   });
 
-  test("runScheduledMaintenance with CLOUDFLARE_PAID_TIER folds a sub-50 tail", async () => {
+  test("runMaintenancePass with CLOUDFLARE_PAID_TIER folds a sub-50 tail", async () => {
     // Paid scheduled profile exists for per-pass caps (maxEntriesPerRun: 200,
     // GC bounds), not an in-band count floor. The helper default is
     // SCHEDULED_MIN_ENTRIES_TO_COMPACT (1), so a 36-entry tail — the
@@ -257,10 +261,7 @@ describe("runScheduledMaintenance", () => {
         body: { _id: `d${i}`, n: i },
       });
     }
-    const r = await runScheduledMaintenance(
-      { storage: s, currentJsonKey: KEY },
-      CLOUDFLARE_PAID_TIER,
-    );
+    const r = await runMaintenancePass({ storage: s, currentJsonKey: KEY }, CLOUDFLARE_PAID_TIER);
     expect(r.compact.written).toBe(true);
     expect(r.compact.entriesFolded).toBe(n);
     await expect(readSeqStart(s, KEY)).resolves.toBe(n);
@@ -311,6 +312,150 @@ describe("runScheduledMaintenance", () => {
     expect(cfPaid.compact?.maxTailProbeGets).toBe(CF_PAID_COMPACT_TAIL_PROBE_GETS);
     expect(cfPaid.gc?.maxMarksPerRun).toBe(200);
     expect(cfPaid.gc?.maxSweepsPerRun).toBe(100);
+  });
+});
+
+describe("runScheduledMaintenance", () => {
+  const TARGET = { app: "t", tenant: "x", collection: COLL } as const;
+
+  /** `MemoryStorage` that records every key it is asked about. */
+  const recording = (): { storage: Storage; base: MemoryStorage; keys: string[] } => {
+    const base = new MemoryStorage();
+    const keys: string[] = [];
+    const storage: Storage = {
+      get: (key, opts) => (keys.push(key), base.get(key, opts)),
+      put: (key, body, opts) => (keys.push(key), base.put(key, body, opts)),
+      delete: (key, opts) => (keys.push(key), base.delete(key, opts)),
+      list: (prefix, opts) => (keys.push(prefix), base.list(prefix, opts)),
+    };
+    return { storage, base, keys };
+  };
+
+  /** `n` commits through a bare Writer, which leaves `tail_hint` at 0. */
+  const seed = async (storage: MemoryStorage, n: number): Promise<void> => {
+    await bootstrap(storage, KEY);
+    const writer = new Writer({ storage, currentJsonKey: KEY });
+    for (let i = 0; i < n; i++) {
+      await writer.commit({ op: "I", collection: COLL, docId: `d${i}`, body: { _id: `d${i}` } });
+    }
+  };
+
+  test("maintains the collection a Db writes, addressed by app, tenant and collection", async () => {
+    const storage = new MemoryStorage();
+    const db = Db.create({ storage, app: "helpdesk", tenant: "acme" });
+    for (let i = 0; i < 5; i++) {
+      await db.collection("tickets").insert({ _id: `t${i}`, n: i });
+    }
+    const target = { storage, app: "helpdesk", tenant: "acme", collection: "tickets" };
+    const res = await runScheduledMaintenance(target);
+    expect(res).toEqual({ folded: 5, gcDeleted: 0, pending: 0 });
+    await expect(runScheduledMaintenance(target)).resolves.toEqual({
+      folded: 0,
+      gcDeleted: 0,
+      pending: 0,
+    });
+    await expect(db.collection("tickets").count()).resolves.toBe(5);
+  });
+
+  test("tier selects the host's per-pass caps", async () => {
+    for (const tier of ["node", "cf-paid", undefined] as const) {
+      const s = new MemoryStorage();
+      await seed(s, 30);
+      const res = await runScheduledMaintenance({ storage: s, ...TARGET }, { tier });
+      expect(res, "an uncapped tier folds the whole tail").toEqual({
+        folded: 30,
+        gcDeleted: 0,
+        pending: 0,
+      });
+    }
+    // cf-free folds one 20-entry slice per pass and waits for a full slice.
+    const s = new MemoryStorage();
+    await seed(s, 30);
+    const target = { storage: s, ...TARGET };
+    await expect(runScheduledMaintenance(target, { tier: "cf-free" })).resolves.toMatchObject({
+      folded: 20,
+    });
+    await expect(runScheduledMaintenance(target, { tier: "cf-free" })).resolves.toMatchObject({
+      folded: 0,
+    });
+  });
+
+  test("a pass that loses the fold to a concurrent write reports contention", async () => {
+    const base = new MemoryStorage();
+    await seed(base, 10);
+    let raced = false;
+    const storage: Storage = {
+      get: (key, opts) => base.get(key, opts),
+      delete: (key, opts) => base.delete(key, opts),
+      list: (prefix, opts) => base.list(prefix, opts),
+      put: async (key, body, opts) => {
+        if (key === KEY && opts?.ifMatch !== undefined && !raced) {
+          raced = true; // a concurrent writer moves current.json first
+          await casUpdateCurrentJson(base, KEY, (cur) => ({ ...cur, tail_hint: 1 }));
+        }
+        return base.put(key, body, opts);
+      },
+    };
+    const res = await runScheduledMaintenance({ storage, ...TARGET }, { phase: "compact" });
+    expect(res).toEqual({
+      folded: 0,
+      deferred: { reason: "contention" },
+      gcDeleted: 0,
+      pending: 0,
+    });
+  });
+
+  test('phase "compact" folds without touching GC state', async () => {
+    const { storage, base, keys } = recording();
+    await seed(base, 10);
+    const res = await runScheduledMaintenance({ storage, ...TARGET }, { phase: "compact" });
+    expect(res).toEqual({ folded: 10, gcDeleted: 0, pending: 0 });
+    expect(keys.filter((k) => k.includes("/gc/"))).toEqual([]);
+  });
+
+  test('phase "gc" runs GC without folding', async () => {
+    const { storage, base, keys } = recording();
+    await seed(base, 10);
+    const res = await runScheduledMaintenance({ storage, ...TARGET }, { phase: "gc" });
+    expect(res.folded).toBe(0);
+    expect(keys.some((k) => k.includes("/gc/"))).toBe(true);
+    const head = await readCurrentJson(base, KEY);
+    expect(head?.json.log_seq_start).toBe(0);
+  });
+
+  test("a whole pass counts retired log objects as deleted", async () => {
+    const s = new MemoryStorage();
+    await seed(s, LOG_RETENTION_SEQ_WINDOW + 30);
+    const logCount = async (): Promise<number> => {
+      let n = 0;
+      for await (const _ of s.list(`${COLLECTION_PREFIX}/log/`)) {
+        n++;
+      }
+      return n;
+    };
+    const before = await logCount();
+    const res = await runScheduledMaintenance({ storage: s, ...TARGET });
+    expect(res.gcDeleted).toBe(LOG_RETENTION_MAX_DELETES_PER_TICK);
+    expect(before - (await logCount())).toBe(LOG_RETENTION_MAX_DELETES_PER_TICK);
+  });
+
+  test("refuses an invalid target or option before any storage call", async () => {
+    const { storage, keys } = recording();
+    const cases: [Parameters<typeof runScheduledMaintenance>[0], object][] = [
+      [{ storage, ...TARGET, collection: "_reserved" }, {}],
+      [{ storage, ...TARGET, collection: "cafe\u0301" }, {}],
+      [{ storage, ...TARGET, app: "a/b" }, {}],
+      [{ storage, ...TARGET, tenant: "" }, {}],
+      [{ storage, ...TARGET }, { tier: "cf_paid" }],
+      [{ storage, ...TARGET }, { tier: "toString" }],
+      [{ storage, ...TARGET }, { phase: "retire" }],
+    ];
+    for (const [target, options] of cases) {
+      await expect(runScheduledMaintenance(target, options)).rejects.toMatchObject({
+        code: "InvalidConfig",
+      });
+    }
+    expect(keys).toEqual([]);
   });
 });
 
@@ -657,7 +802,7 @@ describe("runBoundedMaintenance", () => {
     });
     await expect(readSeqStart(inner, KEY)).resolves.toBe(before); // 0 — nothing folded
     // Contrast: the same store under the scheduled path folds it all.
-    const r = await runScheduledMaintenance({ storage: inner, currentJsonKey: KEY });
+    const r = await runMaintenancePass({ storage: inner, currentJsonKey: KEY });
     expect(r.compact.written).toBe(true);
     expect(r.compact.entriesFolded).toBe(40);
   });
@@ -1271,29 +1416,28 @@ describe("retireLogs error policy (via the runners)", () => {
     },
   });
 
-  test("WriteConflict from the floor CAS is swallowed — runScheduledMaintenance resolves, floor unpublished", async () => {
+  test("WriteConflict from the floor CAS is swallowed — runMaintenancePass resolves, floor unpublished", async () => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
     // `WriteConflict` is routine CAS contention (the next pass retries), per
     // the helper's documented error policy — must NOT reject.
-    await runScheduledMaintenance(
-      { storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY },
-      { logRetention: { window: 5 } } as InternalMaintenanceOptions,
-    );
+    await runMaintenancePass({ storage: conflictOnCurrentJsonCas(inner), currentJsonKey: KEY }, {
+      logRetention: { window: 5 },
+    } as InternalMaintenanceOptions);
     // Non-vacuity: the swallowed WriteConflict came from retirement's own
     // floor CAS, so the floor was never published. (A wrapper hit on an
     // earlier compact/GC current.json CAS would have REJECTED the call —
-    // runScheduledMaintenance propagates those — so resolving here plus
+    // runMaintenancePass propagates those — so resolving here plus
     // floor === 0 pins that retirement, and only retirement, ran.)
     const after = await readCurrentJson(inner, KEY);
     expect(logDeleteFloorOf(after!.json)).toBe(0);
   });
 
-  test("a non-WriteConflict DELETE failure re-throws out of runScheduledMaintenance — after the floor CAS landed", async () => {
+  test("a non-WriteConflict DELETE failure re-throws out of runMaintenancePass — after the floor CAS landed", async () => {
     const inner = new MemoryStorage();
     await seedIdleFolded(inner);
     await expect(
-      runScheduledMaintenance({ storage: networkErrorOnLogDelete(inner), currentJsonKey: KEY }, {
+      runMaintenancePass({ storage: networkErrorOnLogDelete(inner), currentJsonKey: KEY }, {
         logRetention: { window: 5 },
       } as InternalMaintenanceOptions),
     ).rejects.toMatchObject({ code: "NetworkError" });

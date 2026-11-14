@@ -24,7 +24,6 @@
 export { r2BindingStorage } from "./r2-binding-storage.ts";
 export type { R2BindingStorageOptions } from "./r2-binding-storage.ts";
 
-// Worker module-default + Cron Trigger surface. `resolveCfMaintenanceProfile`
-// is the cron-profile helper callers thread into the scheduled handler.
-export { baerlyWorker, resolveCfMaintenanceProfile } from "./worker.ts";
+// Worker module-default + Cron Trigger surface.
+export { baerlyWorker } from "./worker.ts";
 export type { BaerlyEnv, BaerlyWorkerOptions, WorkerScheduledHandler } from "./worker.ts";

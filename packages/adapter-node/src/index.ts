@@ -20,7 +20,7 @@
  * `BAERLY_MAINTENANCE_DISABLE` (see {@link baerlyNode} for the accepted
  * values); invalid values fail API/database dispatch with
  * `BaerlyError{code:"InvalidConfig"}`. Call `runScheduledMaintenance`
- * from `@gusto/baerly-storage` for an explicit out-of-band sweep.
+ * from `@gusto/baerly-storage/maintenance` for an explicit out-of-band sweep.
  *
  * @example
  * ```ts

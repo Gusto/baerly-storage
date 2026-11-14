@@ -1,10 +1,10 @@
 /**
- * Compact phase. Calls `runScheduledMaintenance` sequentially for
+ * Compact phase. Calls `runMaintenancePass` sequentially for
  * each `currentJsonKey` in `opts.currentJsonKeys`, using one of the
  * pre-baked tuning profiles (UNBOUNDED — the engine's default — or
  * CLOUDFLARE_FREE_TIER's 50-subrequest budget).
  *
- * Sequential per (tenant, table) — `runScheduledMaintenance` is safe
+ * Sequential per (tenant, table) — `runMaintenancePass` is safe
  * to run concurrently against disjoint `currentJsonKey`s but
  * contending against the same key is the contention scenario the
  * r2-contention bench measures separately. Keeping this phase
@@ -16,10 +16,10 @@
  */
 
 import {
-  runScheduledMaintenance,
+  runMaintenancePass,
   CLOUDFLARE_FREE_TIER,
-  type MaintenanceOptions,
-} from "@baerly/server/maintenance";
+  type InternalMaintenanceOptions,
+} from "@baerly/server/_internal/maintenance";
 import type { StorageSnapshot } from "../../types.ts";
 import type { CountingStorage } from "../../storage.ts";
 
@@ -37,10 +37,10 @@ export interface CompactResult {
   readonly metrics: StorageSnapshot;
 }
 
-// Map profile name strings to the imported `MaintenanceOptions` constants.
+// Map profile name strings to the imported tier constants.
 // `UNBOUNDED` passes `{}` — the engine's defaults are unbounded
 // (Number.MAX_SAFE_INTEGER for the per-run caps).
-const PROFILES: Record<CompactProfileName, MaintenanceOptions> = {
+const PROFILES: Record<CompactProfileName, InternalMaintenanceOptions> = {
   UNBOUNDED: {},
   CLOUDFLARE_FREE_TIER,
 };
@@ -51,7 +51,7 @@ export async function runCompact(opts: CompactOpts): Promise<CompactResult> {
   const perTableEntriesFolded: Record<string, number> = {};
 
   for (const key of opts.currentJsonKeys) {
-    const res = await runScheduledMaintenance(
+    const res = await runMaintenancePass(
       { storage: opts.storage, currentJsonKey: key },
       PROFILES[opts.profile],
     );

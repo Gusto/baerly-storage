@@ -35,7 +35,7 @@ import {
   uuid,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { compact, runGc } from "@baerly/server/maintenance";
+import { compact, runGc } from "@baerly/server/_internal/maintenance";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
 import {
   compactInternal,

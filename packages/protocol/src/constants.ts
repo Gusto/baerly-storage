@@ -784,8 +784,9 @@ export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 7;
 export const CF_FREE_FETCH_GC_MAX_SWEEPS: number = 3;
 
 /**
- * `runScheduledMaintenance`'s own `minEntriesToCompact` floor, applied when the
- * caller passes no `options.compact.minEntriesToCompact`. Deliberately NOT
+ * The scheduled pass's own `minEntriesToCompact` floor (`runMaintenancePass`,
+ * which `runScheduledMaintenance` runs), applied when no
+ * `options.compact.minEntriesToCompact` is set. Deliberately NOT
  * `DEFAULT_MIN_TO_COMPACT` (compact()'s own 100) or
  * {@link WRITE_TICK_MIN_ENTRIES_TO_COMPACT} (50): both of those floors exist
  * for the IN-BAND write tick, where a write is not a scheduling decision and

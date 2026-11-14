@@ -56,7 +56,7 @@ import {
   encodeSnapshotBody,
   snapshotKey,
 } from "@baerly/server/_internal/kernel";
-import { compact } from "@baerly/server/maintenance";
+import { compact } from "@baerly/server/_internal/maintenance";
 import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
 
 // ── Fixture config. Pinned constants — tweak in the source if needed. ──
