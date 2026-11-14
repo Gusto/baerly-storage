@@ -258,8 +258,8 @@ qualitative test lives in [workload-fit.md](workload-fit.md).
 Once the shape fits, the numeric envelope belongs to the docs that own
 the decision:
 
-- [workload-fit.md#scale-at-a-glance](workload-fit.md#scale-at-a-glance)
-  is the builder-facing summary.
+- [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
+  owns the figures.
 - [graduation.md](graduation.md) is the operator-facing decision table
   for CPU, memory, write rate, collection fan-out, and workload
   graduation.

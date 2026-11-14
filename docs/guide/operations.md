@@ -210,11 +210,11 @@ Sink wiring and field reference are in
 
 ## Capacity
 
-| Line | Meaning |
-| --- | --- |
-| roughly 30 sustained logical writes/min per collection | Throughput ceiling; model/estimate, pending real-infra measurement. |
-| >10 GB per tenant stored | R2 free-tier storage line; a cost signal, not a protocol ceiling. baerly-storage does not enforce per-tenant byte limits. |
-| ~100 collections per tenant | Soft fan-out guideline; bench-grounded linear cost. Nothing in the protocol enforces a cap. |
+The capacity lines (writes per collection, collections per tenant,
+documents per collection on each host) and their derivation live in
+[scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope).
+None of them is enforced by the protocol, and per-tenant stored bytes
+are a cost signal rather than a ceiling.
 
 On Workers, each request has a storage-call budget: 900 calls through the R2
 binding and 45 through `fetch` on Free, 9,000 on Paid (`cfRequestLedger`). A
@@ -224,9 +224,9 @@ what it has, so on Free with S3 over HTTP an idle long-poll returns after about
 22 seconds instead of 25 and a busy one returns part of the backlog, which the
 client's next poll continues. Neither is an error. The Free with S3 over HTTP
 envelope is in
-[workload-fit.md](../about/workload-fit.md#scale-at-a-glance).
+[scale-ceilings.md](../spec/scale-ceilings.md#workers-free--s3-over-http).
 
-Graduation thresholds and the fold-cost derivation live in
+What to do when a line is crossed is in
 [graduation.md](../about/graduation.md); cost math lives in
 [cost-model.md](../about/cost-model.md).
 

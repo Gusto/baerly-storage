@@ -392,7 +392,9 @@ cost-curve table that is an **account-wide aggregate** rate because
 Class A is billed per account, not per collection. It numerically
 coincides with, but is different from, the per-collection CAS-contention
 ceiling `M_SIZE_WRITES_PER_MIN_PER_COLLECTION` (the CLI grading
-constant). Full arithmetic:
+constant), which
+[scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
+owns. Full arithmetic:
 
 ```
 Writes/mo = 30 writes/min × 60 min/hr × 24 hr/day × 30 days = 1,296,000
