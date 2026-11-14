@@ -39,6 +39,7 @@ import {
   type DocumentData,
   type MetricsRecorder,
   assertCurrentJsonTransition,
+  COMPACT_FOLD_WRITE_REQUESTS,
   encodeJsonBytes,
   type LogEntry,
   logSeqStartOf,
@@ -106,11 +107,13 @@ export interface InternalCompactOptions extends CompactOptions {
 
   /**
    * @internal Maximum consecutive log GETs spent discovering the tail
-   * during one compaction run. An exhausted budget checkpoints the
-   * certified lower bound in `current.json` so the next run resumes from
-   * there. Must be a positive integer. When omitted, the default path uses
-   * the strict protocol-capped probe, which throws rather than accepting a
-   * partial result.
+   * during one compaction run. Inside an invocation whose request ledger
+   * has less left, the probe is lowered further so the fold it certifies
+   * still fits (see {@link COMPACT_FOLD_WRITE_REQUESTS}). An exhausted
+   * budget checkpoints the certified lower bound in `current.json` so the
+   * next run resumes from there. Must be a positive integer. When omitted,
+   * the default path uses the strict protocol-capped probe, which throws
+   * rather than accepting a partial result.
    */
   readonly maxTailProbeGets?: number;
 
@@ -351,9 +354,18 @@ export const compactInternal = async (
     });
     probe = { kind: "exact", ...exact, complete: true };
   } else {
+    // Size the probe from the invocation's request ledger, net of the fold
+    // it may certify: the prior-snapshot GET, `maxPerRun` log GETs and the
+    // two fold writes. Without this, a probe of `maxTailProbeGets` behind a
+    // stale `tail_hint` certifies a fold the ledger then refuses mid-walk,
+    // before anything is written, and every later pass repeats it. Room
+    // for no probe at all leaves the stored hint as the lower bound.
+    const foldReserve =
+      (current.snapshot === null ? 0 : 1) + maxPerRun + COMPACT_FOLD_WRITE_REQUESTS;
+    const requestsLeft = getCurrentContext()?.ledger?.storageRemaining() ?? Infinity;
     probe = await probeTailChunk(storage, collectionPrefix, probeFloor, {
       ...(options.signal !== undefined && { signal: options.signal }),
-      cap: maxTailProbeGets,
+      cap: Math.max(0, Math.min(maxTailProbeGets, requestsLeft - foldReserve)),
     });
   }
   const tailIsExact = probe.kind === "exact";
@@ -361,6 +373,17 @@ export const compactInternal = async (
   const nextSeq = discoveredTail;
   const available = nextSeq - logSeqStartBefore;
   if (available < minToCompact) {
+    if (!tailIsExact && discoveredTail <= current.tail_hint) {
+      // The ledger left no probe: nothing new to checkpoint.
+      return {
+        written: false,
+        skippedReason: "probe-budget-checkpointed",
+        previousSnapshotKey: current.snapshot,
+        logSeqStartBefore,
+        logSeqStartAfter: logSeqStartBefore,
+        entriesFolded: 0,
+      };
+    }
     if (!tailIsExact) {
       const checkpoint: CurrentJson = {
         ...current,

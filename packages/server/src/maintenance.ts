@@ -263,14 +263,16 @@ const profileToScheduledOptions = (
  * {@link runScheduledMaintenance} pass per invocation is safe. Free CPU is
  * the tighter limit there (about 0.25 ms per binding call against a 10 ms
  * budget), which is why the caps stay at their measured values. Through
- * `fetch` the compaction row alone can pass 45: a scheduler on that host
- * alternates `phase: "compact"` and `phase: "gc"` across invocations, and even
- * then a scheduled compact whose `tail_hint` is about 20 or more entries
- * stale stalls. Its probe and log GETs reach call 46 before it writes
- * anything, so the ledger refuses a log GET, nothing is checkpointed, and
- * every later pass repeats it. On that host the in-band write tick, which
- * folds early (`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES`) from the writer's own
- * tail, is the path that keeps the tail moving.
+ * `fetch` a whole pass does not fit 45, so a scheduler on that host
+ * alternates `phase: "compact"` and `phase: "gc"` across invocations. The
+ * compaction row fits there because `compact()` lowers its tail probe to
+ * what the ledger has left after its `current.json` GET, net of the fold
+ * it may certify (prior-snapshot GET + N log GETs +
+ * `COMPACT_FOLD_WRITE_REQUESTS`): 45 − 1 − 23 = 21 probe GETs, so a pass
+ * behind a stale `tail_hint` folds N entries in at most 45 calls. A ledger
+ * with less left probes less; a pass whose probe then certifies fewer than
+ * `minEntriesToCompact` entries checkpoints its lower bound (reported as
+ * `deferred: { reason: "budget" }`) and the next pass probes on from it.
  *
  * `minEntriesToCompact` is `maxFoldEntriesPerPass` (20) here, passed
  * explicitly (not the scheduled helper default of 1), because a bounded
