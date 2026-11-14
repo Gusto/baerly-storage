@@ -15,11 +15,9 @@
  *     Node target self-validates at scaffold time — the example IS the
  *     contract — so it has no doctor backend.
  *
- * Drift detection, index rebuilds, and writes/min health are separate
- * verbs:
- *   - `baerly admin fsck --indexes [--fix]` — index drift.
+ * Consistency checks and writes/min health are separate verbs:
+ *   - `baerly admin fsck` — snapshot hash and log-range consistency.
  *   - `baerly admin usage` — writes/min M-size graduation.
- *   - `baerly admin rebuild-index` — single-index reconciliation.
  *
  * Renders the returned {@link DoctorReport} into either a
  * stdout checklist (text mode) or a JSON envelope (`--json`

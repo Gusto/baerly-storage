@@ -36,8 +36,8 @@ compaction state plus a *non-authoritative* `tail_hint` lower bound, not
 the authoritative head. Readers discover the tail by **bounded forward
 probe** (GET until the first 404), never a reverse-LIST.
 
-**The full algorithm — write path, read path, tail discovery, hybrid
-index emission, and the v3 schema — lives in
+**The full algorithm — write path, read path, tail discovery, and the
+v3 schema — lives in
 [sync-protocol.md](../spec/sync-protocol.md)
 ([§Write algorithm](../spec/sync-protocol.md#write-algorithm),
 [§Storage layout](../spec/sync-protocol.md#storage-layout),
@@ -79,4 +79,6 @@ These remain closed unless a future post-0.3.0 ADR supersedes this one.
 - **Emit all index keys *after* the commit.** Would leave a committed doc
   transiently unindexed. Index emission is hybrid — new keys PUT *before*
   the commit, stale keys DELETE'd *after* — so a crash can never de-index a
-  committed doc.
+  committed doc. *Superseded in 0.7: the writer emits no index markers at
+  all, because every read takes membership from the snapshot and log, so
+  the create is the commit's only write.*

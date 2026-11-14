@@ -6,7 +6,6 @@ import {
   invalidDocIdArb,
   validDocIdArb,
 } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
-import { encodeIndexValue } from "./indexes.ts";
 import { MAX_SEGMENT_BYTES } from "./path-segment.ts";
 import { assertSnapshotDocId, compareDocIds } from "./snapshot-doc-id.ts";
 
@@ -35,16 +34,6 @@ const compareCodePointArrays = (left: string, right: string): number => {
     }
   }
   return sign(leftPoints.length - rightPoints.length);
-};
-
-/** `encodeIndexValue` output is ASCII base-32, so JS `<` is its byte order. */
-const compareIndexEncodings = (left: string, right: string): number => {
-  const leftKey = encodeIndexValue(left);
-  const rightKey = encodeIndexValue(right);
-  if (leftKey === rightKey) {
-    return 0;
-  }
-  return leftKey < rightKey ? -1 : 1;
 };
 
 // The format contract hard-codes this ceiling; it is restated, not imported.
@@ -270,13 +259,6 @@ describe("compareDocIds", () => {
         },
       );
 
-      fcTest.prop({ left: idArb, right: idArb })(
-        "agrees with encodeIndexValue's string order",
-        ({ left, right }) => {
-          expect(compareDocIds(left, right)).toBe(compareIndexEncodings(left, right));
-        },
-      );
-
       fcTest.prop({ ids: fc.array(idArb, { maxLength: 24 }) })(
         "sorts like the UTF-8 oracle, duplicates removed",
         ({ ids }) => {
@@ -294,7 +276,6 @@ describe("compareDocIds", () => {
       expect(actual).not.toBe(0);
       expect(actual).toBe(compareUtf8Bytes(left, right));
       expect(actual).toBe(compareCodePointArrays(left, right));
-      expect(actual).toBe(compareIndexEncodings(left, right));
     },
   );
 });

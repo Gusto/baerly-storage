@@ -309,11 +309,10 @@ const runDocIdBoundary = async (
 
 /**
  * `_id` identity at the `Db` level. An `_id` must be NFC, so two ids that
- * differ only by Unicode normalization cannot both be written: R2 folds
- * canonically-equivalent keys onto one object, and index markers embed the
- * raw `_id`, so such twins would share one marker. Ids that differ only by
- * case stay distinct, as do collection names. A stale-marker delete for one
- * twin must not de-index the other.
+ * differ only by Unicode normalization cannot both be written: one id has
+ * one byte form, whatever key canonicalization a backend such as R2
+ * applies. Ids that differ only by case stay distinct, as do collection
+ * names. Deleting one twin leaves the others readable.
  */
 const runCaseAndNormalizationTwins = async (
   storage: Storage,
@@ -355,14 +354,14 @@ const runCaseAndNormalizationTwins = async (
   }
   await twins.delete("a");
   const survivors = await twins.where({ kind: "twin" }).all();
-  expect(sortIds(survivors), "survivors keep their index markers").toEqual([NFC, "A"].toSorted());
-  const markers: string[] = [];
-  for await (const entry of storage.list(
-    `app/${app}/tenant/${tenant}/manifests/${t}/index/by_kind/`,
-  )) {
-    markers.push(entry.key);
+  expect(sortIds(survivors), "indexed where over the surviving twins").toEqual(
+    [NFC, "A"].toSorted(),
+  );
+  const indexObjects: string[] = [];
+  for await (const entry of storage.list(`app/${app}/tenant/${tenant}/manifests/${t}/index/`)) {
+    indexObjects.push(entry.key);
   }
-  expect(markers, "one live index marker per surviving twin").toHaveLength(2);
+  expect(indexObjects, "declared indexes write no index objects").toEqual([]);
 
   // Collection-name twins: `Users` and `users` are separate collections.
   const suffix = uuid().slice(0, 8);
@@ -385,11 +384,11 @@ const runCaseAndNormalizationTwins = async (
 /**
  * A row whose `_id` is not NFC, written by a release that accepted such
  * ids. Seeded by committing a placeholder id and rewriting every object
- * that names it (the log entry body and its index marker key) to the NFD
- * id, which is byte-for-byte what the older writer produced. The row stays
- * readable by `get`, `where`, and an indexed `where`, and stays deletable;
- * `update` and `replace` refuse it, because they would write new markers
- * under the non-NFC id.
+ * that names it (the log entry body) to the NFD id, which is byte-for-byte
+ * what the older writer's log entry held. The row stays readable by `get`,
+ * `where`, and an indexed `where`, and stays deletable; `update` and
+ * `replace` refuse it, because they would commit a new row version under
+ * the non-NFC id.
  */
 const runLegacyNonNfcRow = async (storage: Storage, app: string, tenant: string): Promise<void> => {
   const LEGACY = "legacy-n\u0303"; // NFD "legacy-ñ"
@@ -427,7 +426,7 @@ const runLegacyNonNfcRow = async (storage: Storage, app: string, tenant: string)
       await storage.delete(key);
     }
   }
-  expect(rewritten, "the log entry and its index marker").toBe(2);
+  expect(rewritten, "the log entry").toBe(1);
 
   const legacyRow = { _id: LEGACY, kind: "legacy", label: "old" };
   await expect(rows.get(LEGACY)).resolves.toEqual(legacyRow);
@@ -447,21 +446,20 @@ const runLegacyNonNfcRow = async (storage: Storage, app: string, tenant: string)
   await expect(rows.where({ kind: "legacy" }).all()).resolves.toEqual([
     { _id: "keep", kind: "legacy" },
   ]);
-  const markers: string[] = [];
-  for await (const entry of storage.list(`${prefix}index/by_kind/`)) {
-    markers.push(entry.key);
+  const indexObjects: string[] = [];
+  for await (const entry of storage.list(`${prefix}index/`)) {
+    indexObjects.push(entry.key);
   }
-  expect(markers, "the legacy row's marker is gone, its neighbour's is not").toHaveLength(1);
+  expect(indexObjects, "declared indexes write no index objects").toEqual([]);
 };
 
 /**
  * A row whose `_id` holds an unpaired UTF-16 surrogate, written by a
  * release that accepted such ids. Seeded by committing a placeholder id and
  * rewriting the log entry body to the JSON escape of the ill-formed id,
- * which is what the older writer's `JSON.stringify` produced. The
- * collection is unindexed: an index marker key cannot hold the id on
- * local-fs, S3, or GCS. The row stays readable and deletable in-process;
- * `update` and `replace` refuse it.
+ * which is what the older writer's `JSON.stringify` produced. The row
+ * stays readable and deletable in-process; `update` and `replace` refuse
+ * it.
  */
 const runLegacyIllFormedIdRow = async (
   storage: Storage,

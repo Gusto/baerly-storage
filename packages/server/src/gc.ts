@@ -23,12 +23,13 @@
  * deletion path.
  *
  * Unbounded by default — the run marks and sweeps the entire eligible
- * set in one pass. Callers on the Cloudflare 50-subrequest free-tier
- * budget opt INTO caps via the `CLOUDFLARE_FREE_TIER` profile's mark
- * and sweep knobs (`InternalRunGcOptions`, not on the public
- * `RunGcOptions`). One Free invocation processes only this GC phase
- * for one collection; alternate it with a direct bounded `compact()`
- * invocation instead of composing both phases.
+ * set in one pass. Callers on a per-invocation request limit (Cloudflare
+ * Workers) opt INTO caps via the `CLOUDFLARE_FREE_TIER` /
+ * `CLOUDFLARE_PAID_TIER` profiles' mark and sweep knobs
+ * (`InternalRunGcOptions`, not on the public `RunGcOptions`); the
+ * per-pass worst cases are on `CLOUDFLARE_FREE_TIER`. On Free with
+ * storage over `fetch`, run this phase alone in an invocation and
+ * alternate it with a direct bounded `compact()` invocation.
  *
  * One category of orphan:
  *   - `orphan-snapshot`: a canonical

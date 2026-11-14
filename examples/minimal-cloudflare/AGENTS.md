@@ -34,9 +34,8 @@ Common anti-patterns that compile but are wrong:
 - Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
   query surface is `db.collection(...).where({ field: value }).all()` or
   `.where(q => q.gte("count", 1))`. See **Predicates** below.
-- `.useIndex("name")` / `.hint(...)` — no such methods. The planner
-  picks the index automatically from `IndexDefinition`s in
-  `baerly.config.ts`. See **Indexes** below.
+- `.useIndex("name")` / `.hint(...)` — no such methods. Declared
+  indexes do not change how a read runs. See **Indexes** below.
 
 <!-- stop:end -->
 ## What this is
@@ -234,32 +233,12 @@ http://localhost:5173/<path>`) before declaring the task complete.
   set membership when you'd otherwise want
   `{ status: ["open","pending"] }`.
 
-- **Indexes** — declare them in `baerly.config.ts`; the read-path
-  planner picks one automatically when the predicate's equality
-  fields cover an index's keys. No call-site hint is needed (the
-  earlier `.useIndex(name)` chain was removed when the planner
-  shipped — `Query<T>` has no such method).
-
-  ```ts
-  import { defineConfig } from "@gusto/baerly-storage/config";
-
-  export default defineConfig({
-    collections: {
-      tickets: {
-        indexes: [{ name: "by_status", on: "status" }],
-      },
-    },
-  });
-  ```
-
-  With that declared, a query like
-  `db.collection("tickets").where({ status: "open" }).all()` walks
-  `by_status` automatically. Composite indexes
-  (`on: ["status", "priority"]`) match any leftmost prefix.
-  Mismatches (predicate doesn't cover any index) fall back to a full
-  table scan with a metric bump; correctness is preserved because the
-  reader re-checks the predicate in memory regardless of how it got
-  the row set.
+- **Indexes** — don't declare them. Every read folds the whole
+  collection (snapshot + log) and filters in memory; a declared index
+  neither speeds a read up nor changes its result. `defineConfig`
+  still accepts `indexes` and `Db.create` validates them, so an
+  existing config keeps compiling. For a hot filtered read, maintain a
+  side-projection (see the unbounded-read anti-pattern below).
 
 - **Schemas (live feature)** — schemas are validated on the server
   for every `insert` / `update` / `replace` when bound. Declare via
@@ -506,9 +485,9 @@ from the runtime env.
 - Calling `db.collection(...).all()` (or any unbounded read) inside a
   per-request handler. The call scans the entire collection on every
   request — fine for a fixture-sized table, catastrophic at any real
-  size, and `pnpm verify` doesn't surface the cost. Push the filter
-  into the predicate so the index planner can prune
-  (`db.collection("notes").where({ ... }).all()`), or maintain a
+  size, and `pnpm verify` doesn't surface the cost. A predicate
+  (`db.collection("notes").where({ ... }).all()`) trims the response
+  but still folds the whole collection, so instead maintain a
   side-projection (D1/KV/search index) populated incrementally from
   the `/v1/since?collection=<name>&cursor=<opaque>` log feed or from
   a write hook — never re-scan per
@@ -534,8 +513,11 @@ graduate once a collection is large. See docs/spec/scale-ceilings.md for the per
 envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator
 env vars (you almost never need them).
 
-Operator opt-in is not required for steady-state operation. On Cloudflare Free, run
-exactly one collection and one phase per invocation, alternating the direct primitives:
+Operator opt-in is not required for steady-state operation. A scheduled pass on
+Cloudflare processes one collection per invocation. With the R2 binding, Free or Paid,
+one `runScheduledMaintenance(args, CLOUDFLARE_FREE_TIER)` (or `CLOUDFLARE_PAID_TIER`)
+call fits. On Free with storage over `fetch` (S3 over HTTP), run one phase per
+invocation, alternating the direct primitives:
 
 ```ts
 import { CLOUDFLARE_FREE_TIER, compact, runGc } from "@gusto/baerly-storage/maintenance";
@@ -548,9 +530,8 @@ if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
 }
 ```
 
-Do not loop tenants or collections in one Free invocation; shard the schedule or persist
-a collection cursor across invocations. Reserve `runScheduledMaintenance()` (both
-phases) for Cloudflare Paid or Node, within that host's invocation budget.
+Do not loop tenants or collections in one Cloudflare invocation; shard the schedule or
+persist a collection cursor across invocations.
 
 On Node, the canonical scheduled pass folds whatever live tail
 exists — `runScheduledMaintenance`'s own `minEntriesToCompact` default is 1 (a

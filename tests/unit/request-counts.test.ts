@@ -12,16 +12,23 @@ import {
   loadRequestCountSnapshot,
   parseCell,
 } from "../../scripts/request-counts.ts";
-import { INDEX_COUNTS, measureRequestCounts } from "../fixtures/request-count-grid.ts";
-import { FREE_FETCH_BUDGET, freeFetchCells } from "../fixtures/request-count-free-fetch.ts";
+import { measureRequestCounts } from "../fixtures/request-count-grid.ts";
+import {
+  FREE_FETCH_BUDGET,
+  FREE_FETCH_INDEXES,
+  freeFetchCells,
+} from "../fixtures/request-count-free-fetch.ts";
 import { chargedStorage } from "../fixtures/ledgered-storage.ts";
+import { SINCE_HOSTS, sinceCells } from "../fixtures/request-count-since.ts";
 import { totalCalls } from "../fixtures/request-counting-storage.ts";
 import {
   createObservabilityContext,
   runWithContext,
 } from "../../packages/server/src/observability/context.ts";
 import {
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_FREE_FETCH_GC_MAX_SWEEPS,
   GC_STARVATION_GUARD,
   MemoryStorage,
@@ -57,16 +64,36 @@ describe("Workers Free with storage over fetch", () => {
   });
   // Each `free-fetch:*` cell is a whole request, route plus the tick it
   // dispatches; the Worker's Cache API calls share the same quota.
-  test.each(INDEX_COUNTS)(
-    "every request at %i indexes fits the external subrequest budget",
-    async (indexes) => {
-      const cells = await freeFetchCells(indexes);
+  test("every request on a collection declaring indexes fits the external subrequest budget", async () => {
+    const cells = await freeFetchCells(FREE_FETCH_INDEXES);
+    const over = cells
+      .map((c) => ({ name: c.name, calls: totalCalls(c.counts) + c.cacheApiCalls }))
+      .filter((c) => c.calls > FREE_FETCH_BUDGET);
+    expect(over).toEqual([]);
+  });
+});
+
+describe("GET /v1/since on Workers Free", () => {
+  // The cells run under the Free ledger, so a call past a limit would be
+  // refused; these pin that the route stays inside it rather than
+  // throwing, and that an idle poll spends nearly all of it holding.
+  test("idle and busy long-polls stay within each host's request limit", async () => {
+    const limit = {
+      external: CF_FREE_EXTERNAL_REQUEST_LIMIT,
+      internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+    };
+    const cells = await sinceCells();
+    for (const host of SINCE_HOSTS) {
+      const hostLimit = limit[host.pool];
       const over = cells
-        .map((c) => ({ name: c.name, calls: totalCalls(c.counts) + c.cacheApiCalls }))
-        .filter((c) => c.calls > FREE_FETCH_BUDGET);
+        .filter((c) => c.name.startsWith(`${host.name}:`) && totalCalls(c.counts) > hostLimit)
+        .map((c) => c.name);
       expect(over).toEqual([]);
-    },
-  );
+      const idle = cells.find((c) => c.name === `${host.name}:since-idle-no-timeout`)!;
+      // Two calls per idle cycle: all but an odd one left over.
+      expect(totalCalls(idle.counts)).toBe(hostLimit - (hostLimit % 2));
+    }
+  });
 });
 
 describe("request-counts format", () => {

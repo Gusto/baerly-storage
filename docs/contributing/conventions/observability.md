@@ -17,12 +17,12 @@ counterpart is [`docs/guide/observability.md`](../../guide/observability.md).
 **Every HTTP request emits one canonical line.** The kernel emits it
 on the request boundary; you don't.
 
-Maintenance ticks (compactor, GC, `rebuildIndex`, `runScheduledMaintenance`)
+Maintenance ticks (compactor, GC, `runScheduledMaintenance`)
 emit NO canonical line — there's no human reading cron-tick logs on a
 15-user app, and errors throw to the platform (Cloudflare dashboard,
 Node process logs). Their per-emission metrics still flow into the
 canonical line when called from within an HTTP scope (e.g. an admin
-route that triggers `rebuildIndex`); outside any HTTP scope each emit
+route that triggers `compact`); outside any HTTP scope each emit
 site falls through to `noopMetricsRecorder` — operators don't wire
 their own `MetricsRecorder`, the canonical line on stdout is the
 operator's view of kernel emissions.
@@ -103,9 +103,9 @@ operator-run batches, maintenance ticks) call the kernel primitives
 directly:
 
 ```ts
-import { rebuildIndex } from "@gusto/baerly-storage/maintenance";
+import { compact } from "@gusto/baerly-storage/maintenance";
 
-await rebuildIndex(storage, currentJsonKey, def);
+await compact({ storage, currentJsonKey });
 ```
 
 Errors propagate to the platform's process / Worker log. Metric
@@ -126,7 +126,7 @@ import { createObservabilityContext, runWithContext } from "../observability";
 
 const ctx = createObservabilityContext();
 await runWithContext(ctx, async () => {
-  await rebuildIndex(storage, currentJsonKey, def);
+  await compact({ storage, currentJsonKey });
 });
 console.log(ctx.recorder.snapshot());
 ```
@@ -164,8 +164,6 @@ The load-bearing kernel metrics today (canonical list in
 - `db.write.class_a_ops_per_logical_write` — writer histogram
   (recommended operator alert when p99 exceeds ~5; not a shipped or
   CI-gated check).
-- `db.write.index_ops_per_logical_write` — writer histogram
-  (`K (PUT) + L (DELETE)` per commit, per-collection label).
 - `db.write.ambiguous_commit_total` — writer counter, labelled by
   `collection` and `cleanup` (`deleted` / `failed`). A committing create
   won at a sequence already certified deleted, so the commit failed with
@@ -183,11 +181,10 @@ The load-bearing kernel metrics today (canonical list in
   evaluated. A sustained rate means the check is not covering the writes
   it exists to protect, even though no individual commit is rejected.
 - `db.write.post_commit_refused_total` — writer counter, labelled by
-  `collection` and `phase` (`delete-floor-check` / `pre-image-read` /
-  `stale-delete`). The request ledger refused a storage call of a step that
-  runs after a known commit; the step was skipped and the commit stands.
-  The floor check runs inside the commit's ledger hold, so a
-  `delete-floor-check` count means a call outside every hold (the read
+  `collection` and `phase` (`delete-floor-check`, the only post-commit
+  step). The request ledger refused a storage call of a step that runs
+  after a known commit; the step was skipped and the commit stands. The
+  floor check runs inside the commit's ledger hold, so a count means a call outside every hold (the read
   cache's post-write invalidation) or a platform cap below the ledger's
   limit cut into it.
 - `db.write.unresolved_create_total` — writer counter, labelled by

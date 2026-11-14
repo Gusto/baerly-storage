@@ -7,10 +7,9 @@ Fix `LocalFsStorage` (`localFsStorage` on the `/node` barrel, and the
 normalization on a folding filesystem such as default macOS APFS.
 
 Keys were written to the path made of their raw segments, so `A` / `a` and
-NFC / NFD `é` landed on one file. Because index markers embed the raw `_id`
-and collection names are interpolated raw into key prefixes, an indexed
-`where` over such ids returned the wrong rows, a stale-marker delete for one
-id de-indexed its twin, and `Users` / `users` shared one collection. S3,
+NFC / NFD `é` landed on one file. Because collection names are
+interpolated raw into key prefixes, `Users` / `users` shared one
+collection. S3,
 Minio, and `MemoryStorage` were never affected; Linux filesystems are
 byte-exact, so this only diverged on macOS dev machines. R2 folds Unicode
 normalization (not case) the same way; that is addressed by requiring NFC

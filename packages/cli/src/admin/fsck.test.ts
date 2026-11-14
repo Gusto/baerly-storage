@@ -6,13 +6,13 @@
  * CLI test for `baerly admin fsck` — the read-only consistency walk.
  *
  * Each test seeds a `LocalFsStorage` collection and then either
- * injects a corruption (missing log entry, hash-mismatched snapshot,
- * orphan index key) or verifies a clean bucket. The exit-4 path is
+ * injects a corruption (missing log entry, hash-mismatched snapshot)
+ * or verifies a clean bucket. The exit-4 path is
  * exercised for each injectable finding; exit-0 is the no-finding
  * baseline.
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -24,7 +24,6 @@ import {
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
-import { allIndexKeysFor } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runFsck } from "./fsck.ts";
 import { captureStream } from "../_internal/testing.ts";
@@ -51,7 +50,6 @@ const seedRows = async (storage: Storage, count: number): Promise<void> => {
   const writer = new Writer({
     storage,
     currentJsonKey: CURRENT_JSON_KEY,
-    options: { indexes: [{ name: "by_status", on: "status" }] },
   });
   for (let i = 0; i < count; i++) {
     await writer.commit({
@@ -224,81 +222,12 @@ describe("baerly admin fsck — consistency check and corruption findings", () =
     ]);
   });
 
-  test("orphan index key with --indexes → exit 4 with drift finding", async () => {
+  test("an orphan index object is ignored → exit 0 (fsck never reads index/)", async () => {
     await provision(storage);
     await seedRows(storage, 3);
-    // Inject an orphan index key. Use `allIndexKeysFor` so the
-    // physical key matches the writer's encoding.
-    const [orphanKey] = allIndexKeysFor(
-      TABLE_PREFIX,
-      [{ name: "by_status", on: "status" }],
-      { _id: "ghost", status: "wip" },
-      "ghost",
-    );
-    if (orphanKey === undefined) {
-      throw new Error("test setup: failed to build orphan key");
-    }
-    await storage.put(orphanKey, new Uint8Array(0), {
-      ifNoneMatch: "*",
-      contentType: "application/json",
-    });
-
-    // Write a JSON config so --config can resolve the index def.
-    const cfgPath = join(root, "baerly.config.json");
-    await writeFile(
-      cfgPath,
-      JSON.stringify({
-        collections: { [COLL]: { indexes: [{ name: "by_status", on: "status" }] } },
-      }),
-      "utf8",
-    );
-
-    const stdout = captureStream(process.stdout);
-    let exitCode: number;
-    try {
-      exitCode = await runFsck([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--collection=${COLL}`,
-        "--indexes",
-        `--config=${cfgPath}`,
-        "--json",
-      ]);
-    } finally {
-      stdout.restore();
-    }
-    expect(exitCode).toBe(4);
-    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
-      result: {
-        mode: string;
-        indexes: { name: string; added: number; removed: number; rebuilt: boolean }[];
-        findings: { check: string; severity: string }[];
-      };
-    };
-    expect(envelope.result.mode).toBe("indexes");
-    const summary = envelope.result.indexes.find((i) => i.name === "by_status");
-    expect(summary?.removed).toBeGreaterThanOrEqual(1);
-    expect(summary?.rebuilt).toBe(false);
-    expect(
-      envelope.result.findings.some(
-        (f) => f.check === "index.by_status" && f.severity === "warning",
-      ),
-    ).toBe(true);
-  });
-
-  test("orphan index key WITHOUT --indexes → exit 0 (default mode skips index walk)", async () => {
-    await provision(storage);
-    await seedRows(storage, 3);
-    const [orphanKey] = allIndexKeysFor(
-      TABLE_PREFIX,
-      [{ name: "by_status", on: "status" }],
-      { _id: "ghost", status: "wip" },
-      "ghost",
-    );
-    if (orphanKey === undefined) {
-      throw new Error("test setup: failed to build orphan key");
-    }
+    // An index marker with no live row behind it. No read or fsck
+    // check consults `index/`.
+    const orphanKey = `${TABLE_PREFIX}/index/by_status/ghost.json`;
     await storage.put(orphanKey, new Uint8Array(0), {
       ifNoneMatch: "*",
       contentType: "application/json",
@@ -320,105 +249,27 @@ describe("baerly admin fsck — consistency check and corruption findings", () =
     expect(exitCode).toBe(0);
   });
 
-  test("--indexes --fix rebuilds drifted keys; finding downgrades to info", async () => {
-    await provision(storage);
-    await seedRows(storage, 3);
-    const [orphanKey] = allIndexKeysFor(
-      TABLE_PREFIX,
-      [{ name: "by_status", on: "status" }],
-      { _id: "ghost", status: "wip" },
-      "ghost",
-    );
-    if (orphanKey === undefined) {
-      throw new Error("test setup: failed to build orphan key");
-    }
-    await storage.put(orphanKey, new Uint8Array(0), {
-      ifNoneMatch: "*",
-      contentType: "application/json",
-    });
-
-    const cfgPath = join(root, "baerly.config.json");
-    await writeFile(
-      cfgPath,
-      JSON.stringify({
-        collections: { [COLL]: { indexes: [{ name: "by_status", on: "status" }] } },
-      }),
-      "utf8",
-    );
-
-    const stdout = captureStream(process.stdout);
-    let exitCode: number;
-    try {
-      exitCode = await runFsck([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--collection=${COLL}`,
-        "--indexes",
-        "--fix",
-        `--config=${cfgPath}`,
-        "--json",
-      ]);
-    } finally {
-      stdout.restore();
-    }
-    // `--fix` downgrades drift findings to `info` (since drift was
-    // both detected AND fixed in one pass); only `warning` / `finding`
-    // severities count toward exit 4, so exit 0.
-    expect(exitCode).toBe(0);
-    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
-      result: {
-        mode: string;
-        indexes: { name: string; rebuilt: boolean }[];
-        findings: { check: string; severity: string }[];
-      };
-    };
-    expect(envelope.result.mode).toBe("indexes-fix");
-    expect(envelope.result.indexes.find((i) => i.name === "by_status")?.rebuilt).toBe(true);
-    expect(
-      envelope.result.findings.some((f) => f.check === "index.by_status" && f.severity === "info"),
-    ).toBe(true);
-    // Orphan key was deleted by the rebuild.
-    await expect(storage.get(orphanKey)).resolves.toBeNull();
-  });
-
-  test("--fix without --indexes rejected with InvalidConfig (exit 1)", async () => {
-    await provision(storage);
-    const stderr = captureStream(process.stderr);
-    let exitCode: number;
-    try {
-      exitCode = await runFsck([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--collection=${COLL}`,
-        "--fix",
-      ]);
-    } finally {
-      stderr.restore();
-    }
-    expect(exitCode).toBe(1);
-    expect(stderr.captured.join("")).toContain("InvalidConfig");
-  });
-
-  test("--indexes without --config rejected with InvalidConfig (exit 1)", async () => {
-    await provision(storage);
-    const stderr = captureStream(process.stderr);
-    let exitCode: number;
-    try {
-      exitCode = await runFsck([
-        `--bucket=file://${root}`,
-        `--app=${APP}`,
-        `--tenant=${TENANT}`,
-        `--collection=${COLL}`,
-        "--indexes",
-      ]);
-    } finally {
-      stderr.restore();
-    }
-    expect(exitCode).toBe(1);
-    expect(stderr.captured.join("")).toContain("InvalidConfig");
-  });
+  test.each(["--indexes", "--fix"])(
+    "removed flag %s is rejected as an unknown flag (exit 1)",
+    async (flag) => {
+      await provision(storage);
+      const stderr = captureStream(process.stderr);
+      let exitCode: number;
+      try {
+        exitCode = await runFsck([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          flag,
+        ]);
+      } finally {
+        stderr.restore();
+      }
+      expect(exitCode).toBe(1);
+      expect(stderr.captured.join("")).toContain("unknown flag");
+    },
+  );
 
   test("missing current.json surfaces InvalidConfig (exit 1)", async () => {
     const stderr = captureStream(process.stderr);

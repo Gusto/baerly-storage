@@ -8,7 +8,6 @@ import {
   type CurrentJsonRead,
   decodeJsonBytes,
   type DocumentData,
-  type IndexDefinition,
   logDeleteFloorOf,
   logObjectKey,
   type LogEntry,
@@ -21,7 +20,7 @@ import {
 } from "@baerly/protocol";
 import { isOwnCollection } from "./collection-alias.ts";
 import { collectionsToMaps } from "./config.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { probeTailChunk, probeTailFrom, type TailProbeChunk } from "./log-tail.ts";
 import { assertNameSegment } from "./path-segment.ts";
 import type { CollectionReadContext } from "./query.ts";
 import { makeCollection } from "./collection.ts";
@@ -94,28 +93,17 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
    * {@link collectionsToMaps} at {@link Db.create} time.
    */
   readonly #schemas: ReadonlyMap<string, SchemaValidator>;
-  /**
-   * Per-collection {@link IndexDefinition}s threaded onto every
-   * {@link CollectionReadContext} this `Db` mints for writer marker
-   * maintenance. Reads always fold the complete snapshot and log.
-   *
-   * Derived from `config.collections[*].indexes` via
-   * {@link collectionsToMaps} at {@link Db.create} time.
-   */
-  readonly #indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>;
 
   private constructor(
     app: string,
     tenant: string,
     storage: Storage,
     schemas: ReadonlyMap<string, SchemaValidator>,
-    indexes: ReadonlyMap<string, ReadonlyArray<IndexDefinition>>,
   ) {
     this.app = app;
     this.tenant = tenant;
     this.#storage = storage;
     this.#schemas = schemas;
-    this.#indexes = indexes;
   }
 
   /**
@@ -151,10 +139,11 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
      * 1. **Types.** `db.collection(name)` narrows `name` to declared
      *    collection names and infers the row type from
      *    `collections[name].schema` via {@link RowOf}.
-     * 2. **Runtime.** Schemas and indexes are derived from
-     *    `config.collections` via {@link collectionsToMaps}. Schema
-     *    validation and index maintenance are wired automatically — no
-     *    second hand-off step.
+     * 2. **Runtime.** Schemas are wired from `config.collections`
+     *    via {@link collectionsToMaps} — no second hand-off step.
+     *    Declared `indexes` are validated here (a malformed one throws
+     *    `SchemaError` or `InvalidConfig`) but do not speed up reads
+     *    or change their results or costs.
      *
      * @example
      * ```ts
@@ -178,18 +167,12 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     for (const name of Object.keys(config.config?.collections ?? {})) {
       assertKeySegment(name, "collection", "Db.create");
     }
-    // Always derive runtime maps from `config.collections`. Absent
-    // config ⇒ empty maps (no schemas, no indexes); the kernel
-    // behaves the same as a config with `collections: {}`.
+    // Always derive runtime maps from `config.collections` (which also
+    // validates every index declaration). Absent config ⇒ no schemas;
+    // the kernel behaves the same as a config with `collections: {}`.
     const derived =
       config.config !== undefined ? collectionsToMaps(config.config.collections) : undefined;
-    return new Db<TConfig>(
-      app,
-      tenant,
-      storage,
-      derived?.schemas ?? new Map(),
-      derived?.indexes ?? new Map(),
-    );
+    return new Db<TConfig>(app, tenant, storage, derived?.schemas ?? new Map());
   }
 
   /**
@@ -253,7 +236,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
       storage: this.#storage,
       collectionPrefix: `${physicalPrefixFor(this.app, this.tenant)}manifests/${name}`,
       collectionName: name,
-      indexes: this.#indexes.get(name) ?? [],
       ...(schema !== undefined ? { schema } : {}),
     };
   }
@@ -375,6 +357,45 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
     const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
     const { tail } = await probeTailFrom(this.#storage, logPrefix, hint, opts);
     return tail;
+  }
+
+  /**
+   * Forward-probe at most `cap` committed log entries from `hint` and
+   * return them. Unlike {@link probeLogTail}, reaching `cap` is not an
+   * error: the chunk comes back as `kind: "at-least"`, a prefix of the
+   * entries past `hint`, so a caller with a bounded request budget can
+   * deliver it and resume after its last entry. A slot GET the request
+   * ledger refuses ends the chunk the same way, keeping the entries read
+   * before it. Each slot is one GET; size `cap` with `forwardProbeCap`.
+   *
+   * @throws BaerlyError code="Internal" — `hint` is below the floor, as
+   *         for {@link probeLogTail}.
+   * @throws BaerlyError code="InvalidResponse" — an occupied slot does
+   *         not hold valid JSON.
+   * @throws BaerlyError code="InvalidConfig" — an entry names a
+   *         canonically-equivalent but byte-different collection, as for
+   *         {@link getLogEntry}.
+   *
+   * @internal — typed seam for the HTTP handler.
+   */
+  async probeLogChunk(
+    collection: string,
+    hint: number,
+    current: CurrentJson,
+    opts: { cap: number; signal?: AbortSignal },
+  ): Promise<TailProbeChunk> {
+    assertNameSegment(collection, "collection");
+    assertAtOrAboveLogFloor("probeLogChunk", hint, current);
+    const logPrefix = `${physicalPrefixFor(this.app, this.tenant)}manifests/${collection}`;
+    const chunk = await probeTailChunk(this.#storage, logPrefix, hint, {
+      ...opts,
+      stopOnRefusal: true,
+    });
+    // As for getLogEntry: refuse a legacy non-NFC spelling's entries.
+    for (const entry of chunk.entries) {
+      isOwnCollection(entry.collection, collection);
+    }
+    return chunk;
   }
 }
 

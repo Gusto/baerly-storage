@@ -29,7 +29,6 @@ import {
 } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
-import { indexKeyFor, type IndexDefinition } from "./indexes.ts";
 import { retireLogRange } from "./log-retention.ts";
 import {
   createObservabilityContext,
@@ -222,28 +221,17 @@ describe("log retirement vs. the numbered-log create", () => {
     expect(visible).toBeUndefined();
   });
 
-  test("T3: a sub-floor update rejects before deleting the OLD value's index keys", async () => {
+  test("T3: a sub-floor update over a leaked prior entry rejects and the old value stays visible", async () => {
     const inner = new MemoryStorage();
     // Slot 0 already holds this doc's prior committed value — landed by a
-    // real Writer commit, so the OLD value's index marker is physically in
-    // the bucket — while the manifest certifies [0, 1) deleted. That is the
-    // leak state a crashed retirement DELETE loop leaves behind (the floor
-    // CAS advances before the DELETEs run; a leaked object is the
-    // deliberate fail-safe, `log-retention.ts`), and it is the one shape in
-    // which `#readPreImage` can still find a pre-image below a floor the
-    // Step-5a check fires on. Pre-fold consumers clamp the stored floor to
-    // min(1, log_seq_start = 0) = 0, so the prior commit's own Step-5a
-    // check stays silent and lands at seq 0.
+    // real Writer commit — while the manifest certifies [0, 1) deleted.
+    // That is the leak state a crashed retirement DELETE loop leaves behind
+    // (the floor CAS advances before the DELETEs run; a leaked object is
+    // the deliberate fail-safe, `log-retention.ts`). Pre-fold consumers
+    // clamp the stored floor to min(1, log_seq_start = 0) = 0, so the prior
+    // commit's own Step-4a check stays silent and lands at seq 0.
     await createCurrentJson(inner, CURRENT_KEY, logStateCurrentJson({ log_delete_floor: 1 }));
-    const bySource = { name: "by_source", on: "source" } satisfies IndexDefinition;
-    const oldMarker = indexKeyFor(PREFIX, bySource, ["old"], DOC_ID);
-    const newMarker = indexKeyFor(PREFIX, bySource, ["new"], DOC_ID);
-    const writer = (storage: Storage) =>
-      new Writer({
-        storage,
-        currentJsonKey: CURRENT_KEY,
-        options: { indexes: [bySource] },
-      });
+    const writer = (storage: Storage) => new Writer({ storage, currentJsonKey: CURRENT_KEY });
     await runWithContext(MAINTENANCE_OFF, () =>
       writer(inner).commit({
         op: "I",
@@ -253,13 +241,9 @@ describe("log retirement vs. the numbered-log create", () => {
       }),
     );
     await expect(inner.get(logObjectKey(PREFIX, 0))).resolves.toBeTruthy();
-    await expect(inner.get(oldMarker)).resolves.toBeTruthy();
 
-    // The contended slot is 1 — slot 0 is taken by the pre-image, so the
-    // tail probe lands the update past it — and the update changes the
-    // indexed field, so Step 5b would compute a genuinely stale key from
-    // the pre-image. Without that, this test is vacuous: a mutant check
-    // that runs late deletes nothing and the marker survives anyway.
+    // The contended slot is 1 — slot 0 is taken by the prior entry, so the
+    // tail probe lands the update past it.
     const gate = gatedPutStorage(inner, logObjectKey(PREFIX, 1), "delay");
     const pausedCommit = runWithContext(MAINTENANCE_OFF, () =>
       writer(gate.storage).commit({
@@ -274,7 +258,7 @@ describe("log retirement vs. the numbered-log create", () => {
     // During the gate: a peer doc occupies the contended slot so
     // [0, retireEnd) is dense, the fold absorbs [0, retireEnd), and
     // retirement — starting at the certified floor 1 — deletes ONLY the
-    // peer at slot 1 and publishes floor 2. The leaked pre-image at log/0
+    // peer at slot 1 and publishes floor 2. The leaked prior entry at log/0
     // survives below the advanced floor, which is exactly what the
     // crash-leak state guarantees for every slot it already certified.
     const retireEnd = LOG_RETENTION_SEQ_WINDOW + 2;
@@ -300,29 +284,15 @@ describe("log retirement vs. the numbered-log create", () => {
     await expect(inner.get(logObjectKey(PREFIX, 1))).resolves.toBeNull();
     await expect(
       inner.get(logObjectKey(PREFIX, 0)),
-      "the leaked pre-image object survives retirement",
+      "the leaked prior entry survives retirement",
     ).resolves.toBeTruthy();
     gate.release();
 
     await expect(pausedCommit).rejects.toMatchObject({ code: "AmbiguousCommit" });
 
-    // THE ORDERING PIN. Step 5a must throw before Step 5b runs, so the
-    // OLD value's marker survives: the update is invisible (the fold
-    // absorbed the peer, not us), the doc's live value is still the old
-    // one, and de-indexing it is exactly the failure the hybrid emission
-    // polarity exists to prevent (invariant 7). A mutant that runs the
-    // check after Step 5b lets `#readPreImage` find the leaked pre-image
-    // at log/0, compute the old marker as stale, and DELETE it before
-    // throwing.
-    await expect(
-      inner.get(oldMarker),
-      "the old value's index marker survives the reject",
-    ).resolves.toBeTruthy();
-    // The additive Step-4 markers for the NEW value are the documented
-    // benign residual of the failure path, and remain.
-    await expect(inner.get(newMarker)).resolves.toBeTruthy();
-    // A fresh reader still sees the OLD value — which is why the marker
-    // surviving is load-bearing, not cosmetic.
+    // The update is invisible (the fold absorbed the peer, not us), so a
+    // fresh reader still sees the OLD value, which is why the commit must
+    // not be acknowledged.
     const visible = await Db.create({ storage: inner, app: "a", tenant: "t" })
       .collection("c")
       .get(DOC_ID);

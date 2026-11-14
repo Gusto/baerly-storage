@@ -249,14 +249,13 @@ type LogPutFault =
   | "subrequest-limit";
 
 /**
- * An in-memory `R2Bucket` honoring the `onlyIf` shapes the adapter
+ * An in-memory `R2Bucket` honoring the `onlyIf` PUT shapes the adapter
  * sends, counting binding `get` / `put` per key class. `logPutFault`
  * sees the 0-based ordinal of log-key `put`s once armed.
  */
-const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottles = 0) => {
+const memBucket = (logPutFault: (ordinal: number) => LogPutFault) => {
   const objects = new Map<string, { bytes: Uint8Array; etag: string }>();
-  const calls = { logGets: 0, logPuts: 0, otherGets: 0, otherPuts: 0, markerPuts: 0 };
-  let markerThrottlesLeft = markerThrottles;
+  const calls = { logGets: 0, logPuts: 0, otherGets: 0, otherPuts: 0 };
   let version = 0;
   let armed = false;
   let invocationExhausted = false;
@@ -268,7 +267,7 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
     return meta(key, etag);
   };
   const bucket = {
-    get: (key: string, opts?: R2GetOptions) => {
+    get: (key: string) => {
       if (isLog(key)) {
         calls.logGets++;
       } else {
@@ -280,10 +279,6 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
       const obj = objects.get(key);
       if (obj === undefined) {
         return Promise.resolve(null);
-      }
-      const onlyIf = opts?.onlyIf as R2Conditional | undefined;
-      if (onlyIf?.etagDoesNotMatch === obj.etag) {
-        return Promise.resolve(meta(key, obj.etag));
       }
       return Promise.resolve({
         ...meta(key, obj.etag),
@@ -297,13 +292,6 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
         calls.logPuts++;
       } else {
         calls.otherPuts++;
-      }
-      if (armed && key.includes("/index/")) {
-        calls.markerPuts++;
-        if (markerThrottlesLeft > 0) {
-          markerThrottlesLeft--;
-          return Promise.reject(new Error(R2_SAME_KEY_RATE_LIMIT));
-        }
       }
       if (fault === "throw") {
         return Promise.reject(new Error("internal error"));
@@ -360,27 +348,18 @@ const memBucket = (logPutFault: (ordinal: number) => LogPutFault, markerThrottle
     logKeys: () => [...objects.keys()].filter(isLog),
     arm() {
       armed = true;
-      Object.assign(calls, { logGets: 0, logPuts: 0, otherGets: 0, otherPuts: 0, markerPuts: 0 });
+      Object.assign(calls, { logGets: 0, logPuts: 0, otherGets: 0, otherPuts: 0 });
     },
   };
 };
 
-const setupWriter = async (
-  logPutFault: (ordinal: number) => LogPutFault,
-  opts: { indexed?: boolean; markerThrottles?: number } = {},
-) => {
-  const mem = memBucket(logPutFault, opts.markerThrottles);
+const setupWriter = async (logPutFault: (ordinal: number) => LogPutFault) => {
+  const mem = memBucket(logPutFault);
   const storage = r2BindingStorage(mem.bucket);
   await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());
   mem.arm();
   const counted = wrapCountingStorage(storage);
-  const writer = new Writer({
-    storage: counted.storage,
-    currentJsonKey: CURRENT_KEY,
-    ...(opts.indexed === true && {
-      options: { indexes: [{ name: "by_status", on: "status" }] },
-    }),
-  });
+  const writer = new Writer({ storage: counted.storage, currentJsonKey: CURRENT_KEY });
   const commit = () =>
     writer.commit({
       op: "I",
@@ -442,18 +421,6 @@ describe("Writer commit over r2BindingStorage: binding calls behind the log crea
     await expect(commit()).resolves.toMatchObject({ entry: { seq: 1, doc_id: "one" } });
     // Slot 0: 3 throttled binding PUTs; slot 1: one clean PUT.
     expect(calls.logPuts).toBe(STORAGE_RETRY_MAX_ATTEMPTS + 1);
-    expect(counted.puts).toBe(2);
-  });
-
-  test("an index-marker put throttled once by the same-key limit is retried and the write commits", async () => {
-    vi.spyOn(Math, "random").mockReturnValue(0);
-    const { counted, calls, commit } = await setupWriter(() => "pass", {
-      indexed: true,
-      markerThrottles: 1,
-    });
-    await expect(commit()).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
-    // One outer marker put; the adapter's retry is the second binding call.
-    expect(calls.markerPuts).toBe(2);
     expect(counted.puts).toBe(2);
   });
 

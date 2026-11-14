@@ -53,14 +53,14 @@ collection's key namespace in the bucket. Inside that prefix:
 | Legacy content objects | Side objects emitted by legacy writers. Inert: no reader opens one and GC never touches the prefix. |
 | Numbered log entries | Append-only records containing the authoritative `LogEntry.after` post-image for inserts and updates: "at this sequence, this row was inserted, updated, or deleted." The log uses `log/0.json`, `log/1.json`, and so on. The _tail_ is the first missing number after committed entries. |
 | Snapshot objects | Rolled-up older history, created by maintenance so reads do not replay the whole log forever. |
-| Index objects | Small marker artifacts maintained by writers and reconciled by `rebuildIndex`; reads do not use them for membership. |
+| Legacy index objects | Zero-byte markers written by writers before 0.7. Inert: nothing reads, writes or reclaims them. |
 | `current.json` | A per-collection _compaction bookmark_. It is **not** the authority on the collection's state. It names the current snapshot, records how far the log has been folded into that snapshot (`log_seq_start`), and carries `tail_hint`, a lower-bound starting point for finding the live tail. |
 
 The numbered log decides commit order. A snapshot is a cached fold of old
 log entries. `current.json` names the snapshot and gives a probe start;
 if `tail_hint` is behind, the reader probes forward to the first missing
-log entry. Every read folds the snapshot plus log to decide visible rows;
-index markers cannot restrict membership.
+log entry. Every read folds the snapshot plus log to decide visible rows,
+whatever indexes the collection declares.
 
 Each collection has its own `current.json`, numbered log, and tail. A
 write commits to exactly one collection's log. Writes to two collections
@@ -71,25 +71,18 @@ formal statement is in [`spec/sync-protocol.md`](../spec/sync-protocol.md).
 
 ## What a write does
 
-A write prepares the entry and configured index objects, commits
-with one conditional log create, then cleans up old lookup markers. For
-an insert or update:
+A write prepares the entry and commits with one conditional log create.
+For an insert or update:
 
 1. **Serialize the post-image**: place the complete new row in
    `LogEntry.after` for an insert or update.
-2. **PUT the new index markers**: write the lookup markers that point
-   at this row, _before_ committing.
-3. **Create the next numbered log entry**: `PUT log/<seq>.json` with a
+2. **Create the next numbered log entry**: `PUT log/<seq>.json` with a
    conditional _"only if it doesn't exist yet."_ **This create is the
    commit.** The instant it wins, the row is part of the database.
-4. **Delete now-stale index markers, if any**: for an update, remove
-   the markers for the value this write superseded, _after_ committing.
-   A concurrent write can race this cleanup; reads rely on the log, not
-   marker completeness.
 
-Steps 1 and 2 are preparation. Step 3 writes the serialized entry and
-changes the visible database state; there is no later `current.json`
-pointer swap. Step 4 cleans up the old value's markers.
+Step 1 is preparation. Step 2 writes the serialized entry and changes
+the visible database state; it is the write's only storage write, and
+there is no later `current.json` pointer swap.
 
 ## The part that makes it safe
 
@@ -190,18 +183,18 @@ objects that step leaves behind:
   unreferenced.
 - **Garbage collection** sweeps objects no live snapshot or log entry
   still references: superseded snapshots and compacted-away log
-  entries. Orphaned index markers do not affect reads and can be
-  repaired by `rebuildIndex`.
+  entries.
 - **Legacy `content/<sha>.json` side objects** are different again. GC
   never touches that prefix, so an object a legacy writer left behind
   sits inert and costs only storage. Nothing needs migrating; an
   operator who wants the bytes back deletes the prefix
   ([how](../guide/backups.md#legacy-content-cleanup),
-  [why](../spec/sync-protocol.md#legacy-content-side-objects)).
+  [why](../spec/sync-protocol.md#legacy-content-side-objects)). Legacy
+  `index/` markers are the same
+  ([how](../guide/backups.md#legacy-index-markers)).
 
 Crashes fall on one side of the commit line. A crash before the log
-create can leave additive index markers, which reads ignore, but no
-current-writer content side object. A crash after the
+create leaves nothing of the write. A crash after the
 log create leaves a committed entry that future writers can pass.
 Because there is no separate `current.json` swap to crash between, a
 write cannot wedge the tail and block all future writes to the
@@ -250,7 +243,7 @@ then exposes the part it can safely execute.
 | Layer | Role |
 | --- | --- |
 | Protocol | Defines the typed menu: `insert`, `update`, `where`, `order`, `first`, `all`, and related shapes. It has no implementation. |
-| Server | Implements that menu against the bucket: serialize `LogEntry.after`, PUT additive index objects, create `log/<seq>.json` as the commit, then DELETE stale index objects. |
+| Server | Implements that menu against the bucket: serialize `LogEntry.after`, then create `log/<seq>.json` as the commit. |
 | HTTP router | Decodes the request, calls the server action, and serializes the result. It holds no storage-protocol decision logic of its own. |
 | Client | Exposes the client-safe API over HTTP with the same row types and query vocabulary. It does not touch the bucket and is not the full server protocol surface. |
 | React bindings | Add reactivity, loading state, and error state with `useQuery`, `useMutation`, and `BaerlyProvider`. Database semantics stay in the client/server protocol. |

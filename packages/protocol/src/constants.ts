@@ -238,20 +238,18 @@ export const CF_CACHE_API_MAX_CALLS: number = 3;
  *
  * Without room for both, a create that landed but lost its reply cannot be
  * resolved and becomes `AmbiguousCommit`, and a won create skips the
- * delete-floor check. Everything else after the create (the pre-image
- * walk, stale index-marker DELETEs, the write tick) is best effort and is
- * not reserved.
+ * delete-floor check. Everything else after the create (the write tick) is
+ * best effort and is not reserved.
  *
  * Each slot's attempt runs under a request-ledger hold
  * (`RequestLedger.hold`) of
- * `STORAGE_RETRY_MAX_ATTEMPTS * (newIndexMarkers + 1) + COMMIT_RESOLUTION_RESERVE`
- * requests: each additive index-marker PUT and the create itself at full
- * retries, plus this reserve. Other work in the invocation (a
- * `ctx.waitUntil` write tick) cannot spend held requests. The writer
- * refuses with `CapacityExceeded`, before it writes anything, when the
- * ledger's room cannot cover the hold. After a lost create race it takes a
- * new hold (markers only when the re-decided post-image needs new ones)
- * before the next create.
+ * `STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE` = 9 requests: the
+ * create at full retries, plus this reserve. The create is the commit's only
+ * write, so the hold is the same for every collection, whatever indexes it
+ * declares. Other work in the invocation (a `ctx.waitUntil` write tick)
+ * cannot spend held requests. The writer refuses with `CapacityExceeded`,
+ * before it writes anything, when the ledger's room cannot cover the hold.
+ * After a lost create race it takes a new hold before the next create.
  *
  * The arithmetic assumes the default adapter retry policy; an adapter
  * configured with more retries can need more than it reserves.
@@ -268,10 +266,14 @@ export const COMMIT_RESOLUTION_RESERVE: number = 2 * STORAGE_RETRY_MAX_ATTEMPTS;
  * steady state on the free-tier profile).
  *
  * 16 bounds CONCURRENCY, not the per-request total: a walk still issues
- * one GET per live-tail entry, 16 at a time. The free cap (50/request)
- * is not met by this bound — see `docs/spec/scale-ceilings.md`
- * §Per-tier bounds. A free-tier reader relies on the compactor keeping
- * the live tail short enough that the walk never approaches it.
+ * one GET per live-tail entry, 16 at a time, and every GET is charged to
+ * the invocation's request ledger, which refuses a read whose tail does
+ * not fit the host's limit. On Workers the platform also caps an
+ * invocation at 6 simultaneous outgoing connections, R2 binding calls
+ * included, so the walk runs at most 6 at a time there whatever this
+ * value is. A reader relies on the compactor keeping the live tail short
+ * enough that the walk fits; see `docs/spec/scale-ceilings.md`
+ * §Per-tier bounds.
  *
  * @see packages/server/src/log-walk.ts (`walkLogRange`)
  */
@@ -289,88 +291,28 @@ export const MAX_PARALLEL_LOG_READS: number = 16;
 export const LOG_FORWARD_PROBE_CAP: number = 100_000;
 
 /**
- * Descent budget on the writer's backwards pre-image walk
- * (`Writer#readPreImage`): max `log/<seq>` GETs below the committing
- * seq before the walk gives up and reports "pre-image unknown".
+ * Sequence distance retained below `log_seq_start` before `log/<seq>.json`
+ * objects become retirable: a rate limit on how fast retirement approaches the
+ * live floor.
  *
- * The walk MUST be 404-tolerant — a folded-and-swept entry and a peer
- * mid-CAS are indistinguishable from a missing object — so it cannot
- * use a hole as a stop signal, and `seq` grows monotonically forever.
- * Without this budget the walk is O(seq): once GC sweeps a doc's last
- * I/U past the {@link GC_GRACE_PERIOD_MILLIS} grace, every later
- * `U` / `D` on that doc issues one SEQUENTIAL GET per seq down to 0,
- * then returns "unknown" and deletes nothing. That is unbounded
- * opportunistic work on the request path — the shape
- * `docs/contributing/conventions/change-discipline.md` rules out.
- *
- * Deliberately NOT floored at `log_seq_start`: sub-floor entries
- * survive the 7-day GC grace, so a post-fold `U` / `D` can still find
- * its pre-image below the floor. The budget is anchored at the
- * committing seq instead, which makes the cost unconditional.
- *
- * **Sized by the subrequest wall, not by coverage.** Cloudflare free
- * allows 50 subrequests per request total
- * (`docs/spec/scale-ceilings.md` §Per-tier bounds); R2 binding ops count
- * 1:1, and a `ctx.waitUntil` maintenance continuation draws on the
- * same per-invocation budget. One `op:"U"` commit on a single-index
- * collection already costs ~15 before this walk — 1 GET
- * `current.json`, ~10 sequential GETs for `findLogTail`'s gallop over
- * a one-fold-interval `tail_hint` lag, 1 index `newKey` PUT, the
- * `log/<seq>` create, 1 GET re-reading `current.json` after that create
- * resolves to reject a create that landed below the certified delete floor
- * (`Writer#assertCommitAboveDeleteFloor`), 1 stale-key DELETE — and the
- * write-tick fold branch it may dispatch costs ~26 more (1 runner GET
- * + `compact()`'s 3 + {@link WRITE_TICK_FOLD_ENTRIES_PER_PASS} log
- * GETs + 2 PUTs). `50 - 15 - 26 = 9`; `PREIMAGE_SCAN_MAX_GETS = 8`
- * leaves one spare subrequest. The post-create delete-floor re-read adds no
- * billable cost — `billableClassAOps = puts + lists` excludes GET — but it
- * does consume the subrequest headroom, so this budget cannot rise without
- * re-deriving the total. The walk is strictly SEQUENTIAL, so this is a hard
- * per-request cost, not a fan-out bound like {@link MAX_PARALLEL_LOG_READS}.
- *
- * **What that budget actually covers.** The pre-image sits roughly
- * one working-set of seqs back, so 8 reaches a doc rewritten within
- * the last few log entries — a form re-save, a retry, a two-phase
- * update — and nothing colder. On a collection with more than ~8
- * actively-written docs the walk normally gives up. That is accepted:
- * the residual is a benign extra index key (a false positive dropped
- * by `matchesWire`, never a missing candidate — see
- * `docs/spec/sync-protocol.md` invariant 7), and `rebuildIndex` /
- * `baerly admin fsck --indexes` is the authoritative reconciler. The
- * give-up is deliberately NOT counted: at this budget it is the
- * common path, not an anomaly, so a counter would be noise rather
- * than signal.
- *
- * A per-tier budget on `MaintenanceProfile` (free 8, Node / CF-paid
- * far higher — the same commit leaves ~9,780 of a 10,000 subrequest
- * budget there) would buy real coverage back on the larger tiers.
- * Not built: it widens the profile surface for a best-effort cleanup
- * path whose backstop already exists.
- *
- * @see packages/server/src/writer.ts (`Writer#readPreImage`)
- */
-export const PREIMAGE_SCAN_MAX_GETS: number = 8;
-
-/**
- * Sequence-distance safety window retained below `log_seq_start` before
- * `log/<seq>.json` objects become retirable.
- *
- * `Writer#readPreImage` is the only production reader deliberately allowed
- * below the manifest floor it observed. Its reach is capped by
- * {@link PREIMAGE_SCAN_MAX_GETS}; the 128x multiplier gives the current 8-GET
- * reach a 1024-sequence window while keeping that relationship explicit if the
- * pre-image budget changes.
+ * Folded entries stay readable below the floor for this long, which is what a
+ * windowed commit (`Writer#readFoldedWindow`, for an insert guard or an
+ * admission re-check whose read predates a fold) needs to finish rather than
+ * refuse with `WriteConflict`; it reads at most the entries a fold absorbed
+ * between two reads in one request, far fewer than 1024. The value is a
+ * literal: it carries no derivation, and shrinking it is a measured change of
+ * its own.
  *
  * **This window is NOT a paused-writer fence, and no safety property may be
- * derived from it.** It is a pre-image cost margin and a rate limit on how fast
+ * derived from it.** It is a cost margin and a rate limit on how fast
  * retirement approaches the live floor — nothing more. The withdrawn argument
  * was that a certified-deleted slot needs `log_seq_start` to advance by more
  * than this window "during one in-flight commit". The arithmetic is correct and
  * the quantifier is vacuous: one in-flight commit bounds no wall-clock and no
  * commit count, so this is a rate x duration assumption expressed in sequences,
  * the same class as `GC_GRACE_PERIOD_MILLIS` in seconds. Lowering the value on
- * cost grounds costs pre-image coverage and retirement smoothness; it does not
- * weaken a safety proof, because there was never one here.
+ * cost grounds costs windowed-commit headroom and retirement smoothness; it
+ * does not weaken a safety proof, because there was never one here.
  *
  * Withdrawing the claim does not leave the schedule open, because the commit
  * path closes it directly. After the committing `log/<seq>` create resolves,
@@ -386,27 +328,29 @@ export const PREIMAGE_SCAN_MAX_GETS: number = 8;
  * @see docs/spec/sync-protocol.md invariant 12
  * @see docs/adr/002-ephemeral-coordination.md § Closed paths
  */
-export const LOG_RETENTION_SEQ_WINDOW: number = PREIMAGE_SCAN_MAX_GETS * 128;
+export const LOG_RETENTION_SEQ_WINDOW: number = 1024;
 
 /**
  * Maximum log-object DELETEs a retention pass may attempt on one write tick.
- * Twenty fits within the most constrained request budget and drains faster than
- * the fold floor advances in steady state.
+ * Twenty keeps a GC tick plus retirement at 48 calls (144 with every call
+ * retried), inside Workers Free's 900-call R2 binding limit, and drains faster
+ * than the fold floor advances in steady state.
  *
  * `retireLogRange` is the pass that spends this budget. Every maintenance
  * trigger runs it via the shared `retireLogs` helper in `maintenance.ts`:
  * `runScheduledMaintenance` after its GC phase, and `runBoundedMaintenance`
  * both on the hard-GC early-return path and as its final step. The combined
- * per-tick subrequest arithmetic, against the worst cases `maintenance.ts`'s
- * `CLOUDFLARE_FREE_TIER` JSDoc documents:
+ * per-tick storage-call arithmetic, against the worst cases `maintenance.ts`'s
+ * `CLOUDFLARE_FREE_TIER` JSDoc documents (fault-free; times
+ * {@link STORAGE_RETRY_MAX_ATTEMPTS} with every call retried):
  *
- * - One retirement pass, worst case, is 23 subrequests: 1 advisory-gate GET
+ * - One retirement pass, worst case, is 23 calls: 1 advisory-gate GET
  *   + `casUpdateCurrentJson`'s own GET + 1 CAS PUT + up to 20 DELETEs.
  * - A maximally contended write-tick GC including the retirement gate read
  *   is 26 storage operations, pinned exactly by `maintenance-budget.test.ts`.
  *   When the gate finds work, the pass adds its CAS read + CAS write + up to
- *   20 DELETEs on top (48 of 50 worst case).
- * - A compaction pass is ≤49, so compact + retirement is 72. **Retirement
+ *   20 DELETEs on top (48, or 144 retried).
+ * - A compaction pass is ≤49, so compact + retirement would be 72. **Retirement
  *   cannot share a tick with a fold**: in `"single"` phase mode a write-tick
  *   fold returns before the runner's retirement step, and
  *   `maintenance-budget.test.ts` pins that a fold tick issues zero retirement
@@ -644,13 +588,40 @@ export const WRITE_TICK_FOLD_ENTRIES_PER_PASS: number = 20;
  * prior-snapshot fold pass costs 1 GET current + P GETs tail probe +
  * 1 GET prior snapshot + N GETs log + 1 PUT snapshot + 1 PUT current
  * = 4 + N + P storage operations. With P=25 and the Free profile's
- * N=20 slice, the worst pass is 49 operations, leaving one operation
- * below the 50-subrequest invocation cap.
+ * N=20 slice, the worst pass is 49 operations, 147 with every call
+ * retried, inside the 900 a Free invocation may spend through the R2
+ * binding ({@link CF_FREE_INTERNAL_REQUEST_LIMIT}). Through `fetch` (45)
+ * the worst pass does not fit, and a pass about 20 or more entries behind
+ * its `tail_hint` stalls there; see `CLOUDFLARE_FREE_TIER`. Kept at 25
+ * because Free CPU, not the request count, binds first on the binding,
+ * and the maintenance-backlog baselines were measured at it.
  *
  * @see packages/server/src/maintenance.ts
  * @see packages/server/src/maintenance-budget.test.ts
  */
 export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
+
+/**
+ * Cloudflare Paid scheduled-compactor tail-discovery budget (`P`) for
+ * `CLOUDFLARE_PAID_TIER`. Without one, the scheduled probe may walk up to
+ * {@link LOG_FORWARD_PROBE_CAP} (100,000) GETs past a stale `tail_hint`,
+ * which no Paid invocation can issue: the request ledger refuses the pass
+ * at {@link CF_PAID_REQUEST_LIMIT} and nothing folds. With a budget, a
+ * pass that exhausts it checkpoints the certified lower bound in
+ * `current.json` and the next pass resumes there.
+ *
+ * With the Paid profile's per-pass slice
+ * `N` = {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} (200), the worst
+ * pass is `4 + N + P` = 1,204 storage calls, 3,612 with every call retried
+ * {@link STORAGE_RETRY_MAX_ATTEMPTS} times, well inside 9,000. 1,000 is
+ * five slices of discovery per pass: large enough that a pass behind by
+ * a normal backlog still folds, small enough that a scheduled compact, GC
+ * and retirement pass together stay under the limit at full retries.
+ *
+ * @see packages/server/src/maintenance.ts (`CLOUDFLARE_PAID_TIER`)
+ * @see packages/server/src/maintenance-budget.test.ts
+ */
+export const CF_PAID_COMPACT_TAIL_PROBE_GETS: number = 1000;
 
 /**
  * compact()'s minEntriesToCompact, set EXPLICITLY by the runner so it agrees with Gate 1
@@ -660,6 +631,69 @@ export const CF_FREE_COMPACT_TAIL_PROBE_GETS: number = 25;
  * @see packages/server/src/maintenance.ts
  */
 export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
+
+/**
+ * Storage requests a write-tick fold issues besides its log GETs, on its
+ * common path (every call answered first time, no concurrent writer): the
+ * `current.json` GET, one tail-probe GET at the writer's observed tail, the
+ * prior-snapshot GET, the snapshot PUT and the `current.json` CAS PUT. A
+ * fold of `e` entries costs `5 + e` after the runner's own `current.json`
+ * GET (the `6 + e` in {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES}'s
+ * derivation counts that GET too).
+ *
+ * `runBoundedMaintenance` skips the fold when the invocation's request
+ * ledger has less than this plus the tail it would fold left. Retries and
+ * a tail a concurrent writer lengthened can still overrun; the ledger
+ * refuses that call before it is sent and the next tick folds again.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const MAINTENANCE_FOLD_BASE_REQUESTS: number = 5;
+
+/**
+ * Storage requests a write-tick GC slice issues besides its sweep DELETEs,
+ * on its common path: the `current.json` GET, the `gc/pending.json` GET,
+ * one snapshot LIST page, the fresh `current.json` GET before a due sweep,
+ * and the pending CAS (GET + PUT). A slice sweeping `S` costs `6 + S`.
+ * Contention adds at most 6 (the pending-bootstrap race, two more CAS
+ * attempts), the `12 + S` worst case in `CLOUDFLARE_FREE_TIER`'s JSDoc.
+ *
+ * `runBoundedMaintenance` lowers the slice's sweep cap to what the
+ * invocation's request ledger has left after this, and skips the slice
+ * when not even this is left. A deferred sweep stays pending for the next
+ * slice.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const MAINTENANCE_GC_BASE_REQUESTS: number = 6;
+
+/**
+ * Most storage requests a log-retirement pass can be charged before its
+ * floor CAS lands: the advisory `current.json` GET and the CAS's own GET,
+ * each up to {@link STORAGE_RETRY_MAX_ATTEMPTS} attempts, plus the CAS PUT,
+ * which an If-Match PUT sends once. 7 at 3 attempts.
+ *
+ * `retireLogRange` moves `log_delete_floor` past the range BEFORE it
+ * DELETEs it, and the next pass starts at the floor, so a DELETE refused
+ * after the CAS leaks that log object for good. `runBoundedMaintenance`
+ * therefore caps the pass at `(remaining - this) / STORAGE_RETRY_MAX_ATTEMPTS`
+ * DELETEs, so every DELETE can spend all its attempts, and skips the pass
+ * when that leaves none. The range not retired stays retirable.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ * @see packages/server/src/log-retention.ts (`retireLogRange`)
+ */
+export const MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS: number = 2 * STORAGE_RETRY_MAX_ATTEMPTS + 1;
+
+/**
+ * Storage requests the write tick's `tail_hint` refresh issues: one
+ * non-retrying `casUpdateCurrentJson` (GET + PUT). `runBoundedMaintenance`
+ * skips the refresh when the invocation's request ledger has less left; a
+ * later tick refreshes instead.
+ *
+ * @see packages/server/src/maintenance.ts (`runBoundedMaintenance`)
+ */
+export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
 
 /**
  * Live-tail length at which the write tick folds on Workers Free when the
@@ -682,28 +716,31 @@ export const WRITE_TICK_MIN_ENTRIES_TO_COMPACT: number = 50;
  * the tail passes ~41.
  *
  * **Derivation of 7.** From `request-counts.json` (100-doc snapshot, live
- * tail `t`, `I >= 1` indexes): an insert costs `7 + t + I`. An update can
- * spend all 8 pre-image GETs AND find an old image, deleting `I` stale
- * markers as well as PUTting `I` new markers: `15 + t + 2I`. A cold update
- * spends the same GETs but finds no image, so it misses those DELETEs.
- * A fold of `e` entries costs `6 + e`. A fold and GC never share a tick
- * (`phasesPerTick: "single"`), so a request costs its route plus one of:
+ * tail `t`): an insert, an update and a delete each cost `7 + t`, whatever
+ * indexes the collection declares; the commit's only write is its log
+ * create. A fold of `e` entries costs `6 + e`. A fold and GC never share a
+ * tick (`phasesPerTick: "single"`), so a request costs its route plus one
+ * of:
  *
  * - the fold, triggered at tail `T`, or `T + 1` when the hard-GC guard
- *   pre-empts it: at most `22 + 2T + 2I`, 42 at `T = 7`, `I = 3`;
+ *   pre-empts it: at most `14 + 2T`, 28 at `T = 7`;
  * - a GC slice sweeping `D` = {@link CF_FREE_FETCH_GC_MAX_SWEEPS} due
  *   snapshots, plus log retirement, including a write whose tail reaches
  *   `T + 1` while the hard-GC guard pre-empts the fold.
  *
  * Plus one Cache API `delete` (which shares the subrequest quota) on a
- * PATCH or DELETE. The `free-fetch:*` cells measure cold updates and
- * rotations at every pre-image scan depth, through a full cycle of fold
- * and GC phases with every GC slice sweeping its cap. At `I = 3` the
- * worst is 44 + 1 = 45 at `T = 7`, `D = 3`. `T = 8`, `D = 2` also fits
- * but only matches snapshot creation at the guaranteed GC cadence;
- * `T = 7`, `D = 3` leaves sweep throughput headroom.
- * The longest live tail a read then sees is `T + 1` = 8: a GET by id
- * costs 11 + 2 Cache API calls, an indexed `$in` of 16 values 27.
+ * PATCH or DELETE. The `free-fetch:*` cells measure inserts, cold updates
+ * and a mixed rotation through a full cycle of fold and GC phases with
+ * every GC slice sweeping its cap; the worst is 30 + 1 = 31 at `T = 7`,
+ * `D = 3`, set by the GC arm. `T = 8`, `D = 2` would only match snapshot
+ * creation at the guaranteed GC cadence; `T = 7`, `D = 3` leaves sweep
+ * throughput headroom. The 14 calls of room left are deliberately unspent:
+ * a later fold trigger moves the snapshot-creation rate, the GC throughput
+ * argument on {@link CF_FREE_FETCH_GC_MAX_SWEEPS} and the documented Free +
+ * S3 envelope, so raising `T` is a measured change of its own.
+ * The longest live tail a read then sees is `T + 1` = 8: any read, with or
+ * without declared indexes (`$in` included), costs 11, plus 2 Cache API
+ * calls for a GET by id.
  * Retried calls (up to `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this
  * budget: that host is best effort.
  *
@@ -722,9 +759,11 @@ export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 7;
  * when storage is reached through `fetch`; replaces
  * {@link WRITE_TICK_GC_MAX_SWEEPS} (10) there. Each DELETE is one of the
  * request's external subrequests, and a full 10-delete slice on top of the
- * write that dispatched it exceeds the 45-call budget. 3 is the largest
- * sweep for which every `free-fetch:*` cell fits at
- * {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} (derivation there).
+ * write that dispatched it exceeds the 45-call budget at the tail lengths a
+ * write tick folds from. At 3 every `free-fetch:*` cell fits with room to
+ * spare at {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} (derivation there);
+ * the sweep stays at 3 because it is sized by the throughput argument below,
+ * which a larger sweep only widens.
  *
  * **Sweep throughput must outrun the fold rate.** Every landed fold
  * replaces one snapshot, so a collection produces at most one sweep
@@ -1020,9 +1059,9 @@ export const MAINTENANCE_PROFILE_NODE: MaintenanceProfileShape = {
 
 /**
  * CF-paid profile — opt-in via `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A paid
- * isolate keeps the CF-free single-phase shape (one phase per request) but has the 10,000-
- * subrequest budget (vs free's 50), so it reuses the `NODE_MAINTENANCE_*`
- * per-pass caps.
+ * isolate keeps the CF-free single-phase shape (one phase per request) but has a
+ * 9,000-call request ledger limit ({@link CF_PAID_REQUEST_LIMIT}), so it reuses the
+ * `NODE_MAINTENANCE_*` per-pass caps.
  *
  * A profile moves RATE and the DEFER THRESHOLD, never the stored data or the
  * query semantics — that is the equivalence invariant, and it is what
@@ -1123,18 +1162,18 @@ export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Pre-provisioned, unindexed, first-attempt Class A commit floor.
+ * Pre-provisioned, first-attempt Class A commit floor, whatever indexes the
+ * collection declares.
  *
  * The floor is the sole committing `log/<seq>` create
- * (`If-None-Match: "*"`). It is not a ceiling: provisioning, additive
- * and stale index-marker mutations, contention/retries, and in-band
- * maintenance can add Class A operations.
+ * (`If-None-Match: "*"`). It is not a ceiling: provisioning,
+ * contention/retries, and in-band maintenance can add Class A operations.
  *
  * @see tests/integration/http-cost-shape.test.ts
  * @see packages/server/src/writer.test.ts
  * @see tests/integration/write-amp.test.ts
  */
-export const UNINDEXED_COMMIT_CLASS_A_FLOOR: number = 1;
+export const COMMIT_CLASS_A_FLOOR: number = 1;
 
 /**
  * Canonical auth posture identifiers consumed by `BaerlyAppConfig.auth`,

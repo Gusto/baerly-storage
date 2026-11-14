@@ -51,12 +51,12 @@ export interface RetireLogRangeResult {
    * the {@link Storage} DELETE contract), so this is a request count, not a
    * count of objects that were physically present.
    *
-   * This does NOT cover the call's full subrequest cost: an active pass also
+   * This does NOT cover the call's full storage-call cost: an active pass also
    * issues 2 GETs (the advisory gate read, then {@link casUpdateCurrentJson}'s
    * own read) + 1 PUT (the floor CAS), and a no-op pass (empty gate) still
-   * costs 1 GET. A caller budgeting against the 50-subrequest free-tier cap
-   * that {@link LOG_RETENTION_MAX_DELETES_PER_TICK}'s JSDoc names — the
-   * combined GC-sweep + fold + retirement total per tick — must add those
+   * costs 1 GET. A caller budgeting a tick against a per-invocation request
+   * limit (the combined GC-sweep + fold + retirement total that
+   * {@link LOG_RETENTION_MAX_DELETES_PER_TICK}'s JSDoc derives) must add those
    * manifest round-trips itself; `deleted` alone undercounts.
    *
    * Two states make {@link computeRetirableRange} return an empty range, so
@@ -95,10 +95,9 @@ export interface RetireLogRangeResult {
  * a caller overrides it (via {@link computeRetirableRange}, which also clamps
  * a malformed stored floor per `docs/spec/sync-protocol.md` invariant 12).
  * That bound holds only at the default window: `opts.window` is a test seam
- * that can shrink or erase the pre-image reach the window preserves
- * (`PREIMAGE_SCAN_MAX_GETS`) and steepen the retirement rate it limits (this
- * module's own `{window: 0}` tests push the floor to `log_seq_start`
- * exactly).
+ * that can shrink or erase the folded entries the window keeps readable for
+ * a windowed commit and steepen the retirement rate it limits (this module's
+ * own `{window: 0}` tests push the floor to `log_seq_start` exactly).
  * `log_delete_floor` is monotone under the transition validator regardless of
  * `window`. So by the time a slot is physically deleted, a durable
  * certificate that it is gone already exists — which is what makes

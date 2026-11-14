@@ -29,9 +29,9 @@ Everything after it is cleanup or maintenance. `current.json` does not
 commit writes.
 
 For an insert or update, the writer serializes the post-image into
-`LogEntry.after` and uploads additive index markers before it creates
-that entry at `log/<seq>.json` with `If-None-Match: "*"`. There is no
-`current.json` write on the commit path. `current.json` is
+`LogEntry.after` and creates that entry at `log/<seq>.json` with
+`If-None-Match: "*"`, the commit's only write. There is no `current.json`
+write on the commit path. `current.json` is
 compactor-owned state: it names the snapshot, stores `log_seq_start`
 (the first log seq not covered by that snapshot), and carries a
 non-authoritative `tail_hint`.
@@ -161,7 +161,6 @@ flowchart TD
     subgraph engine["Read / write engine · @baerly/server"]
         query["query.ts<br/>Query reader + mutation terminals"]
         writer["writer.ts<br/>single-write commit"]
-        indexhelpers["indexes.ts<br/>validate · encode · project"]
         logio["log-tail · log-walk · snapshot<br/>tail probe + fold"]
     end
 
@@ -174,12 +173,10 @@ flowchart TD
     query --> writer
     query --> logio
     query -. uses .-> protocol
-    writer --> indexhelpers
     writer --> logio
     writer --> storage
     writer -. uses .-> protocol
     writer -. post-commit .-> maint
-    indexhelpers -. uses .-> protocol
     logio --> storage
     logio -. uses .-> protocol
     storage -. implements .-> protocol
@@ -306,12 +303,10 @@ both `baerly deploy --target=cloudflare` and
 
 ## Lifecycle of `db.collection("X").insert(doc)`
 
-Write ordering is asymmetric: the writer serializes `LogEntry.after`
-and writes additive index markers before the `log/<seq>` create; stale
-index markers are deleted after commit. A row becomes visible only when
-a committed log entry is replayed; index objects alone are ignored as
-rows. Index markers are maintained zero-byte artifacts; reads do not
-use them to determine membership.
+The writer serializes `LogEntry.after` and creates `log/<seq>`; that
+create is the commit's only write. A row becomes visible only when a
+committed log entry is replayed. Declared indexes are validated at
+`Db.create` and change no storage call.
 
 1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`,
    `runInsert` in `packages/server/src/query.ts`): normalises the
@@ -337,15 +332,11 @@ use them to determine membership.
      without writing. It then hands that window to `admission.check`, which
      re-runs the capacity decision when the window is non-empty
      ([Capacity: the commit-time re-check](spec/sync-protocol.md#capacity-the-commit-time-re-check));
-   - serializes the `I` / `U` post-image into `LogEntry.after`, then
-     PUTs additive (new) index artifacts under
-     `app/<app>/tenant/<tenant>/manifests/<collection>/index/...`
-     **before** the commit;
+   - serializes the `I` / `U` post-image into `LogEntry.after`;
    - creates the log entry under
      `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
      with `If-None-Match: "*"` — **that create is the commit** (no
-     `current.json` write on the commit path);
-   - DELETEs stale index keys after the commit.
+     `current.json` write on the commit path, and no other write).
 
    A `412` on the log create means the key already exists. The writer
    reads the existing `LogEntry` and adopts it only when it has the same
@@ -371,11 +362,9 @@ use them to determine membership.
        W->>B: GET log/N onward (forward-probe)
        B-->>W: first 404 fixes seq = N
        Note over W: serialize I / U post-image into LogEntry.after
-       W->>B: PUT new index markers (create-if-absent)
        W->>B: PUT log/N (create-if-absent)
        alt slot was free
            B-->>W: 200 — COMMIT
-           W->>B: DELETE stale index markers (after commit)
        else slot taken
            B-->>W: 412 Precondition Failed
            W->>B: GET log/N (read the occupant)
@@ -398,14 +387,9 @@ use them to determine membership.
 Every read folds the complete snapshot and log suffix before applying
 its predicate, order, and limit. The returned tail describes exactly
 that folded state, including for empty results and mutation selection.
-Index markers do not participate in read membership: a delayed stale-key
-DELETE can erase a reinserted row's marker, and a commit between a marker
-LIST and the tail probe can be absent from that LIST. Strongly consistent
-individual storage operations do not make those sequences atomic.
-
-This removes index LIST calls. A nonempty indexed read already loaded
-the snapshot and log; an empty marker result must now do the same work
-to prove absence. Limits bound returned rows, not fold I/O or memory.
+A declared index changes neither membership nor cost: no read LISTs
+anything, and an empty result does the same fold to prove absence as a
+nonempty one. Limits bound returned rows, not fold I/O or memory.
 
 The HTTP `/v1/since?collection=<name>&cursor=<opaque>` route in
 `packages/server/src/http/since.ts` walks the log from a caller-supplied
@@ -567,16 +551,15 @@ adapter package. Platform-specific code belongs in adapters.
   fetches a snapshot from object storage, verifies the SHA-256
   baked into the filename, and returns a `Map<_id, body>`. Internal
   callers: the compactor's fold-base load, the reader
-  (`Query.runRead`), `rebuildIndex`. See
+  (`Query.runRead`), and the CLI's export and fsck. See
   [extending.md §5](contributing/extending.md#5-shared-utilities-on-the-public-surface).
 
 ## Storage layout in the bucket
 
 Every object for one collection lives under one prefix: `log/` holds
-commits; `snapshot/` supports reads, `index/` holds writer-maintained
-artifacts, and `gc/` supports maintenance;
-`content/` holds inert legacy side objects that neither readers nor GC
-touch. For a `Db` constructed with `app="tickets"` and `tenant="acme"`,
+commits; `snapshot/` supports reads, and `gc/` supports maintenance;
+`content/` and `index/` hold inert legacy objects that nothing reads,
+writes or reclaims. For a `Db` constructed with `app="tickets"` and `tenant="acme"`,
 that prefix is the tree root below — shown once here, then omitted
 from the table that follows:
 
@@ -588,7 +571,7 @@ app/tickets/tenant/acme/manifests/<collection>/
 ├── content/
 │   └── <content-version>.json     ← side object emitted by a legacy writer; inert, neither readers nor GC touch it
 ├── index/
-│   └── <name>/…                   ← advisory marker (zero-byte)
+│   └── <name>/…                   ← legacy marker from a pre-0.7 writer; inert
 ├── snapshot/
 │   └── L9/<min>-<max>-<sha>.json  ← materialized snapshot
 └── gc/
@@ -600,7 +583,7 @@ app/tickets/tenant/acme/manifests/<collection>/
 | `current.json`                       | — (one per collection)               | Snapshot pointer, `log_seq_start`, the non-authoritative `tail_hint`, and the dormant `writer_fence`. **Not** the commit-path linearization point.                               |
 | `log/<seq>.json`                     | `seq` — monotonic integer            | One `LogEntry`. The `If-None-Match: "*"` create on this key **is the commit**. Readers scan the trusted range `[log_seq_start, tail_hint)`, then forward-probe to the true tail. |
 | `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](spec/sync-protocol.md#legacy-content-side-objects). |
-| `index/<name>/…`                     | index name + encoded key             | Zero-byte advisory index marker.                                                                                                                                                 |
+| `index/<name>/…`                     | index name + encoded key             | Legacy zero-byte index marker from a pre-0.7 writer. Inert. See [Legacy index markers](spec/sync-protocol.md#legacy-index-markers).                                            |
 | `snapshot/L9/<min>-<max>-<sha>.json` | `seq` range + content hash           | Content-hashed materialized snapshot.                                                                                                                                            |
 | `gc/pending.json`                    | — (one per collection)               | Two-phase GC candidate ledger.                                                                                                                                                   |
 

@@ -12,19 +12,16 @@ pass. Ids that differ only by case (`A` / `a`) or by compatibility form
 (`ﬁ` / `fi`) are still distinct.
 
 R2 stores canonically-equivalent keys as one object (NFC `é` and NFD
-`e` + U+0301 list back as one key), and index marker keys embed the raw
-`_id`. Two documents whose ids differed only by normalization therefore
-shared one index marker: an indexed `where` returned the wrong row, and a
-stale-marker delete for one de-indexed the other.
+`e` + U+0301 list back as one key), so NFC gives each `_id` one spelling
+and one byte form for any object a future storage format keys by `_id`.
 
-Rows already stored under a non-NFC `_id` keep working for reads: `get`,
-`where`, and indexed `where` return them, and `delete` removes them.
-`update` and `replace` refuse them, because they would write new index
-markers under the non-NFC id. To keep such a row writable, read it by `_id`
-and insert a copy under a fresh NFC id that is not canonically equivalent
-to the original (for example, omit `_id` for a UUID), then delete the
-original. On R2, copying to the normalized original id before deleting it
-would remove the copy's index markers. If a collection already holds two
+Rows already stored under a non-NFC `_id` keep working for reads: `get`
+and `where` return them, and `delete` removes them. `update` and `replace`
+refuse them, because they would commit a new row version under the
+non-NFC id. To keep such a row writable, read it by `_id` and insert a
+copy under a fresh NFC id that is not canonically equivalent to the
+original (for example, omit `_id` for a UUID), then delete the original.
+If a collection already holds two
 rows whose ids are canonically equivalent, read both rows by `_id`, copy
 each under a fresh NFC id that is not canonically equivalent to either
 original, then delete the originals. An NDJSON export that contains a

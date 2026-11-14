@@ -182,8 +182,7 @@ not you are paying. Hosts fall into three support tiers:
 
 Both Free hosts share the same data ceiling (the Cloudflare free column
 above). The R2 binding buys request headroom — a longer pending tail,
-more indexes per write, a larger `$in`, room for retries — not a bigger
-collection. Free CPU is best effort: a CPU kill hasn't been observed,
+room for retries — not a bigger collection. Free CPU is best effort: a CPU kill hasn't been observed,
 but the ~10 ms budget is not a guarantee
 ([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)).
 
@@ -201,9 +200,22 @@ retries and 45 calls of the 50 budgeted, are:
 
 | Bound | Free + S3 limit |
 | --- | --- |
-| Indexes per write | 3 |
-| Largest `$in` | 16 values |
 | Pending tail length | 8 entries |
+
+A write costs 7 + tail calls and its worst request, write plus
+maintenance, 31 (30 storage calls plus one Cache API call); any read at the longest 8-entry tail costs 11, an `$in`
+of any size included. Declared indexes change none of these. One
+consequence of the budget is accepted on this host:
+
+- **Past a pending tail of 15 entries, a write cannot fold.** A write at
+  tail `t` costs 7 + `t` calls and a fold of its `t + 1` entries 6 more
+  than that, so a write at a 15-entry tail plus its fold is 44 calls and
+  at 16 the write tick skips the fold. A tail that long, for example after
+  a burst of concurrent writes, then does not shorten on a write tick, and
+  from 32 pending entries a write is refused with `CapacityExceeded`
+  before it writes anything: its reads plus the 9 calls a commit keeps to
+  resolve its create pass 45. The R2 binding has the request headroom to
+  fold it.
 
 The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
 writes, and GC reclaims about 1,000 replaced snapshots per collection per
@@ -212,8 +224,13 @@ writes, and GC reclaims about 1,000 replaced snapshots per collection per
 snapshots; above that rate, replaced snapshots accumulate.
 
 A read that must replay a longer pending tail, such as one racing a write
-burst, can exceed the 50-call limit and fail, and so can a request whose
-storage calls are retried. Past the envelope, expect more
+burst, can need more than the 45 calls a request may make, and so can a
+request whose storage calls are retried; such a read is refused whole with
+`CapacityExceeded`, never answered with missing rows. The `/v1/since`
+change feed is the exception: it stops polling when its calls run out, so
+an idle long-poll returns after about 22 seconds instead of 25 and a busy
+one returns part of the backlog, which the next poll continues. Past the
+envelope, expect more
 `CapacityExceeded` and `MaintenancePending`; data is never lost. For more
 request headroom use the R2 binding; for guaranteed CPU, use Paid.
 

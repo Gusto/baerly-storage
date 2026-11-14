@@ -330,14 +330,17 @@ work; the protocol does not supply rewrite logic.
 
 ## 1c. Declare an index on a collection
 
-An index is a second set of storage keys: each key is a marker that says one
-document has one indexed value. The writer maintains those markers; the
-reader always folds the complete authoritative snapshot and log.
+An index declaration does not speed up reads or change their results:
+every read folds the complete authoritative snapshot and log. The field is
+kept, and validated at `Db.create`, so existing configs compile and the
+names stay reserved for a future index-aware storage format. Guidance for
+apps is to omit it. A declaration changes no storage call: the writer
+maintains no index objects.
 
 Declare indexes under `BaerlyConfig.collections[*].indexes`. Each
 `IndexDefinition` has a `name`, an `on` field tuple, and an optional
-`predicate?` for a filtered index. These declarations control marker
-maintenance, not read routing; there is no manual-hint API on `Query<T>`.
+`predicate?` for a filtered index. A malformed declaration throws at
+`Db.create`. There is no manual-hint API on `Query<T>`.
 
 ### `IndexDefinition` shape
 
@@ -368,7 +371,6 @@ export default defineConfig({
 ### Worked example — composite
 
 ```ts
-// Composite markers encode status, then priority.
 // Reads fold the snapshot and log regardless of declared indexes.
 { name: "by_status_priority", on: ["status", "priority"] },
 ```
@@ -376,8 +378,7 @@ export default defineConfig({
 ### Worked example — filtered
 
 ```ts
-// Only `status = "open"` docs project keys, reducing marker writes
-// compared with a dense `by_assignee` when most tickets are closed.
+// A filtered declaration is validated like any other; it restricts nothing.
 { name: "by_open_assignee",
   on: "assignee",
   predicate: { clauses: [{ op: "eq", field: "status", value: "open" }] } },
@@ -386,37 +387,17 @@ export default defineConfig({
 ### Read behavior and conventions
 
 Reads and mutation selection always fold the complete snapshot and log,
-then apply the predicate, order, and limit. Missing or filtered markers
-cannot hide rows. Index declarations do not accelerate reads; limits do
+then apply the predicate, order, and limit. Index declarations do not accelerate reads; limits do
 not bound fold I/O or memory. See the
 [read algorithm](../spec/sync-protocol.md#read-algorithm).
 
-- Top-level fields only on `on`; dotted paths throw `SchemaError` at projection.
+- Top-level fields only on `on`; a dotted path throws `InvalidConfig` at
+  `Db.create`. A row may hold any value, arrays included, in a declared
+  field.
 - `name` must match `/^[a-z][a-z0-9_]*$/`. Reserved leading-`_` names throw
   `InvalidConfig`; other malformed names throw `SchemaError`.
 - `predicate?` is a `PredicateWire` with `eq`, `gt`, `gte`, `lt`, `lte`,
-  and `in` clauses. It controls marker projection only.
-
-### Adding an index to an existing deployment
-
-Run one of these forms:
-
-```sh
-pnpm build && pnpm baerly admin rebuild-index \
-  --bucket=<uri> --collection=<collection> --index=<name> --on=<field>
-
-pnpm build && pnpm baerly admin rebuild-index \
-  --bucket=<uri> --collection=<collection> --index=<name> --config=<compiled-js-mjs-or-json>
-```
-
-The command also accepts `--app` and `--tenant`; when omitted, they default from
-`baerly.config.ts`. Use `--on` only for a single-field unfiltered index. Use
-`--config` with a compiled `.js`, `.mjs`, or `.json` config to resolve the
-matching declared index; the current CLI resolves the index's `on` field only,
-so do not use it as the source of truth for filtered-index predicates. The
-writer emits forward entries on every commit; pre-existing rows are not
-back-projected until rebuild runs. This affects marker completeness only;
-reads remain complete before rebuilding.
+  and `in` clauses. It never restricts what a query returns.
 
 ### Verify
 
@@ -624,11 +605,11 @@ and stable; their JSDoc is the canonical reference.
   (`packages/server/src/snapshot.ts`) — load a content-addressed
   snapshot, verify its SHA-256 against the filename, and return the
   docs as a `Map<_id, body>`. Used internally by the compactor,
-  reader, rebuild-index, export, and fsck paths. Prefer this over
+  reader, export, and fsck paths. Prefer this over
   hand-rolling a snapshot reader — the function bakes in the hash
   check, schema-version gate, and collection-mismatch guard.
 
-Other utilities (e.g. `compact`, `runGc`, `rebuildIndex`) are
+Other utilities (e.g. `compact`, `runGc`) are
 end-to-end orchestrators rather than helpers; their entry points are
 documented in [architecture.md](../architecture.md) under "Where
 invariants live."

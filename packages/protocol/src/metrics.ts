@@ -13,12 +13,9 @@
  *
  * **Naming convention** matches the load-bearing metrics:
  *   - `db.write.class_a_ops_per_logical_write` — histogram (recommend p99 alert ~5; not gated).
- *     Includes one Class A op per index PUT + index DELETE emitted
- *     in the commit's fence. Idle-reader cost is unchanged.
+ *     The committing log create, 1 per commit. Idle-reader cost is unchanged.
  *   - `db.r2.put.412_total` — counter (CAS conflict / If-Match-or-None-Match loss)
  *   - `db.r2.put.429_total` — counter (R2 prefix-partition rate-limit)
- *   - `db.write.index_ops_per_logical_write` — histogram.
- *     `K (PUT) + L (DELETE)` per commit. Per-collection label.
  *   - `db.write.ambiguous_commit_total` — counter, labelled by `collection`
  *     and `cleanup` (`deleted` / `failed`). A committing create won at a
  *     sequence already certified deleted, so the commit failed with
@@ -36,11 +33,10 @@
  *     evaluated. A sustained rate means the check is not covering the writes
  *     it exists to protect, even though no individual commit is rejected.
  *   - `db.write.post_commit_refused_total` — counter, labelled by
- *     `collection` and `phase` (`delete-floor-check` / `pre-image-read` /
- *     `stale-delete`). The request ledger refused a storage call of a step
- *     that runs after a known commit; the step was skipped and the commit
- *     stands. The floor check runs inside the commit's ledger hold, so a
- *     `delete-floor-check` count means a call outside every hold, or a
+ *     `collection` and `phase` (`delete-floor-check`, the only post-commit
+ *     step). The request ledger refused a storage call of a step that runs
+ *     after a known commit; the step was skipped and the commit stands. The
+ *     floor check runs inside the commit's ledger hold, so a count means a call outside every hold, or a
  *     platform cap below the ledger's limit, cut into it.
  *   - `db.write.unresolved_create_total` — counter, labelled by
  *     `collection`. A rejected committing create could not be resolved by

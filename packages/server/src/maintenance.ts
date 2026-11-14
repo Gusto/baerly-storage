@@ -1,9 +1,10 @@
 /**
  * `runScheduledMaintenance` — single-pass composition of `compact()` and
- * `runGc()` over one collection. It always runs both phases; therefore one
- * invocation with {@link CLOUDFLARE_FREE_TIER} is **not** safe for
- * Cloudflare Free's 50-subrequest limit. Free-tier schedulers alternate
- * direct `compact()` and `runGc()` calls instead. Unbounded on Node.
+ * `runGc()` over one collection. It always runs both phases. With
+ * {@link CLOUDFLARE_FREE_TIER} one invocation fits Workers Free with the R2
+ * binding; with storage over `fetch` (S3 over HTTP) on Free it does not,
+ * and schedulers there alternate direct `compact()` and `runGc()` calls
+ * instead (budgets on {@link CLOUDFLARE_FREE_TIER}). Unbounded on Node.
  *
  * Single-attempt: returns the combined result. The caller (cron
  * handler) is responsible for scheduling the next invocation; this
@@ -13,8 +14,8 @@
  *
  * Callers that want only one phase to fire this tick should invoke
  * the underlying primitive directly (`compact()` or `runGc()` from
- * this same module's re-exports). The even/odd-minute CF cron
- * pattern uses exactly that.
+ * this same module's re-exports). The even/odd-minute cron pattern
+ * for Free with storage over `fetch` uses exactly that.
  */
 
 import {
@@ -25,18 +26,25 @@ import {
   isWriteConflict,
   casUpdateCurrentJson,
   CF_FREE_COMPACT_TAIL_PROBE_GETS,
+  CF_PAID_COMPACT_TAIL_PROBE_GETS,
   GC_STARVATION_GUARD,
+  LOG_RETENTION_MAX_DELETES_PER_TICK,
   MAINTENANCE_COLD_START_ENTRY_BYTES,
+  MAINTENANCE_FOLD_BASE_REQUESTS,
+  MAINTENANCE_GC_BASE_REQUESTS,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
   MAINTENANCE_PROFILE_NODE,
+  MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
+  MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
   noopMetricsRecorder,
   readCurrentJson,
   SCHEDULED_MIN_ENTRIES_TO_COMPACT,
+  STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
 import { compact, type CompactResult, type InternalCompactOptions } from "./compactor.ts";
@@ -55,11 +63,6 @@ const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopM
 
 export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
 export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";
-export {
-  type RebuildIndexOptions,
-  type RebuildIndexResult,
-  rebuildIndex,
-} from "./rebuild-index.ts";
 // Public half only. `InternalMaintenanceOptions` is declared alongside
 // it but deliberately NOT re-exported here — this is a published entry,
 // and re-exporting the widening is exactly the leak being fixed.
@@ -121,11 +124,17 @@ const retireLogs = async (
 /**
  * Single maintenance pass for one collection. Always runs `compact()` then
  * `runGc()` (in that order; the compactor's advance of `log_seq_start`
- * produces the stale-log candidates the GC then marks). It is not safe to
- * call once with {@link CLOUDFLARE_FREE_TIER} on Cloudflare Free: the two
- * individually bounded phases can exceed that invocation's combined
- * 50-subrequest limit. Alternate direct `compact()` and `runGc()` calls for
- * that profile.
+ * produces the stale-log candidates the GC then marks), then log
+ * retirement. With {@link CLOUDFLARE_FREE_TIER} the whole pass is at most
+ * 94 storage calls, 282 with every call retried, which fits the 900 a
+ * Workers Free invocation may spend through the R2 binding. It does not fit
+ * the 45 a Free invocation may spend through `fetch` (S3 over HTTP): there,
+ * alternate direct `compact()` and `runGc()` calls, one per invocation, and
+ * rely on the in-band write tick, which folds early on that host: a
+ * scheduled compact there stalls once `tail_hint` is about 20 entries
+ * stale (see {@link CLOUDFLARE_FREE_TIER}). The request ledger refuses any
+ * call past the invocation's limit before it is sent, so a pass never
+ * exceeds the limit.
  *
  * Defaults: `minEntriesToCompact` defaults to
  * {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT} (1) on THIS entry point only — a
@@ -140,9 +149,8 @@ const retireLogs = async (
  * via `options.compact.minEntriesToCompact`. {@link CLOUDFLARE_PAID_TIER}
  * carries this same floor of 1 plus per-pass caps — pass it for those
  * caps, not for an in-band count floor. {@link CLOUDFLARE_FREE_TIER}
- * still carries an explicit 20 so the 50-subrequest envelope stays
- * honest; do not pass it to this helper (alternate direct `compact()` /
- * `runGc()` instead).
+ * carries an explicit 20, which keeps `minEntriesToCompact <= P` for its
+ * bounded tail probe (derivation on that constant).
  *
  * Errors propagate — the caller's cron handler is responsible for
  * logging them. The Cloudflare runtime ships uncaught Worker errors
@@ -172,7 +180,10 @@ const retireLogs = async (
  *   { compact: { minEntriesToCompact: 10 } },
  * );
  *
- * // Cloudflare Free: alternate the individually bounded direct phases.
+ * // Cloudflare Free with the R2 binding: one bounded pass fits.
+ * await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER);
+ *
+ * // Cloudflare Free with S3 over HTTP: alternate the direct phases.
  * if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
  *   await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
  * } else {
@@ -195,7 +206,7 @@ export const runScheduledMaintenance = async (
   // this default. `CLOUDFLARE_PAID_TIER` is built by
   // `profileToScheduledOptions`, whose default floor is also
   // SCHEDULED_MIN_ENTRIES_TO_COMPACT — callers pass it for per-pass caps.
-  // `CLOUDFLARE_FREE_TIER` still carries an explicit 20.
+  // `CLOUDFLARE_FREE_TIER` carries an explicit 20 (its bounded probe).
   const compactRes = await compact(args, {
     ...options.compact,
     ...(options.compact?.minEntriesToCompact === undefined && {
@@ -259,17 +270,59 @@ const profileToScheduledOptions = (
 });
 
 /**
- * Tuning profile for the 50-subrequest Cloudflare free-tier budget,
- * derived from {@link MAINTENANCE_PROFILE_CF_FREE} (one source of truth).
+ * Tuning profile for Cloudflare Workers Free, derived from
+ * {@link MAINTENANCE_PROFILE_CF_FREE} (one source of truth): fold slice
+ * N=20, compact tail probe P=25 ({@link CF_FREE_COMPACT_TAIL_PROBE_GETS}),
+ * GC sweeps S=10, marks 20.
  *
- * Budget arithmetic (worst case):
+ * **These caps are ceilings, not the budget.** Every storage call is
+ * charged to the invocation's request ledger, which refuses a call past
+ * the host's limit before sending it: 900 calls through the R2 binding
+ * (`CF_FREE_INTERNAL_REQUEST_LIMIT`), 45 through `fetch`
+ * (`CF_FREE_EXTERNAL_REQUEST_LIMIT`). The caps bound one pass's work so
+ * that it fits those limits; they do not need to stay under a 50 of their
+ * own. The in-band write tick (`runBoundedMaintenance`) also sizes each
+ * phase from what the ledger has left, net of commit holds: a fold that
+ * does not fit is skipped, and a GC slice or retirement pass runs with a
+ * smaller DELETE cap.
+ *
+ * Budget arithmetic (worst case, one storage call per GET, PUT, DELETE or
+ * LIST page):
  *   compact: 1 current GET + P tail-probe GETs + 1 optional prior-snapshot
  *     GET + N folded-log GETs + 1 snapshot PUT + 1 `current.json` CAS PUT
- *     = 4 + N + P (N = maxEntriesPerRun, P = 25).
+ *     = 4 + N + P.
  *   GC, maximally contended: 1 current GET + 3 pending-bootstrap-conflict
- *     operations + 2 LIST calls (log, snapshot) + 1 conditional
- *     fresh-current GET before a due snapshot sweep + S DELETEs + all three
- *     final pending CAS attempts (3 GETs + 3 PUTs) = 13 + S.
+ *     operations + 1 `snapshot/` LIST page (the mark window never exceeds
+ *     one page) + 1 conditional fresh-current GET before a due snapshot
+ *     sweep + S DELETEs + all three final pending CAS attempts (3 GETs +
+ *     3 PUTs) = 12 + S.
+ *   retirement: 1 advisory-gate GET + 1 CAS GET + 1 CAS PUT + up to
+ *     `LOG_RETENTION_MAX_DELETES_PER_TICK` (20) DELETEs = 23.
+ *
+ * At these caps, fault-free / with every call retried
+ * `STORAGE_RETRY_MAX_ATTEMPTS` (3) times:
+ *
+ * | Pass | Calls | Retried |
+ * | --- | --- | --- |
+ * | compaction | 49 | 147 |
+ * | GC | 22 | 66 |
+ * | write-tick GC (runner GET + GC + `tail_hint` refresh GET+PUT + retirement gate GET) | 26 | 78 |
+ * | retirement | 23 | 69 |
+ * | write-tick GC + retirement | 48 | 144 |
+ * | scheduled compact + GC + retirement | 94 | 282 |
+ *
+ * Every row fits 900, so on Free with the R2 binding one
+ * {@link runScheduledMaintenance} call per invocation is safe. Free CPU is
+ * the tighter limit there (about 0.25 ms per binding call against a 10 ms
+ * budget), which is why the caps stay at their measured values. Through
+ * `fetch` the compaction row alone can pass 45: a scheduler on that host
+ * runs one direct `compact()` or `runGc()` phase per invocation, and even
+ * then a scheduled compact whose `tail_hint` is about 20 or more entries
+ * stale stalls. Its probe and log GETs reach call 46 before it writes
+ * anything, so the ledger refuses a log GET, nothing is checkpointed, and
+ * every later pass repeats it. On that host the in-band write tick, which
+ * folds early (`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES`) from the writer's own
+ * tail, is the path that keeps the tail moving.
  *
  * `minEntriesToCompact` is `maxFoldEntriesPerPass` (20) here, passed
  * explicitly (not the scheduled helper default of 1), because a bounded
@@ -284,16 +337,8 @@ const profileToScheduledOptions = (
  * Keeping the threshold at N makes a pass fold exactly when one pass's worth
  * of work exists. Any future edit must keep `minEntriesToCompact <= P`.
  *
- * With N=20, compact P=25, S=10 the exact worst cases are: compaction ≤49
- * and GC ≤23. The write-tick runner adds a preliminary `current.json` GET
- * and, on a GC tick, a rate-limited `tail_hint` refresh (a single
- * non-retrying `casUpdateCurrentJson`: 1 GET + 1 PUT), taking a GC tick to
- * ≤26. Combining a compact and GC pass can still exceed 50, so the
- * Cloudflare scheduled handler processes one collection and alternates
- * phases per invocation (even minute → compact, odd minute → GC) by calling
- * `compact()` / `runGc()` directly instead of `runScheduledMaintenance`; the
- * `maintenance-budget.test.ts` worst-case test proves each phase in
- * isolation sits under 50 ops with these bounds.
+ * `maintenance-budget.test.ts` pins the per-phase counts exactly and checks
+ * each against the Free limit with retries.
  */
 export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_FREE,
@@ -302,11 +347,20 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
 );
 
 /**
- * Tuning profile for the 10,000-subrequest Cloudflare paid-tier budget,
- * derived from {@link MAINTENANCE_PROFILE_CF_PAID} (one source of truth).
- * Keeps the single-phase CF-free shape but affords Node-tier per-pass
- * fold, GC classification, and sweep budgets — comfortably within the 10k
- * cap. Exact per-phase op counts live in {@link CLOUDFLARE_FREE_TIER}.
+ * Tuning profile for Cloudflare Workers Paid, derived from
+ * {@link MAINTENANCE_PROFILE_CF_PAID} (one source of truth): Node-tier
+ * per-pass fold, GC classification, and sweep budgets, and a compact tail
+ * probe of {@link CF_PAID_COMPACT_TAIL_PROBE_GETS} (`P` = 1,000) GETs.
+ *
+ * Worst cases, with the {@link CLOUDFLARE_FREE_TIER} formulas at N=200,
+ * P=1,000, S=100 (fault-free / every call retried
+ * `STORAGE_RETRY_MAX_ATTEMPTS` = 3 times): compaction `4 + N + P` =
+ * 1,204 / 3,612; GC `12 + S` = 112 / 336; retirement 23 / 69; one
+ * scheduled compact + GC + retirement pass 1,339 / 4,017. All fit the Paid
+ * request ledger limit of 9,000 (`CF_PAID_REQUEST_LIMIT`). The bounded
+ * probe is what makes the compaction figure finite: unbounded, a pass
+ * behind a stale `tail_hint` could need up to `LOG_FORWARD_PROBE_CAP`
+ * GETs, which the ledger refuses before the fold lands.
  *
  * Fold floor is {@link SCHEDULED_MIN_ENTRIES_TO_COMPACT} (1): this object
  * exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not for
@@ -322,6 +376,7 @@ export const CLOUDFLARE_FREE_TIER: MaintenanceOptions = profileToScheduledOption
  */
 export const CLOUDFLARE_PAID_TIER: MaintenanceOptions = profileToScheduledOptions(
   MAINTENANCE_PROFILE_CF_PAID,
+  CF_PAID_COMPACT_TAIL_PROBE_GETS,
 );
 
 // =====================================================================
@@ -527,7 +582,10 @@ const foldDeferredWarning = (f: FoldDeferredFields): string => {
  * See `maintenance-profile-equivalence.test.ts`.
  *
  * Never throws — the write-tick caller must never see a maintenance
- * failure. CAS contention is swallowed quietly; an over-ceiling deferral
+ * failure. CAS contention is swallowed quietly, and so is a call the
+ * invocation's request ledger refused (each phase is sized from the
+ * ledger's remainder first; see the request-budget note inside, and
+ * `docs/spec/sync-protocol.md` "Per-invocation request budget"); an over-ceiling deferral
  * is not an error but is signalled loudly (see `signalFoldDeferred`
  * inside); unexpected throws bump
  * `db.maintenance.unexpected_error_total`, log a stack, and are
@@ -611,6 +669,42 @@ export const runBoundedMaintenance = async (
     ...(options?.now !== undefined && { now: options.now }),
   } as InternalRunGcOptions;
 
+  // Request budget. On a host with a per-invocation request cap the tick
+  // shares the ledger of the write that dispatched it (`ctx.waitUntil` work
+  // included), so each phase is sized at its start from what that ledger
+  // has left on the pool the storage charges, net of active holds
+  // (`storageRemaining()`). A tick dispatched while a multi-row write runs
+  // sits outside every commit hold, so it sizes against the room the later
+  // rows' commit-resolution reserves leave. A phase whose common-path
+  // cost does not fit is skipped, and a GC slice or retirement pass that
+  // fits only in part runs with a smaller DELETE cap. The profile's caps
+  // stay the ceilings. A call that still overruns (a retry, a tail a
+  // concurrent writer lengthened) is refused by the ledger before it is
+  // sent; the tick ends there and the next one resumes.
+  const ledger = getCurrentContext()?.ledger;
+  const requestsLeft = (): number => ledger?.storageRemaining() ?? Infinity;
+  const skipForBudget = (phase: "fold" | "gc" | "retire" | "tail_hint"): void => {
+    ctxMetrics().counter("db.maintenance.request_budget_skipped_total", 1, { collection, phase });
+  };
+
+  const retireWithinBudget = async (): Promise<void> => {
+    // Unlike the other phases, sized for every attempt: the floor CAS lands
+    // before the DELETEs, so a DELETE refused after it leaks for good.
+    const deletes = Math.floor(
+      (requestsLeft() - MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS) / STORAGE_RETRY_MAX_ATTEMPTS,
+    );
+    if (deletes < 1) {
+      skipForBudget("retire");
+      return;
+    }
+    const logRetention = options?.logRetention;
+    const maxDeletes = logRetention?.maxDeletes ?? LOG_RETENTION_MAX_DELETES_PER_TICK;
+    await retireLogs(storage, currentJsonKey, {
+      logRetention: deletes < maxDeletes ? { ...logRetention, maxDeletes: deletes } : logRetention,
+      ...(signal !== undefined && { signal }),
+    });
+  };
+
   try {
     // ── Step 1. Read current.json once. ──────────────────────────────
     const read = await readCurrentJson(
@@ -680,8 +774,8 @@ export const runBoundedMaintenance = async (
     // the SAME CAS as the hint refresh, so a warning defer costs one
     // GET+PUT, not two. A single-phase rebuild-gate defer tick then costs
     // 26 ops — runner GET 1 + deferred compact() 23 (current.json GET,
-    // `knownTail` probe, snapshot GET, 20 log GETs) + this CAS 2 — inside
-    // CF-free's 50 subrequests; pinned in `maintenance-budget.test.ts`.
+    // `knownTail` probe, snapshot GET, 20 log GETs) + this CAS 2; pinned in
+    // `maintenance-budget.test.ts`.
     const refreshTailHintIfNeeded = async (stampWarnedSeq = false): Promise<void> => {
       if (!stampWarnedSeq) {
         if (tailHintPublished) {
@@ -697,6 +791,10 @@ export const runBoundedMaintenance = async (
       // next tick. Retrying inside one tick would reintroduce the extra
       // ops this guard exists to bound.
       tailHintPublished = true;
+      if (requestsLeft() < MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS) {
+        skipForBudget("tail_hint");
+        return;
+      }
       try {
         await casUpdateCurrentJson(
           storage,
@@ -798,7 +896,15 @@ export const runBoundedMaintenance = async (
     };
 
     const runGcAndRefreshTailHint = async (): Promise<void> => {
-      await runGc({ storage, currentJsonKey }, gcOpts);
+      const sweeps = requestsLeft() - MAINTENANCE_GC_BASE_REQUESTS;
+      if (sweeps < 0) {
+        skipForBudget("gc");
+      } else {
+        await runGc(
+          { storage, currentJsonKey },
+          sweeps < gcMaxSweeps ? { ...gcOpts, maxSweepsPerRun: sweeps } : gcOpts,
+        );
+      }
       await refreshTailHintIfNeeded();
     };
 
@@ -831,15 +937,23 @@ export const runBoundedMaintenance = async (
         // Retire stale logs after GC even on the early-return path.
         // Non-WriteConflict errors re-throw into the outer catch below
         // (unexpected_error_total + stack log), like every other phase.
-        await retireLogs(storage, currentJsonKey, {
-          logRetention: options?.logRetention,
-          ...(signal !== undefined && { signal }),
-        });
+        await retireWithinBudget();
         return;
       }
 
       // ── Step 3. Fold-priority. ───────────────────────────────────────
-      if (gate1) {
+      // A fold folds at most one pass of the tail the runner sees. It is not
+      // shortened to fit: the growth refusal (`capacity.ts`) models passes
+      // of exactly `maxFoldEntriesPerPass` seqs, so a shorter pass could
+      // rebuild past `C` where the modelled one lands. One that does not
+      // fit is skipped and falls through to GC like a pre-fold defer.
+      const foldFits =
+        requestsLeft() >=
+        MAINTENANCE_FOLD_BASE_REQUESTS +
+          Math.min(maxFoldEntriesPerPass, Math.max(0, nextSeq - logSeqStart));
+      if (gate1 && foldViable && !foldFits) {
+        skipForBudget("fold");
+      } else if (gate1) {
         if (foldViable) {
           // Thread the same `C` / `E` ceilings the pre-fold projection
           // above used into compact() as a Node-side belt-and-suspenders.
@@ -895,8 +1009,8 @@ export const runBoundedMaintenance = async (
             // This tick's one phase was the fold attempt. A rebuild defer
             // already spent a full compact() walk, so it must NOT also GC:
             // runner GET (1) + deferred compact (23) + the one signal CAS (2)
-            // is 26 ops, and a GC slice on top would spend the headroom that
-            // keeps the tick under CF-free's 50 subrequests. An unpublished
+            // is 26 ops, and a GC slice on top would spend request budget the
+            // write's own route needs on Free over `fetch`. An unpublished
             // fold takes the closing refresh in the `finally` below; after a
             // rebuild defer the signal already took it, so that is a no-op.
             return;
@@ -927,10 +1041,7 @@ export const runBoundedMaintenance = async (
       // swallowed inside `retireLogs`; anything unexpected re-throws into
       // this runner's outer catch (counter + stack log), never out of the
       // write-tick path.
-      await retireLogs(storage, currentJsonKey, {
-        logRetention: options?.logRetention,
-        ...(signal !== undefined && { signal }),
-      });
+      await retireWithinBudget();
     } finally {
       await refreshTailHintIfNeeded();
     }
@@ -938,6 +1049,18 @@ export const runBoundedMaintenance = async (
     // CAS contention (WriteConflict) thrown by compact()/runGc() is an
     // EXPECTED signal — swallow without the unexpected-error counter.
     if (isWriteConflict(error)) {
+      return;
+    }
+    // So is a call refused before it was sent (`cause.refused`: the request
+    // ledger, or the platform's subrequest limit): the tick spent this
+    // invocation's request budget, and the next tick resumes. Any other
+    // CapacityExceeded is unexpected here.
+    if (
+      error instanceof BaerlyError &&
+      error.code === "CapacityExceeded" &&
+      (error.cause as { refused?: boolean } | undefined)?.refused === true
+    ) {
+      ctxMetrics().counter("db.maintenance.request_budget_refused_total", 1, { collection });
       return;
     }
     // Anything else is unexpected: count it, log the stack, swallow.

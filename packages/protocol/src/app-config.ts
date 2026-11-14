@@ -23,12 +23,7 @@
  *   tenant: "acme",
  *   target: "cloudflare",
  *   collections: {
- *     tickets: {
- *       indexes: [
- *         { name: "by_status", on: "status" },
- *         { name: "by_assignee", on: "assignee" },
- *       ],
- *     },
+ *     tickets: {},
  *   },
  * });
  * ```
@@ -47,16 +42,20 @@ import type { SchemaValidator } from "./schema.ts";
 export type { DocumentData, DocumentValue } from "./json.ts";
 
 /**
- * One collection's declarative config. Today `indexes` and `schema`
- * are consumed; future tickets add `replica_identity` and lifecycle
- * hooks.
+ * One collection's declarative config: an optional `schema`, and
+ * optional `indexes`, which are validated but do not affect reads.
  */
 export interface CollectionDefinition {
   /**
-   * Secondary indexes declared for this collection. Each declared
-   * index produces one zero-byte PUT per commit (when the indexed
-   * field is set on the doc), landing before the committing log entry.
-   * See `./indexes.ts` for the key shape.
+   * Reserved secondary-index declarations. **They do not speed up
+   * reads or change which rows a read returns**: every read folds the
+   * collection's snapshot and log in full. Omit this field unless an
+   * existing config already declares indexes.
+   *
+   * `Db.create` validates each entry and throws on a malformed one
+   * (see {@link IndexDefinition}), so names and shapes stay reserved
+   * for a future index-aware storage format. A declared index changes
+   * no storage call: writes cost what they cost without it.
    */
   readonly indexes?: ReadonlyArray<IndexDefinition>;
   /**
@@ -89,7 +88,7 @@ export interface CollectionDefinition {
 /**
  * The full `baerly.config.ts` runtime shape. Re-exported from
  * `baerly-storage` and consumed by the day-1 `npm create baerly`
- * scaffold + the `baerly admin rebuild-index` CLI.
+ * scaffold and the `baerly` CLI.
  *
  * The two-tier shape — collections namespaced under `collections`,
  * reserved keys at the top level — is deliberate. Flattening collection

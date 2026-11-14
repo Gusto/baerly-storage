@@ -23,14 +23,8 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  AUTH_CONFIG_VALUES,
-  type AuthConfig,
-  type BaerlyConfig,
-  BaerlyError,
-  type IndexDefinition,
-} from "@baerly/protocol";
+import { pathToFileURL } from "node:url";
+import { AUTH_CONFIG_VALUES, type AuthConfig, BaerlyError } from "@baerly/protocol";
 
 export interface AppConfig {
   readonly app: string;
@@ -232,55 +226,4 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
     ...(cloudflareAccess !== undefined && { cloudflareAccess }),
     repoRoot: cwd,
   };
-};
-
-/**
- * Load the declared `IndexDefinition[]` for a single collection from a
- * `baerly.config.{js,mjs,json}`. Used by `baerly inspect` (key-count
- * probes) and `baerly admin rebuild-index` (resolving the `on` field).
- *
- * `.ts` configs are rejected — Node can't `import` them without a TS
- * loader; point at the compiled `.js` output instead.
- *
- * `commandName` is woven into thrown error messages so the operator
- * sees the calling command name in the prefix.
- *
- * @throws BaerlyError code="InvalidConfig" — `.ts` extension, JSON
- *   parse error, missing default export, or missing
- *   `collections[collection]`.
- */
-export const loadCollectionIndexes = async (
-  configPath: string,
-  collection: string,
-  commandName: string,
-): Promise<readonly IndexDefinition[]> => {
-  if (configPath.endsWith(".ts")) {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `${commandName}: --config must point at compiled JS / JSON (got .ts: ${JSON.stringify(configPath)})`,
-    );
-  }
-  let cfg: BaerlyConfig;
-  if (configPath.endsWith(".json")) {
-    const text = await readFile(configPath, "utf8");
-    try {
-      cfg = JSON.parse(text) as BaerlyConfig;
-    } catch (error) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `${commandName}: --config JSON parse error in ${JSON.stringify(configPath)}: ${(error as Error).message}`,
-      );
-    }
-  } else {
-    const abs = configPath.startsWith("file://") ? fileURLToPath(configPath) : resolve(configPath);
-    const mod = (await import(pathToFileURL(abs).href)) as { default?: BaerlyConfig };
-    if (mod.default === undefined) {
-      throw new BaerlyError(
-        "InvalidConfig",
-        `${commandName}: --config ${JSON.stringify(configPath)} has no default export`,
-      );
-    }
-    cfg = mod.default;
-  }
-  return cfg.collections?.[collection]?.indexes ?? [];
 };

@@ -3,9 +3,8 @@
  *
  * Each {@link Writer.commit} reads `current.json` FRESH (for
  * `log_seq_start` / `tail_hint` as a probe FLOOR — a lower bound, NOT a
- * CAS precondition), publishes additive index markers, then **creates `log/<seq>`
- * via `If-None-Match: "*"`. That create IS the commit / linearization
- * point.** The writer writes NOTHING to `current.json` on the commit
+ * CAS precondition), then **creates `log/<seq>` via `If-None-Match: "*"`.
+ * That create IS the commit / linearization point.** The writer writes NOTHING to `current.json` on the commit
  * path; `tail_hint` advances outside ordinary commits via compaction
  * folds, write-tick refreshes, and explicit operator/import paths. The
  * commit model and its invariants are recorded in ADR-004
@@ -34,16 +33,11 @@
  * `docs/spec/sync-protocol.md` §"Update and delete: decided on the newest
  * row version".
  *
- * **Crash safety.** Order is additive index `newKeys` → `log/<seq>`
- * create → stale index-key DELETEs. `LogEntry.after` is the authoritative
- * post-image. A crash before the create leaves only orphan additive index
- * keys; a stray additive key only ever yields a false-POSITIVE candidate
- * that `matchesWire` (read path) drops. Emitting `newKeys` before the commit
- * and the stale-key DELETEs after it means no crash can de-index a
- * committed doc. A concurrent same-doc write still can, through the
- * delete-after-commit ABA described at `Writer#readPreImage`, so index
- * completeness is not guaranteed. See `index-emit-order.test.ts` and
- * ADR-004 Q4.
+ * **Crash safety.** The `log/<seq>` create is the commit's only write.
+ * `LogEntry.after` is the authoritative post-image, so a crash before the
+ * create leaves nothing of the commit on the bucket, and a crash after it
+ * leaves a durable commit. The writer maintains no secondary objects:
+ * declared indexes change no storage call (ADR-004 Q4, superseded in 0.7).
  *
  * **`LogEntry` shape.** Emitted entries follow the contract in
  * `packages/protocol/src/log.ts` (see {@link LogEntry}) and
@@ -78,7 +72,6 @@ import {
   type Storage,
   LOG_FORWARD_PROBE_CAP,
   MAX_PARALLEL_LOG_READS,
-  PREIMAGE_SCAN_MAX_GETS,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   SESSION_ID_LENGTH,
@@ -95,7 +88,6 @@ import {
   insertReplaysRow,
   recordInsertReplay,
 } from "./doc-id.ts";
-import { allIndexKeysFor, type IndexDefinition, validateIndexDefinition } from "./indexes.ts";
 import { assertKeyWithinLimit } from "./key-limit.ts";
 import { walkLogRange } from "./log-walk.ts";
 import { findLogTail, probeTailFrom } from "./log-tail.ts";
@@ -116,35 +108,6 @@ const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopM
  * uncertain log create by occupant readback rather than resending it.
  */
 export interface WriterOptions {
-  /**
-   * Optional. Indexes declared for the collection this writer
-   * commits to. Each commit emits one zero-byte PUT per declared
-   * index (when the indexed field is set on the doc) — the additive
-   * `newKeys` go down BEFORE the committing `log/<seq>` create, so no
-   * crash leaves a committed row unindexed. On U/D, the writer reads
-   * the prior `LogEntry.after` post-image from the log (one back-walk per
-   * indexed collection, NOT per index) to compute the stale-key set;
-   * stale keys are DELETE'd AFTER the commit, computed from the
-   * resolved committing seq's pre-image.
-   *
-   * Validated at construction via {@link validateIndexDefinition} —
-   * an invalid def throws `BaerlyError{code:"SchemaError"}`
-   * synchronously, before the first commit. Empty / undefined is
-   * a no-op (writer behaves identically to the no-index path — no
-   * extra GET, no extra PUTs).
-   *
-   * Note: `Writer` is per-collection (the `currentJsonKey`
-   * is per-collection), so this array applies to one collection
-   * only — adapters that serve multiple collections instantiate
-   * one writer per collection.
-   *
-   * Emits one new metric when at least one index is declared:
-   *   - `db.write.index_ops_per_logical_write` (histogram,
-   *     labelled by `collection`) — `K (PUT) + L (DELETE)` per
-   *     successful commit.
-   */
-  readonly indexes?: ReadonlyArray<IndexDefinition>;
-
   /**
    * When `true`, every commit walks the live log range
    * `[log_seq_start, tail_hint)` before minting a new entry, surfacing
@@ -224,8 +187,8 @@ export interface CommitInput {
  * commit from the collection state folded through log tail `fromSeq`.
  * The writer reads every log entry in `[fromSeq, seq)` (the same window
  * read as the insert guard, shared with it when both are set) and passes
- * it to `check` before the Step 4 index markers, and again with the
- * longer window after each lost create race, before the next create.
+ * it to `check` before the first create, and again with the longer
+ * window after each lost create race, before the next create.
  * `check` throws to refuse; nothing is committed. It may instead return a
  * {@link CommitVerdict} whose `body` replaces a `U`'s post-image: the
  * write verbs re-apply an update to the newest version of its row this
@@ -266,9 +229,7 @@ export interface CommitVerdict {
   readonly forceMaintenance?: boolean;
   /**
    * The post-image to commit instead of {@link CommitInput.body}; valid
-   * only on a `U`, and identity-checked like the input body. A changed
-   * body gets its own Step 4 index markers before the next create; the
-   * markers of a body it replaced stay as benign orphans.
+   * only on a `U`, and identity-checked like the input body.
    */
   readonly body?: DocumentData;
 }
@@ -299,8 +260,7 @@ export interface InsertGuard {
   /**
    * Treat a live `I` / `U` for the doc whose `after` equals the body
    * (`insertReplaysRow`) as this insert's original success: return it
-   * as the commit result, with no index marker PUT, no create, no
-   * stale-marker cleanup and no maintenance tick. Set only for an
+   * as the commit result, with no create and no maintenance tick. Set only for an
    * SDK-minted `_id` (`runInsert`'s `mintedId`); a caller-chosen `_id`
    * keeps strict `AlreadyExists`. Default `false`.
    */
@@ -314,8 +274,7 @@ export interface CommitResult {
    * guarded insert that replayed ({@link InsertGuard.replayIdentical}),
    * it is instead the stored live `I` / `U` in the guarded window whose
    * `after` the body matched, written by an earlier commit, and this call
-   * committed nothing (it may have PUT orphan index markers before losing
-   * a create race).
+   * wrote nothing.
    */
   readonly entry: LogEntry;
 
@@ -329,15 +288,6 @@ export interface CommitResult {
 }
 
 const APPLICATION_JSON = "application/json";
-
-/**
- * Empty body for index entries. Each index entry is a fact ("doc
- * `<docId>` has `<field> = <value>`"), not data — readers list the
- * prefix, extract the doc id, then read its authoritative `LogEntry.after`.
- * Pre-allocated module-level constant so every index PUT shares one
- * zero-length buffer.
- */
-const EMPTY_BODY = new Uint8Array(0);
 
 /**
  * Successful outcome of one full {@link Writer.#singleAttemptCommit}
@@ -391,7 +341,6 @@ type SingleAttemptSuccess =
 export class Writer {
   readonly #storage: Storage;
   readonly #currentJsonKey: string;
-  readonly #indexes: ReadonlyArray<IndexDefinition>;
   readonly #verifyLogIntegrityOnCommit: boolean;
 
   constructor(opts: {
@@ -401,41 +350,31 @@ export class Writer {
      * `app/tickets/tenant/acme/manifests/tickets/current.json`. The
      * collection-prefix half lives at
      * `currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"))` — the
-     * log and index keys are derived from it.
+     * log keys are derived from it.
      */
     currentJsonKey: string;
     options?: WriterOptions;
   }) {
     this.#storage = opts.storage;
     this.#currentJsonKey = opts.currentJsonKey;
-    const indexes = opts.options?.indexes ?? [];
-    for (const def of indexes) {
-      validateIndexDefinition(def);
-    }
-    this.#indexes = indexes;
     this.#verifyLogIntegrityOnCommit = opts.options?.verifyLogIntegrityOnCommit ?? false;
   }
 
   /**
    * Atomically commit one mutation. Reads `current.json` fresh (as a
-   * probe FLOOR, not a CAS precondition), PUTs any additive index
-   * `newKeys`, then creates `log/<seq>` via
+   * probe FLOOR, not a CAS precondition), then creates `log/<seq>` via
    * `If-None-Match: "*"` — that create IS the commit (single-write
-   * commit; no `current.json` CAS follows it). Stale index keys are
-   * DELETE'd after the commit.
+   * commit; no `current.json` CAS follows it).
    *
-   * The hot-path cost under no contention on an unindexed collection is
-   * 3 GETs + 1 PUT: the Step 1 `current.json` read, `findLogTail`'s
-   * forward probe (one 404 GET when `tail_hint` is accurate, `O(log gap)`
-   * GETs when it lags a fold interval), the committing `log/<seq>`
-   * create, and the post-create `current.json` re-read that rejects a
-   * create landing below the certified delete floor
-   * (`#assertCommitAboveDeleteFloor`). Each
-   * declared index that projects a key on this write adds one PUT
-   * (new key, before the commit) and, on U/D, up to one DELETE (stale
-   * key, after the commit). A peer that won the slot costs one occupant
-   * readback GET, the forward probe's GETs, and one more create at the
-   * next slot.
+   * The hot-path cost under no contention is 3 GETs + 1 PUT, whatever
+   * indexes the collection declares: the Step 1 `current.json` read,
+   * `findLogTail`'s forward probe (one 404 GET when `tail_hint` is
+   * accurate, `O(log gap)` GETs when it lags a fold interval), the
+   * committing `log/<seq>` create, and the post-create `current.json`
+   * re-read that rejects a create landing below the certified delete
+   * floor (`#assertCommitAboveDeleteFloor`). A peer that won the slot
+   * costs one occupant readback GET, the forward probe's GETs, and one
+   * more create at the next slot.
    *
    * Idempotency: `LogEntry.after` carries the full post-image, and the
    * `log/<seq>` create uses `If-None-Match: "*"`, so two writers racing
@@ -485,9 +424,8 @@ export class Writer {
    *   is longer than `LOG_FORWARD_PROBE_CAP`) before the writer could read
    *   it. Nothing was committed; re-read and retry.
    * @throws BaerlyError code="CapacityExceeded" when the request ledger
-   *   cannot afford this commit's index markers, its create and
-   *   `COMMIT_RESOLUTION_RESERVE`, checked before Step 4 and again before
-   *   each create after a lost race; or when the ledger refused the create
+   *   cannot afford this commit's create and `COMMIT_RESOLUTION_RESERVE`,
+   *   checked before each create; or when the ledger refused the create
    *   itself before any attempt was sent (`cause.notApplied`), or any
    *   storage call before it. Nothing was committed.
    * @throws whatever `admission.check` throws (the write verbs throw
@@ -516,9 +454,10 @@ export class Writer {
     // Rejects empty / `"/"` / `"."`|`".."` / control / leading `"_"` /
     // overlong `docId` as `BaerlyError{code:"InvalidConfig"}`, so a
     // traversal-shaped `_id` can never become a written key segment.
-    // An `I` / `U` writes index markers under `docId`, so it must also be
-    // NFC; a `D` only names an existing row, which an earlier release may
-    // have stored under a non-NFC id.
+    // An `I` / `U` mints a row identity, so it must also be NFC: one id
+    // has one byte form, whatever key canonicalization a backend applies
+    // to a future id-keyed object. A `D` only names an existing row, which
+    // an earlier release may have stored under a non-NFC id.
     if (input.op === "D") {
       assertStoredDocId(input.docId);
     } else {
@@ -546,8 +485,7 @@ export class Writer {
     // duplicate the logical write.
     const success = await this.#singleAttemptCommit(input, session, logPrefix, "Writer");
     // A replay committed nothing, so it is not a logical write and records
-    // no write-amplification sample (its orphan marker PUTs included); it is
-    // counted as a replay instead.
+    // no write-amplification sample; it is counted as a replay instead.
     if (success.replayed) {
       recordInsertReplay(input.collection);
     } else {
@@ -561,11 +499,10 @@ export class Writer {
 
   /**
    * One full commit attempt — the body of {@link commit}. Reads
-   * `current.json`, PUTs additive index `newKeys`,
-   * then forward-probes the tail and creates `log/<seq>` once via
-   * `If-None-Match: "*"` — the numbered log create IS the commit
-   * (single-write commit; no `current.json` CAS follows it). Stale index
-   * keys are DELETE'd after the commit. Returns the success payload.
+   * `current.json`, then forward-probes the tail and creates `log/<seq>`
+   * once via `If-None-Match: "*"` — the numbered log create IS the commit
+   * (single-write commit; no `current.json` CAS follows it). Returns the
+   * success payload.
    *
    * Commits exactly one {@link CommitInput} — the numbered log create is
    * the single linearization point per call.
@@ -585,15 +522,9 @@ export class Writer {
    * Unresolved creates throw non-retriable `AmbiguousCommit`; failures
    * before the create propagate.
    *
-   * Crash safety invariant: additive index `newKeys` PUTs are awaited
-   * before the log create. `LogEntry.after` is the authoritative post-image.
-   * A crash before the create leaves orphan additive index keys only. A crash
-   * AFTER the create is a durable, committed write at `seq` whose index
-   * `newKeys` are already present; the only residual
-   * is a possibly-undeleted stale OLD-value key, cleaned by a later write /
-   * `rebuild-index`. Reads fold authoritative data without consulting markers.
-   * De-indexing a committed doc is never produced by a crash; only the concurrent
-   * delete-after-commit ABA at `#readPreImage` produces it.
+   * Crash safety: the create is the attempt's only write. A crash before
+   * it leaves nothing; a crash after it is a durable, committed write at
+   * `seq`, carrying its full post-image in `LogEntry.after`.
    */
   async #singleAttemptCommit(
     input: CommitInput,
@@ -696,9 +627,9 @@ export class Writer {
         Math.max(windowFrom, logSeqStart),
       );
       commitWindow = [...folded, ...probe.entries];
-      // ── Step 3c. Window decisions, BEFORE Step 4's additive index
-      // markers, so a loser caught here writes nothing at all, and a
-      // replay of an identical live row returns it having written nothing.
+      // ── Step 3c. Window decisions, BEFORE the first create, so a loser
+      // caught here writes nothing at all, and a replay of an identical
+      // live row returns it having written nothing.
       // The insert decision runs first: a peer's live row is
       // `AlreadyExists` whatever the capacity re-check would say.
       if (guard !== undefined) {
@@ -735,61 +666,16 @@ export class Writer {
     });
     let entry = mintEntry(seq);
 
-    // ── Step 4. PUT additive index `newKeys` (BEFORE the commit). ───
-    // Additive index `newKeys` (the markers for the doc's NEW value)
-    // ALSO go down here, before the committing create. Emitting
-    // BEFORE the commit means no crash leaves a committed row unindexed
-    // (no crash-made false-negative; the concurrent delete-after-commit
-    // ABA at `#readPreImage` is the one exception). A crash after a `newKey` PUT but
-    // before the commit leaves an orphan additive key for an
-    // UNcommitted write — benign: reads use committed log post-images
-    // and do not consult index markers.
-    // The stale-key DELETEs (de-indexing the OLD value) stay AFTER the
-    // commit (Step 5b), so a crash can never de-index a committed doc.
-    // See ADR-004 Q4 + `index-emit-order.test.ts`.
-    //
-    // A verdict that replaces the body on the lost-race path (Step 5) runs
-    // this again for the new body before the next create. Re-emit even
-    // previously PUT keys: a peer may have used and deleted them while
-    // winning an intervening slot.
-    let newKeysClassA = 0;
-    // Additive index keys for the NEW value — emitted before the commit on
-    // I/U (a D has no new value). `op:"D"` and a missing body project to no
-    // keys. Empty `#indexes` short-circuits.
-    const newKeysFor = (image: DocumentData | undefined): readonly string[] =>
-      this.#indexes.length === 0 || input.op === "D"
-        ? []
-        : allIndexKeysFor(logPrefix, this.#indexes, image, input.docId);
-    const putNewKeys = async (keys: readonly string[]): Promise<void> => {
-      const parallelPuts: Array<Promise<unknown>> = [];
-      for (const k of keys) {
-        assertKeyWithinLimit(k);
-        newKeysClassA++;
-        parallelPuts.push(
-          this.#storage
-            .put(k, EMPTY_BODY, { ifNoneMatch: "*", contentType: APPLICATION_JSON })
-            .catch((error: unknown) => {
-              this.#observe429(error, input.collection);
-              if (isWriteConflict(error)) {
-                return;
-              }
-              throw error;
-            }),
-        );
-      }
-      await Promise.all(parallelPuts);
-    };
-    // The commit-resolution reserve (`COMMIT_RESOLUTION_RESERVE`): each
-    // slot's attempt below (its new markers, the create, the readback, and
-    // on a resolved commit the Step 5a floor check) runs under a request
-    // ledger hold of everything it may spend, taken only if it fits;
-    // otherwise `CapacityExceeded`, with nothing of the attempt sent.
-    let slotKeys: readonly string[] = newKeysFor(body);
-
-    // ── Step 5. Create the commit: PUT log/<seq> via If-None-Match. ─
+    // ── Step 4. Create the commit: PUT log/<seq> via If-None-Match. ─
     // The numbered log create IS the commit (single-write commit). No
     // `current.json` CAS follows it — the create is the linearization
     // point (exactly-one-winner, CI-gated across all backends).
+    //
+    // The commit-resolution reserve (`COMMIT_RESOLUTION_RESERVE`): each
+    // slot's attempt (the create, the readback, and on a resolved commit
+    // the Step 4a floor check) runs under a request ledger hold of
+    // everything it may spend, taken only if it fits; otherwise
+    // `CapacityExceeded`, with nothing of the attempt sent.
     //
     // Each slot gets exactly ONE `storage.put`: the adapter already retried
     // it under the storage retry policy, so a Writer-level resend would
@@ -823,10 +709,8 @@ export class Writer {
     };
     for (;;) {
       const outcome = await this.#withCommitHold(
-        slotKeys.length,
         errorPrefix,
         async (): Promise<{ committed: LogEntry } | { foreign: LogEntry }> => {
-          await putNewKeys(slotKeys);
           const logEntryKey = logObjectKey(logPrefix, seq);
           assertKeyWithinLimit(logEntryKey);
           // Encoded outside the try: an unencodable entry is the caller's
@@ -889,20 +773,12 @@ export class Writer {
             // Own crashed/lost-ack commit already durable at `seq`. Adopt it
             // (byte-identical to the attempted `entry`, INCLUDING
             // `commit_ts` — adoption compares the full entry) — the logical
-            // write lands at EXACTLY `seq`, never duplicated. Step 5b still
-            // runs: the adopted attempt may have died after the create but
-            // before the stale-key cleanup, so the (idempotent) cleanup must
-            // still run.
+            // write lands at EXACTLY `seq`, never duplicated.
             resolved = decision.entry;
           }
-          // ── Step 5a. Refuse a create that re-filled a retired hole. ─────
+          // ── Step 4a. Refuse a create that re-filled a retired hole. ─────
           // Both resolved paths above land here with the resolved committing
-          // `seq`: the fresh win and the own-session adoption. This check
-          // runs BEFORE Step 5b on purpose — an invisible commit must not
-          // get to delete the OLD value's index keys, because the doc's
-          // live value may still BE that old value, and de-indexing it
-          // would be the one failure the hybrid emission polarity exists to
-          // prevent (invariant 7).
+          // `seq`: the fresh win and the own-session adoption.
           await this.#assertCommitAboveDeleteFloor(
             logPrefix,
             seq,
@@ -930,19 +806,14 @@ export class Writer {
       }
       if (commitWindow === undefined) {
         seq = await findLogTail(this.#storage, logPrefix, seq + 1);
-        slotKeys = [];
       } else {
         // Windowed commit: the occupant and every entry the forward probe
         // passes join the window, and the window decisions re-run before
         // the next create. A refusal here (`AlreadyExists`, or the
         // admission's own error) is sound because a foreign occupant at
-        // `seq` proves this commit's send did not land there. The Step 4
-        // markers already PUT stay as orphans: benign false-positive
-        // candidates, like a crash before the create. Deleting them could
-        // remove a marker a later writer re-PUT and de-index a committed
-        // row. A replay of an identical live row returns here for the same
-        // reason: nothing of this commit landed, and the markers it PUT
-        // stay as the same benign orphans.
+        // `seq` proves this commit's send did not land there. A replay of
+        // an identical live row returns here for the same reason: nothing
+        // of this commit landed.
         commitWindow.push(occupant);
         const probe = await probeTailFrom(this.#storage, logPrefix, seq + 1);
         commitWindow.push(...probe.entries);
@@ -952,78 +823,14 @@ export class Writer {
             return { replayed: true, entries: [replayed], currentEtag: baseEtag };
           }
         }
-        const bodyBefore = body;
         await decide(commitWindow, probe.tail);
         seq = probe.tail;
-        // A rebased post-image: its markers go down before its create, as
-        // Step 4's did for the body it replaces; the next hold covers them.
-        slotKeys = body === bodyBefore ? [] : newKeysFor(body);
       }
       entry = mintEntry(seq);
     }
     const committedEntries: readonly LogEntry[] = [committedEntry];
 
-    // ── Step 5b. DELETE stale secondary-index keys (AFTER the commit). ─
-    // The additive `newKeys` already went down in Step 4 (before the
-    // commit), so no crash leaves a committed row unindexed. This block
-    // handles only the OTHER half: deleting the OLD value's now-obsolete
-    // markers. Keeping the stale-key DELETE AFTER the commit is the
-    // load-bearing polarity (ADR-004 Q4): a crash here leaves the OLD
-    // value's marker lingering — benign, reads fold the doc's NEW
-    // committed value without consulting markers; the lingering
-    // key is cleaned by a later same-doc write or operator
-    // `rebuild-index`. The inverse — de-indexing a committed doc with no
-    // log entry to drive repair — cannot come from a crash, since the
-    // DELETE is strictly after the commit. It can come from a race: this
-    // DELETE landing after a peer's same-doc write re-PUT the same marker
-    // (the delete-after-commit ABA, documented at `#readPreImage`).
-    //
-    // BOTH the fresh-win and the own-session-adoption break above reach
-    // here with the resolved committing `seq`. Adoption correctness: an
-    // adopted lost-ack commit is EXACTLY the attempt that may have died
-    // after the create but before this DELETE, so it MUST run it too (do
-    // not skip it). Idempotent under re-run: `Storage.delete` is
-    // contractually idempotent, and the Step-4 `newKeys` PUT is
-    // `ifNoneMatch: "*"` (412 swallowed).
-    //
-    // Empty `#indexes` short-circuits the whole block (including the
-    // pre-image GET), preserving zero behaviour change for collections
-    // without declared indexes. An `op:"I"` has no pre-image and no
-    // stale keys, so it never reads.
-    //
-    // The pre-image is read at the RESOLVED committing `seq` (Step 5
-    // may have advanced `seq` past a foreign winner): `#readPreImage`
-    // back-walks from `seq - 1`, so it skips the just-committed entry
-    // and finds the prior same-doc image.
-    //
-    // Filter-aware projection (T4): `allIndexKeysFor` short-circuits on
-    // `def.predicate` miss. The diff `oldKeys \ newKeys` covers all four
-    // U-quadrants (match→match deletes only the changed keys; match→miss
-    // DELETEs all; miss→match deletes nothing; miss→miss no-ops), each
-    // pinned by a named test in `writer.test.ts` ("Writer — filtered
-    // index").
-    const staleKeysClassA = await this.#cleanupStaleIndexKeysBestEffort({
-      input,
-      body,
-      logPrefix,
-      seq,
-    });
-    // The per-logical-write index-op histogram counts BOTH halves: the
-    // `newKeys` PUTs (Step 4) and the `staleKeys` DELETEs (Step 5b).
-    const indexClassA = newKeysClassA + staleKeysClassA;
-    if (this.#indexes.length > 0 && indexClassA > 0) {
-      ctxMetrics().histogram("db.write.index_ops_per_logical_write", indexClassA, {
-        collection: input.collection,
-      });
-    }
-
-    // ── Step 6. (removed). No current.json write on the commit path. ─
-    // The numbered log create above IS the commit. `tail_hint` is
-    // refreshed durably only by the compactor; the writer never advances
-    // it. The maintenance trigger below reads a DERIVED tail-byte
-    // estimate (`estimateTailBytes`), so there is no stored byte counter.
-
-    // ── Step 6b. Write-tick maintenance dispatch. ───────────────────
+    // ── Step 5. Write-tick maintenance dispatch. ────────────────────
     // Single funnel site: write-tick maintenance dispatch. Reached by
     // `commit()` exactly once per logical commit, after the committing
     // log create has landed.
@@ -1077,11 +884,10 @@ export class Writer {
       });
     }
 
-    // Class-A op count for this commit: the committing log create +
-    // index PUTs + index DELETEs. No current.json CAS. Forward-probe and
-    // readback GETs are Class B and excluded, as are creates refused at
-    // slots a foreign writer won.
-    const classAOps = 1 + indexClassA;
+    // Class-A op count for this commit: the committing log create alone.
+    // No current.json CAS. Forward-probe and readback GETs are Class B and
+    // excluded, as are creates refused at slots a foreign writer won.
+    const classAOps = 1;
     return {
       replayed: false,
       entries: committedEntries,
@@ -1152,165 +958,6 @@ export class Writer {
     return recovered;
   }
 
-  async #cleanupStaleIndexKeysBestEffort(args: {
-    input: CommitInput;
-    /** The committed post-image (a verdict may have replaced `input.body`). */
-    body: DocumentData | undefined;
-    logPrefix: string;
-    seq: number;
-  }): Promise<number> {
-    if (this.#indexes.length === 0) {
-      return 0;
-    }
-
-    const { input } = args;
-    let staleKeys: readonly string[] = [];
-    try {
-      if (input.op === "U") {
-        const preImage = await this.#readPreImage(
-          args.logPrefix,
-          input.collection,
-          input.docId,
-          args.seq,
-        );
-        const oldKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
-        const newSet = new Set(
-          allIndexKeysFor(args.logPrefix, this.#indexes, args.body, input.docId),
-        );
-        staleKeys = oldKeys.filter((k) => !newSet.has(k));
-      } else if (input.op === "D") {
-        const preImage = await this.#readPreImage(
-          args.logPrefix,
-          input.collection,
-          input.docId,
-          args.seq,
-        );
-        staleKeys = allIndexKeysFor(args.logPrefix, this.#indexes, preImage, input.docId);
-      }
-    } catch (error) {
-      ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
-        collection: input.collection,
-        step: "pre-image-read",
-      });
-      countPostCommitRefusal(error, input.collection, "pre-image-read");
-      return 0;
-    }
-
-    // (op:"I" has no pre-image → no stale keys.)
-    const indexDeletes: Array<Promise<unknown>> = [];
-    for (const k of staleKeys) {
-      indexDeletes.push(
-        this.#storage.delete(k).catch((error: unknown) => {
-          ctxMetrics().counter("db.write.index_cleanup_errors_total", 1, {
-            collection: input.collection,
-            step: "delete",
-          });
-          countPostCommitRefusal(error, input.collection, "stale-delete");
-        }),
-      );
-    }
-    await Promise.all(indexDeletes);
-    return staleKeys.length;
-  }
-
-  /**
-   * Read a doc's pre-image from authoritative `LogEntry.after` payloads by walking the log
-   * backwards from `currentNextSeq` looking for the most-recent I/U
-   * entry on this `(collection, docId)`. Returns `undefined` when:
-   *
-   *   - the doc's most-recent op was `D` (tombstone — no live body);
-   *   - no entry for this doc is found within the descent budget
-   *     (a fresh-insert race, or the doc's last write has been folded
-   *     into the snapshot and swept off the bucket).
-   *
-   * Used ONLY by the index-emission path's stale-key half (Step 5b, on
-   * `U` / `D`) to compute which OLD-value keys to DELETE.
-   *
-   * **Not bounded by `log_seq_start`.** GC only marks sub-floor
-   * entries and sweeps them a {@link GC_GRACE_PERIOD_MILLIS} (7-day)
-   * grace later, so a doc's last I/U often survives below the floor
-   * and is worth reading. The walk is 404-tolerant for a related
-   * reason: a swept entry and a peer mid-CAS look identical from
-   * here, so a hole cannot be a stop signal.
-   *
-   * **Cost, and what it buys.** One SEQUENTIAL GET per seq, hard-
-   * capped at {@link PREIMAGE_SCAN_MAX_GETS}. The cap is load-bearing,
-   * not a tuning knob: `seq` grows monotonically forever, so an
-   * uncapped walk is O(seq) on the write path (post-commit but inline,
-   * before the response) for any doc whose last entry GC has swept.
-   * The cap is sized against the Cloudflare free-tier 50-subrequest
-   * wall, which a `U` commit has already largely spent — the
-   * derivation is on the constant. At that size the walk reaches a doc
-   * rewritten within the last few log entries and nothing colder, so
-   * on any collection with more than a handful of active docs it
-   * normally finds nothing.
-   *
-   * That is the accepted trade, not a silent failure. Giving up is
-   * benign by construction: the caller computes no stale keys, and an
-   * extra index key cannot affect reads, which fold authoritative
-   * state without consulting markers. `rebuildIndex` (`./rebuild-index.ts`)
-   * and `baerly admin fsck --indexes` are the authoritative
-   * reconcilers. The give-up is deliberately NOT counted on
-   * `db.write.index_cleanup_errors_total`: at this budget it is the
-   * common path, so it would swamp the two entries on that counter
-   * that do mean something went wrong (`"pre-image-read"` — the read
-   * threw; `"delete"` — a stale-key DELETE failed).
-   *
-   * Reading below the floor cannot delete a LIVE index key: keys are
-   * docId-scoped (`./indexes.ts`), and on `U` the caller diffs
-   * `oldKeys \ newKeys`, so anything still live is in `newKeys`. The
-   * residual hazard is the pre-existing compute-then-delete-after-
-   * commit ABA (a peer may re-PUT a key between the diff and the
-   * DELETE), which the cap narrows but does not close.
-   */
-  async #readPreImage(
-    logPrefix: string,
-    collection: string,
-    docId: string,
-    currentNextSeq: number,
-  ): Promise<DocumentData | undefined> {
-    // Walk newest-to-oldest so we hit the most-recent op first.
-    // `s = -1` is the natural empty-bucket sentinel; `floor` is the
-    // budget guard, NOT `log_seq_start` (see the docstring above).
-    const floor = Math.max(0, currentNextSeq - PREIMAGE_SCAN_MAX_GETS);
-    for (let s = currentNextSeq - 1; s >= floor; s--) {
-      const logKey = logObjectKey(logPrefix, s);
-      const got = await this.#storage.get(logKey);
-      if (got === null) {
-        // A hole — either the entry was folded and swept, or a peer
-        // is mid-CAS on a write we don't see yet. Indistinguishable
-        // from here, so a hole cannot be a stop signal: keep
-        // descending until the budget runs out. The rebuild command
-        // (`rebuildIndex`) handles holes by re-projecting from the
-        // snapshot.
-        continue;
-      }
-      let entry: LogEntry;
-      try {
-        entry = decodeJsonBytes<LogEntry>(got.body);
-      } catch {
-        // Malformed entry shouldn't propagate up the index-emission
-        // path — let the outer commit's `#walkLog` (step 2) flag it
-        // as the protocol violation. Skip.
-        continue;
-      }
-      if (!isOwnCollection(entry.collection, collection) || entry.doc_id !== docId) {
-        continue;
-      }
-      if (entry.op === "D") {
-        return undefined;
-      } // last op was delete
-      if ((entry.op === "I" || entry.op === "U") && entry.after !== undefined) {
-        return entry.after;
-      }
-    }
-    // Fell through: either the budget stopped the walk or the doc
-    // genuinely has no prior image. Both are reported the same way and
-    // neither is counted — see the docstring on why a give-up counter
-    // would be noise at this budget.
-    return undefined;
-  }
-
   /**
    * Fail the commit if the create landed at a sequence the collection has
    * already certified deleted.
@@ -1367,16 +1014,8 @@ export class Writer {
    * floor. GC does not reclaim log objects at all. So a `cleanup: "failed"`
    * on `db.write.ambiguous_commit_total` is a genuine permanent leak, not a
    * deferral. Deleting it is safe: no reader may read below the certified
-   * floor (invariant 5), and the one deliberate sub-floor reader,
-   * `#readPreImage`, treats a hole as "keep descending" rather than a stop
-   * signal. A failed cleanup is recorded on the counter and never masks the
+   * floor (invariant 5). A failed cleanup is recorded on the counter and never masks the
    * throw.
-   *
-   * **The Step 4 additive index keys are left behind.** The failure path does
-   * not roll back the `newKeys` PUTs, and deliberately so — it is the same
-   * benign residual invariant 7 already covers. If the mutation did land, those
-   * keys are correct; if it did not, each is a false-positive candidate that
-   * `matchesWire` drops on read, never a missing one.
    *
    * **A failed manifest read skips the check rather than failing the commit —
    * except an abort, which propagates.** The check runs over an already-durable
@@ -1389,8 +1028,8 @@ export class Writer {
    *
    * Cost: one Class B GET per commit.
    * `billableClassAOps = puts + lists` excludes GET, so billing is unchanged;
-   * the subrequest arithmetic on {@link PREIMAGE_SCAN_MAX_GETS} carries the
-   * re-derivation.
+   * it is one of the calls `COMMIT_RESOLUTION_RESERVE` keeps on the request
+   * ledger.
    *
    * @throws BaerlyError code="AmbiguousCommit"
    */
@@ -1418,9 +1057,8 @@ export class Writer {
       // than useless: the create already committed, and `NetworkError` is
       // `retriable`, so a generic retry wrapper would re-run the whole logical
       // write at a fresh tail — duplicating the mutation and minting a second
-      // `lsn`. The other post-create steps here swallow their non-abort
-      // failures for the same reason (`#cleanupStaleIndexKeysBestEffort`, the
-      // maintenance dispatch). Failing closed is not the answer either
+      // `lsn`. The maintenance dispatch after it swallows its non-abort
+      // failures for the same reason. Failing closed is not the answer either
       // — throwing `AmbiguousCommit` on an unreadable manifest would reject
       // durable commits far more often than the fault this check catches.
       ctxMetrics().counter("db.write.delete_floor_check_skipped_total", 1, { collection });
@@ -1452,10 +1090,9 @@ export class Writer {
   }
 
   /**
-   * Run one commit slot's attempt, `fn` (its `markers` additive
-   * index-marker PUTs, the committing create, and the calls that resolve
-   * it), under a hold on the active request ledger of everything it may
-   * spend: the markers and the create at full retries, plus
+   * Run one commit slot's attempt, `fn` (the committing create and the
+   * calls that resolve it), under a hold on the active request ledger of
+   * everything it may spend: the create at full retries, plus
    * {@link COMMIT_RESOLUTION_RESERVE} for the readback and the delete-floor
    * check. `fn` runs in a child observability context carrying the hold, so
    * only its own storage calls draw on it; work outside that context (a
@@ -1466,24 +1103,23 @@ export class Writer {
    * Refuses, before `fn` sends anything, when the ledger's room is short
    * of the hold. No create of this commit has landed or can land then:
    * before the first slot nothing was sent, and before a later one a
-   * foreign occupant holds the slot this commit's only send targeted
-   * (markers already PUT stay as benign orphans). A host without request
+   * foreign occupant holds the slot this commit's only send targeted. A host without request
    * limits (Node, or no ledger) never refuses and takes no hold.
    *
    * @throws BaerlyError code="CapacityExceeded", cause `{ refused: true }`.
    */
-  async #withCommitHold<T>(markers: number, errorPrefix: string, fn: () => Promise<T>): Promise<T> {
+  async #withCommitHold<T>(errorPrefix: string, fn: () => Promise<T>): Promise<T> {
     const ctx = getCurrentContext();
     const ledger = ctx?.ledger;
     const remaining = ledger?.storageRemaining() ?? Infinity;
     if (ctx === undefined || ledger === undefined || remaining === Infinity) {
       return await fn();
     }
-    const needed = STORAGE_RETRY_MAX_ATTEMPTS * (markers + 1) + COMMIT_RESOLUTION_RESERVE;
+    const needed = STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
     if (remaining < needed) {
       throw new BaerlyError(
         "CapacityExceeded",
-        `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit on ${this.#currentJsonKey} may need (its ${String(markers)} index markers and the committing create, with retries, plus resolving the create), so nothing was committed; the work this request needs does not fit in one request on this host`,
+        `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit on ${this.#currentJsonKey} may need (the committing create, with retries, plus resolving it), so nothing was committed; the work this request needs does not fit in one request on this host`,
         // The HTTP envelope fills in the code's canonical resolution.
         { cause: { refused: true, needed, remaining } },
       );
@@ -1618,8 +1254,8 @@ export class Writer {
 
   /**
    * Emit the per-logical-write `class_a_ops_per_logical_write`
-   * histogram for `commit`. `classAOps` is the committing create plus
-   * the index PUTs and DELETEs, computed by `#singleAttemptCommit`.
+   * histogram for `commit`. `classAOps` is the committing create, computed
+   * by `#singleAttemptCommit`.
    */
   #emitWriteMetrics(collection: string, classAOps: number): void {
     ctxMetrics().histogram("db.write.class_a_ops_per_logical_write", classAOps, { collection });
@@ -1652,14 +1288,15 @@ const isCreateNotApplied = (err: unknown): boolean =>
 
 /**
  * Count a post-commit step the request ledger refused on
- * `db.write.post_commit_refused_total`. Those steps run after a known
- * commit and swallow their failures, so the refusal leaves the commit
- * acknowledged; the counter shows which step went without.
+ * `db.write.post_commit_refused_total`. The step runs after a known
+ * commit and swallows its failure, so the refusal leaves the commit
+ * acknowledged; `phase` names the step that went without (the delete-floor
+ * check is the only one).
  */
 const countPostCommitRefusal = (
   err: unknown,
   collection: string,
-  phase: "delete-floor-check" | "pre-image-read" | "stale-delete",
+  phase: "delete-floor-check",
 ): void => {
   if (
     err instanceof BaerlyError &&

@@ -326,8 +326,7 @@ These fan-out and descriptor ceilings derive from the Cloudflare Free
 50-subrequest-per-request budget, accounted as outer storage operations, not
 from the chunk format itself. A complete read spends one head GET, one
 manifest GET, and up to 32 chunk GETs, for 34 operations total, leaving 16
-for the index-marker GETs and remaining query-path calls an index-routed read
-also makes; a bounded-range read spends at most 10. Raising a ceiling
+for the remaining query-path calls; a bounded-range read spends at most 10. Raising a ceiling
 therefore re-derives this budget and is a format amendment, never a profile
 tuning change.
 

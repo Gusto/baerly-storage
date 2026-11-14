@@ -290,7 +290,7 @@ const referenceFold = (
 
 const runFold = (
   entries: ReadonlyArray<LogEntry>,
-  opts: { collection: string; docIdFilter?: ReadonlySet<string> },
+  opts: { collection: string },
 ): Map<string, DocumentData> => {
   const m = new Map<string, DocumentData>();
   foldLogEntriesOnto(m, entries, opts);
@@ -309,17 +309,6 @@ describe("foldLogEntriesOnto — per-doc replace semantics", () => {
     ({ entries }) => {
       const subset = entries.filter((e) => e.collection === FOLD_COLLECTION);
       expect(runFold(entries, { collection: FOLD_COLLECTION })).toEqual(
-        runFold(subset, { collection: FOLD_COLLECTION }),
-      );
-    },
-  );
-
-  fcTest.prop({ entries: entriesArb, ids: fc.subarray(["a", "b", "c", "d"]) })(
-    "docIdFilter scoping: filtered fold == fold of the filter subset",
-    ({ entries, ids }) => {
-      const filter = new Set(ids);
-      const subset = entries.filter((e) => filter.has(e.doc_id));
-      expect(runFold(entries, { collection: FOLD_COLLECTION, docIdFilter: filter })).toEqual(
         runFold(subset, { collection: FOLD_COLLECTION }),
       );
     },

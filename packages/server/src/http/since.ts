@@ -17,27 +17,46 @@
  * module owns the I/O + cursor semantics.
  *
  * Cost model. While a long-poll connection is active the per-poll
- * cost is one `Storage.get` of `current.json`, the tail
- * forward-probe GETs, plus one `Storage.get` per log entry yielded.
+ * cost is one `Storage.get` of `current.json`, one GET per entry below
+ * `tail_hint` the cursor has not seen, and the forward probe from the
+ * later of `tail_hint` and the cursor: one GET per entry it yields plus
+ * the GET that finds the tail. An idle poll is therefore two GETs.
  * These are Class B ops, not Class A. The `< 1 Class A op / writer /
  * hour` cost-model bound (see `docs/spec/sync-protocol.md`) still
  * holds; active long-poll subscribers pay repeated Class B reads for
  * lower-latency delivery.
+ *
+ * Request budget. On a host whose request ledger limits storage calls
+ * (Workers Free: 45 through `fetch`), the long-poll reads the ambient
+ * ledger and never runs past it. A cycle starts only when the ledger
+ * has room for an idle one; inside a cycle, entry reads and the probe
+ * are capped by what is left, and a refused call ends the cycle with
+ * the entries read so far. Out of room, the poll resolves with those
+ * entries (a prefix whose `next_cursor` resumes after the last one) or,
+ * having waited at least one poll interval, an empty batch at the same
+ * cursor. With no room for even the first cycle it refuses with a
+ * retriable `MaintenancePending`, so an empty 200 never comes back
+ * faster than one interval. A host that counts without refusing (Node)
+ * polls as before.
  */
 
 import {
   type BaerlyConfig,
   BaerlyError,
   COUNT_BIT_WIDTH,
+  currentRequestLedger,
   formatCursor,
   type LogEntry,
   logSeqStartOf,
   lsnParts,
+  MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
   NO_GENERATION,
   parseCursor,
+  type RequestPool,
 } from "@baerly/protocol";
 import type { Db } from "../db.ts";
 import type { SinceResponse } from "../contract.ts";
+import { forwardProbeCap, isStorageRefusal } from "../log-tail.ts";
 
 /**
  * Validation regex for an opaque LSN cursor. Matches the shape minted
@@ -113,6 +132,13 @@ const DEFAULT_TIMEOUT_MS = 25_000;
  */
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
+/**
+ * Storage calls one poll cycle that finds nothing costs: the
+ * `current.json` GET and the probe GET that finds the tail at the
+ * cursor. A cycle starts only with this much room on the ledger.
+ */
+const IDLE_POLL_CALLS = 2;
+
 export interface LongPollSinceOptions {
   readonly db: Db<BaerlyConfig>;
   readonly collection: string;
@@ -154,8 +180,24 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
     decodeCursor(cursor);
   }
 
+  // Room for at least an idle cycle, or the request refuses: an empty
+  // 200 here would come back at once and a client re-polling it would
+  // spin. The next request has a fresh ledger.
+  const budget = pollBudget();
+  if (budget.left() < IDLE_POLL_CALLS) {
+    throw new BaerlyError(
+      "MaintenancePending",
+      `collection ${JSON.stringify(collection)}: this request has too few storage calls left to poll the change feed, so it was not polled. Retry after ${MAINTENANCE_PENDING_RETRY_AFTER_SECONDS}s.`,
+      {
+        resolution:
+          "Retry after the delay in retryAfter (Retry-After header, seconds) with the same cursor: nothing was read and the cursor is still valid.",
+        retryAfter: MAINTENANCE_PENDING_RETRY_AFTER_SECONDS,
+      },
+    );
+  }
+
   // Fast path: the first poll already sees new events.
-  const initial = await pollOnce({ db, collection, cursor, signal });
+  const initial = await pollOnce({ db, collection, cursor, signal }, budget);
   if (initial.events.length > 0) {
     return { events: initial.events, next_cursor: nextCursor(initial) };
   }
@@ -214,8 +256,15 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
       if (settled) {
         return;
       }
+      // Out of room for another cycle. At least one poll interval has
+      // passed since the request began, so an empty batch is safe to
+      // return: a client re-polling it waits that long per request.
+      if (budget.left() < IDLE_POLL_CALLS) {
+        settleResolve({ events: [], next_cursor: cursor });
+        return;
+      }
       try {
-        const polled = await pollOnce({ db, collection, cursor, signal });
+        const polled = await pollOnce({ db, collection, cursor, signal }, budget);
         if (settled) {
           return;
         }
@@ -256,20 +305,62 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  * return the parsed `LogEntry`s in causal order.
  *
  * On-bucket log keys are `log/<seq>.json` — the same shape
- * `compactor` / `gc` / `rebuild-index` walk. Iterating
+ * `compactor` / `gc` walk. Iterating
  * `[startSeq, endSeq)` and GET-ing each key directly avoids the
  * lex-`startAfter` hazard on integer filenames (`10.json` sorts
  * before `2.json` lex) and gives us the global causal ordering for
  * free — `seq` is monotonic across writer sessions.
  *
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
- * collection without erroring). Cursor inside `[0, log_seq_start)`, or
+ * collection without erroring). Under a request ledger that runs out,
+ * the result is a prefix of the entries past the cursor. Cursor inside `[0, log_seq_start)`, or
  * minted in a truncated generation → `BaerlyError{code:"SchemaError"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
-  const polled = await pollOnce(opts);
+  const polled = await pollOnce(opts, pollBudget());
   return polled.events;
 }
+
+/**
+ * The request ledger's room for the long-poll's storage calls, read
+ * through {@link forwardProbeCap}, the same cap every read path sizes its
+ * tail probe with. The pool the storage charges is not known up front
+ * (the R2 binding charges `internal`, `fetch` storage `external` as
+ * well), so until a poll has made a call the room is `external`'s, the
+ * smaller of the two; after it, the room in whichever pool that call
+ * charged. With no ledger, or one that never refuses (Node), the room is
+ * the runaway cap `LOG_FORWARD_PROBE_CAP`, far above any cycle.
+ */
+interface PollBudget {
+  /** Calls still allowed this request. */
+  left(): number;
+  /** Run `fn`, learning the storage's pool from what it charges. */
+  observe<T>(fn: () => Promise<T>): Promise<T>;
+}
+
+const pollBudget = (): PollBudget => {
+  let pool: RequestPool | undefined;
+  return {
+    left: (): number => forwardProbeCap(pool ?? "external").slots,
+    observe: async <T>(fn: () => Promise<T>): Promise<T> => {
+      const ledger = currentRequestLedger();
+      if (ledger === undefined || pool !== undefined) {
+        return fn();
+      }
+      const before = ledger.charged;
+      try {
+        return await fn();
+      } finally {
+        const after = ledger.charged;
+        if (after.external > before.external) {
+          pool = "external";
+        } else if (after.internal > before.internal) {
+          pool = "internal";
+        }
+      }
+    },
+  };
+};
 
 /**
  * The body of {@link listEventsSince}, additionally surfacing the
@@ -285,94 +376,120 @@ export async function listEventsSince(opts: ListEventsSinceOptions): Promise<Log
  * `generation` is `undefined` when the collection has no `current.json`
  * (no events either, so it is never consumed) or when the manifest
  * predates the field.
+ *
+ * Entry reads and the probe are capped by the budget's room, and a
+ * refused storage call ends the cycle: the entries read so far come back
+ * as a prefix, in order, which a cursor minted from the last one resumes.
  */
 async function pollOnce(
   opts: ListEventsSinceOptions,
+  budget: PollBudget,
 ): Promise<{ events: LogEntry[]; generation: string | undefined }> {
   const { db, collection, cursor, signal } = opts;
 
   const decoded = cursor.length > 0 ? decodeCursor(cursor) : undefined;
 
-  const read = await db.getCurrentJson(collection, signalOpt(signal));
-  if (read === null) {
-    // No collection provisioned yet. Clients polling for a collection that
-    // doesn't exist see an empty stream, NOT an error.
-    return { events: [], generation: undefined };
-  }
-  const logSeqStart = logSeqStartOf(read.json);
-  // End bound is the DISCOVERED tail (probe past a stale-low hint).
-  // The GET loop below 404-tolerates misses, so over-bounding is safe.
-  // Floor at `max(log_seq_start, tail_hint)` — same probe floor every
-  // other consumer uses (the invariant `tail_hint >= log_seq_start`
-  // holds, so this is consistency, not a behaviour change).
-  const tail = await db.probeLogTail(
-    collection,
-    Math.max(logSeqStart, read.json.tail_hint),
-    read.json,
-    signalOpt(signal),
-  );
-
-  // Derive the seq range to scan. Empty cursor → start at
-  // `log_seq_start` (the first un-snapshotted entry). Non-empty
-  // cursor → start at `cursorSeq + 1`, after two rejections.
-  let startSeq: number;
-  if (decoded === undefined) {
-    startSeq = logSeqStart;
-  } else {
-    const { generation, lsn } = decoded;
-    // (1) Wrong generation. A seq identifies a `log/<seq>` slot, and
-    // slots are REUSED: `restore --force` truncates and reseeds
-    // `log_seq_start` to one past the highest surviving log object,
-    // which can land below the old floor (the floor exemption —
-    // invariant 12 in `docs/spec/sync-protocol.md`). A pre-restore
-    // cursor would then clear check (2) below and resume into the new
-    // generation, silently skipping every restored row beneath it —
-    // gapped, not broken, which is the failure mode a sync client can't
-    // detect for itself.
-    //
-    // Both spellings of "no generation" — a manifest predating the
-    // field and a bare-LSN cursor predating the composite shape —
-    // decode to `NO_GENERATION`, so this stays one comparison with no
-    // fail-open branch. See the truth table in `sync-protocol.md`.
-    const currentGeneration = read.json.generation ?? NO_GENERATION;
-    if (generation !== currentGeneration) {
-      throw new BaerlyError(
-        "SchemaError",
-        `cursor ${JSON.stringify(cursor)} was minted in a generation that no longer exists (the collection has been truncated and restored); re-bootstrap from a snapshot read before resuming`,
-      );
-    }
-    // (2) Folded away. The entry is below the floor, so the compactor
-    // folded it into the snapshot and the GC sweep deleted it.
-    const cursorSeq = lsnParts(lsn).seq;
-    if (cursorSeq < logSeqStart) {
-      throw new BaerlyError(
-        "SchemaError",
-        `cursor ${JSON.stringify(cursor)} points to a log entry that has been folded into a snapshot (log_seq_start=${logSeqStart}); re-bootstrap from a snapshot read before resuming`,
-      );
-    }
-    startSeq = cursorSeq + 1;
-  }
-
-  // Cap the range at the discovered `tail` (no entries past the tail
-  // exist) and at `DEFAULT_MAX_EVENTS` (hard ceiling per the module
-  // docstring).
-  const endSeq = Math.min(tail, startSeq + DEFAULT_MAX_EVENTS);
-
-  // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
-  // per-poll batch is typically 0-10 entries, sequential keeps
-  // memory bounded under pathological workloads.
   const entries: LogEntry[] = [];
-  for (let s = startSeq; s < endSeq; s++) {
-    const entry = await db.getLogEntry(collection, s, read.json, signalOpt(signal));
-    if (entry === null) {
-      // Race: the GC sweeper deleted this entry between
-      // `getCurrentJson` and the GET. Skip; don't error.
-      continue;
+  let generation: string | undefined;
+  try {
+    const read = await budget.observe(() => db.getCurrentJson(collection, signalOpt(signal)));
+    if (read === null) {
+      // No collection provisioned yet. Clients polling for a collection that
+      // doesn't exist see an empty stream, NOT an error.
+      return { events: [], generation: undefined };
     }
-    entries.push(entry);
+    generation = read.json.generation;
+    const logSeqStart = logSeqStartOf(read.json);
+    // Every entry below the hint is committed (`log_seq_start <=
+    // tail_hint <= tail`); the true tail is at or past it.
+    const hint = Math.max(logSeqStart, read.json.tail_hint);
+
+    // Derive the seq range to scan. Empty cursor → start at
+    // `log_seq_start` (the first un-snapshotted entry). Non-empty
+    // cursor → start at `cursorSeq + 1`, after two rejections.
+    let startSeq: number;
+    if (decoded === undefined) {
+      startSeq = logSeqStart;
+    } else {
+      const { generation: cursorGeneration, lsn } = decoded;
+      // (1) Wrong generation. A seq identifies a `log/<seq>` slot, and
+      // slots are REUSED: `restore --force` truncates and reseeds
+      // `log_seq_start` to one past the highest surviving log object,
+      // which can land below the old floor (the floor exemption —
+      // invariant 12 in `docs/spec/sync-protocol.md`). A pre-restore
+      // cursor would then clear check (2) below and resume into the new
+      // generation, silently skipping every restored row beneath it —
+      // gapped, not broken, which is the failure mode a sync client can't
+      // detect for itself.
+      //
+      // Both spellings of "no generation" — a manifest predating the
+      // field and a bare-LSN cursor predating the composite shape —
+      // decode to `NO_GENERATION`, so this stays one comparison with no
+      // fail-open branch. See the truth table in `sync-protocol.md`.
+      const currentGeneration = read.json.generation ?? NO_GENERATION;
+      if (cursorGeneration !== currentGeneration) {
+        throw new BaerlyError(
+          "SchemaError",
+          `cursor ${JSON.stringify(cursor)} was minted in a generation that no longer exists (the collection has been truncated and restored); re-bootstrap from a snapshot read before resuming`,
+        );
+      }
+      // (2) Folded away. The entry is below the floor, so the compactor
+      // folded it into the snapshot and the GC sweep deleted it.
+      const cursorSeq = lsnParts(lsn).seq;
+      if (cursorSeq < logSeqStart) {
+        throw new BaerlyError(
+          "SchemaError",
+          `cursor ${JSON.stringify(cursor)} points to a log entry that has been folded into a snapshot (log_seq_start=${logSeqStart}); re-bootstrap from a snapshot read before resuming`,
+        );
+      }
+      startSeq = cursorSeq + 1;
+    }
+
+    // At most `DEFAULT_MAX_EVENTS` per cycle (hard ceiling per the
+    // module docstring), and at most what the budget has room for.
+    const endSeq = startSeq + DEFAULT_MAX_EVENTS;
+
+    // Entries below the hint the cursor has not seen: GET each by seq.
+    // Sequential GETs (NOT Promise.all). Long-poll is latency-bound,
+    // per-poll batch is typically 0-10 entries, sequential keeps
+    // memory bounded under pathological workloads.
+    let s = startSeq;
+    for (; s < Math.min(hint, endSeq); s++) {
+      if (budget.left() < 1) {
+        return { events: entries, generation };
+      }
+      const entry = await db.getLogEntry(collection, s, read.json, signalOpt(signal));
+      if (entry === null) {
+        // Race: the GC sweeper deleted this entry between
+        // `getCurrentJson` and the GET. Skip; don't error.
+        continue;
+      }
+      entries.push(entry);
+    }
+
+    // The rest: probe forward from the later of the hint and the cursor,
+    // taking each entry the probe passes. Starting at the cursor rather
+    // than the hint skips re-reading entries the client already has, so
+    // an idle poll costs one probe GET however far the hint lags. An
+    // "at least" chunk (the cap was reached, or a slot GET was refused,
+    // before the tail) is a delivered prefix; the next poll resumes
+    // after its last entry.
+    const cap = Math.min(endSeq - s, budget.left());
+    if (cap >= 1) {
+      const chunk = await db.probeLogChunk(collection, s, read.json, {
+        cap,
+        ...(signal !== undefined && { signal }),
+      });
+      entries.push(...chunk.entries);
+    }
+  } catch (error) {
+    if (isStorageRefusal(error)) {
+      return { events: entries, generation };
+    }
+    throw error;
   }
 
-  return { events: entries, generation: read.json.generation };
+  return { events: entries, generation };
 }
 
 /**

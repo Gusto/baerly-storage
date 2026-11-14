@@ -26,9 +26,9 @@ entry, not on `current.json`.
 
 For each `(app, tenant, collection)`, the bucket holds a
 `log/<seq>.json` series and a `current.json` control object. The writer
-serializes the `I` / `U` post-image into `LogEntry.after` and PUTs
-additive index keys first. Then it creates exactly one numbered log
-object with `If-None-Match: "*"`. If that create succeeds, the mutation
+serializes the `I` / `U` post-image into `LogEntry.after`, then creates
+exactly one numbered log object with `If-None-Match: "*"`, the commit's
+only write. If that create succeeds, the mutation
 is committed at that `seq`; no later `current.json` CAS is needed.
 
 The live log is dense: writers target the first missing sequence
@@ -68,7 +68,7 @@ The collection prefix may contain these objects:
 | `current.json`                                | Compactor-owned compaction-state object: snapshot pointer, `log_seq_start`, snapshot counters, plus the non-authoritative `tail_hint`. **Not** the linearization point. |
 | `log/<seq>.json`                              | One `LogEntry` per mutation, keyed by monotonic integer `seq`. The create-if-absent on this key **is** the linearization point.                                         |
 | `content/<sha>.json`                          | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](#legacy-content-side-objects).   |
-| `index/<name>/...`                            | Zero-byte advisory index markers.                                                                                                                                       |
+| `index/<name>/...`                            | Legacy zero-byte index markers written before 0.7. Inert: never read, written or reclaimed; the prefix stays reserved. See [Legacy index markers](#legacy-index-markers). |
 | `snapshot/L9/<000000000000>-<max>-<sha>.json` | Content-hashed materialized snapshot covering `[0, max)`. `min` and `max` are fixed-width 12-digit zero-padded; `min` is always `0`.                                    |
 | `gc/pending.json`                             | Two-phase GC candidate ledger (orphan-snapshot and orphan-content only; stale logs are reclaimed by computed range, not listed).                                                                                                                                          |
 
@@ -152,6 +152,17 @@ The key and hash layout needed to interpret an object that already
 exists is in
 [`log-entry-shape.md`](log-entry-shape.md#legacy-content-side-object-layout).
 
+### Legacy index markers
+
+Current writers create nothing under `index/`. Writers before 0.7 PUT a
+zero-byte marker there per declared index a write touched, and during a
+mixed 0.6 / 0.7 rollout 0.6 nodes still do. No 0.7 reader, writer, GC
+pass or `fsck` opens the prefix: reads and insert uniqueness take
+membership from the snapshot plus the committed log, so a missing, stale or
+extra marker changes no result. The prefix stays reserved. Deleting it,
+and the rollback consequence of 0.7 writes carrying no markers, are in
+[Legacy index markers](../guide/backups.md#legacy-index-markers).
+
 ## Required storage semantics
 
 On the ordinary commit path, writers do not race to update
@@ -231,24 +242,16 @@ For a single-document mutation:
    [Insert: the first `I` wins](#insert-the-first-i-wins),
    [Capacity: the commit-time re-check](#capacity-the-commit-time-re-check),
    and [Update and delete: decided on the newest row version](#update-and-delete-decided-on-the-newest-row-version).
-3. **Serialize `LogEntry.after` and PUT additive (new) index keys —
-   before the commit.** `I` / `U` post-images are serialized into the
-   `LogEntry.after` field; current writers do not create a content side
-   object. Additive **new** index keys are PUT (`If-None-Match: "*"`)
-   **before** the committing log create, so no crash can leave a
-   committed row unindexed. A concurrent same-doc write still can: a
-   stale-key DELETE (step 5) may land after a peer re-PUT the same marker,
-   so index completeness is not guaranteed. Reads and insert uniqueness
-   use the authoritative snapshot-plus-log fold, not marker membership.
-   Stale index keys are deleted _after_ the commit; see step 5.
+3. **Serialize `LogEntry.after`.** `I` / `U` post-images are serialized
+   into the `LogEntry.after` field; current writers create no content
+   side object and no index object. Reads and insert uniqueness use the
+   authoritative snapshot-plus-log fold, whatever indexes a collection
+   declares.
 4. **Create `log/<seq>.json` with `If-None-Match: "*"` — this create
    _is_ the commit.** Winning (`200`) means committed; a `412` means
    the slot is occupied (re-probe the next seq, per the
-   [contention rules](#contention-and-retries)).
-5. **DELETE stale index keys — after the commit.** A DELETE mutates
-   committed-doc-visible state, so it must never land for a write that
-   does not commit; deleting only after the winning `log/<seq>` create
-   guarantees a crash can never de-index a committed doc.
+   [contention rules](#contention-and-retries)). It is the commit's only
+   write.
 
 The `log/<seq>` create on step 4 is the linearization point. A reader
 sees the mutation once the log entry exists and the reader's
@@ -317,23 +320,20 @@ not see:
    uncontended, `T0` is the tail and the probe is one `404` GET.
 3. **Window decision.** If the last entry for this doc in the window is an
    `I` or `U`, a peer's insert won: the insert fails with `AlreadyExists`
-   before it writes any index marker. A `D`, or no entry, lets it proceed.
+   before it writes anything. A `D`, or no entry, lets it proceed.
 4. **Lost create race.** A foreign occupant at `seq`, and every entry the
    forward probe from `seq + 1` passes, join the window, and step 3 runs
    again before the next create. A live row there fails the insert with
    `AlreadyExists`: the occupant proves this commit's send did not land at
-   `seq`. The index markers already written stay as orphans, which reads
-   drop (invariant 7); the writer never deletes them, since a DELETE could
-   remove a marker a later writer re-PUT and de-index a committed row.
+   `seq`, so nothing of the insert was written.
 
 **SDK-minted replay.** An HTTP insert whose body carries `mintedId` (a
 canonical UUIDv7 equal to `doc._id`) is a client resending an insert of an
 `_id` it minted. At step 1 and at every step-3 decision, a live last entry
 whose `after` equals the insert's post-image after a JSON round-trip (key
 order ignored) is treated as replay success: the insert returns
-`{ _id }` and writes nothing further, with no create, no stale-marker
-cleanup and no maintenance tick (markers already PUT at step 4 stay as
-the same benign orphans). Any other live row still fails with
+`{ _id }` and writes nothing, with no create and no maintenance tick. Any
+other live row still fails with
 `AlreadyExists`, and an insert without `mintedId` never replays, so a
 caller-chosen `_id` keeps at most one winner. Equality is against the current
 live row, not a retained request result: deletion permits reinsertion, an
@@ -363,9 +363,8 @@ commit time over the entries the read could not see:
 2. An empty window means nothing intervened: the pre-commit decision
    stands and nothing is recomputed. Otherwise the decision re-runs over
    the read's tail plus the window, for this write and the batch rows
-   after it, before any index marker is written, and again after each lost
-   create race before the next create. A refusal commits nothing; markers
-   already PUT after a lost race stay as the same benign orphans.
+   after it, before the first create, and again after each lost create
+   race before the next create. A refusal commits nothing.
 3. In a batch, each row's window starts one past the previous row's
    committed seq, so no entry is read twice. A refusal there stops the
    batch with the earlier rows applied.
@@ -385,7 +384,7 @@ re-inserted, or one that no longer matches its predicate. The write verbs
 instead follow PostgreSQL READ COMMITTED's EvalPlanQual, decided in the
 same commit window as the capacity re-check:
 
-1. **Newest version.** At each window decision (before any index marker,
+1. **Newest version.** At each window decision (before the first create,
    and again after each lost create race), the verb looks for entries on
    the row's `_id` among everything committed after its read: the window
    `[T0, seq)`, plus, in a batch, the windows of the rows already committed.
@@ -405,12 +404,6 @@ same commit window as the capacity re-check:
    and that becomes the commit's post-image, and a delete tombstones the
    row. A `replace` keeps its document: it is last-writer-wins against
    updates.
-4. **Index markers.** A re-applied post-image gets its own additive index
-   markers before its create, so the hybrid polarity holds: new markers
-   before the committing `log/<seq>` create, stale-marker DELETEs (computed
-   from the entry just below the committed `seq`, which is the version the
-   patch was re-applied to) after it. Markers already PUT for a post-image
-   abandoned after a lost create race stay as benign orphans (invariant 7).
 
 The result is that every committed `U` from an update is its patch merged
 onto the entry immediately before it for that `_id`, and no `U` follows a
@@ -511,12 +504,11 @@ limits follow the Workers maintenance profile:
 **Commit-resolution reserve.** Once its committing create is sent, a write
 may still need one occupant readback and the delete-floor `current.json`
 read to know its fate; without room for them, a create that landed but lost
-its reply becomes `AmbiguousCommit`. So each slot's attempt (its additive
-index markers, the create, the readback and the floor read) runs under a
-ledger **hold** of
-`STORAGE_RETRY_MAX_ATTEMPTS × (markers + 1) + COMMIT_RESOLUTION_RESERVE`
-requests (each marker PUT and the create at full retries, plus 6 for the
-readback and the floor read). The writer takes the hold only if the
+its reply becomes `AmbiguousCommit`. So each slot's attempt (the create,
+the readback and the floor read) runs under a ledger **hold** of
+`STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE` = 9 requests (the
+create at full retries, plus 6 for the readback and the floor read),
+whatever indexes the collection declares. The writer takes the hold only if the
 ledger's room, net of other holds, covers it, and otherwise refuses with
 `CapacityExceeded`, nothing written. Only calls made in the attempt's own
 async context draw on the hold; every other call in the invocation, a
@@ -524,14 +516,13 @@ async context draw on the hold; every other call in the invocation, a
 it, so concurrent work cannot spend the reserve. After a lost create race
 the hold is released (the foreign occupant proves this commit's only send
 did not land, so a refusal from there is clean), the forward probe runs,
-and the next slot takes a new hold, counting markers only for a re-decided
-post-image. Only a call outside every hold that the ledger cannot refuse
+and the next slot takes a new hold. Only a call outside every hold that the ledger cannot refuse
 (the read cache's post-write invalidation) or a platform cap below the
 ledger's limit can still cut into a hold; then the create resolves as
 described above (`CapacityExceeded` when the create was never sent,
-`AmbiguousCommit` when a sent create cannot be read back). Post-commit
-steps (the pre-image walk, stale-marker DELETEs, the write tick) run
-after the hold and swallow a refusal, leaving the commit acknowledged.
+`AmbiguousCommit` when a sent create cannot be read back). The write tick
+runs after the hold and swallows a refusal, leaving the commit
+acknowledged.
 
 A multi-row update or delete commits row by row, so a refusal part-way
 keeps the rows already committed, commits neither the refused row nor any
@@ -544,26 +535,98 @@ call to `external`, at most `CF_CACHE_API_MAX_CALLS` per invocation; a cache
 `match` or `put` without room is skipped and the request is served from
 storage, and the invalidation after a write is always sent.
 
+The `/v1/since` long-poll reads the ledger and never runs past it, so it
+never fails with the ledger's `CapacityExceeded`. Each poll cycle starts
+only with room for an idle one (two GETs: `current.json` and the probe at
+the cursor), and its entry reads and probe are capped by what is left. Out
+of room, the request returns the entries it has read, a prefix whose
+`next_cursor` resumes after the last one, or, having waited at least one
+poll interval, an empty batch at the same cursor. A request without room
+for its first cycle returns `MaintenancePending` (503, `Retry-After`), so
+an empty batch never comes back sooner than one interval. On `cf-free`
+with storage over `fetch` this shortens an idle long-poll to about 22 of
+its 25 seconds; elsewhere the timeout ends it first.
+
+The write tick a commit dispatches shares that ledger, so it sizes each
+phase at the phase's start from what the ledger has left on the pool its
+storage charges, net of active holds, with the host profile's per-pass
+caps as ceilings. The tick is dispatched outside every commit hold, so a
+tick that runs while a multi-row write continues sizes against the room
+the later rows' commit-resolution reserves leave, and never plans to spend
+them. A fold needs `MAINTENANCE_FOLD_BASE_REQUESTS` (5) plus the entries
+it would fold and is skipped, never shortened, when that does not fit: the
+growth refusal models fold passes of exactly `maxFoldEntriesPerPass`
+entries. A GC slice needs `MAINTENANCE_GC_BASE_REQUESTS` (6) and runs with
+its sweep cap lowered to what is left after that, or is skipped when
+nothing is. The `tail_hint` refresh needs
+`MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS` (2). These are common-path costs
+(each call answered first time, no contention). A retry or a concurrent
+writer can still overrun one; the ledger refuses that call before it is
+sent and the tick ends quietly
+(`db.maintenance.request_budget_refused_total`). A fold or GC slice cut
+short this way leaves nothing the next tick cannot redo: an unpublished
+snapshot is an orphan GC collects, and an unrecorded sweep is swept again.
+A skipped phase counts `db.maintenance.request_budget_skipped_total`
+(label `phase`).
+
+Log retirement is sized for every attempt instead, because it moves
+`log_delete_floor` past its range before it DELETEs that range, and the
+next pass starts at the floor: a DELETE that fails after the floor CAS
+leaks that log object. The pass takes at most
+`(remaining − MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS) / STORAGE_RETRY_MAX_ATTEMPTS`
+DELETEs (`MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS` = 7, the most it can be
+charged before the CAS lands), so the ledger never refuses one of them on
+its own account. A crash, a DELETE that fails all its attempts, or calls
+charged concurrently by other work in the same invocation between the
+floor CAS and the DELETEs still leak the objects not deleted (they are
+never read again, only stored); that window predates the ledger.
+
+### Read admission
+
+A read whose work does not fit the serving request is refused whole with
+`CapacityExceeded`, never answered with a truncated row set, and a read that
+fits returns the same rows on every host. A refused read writes nothing and
+dispatches no maintenance, so a read never carries `MaintenancePending`.
+Admission runs in two stages (`packages/server/src/read-admission.ts`):
+
+1. **Head.** From `current.json` alone, the read is refused when its work is
+   certain not to fit. `tail_hint` is a lower bound on the tail, so the
+   strict range `[log_seq_start, tail_hint)`, the snapshot GET and the
+   probe's closing empty slot are a lower bound on the storage calls; when
+   that is more than the request ledger has left, the read is refused
+   before its snapshot GET.
+2. **Staged.** The ledger charges each storage call as it is issued. The
+   forward probe past `tail_hint` is capped at
+   `min(LOG_FORWARD_PROBE_CAP, ledger remaining)` (`forwardProbeCap` in
+   `log-tail.ts`, shared by every read path that probes); exhausting a
+   ledger-set cap is `CapacityExceeded`, exhausting `LOG_FORWARD_PROBE_CAP`
+   remains the `Internal` runaway alarm.
+
+The host may also set a read envelope on the observability context
+(`readEnvelope`): snapshot bytes and rows (checked from the head before the
+snapshot GET), tail entries and bytes (each stored body charged before it is
+decoded), rows materialized before predicate, sort and limit, and rows in
+the answer (a count is exempt). Every read, index-covered or not, is a full
+fold (see [Read algorithm](#read-algorithm)), so these are also the bounds
+on an index-covered read: its work is the snapshot rows plus the tail
+entries it materializes, and there is no index-specific bound. Two
+collections with identical heads but different tails are told apart at the
+staged checks. No shipped profile sets the data bounds
+yet; the Worker sets only the request pool its storage charges, so the head
+check is exact for the R2 binding and for `fetch` storage.
+
 ### Crash safety
 
 Crashes fall on one side of the commit line: serializing `LogEntry.after`
-and PUTting additive (new) index keys are preparation, the `log/<seq>`
-create is the commit, and stale-key DELETEs are cleanup. The single
-`log/<seq>` create is the only point at which the mutation becomes
-committed. Reads reconstruct visibility from the snapshot and log,
-independently of index markers.
+is preparation and the `log/<seq>` create is the commit. The single
+`log/<seq>` create is the commit's only write and the only point at which
+the mutation becomes committed. Reads reconstruct visibility from the
+snapshot and log.
 
 | Crash point | Bucket residue | Reader behavior |
 | --- | --- | --- |
-| Before the log create (during new-key PUTs) | Orphan additive index keys may exist; no committed log entry. | The uncommitted row is invisible. |
-| After the log create, before the stale-key DELETE | Committed entry and possibly stale index keys. | The committed row is visible from the log. |
-
-Marker maintenance is not atomic with the log. A delayed stale-key DELETE
-can erase a marker that a concurrent same-id reinsertion needs, even on
-strongly consistent storage. Extra or missing markers do not affect reads
-or mutation selection because neither uses marker membership.
-`rebuildIndex` reconciles these artifacts; it is not a prerequisite for
-read correctness.
+| Before the log create | Nothing of the commit. | The uncommitted row is invisible. |
+| After the log create | The committed entry. | The committed row is visible from the log. |
 
 The orphan-at-the-tail wedge of the old two-write commit is **gone by
 construction**: there is no longer a head pointer to crash _between_, so
@@ -692,10 +755,12 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   Stale-log classification continues to use the initial monotone
   `log_seq_start`; a stale read can delay collection but cannot make a live log
   stale.
-- Cloudflare Free schedules one collection and one phase per invocation,
-  alternating direct bounded `compact()` and `runGc()` calls. Fan-out must be
-  sharded or driven by a persisted collection cursor; the combined
-  `runScheduledMaintenance()` helper is for Cloudflare Paid or Node budgets.
+- A Cloudflare scheduled invocation processes one collection. With the R2
+  binding, Free or Paid, one combined `runScheduledMaintenance()` call with the
+  host's profile fits the request ledger; on Free with storage over `fetch` it
+  does not, so that host alternates direct bounded `compact()` and `runGc()`
+  calls, one phase per invocation. Fan-out must be sharded or driven by a
+  persisted collection cursor.
 - Cloudflare can defer the tick past the response with
   `ctx.waitUntil`; Node runs inline unless the host wraps it
   differently.
@@ -715,7 +780,7 @@ defaults, deliberately:
 | In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
 | Scheduled (`runScheduledMaintenance`, no `options.compact`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
 | Cloudflare Paid scheduled (`runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The library-provided scheduled profile exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
-| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. Do not pass this object to `runScheduledMaintenance`. |
+| Cloudflare Free compact options (`CLOUDFLARE_FREE_TIER.compact`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. Pass it to `runScheduledMaintenance` only with the R2 binding; with storage over `fetch`, alternate its `.compact` / `.gc` halves. |
 | Direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; direct callers should pass a threshold sized to their trigger. |
 
 The scheduled floor drains the tail to zero so reads stay O(snapshot),
@@ -723,7 +788,8 @@ not O(history). Every fold rewrites the entire snapshot, so at a
 5-minute cadence a threshold of 1 bounds snapshot rewrites to one per
 tick that actually received writes (an idle tick costs only the
 `current.json` GET + tail probe, no PUT). `CLOUDFLARE_PAID_TIER` uses
-that same floor of 1; Free still carries an explicit 20. A
+that same floor of 1 with a 1,000-GET tail probe
+(`CF_PAID_COMPACT_TAIL_PROBE_GETS`); Free carries an explicit 20. A
 write-amplification-sensitive caller whose fold cost outweighs its
 per-entry read cost raises the floor explicitly via
 `options.compact.minEntriesToCompact`; the trade is a tail of up to
@@ -783,9 +849,10 @@ These are the load-bearing rules.
    `getLogEntry` and `probeLogTail` — take the `current.json` they are
    floored against and throw `Internal` below it, so the floor is a
    property of the seam rather than a discipline each caller has to
-   repeat. The one deliberate sub-floor GET is the writer's pre-image
-   scan, which is 404-tolerant by construction and whose worst case is
-   a redundant index key (invariant 7), never a wrong read.
+   repeat. The one deliberate sub-floor read is a windowed commit's
+   point GETs of the entries a fold absorbed after its caller's read
+   (an insert guard or admission re-check); a missing entry refuses the
+   commit with `WriteConflict`, never a wrong read.
 
    A **second, stricter floor** sits beneath it. `log_seq_start` marks
    what a reader may *need*; the optional `log_delete_floor` is the
@@ -857,17 +924,9 @@ These are the load-bearing rules.
    it inline. Other non-commit-path writers are explicit: the one-time
    `createCurrentJson` bootstrap, operator/import paths such as `admin
    restore`, and the best-effort `last_warned_seq` graduation stamp.
-7. **An abandoned write cannot falsely unindex a committed doc.** New
-   index keys are emitted _before_ the commit and stale keys deleted
-   _after_, so a committed value is never de-indexed by a write that did
-   not commit. The only residual is a benign false-positive (an extra
-   key) dropped by `matchesWire`. It self-heals on the doc's next write
-   only when that write can still read the doc's prior post-image: the
-   backwards pre-image walk is capped at `PREIMAGE_SCAN_MAX_GETS` log
-   GETs, because the walk is sequential and runs on the write path, so a
-   doc not rewritten within that many log entries keeps its stale key.
-   `rebuildIndex` / `baerly admin fsck --indexes` is the authoritative
-   backstop, not merely an operator convenience.
+7. **Retired in 0.7.** The writer maintains no index markers, so the
+   marker-ordering invariant this number held has nothing left to order;
+   the number stays so later citations keep theirs.
 8. **Reads are pure.** Reads load state; they never compact, GC, or
    tick maintenance. The tail forward-probe is Class B (GETs), so the
    idle-reader cost bound is untouched.
@@ -933,8 +992,9 @@ These are the load-bearing rules.
     generation to no deleted prefix certified.
 
     The retention window between the two floors
-    (`LOG_RETENTION_SEQ_WINDOW`) is a pre-image cost margin and a rate limit
-    on how fast retirement approaches the live floor. It is **not** a
+    (`LOG_RETENTION_SEQ_WINDOW`) is a rate limit on how fast retirement
+    approaches the live floor, which also keeps folded entries readable for
+    a windowed commit. It is **not** a
     paused-writer fence and no safety property may be derived from it: it
     bounds no wall-clock and no commit count, so a delayed create PUT, an
     isolate suspension, or the adapter's retry of a create can each

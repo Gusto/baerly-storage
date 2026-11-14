@@ -198,10 +198,6 @@ export class LocalFsStorage implements Storage {
       );
     }
     const etag = etagOf(body);
-    if (opts?.ifNoneMatch !== undefined && opts.ifNoneMatch === etag) {
-      // 304 Not Modified — caller's cached copy is current.
-      return null;
-    }
     return { body: toUint8Array(body), etag };
   }
 

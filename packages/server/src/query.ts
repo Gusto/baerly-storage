@@ -71,11 +71,11 @@ import {
   insertReplaysRow,
   recordInsertReplay,
 } from "./doc-id.ts";
-import { type IndexDefinition } from "./indexes.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
-import { probeTailFrom } from "./log-tail.ts";
+import { probeReadTail } from "./log-tail.ts";
 import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
+import { ReadBudget } from "./read-admission.ts";
 import { type SchemaValidator, validateOrThrow } from "./schema.ts";
 import { type CommitAdmission, type CommitVerdict, Writer } from "./writer.ts";
 import { isOwnCollection } from "./collection-alias.ts";
@@ -115,20 +115,6 @@ export interface CollectionReadContext {
    * @internal
    */
   readonly schema?: SchemaValidator;
-  /**
-   * Per-collection {@link IndexDefinition}s maintained by the Writer.
-   * Reads take membership from the complete snapshot plus log fold.
-   * Empty array means no indexes declared.
-   *
-   * Mirrors the shape callers build when flattening
-   * `BaerlyConfig.collections[*].indexes` into a map keyed by name
-   * before constructing the `Db`; we keep the `Db` itself library-
-   * agnostic by accepting the pre-flattened map (not the full
-   * `BaerlyConfig`).
-   *
-   * @internal
-   */
-  readonly indexes: ReadonlyArray<IndexDefinition>;
 }
 
 /**
@@ -184,7 +170,7 @@ export const serializeManifestPointer = (json: CurrentJson, tail = json.tail_hin
  * — the public seam (`.where(p)` accepting `PredicateArg<T>`) routes
  * incoming object-form / callback-form predicates through
  * `normalizePredicateArg` before they reach this state, so every
- * downstream consumer (planner, executor, post-filter) reads the
+ * downstream consumer (executor, post-filter) reads the
  * same shape.
  *
  * @internal
@@ -279,7 +265,7 @@ export const makeQuery = <T extends DocumentData>(
       return res.rows;
     },
     count: async () => {
-      const res = await runRead<T>(ctx, state);
+      const res = await runRead<T>(ctx, state, { countOnly: true });
       return res.rows.length;
     },
     update: (patch) => runUpdate<T>(ctx, state, patch),
@@ -307,9 +293,16 @@ export const makeQuery = <T extends DocumentData>(
 export const runAllWithMeta = <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
+  opts?: ReadOptions,
 ): Promise<ReadResult<T>> => {
-  return runRead<T>(ctx, state);
+  return runRead<T>(ctx, state, opts);
 };
+
+/** Options for a read terminal. */
+export interface ReadOptions {
+  /** The caller returns only the row count, so the output bound does not apply. */
+  readonly countOnly?: boolean;
+}
 
 /**
  * By-id read entry surfacing the same `ReadResult<T>` shape as
@@ -359,9 +352,6 @@ const writerFor = (ctx: CollectionReadContext): Writer =>
   new Writer({
     storage: ctx.storage,
     currentJsonKey: `${ctx.collectionPrefix}/current.json`,
-    options: {
-      indexes: ctx.indexes,
-    },
   });
 
 /**
@@ -515,7 +505,7 @@ const EMPTY_HEAD = { snapshot_rows: 0, snapshot_bytes: 0, log_seq_start: 0 } as 
  *   committed after the read touched (in this window, or in an earlier
  *   row's window of the same batch) is re-decided from the newest version,
  *   or skipped; see {@link VerbWrite}. A rebased post-image is the verdict's `body`,
- *   so the writer indexes and commits it.
+ *   so the writer commits it.
  * - **Capacity (main-10 G5-race).** An empty window with no rebase means
  *   nothing intervened, so the decision stands as made and nothing is
  *   recomputed. Otherwise the decision re-runs over the read's tail plus
@@ -1013,9 +1003,9 @@ const runUpdate = async <T extends DocumentData>(
     const doc = row.doc;
     const docId = storedRowId(row, "update");
     assertPatchKeepsId(patch, docId);
-    // The commit re-writes index markers under `docId`, so a row an
-    // earlier release stored under a non-NFC id is refused here, before
-    // schema validation; it stays readable and deletable.
+    // An update re-mints the row under `docId`, which must be NFC, so a
+    // row an earlier release stored under a non-NFC id is refused here,
+    // before schema validation; it stays readable and deletable.
     assertDocId(docId);
     const merged = await mergeAndValidate(ctx, doc as DocumentData, patch);
     planned.push({ docId, before: doc as DocumentData, merged });
@@ -1102,7 +1092,7 @@ export const runReplaceById = async <T extends DocumentData>(
   doc: T,
 ): Promise<void> => {
   // Guard the caller-supplied id before it becomes a written key
-  // segment (index keys, log `doc_id`). Same boundary as `runInsert`.
+  // segment (log `doc_id`). Same boundary as `runInsert`.
   callerFacingCheck(() => assertDocId(id));
   callerFacingCheck(() => assertDocumentValues(doc, "replace"));
   const wire: PredicateWire = {
@@ -1239,8 +1229,14 @@ const runDelete = async <T extends DocumentData>(
 const runRead = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
+  opts?: ReadOptions,
 ): Promise<ReadResult<T>> => {
-  const { rows, manifestPointer, fresh } = await runReadRows(ctx, state);
+  // The host's read envelope admits the read (see `read-admission.ts`).
+  const budget = new ReadBudget(ctx.collectionName);
+  const { rows, manifestPointer, fresh } = await runReadRows(ctx, state, budget);
+  if (opts?.countOnly !== true) {
+    budget.admitOutput(rows.length);
+  }
   return { rows: rows.map((row) => row.doc), manifestPointer, fresh };
 };
 
@@ -1258,6 +1254,8 @@ interface StoredRow<T extends DocumentData> {
 const runReadRows = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
+  // A write verb's pre-commit read is bounded by the request ledger only.
+  budget: ReadBudget = new ReadBudget(ctx.collectionName, {}),
 ): Promise<{
   readonly rows: StoredRow<T>[];
   readonly manifestPointer: string;
@@ -1266,7 +1264,7 @@ const runReadRows = async <T extends DocumentData>(
    * The log tail this read folded through: the first empty slot its
    * probe found, or `0` when the collection is not provisioned. Before
    * predicate, order and limit are applied, the fold contains every live
-   * row through this tail; markers do not restrict membership.
+   * row through this tail.
    */
   readonly tail: number;
   /** The folded state, for the write verbs' capacity check. */
@@ -1290,10 +1288,6 @@ const runReadRows = async <T extends DocumentData>(
     return { rows: [], manifestPointer: "m1:0000000000000", fresh, tail: 0 };
   }
 
-  // Markers cannot establish membership: post-commit cleanup can remove
-  // a reinserted row's marker, and a LIST can precede a commit that the
-  // tail probe includes. Fold authoritative state before filtering.
-
   // Load the snapshot, if any. `compact()` guarantees:
   // `snapshot !== null` iff `log_seq_start > 0`. The snapshot is
   // sealed by its filename hash; `loadSnapshotAsMap` recomputes on
@@ -1301,6 +1295,7 @@ const runReadRows = async <T extends DocumentData>(
   // `seq < log_seq_start` have been folded into the snapshot (or
   // dropped on truncation) and MUST NOT be GET-required here — the
   // bucket may have already swept them via `runGc()`.
+  budget.admitHead(head.json);
   const hint = head.json.tail_hint;
   const logSeqStart = logSeqStartOf(head.json);
   const baseDocs: Map<string, DocumentData> =
@@ -1317,8 +1312,14 @@ const runReadRows = async <T extends DocumentData>(
   // compactor that advanced `log_seq_start` past a stale `tail_hint`
   // must NOT have its folded entries re-read by the probe.
   const probeFrom = Math.max(logSeqStart, hint);
-  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint);
-  const probe = await probeTailFrom(ctx.storage, ctx.collectionPrefix, probeFrom);
+  const entries = await walkLogRange(ctx.storage, ctx.collectionPrefix, logSeqStart, hint, {
+    onBody: budget.chargeTailBody,
+  });
+  const probe = await probeReadTail(ctx.storage, ctx.collectionPrefix, probeFrom, {
+    pool: budget.requestPool,
+    onBody: budget.chargeTailBody,
+    refusal: budget.probeRefusal,
+  });
   const tail = probe.tail;
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────

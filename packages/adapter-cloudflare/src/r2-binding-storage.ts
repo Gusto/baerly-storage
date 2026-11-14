@@ -59,18 +59,8 @@ class R2BindingStorageImpl implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
-    const getOpts: R2GetOptions = {};
-    if (opts?.ifNoneMatch !== undefined) {
-      getOpts.onlyIf = { etagDoesNotMatch: stripQuotes(opts.ifNoneMatch) };
-    }
-    const obj = await this.#callBinding(() => this.#bucket.get(key, getOpts), `GET ${key}`);
+    const obj = await this.#callBinding(() => this.#bucket.get(key), `GET ${key}`);
     if (obj === null) {
-      return null;
-    }
-    // R2 returns a bare `R2Object` (no body) when a conditional GET's
-    // precondition succeeds — i.e. the caller's copy is current.
-    // Match the `Storage` contract's 304 → null semantics.
-    if (!("body" in obj) || obj.body === null) {
       return null;
     }
     const body = new Uint8Array(await obj.arrayBuffer());

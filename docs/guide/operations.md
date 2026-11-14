@@ -200,7 +200,7 @@ Cloudflare maintenance alerts, also collect the `wrangler tail`
 | 5xx rate or `outcome:"error"`                | User-visible API failure                     | Filter logs by `error.code`; check bucket auth, S3 status, and recent deploys. Run the healthz and authenticated collection curls above.                                                                                                                                     |
 | `db.r2.put.412_total` sustained              | Conditional-write contention                 | Check writes/min for `$COLLECTION`; add app-edge retry for bursts, split hot collections if possible, graduate if sustained.                                                                                                                                                 |
 | `db.compaction.deferred_total` or `fold_deferred` warning | Snapshot over fold ceiling; compaction and log retention stopped | The warning names whether bytes or rows tripped, with `C` and `E`. Run `baerly inspect` for `fold_gate`, `live_log_tail`, and `materialised_rows`. Bytes: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Workers Paid, or raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. Rows: no env var applies; switch profile on Cloudflare, otherwise split or graduate. |
-| Class A ops spike                            | Cost regression or hot write path            | Run `baerly cost`; inspect write amp, index count, retries, and compaction CAS losses.                                                                                                                                                                                       |
+| Class A ops spike                            | Cost regression or hot write path            | Run `baerly cost`; inspect write amp, retries, and compaction CAS losses.                                                                                                                                                                                                      |
 | Object count growing while writes are steady | GC not draining or contention above envelope | Run `baerly admin fsck`; inspect `db.compaction.cas_lost_total`, deferred warnings, and write contention.                                                                                                                                                                    |
 
 Sink wiring and field reference are in
@@ -215,6 +215,16 @@ Sink wiring and field reference are in
 | roughly 30 sustained logical writes/min per collection | Throughput ceiling; model/estimate, pending real-infra measurement. |
 | >10 GB per tenant stored | R2 free-tier storage line; a cost signal, not a protocol ceiling. baerly-storage does not enforce per-tenant byte limits. |
 | ~100 collections per tenant | Soft fan-out guideline; bench-grounded linear cost. Nothing in the protocol enforces a cap. |
+
+On Workers, each request has a storage-call budget: 900 calls through the R2
+binding and 45 through `fetch` on Free, 9,000 on Paid (`cfRequestLedger`). A
+request that would exceed it is refused with `CapacityExceeded`, except a
+`GET /v1/since` long-poll: it stops polling when its calls run out and returns
+what it has, so on Free with S3 over HTTP an idle long-poll returns after about
+22 seconds instead of 25 and a busy one returns part of the backlog, which the
+client's next poll continues. Neither is an error. The Free with S3 over HTTP
+envelope is in
+[workload-fit.md](../about/workload-fit.md#scale-at-a-glance).
 
 Graduation thresholds and the fold-cost derivation live in
 [graduation.md](../about/graduation.md); cost math lives in

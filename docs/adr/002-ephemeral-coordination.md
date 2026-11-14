@@ -112,8 +112,8 @@ is a **graduation signal, not silent breakage**.
   delayed create PUT, an isolate suspension, or the adapter's retry of a create
   can each straddle an unbounded number of peer commits and folds. The
   commit-path check (`assertCommitAboveDeleteFloor` in invariant 5) closes that
-  schedule instead. The window survives as a pre-image cost margin and a retirement
-  rate limit, with no safety property attached.
+  schedule instead. The window survives as a retirement rate limit, with no
+  safety property attached.
 - **Post-create manifest revalidation with discard-and-re-probe.** Insufficient,
   and for a stronger reason than the per-commit GET cost. Discard-and-re-probe
   cannot distinguish "my create landed and was folded" from "a foreign create

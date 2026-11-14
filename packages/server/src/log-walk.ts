@@ -34,6 +34,16 @@ import {
 } from "@baerly/protocol";
 import { isOwnCollection } from "./collection-alias.ts";
 
+/** Options for the log-walk reads. */
+export interface LogWalkOptions {
+  readonly signal?: AbortSignal;
+  /**
+   * Called with each entry's stored body length before it is decoded. A
+   * throw rejects the walk: the read path's admission budget charges here.
+   */
+  readonly onBody?: (bytes: number) => void;
+}
+
 /**
  * Fetch a single log entry. Centralises the "missing entry inside the
  * visible log range is a protocol-invariant violation" rule used by
@@ -71,7 +81,7 @@ export const readLogEntry = async (
 const readLogEntryWithBytes = async (
   storage: Storage,
   key: string,
-  opts?: { signal?: AbortSignal },
+  opts?: LogWalkOptions,
 ): Promise<{ entry: LogEntry; bytes: number }> => {
   const got = await storage.get(
     key,
@@ -83,6 +93,7 @@ const readLogEntryWithBytes = async (
       `log-walk: missing log entry at ${key}; protocol invariant violation`,
     );
   }
+  opts?.onBody?.(got.body.byteLength);
   try {
     return { entry: decodeJsonBytes<LogEntry>(got.body), bytes: got.body.byteLength };
   } catch (error) {
@@ -116,7 +127,7 @@ export const walkLogRange = async (
   logPrefix: string,
   fromSeq: number,
   toSeqExclusive: number,
-  opts?: { signal?: AbortSignal },
+  opts?: LogWalkOptions,
 ): Promise<LogEntry[]> => {
   const withBytes = await walkLogRangeWithBytes(storage, logPrefix, fromSeq, toSeqExclusive, opts);
   return withBytes.map((r) => r.entry);
@@ -138,7 +149,7 @@ export const walkLogRangeWithBytes = async (
   logPrefix: string,
   fromSeq: number,
   toSeqExclusive: number,
-  opts?: { signal?: AbortSignal },
+  opts?: LogWalkOptions,
 ): Promise<Array<{ entry: LogEntry; bytes: number }>> => {
   if (fromSeq >= toSeqExclusive) {
     return [];
@@ -173,13 +184,9 @@ export const walkLogRangeWithBytes = async (
  *   - `D`: tombstone — `map.delete(entry.doc_id)`.
  *
  * Entries whose `collection` does not match `opts.collection`, or
- * whose `doc_id` is `undefined`, are skipped. When
- * `opts.docIdFilter` is provided, only entries whose `doc_id` is
- * present in the filter set are folded. Authoritative query reads
- * omit this filter so the row set is complete at the returned tail.
+ * whose `doc_id` is `undefined`, are skipped.
  *
- * This is the canonical fold used by the read path
- * (`query.ts`) and the index reconciler (`rebuild-index.ts`).
+ * This is the canonical fold used by the read path (`query.ts`).
  * Centralising it keeps the
  * "straight `set` on I/U; tombstone on D" protocol invariant in one place.
  *
@@ -190,18 +197,14 @@ export const foldLogEntriesOnto = <T extends DocumentData>(
   entries: Iterable<LogEntry>,
   opts: {
     readonly collection: string;
-    readonly docIdFilter?: ReadonlySet<string>;
   },
 ): void => {
-  const { collection, docIdFilter } = opts;
+  const { collection } = opts;
   for (const entry of entries) {
     if (!isOwnCollection(entry.collection, collection)) {
       continue;
     }
     if (entry.doc_id === undefined) {
-      continue;
-    }
-    if (docIdFilter !== undefined && !docIdFilter.has(entry.doc_id)) {
       continue;
     }
     switch (entry.op) {

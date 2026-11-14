@@ -42,7 +42,7 @@ import {
   merge,
   type Storage,
 } from "@baerly/protocol";
-import { Db } from "@baerly/server";
+import { Db, type IndexDefinition } from "@baerly/server";
 import { APP, COLLECTION, TABLE_PREFIX, TENANT } from "./maintenance-harness.ts";
 
 /** The `_id` pool every op draws from. */
@@ -86,15 +86,31 @@ const insertBodyFor = (id: string, k: number): DocumentData => ({
   last: k,
 });
 
-const collectionOn = (storage: Storage) =>
-  Db.create({ storage, app: APP, tenant: TENANT }).collection(
-    COLLECTION,
-  ) as Collection<DocumentData>;
+/**
+ * Indexes covering every op's predicate: `_id` for the by-id verbs and
+ * `status` for the batch ops. Pass them to run the workload on a `Db` that
+ * declares them; declared indexes must change no verb's selection.
+ */
+export const RMW_INDEXES: readonly IndexDefinition[] = [
+  { name: "by_id", on: "_id" },
+  { name: "by_status", on: "status" },
+];
+
+const collectionOn = (storage: Storage, indexes: readonly IndexDefinition[] = []) =>
+  Db.create({
+    storage,
+    app: APP,
+    tenant: TENANT,
+    config: { collections: { [COLLECTION]: { indexes: [...indexes] } } },
+  }).collection(COLLECTION) as Collection<DocumentData>;
 
 /** Seed every pooled row live and matching the batch predicate. */
-export const seedRmwRows = async (storage: Storage): Promise<void> => {
+export const seedRmwRows = async (
+  storage: Storage,
+  indexes: readonly IndexDefinition[] = [],
+): Promise<void> => {
   for (const id of RMW_IDS) {
-    await collectionOn(storage).insert({ _id: id, status: "open", last: -1 });
+    await collectionOn(storage, indexes).insert({ _id: id, status: "open", last: -1 });
   }
 };
 
@@ -174,8 +190,13 @@ export const rmwOpsArb: fc.Arbitrary<RmwOp[]> = fc.array(
 const BATCH_WHERE = { status: "open" } as const;
 const matchesBatch = (row: DocumentData | undefined): boolean => row?.["status"] === "open";
 
-const runOp = (storage: Storage, op: RmwOp, k: number): Promise<unknown> => {
-  const c = collectionOn(storage);
+const runOp = (
+  storage: Storage,
+  op: RmwOp,
+  k: number,
+  indexes: readonly IndexDefinition[],
+): Promise<unknown> => {
+  const c = collectionOn(storage, indexes);
   if (op.kind === "batch") {
     return c.where(BATCH_WHERE).update(patchFor(op, k));
   }
@@ -217,16 +238,18 @@ const logLength = async (storage: Storage): Promise<number> => {
 /**
  * Start every op at once over `storage`; settle each to its value or error
  * code. `logOf` is read, unjittered and unscheduled, for each op's span.
+ * Every op runs on a `Db` declaring `indexes`.
  */
 export const runRmwOps = (
   storage: Storage,
   ops: readonly RmwOp[],
   logOf: Storage,
+  indexes: readonly IndexDefinition[] = [],
 ): Promise<RmwOutcome[]> =>
   Promise.all(
     ops.map(async (op, k) => {
       const from = await logLength(logOf);
-      const result = await runOp(storage, op, k).then(
+      const result = await runOp(storage, op, k, indexes).then(
         (ok): RmwResult => ({ ok }),
         (error: unknown): RmwResult => ({ code: (error as { code?: string }).code }),
       );
@@ -251,6 +274,7 @@ export const assertEvalPlanQualHistory = async (
   ops: readonly RmwOp[],
   outcomes: readonly RmwOutcome[],
   label: string,
+  indexes: readonly IndexDefinition[] = [],
 ): Promise<void> => {
   const log = await readWholeLog(storage);
   const live = new Map<string, DocumentData>();
@@ -370,4 +394,20 @@ export const assertEvalPlanQualHistory = async (
       rows: Object.fromEntries(live),
     },
   );
+  // Reads on a `Db` declaring `indexes` see the same fold.
+  const indexed = collectionOn(storage, indexes);
+  const byPredicate = await indexed.where(BATCH_WHERE).all();
+  const byId = await Promise.all(RMW_IDS.map((id) => indexed.get(id)));
+  expect({
+    at: label,
+    byPredicate: byPredicate.map((r) => r["_id"]).toSorted(),
+    byId: byId.map((r) => r?.["_id"]),
+  }).toEqual({
+    at: label,
+    byPredicate: [...live.values()]
+      .filter(matchesBatch)
+      .map((r) => r["_id"])
+      .toSorted(),
+    byId: RMW_IDS.map((id) => live.get(id)?.["_id"]),
+  });
 };

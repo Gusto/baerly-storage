@@ -218,14 +218,9 @@ The safe cutover shape is:
    GC passes to finish.
 2. Restore into a separate recovery bucket or tenant prefix.
 3. Run `baerly admin fsck` on the recovered collection.
-4. For indexed collections, run `baerly admin fsck --indexes
-   --config=<compiled baerly config>` on the recovered collection. Plain
-   restore imports rows; it does not rebuild secondary index markers. If
-   the index check reports drift, run it with `--fix` or run
-   `baerly admin rebuild-index` for each index before cutover.
-5. Point the app at the recovered bucket/prefix. This direct route
+4. Point the app at the recovered bucket/prefix. This direct route
    cutover is preferred, and it is the only route that rewrites no keys.
-6. If infrastructure requires a raw object copy instead, copy into a
+5. If infrastructure requires a raw object copy instead, copy into a
    separate bucket or storage namespace at the **identical
    bucket-relative collection path**. `current.snapshot` and every
    `gc/pending.json` candidate store complete bucket-relative keys, so a
@@ -248,18 +243,17 @@ The safe cutover shape is:
    - Copy `current.json` **last** — after the snapshot it names (when
      non-null) and every live log object exist at the destination. If
      `current.json` lands first, readers can reference missing objects.
-     Index artifacts can be rebuilt independently; reads do not depend
-     on their completeness.
+     Skip `index/`: it holds only legacy markers that nothing reads (see
+     [Legacy index markers](#legacy-index-markers)).
    - No kernel reader depends on content side objects, and GC does not
      touch them. Copy `content/` only when preserving a legacy or
      mixed-version bucket for legacy writers or tooling. Otherwise skip
      it. See [Legacy content cleanup](#legacy-content-cleanup) to reclaim
      the source bytes safely.
-7. Run `baerly admin fsck` (plus `--indexes` for indexed collections)
-   against the final destination — the exact route the app will read —
-   before enabling reads. Step 3 checked the recovery prefix, not the
-   copy.
-8. Resume writers only after a successful authenticated read against
+6. Run `baerly admin fsck` against the final destination — the exact
+   route the app will read — before enabling reads. Step 3 checked the
+   recovery prefix, not the copy.
+7. Resume writers only after a successful authenticated read against
    the recovered route.
 
 ### Legacy content cleanup
@@ -291,6 +285,62 @@ For R2, MinIO, and native GCS, use the configured endpoint or provider
 tooling against the identical full prefix; the AWS command is not portable
 to those providers.
 
+### Legacy index markers
+
+Writers before 0.7 PUT a zero-byte marker under
+`app/<app>/tenant/<tenant>/manifests/<collection>/index/` for each declared
+index a write touched. 0.7 writes none and no 0.7 read, write, `fsck` or
+maintenance pass opens one, so existing markers are inert and cost only
+storage. GC never reclaims them. The one 0.7 command that still lists them
+is `baerly admin usage`, which lists all of `manifests/` to discover
+collection names, so a large legacy prefix costs it extra LIST pages.
+
+No cleanup is required for correctness. To reclaim the bytes, delete the
+prefix once no 0.6 instance will read the collection again (see below).
+Build the target exactly as for
+[Legacy content cleanup](#legacy-content-cleanup), ending in `/index/`
+instead of `/content/`, and review the dry run first:
+
+```sh
+# Copy the exact configured URI, including any bucket key prefix.
+INDEX_PREFIX='s3://bucket/prod/app/acme/tenant/t1/manifests/tickets/index/'
+aws s3 rm --recursive --dryrun "$INDEX_PREFIX"
+# After reviewing the dry run:
+aws s3 rm --recursive "$INDEX_PREFIX"
+```
+
+**Rolling back to 0.6, or a mixed 0.6 / 0.7 fleet.** 0.6 reads of an
+indexed `where` took membership from these markers, and 0.7 writes create
+none. So a 0.6 instance reading a collection that a 0.7 instance has
+written to, during a rolling deploy or after a rollback, misses every row
+0.7 inserted or changed from every query it routes through an index.
+There is no version gate: 0.6 indexed reads could already miss live rows.
+0.6 writers in a mixed fleet keep creating markers, which 0.7 ignores.
+
+0.6's `baerly admin rebuild-index` cannot repair every collection 0.7 has
+written. 0.7 accepts values that 0.6 refused in a declared index field:
+an array, or a value too long for a marker key (S3 and R2 cap a key at
+1024 bytes). A 0.6 rebuild that meets one aborts (`SchemaError` for an
+array), leaving that index incomplete.
+
+First stop every app writer and any scheduled maintenance
+(`runScheduledMaintenance`); the in-band write tick stops with the
+writers. Then roll back one of two ways:
+
+1. **Drop the indexes.** Remove `indexes` from each affected collection in
+   the 0.6 configuration. 0.6 then answers those queries with a full scan
+   of the snapshot and log, which needs no markers.
+2. **Keep the indexes.** While still on 0.7, rewrite every row that holds
+   such a value in a field an index you keep declares (`baerly admin dump`
+   lists every row). Then roll back and run 0.6's
+   `baerly admin rebuild-index` once per kept index of each affected
+   collection; it rebuilds the markers from the snapshot and log.
+
+Either way, finish the index repair and check that indexed queries return
+the rows `baerly admin dump` shows before reopening traffic to 0.6.
+Do not delete the `index/` prefix while a rollback that keeps indexes is
+still possible, or that rollback must rebuild every index.
+
 ## Restore Drill
 
 At least once per retention window, run a restore drill: verify the
@@ -317,20 +367,6 @@ baerly admin fsck \
   --collection=tickets
 ```
 
-For indexed collections, add index reconciliation to the drill before
-testing indexed routes:
-
-```sh
-baerly admin fsck \
-  --bucket=s3://baerly-restore-drill \
-  --app=acme \
-  --tenant=t1-restore-drill \
-  --collection=tickets \
-  --indexes \
-  --fix \
-  --config=./dist/baerly.config.mjs
-```
-
 For byte-level confidence, dump the restored collection and compare:
 
 ```sh
@@ -344,5 +380,5 @@ baerly admin dump \
 cmp "$DUMP" /tmp/tickets-restored.ndjson
 ```
 
-This comparison proves the materialized rows, not secondary index
-markers. Use the indexed `fsck` step above for indexed collections.
+This comparison proves the materialized rows, which is everything a read
+depends on.

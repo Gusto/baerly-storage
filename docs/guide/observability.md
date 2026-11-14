@@ -2,7 +2,7 @@
 title: Observability
 audience: operator
 summary: "Operator signals, first-response actions, sinks, cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md."
-last-reviewed: 2026-06-23
+last-reviewed: 2026-11-13
 tags: [observability, operations, logging]
 related:
   [
@@ -39,7 +39,12 @@ Maintenance is the exception because it can run outside that request
 boundary. The in-band write-tick runner (`runBoundedMaintenance`) never
 throws: it swallows expected `WriteConflict` CAS losses silently, and on an
 unexpected error it increments `db.maintenance.unexpected_error_total`
-and logs the stack via `console.error`. A separate, rate-limited
+and logs the stack via `console.error`. A tick that runs out of the
+request's storage-call budget is expected, not an error: it skips a phase
+that does not fit (`db.maintenance.request_budget_skipped_total`) or ends
+on the call the budget refused
+(`db.maintenance.request_budget_refused_total`), and a later write's tick
+resumes. A separate, rate-limited
 `fold_deferred` warning fires when compaction defers — a record on the
 `baerly.maintenance` category, or a plain `console.warn` line where no
 adapter sink is bound. The opt-in

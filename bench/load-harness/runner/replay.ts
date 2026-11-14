@@ -26,11 +26,9 @@ export interface ReplayOpts {
   /** Per-logical-op latency capture (one entry per op). */
   readonly recordLatency: (kind: string, ms: number) => void;
   /**
-   * Optional {@link BaerlyConfig} forwarded to `Db.create`. When
-   * `collections[*].indexes` is declared, the auto-planner routes
-   * reads through the matching index; when absent, every read
-   * falls through to the snapshot+log fold. Set by the CLI's
-   * `--indexes=auto|none` flag.
+   * Optional {@link BaerlyConfig} forwarded to `Db.create`. Declared
+   * `collections[*].indexes` change no storage call, so the CLI sets
+   * none.
    */
   readonly config?: BaerlyConfig;
 }

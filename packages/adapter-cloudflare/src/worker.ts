@@ -28,6 +28,7 @@ import {
   type ObservabilityConfig,
   configureObservability,
   createObservabilityContext,
+  type ReadEnvelope,
   deriveOutcome,
   flushCanonicalLine,
   flushUnauthorizedAndRespond,
@@ -207,6 +208,18 @@ export const cfRequestLedger = (readEnv: (key: string) => string | undefined): R
   );
 
 /**
+ * The Worker's read envelope: the request pool its storage charges, so a
+ * read the ledger certainly cannot fit is refused from `current.json`
+ * alone (the R2 binding charges `internal`; anything else, reached through
+ * `fetch`, charges `external`). The data bounds (snapshot, tail, output)
+ * are left unbounded on every profile until cold CPU measurements size
+ * them; the ledger bounds every read's storage calls today.
+ */
+export const cfReadEnvelope = (storage: Storage): ReadEnvelope => ({
+  requestPool: isR2BindingStorage(storage) ? "internal" : "external",
+});
+
+/**
  * Write-tick options on the free profile for storage reached through
  * `fetch`: the GC sweep capped, and the server's unpublished host trigger
  * `foldAtTailEntries` (`InternalBoundedMaintenanceOptions`), spread into
@@ -232,9 +245,10 @@ const CF_FREE_FETCH_TICK = {
  * isolate stays alive long enough to drain the continuation; the
  * per-pass caps default to the TESTED CF-free `WRITE_TICK_*` values
  * (`phasesPerTick: "single"` — a CPU-limited free isolate does ONE of
- * fold/GC per request, never both), sized so a single pass stays well
- * under the free-tier 50-subrequest budget. Free stays at 50 external /
- * 1,000 internal-service subrequests. An operator on CF **paid** opts
+ * fold/GC per request, never both). Every storage call is charged to the
+ * invocation's request ledger (`cfRequestLedger`): on Free, 900 calls
+ * through the R2 binding and 45 through `fetch`, below the platform's
+ * 1,000 internal-service and 50 external subrequests. An operator on CF **paid** opts
  * into the whole paid tier — per-pass caps AND snapshot ceilings — with
  * `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which is what exploits the
  * 10,000-subrequest paid budget (the default since 2026-02-11, up from
@@ -306,12 +320,14 @@ export const cfMaintenanceDispatch = (
  * Cron Trigger handler. Called once per tick when the user has
  * declared `triggers.crons` in `wrangler.jsonc` AND passed this
  * option. The body owns its own subrequest budget — wrap any
- * outlasting work in `ctx.waitUntil(...)`. On Cloudflare Free, one
- * invocation must process only one `current.json` key and one direct
- * `compact()` or `runGc()` phase; alternate phases and shard cron
+ * outlasting work in `ctx.waitUntil(...)`; it runs under its own request
+ * ledger. Process one `current.json` key per invocation and shard cron
  * triggers or persist a collection cursor instead of looping tenants /
- * collections. Cloudflare Paid may use {@link runScheduledMaintenance}
- * within its larger invocation budget.
+ * collections. With the R2 binding, Free and Paid may call
+ * {@link runScheduledMaintenance} once per invocation (with
+ * `CLOUDFLARE_FREE_TIER` or `CLOUDFLARE_PAID_TIER`). On Free with storage
+ * over `fetch`, run one direct `compact()` or `runGc()` phase per
+ * invocation and alternate them.
  */
 export type WorkerScheduledHandler = (
   event: ScheduledController,
@@ -672,6 +688,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // and the `ctx.waitUntil` tick and invalidation it dispatches
         // (both started inside this context) charge the same ledger.
         ledger: cfRequestLedger(readEnv),
+        readEnvelope: cfReadEnvelope(baseStorage),
       });
 
       return runWithContext(obsCtx, async (): Promise<Response> => {
@@ -775,14 +792,15 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       const { options } = await ensureResolved(env);
       const handler = options.scheduled;
       if (handler !== undefined) {
-        // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, reserve
-        // `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` for
-        // "cf-paid" — it folds whatever live tail exists, bounded by
-        // the Paid slice. On the Free default, alternate direct
+        // To honour BAERLY_MAINTENANCE_PROFILE on the cron path, pass
+        // `CLOUDFLARE_PAID_TIER` to `runScheduledMaintenance(args, …)` on
+        // "cf-paid" and `CLOUDFLARE_FREE_TIER` on the Free default with
+        // the R2 binding, one collection per invocation. On Free with
+        // storage over `fetch`, alternate direct
         // `compact(args, CLOUDFLARE_FREE_TIER.compact)` and
-        // `runGc(args, CLOUDFLARE_FREE_TIER.gc)` calls, with exactly one
-        // collection/phase per invocation; shard or persist a collection
-        // cursor instead of looping. Import those entry points from
+        // `runGc(args, CLOUDFLARE_FREE_TIER.gc)` calls, one phase per
+        // invocation. Shard or persist a collection cursor instead of
+        // looping. Import those entry points from
         // `@gusto/baerly-storage/maintenance`, and use
         // `resolveCfMaintenanceProfile((k) => env[k])` here to select the
         // paid recipe when configured.

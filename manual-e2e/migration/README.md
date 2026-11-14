@@ -37,4 +37,4 @@ Outputs per version: `bucket/`, `expected.json` (model rows, index query answers
 
 ## Not implemented here (step 4)
 
-The release-candidate comparison: restore with the RC, re-dump and byte-compare, point/index/scan comparison against `expected.json`, `fsck`, `rebuild-index`, in-place open of the 0.6.0 bucket, and the restore drill.
+The release-candidate comparison: restore with the RC, re-dump and byte-compare, point/index/scan comparison against `expected.json`, `fsck`, in-place open of the 0.6.0 bucket, and the restore drill.

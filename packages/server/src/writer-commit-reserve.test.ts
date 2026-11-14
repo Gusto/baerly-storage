@@ -1,14 +1,16 @@
 /**
  * The committing create under the per-invocation request ledger: the
  * commit-resolution reserve (`COMMIT_RESOLUTION_RESERVE`) checked before
- * the index markers and again after a lost create race, a create the
- * ledger refuses before sending (definitively not applied), an uncertain
- * create whose readback the ledger refuses (`AmbiguousCommit`), refused
- * post-commit steps, and a multi-row update stopped part-way.
+ * the create and again after a lost create race, a create the ledger
+ * refuses before sending (definitively not applied), an uncertain create
+ * whose readback the ledger refuses (`AmbiguousCommit`), a multi-row
+ * update stopped part-way, and the tail at which an update stops fitting.
  */
 
 import {
   BaerlyError,
+  CF_FREE_EXTERNAL_REQUEST_LIMIT,
+  CF_FREE_INTERNAL_REQUEST_LIMIT,
   COMMIT_RESOLUTION_RESERVE,
   createCurrentJson,
   encodeJsonBytes,
@@ -26,8 +28,8 @@ import {
 import { describe, expect, test, vi } from "vitest";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
+import { compact, type InternalCompactOptions } from "./compactor.ts";
 import { Db } from "./db.ts";
-import type { IndexDefinition } from "./indexes.ts";
 import type { InternalBoundedMaintenanceOptions } from "./maintenance-options.ts";
 import {
   createObservabilityContext,
@@ -80,19 +82,12 @@ const limitsFor = (pool: RequestPool, limit: number) =>
     ? { internal: limit, external: Infinity }
     : { internal: limit, external: limit };
 
-const BY_STATUS = { name: "by_status", on: "status" } satisfies IndexDefinition;
-const BY_OWNER = { name: "by_owner", on: "owner" } satisfies IndexDefinition;
-
 const commitInsert = async (
   storage: Storage,
   ledger: RequestLedger,
-  opts: { indexes?: IndexDefinition[]; ctx?: ObservabilityContext; force?: boolean } = {},
+  opts: { ctx?: ObservabilityContext; force?: boolean } = {},
 ): Promise<unknown> => {
-  const writer = new Writer({
-    storage,
-    currentJsonKey: CURRENT_KEY,
-    options: { indexes: opts.indexes ?? [] },
-  });
+  const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
   return await runWithContext(opts.ctx ?? createObservabilityContext({ ledger }), async () => {
     try {
       return await writer.commit({
@@ -204,30 +199,29 @@ describe.each(POOLS)("Writer create under the request ledger (%s pool)", (pool) 
 });
 
 describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
-  const indexes = [BY_STATUS, BY_OWNER];
-  // Every marker PUT and the create at full retries, plus the reserve.
-  const needed = STORAGE_RETRY_MAX_ATTEMPTS * (indexes.length + 1) + COMMIT_RESOLUTION_RESERVE;
+  // The create at full retries, plus the reserve.
+  const needed = STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
 
-  /** Storage calls the commit charges before its first index-marker PUT. */
-  const chargedBeforeMarkers = async (): Promise<number> => {
+  /** Storage calls the commit charges before its create, its first PUT. */
+  const chargedBeforeCreate = async (): Promise<number> => {
     const inner = await provisioned();
     const ledger = new RequestLedger();
     inner.ledger = ledger;
-    await expect(
-      commitInsert(ledgeredStorage(inner, pool), ledger, { indexes }),
-    ).resolves.toMatchObject({ entry: { seq: 0 } });
+    await expect(commitInsert(ledgeredStorage(inner, pool), ledger)).resolves.toMatchObject({
+      entry: { seq: 0 },
+    });
     return inner.chargedBeforeFirstPut!;
   };
 
-  test("a budget one short of the reserve refuses before any index-marker PUT", async () => {
+  test("a budget one short of the reserve refuses before the create", async () => {
     expect(COMMIT_RESOLUTION_RESERVE).toBe(6);
-    const limit = (await chargedBeforeMarkers()) + needed - 1;
+    expect(needed).toBe(9);
+    const limit = (await chargedBeforeCreate()) + needed - 1;
     const inner = await provisioned();
 
     const err = await commitInsert(
       ledgeredStorage(inner, pool),
       new RequestLedger(limitsFor(pool, limit)),
-      { indexes },
     );
 
     expect(err).toBeInstanceOf(BaerlyError);
@@ -238,19 +232,15 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
   });
 
   test("a budget exactly covering the reserve commits", async () => {
-    const limit = (await chargedBeforeMarkers()) + needed;
+    const limit = (await chargedBeforeCreate()) + needed;
     const inner = await provisioned();
 
     await expect(
-      commitInsert(ledgeredStorage(inner, pool), new RequestLedger(limitsFor(pool, limit)), {
-        indexes,
-      }),
+      commitInsert(ledgeredStorage(inner, pool), new RequestLedger(limitsFor(pool, limit))),
     ).resolves.toMatchObject({ entry: { seq: 0, doc_id: "one" } });
   });
 
   test("a lost create race re-checks the reserve before the next create", async () => {
-    // Unindexed: the pre-marker check needs the create plus the reserve.
-    const firstCheck = STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
     const measure = await provisioned();
     const measureLedger = new RequestLedger();
     measure.ledger = measureLedger;
@@ -275,7 +265,7 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
 
     const err = await commitInsert(
       ledgeredStorage(inner, pool),
-      new RequestLedger(limitsFor(pool, before + firstCheck)),
+      new RequestLedger(limitsFor(pool, before + needed)),
     );
 
     // The 412, the occupant readback and the forward probe spent three of
@@ -290,10 +280,10 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
     });
   });
 
-  test("a rebased post-image after a lost race re-checks the reserve with its markers", async () => {
+  test("a rebased post-image after a lost race re-checks the reserve", async () => {
     const rebased = { _id: "one", status: "rebased", owner: "grace" };
     const commitRebasing = async (storage: Storage, ledger: RequestLedger): Promise<unknown> => {
-      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY, options: { indexes } });
+      const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY });
       return await runWithContext(createObservabilityContext({ ledger }), async () => {
         try {
           return await writer.commit({
@@ -339,8 +329,8 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
       new RequestLedger(limitsFor(pool, measure.chargedBeforeFirstPut! + needed)),
     );
 
-    // Two marker PUTs, the 412, the readback and the probe spent five; the
-    // rebased body's two markers, its create and the reserve need 15.
+    // The 412, the readback and the probe spent three; the rebased body's
+    // create and the reserve need 9 again.
     expect(err).toBeInstanceOf(BaerlyError);
     expect((err as BaerlyError).code).toBe("CapacityExceeded");
     expect((err as BaerlyError).cause).toMatchObject({ refused: true, needed });
@@ -348,7 +338,7 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
   });
 
   test("an uncertain create with full retries on its readback and floor read resolves within the reserve, despite concurrent work", async () => {
-    // Unindexed: the hold is the create's 3 attempts plus the reserve's 6.
+    // The hold is the create's 3 attempts plus the reserve's 6.
     const before = await (async () => {
       const measure = await provisioned();
       const measureLedger = new RequestLedger();
@@ -407,63 +397,11 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
     expect(sumCounter(ctx, "db.write.delete_floor_check_skipped_total")).toBe(0);
     expect(ledger.storageRemaining()).toBe(0);
   });
-
-  test("steps after the commit run outside the hold: a refusal there leaves the commit acknowledged", async () => {
-    const inner = await provisioned();
-    const seed = new Writer({ storage: inner, currentJsonKey: CURRENT_KEY, options: { indexes } });
-    await seed.commit({
-      op: "I",
-      collection: "tickets",
-      docId: "one",
-      body: { _id: "one", status: "open", owner: "ada" },
-    });
-    const ledger = new RequestLedger(limitsFor(pool, 1000));
-    const ledgered = ledgeredStorage(inner, pool);
-    let committed = false;
-    const storage: Storage = {
-      ...ledgered,
-      put: async (
-        key: string,
-        body: Uint8Array,
-        opts?: StoragePutOptions,
-      ): Promise<StoragePutResult> => {
-        const result = await ledgered.put(key, body, opts);
-        committed ||= isLogCreate(key, opts);
-        return result;
-      },
-      get: (key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> => {
-        if (committed && key === LOG_0) {
-          // The pre-image walk's first read: concurrent work has spent
-          // everything outside the (now released) hold.
-          drain(ledger, pool);
-        }
-        return ledgered.get(key, opts);
-      },
-    };
-    const ctx = createObservabilityContext({ ledger });
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    const writer = new Writer({ storage, currentJsonKey: CURRENT_KEY, options: { indexes } });
-
-    const result = await runWithContext(ctx, () =>
-      writer.commit({
-        op: "U",
-        collection: "tickets",
-        docId: "one",
-        body: { _id: "one", status: "closed", owner: "ada" },
-        forceMaintenance: true,
-      }),
-    );
-
-    errorLog.mockRestore();
-    expect(result).toMatchObject({ entry: { seq: 1, op: "U" } });
-    expect(sumCounter(ctx, "db.write.post_commit_refused_total", "pre-image-read")).toBe(1);
-    expect(sumCounter(ctx, "db.write.delete_floor_check_skipped_total")).toBe(0);
-  });
 });
 
-const ticketsConfig = { collections: { tickets: { indexes: [BY_STATUS, BY_OWNER] } } };
+const ticketsConfig = { collections: { tickets: {} } };
 
-/** Seed rows `a` and `b`, open and indexed, outside any ledger. */
+/** Seed rows `a` and `b`, open, outside any ledger. */
 const seededTickets = async <S extends MemoryStorage>(inner: S): Promise<S> => {
   const seedDb = Db.create({ storage: inner, app: "test", tenant: "t", config: ticketsConfig });
   await seedDb.collection("tickets").insert({ _id: "a", status: "open", owner: "ada" });
@@ -488,13 +426,13 @@ const closeAll = async (storage: Storage, ctx: ObservabilityContext): Promise<un
   });
 };
 
-describe.each(POOLS)("a multi-row indexed update under the request ledger (%s pool)", (pool) => {
+describe.each(POOLS)("a multi-row update under the request ledger (%s pool)", (pool) => {
   test("stopped by the budget, keeps the rows before the refused one and commits nothing after it", async () => {
     const inner = await seededTickets(new MemoryStorage());
     const ledger = new RequestLedger(limitsFor(pool, 1000));
     const ledgered = ledgeredStorage(inner, pool);
-    // Row b's two markers and its create, with retries, plus the reserve.
-    const rowNeeds = 3 * STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
+    // Row b's create, with retries, plus the reserve.
+    const rowNeeds = STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
     let creates = 0;
     let manifestReads = 0;
     const storage: Storage = {
@@ -596,4 +534,137 @@ describe.each(POOLS)("a multi-row indexed update under the request ledger (%s po
     expect(dispatchedHolds).toEqual([undefined, undefined]);
     await expect(statuses(lossy)).resolves.toEqual({ a: "closed", b: "closed" });
   });
+
+  test("a write tick running in waitUntil sizes its fold net of the next row's reserve", async () => {
+    const ledger = new RequestLedger(limitsFor(pool, 1000));
+    const ticks: Array<() => Promise<void>> = [];
+    const ctx = createObservabilityContext({
+      ledger,
+      maintenance: {
+        dispatch: (task) => {
+          const from = getCurrentContext()!;
+          ticks.push(async () => {
+            await runWithContext(from, task);
+          });
+        },
+        options: { foldAtTailEntries: 1 } as InternalBoundedMaintenanceOptions,
+      },
+    });
+    let creates = 0;
+    let armed = false;
+    let heldDuringTick: number | undefined;
+    let heldAfterTick: number | undefined;
+    class TickDuringRowB extends MemoryStorage {
+      override async put(
+        key: string,
+        body: Uint8Array,
+        opts?: StoragePutOptions,
+      ): Promise<StoragePutResult> {
+        if (armed && isLogCreate(key, opts) && key.includes("/log/") && ++creates === 2) {
+          // Row b's create, under its hold: leave 5 requests outside it, so
+          // the gross room fits row a's fold but the room net of the hold
+          // (4 after the tick's manifest read) does not.
+          drain(ledger, pool, 5);
+          heldDuringTick = ledger.held;
+          for (const tick of ticks.splice(0)) {
+            await tick();
+          }
+          heldAfterTick = ledger.held;
+        }
+        return super.put(key, body, opts);
+      }
+    }
+    const inner = await seededTickets(new TickDuringRowB());
+    armed = true;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await closeAll(ledgeredStorage(inner, pool), ctx);
+
+    errorLog.mockRestore();
+    expect(result).toEqual({ modified: 2 });
+    // The hold outweighs the fold's shortfall, so only net sizing skips it.
+    expect(heldDuringTick).toBeGreaterThanOrEqual(COMMIT_RESOLUTION_RESERVE + 2);
+    expect(sumCounter(ctx, "db.maintenance.request_budget_skipped_total", "fold")).toBe(1);
+    expect(sumCounter(ctx, "db.maintenance.request_budget_refused_total")).toBe(0);
+    expect(sumCounter(ctx, "db.maintenance.unexpected_error_total")).toBe(0);
+    // The tick spent nothing of row b's reserve.
+    expect(heldAfterTick).toBe(heldDuringTick);
+    await expect(statuses(inner)).resolves.toEqual({ a: "closed", b: "closed" });
+  });
+});
+
+describe("update tail limit on Workers Free over fetch", () => {
+  const KEY = "app/rc/tenant/t/manifests/docs/current.json";
+
+  /**
+   * Update one snapshot doc at a pending tail of `tail` entries over a
+   * folded snapshot, under the Free external ledger, on a collection
+   * declaring `indexes` single-field indexes that the update changes.
+   * Returns the error code, or "ok".
+   */
+  const updateAt = async (tail: number, indexes: number): Promise<string> => {
+    const inner = new MemoryStorage();
+    const defs = Array.from({ length: indexes }, (_, k) => ({ name: `by_f${k}`, on: `f${k}` }));
+    const coll = (storage: Storage) =>
+      Db.create({
+        storage,
+        app: "rc",
+        tenant: "t",
+        config: { collections: { docs: { indexes: defs } } },
+      }).collection("docs");
+    const body = (id: string) => ({
+      _id: id,
+      f: "a",
+      ...Object.fromEntries(defs.map((d) => [d.on, "a"])),
+    });
+    const noTick = createObservabilityContext({ maintenance: { dispatch: () => {} } });
+    await runWithContext(noTick, async () => {
+      for (let i = 0; i < 10; i++) {
+        await coll(inner).insert(body(`s${i}`));
+      }
+    });
+    await compact({ storage: inner, currentJsonKey: KEY }, {
+      maxEntriesPerRun: 10,
+      minEntriesToCompact: 1,
+    } as InternalCompactOptions);
+    await runWithContext(noTick, async () => {
+      for (let i = 0; i < tail; i++) {
+        await coll(inner).insert(body(`t${i}`));
+      }
+    });
+    const ledger = new RequestLedger({
+      internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
+      external: CF_FREE_EXTERNAL_REQUEST_LIMIT,
+    });
+    const ctx = createObservabilityContext({ ledger, maintenance: { dispatch: () => {} } });
+    return await runWithContext(ctx, async () => {
+      try {
+        await coll(ledgeredStorage(inner, "external")).update("s1", {
+          f: "z",
+          ...Object.fromEntries(defs.map((d) => [d.on, "z"])),
+        });
+        return "ok";
+      } catch (error) {
+        return (error as BaerlyError).code;
+      }
+    });
+  };
+
+  // The update reads 5 + tail calls before its hold, and the hold is the
+  // create's retries plus the reserve, whatever indexes are declared.
+  test.each([0, 9])(
+    "an update with %i declared indexes is refused from a 32-entry tail; at 31 it commits",
+    async (indexes) => {
+      const needed = (tail: number): number =>
+        5 + tail + STORAGE_RETRY_MAX_ATTEMPTS + COMMIT_RESOLUTION_RESERVE;
+      // The first tail at which the update no longer fits.
+      let firstRefusedTail = 0;
+      while (needed(firstRefusedTail) <= CF_FREE_EXTERNAL_REQUEST_LIMIT) {
+        firstRefusedTail += 1;
+      }
+      expect(firstRefusedTail).toBe(32);
+      await expect(updateAt(firstRefusedTail - 1, indexes)).resolves.toBe("ok");
+      await expect(updateAt(firstRefusedTail, indexes)).resolves.toBe("CapacityExceeded");
+    },
+  );
 });

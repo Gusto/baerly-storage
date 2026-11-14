@@ -35,8 +35,7 @@ import {
   readCurrentJson,
   uuid,
 } from "@baerly/protocol";
-import { allIndexKeysFor, Db, probeTailFrom } from "@baerly/server";
-import { rebuildIndex } from "@baerly/server/maintenance";
+import { Db, probeTailFrom } from "@baerly/server";
 import { Writer } from "@baerly/server/_internal/testing";
 import {
   CentralisedOfflineFirstCausalSystem,
@@ -101,6 +100,7 @@ interface Instance {
   readonly db: Db;
   readonly writer: Writer;
   readonly storage: Storage;
+  readonly tenant: string;
   readonly currentJsonKey: string;
   readonly logPrefix: string;
 }
@@ -207,38 +207,29 @@ const readLatest = async (
 };
 
 /**
- * T4 invariant — when the filtered index is declared, the live key
- * set under its prefix MUST equal `allIndexKeysFor(FILTERED_INDEX,
- * liveBody)` after a {@link rebuildIndex} reconciliation pass.
- *
- * Multi-writer cascade contention can leave orphan index entries in
- * the bucket — CAS retries throw the prior attempt's PUT/DELETE
- * work away from `current.json` but the storage-level keys persist
- * until the next writer's diff path cleans them up or a rebuild
- * runs. The chapter's correctness invariant lives at the rebuild
- * boundary: after rebuild, the on-storage key set MUST equal the
- * filter-aware projection of the live doc set.
+ * Declared-index invariant — when the filtered index is declared, a
+ * read through a `Db` that declares it returns exactly what the log
+ * says is live: the doc iff its latest value satisfies the index's
+ * filter. Reads take membership from the fold, and a declaration
+ * changes no read.
  *
  * The cascade is single-key (`COLLECTION === docId`) so the live
- * set is at most one row; the expectation collapses to "zero keys
- * iff the live doc doesn't satisfy the filter, else one key for
- * that doc".
+ * set is at most one row.
  */
-const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
-  // Quiesce the cascade with a rebuild pass before asserting. The
-  // rebuild reconciles the live doc set against the on-storage
-  // index keys (CONTRACTS §4 — `rebuildIndex` consumes
-  // `allIndexKeysFor` and is filter-aware via T4's projector
-  // change).
-  await rebuildIndex(inst.storage, inst.currentJsonKey, FILTERED_INDEX);
+const assertFilteredIndexReadMatchesLive = async (inst: Instance): Promise<void> => {
   const latest = await readLatest(inst, COLLECTION);
   const live = latest?.value;
-  const expected = new Set(allIndexKeysFor(inst.logPrefix, [FILTERED_INDEX], live, COLLECTION));
-  const actual = new Set<string>();
-  for await (const entry of inst.storage.list(`${inst.logPrefix}/index/${FILTERED_INDEX.name}/`)) {
-    actual.add(entry.key);
-  }
-  expect(actual, "filtered-index live key set != allIndexKeysFor(liveBody)").toEqual(expected);
+  const db = Db.create({
+    storage: inst.storage,
+    app: APP,
+    tenant: inst.tenant,
+    config: { collections: { [COLLECTION]: { indexes: [FILTERED_INDEX] } } },
+  });
+  const rows = await db.collection(COLLECTION).where({ sender: 0 }).all();
+  expect(
+    rows.map((r) => r["_id"]),
+    "indexed read != live doc set under the index filter",
+  ).toEqual(live?.sender === 0 ? [COLLECTION] : []);
 };
 
 /**
@@ -255,8 +246,7 @@ const assertFilteredIndexConsistent = async (inst: Instance): Promise<void> => {
  * Filtered-index injected by `runCausalConsistencyCascade` when
  * `opts.injectFilteredIndex === true` (T4). Filters on `sender === 0`
  * so ~1/N of writes match the predicate; the assertion at the end
- * of the cascade walks the storage and checks the live key set
- * equals `allIndexKeysFor(FILTERED_INDEX)(liveBody)`.
+ * of the cascade checks an indexed read against the live doc.
  */
 const FILTERED_INDEX: IndexDefinition = {
   name: "cascade_filter",
@@ -264,10 +254,7 @@ const FILTERED_INDEX: IndexDefinition = {
   predicate: { clauses: [{ op: "eq", field: "sender", value: 0 }] },
 };
 
-const buildInstances = async (
-  storages: Storage[],
-  indexes: ReadonlyArray<IndexDefinition>,
-): Promise<Instance[]> => {
+const buildInstances = async (storages: Storage[]): Promise<Instance[]> => {
   // Pick a deterministic tenant for the CAS-shared current.json so all
   // N writers contend on the same key. (`Db.create` enforces a "/"-free
   // tenant; tests use a fresh suffix per cascade.)
@@ -288,15 +275,12 @@ const buildInstances = async (
       tenant: sharedTenant,
     });
     void i;
-    const writer = new Writer({
-      storage,
-      currentJsonKey: sharedCurrentKey,
-      ...(indexes.length > 0 && { options: { indexes } }),
-    });
+    const writer = new Writer({ storage, currentJsonKey: sharedCurrentKey });
     return {
       db,
       writer,
       storage,
+      tenant: sharedTenant,
       currentJsonKey: sharedCurrentKey,
       logPrefix: sharedLogPrefix,
     };
@@ -397,10 +381,10 @@ export const runCausalConsistencyCascade = (opts: {
   pollTickMs: number;
   clockOffsetsMs?: readonly number[];
   /**
-   * T4: when `true`, the cascade declares a sparse filtered index
-   * over the single shared doc and, after the cascade completes,
-   * asserts the on-storage key set under the index's prefix equals
-   * `allIndexKeysFor(FILTERED_INDEX, liveDoc)`. The filter matches
+   * When `true`, the cascade declares a sparse filtered index over
+   * the single shared doc and, after the cascade completes, asserts
+   * that a read through a `Db` declaring it returns the live doc iff
+   * the doc satisfies the filter. The filter matches
    * roughly 1/N of broadcasts (`sender === 0`), exercising both the
    * miss→match and match→miss U-quadrants under live contention.
    */
@@ -462,10 +446,7 @@ export const runCausalConsistencyCascade = (opts: {
         // append-only and entries are immutable, so the freshest matching
         // slot only grows).
         const lastObservedSeq: number[] = Array.from({ length: N }, () => -1);
-        const declaredIndexes: ReadonlyArray<IndexDefinition> = opts.injectFilteredIndex
-          ? [FILTERED_INDEX]
-          : [];
-        const instances = await buildInstances(opts.storages, declaredIndexes);
+        const instances = await buildInstances(opts.storages);
         const system = new CentralisedOfflineFirstCausalSystem();
 
         let testFailed = false;
@@ -631,7 +612,7 @@ export const runCausalConsistencyCascade = (opts: {
                   )}`,
                 ).toEqual([]);
                 if (opts.injectFilteredIndex) {
-                  await assertFilteredIndexConsistent(instances[0]!);
+                  await assertFilteredIndexReadMatchesLive(instances[0]!);
                 }
                 done();
               } catch (error) {
@@ -789,7 +770,7 @@ export const runMultiDocCascade = async (opts: {
   const docIds = opts.docIds ?? [COLLECTION];
   const commitsPerDoc = opts.commitsPerDoc ?? 8;
   const N = opts.storages.length;
-  const instances = await buildInstances(opts.storages, []);
+  const instances = await buildInstances(opts.storages);
 
   const writtenPerDoc: Record<string, string[]> = {};
   for (const docId of docIds) {
@@ -892,11 +873,9 @@ export const runMultiDocCascade = async (opts: {
 
 /**
  * Doc shape consumed by the range-walk parity cascade. `priority`
- * is a string-typed field intentionally — `encodeIndexValue` is
- * value-order-preserving across every supported type, so numeric
- * ranges would also route through the index, but pinning priorities
- * to short string tokens keeps the cascade's surface stable across
- * tickets and makes the in-memory full-scan baseline easy to read.
+ * is a string-typed field intentionally: pinning priorities to short
+ * string tokens keeps the cascade's surface stable and makes the
+ * in-memory full-scan baseline easy to read.
  */
 interface ParityDoc extends DocumentData {
   readonly _id: string;
@@ -904,8 +883,8 @@ interface ParityDoc extends DocumentData {
 }
 
 /**
- * Seed N random docs into the collection via a single Writer
- * with the `by_priority` index declared. Returns the seeded docs
+ * Seed N random docs into the collection via a single Writer.
+ * Returns the seeded docs
  * so the caller can compute the expected (full-scan) result in
  * memory.
  */
@@ -914,17 +893,12 @@ const seedParityDocs = async (
   app: string,
   tenant: string,
   collection: string,
-  indexes: ReadonlyArray<IndexDefinition>,
   count: number,
   priorityAlphabet: ReadonlyArray<string>,
 ): Promise<ParityDoc[]> => {
   const currentJsonKey = `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`;
   await ensureCurrent(storage, currentJsonKey);
-  const writer = new Writer({
-    storage,
-    currentJsonKey,
-    options: { indexes },
-  });
+  const writer = new Writer({ storage, currentJsonKey });
   const docs: ParityDoc[] = [];
   for (let i = 0; i < count; i++) {
     const priority = priorityAlphabet[i % priorityAlphabet.length]!;
@@ -934,8 +908,7 @@ const seedParityDocs = async (
     // unacknowledged commit (a Toxiproxy dead window outlasting the
     // adapter's retries on node-minio) is re-issued until one is acked.
     // Re-issuing is safe even when the earlier attempt landed: the body is
-    // identical, so a second `I` entry folds to the same row and the same
-    // index marker. The parity check itself then proves all `count` docs
+    // identical, so a second `I` entry folds to the same row. The parity check itself then proves all `count` docs
     // are visible.
     await withNetworkRetry(
       () => writer.commit({ op: "I", collection, docId: doc._id, body: doc }),
@@ -990,15 +963,7 @@ export const runRangeWalkParityCascade = async (opts: {
   // meaningful, narrow enough that the cascade stays under a
   // second on memory.
   const priorityAlphabet = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"];
-  const seeded = await seedParityDocs(
-    opts.storage,
-    app,
-    tenant,
-    collection,
-    indexes,
-    72,
-    priorityAlphabet,
-  );
+  const seeded = await seedParityDocs(opts.storage, app, tenant, collection, 72, priorityAlphabet);
   // Seeding runs under faults; the planner-vs-full-scan reads run healed.
   // Every seed was acked, and the reads below prove all of them durable.
   await opts.healNetwork?.();

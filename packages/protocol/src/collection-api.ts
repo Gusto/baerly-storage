@@ -205,8 +205,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         read and deleted but not updated. Insert a
    *         copy under a fresh NFC id that is not canonically equivalent
    *         to the original (for example, omit `_id` for a UUID), then
-   *         delete the original. On R2, using the normalized original id
-   *         would let that delete remove the copy's index markers.
+   *         delete the original.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id`. Repair it with
    *         `replace(id, doc)`.

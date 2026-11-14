@@ -82,13 +82,12 @@ export class S3HttpStorage implements Storage {
     this.#backoffMs = options.backoffMs;
   }
 
-  #objectUrl(key: string, versionId?: string): string {
+  #objectUrl(key: string): string {
     // Choke point for every key-addressing verb — reject unaddressable
     // `.`/`..`/empty keys before URL normalization turns them into a
     // bucket-root 403. @see storage-compatibility.md "Key namespace".
     assertValidStorageKey(key);
-    const base = `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
-    return versionId !== undefined ? `${base}?versionId=${encodeURIComponent(versionId)}` : base;
+    return `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
   }
 
   async #dispatch(req: Request): Promise<Response> {
@@ -119,14 +118,10 @@ export class S3HttpStorage implements Storage {
 
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
-    const url = this.#objectUrl(key, opts?.versionId);
-    const headers = new Headers();
-    if (opts?.ifNoneMatch !== undefined) {
-      headers.set("If-None-Match", opts.ifNoneMatch);
-    }
+    const url = this.#objectUrl(key);
     return this.#retry(async () => {
       const res = await this.#dispatch(
-        new Request(url, { method: "GET", headers, signal: opts?.signal ?? null }),
+        new Request(url, { method: "GET", signal: opts?.signal ?? null }),
       );
       switch (res.status) {
         case 200: {
@@ -135,10 +130,8 @@ export class S3HttpStorage implements Storage {
             throw new BaerlyError("InvalidResponse", `GET ${key}: missing ETag`);
           }
           const body = new Uint8Array(await res.arrayBuffer());
-          const versionId = res.headers.get("x-amz-version-id") ?? undefined;
-          return versionId !== undefined ? { body, etag, versionId } : { body, etag };
+          return { body, etag };
         }
-        case 304:
         case 404: {
           return null;
         }
@@ -208,13 +201,9 @@ export class S3HttpStorage implements Storage {
         throw new BaerlyError("InvalidResponse", `PUT ${key}: missing ETag`);
       }
       const dateStr = res.headers.get("Date");
-      const versionId = res.headers.get("x-amz-version-id") ?? undefined;
-      const result: { etag: string; serverDate?: Date; versionId?: string } = { etag };
+      const result: { etag: string; serverDate?: Date } = { etag };
       if (dateStr !== null) {
         result.serverDate = new Date(dateStr);
-      }
-      if (versionId !== undefined) {
-        result.versionId = versionId;
       }
       return result;
     }, opts);

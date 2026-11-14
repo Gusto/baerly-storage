@@ -8,7 +8,7 @@ import { assertNfcSegment, assertPathSegment, assertWellFormedSegment } from "./
  * release stays readable and deletable, so it is migrated by copy.
  */
 const DOC_ID_NFC_RESOLUTION =
-  'Pass id.normalize("NFC") for a new _id. To migrate a stored non-NFC row, insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit _id for a UUID), then delete the original. On R2, copying to the normalized original id before deleting it would remove the copy\'s index markers.';
+  'Pass id.normalize("NFC") for a new _id. To migrate a stored non-NFC row, insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit _id for a UUID), then delete the original.';
 
 /**
  * Resolution for an `_id` with an unpaired surrogate. A row stored under
@@ -16,7 +16,7 @@ const DOC_ID_NFC_RESOLUTION =
  * is migrated by copy.
  */
 const DOC_ID_WELL_FORMED_RESOLUTION =
-  "Pass an _id with no unpaired UTF-16 surrogate (id.isWellFormed() is true), or omit _id for a UUID. To migrate a stored row with such an _id, read it by _id, remove _id from the copy so insert generates a fresh UUID, then delete the original. Do not use id.toWellFormed() as the new _id: on R2 it shares the original's index markers, which deleting the original would remove.";
+  "Pass an _id with no unpaired UTF-16 surrogate (id.isWellFormed() is true), or omit _id for a UUID. To migrate a stored row with such an _id, read it by _id, remove _id from the copy so insert generates a fresh UUID, then delete the original.";
 
 /**
  * Resolution for a point read whose id no row can be stored under.
@@ -31,11 +31,13 @@ const READ_ID_RESOLUTION =
  *
  * Applies {@link assertStoredDocId}, then requires the id to be
  * well-formed UTF-16 (no unpaired surrogate, which no URL or S3 key can
- * carry) and in Unicode Normalization Form C (`id === id.normalize("NFC")`). Index marker keys
- * embed the raw `_id`, and R2 stores canonically-equivalent keys (NFC `é`
- * and NFD `e` + U+0301) as one object, so two rows whose ids differ only
- * by normalization would share a marker. NFC gives each equivalence class
- * one spelling. Case and compatibility variants (`A` / `a`, `ﬁ` / `fi`)
+ * carry) and in Unicode Normalization Form C (`id === id.normalize("NFC")`),
+ * so each canonical-equivalence class (NFC `é` and NFD `e` + U+0301) has one
+ * spelling and one byte form. R2 stores canonically-equivalent keys as one
+ * object, so any object a future format keys by `_id` (an index-aware
+ * snapshot, say) would otherwise merge two rows whose ids differ only by
+ * normalization; the rule keeps that door open, and loosening it later is
+ * not a breaking change. Case and compatibility variants (`A` / `a`, `ﬁ` / `fi`)
  * are distinct NFC strings and stay distinct ids.
  *
  * @throws BaerlyError code="InvalidConfig" — the id breaks the key-segment

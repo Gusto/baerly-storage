@@ -7,9 +7,6 @@
  * what a migration has to handle, including rows whose `_id`s are
  * canonically equivalent (legacy twins).
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, test } from "vitest";
 import {
@@ -22,11 +19,9 @@ import { Db } from "@baerly/server";
 import { captureStream } from "../../packages/cli/src/_internal/testing.ts";
 import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runFsck } from "../../packages/cli/src/admin/fsck.ts";
-import { runRebuildIndex } from "../../packages/cli/src/admin/rebuild-index.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { runInspect } from "../../packages/cli/src/inspect.ts";
-import { allIndexKeysFor } from "../../packages/server/src/indexes.ts";
-import { rebuildIndex } from "../../packages/server/src/rebuild-index.ts";
+import { listIndexObjects } from "../fixtures/legacy-index-markers.ts";
 import { logStateCurrentJson, seedLogEntry } from "../fixtures/log-state.ts";
 
 const NFC = "café";
@@ -92,32 +87,21 @@ const ROWS = [
 
 describe("migration of an ill-formed legacy _id", () => {
   test.each(["bad-\ud800", "bad-\udc00"])(
-    "copying %j with a generated id preserves its index after deleting the original",
+    "copying %j to a generated id keeps it queryable after deleting the original",
     async (legacyId) => {
-      const base = new MemoryStorage({ ephemeral: true });
-      // R2 bindings convert lone surrogates in keys to U+FFFD. JSON log
-      // bodies retain the original id, so the row and its marker differ.
-      const storage: Storage = {
-        get: (key, opts) => base.get(key.toWellFormed(), opts),
-        put: (key, body, opts) => base.put(key.toWellFormed(), body, opts),
-        delete: (key, opts) => base.delete(key.toWellFormed(), opts),
-        list: (key, opts) => base.list(key.toWellFormed(), opts),
-      };
+      // No object key embeds `_id`, so R2's U+FFFD key mapping cannot
+      // couple the copy to the original; plain memory storage suffices.
+      const storage = new MemoryStorage({ ephemeral: true });
       const names = { app: "app", tenant: "tenant", collection: "rows" };
       const prefix = "app/app/tenant/tenant/manifests/rows";
-      const indexes = [{ name: "by_kind", on: "kind" }];
       const original = { _id: legacyId, kind: "x" };
       await seedCollection(storage, names, [original]);
-      const [legacyMarker] = allIndexKeysFor(prefix, indexes, original, legacyId);
-      await storage.put(legacyMarker!, new Uint8Array());
-      const [repairedMarker] = allIndexKeysFor(prefix, indexes, original, legacyId.toWellFormed());
-      await expect(storage.get(repairedMarker!)).resolves.not.toBeNull();
 
       const rows = Db.create({
         storage,
         app: names.app,
         tenant: names.tenant,
-        config: { collections: { rows: { indexes } } },
+        config: { collections: { rows: { indexes: [{ name: "by_kind", on: "kind" }] } } },
       }).collection("rows");
       const stored = await rows.get(legacyId);
       expect(stored).toEqual(original);
@@ -127,14 +111,10 @@ describe("migration of an ill-formed legacy _id", () => {
       await expect(rows.delete(legacyId)).resolves.toEqual({ deleted: 1 });
       await expect(rows.get(legacyId)).resolves.toBeUndefined();
       await expect(rows.get(migratedId)).resolves.toEqual({ _id: migratedId, kind: "x" });
-      const markers: string[] = [];
-      for await (const entry of storage.list(`${prefix}/index/by_kind/`)) {
-        markers.push(entry.key);
-      }
-      expect(markers).toEqual(allIndexKeysFor(prefix, indexes, copy, migratedId));
-      await expect(
-        rebuildIndex(storage, `${prefix}/current.json`, indexes[0]!, { dryRun: true }),
-      ).resolves.toMatchObject({ added: 0, removed: 0, kept: 1 });
+      await expect(rows.where({ kind: "x" }).all()).resolves.toEqual([
+        { _id: migratedId, kind: "x" },
+      ]);
+      await expect(listIndexObjects(storage, prefix)).resolves.toEqual([]);
     },
   );
 });
@@ -232,39 +212,6 @@ describe("a collection stored under a legacy non-NFC name", () => {
     const restored = await rows.where({}).all();
     expect(restored).toHaveLength(ROWS.length);
     expect(restored).toEqual(expect.arrayContaining(ROWS));
-  });
-
-  test("rebuild-index and fsck --indexes --fix refuse a non-NFC name", async () => {
-    const { uri, storage } = freshBucket();
-    await seedCollection(storage, { app: "app", tenant: "tenant", collection: NFD }, ROWS);
-    const flags = [`--bucket=${uri}`, "--app=app", "--tenant=tenant", `--collection=${NFD}`];
-    const rebuilt = await captured(() =>
-      runRebuildIndex([...flags, "--index=by_kind", "--on=kind"]),
-    );
-    expect(rebuilt.code).toBe(1);
-
-    const dir = await mkdtemp(join(tmpdir(), "baerly-legacy-names-"));
-    try {
-      const config = join(dir, "baerly.config.json");
-      await writeFile(
-        config,
-        JSON.stringify({ collections: { [NFD]: { indexes: [{ name: "by_kind", on: "kind" }] } } }),
-      );
-      const fixed = await captured(() =>
-        runFsck([...flags, "--indexes", "--fix", `--config=${config}`]),
-      );
-      expect(fixed.code).toBe(1);
-      // Read-only drift check on the same legacy name still runs.
-      const checked = await captured(() => runFsck([...flags, "--indexes", `--config=${config}`]));
-      expect(checked.code).toBe(4);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-    const indexKeys: string[] = [];
-    for await (const e of storage.list(`app/app/tenant/tenant/manifests/${NFD}/index/`)) {
-      indexKeys.push(e.key);
-    }
-    expect(indexKeys).toEqual([]);
   });
 });
 

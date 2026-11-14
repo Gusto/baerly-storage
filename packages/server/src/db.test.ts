@@ -217,6 +217,34 @@ describe("Db.create config derivation", () => {
     },
   };
 
+  test("a malformed index declaration fails at Db.create, before any I/O", () => {
+    const create = (indexes: BaerlyConfig["collections"][string]["indexes"]) => () =>
+      Db.create({
+        storage: new MemoryStorage(),
+        app: "x",
+        tenant: "y",
+        config: { collections: { tickets: { indexes } } },
+      });
+    expect(create([{ name: "Bad-Name", on: "status" }])).toThrow(
+      expect.objectContaining({ code: "SchemaError" }),
+    );
+    expect(create([{ name: "_reserved", on: "status" }])).toThrow(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    expect(create([{ name: "by_status", on: [] }])).toThrow(
+      expect.objectContaining({ code: "SchemaError" }),
+    );
+    // A dotted `on` could never be projected, so every write of a row
+    // would throw; refuse the declaration up front instead.
+    expect(create([{ name: "by_owner", on: "meta.owner" }])).toThrow(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    expect(create([{ name: "by_pair", on: ["status", "meta.owner"] }])).toThrow(
+      expect.objectContaining({ code: "InvalidConfig" }),
+    );
+    expect(create([{ name: "by_status", on: "status" }])).not.toThrow();
+  });
+
   test("derives schemas from config — invalid insert throws SchemaError", async () => {
     const config: BaerlyConfig = {
       collections: { tickets: { schema: onlyStrings } },
@@ -255,14 +283,6 @@ describe("Db.create config derivation", () => {
     });
     // Every row is validated before any commits, so row "a" is untouched.
     await expect(tickets.get("a")).resolves.toMatchObject({ title: "keep" });
-  });
-
-  test("derives indexes from config — visible on the collectionReadContext", () => {
-    const config: BaerlyConfig = {
-      collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } },
-    };
-    const db = Db.create({ storage: new MemoryStorage(), app: "x", tenant: "y", config });
-    expect(db.collectionReadContext("tickets").indexes.map((i) => i.name)).toEqual(["by_status"]);
   });
 });
 
