@@ -357,7 +357,7 @@ try {
 | `WriteConflict`          | 409  | Lost a write race; re-read, then retry           |
 | `AlreadyExists`          | 409  | `insert` `_id` taken, or `restore` target exists |
 | `AmbiguousCommit`        | 409  | Commit may be durable; outcome unresolved        |
-| `CapacityExceeded`       | 409  | Write refused at the host's fold ceiling         |
+| `CapacityExceeded`       | 409  | Too much work for one request on this host       |
 | `MaintenancePending`     | 503  | Maintenance behind; wait `retryAfter` seconds    |
 | `Unauthorized`           | 401  | Verifier returned no identity                    |
 | `NotFound`               | 404  | Row by id not found                              |

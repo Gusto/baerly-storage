@@ -77,7 +77,7 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   AmbiguousCommit:
     "A committing create may be durable, but its outcome could not be resolved; reconcile before any deliberate retry.",
   CapacityExceeded:
-    "The collection is at this host's fold ceiling; the write was refused and not committed (a batch refused part-way keeps its committed rows).",
+    "The request needs more work than this host does in one request and was refused whole: a read returns no rows, a write commits nothing (a batch refused part-way keeps its committed rows). Not retriable unchanged; follow the resolution.",
   MaintenancePending:
     "Maintenance is behind on this collection; the write was refused and not committed. Retry after the Retry-After delay.",
   Unauthorized: "Verifier returned no identity.",
@@ -104,10 +104,15 @@ const OPERATOR_META: Record<
 // Curated method tables. Names + return shapes match the live Collection<T> /
 // Query<T> / Storage interfaces; param strings are curated (owner-accepted fidelity).
 const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
-  { name: "first", params: "", returns: "Promise<T | undefined>" },
-  { name: "all", params: "", returns: "Promise<T[]>" },
-  { name: "count", params: "", returns: "Promise<number>" },
-  { name: "get", params: "id: string", returns: "Promise<T | undefined>" },
+  { name: "first", params: "", returns: "Promise<T | undefined>", throws: ["CapacityExceeded"] },
+  { name: "all", params: "", returns: "Promise<T[]>", throws: ["CapacityExceeded"] },
+  { name: "count", params: "", returns: "Promise<number>", throws: ["CapacityExceeded"] },
+  {
+    name: "get",
+    params: "id: string",
+    returns: "Promise<T | undefined>",
+    throws: ["CapacityExceeded"],
+  },
   { name: "where", params: "predicate: PredicateArg<T>", returns: "Query<T>" },
   { name: "order", params: "spec: OrderSpec<T>", returns: "Query<T>" },
   { name: "limit", params: "n: number", returns: "Query<T>" },
@@ -161,9 +166,9 @@ const QUERY_METHODS: ReadonlyArray<SpecMethod> = [
   { name: "where", params: "predicate: PredicateArg<T>", returns: "Query<T>" },
   { name: "order", params: "spec: OrderSpec<T>", returns: "Query<T>" },
   { name: "limit", params: "n: number", returns: "Query<T>" },
-  { name: "first", params: "", returns: "Promise<T | undefined>" },
-  { name: "all", params: "", returns: "Promise<T[]>" },
-  { name: "count", params: "", returns: "Promise<number>" },
+  { name: "first", params: "", returns: "Promise<T | undefined>", throws: ["CapacityExceeded"] },
+  { name: "all", params: "", returns: "Promise<T[]>", throws: ["CapacityExceeded"] },
+  { name: "count", params: "", returns: "Promise<number>", throws: ["CapacityExceeded"] },
   {
     name: "update",
     params: "patch: Partial<T>",
