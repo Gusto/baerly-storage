@@ -18,6 +18,7 @@ import { BaerlyError } from "@baerly/protocol";
  * distinct names, and folding those names changes nothing. Kernel-written
  * segments (`log/<seq>`, `current.json`, base-32 index values, UUIDv7
  * ids) are already in the literal set, so they look the same on disk.
+ * The exception is the snapshot level segment `L9`, stored as `%4c9`.
  *
  * No on-disk name ever starts with `.`, which leaves every dot-prefixed
  * name (staging temps, the format marker, a stray `.DS_Store`) private to
