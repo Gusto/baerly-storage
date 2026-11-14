@@ -43,6 +43,7 @@
 import {
   type BaerlyConfig,
   BaerlyError,
+  CODE_RESOLUTIONS,
   COUNT_BIT_WIDTH,
   currentRequestLedger,
   formatCursor,
@@ -165,9 +166,9 @@ export interface ListEventsSinceOptions {
  * because the response body carries the unchanged cursor the client
  * needs for the next poll cycle.
  *
- * @throws BaerlyError{code:"SchemaError"} — invalid cursor shape, or
- *   the cursor references a log entry that has been folded into a
- *   snapshot and GC'd.
+ * @throws BaerlyError{code:"SchemaError"} — invalid cursor shape.
+ * @throws BaerlyError{code:"CursorExpired"} — the cursor sits below the
+ *   retained log, or was minted in a truncated generation.
  */
 export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceResponse> {
   const { db, collection, cursor, signal } = opts;
@@ -314,7 +315,7 @@ export async function longPollSince(opts: LongPollSinceOptions): Promise<SinceRe
  * No `current.json` yet → `[]` (clients can poll a not-yet-existing
  * collection without erroring). Under a request ledger that runs out,
  * the result is a prefix of the entries past the cursor. Cursor inside `[0, log_seq_start)`, or
- * minted in a truncated generation → `BaerlyError{code:"SchemaError"}`.
+ * minted in a truncated generation → `BaerlyError{code:"CursorExpired"}`.
  */
 export async function listEventsSince(opts: ListEventsSinceOptions): Promise<LogEntry[]> {
   const polled = await pollOnce(opts, pollBudget());
@@ -429,8 +430,9 @@ async function pollOnce(
       const currentGeneration = read.json.generation ?? NO_GENERATION;
       if (cursorGeneration !== currentGeneration) {
         throw new BaerlyError(
-          "SchemaError",
-          `cursor ${JSON.stringify(cursor)} was minted in a generation that no longer exists (the collection has been truncated and restored); re-bootstrap from a snapshot read before resuming`,
+          "CursorExpired",
+          `cursor ${JSON.stringify(cursor)} was minted in a generation that no longer exists (the collection has been truncated and restored)`,
+          { resolution: CODE_RESOLUTIONS.CursorExpired },
         );
       }
       // (2) Folded away. The entry is below the floor, so the compactor
@@ -438,8 +440,9 @@ async function pollOnce(
       const cursorSeq = lsnParts(lsn).seq;
       if (cursorSeq < logSeqStart) {
         throw new BaerlyError(
-          "SchemaError",
-          `cursor ${JSON.stringify(cursor)} points to a log entry that has been folded into a snapshot (log_seq_start=${logSeqStart}); re-bootstrap from a snapshot read before resuming`,
+          "CursorExpired",
+          `cursor ${JSON.stringify(cursor)} is older than the oldest change this collection retains (log_seq_start=${logSeqStart}); the changes after it are no longer retained`,
+          { resolution: CODE_RESOLUTIONS.CursorExpired },
         );
       }
       startSeq = cursorSeq + 1;

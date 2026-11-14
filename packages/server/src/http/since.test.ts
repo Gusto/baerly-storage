@@ -11,7 +11,7 @@
  *   4. blocks then unblocks mid-poll → resolves with new entry.
  *   5. idle timeout → empty events + same cursor.
  *   6. AbortSignal aborts promptly → empty events.
- *   7. pre-snapshot cursor → SchemaError.
+ *   7. pre-snapshot or truncated-generation cursor → CursorExpired.
  *   8. under a request ledger (Workers Free): idle polls end in an empty
  *      200, busy polls deliver a resumable prefix, an exhausted start
  *      refuses with a retriable MaintenancePending.
@@ -24,6 +24,7 @@ import {
   BaerlyError,
   CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
+  CODE_RESOLUTIONS,
   type CurrentJson,
   createCurrentJson,
   formatCursor,
@@ -223,7 +224,7 @@ describe("longPollSince — fake-timer cases", () => {
   });
 });
 
-describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
+describe("listEventsSince — pre-snapshot cursor → CursorExpired", () => {
   test("cursor inside [0, log_seq_start) rejects", async () => {
     const { db, storage } = makeDb();
     await provision(storage);
@@ -268,15 +269,17 @@ describe("listEventsSince — pre-snapshot cursor → SchemaError", () => {
 
     await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
       name: "BaerlyError",
-      code: "SchemaError",
-      // Pin WHICH rejection fired: `/v1/since` has two SchemaError
+      code: "CursorExpired",
+      retriable: false,
+      resolution: CODE_RESOLUTIONS.CursorExpired,
+      // Pin WHICH rejection fired: `/v1/since` has two CursorExpired
       // paths and a bare `code` assertion cannot tell them apart.
-      message: expect.stringContaining("folded into a snapshot"),
+      message: expect.stringContaining("no longer retained"),
     });
   });
 });
 
-describe("listEventsSince — truncated generation → SchemaError", () => {
+describe("listEventsSince — truncated generation → CursorExpired", () => {
   /**
    * Seed one entry, take a real cursor for it, then rewrite
    * `current.json` the way `baerly admin restore --force` does:
@@ -347,7 +350,9 @@ describe("listEventsSince — truncated generation → SchemaError", () => {
     // in [10, 13). Now it is rejected outright.
     await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
       name: "BaerlyError",
-      code: "SchemaError",
+      code: "CursorExpired",
+      retriable: false,
+      resolution: CODE_RESOLUTIONS.CursorExpired,
       message: expect.stringContaining("generation that no longer exists"),
     });
   });
@@ -368,7 +373,9 @@ describe("listEventsSince — truncated generation → SchemaError", () => {
 
     await expect(listEventsSince({ db, collection: TABLE, cursor })).rejects.toMatchObject({
       name: "BaerlyError",
-      code: "SchemaError",
+      code: "CursorExpired",
+      retriable: false,
+      resolution: CODE_RESOLUTIONS.CursorExpired,
       message: expect.stringContaining("generation that no longer exists"),
     });
   });

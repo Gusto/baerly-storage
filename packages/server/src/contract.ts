@@ -124,10 +124,11 @@ export interface HttpOkEnvelope<T> {
  * resuming into the new generation. `""` means "start from the
  * collection's log floor" and is always valid.
  *
- * A `400 SchemaError` on resume means the cursor is permanently dead —
- * the entry was folded into a snapshot and GC'd, or its generation was
- * truncated. Neither clears on retry: restart with `cursor: ""`.
- * Retrying the rejected cursor loops forever. See invariant 13 in
+ * A `410 CursorExpired` on resume means the cursor is permanently dead:
+ * the changes after it are no longer retained, or its generation was
+ * truncated. Neither clears on retry: re-read, then restart with
+ * `cursor: ""`. Retrying the rejected cursor loops forever. A malformed
+ * cursor is `400 SchemaError`. See invariant 13 in
  * `docs/spec/sync-protocol.md`.
  */
 export interface SinceResponse {
@@ -151,6 +152,7 @@ export interface SinceResponse {
  * | 404    | Doc not found → `code:"NotFound"`. NOT used for "tenant unknown" (→ 401). |
  * | 409    | Lost race → `code:"WriteConflict"` (retriable, generic message). Create target exists → `code:"AlreadyExists"` (not retriable, message kept). Unresolved commit → `code:"AmbiguousCommit"` (not retriable, carries `_id`). |
  * | 409    | The request needs more work than this host does in one request → `code:"CapacityExceeded"` (not retriable, message kept; a read returns no rows, a write commits nothing). |
+ * | 410    | `/v1/since` cursor can no longer resume → `code:"CursorExpired"` (not retriable, message kept; restart with `cursor: ""`). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
  * | 503    | Maintenance is behind → `code:"MaintenancePending"` (retriable, message kept, `Retry-After` header and `retryAfter` seconds). |
  * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"` with a generic message. |
@@ -172,6 +174,7 @@ export type HttpStatus =
   | 403
   | 404
   | 409
+  | 410
   | 413
   | 500
   | 502

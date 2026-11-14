@@ -109,6 +109,13 @@
       "summary": "Predicate is well-formed but contradicts itself."
     },
     {
+      "code": "CursorExpired",
+      "httpStatus": 410,
+      "retriable": false,
+      "messagePolicy": "public",
+      "summary": "A /v1/since cursor can no longer resume (its changes are no longer retained, or its generation was truncated); re-read, then restart with cursor \"\". Never retriable."
+    },
+    {
       "code": "UseQueryAwaitedRecorder",
       "httpStatus": null,
       "retriable": false,

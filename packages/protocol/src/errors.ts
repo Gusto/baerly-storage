@@ -118,6 +118,18 @@ export type BaerlyErrorCode =
    */
   | "MaintenancePending"
   /**
+   * A `/v1/since` cursor can no longer resume, so the long-poll was
+   * refused; `retriable` is `false`, because the same cursor never
+   * succeeds again. Either the changes after it are no longer retained
+   * (maintenance retired them), or it was minted in a generation that
+   * `baerly admin restore --force` has since truncated. Re-read the rows
+   * the subscriber shows, then resume with `cursor: ""`: the changes
+   * between the dead cursor and the restart are not replayed. A
+   * malformed cursor is `SchemaError` instead. HTTP maps this code to 410
+   * and keeps the message.
+   */
+  | "CursorExpired"
+  /**
    * `Verifier` returned no identity. HTTP server maps to 401.
    * Code is reserved here so the union locks.
    */
@@ -217,6 +229,7 @@ export const ERROR_CODES = [
   "NotFound",
   "PayloadTooLarge",
   "UnsatisfiablePredicate",
+  "CursorExpired",
   "UseQueryAwaitedRecorder",
   "UnexpectedWriteInQuery",
   "MutationFailed",

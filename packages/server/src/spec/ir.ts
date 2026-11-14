@@ -80,6 +80,8 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
     "The request needs more work than this host does in one request and was refused whole: a read returns no rows, a write commits nothing (a batch refused part-way keeps its committed rows). Not retriable unchanged; follow the resolution.",
   MaintenancePending:
     "Maintenance is behind on this collection; the write was refused and not committed. Retry after the Retry-After delay.",
+  CursorExpired:
+    'A /v1/since cursor can no longer resume (its changes are no longer retained, or its generation was truncated); re-read, then restart with cursor "". Never retriable.',
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",

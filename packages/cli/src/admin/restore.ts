@@ -282,7 +282,7 @@ const bundle = defineBaerlySubcommand({
         // lowers `log_seq_start`, so it is the one write that can leave
         // a live `/v1/since` cursor pointing above the floor but into a
         // dead generation. Re-minting here is what lets the next resume
-        // on that cursor fail loudly (`SchemaError` → re-bootstrap)
+        // on that cursor fail loudly (`CursorExpired` → re-bootstrap)
         // instead of silently skipping the restored rows beneath it.
         generation: mintGeneration(),
       };
