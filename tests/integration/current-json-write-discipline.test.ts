@@ -146,8 +146,8 @@ describe("every current.json write is conditional", () => {
   });
 
   test("ensureTable creates the head If-None-Match, including on an existing head", async () => {
-    await ensureTable(storage, { app: APP, tenant: TENANT, table: COLL });
-    await ensureTable(storage, { app: APP, tenant: TENANT, table: COLL });
+    await ensureTable(storage, { app: APP, tenant: TENANT, collection: COLL });
+    await ensureTable(storage, { app: APP, tenant: TENANT, collection: COLL });
     expect(conditions()).toEqual(["if-none-match", "if-none-match"]);
   });
 

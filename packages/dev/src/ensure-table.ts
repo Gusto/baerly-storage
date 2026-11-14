@@ -1,4 +1,5 @@
 import {
+  BaerlyError,
   isWriteConflict,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -9,7 +10,7 @@ import { assertNameSegment } from "@baerly/server/_internal/testing";
 
 /**
  * Optional pre-warm: idempotently create the `current.json` manifest
- * for a single `(app, tenant, table)` triple. The kernel auto-creates
+ * for a single `(app, tenant, collection)` triple. The kernel auto-creates
  * this manifest on the first commit anyway (see `Db.create` and
  * `Writer.commit`), so calling `ensureTable` is **not required** for
  * correctness — it's a one-Class-A-PUT optimization for callers that
@@ -18,7 +19,7 @@ import { assertNameSegment } from "@baerly/server/_internal/testing";
  * bucket between phases, etc.).
  *
  * Wraps {@link createCurrentJson} with the canonical key shape
- * (`app/<app>/tenant/<tenant>/manifests/<table>/current.json`) and
+ * (`app/<app>/tenant/<tenant>/manifests/<collection>/current.json`) and
  * swallows `BaerlyError{code:"WriteConflict"}` so re-runs are safe. The
  * three names follow the same rule as `Db.create` / `db.collection`
  * (including Unicode Normalization Form C), refused with
@@ -37,19 +38,30 @@ import { assertNameSegment } from "@baerly/server/_internal/testing";
  *
  * const storage = new LocalFsStorage({ root: "./.baerly-data" });
  * // Pre-warm so the first request doesn't pay the bootstrap PUT.
- * await ensureTable(storage, { app: "helpdesk", tenant: "demo", table: "tickets" });
+ * await ensureTable(storage, { app: "helpdesk", tenant: "demo", collection: "tickets" });
  * // …then `baerlyNode({ config, storage, verifier })`.
  * ```
  */
 export const ensureTable = async (
   storage: Storage,
-  args: { app: string; tenant: string; table: string },
+  args: { app: string; tenant: string; collection: string },
 ): Promise<void> => {
+  // Plain-JS callers bypass the type: refuse a missing `collection` as a
+  // BaerlyError, and point a caller still on the pre-0.7 `table` key at
+  // the rename. `table` is never read as the name.
+  if (typeof args.collection !== "string") {
+    throw new BaerlyError(
+      "InvalidConfig",
+      "table" in args
+        ? "ensureTable: the `table` key is now `collection`; pass { app, tenant, collection }"
+        : "ensureTable: collection must be a string",
+    );
+  }
   // The SDK's name rule (key segment + NFC), before any write.
   assertNameSegment(args.app, "app", "ensureTable");
   assertNameSegment(args.tenant, "tenant", "ensureTable");
-  assertNameSegment(args.table, "table", "ensureTable");
-  const key = `app/${args.app}/tenant/${args.tenant}/manifests/${args.table}/current.json`;
+  assertNameSegment(args.collection, "collection", "ensureTable");
+  const key = `app/${args.app}/tenant/${args.tenant}/manifests/${args.collection}/current.json`;
   try {
     await createCurrentJson(storage, key, {
       schema_version: CURRENT_JSON_SCHEMA_VERSION,
