@@ -8,7 +8,9 @@
  *   --collection Required. Collection name.
  *   --profile  Optional host profile (cf-free | cf-paid | node) for the
  *              fold_gate verdict. Default: report all three.
- *   --json     JSON envelope.
+ *   --json     JSON envelope. A storage-format diagnostic, not a stable
+ *              contract: its fields name format internals and change
+ *              with the format, release to release.
  *
  * Reports, per-collection:
  *   - currentJsonKey path.
@@ -95,7 +97,10 @@ const INSPECT_ARGS = {
     description:
       "Host profile for the fold_gate verdict: cf-free | cf-paid | node. Default: all three.",
   },
-  json: JSON_ARG,
+  json: {
+    ...JSON_ARG,
+    description: `${JSON_ARG.description}. A storage-format diagnostic: fields follow the storage format and can change in any release`,
+  },
 } as const satisfies ArgsDef;
 
 /** The host profiles `BAERLY_MAINTENANCE_PROFILE` / the adapters select, keyed by name. */
