@@ -89,6 +89,11 @@ part-way, it keeps the rows it already committed.
 **Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (typically after the collection moved from a host with a larger ceiling, with deletes still pending). The write ran one bounded fold and was refused without committing (a batch refused part-way keeps the rows it already committed). `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
 **Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working. `createBaerlyClient` already does this on every verb: it resends the identical request (an auto-ID insert keeps its minted `_id`) up to 3 attempts in total, waiting each hint of at most 10 s, so the error reaches your code only once those run out. The React subscription poll waits at least `retryAfter` before re-polling. Resending is safe because the refusal committed nothing and each HTTP write is one row. In-process, a multi-row `update` refused part-way keeps the rows before it; re-running it is safe, since a merge patch re-applied to a row it already changed leaves that row as it is.
 
+### `BaerlyError code="CursorExpired"` (HTTP 410)
+
+**Cause:** a `/v1/since` cursor can no longer resume: the changes after it are no longer retained, or `baerly admin restore --force` truncated the generation it was minted in. `retriable` is `false`; the same cursor never succeeds again. A malformed cursor is `SchemaError` (400) instead.
+**Fix:** re-read the rows you show, then resume with `cursor=` (empty); the changes between the dead cursor and the restart are not replayed. Back off before the restart so a cursor that expires on every lap cannot become a hot loop. The React hooks do this for you.
+
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
 **Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC,

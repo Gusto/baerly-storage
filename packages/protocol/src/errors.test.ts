@@ -114,6 +114,7 @@ describe("retriable classification", () => {
       AmbiguousCommit: false,
       CapacityExceeded: false,
       MaintenancePending: true,
+      CursorExpired: false,
       Unauthorized: false,
       NotFound: false,
       PayloadTooLarge: false,

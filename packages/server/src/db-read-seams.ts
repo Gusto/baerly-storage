@@ -252,7 +252,7 @@ export const probeLogChunk = async (
  * never screened at all. Both are protocol-invariant violations by
  * internal code, hence `Internal` rather than `InvalidConfig`: no
  * client input reaches these seams unscreened (`/v1/since` rejects a
- * sub-floor cursor with `SchemaError` before ever getting here).
+ * sub-floor cursor with `CursorExpired` before ever getting here).
  *
  * Below `log_delete_floor` the contiguous prefix is certified deleted,
  * so the object is not merely *reclaimable* but already *reclaimed*.
