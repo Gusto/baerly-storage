@@ -259,6 +259,16 @@ export type Leaked = MaintenanceDispatch;
 `,
   },
   {
+    name: "negative-snapshot-key-on-compact-result",
+    expect: "fails",
+    codes: ["TS2339"],
+    source: `
+import type { CompactResult } from "@gusto/baerly-storage/maintenance";
+declare const res: CompactResult;
+export const leaked = res.newSnapshotKey;
+`,
+  },
+  {
     name: "negative-internal-kernel-subpath",
     expect: "fails",
     codes: ["TS2307"],
