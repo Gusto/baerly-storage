@@ -46,7 +46,8 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import type { MaintenanceProfile } from "@baerly/server/maintenance";
-import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
+import { runWithContext } from "@baerly/server/observability";
+import { createObservabilityContext } from "@baerly/server/_internal/observability";
 import {
   commit,
   type Doc,

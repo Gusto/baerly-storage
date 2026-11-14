@@ -31,8 +31,6 @@ import {
   CATEGORY,
   type ObservabilityConfig,
   configureObservability,
-  createObservabilityContext,
-  type ReadEnvelope,
   deriveOutcome,
   flushCanonicalLine,
   getLogger,
@@ -40,6 +38,8 @@ import {
   runWithContext,
 } from "@baerly/server/observability";
 import {
+  createObservabilityContext,
+  type ReadEnvelope,
   flushUnauthorizedAndRespond,
   logMaintenanceWarning,
 } from "@baerly/server/_internal/observability";

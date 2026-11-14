@@ -16,13 +16,13 @@ import { prettyConsoleSink } from "./logger-pretty.ts";
 import {
   type ObservabilityConfig,
   configureObservability,
-  createObservabilityContext,
   deriveOutcome,
   flushCanonicalLine,
   observableStorage,
   runWithContext,
 } from "@baerly/server/observability";
 import {
+  createObservabilityContext,
   flushUnauthorizedAndRespond,
   logMaintenanceWarning,
 } from "@baerly/server/_internal/observability";
