@@ -14,6 +14,7 @@ import {
 import { describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson, seedLogEntry } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
+import { getLogEntry } from "./db-read-seams.ts";
 import { computeRetirableRange, retireLogRange } from "./log-retention.ts";
 
 // `vi.mock` is hoisted above every import, so the toggle its factory closes
@@ -220,7 +221,7 @@ describe("retireLogRange", () => {
 
     const current = await readCurrentJson(storage, CURRENT_KEY);
     const db = Db.create({ storage, app: "a", tenant: "t" });
-    await expect(db.getLogEntry("c", 5, current!.json)).rejects.toMatchObject({
+    await expect(getLogEntry(db, "c", 5, current!.json)).rejects.toMatchObject({
       code: "Internal",
       message: expect.stringContaining("certified delete floor"),
     });

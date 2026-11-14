@@ -11,6 +11,7 @@
 import { describe, expect, test } from "vitest";
 import { createCurrentJson, MemoryStorage, readCurrentJson, type Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
+import { getLogEntry } from "@baerly/server/_internal/kernel";
 import { listEventsSince } from "@baerly/server/http";
 import { compact, runScheduledMaintenance } from "@baerly/server/maintenance";
 import { loadMaterialisedView } from "../../packages/cli/src/export/index.ts";
@@ -83,7 +84,7 @@ describe("an NFC name that aliases a legacy NFD collection on R2", () => {
       ALIASED,
     );
     const head = await readCurrentJson(storage, `${prefixFor(NFC)}/current.json`);
-    await expect(db.getLogEntry(NFC, 0, head!.json)).rejects.toMatchObject(ALIASED);
+    await expect(getLogEntry(db, NFC, 0, head!.json)).rejects.toMatchObject(ALIASED);
   });
 
   test("the /v1/since forward probe refuses legacy entries past tail_hint", async () => {
