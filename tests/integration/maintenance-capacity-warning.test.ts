@@ -31,6 +31,7 @@ import {
   MAINTENANCE_MIN_LIVE_BYTES,
   type Storage,
 } from "@baerly/protocol";
+import { type BaerlyWarning, createBaerlyClient } from "@baerly/client";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { runBoundedMaintenance } from "@baerly/server/maintenance";
@@ -246,6 +247,33 @@ describe("main-10 Task 5: early capacity warning and its state (G7)", () => {
         const deleted = await send("DELETE", 18);
         expect(deleted.status).toBe(204);
         expect(deleted.headers.get(WARNING_HEADER)).toContain("19 of 20 rows");
+      });
+
+      test("W1: createBaerlyClient hands the header to onWarning; the result is unchanged", async () => {
+        const storage = await folded(17);
+        const router = createRouter({ db: Db.create({ storage, app: APP, tenant: TENANT }) });
+        const seen: BaerlyWarning[] = [];
+        const client = createBaerlyClient({
+          baseUrl: "http://x",
+          fetch: async (req) => runWithContext(hostCtx({}), async () => router.fetch(req)),
+          onWarning: (w) => seen.push(w),
+        });
+        const docs = client.collection(COLLECTION);
+        // 17 -> 18 rows = 90%: warned. Reads never are.
+        await expect(docs.insert({ _id: id(17), n: 0, pad: PAD })).resolves.toEqual({
+          _id: id(17),
+        });
+        await expect(docs.update(id(0), { n: 1 })).resolves.toEqual({ modified: 1 });
+        await docs.get(id(0));
+        expect(seen).toHaveLength(2);
+        expect(seen[0]).toMatchObject({
+          code: "CapacityWarning",
+          method: "POST",
+          path: `/v1/c/${COLLECTION}`,
+        });
+        expect(seen[0]!.message).toContain("18 of 20 rows");
+        expect(seen[1]).toMatchObject({ method: "PATCH", path: `/v1/c/${COLLECTION}/${id(0)}` });
+        expect(Object.keys(seen[0]!).toSorted()).toEqual(["code", "message", "method", "path"]);
       });
 
       test("W2: clears after a shrink and after a host change, with nothing to reset", async () => {

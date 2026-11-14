@@ -4,6 +4,8 @@
 import { type Collection, type DocumentData, isUuidV7 } from "@baerly/protocol";
 import { describe, expect, test, vi } from "vitest";
 import { type ClientCollection, createBaerlyClient } from "./client.ts";
+import { withSignal } from "./internal/context.ts";
+import type { BaerlyWarning } from "./request.ts";
 import type { HttpOkEnvelope } from "./contract.ts";
 import { MockFetch } from "./testing/index.ts";
 
@@ -574,6 +576,85 @@ describe("createBaerlyClient", () => {
       status,
       retriable,
     });
+  });
+});
+
+describe("onWarning", () => {
+  const WARNING = "this collection is at 90% of what this host can hold (18 of 20 rows)";
+  const warned = (body: unknown, status: number): Response =>
+    new Response(status === 204 ? null : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", "Baerly-Capacity-Warning": WARNING },
+    });
+
+  const writes = (): MockFetch =>
+    new MockFetch()
+      .on("POST", "/v1/c/tickets", () => warned({ _id: "a" }, 201))
+      .on("PATCH", "/v1/c/tickets/:id", () => warned({ modified: 1 }, 200))
+      .on("PUT", "/v1/c/tickets/:id", () => warned({ modified: 1 }, 200))
+      .on("DELETE", "/v1/c/tickets/:id", () => warned(null, 204));
+
+  test("each write verb reports the header once and resolves its usual result", async () => {
+    const seen: BaerlyWarning[] = [];
+    const client = createBaerlyClient({
+      baseUrl: "http://x",
+      fetch: writes().fetch,
+      onWarning: (w) => seen.push(w),
+    });
+    const tickets = client.collection("tickets");
+    await expect(tickets.insert({ _id: "a" })).resolves.toEqual({ _id: "a" });
+    await expect(tickets.update("a", { n: 1 })).resolves.toEqual({ modified: 1 });
+    await expect(tickets.replace("a", { _id: "a" })).resolves.toBeUndefined();
+    await expect(tickets.delete("a")).resolves.toEqual({ deleted: 1 });
+    expect(seen).toEqual([
+      { code: "CapacityWarning", message: WARNING, method: "POST", path: "/v1/c/tickets" },
+      { code: "CapacityWarning", message: WARNING, method: "PATCH", path: "/v1/c/tickets/a" },
+      { code: "CapacityWarning", message: WARNING, method: "PUT", path: "/v1/c/tickets/a" },
+      { code: "CapacityWarning", message: WARNING, method: "DELETE", path: "/v1/c/tickets/a" },
+    ]);
+  });
+
+  test("a response without the header reports nothing", async () => {
+    const onWarning = vi.fn<(w: BaerlyWarning) => void>();
+    const mock = new MockFetch()
+      .on("POST", "/v1/c/tickets", () => jsonResponse({ _id: "a" }, 201))
+      .on("GET", "/v1/c/tickets", () => jsonResponse(okEnvelope([])));
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch, onWarning });
+    await client.collection("tickets").insert({ _id: "a" });
+    await client.collection("tickets").all();
+    expect(onWarning).not.toHaveBeenCalled();
+  });
+
+  test("a throwing or rejecting callback does not break the request", async () => {
+    const thrower = createBaerlyClient({
+      baseUrl: "http://x",
+      fetch: writes().fetch,
+      onWarning: () => {
+        throw new Error("callback bug");
+      },
+    });
+    await expect(thrower.collection("tickets").insert({ _id: "a" })).resolves.toEqual({
+      _id: "a",
+    });
+    const rejecter = createBaerlyClient({
+      baseUrl: "http://x",
+      fetch: writes().fetch,
+      // A rejected promise from an async callback must not surface as an
+      // unhandled rejection (vitest fails the run on one).
+      onWarning: async () => {
+        throw new Error("async callback bug");
+      },
+    });
+    await expect(rejecter.collection("tickets").delete("a")).resolves.toEqual({ deleted: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  test("a scoped (signal-bound) view keeps the callback", async () => {
+    const onWarning = vi.fn<(w: BaerlyWarning) => void>();
+    const client = createBaerlyClient({ baseUrl: "http://x", fetch: writes().fetch, onWarning });
+    const scoped = withSignal(client, new AbortController().signal);
+    await scoped.collection("tickets").insert({ _id: "a" });
+    expect(onWarning).toHaveBeenCalledTimes(1);
   });
 });
 

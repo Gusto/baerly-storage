@@ -74,6 +74,8 @@ part-way, it keeps the rows it already committed.
   a new request (it re-reads and re-matches), or narrow it with `where` /
   `limit` so each request does less.
 
+**Warned before it happens:** a write that leaves the collection at 90% or more of the limit succeeds with a `Baerly-Capacity-Warning` response header. `createBaerlyClient({ onWarning })` hands it to your callback as `{ code: "CapacityWarning", message, method, path }`; delete or shrink rows then, before writes start being refused. The write's result is unchanged and a throwing callback cannot fail it. Cross-origin, your CORS layer must list `Baerly-Capacity-Warning` in `Access-Control-Expose-Headers`.
+
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
 **Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (typically after the collection moved from a host with a larger ceiling, with deletes still pending). The write ran one bounded fold and was refused without committing (a batch refused part-way keeps the rows it already committed). `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.

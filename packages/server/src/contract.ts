@@ -159,7 +159,7 @@ export interface SinceResponse {
  * collection within 90% of the host's growth-refusal point also carries a
  * `Baerly-Capacity-Warning` header whose value names the state and the
  * app-side remedy. The body is unchanged; the header is absent while the
- * collection has room.
+ * collection has room. `createBaerlyClient` passes it to `onWarning`.
  */
 export type HttpStatus =
   | 200

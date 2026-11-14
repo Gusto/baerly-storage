@@ -488,6 +488,8 @@ That extra options bag is the **only** API difference between
 `Collection<T>` and `ClientCollection<T>`. Same modifiers, same terminals,
 same predicates.
 
+`onWarning(w)` gets server warnings on successful writes; see RECIPES.md, `CapacityExceeded`.
+
 ## Long-poll: `/v1/since`
 
 `GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that

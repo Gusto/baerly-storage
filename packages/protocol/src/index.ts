@@ -2,6 +2,7 @@ export * from "./app-config.ts";
 export * from "./auth-resolution.ts";
 export * from "./code-resolution.ts";
 export * from "./bytes.ts";
+export * from "./capacity-warning-header.ts";
 export * from "./constants.ts";
 export * from "./document-input.ts";
 export {
