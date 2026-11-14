@@ -1004,15 +1004,6 @@ export const CAPACITY_BYTES_MARGIN: number = 64;
 export const CAPACITY_WARN_FRACTION: number = 0.9;
 
 /**
- * Response header an admitted write carries when it leaves the collection
- * within {@link CAPACITY_WARN_FRACTION} of its host's growth-refusal point.
- * The value is the warning text: it names the state and the app-side
- * remedy only. The same text rides the canonical log line as
- * `capacity_warning`. Absent when the collection has room.
- */
-export const CAPACITY_WARNING_HEADER: string = "Baerly-Capacity-Warning";
-
-/**
  * `retryAfter` (seconds) on a `MaintenancePending` refusal (main-10 G6).
  * The refused write dispatches one bounded fold before it refuses, and
  * that fold finishes within the same invocation: inline before the
