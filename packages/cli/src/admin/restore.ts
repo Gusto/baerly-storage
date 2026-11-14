@@ -61,6 +61,7 @@ import { createInterface } from "node:readline";
 import { type ArgsDef } from "citty";
 import {
   assertCurrentJsonTransition,
+  assertDocumentSize,
   assertDocumentValues,
   BaerlyError,
   CURRENT_JSON_SCHEMA_VERSION,
@@ -421,9 +422,11 @@ const bundle = defineBaerlySubcommand({
         }
         seenIds.set(id, lineNo);
         // Document-value domain: JSON.parse can still yield a value the
-        // write path refuses (`1e999` parses to Infinity).
+        // write path refuses (`1e999` parses to Infinity), or a row an
+        // earlier release stored over the per-document size cap.
         try {
           assertDocumentValues(row, "restore");
+          assertDocumentSize(row, "restore");
         } catch (error) {
           if (error instanceof BaerlyError) {
             throw new BaerlyError(

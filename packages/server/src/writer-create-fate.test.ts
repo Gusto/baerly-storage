@@ -534,8 +534,9 @@ describe("Writer create fate", () => {
       // The encode failure is the caller's error, not an uncertain send.
       expect(failure).toBeInstanceOf(TypeError);
       expect(storage.attempts).toEqual([]);
-      // The one log read is the tail probe; there is no occupant readback.
-      expect(storage.slotReads - readsBeforeCreate).toBe(1);
+      // The size check encodes the post-image before any I/O, so the
+      // failure precedes even the tail probe; there is no occupant readback.
+      expect(storage.slotReads - readsBeforeCreate).toBe(0);
       expect(sumCounter(ctx, "db.write.unresolved_create_total")).toBe(0);
     },
   );
