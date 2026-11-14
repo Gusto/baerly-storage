@@ -319,7 +319,9 @@ unless `--force` truncates first.
 Read-only consistency walk for one collection. Verifies
 `current.json` parses, the snapshot body's content hash matches
 its filename hash, the trusted log range `[log_seq_start, tail_hint)`
-has no holes. It never reads the `index/` prefix. Exit 4 on any finding —
+has no holes. As a migration preflight it also flags non-NFC names, and
+names or snapshot `_id`s with an unpaired UTF-16 surrogate. It never
+reads the `index/` prefix. Exit 4 on any finding —
 distinguished from exit 2 ("command itself failed") so CI can
 wire `fsck` as a regression gate.
 

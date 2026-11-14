@@ -37,9 +37,11 @@ Name rule: read-only verbs (`inspect`, `export`, `cost`, `admin dump`,
 `--collection` with the bare key-segment rule, so a legacy non-NFC name
 stays readable and exportable. The writing verb (`admin restore`) also requires NFC via
 `assertWritableNames` (`src/subcommand.ts`), matching the SDK. `admin fsck`
-and `admin dump` report non-NFC names, and `admin dump` reports non-NFC and
-canonically-equivalent `_id`s, as the migration preflight
-(`src/legacy-names.ts`).
+and `admin dump` report non-NFC names and names with an unpaired UTF-16
+surrogate. `admin fsck` also reports snapshot `_id`s with an unpaired
+surrogate (it does not decode the log), and `admin dump` reports non-NFC,
+ill-formed, and canonically-equivalent `_id`s across every live row, as the
+migration preflight (`src/legacy-names.ts`).
 
 `admin dump --recover-legacy-names` opts into exact collection-name
 matching for a mixed legacy log. Only the CLI export loader accepts this
