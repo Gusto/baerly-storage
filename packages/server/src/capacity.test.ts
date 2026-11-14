@@ -718,17 +718,36 @@ describe("capacityDecision agrees with what compact() folds on the host", () => 
     pad: padArb,
   });
 
-  propTest.prop({
-    seed: fc.array(tailOpArb, { maxLength: 8 }),
-    pending: fc.array(tailOpArb, { minLength: 1, maxLength: 14 }),
-    write: fc.record({
-      kind: fc.constantFrom("I" as const, "U" as const, "D" as const),
-      pad: padArb,
-    }),
-    extraRows: fc.integer({ min: 0, max: 3 }),
-    extraBytes: fc.integer({ min: -150, max: 400 }),
-    pass: fc.integer({ min: 1, max: 6 }),
-  })(
+  propTest.prop(
+    {
+      seed: fc.array(tailOpArb, { maxLength: 8 }),
+      pending: fc.array(tailOpArb, { minLength: 1, maxLength: 14 }),
+      write: fc.record({
+        kind: fc.constantFrom("I" as const, "U" as const, "D" as const),
+        pad: padArb,
+      }),
+      extraRows: fc.integer({ min: 0, max: 3 }),
+      extraBytes: fc.integer({ min: -150, max: 400 }),
+      pass: fc.integer({ min: 1, max: 6 }),
+    },
+    {
+      examples: [
+        {
+          seed: [{ kind: "I", id: 0, pad: "" }],
+          // Byte spikes make this 14-entry tail take five folds at pass size 5.
+          pending: [0, 120, 120, 120, 120, 0, 0, 120, 120, 120, 120, 0, 120, 0].map((n) => ({
+            kind: "U" as const,
+            id: 0,
+            pad: "x".repeat(n),
+          })),
+          write: { kind: "I", pad: "" },
+          extraRows: 3,
+          extraBytes: 110,
+          pass: 5,
+        },
+      ],
+    },
+  )(
     "MaintenancePending: folds alone admit the write; CapacityExceeded growth: they never do; pressure: the forced pass lands",
     async ({ seed, pending, write, extraRows, extraBytes, pass }) => {
       // Build the state on an unbounded host, as a collection written
@@ -838,7 +857,8 @@ describe("capacityDecision agrees with what compact() folds on the host", () => 
       };
 
       const first = await decideNow();
-      const passes = Math.ceil(start.tail.length / pass) + 1;
+      // A byte-limited fold may consume only one entry, regardless of pass size.
+      const passes = start.tail.length;
 
       if (first.refusal === undefined) {
         if (!first.pressure) {
