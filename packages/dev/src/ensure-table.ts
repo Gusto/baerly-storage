@@ -1,4 +1,5 @@
 import {
+  BaerlyError,
   isWriteConflict,
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
@@ -45,6 +46,17 @@ export const ensureTable = async (
   storage: Storage,
   args: { app: string; tenant: string; collection: string },
 ): Promise<void> => {
+  // Plain-JS callers bypass the type: refuse a missing `collection` as a
+  // BaerlyError, and point a caller still on the pre-0.7 `table` key at
+  // the rename. `table` is never read as the name.
+  if (typeof args.collection !== "string") {
+    throw new BaerlyError(
+      "InvalidConfig",
+      "table" in args
+        ? "ensureTable: the `table` key is now `collection`; pass { app, tenant, collection }"
+        : "ensureTable: collection must be a string",
+    );
+  }
   // The SDK's name rule (key segment + NFC), before any write.
   assertNameSegment(args.app, "app", "ensureTable");
   assertNameSegment(args.tenant, "tenant", "ensureTable");
