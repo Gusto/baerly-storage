@@ -536,7 +536,8 @@ export class LocalFsStorage implements Storage {
    * - absent root: nothing to read, so reads return without stamping, and
    *   the first `put` (`create`) makes the root and stamps it;
    * - every on-disk name already reads the same under the encoding (true
-   *   of kernel-written trees with lowercase ids): stamp, nothing moves;
+   *   of kernel-written trees with lowercase ids that hold no snapshot;
+   *   the snapshot segment `L9` is escaped): stamp, nothing moves;
    * - otherwise refuse with `InvalidConfig`. There is no in-place
    *   migration — renaming cannot undo merges a folding filesystem has
    *   already made — so the remedy is dump with the older release and
