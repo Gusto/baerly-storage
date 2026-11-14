@@ -12,8 +12,8 @@
  *    for standalone callers that don't have an adapter-managed
  *    scope) and runs the work under {@link runWithContext}.
  * 3. The adapter calls {@link flushCanonicalLine} at end-of-request;
- *    verifier-rejected requests call
- *    {@link flushUnauthorizedAndRespond} instead.
+ *    verifier-rejected requests call `flushUnauthorizedAndRespond`
+ *    (adapter wiring on `@baerly/server/_internal/observability`).
  * 4. Kernel emissions (Writer histograms, compactor / GC gauges,
  *    storage decorator counters) reach the per-request recorder via
  *    the ALS lookup inside emission sites
@@ -39,12 +39,10 @@ export {
   CATEGORY,
   configureObservability,
   getLogger,
-  logMaintenanceWarning,
 } from "./logger.ts";
 export {
   type FlushCanonicalLineOptions,
   flushCanonicalLine,
-  flushUnauthorizedAndRespond,
   withHttpObservability,
 } from "./canonical.ts";
 export { observableStorage } from "./storage.ts";

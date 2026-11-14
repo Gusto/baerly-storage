@@ -13,6 +13,10 @@
  *   `runScheduledMaintenance`, tuning profiles.
  * - `@gusto/baerly-storage/observability` — context, recorder,
  *   canonical-line helpers, logger config.
+ *
+ * Kernel internals the CLI, adapters, and bench share (snapshot codec,
+ * log walk, verifier resolution) live on the unpublished
+ * `@baerly/server/_internal/kernel` subpath.
  */
 
 export {
@@ -24,20 +28,9 @@ export {
   type UnboundConfig,
   defineConfig,
 } from "@baerly/protocol";
-export { collectionsToMaps } from "./config.ts";
-/** @internal — consumed by `@baerly/adapter-cloudflare` and `@baerly/adapter-node`. */
-export { resolveVerifier } from "./auth/internal/resolve-verifier.ts";
 export { Db } from "./db.ts";
 export type { IndexDefinition } from "./indexes.ts";
-export {
-  type SnapshotBody,
-  encodeSnapshotBody,
-  loadSnapshotAsMap,
-  snapshotKey,
-} from "./snapshot.ts";
-export { walkLogRange } from "./log-walk.ts";
-export { probeTailFrom } from "./log-tail.ts";
-export { type SchemaIssue, type SchemaValidator, validateOrThrow } from "./schema.ts";
+export type { SchemaIssue, SchemaValidator } from "./schema.ts";
 
 /**
  * Curated re-export of `@baerly/protocol`'s user-facing symbols.

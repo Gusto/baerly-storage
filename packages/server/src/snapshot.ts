@@ -1,9 +1,9 @@
 /**
  * Snapshot file shape + parse. Lifted out of `./compactor.ts` so that
- * the kernel barrel (`packages/server/src/index.ts`) — which re-exports
- * these four symbols — does not transitively pull `withObservability`
- * via `compact()`. `./compactor.ts` imports its own snapshot primitives
- * back from this module; the public API surface is unchanged.
+ * `_internal/kernel.ts` — which re-exports these four symbols to the CLI,
+ * bench, and tests — does not transitively pull `withObservability` via
+ * `compact()`. `./compactor.ts` imports its own snapshot primitives back
+ * from this module.
  *
  * @see ../../../docs/spec/sync-protocol.md
  */
@@ -109,7 +109,7 @@ export const encodeSnapshotBody = (s: SnapshotBody): Uint8Array => encodeJsonByt
  *
  * @example
  * ```ts
- * import { loadSnapshotAsMap } from "@gusto/baerly-storage";
+ * import { loadSnapshotAsMap } from "@baerly/server/_internal/kernel";
  *
  * const map =
  *   srcCurrent.snapshot === null

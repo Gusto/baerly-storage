@@ -40,7 +40,7 @@ import {
   loadSnapshotAsMap,
   snapshotKey,
   type SnapshotBody,
-} from "@baerly/server";
+} from "@baerly/server/_internal/kernel";
 import {
   decodeSnapshotChunk,
   decodeSnapshotManifest,

@@ -25,15 +25,28 @@ import { describe, expect, test } from "vitest";
 // ---------------------------------------------------------------------------
 // @gusto/baerly-storage (root barrel)
 // ---------------------------------------------------------------------------
-import { BaerlyError, Db, MemoryStorage, probeTailFrom, walkLogRange } from "@gusto/baerly-storage";
+import { BaerlyError, Db, MemoryStorage } from "@gusto/baerly-storage";
 
 describe("@gusto/baerly-storage", () => {
   test("imports resolve", () => {
     expect(typeof Db).toBe("function");
     expect(typeof BaerlyError).toBe("function");
     expect(typeof MemoryStorage).toBe("function");
-    expect(typeof walkLogRange).toBe("function");
-    expect(typeof probeTailFrom).toBe("function");
+  });
+
+  test("does not export kernel internals", async () => {
+    const root: Record<string, unknown> = await import("@gusto/baerly-storage");
+    const internals = [
+      "collectionsToMaps",
+      "encodeSnapshotBody",
+      "loadSnapshotAsMap",
+      "probeTailFrom",
+      "resolveVerifier",
+      "snapshotKey",
+      "validateOrThrow",
+      "walkLogRange",
+    ];
+    expect(internals.filter((name) => name in root)).toEqual([]);
   });
 });
 
@@ -97,6 +110,22 @@ describe("@gusto/baerly-storage/maintenance", () => {
     expect(root).not.toHaveProperty("allIndexKeysFor");
     expect(maintenance).not.toHaveProperty("rebuildIndex");
   });
+
+  test("does not export the write-tick runner or its helpers", async () => {
+    const maintenance: Record<string, unknown> = await import("@gusto/baerly-storage/maintenance");
+    const internals = [
+      "crossesGcBoundary",
+      "dispatchInlineAwaited",
+      "dispatchWriteTick",
+      "estimateTailBytes",
+      "isFoldViable",
+      "parseMaintenanceEnv",
+      "resolveFoldCeilings",
+      "runBoundedMaintenance",
+      "shouldFireMaintenance",
+    ];
+    expect(internals.filter((name) => name in maintenance)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -115,6 +144,13 @@ describe("@gusto/baerly-storage/observability", () => {
     expect(typeof createObservabilityContext).toBe("function");
     expect(typeof getLogger).toBe("function");
     expect(typeof withHttpObservability).toBe("function");
+  });
+
+  test("does not export adapter wiring", async () => {
+    const observability: Record<string, unknown> =
+      await import("@gusto/baerly-storage/observability");
+    expect(observability).not.toHaveProperty("flushUnauthorizedAndRespond");
+    expect(observability).not.toHaveProperty("logMaintenanceWarning");
   });
 });
 

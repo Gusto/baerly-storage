@@ -58,7 +58,7 @@
  */
 import type { DocumentData, Storage } from "@baerly/protocol";
 import { r2BindingStorage } from "@baerly/adapter-cloudflare";
-import { loadSnapshotAsMap } from "@baerly/server";
+import { loadSnapshotAsMap } from "@baerly/server/_internal/kernel";
 import {
   foldChunkedSnapshotReference,
   openSnapshotView,
