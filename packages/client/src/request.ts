@@ -1,4 +1,4 @@
-import { BaerlyError, isBaerlyErrorCode } from "@baerly/protocol";
+import { BaerlyError, CAPACITY_WARNING_HEADER, isBaerlyErrorCode } from "@baerly/protocol";
 import type { HttpErrorEnvelope, HttpOkEnvelope } from "./contract.ts";
 import {
   backoffMillis,
@@ -15,6 +15,28 @@ import {
  * tests override with a {@link MockFetch}.
  */
 export type Fetcher = (req: Request) => Promise<Response>;
+
+/**
+ * A warning the server attached to a successful response, passed to
+ * `BaerlyClientOptions.onWarning`. The request itself succeeded and its
+ * result is unchanged.
+ *
+ * `code` is the kind of warning. `"CapacityWarning"` (the
+ * `Baerly-Capacity-Warning` response header) means the write was
+ * committed but left its collection at 90% or more of what the host can
+ * hold, so inserts and growing updates will soon be refused with
+ * `CapacityExceeded`; `message` is the server's text, naming the state
+ * and the app-side remedy.
+ */
+export interface BaerlyWarning {
+  readonly code: "CapacityWarning";
+  /** The server's warning text, verbatim. */
+  readonly message: string;
+  /** The request that drew the warning. */
+  readonly method: RequestOptions["method"];
+  /** The request path, e.g. `/v1/c/tickets`. */
+  readonly path: string;
+}
 
 export interface RequestOptions {
   readonly method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
@@ -48,7 +70,28 @@ export interface RequestContext {
    * fetch runs against.
    */
   readonly signal?: AbortSignal;
+  /** `BaerlyClientOptions.onWarning`, called once per warned response. */
+  readonly onWarning?: (warning: BaerlyWarning) => void;
 }
+
+/**
+ * Hand a successful response's capacity warning to `ctx.onWarning`. The
+ * callback is the app's code: whatever it throws, or an async callback's
+ * rejection, is swallowed, so it can never fail a committed write.
+ */
+const reportWarning = (ctx: RequestContext, opts: RequestOptions, res: Response): void => {
+  const message = res.headers.get(CAPACITY_WARNING_HEADER);
+  if (ctx.onWarning === undefined || !message) {
+    return;
+  }
+  try {
+    Promise.resolve(
+      ctx.onWarning({ code: "CapacityWarning", message, method: opts.method, path: opts.path }),
+    ).catch(() => {});
+  } catch {
+    // The callback threw synchronously; the request still succeeds.
+  }
+};
 
 const parseSuccessfulJson = async (
   res: Response,
@@ -164,6 +207,9 @@ const decodeFailure = async (
  * - 200 on `GET /v1/since` → raw `SinceResponse` as T (no `data` unwrap).
  * - 200 on any other `GET` → `HttpOkEnvelope<T>.data`.
  *
+ * A successful response carrying `Baerly-Capacity-Warning` is first
+ * reported to `ctx.onWarning` (see {@link BaerlyWarning}).
+ *
  * Two failure classes are retried, each up to its attempt cap, after a
  * wait of the server's `Retry-After` or else a jittered backoff. A hint
  * above the class's ceiling ends the retries instead of being clamped.
@@ -228,6 +274,10 @@ export const request = async <T>(ctx: RequestContext, opts: RequestOptions): Pro
       }
       await sleep(backoffMillis(attempt - 1), signal);
       continue;
+    }
+
+    if (res.ok) {
+      reportWarning(ctx, opts, res);
     }
 
     // 204 No Content — never a body; cast the "no value" to T. The

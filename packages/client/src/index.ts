@@ -6,7 +6,7 @@ export type {
   ClientCollection,
   TerminalOptions,
 } from "./client.ts";
-export type { Fetcher } from "./request.ts";
+export type { BaerlyWarning, Fetcher } from "./request.ts";
 export { BaerlyError } from "@baerly/protocol";
 export type {
   BaerlyErrorCode,
