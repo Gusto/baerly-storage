@@ -284,7 +284,9 @@ zero overhead.
 
 Reads `current.json` + snapshot + live log tail and prints a
 read-only summary of one collection (tail_hint, log_seq_start,
-writer_fence, materialised row count).
+writer_fence, materialised row count). `--json` is a storage-format
+diagnostic, not a stable contract: its fields follow the storage format
+and can change in any release.
 
 Bolt-on (adding baerly-storage to an existing Cloudflare Worker project) lives
 in `@gusto/create-baerly-storage`: `pnpm create @gusto/baerly-storage@latest .` detects `wrangler.jsonc` and
