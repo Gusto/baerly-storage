@@ -308,6 +308,9 @@ describe("request minted-insert transport retry (E3)", () => {
   });
 
   test("an abort during the backoff stops at once", async () => {
+    // Pin the jitter: an unpinned draw below 1 ms becomes a 0 ms fake timer
+    // that the zero-length advance below would fire before the abort.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const { ctx, calls } = scripted([bare(503), created()]);
     const ac = new AbortController();
     const reason = new Error("stop");
@@ -316,6 +319,8 @@ describe("request minted-insert transport retry (E3)", () => {
       (error: unknown) => error,
     );
     await vi.advanceTimersByTimeAsync(0);
+    // The first attempt failed and the 125 ms backoff timer is pending.
+    expect(vi.getTimerCount()).toBe(1);
     ac.abort(reason);
     await expect(outcome).resolves.toBe(reason);
     expect(calls).toHaveLength(1);
