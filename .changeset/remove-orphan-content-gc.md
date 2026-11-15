@@ -60,8 +60,8 @@ tail. Every GC tick now takes the ordinary rate-limited refresh.
 // before (0.6.0)
 const { marked } = await runGc(args);
 console.log(marked.orphan_content);
-// after: the member is gone; do not read it
-const { marked } = await runGc(args);
+// after: runGc is no longer published; a scheduled pass reports deletions
+const { gcDeleted, pending } = await runScheduledMaintenance({ storage, app, tenant, collection });
 ```
 
 Delete the field from any dashboard or assertion that reads `RunGcResult.marked.orphan_content`. A leftover `content/` prefix needs no action.

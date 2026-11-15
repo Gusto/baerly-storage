@@ -10,14 +10,14 @@ The documented per-pass maxima now count every storage call (GETs and each LIST 
 - **Workers Free with S3 over HTTP:** keep alternating the direct phases, one per invocation. A compact pass sizes its tail probe to fit the 45 calls (see the "scheduled compact over `fetch`" entry of this release).
 - **Workers Paid:** `CLOUDFLARE_PAID_TIER` now walks at most 1,000 log slots to find the tail per compaction pass. Before, a pass behind a stale `tail_hint` could need up to 100,000 GETs, which the request limit refuses; now it returns `skippedReason: "probe-budget-checkpointed"` or folds a slice, and the next pass resumes. Worst case per pass is 1,204 calls (3,612 retried).
 
+The tiers are now selected with `tier`, and the alternation with `phase`, as described in the entry of this release where `/maintenance` "exports one function":
+
 ```ts
+const target = { storage, app, tenant, collection };
 // Workers Free + R2 binding, or Workers Paid: one call per invocation
-await runScheduledMaintenance(args, CLOUDFLARE_FREE_TIER); // or CLOUDFLARE_PAID_TIER
+await runScheduledMaintenance(target, { tier: "cf-free" }); // or "cf-paid"
 
 // Workers Free + S3 over HTTP: alternate phases
-if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
-  await compact(args, CLOUDFLARE_FREE_TIER.compact);
-} else {
-  await runGc(args, CLOUDFLARE_FREE_TIER.gc);
-}
+const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
+await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
 ```
