@@ -96,7 +96,8 @@ model shares no code with `packages/**`, including it would add tens of minutes
 for no additional signal.
 
 `writeModelStudyReport` writes to `bench/results/multilevel-model/<createdAt>/report.json`,
-which is gitignored. Reports are reproducible from the recorded seed, source
+which is gitignored. Only `pnpm model:multilevel` (`MODEL_PERSIST_REPORT=1`) writes
+there; `pnpm test` writes its report to a temporary directory it removes. Reports are reproducible from the recorded seed, source
 hashes, and assumptions rather than checked in. `sourceHashes` covers the `.ts`
 files directly in this directory and nothing else — editing any one of them
 invalidates a previously generated report, so regenerate after changing the

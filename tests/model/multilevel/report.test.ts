@@ -158,7 +158,16 @@ test("writes a complete passing report for the executable model registry", async
   // literal value: pinning the literal here made a rebaseline fail this test
   // for no reason while never catching a stale baseline.
   expect(report.baseSha).toBe(MODEL_BASE_SHA);
-  const reportPath = await writeModelStudyReport(report, repoRoot);
+  // Only the acceptance pass (`pnpm model:multilevel`) keeps its report under
+  // bench/results/; a default run writes to a throwaway directory.
+  const reportRoot =
+    process.env["MODEL_PERSIST_REPORT"] === "1"
+      ? repoRoot
+      : await mkdtemp(join(tmpdir(), "baerly-multilevel-acceptance-"));
+  if (reportRoot !== repoRoot) {
+    temporaryRoots.push(reportRoot);
+  }
+  const reportPath = await writeModelStudyReport(report, reportRoot);
   const persisted = JSON.parse(await readFile(reportPath, "utf8"));
   expect(persisted).toEqual(report);
   expect(report.results.map(({ name }) => name)).toEqual(MODEL_PROPERTIES.map(({ name }) => name));
