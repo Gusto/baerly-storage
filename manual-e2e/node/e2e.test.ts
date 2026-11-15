@@ -196,7 +196,11 @@ describe.runIf(gate("deploy-node", NODE_URL !== undefined && SECRET !== undefine
     const S3_ENDPOINT = process.env["S3_ENDPOINT"] ?? `https://s3.${AWS_REGION}.amazonaws.com`;
 
     const cascadeReady =
-      AWS_ACCESS !== undefined && AWS_SECRET_KEY !== undefined && BUCKET !== undefined;
+      NODE_URL !== undefined &&
+      SECRET !== undefined &&
+      AWS_ACCESS !== undefined &&
+      AWS_SECRET_KEY !== undefined &&
+      BUCKET !== undefined;
 
     describe.runIf(gate("deploy-node-s3-cascade", cascadeReady))(
       "conformance cascade (via S3)",
