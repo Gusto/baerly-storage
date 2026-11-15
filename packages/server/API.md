@@ -823,7 +823,6 @@ options.
 | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `request_id`                                   | Correlation key. Set from `X-Request-Id` if provided, else minted fresh.             |
 | `method` / `path` / `status`                   | HTTP request line + response code.                                                   |
-| `cache_status`                                 | `"hit" \| "miss" \| "bypass"` — Cloudflare adapter only. Node adapter omits.         |
 | `duration_ms`                                  | `performance.now()` delta, monotonic wall-clock.                                     |
 | `outcome`                                      | `"read"`/`"committed"` (<400), `"conflict"` (409), `"refused"` (capacity), `"error"`. |
 | `db.storage.class_a_ops_total`                 | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant.                       |
@@ -929,8 +928,8 @@ tenant-wide — scope and clamp them in your route too (see RECIPES.md).
 **Known limitations of this recipe.** The custom-route `Db.create` is
 a second instance — it doesn't share `baerlyWorker`'s
 `observableStorage(...)` wrapping (so custom-route writes don't land
-in the canonical-line storage counters) or the read-cache invalidation
-helper. For small chat-shaped apps this is acceptable; the
+in the canonical-line storage counters). Worker point reads always reach
+storage and see direct SDK writes. For small chat-shaped apps the
 observability gap is being tracked as a follow-up. If you also need
 PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for
 each verb.

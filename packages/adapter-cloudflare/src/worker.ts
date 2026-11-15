@@ -43,7 +43,6 @@ import {
   flushUnauthorizedAndRespond,
   logMaintenanceWarning,
 } from "@baerly/server/_internal/observability";
-import { type CacheStatus, invalidateOnWrite, withReadCache } from "./cache.ts";
 import { isR2BindingStorage } from "./r2-binding-storage.ts";
 import { resolveWorkerStorage } from "./resolve-storage.ts";
 
@@ -208,7 +207,7 @@ const envReader =
  * tier. The profile, not the account's billing plan, selects them:
  * `cf-free` (the default) allows {@link CF_FREE_INTERNAL_REQUEST_LIMIT}
  * storage calls, of which at most {@link CF_FREE_EXTERNAL_REQUEST_LIMIT}
- * leave through `fetch` or the Cache API; `cf-paid` allows
+ * leave through `fetch`; `cf-paid` allows
  * {@link CF_PAID_REQUEST_LIMIT} of either. A storage call past the limit
  * is refused with `CapacityExceeded` before it is sent, where the
  * platform would otherwise throw on it.
@@ -448,14 +447,9 @@ export interface BaerlyWorkerOptions {
  *
  * Observability: every HTTP request that passes healthz — the
  * verifier included — runs inside a single `runWithContext` scope
- * created up front in this adapter, including the read-cache
- * wrapper. The canonical
- * line emitted at end-of-request carries a top-level
- * `cache_status: "hit" | "miss" | "bypass"` field so operators can
- * split hit/miss/bypass directly from the log stream without
- * consulting a CDN dashboard. The router's observability middleware
- * detects the ambient context and passes through — the adapter owns
- * the flush.
+ * created up front in this adapter. Every point read reaches storage;
+ * response bodies are never cached. The canonical line includes the
+ * storage work of each read; the adapter owns the flush.
  *
  * Cron Triggers are opt-in. Pass `options.scheduled` to wire one;
  * `wrangler.jsonc:triggers.crons` controls the firing cadence.
@@ -681,16 +675,13 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       }
 
       // Construct the per-request observability context up front. The
-      // verifier, `Db.create`, the router, and the read-cache wrapper all
-      // run inside one `runWithContext` scope below, so work done by any
+      // verifier, `Db.create`, and the router run inside one
+      // `runWithContext` scope below, so work done by any
       // of them (e.g. a verifier's JWKS fetch) sees `getCurrentContext()`.
-      // A verifier rejection (or a cache-hit short-circuit) still emits
-      // its canonical line from inside that scope.
+      // A verifier rejection still emits its canonical line in that scope.
       //
-      // The router's observability middleware (see `router.ts`
-      // "Mode A") detects the ambient context and passes through —
-      // it never creates a competing context, and it never flushes
-      // its own line. The adapter owns the flush from here on.
+      // The router uses this ambient context and never flushes a
+      // competing canonical line. The adapter owns the flush.
       const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
       // In-band write-tick maintenance: the writer reads
       // `getCurrentContext()?.maintenance` at its post-commit dispatch
@@ -702,9 +693,8 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       const obsCtx = createObservabilityContext({
         request_id: requestId,
         maintenance: cfMaintenanceDispatch(ctx, readEnv, baseStorage),
-        // One budget for the whole invocation: the route, the read cache,
-        // and the `ctx.waitUntil` tick and invalidation it dispatches
-        // (both started inside this context) charge the same ledger.
+        // One budget for the whole invocation: the route and the
+        // `ctx.waitUntil` tick charge the same ledger.
         ledger: cfRequestLedger(readEnv),
         readEnvelope: cfReadEnvelope(baseStorage),
       });
@@ -746,11 +736,10 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         // only the observability wrap is per-request.
         const storage = observableStorage(baseStorage);
         // One `try` covers `Db.create` (refuses an invalid tenant, for
-        // example a non-NFC claim), `createRouter` and the read-cache
-        // wrapped `app.fetch`. Any throw maps to the JSON error envelope
+        // example a non-NFC claim), `createRouter` and `app.fetch`.
+        // Any throw maps to the JSON error envelope
         // with the mapped status, and one canonical line records it, as
         // the Node adapter does.
-        let cacheStatus: CacheStatus = "bypass";
         let outboundStatus = 500;
         let caughtError: unknown;
         let response: Response;
@@ -766,14 +755,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             sinceTimeoutMs: options.sinceTimeoutMs,
             sincePollIntervalMs: options.sincePollIntervalMs,
           });
-          // Hono's `fetch` returns `Response | Promise<Response>`;
-          // `withReadCache` wants a `Promise<Response>`. Normalize
-          // via `Promise.resolve` so the sync-return branch is wrapped.
-          const cacheResult = await withReadCache(req, tenantPrefix, () =>
-            Promise.resolve(app.fetch(req, env, ctx)),
-          );
-          cacheStatus = cacheResult.cache_status;
-          response = cacheResult.response;
+          response = await app.fetch(req, env, ctx);
           outboundStatus = response.status;
         } catch (error) {
           caughtError = error;
@@ -792,15 +774,8 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             extra: {
               method: req.method,
               path: url.pathname,
-              cache_status: cacheStatus,
             },
           });
-        }
-        // Best-effort invalidate after writes, skipped when the request
-        // threw. `ctx.waitUntil` keeps the Worker alive for the
-        // cache.delete without blocking the response.
-        if (caughtError === undefined) {
-          ctx.waitUntil(invalidateOnWrite(req, tenantPrefix, response.status));
         }
         return response;
       });

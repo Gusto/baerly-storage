@@ -27,3 +27,9 @@ Cloudflare Workers adapter for Baerly. Ships two `Storage` flavors and a
 
 Internal-only for now (`"private": true`). Public API surface is the
 JSDoc on `src/*.ts`.
+
+Point reads always reach storage after authentication and tenant resolution.
+Response bodies are not cached, so a subsequent read sees completed HTTP or
+direct SDK writes. Repeated reads pay the storage-backed read cost; the
+Worker emits no `cache_status` field. Host limits and read bounds are
+unchanged.

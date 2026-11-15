@@ -4,8 +4,9 @@ import { BaerlyError } from "../errors.ts";
 /**
  * A request pool on a {@link RequestLedger}. `internal` is charged for
  * every storage call. `external` is charged as well for a call that
- * leaves through `fetch` or the Cache API (S3 over HTTP, GCS, the Worker
- * read cache). Charging an external call to both pools is safe whether
+ * leaves through `fetch` (S3 over HTTP, GCS). The legacy cache-accounting
+ * seam also charges both pools; the production Worker never calls it.
+ * Charging an external call to both pools is safe whether
  * the host keeps one combined counter or two separate ones.
  */
 export type RequestPool = "internal" | "external";
@@ -185,12 +186,13 @@ export class RequestLedger {
   }
 
   /**
+   * Legacy internal accounting seam; no production Worker caller.
    * Charge one optional Cache API call when it fits: room in `external`
    * and fewer than {@link CF_CACHE_API_MAX_CALLS} cache calls so far.
    * Returns `false`, charging nothing, when it does not; the caller skips
    * the cache call. With `required`, the call is charged whether or not
-   * it fits and always returns `true`: a cache invalidation after a write
-   * runs inside the limits' margin rather than leave a stale entry.
+   * it fits and always returns `true`. Tests use this to model an
+   * unrefusable call consuming the platform margin.
    */
   chargeCacheCall(required = false): boolean {
     if (!required && (this.#cache >= CF_CACHE_API_MAX_CALLS || this.remaining("external") < 1)) {

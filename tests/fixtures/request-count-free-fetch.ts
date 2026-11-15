@@ -301,19 +301,16 @@ export const measureFreeFetchRun = async (
 export const FREE_FETCH_BUDGET = CF_FREE_EXTERNAL_REQUEST_LIMIT;
 
 /**
- * Cache API calls the Worker adds to a request, which share the subrequest
- * quota: `match` plus `put` on a GET by id that misses, and one `delete`
- * on a PATCH or DELETE. `insert` (POST) and queries bypass the cache.
- * This program has no Cache API, so the values are measured through the
- * real Worker under workerd by
- * `packages/adapter-cloudflare/src/worker-maintenance.test.ts`, which fails
- * if they drift.
+ * The Worker adds no Cache API calls. Workerd spies in
+ * `packages/adapter-cloudflare/src/worker-maintenance.test.ts` pin this
+ * overhead at zero alongside the storage-only grid. Keep the existing
+ * platform budget and fold/GC thresholds; freed calls remain headroom.
  */
 export const FREE_FETCH_CACHE_API_CALLS: Record<FreeFetchWrite | FreeFetchRead, number> = {
   insert: 0,
-  update: 1,
-  mixed: 1,
-  get: 2,
+  update: 0,
+  mixed: 0,
+  get: 0,
   "indexed-query": 0,
   "indexed-miss": 0,
   "in-query": 0,

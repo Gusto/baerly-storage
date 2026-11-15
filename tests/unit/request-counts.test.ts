@@ -63,7 +63,7 @@ describe("Workers Free with storage over fetch", () => {
     );
   });
   // Each `free-fetch:*` cell is a whole request, route plus the tick it
-  // dispatches; the Worker's Cache API calls share the same quota.
+  // dispatches; the Worker adds no Cache API overhead.
   test("every request on a collection declaring indexes fits the external subrequest budget", async () => {
     const cells = await freeFetchCells(FREE_FETCH_INDEXES);
     const over = cells

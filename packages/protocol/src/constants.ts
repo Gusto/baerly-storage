@@ -218,11 +218,12 @@ export const CF_FREE_INTERNAL_REQUEST_LIMIT: number = 900;
 
 /**
  * Request-ledger limit on the `external` pool on Workers Free: storage
- * calls that leave through `fetch` (S3 over HTTP, GCS) plus Cache API
- * calls. Free allows 50 external subrequests per invocation, and a
+ * calls that leave through `fetch` (S3 over HTTP, GCS). Free allows 50
+ * external subrequests per invocation, and a
  * `fetch` past the 50th throws before it is sent (observed at exactly
  * call 51). 45 keeps 5 for calls outside the ledger: the verifier's JWKS
- * fetch on a cold isolate and a write's cache invalidation.
+ * fetch on a cold isolate and app code in the same Worker. The removed
+ * response cache's allowance stays headroom; this limit is unchanged.
  * `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and `CF_FREE_FETCH_GC_MAX_SWEEPS`
  * are sized so a whole request fits it.
  */
@@ -238,12 +239,10 @@ export const CF_FREE_EXTERNAL_REQUEST_LIMIT: number = 45;
 export const CF_PAID_REQUEST_LIMIT: number = 9000;
 
 /**
- * Most Cache API calls (`match` / `put` / `delete`) the Worker's read
- * cache spends per invocation. They share the subrequest quota, so each
- * is charged to the ledger's `external` pool. The read cache issues at
- * most `match` + `put` on a cacheable GET and one `delete` after a write;
- * a `match` or `put` without room in the ledger is skipped and the
- * request is served from storage, never refused.
+ * Legacy internal Cache API accounting cap. The production Worker never
+ * calls the Cache API; point reads always reach storage. Retained with
+ * `RequestLedger.chargeCacheCall` for budget-interference tests and
+ * internal compatibility, without increasing any supported host limit.
  */
 export const CF_CACHE_API_MAX_CALLS: number = 3;
 
@@ -767,19 +766,19 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
  *   snapshots, plus log retirement, including a write whose tail reaches
  *   `T + 1` while the hard-GC guard pre-empts the fold.
  *
- * Plus one Cache API `delete` (which shares the subrequest quota) on a
- * PATCH or DELETE. The `free-fetch:*` cells measure inserts, cold updates
- * and a mixed rotation through a full cycle of fold and GC phases with
- * every GC slice sweeping its cap; the worst is 30 + 1 = 31 at `T = 7`,
+ * The Worker adds no Cache API calls. The `free-fetch:*` cells measure
+ * inserts, cold updates and a mixed rotation through a full cycle of
+ * fold and GC phases with
+ * every GC slice sweeping its cap; the worst is 30 at `T = 7`,
  * `D = 3`, set by the GC arm. `T = 8`, `D = 2` would only match snapshot
  * creation at the guaranteed GC cadence; `T = 7`, `D = 3` leaves sweep
- * throughput headroom. The 14 calls of room left are deliberately unspent:
+ * throughput headroom. The 15 calls of room left are deliberately unspent:
  * a later fold trigger moves the snapshot-creation rate, the GC throughput
  * argument on {@link CF_FREE_FETCH_GC_MAX_SWEEPS} and the documented Free +
  * S3 envelope, so raising `T` is a measured change of its own.
  * The longest live tail a read then sees is `T + 1` = 8: any read, with or
- * without declared indexes (`$in` included), costs 11, plus 2 Cache API
- * calls for a GET by id.
+ * without declared indexes (`$in` included), costs 11. Every point read
+ * pays this storage-backed cost, even when repeated.
  * Retried calls (up to `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this
  * budget: that host is best effort.
  *

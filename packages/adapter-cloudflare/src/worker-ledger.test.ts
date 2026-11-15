@@ -4,13 +4,11 @@
 /**
  * The Worker's per-invocation request ledger, under workerd: its limits
  * per maintenance profile, one ledger shared by a request's route and its
- * `ctx.waitUntil` work, a fresh one per cron invocation, and the Cache API
- * calls charged to it. Runs in the `cloudflare-pool` project.
+ * `ctx.waitUntil` work, a fresh one per cron invocation, with storage calls charged to it. Runs in the `cloudflare-pool` project.
  */
 
 import {
   type BaerlyAppConfig,
-  CF_CACHE_API_MAX_CALLS,
   CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
@@ -19,7 +17,7 @@ import {
   createCurrentJson,
   MemoryStorage,
   readCurrentJson,
-  RequestLedger,
+  type RequestLedger,
   type Verifier,
 } from "@baerly/protocol";
 import { runWithContext } from "@baerly/server/observability";
@@ -32,7 +30,6 @@ import { describe, expect, test } from "vitest";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { CallTally, totalCalls } from "../../../tests/fixtures/request-counting-storage.ts";
-import { invalidateOnWrite, withReadCache } from "./cache.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv, cfReadEnvelope, cfRequestLedger } from "./worker.ts";
 
@@ -138,13 +135,12 @@ describe("a Worker request runs under one ledger", () => {
     expect(res.status).toBe(409);
     await expect(res.json()).resolves.toMatchObject({ error: { code: "CapacityExceeded" } });
     expect(ledger?.limits.external).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT);
-    // The read cache's `match` took one; storage got the rest, and the call
-    // the ledger refused was never issued.
-    expect(ledger?.charged).toMatchObject({ external: CF_FREE_EXTERNAL_REQUEST_LIMIT, cache: 1 });
-    expect(totalCalls(issued.read())).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT - 1);
+    // Every issued call reaches storage; the refused call is never sent.
+    expect(ledger?.charged).toMatchObject({ external: CF_FREE_EXTERNAL_REQUEST_LIMIT, cache: 0 });
+    expect(totalCalls(issued.read())).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT);
   });
 
-  test("the waitUntil fold and invalidation charge the request's ledger", async () => {
+  test("the waitUntil fold charges the request's ledger", async () => {
     const tenant = tenantId("ledger-tick");
     const inner = new MemoryStorage();
     const issued = new CallTally();
@@ -174,8 +170,8 @@ describe("a Worker request runs under one ledger", () => {
       expect(res.status).toBeLessThan(300);
       await drain();
       if (method === "PATCH") {
-        // The post-response invalidation charged this request's ledger.
-        expect(ledgers.at(-1)!.charged.cache).toBe(1);
+        // The Worker adds no Cache API work after the response.
+        expect(ledgers.at(-1)!.charged.cache).toBe(0);
       }
     };
     for (let i = 0; i < CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES; i++) {
@@ -282,89 +278,6 @@ describe("a cron invocation gets its own ledger", () => {
     expect(seen[0]?.limits.external).toBe(CF_FREE_EXTERNAL_REQUEST_LIMIT);
     expect(seen[1]?.limits.external).toBe(CF_PAID_REQUEST_LIMIT);
     expect(seen[0]).not.toBe(seen[1]);
-  });
-});
-
-let n = 0;
-const freshUrl = (path: string): string =>
-  `https://baerly-ledger.test/v1/c/${path}-${++n}-${Date.now().toString(36)}`;
-
-const inLedger = <T>(ledger: RequestLedger, fn: () => Promise<T>): Promise<T> =>
-  Promise.resolve(runWithContext(createObservabilityContext({ ledger }), fn));
-
-describe("the read cache charges the ledger and never refuses for it", () => {
-  const ok = (): Response =>
-    new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { "content-type": "application/json", etag: '"e"' },
-    });
-
-  test("a miss charges match + put to the external pool", async () => {
-    const ledger = new RequestLedger({ internal: 900, external: 45 });
-    const result = await inLedger(ledger, () =>
-      withReadCache(new Request(freshUrl("tickets/a")), "t", async () => ok()),
-    );
-    expect(result.cache_status).toBe("miss");
-    expect(ledger.charged).toEqual({ internal: 2, external: 2, cache: 2 });
-  });
-
-  test("with no room for the put, the response is served and nothing is stored", async () => {
-    const url = freshUrl("tickets/b");
-    const ledger = new RequestLedger({ internal: 900, external: 2 });
-    ledger.acquire("external");
-    const first = await inLedger(ledger, () =>
-      withReadCache(new Request(url), "t", async () => ok()),
-    );
-    expect(first.response.status).toBe(200);
-    expect(ledger.charged).toEqual({ internal: 2, external: 2, cache: 1 });
-    // Nothing was stored: the next read misses again.
-    const again = await inLedger(new RequestLedger(), () =>
-      withReadCache(new Request(url), "t", async () => ok()),
-    );
-    expect(again.cache_status).toBe("miss");
-  });
-
-  test("with no room for the match, the cache is bypassed and the handler serves", async () => {
-    const ledger = new RequestLedger({ internal: 900, external: 0 });
-    let ran = 0;
-    const result = await inLedger(ledger, () =>
-      withReadCache(new Request(freshUrl("tickets/c")), "t", async () => {
-        ran += 1;
-        return ok();
-      }),
-    );
-    expect([result.cache_status, result.response.status, ran]).toEqual(["bypass", 200, 1]);
-    expect(ledger.charged.cache).toBe(0);
-  });
-
-  test(`at most ${CF_CACHE_API_MAX_CALLS} optional cache calls per invocation`, async () => {
-    const ledger = new RequestLedger({ internal: 900, external: 45 });
-    const statuses: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const r = await inLedger(ledger, () =>
-        withReadCache(new Request(freshUrl("tickets/d")), "t", async () => ok()),
-      );
-      statuses.push(r.cache_status);
-    }
-    // match + put, then match (3), then the third read bypasses.
-    expect(statuses).toEqual(["miss", "miss", "bypass"]);
-    expect(ledger.charged.cache).toBe(CF_CACHE_API_MAX_CALLS);
-  });
-
-  test("a write's invalidation is issued even with the pool spent", async () => {
-    const url = freshUrl("tickets/e");
-    await inLedger(new RequestLedger(), () =>
-      withReadCache(new Request(url), "t", async () => ok()),
-    );
-    const ledger = new RequestLedger({ internal: 900, external: 0 });
-    await inLedger(ledger, () =>
-      invalidateOnWrite(new Request(url, { method: "PATCH" }), "t", 200),
-    );
-    expect(ledger.charged).toEqual({ internal: 1, external: 1, cache: 1 });
-    const after = await inLedger(new RequestLedger(), () =>
-      withReadCache(new Request(url), "t", async () => ok()),
-    );
-    expect(after.cache_status).toBe("miss");
   });
 });
 

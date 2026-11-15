@@ -492,7 +492,7 @@ unknown fate, which the writer resolves by readback as above.
 
 The ledger has two pools: `internal`, charged for every storage call, and
 `external`, charged as well for a call that leaves through `fetch` (S3 over
-HTTP, GCS) or the Cache API. The R2 binding charges `internal` only. The
+HTTP, GCS). The R2 binding charges `internal` only. The
 limits follow the Workers maintenance profile:
 
 | Profile | `internal` | `external` |
@@ -516,8 +516,7 @@ async context draw on the hold; every other call in the invocation, a
 it, so concurrent work cannot spend the reserve. After a lost create race
 the hold is released (the foreign occupant proves this commit's only send
 did not land, so a refusal from there is clean), the forward probe runs,
-and the next slot takes a new hold. Only a call outside every hold that the ledger cannot refuse
-(the read cache's post-write invalidation) or a platform cap below the
+and the next slot takes a new hold. A platform cap below the
 ledger's limit can still cut into a hold; then the create resolves as
 described above (`CapacityExceeded` when the create was never sent,
 `AmbiguousCommit` when a sent create cannot be read back). The write tick
@@ -530,10 +529,12 @@ after it, and surfaces the `CapacityExceeded`; nothing is ambiguous.
 
 Each limit keeps a margin under the platform cap (1,000 internal and 50
 external on Free, 10,000 on Paid) for calls the ledger does not see, such
-as the verifier's JWKS fetch. The Worker's read cache charges each Cache API
-call to `external`, at most `CF_CACHE_API_MAX_CALLS` per invocation; a cache
-`match` or `put` without room is skipped and the request is served from
-storage, and the invalidation after a write is always sent.
+as the verifier's JWKS fetch. The Worker makes no Cache API calls and
+never serves cached response bodies: every point read reaches storage,
+including after a direct SDK write. The old cache allowance remains
+headroom; request limits and maintenance thresholds stay unchanged.
+The legacy internal `RequestLedger.chargeCacheCall` seam remains available
+for budget-interference tests, with no production Worker callers.
 
 The `/v1/since` long-poll reads the ledger and never runs past it, so it
 never fails with the ledger's `CapacityExceeded`. Each poll cycle starts

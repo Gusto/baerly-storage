@@ -59,11 +59,14 @@ period over a seeded backlog of due snapshots, so every GC slice deletes its
 full sweep cap, and log retirement is live. A `<kind>+tick` cell is the
 most expensive write, route plus tick; a read cell is the most expensive
 read at any state a `mixed` write left, before its tick ran. `tests/unit/request-counts.test.ts` also asserts that
-every such cell, plus the Worker's Cache API calls, stays within 45 calls,
-the budget `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and
-`CF_FREE_FETCH_GC_MAX_SWEEPS` are derived from. The Cache API counts are
-measured under workerd by
-`packages/adapter-cloudflare/src/worker-maintenance.test.ts`. The fixture is
+every such cell stays within 45 calls, the unchanged budget
+`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and `CF_FREE_FETCH_GC_MAX_SWEEPS` are
+derived from. The Worker makes no Cache API calls: point reads always
+reach storage. Workerd spies in
+`packages/adapter-cloudflare/src/worker-maintenance.test.ts` pin zero Cache
+API overhead for reads and writes, including drained `waitUntil` work.
+The removed cache's allowance remains headroom; platform limits, fold/GC
+thresholds and the supported read envelope do not increase. The fixture is
 `tests/fixtures/request-count-free-fetch.ts`.
 
 The `free-fetch:since-*` and `free-r2:since-*` cells are `GET /v1/since`
