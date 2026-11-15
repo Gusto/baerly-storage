@@ -169,11 +169,13 @@ repairs it.
 
 **Values must be plain JSON.** (Input validation.) `insert`, `replace` and
 `update` throw `InvalidConfig` before any storage call for `NaN`,
-`Infinity`, `undefined` object members or array elements, functions,
-symbols, bigints, cycles, and any nested object that is not a plain object
+`Infinity`, `undefined` array elements, functions, symbols, bigints, cycles,
+and any nested object that is not a plain object
 or array (`Date`, `Map`, `Set`, typed arrays, class instances, anything with
 a `toJSON`). The message names the path; `err.resolution` says how to
-convert. The client checks before sending. `null` and `-0` are fine.
+convert. `insert` and `replace` also reject `undefined` object members;
+`update` treats those members as absent. The client checks before sending.
+`null` and `-0` are fine.
 
 ```ts
 // before: stored { due: "1970-01-01T00:00:00.000Z", score: null, tags: {} }
@@ -183,14 +185,16 @@ await tasks.insert({ due: new Date(0).toISOString(), score: null, tags: {} });
 ```
 
 **A document is at most 1 MiB.** `insert`, `replace` and `update` (by id
-or by predicate) throw `InvalidConfig` (400) before writing when the
-resulting row would encode to more than 1,048,576 bytes of JSON, `_id`
-included. `update` checks each merged row, not the patch, so repeated
-patches can no longer grow a row without bound; a multi-row update with
-one over-cap row commits none. A row an earlier release stored over the
-cap stays readable and deletable, and an update that shrinks it under the
-cap commits. `PayloadTooLarge` (413) still means the request body itself
-was too large.
+or by predicate) refuse a resulting row that would encode to more than
+1,048,576 bytes of JSON, `_id` included, with `InvalidConfig` (400).
+`update` checks each merged row, not the patch. A multi-row update checks
+all selected rows before writing, so an over-cap row found then commits
+none. Concurrent writes can require a later row to be merged and checked
+again after earlier rows committed; if that check fails, those earlier
+commits remain. Re-read before retrying. A row an earlier release stored
+over the cap stays readable and deletable, and an update that shrinks it
+under the cap commits. `PayloadTooLarge` (413) still means the request
+body itself was too large.
 
 ```ts
 // before: one row that keeps growing (now refused once it passes 1 MiB)
@@ -412,7 +416,7 @@ affected.
 ```sh
 baerly admin usage --target=node --bucket=s3://my-bucket --app=app --tenant=t
 baerly admin fsck  --bucket=s3://my-bucket --app=app --tenant=t --collection=tickets
-baerly admin dump  --bucket=s3://my-bucket --app=app --tenant=t --collection=tickets --json > tickets.ndjson
+baerly admin dump  --bucket=s3://my-bucket --app=app --tenant=t --collection=tickets > tickets.ndjson
 ```
 
 `usage` scans only the `--tenant` you pass: list every tenant your verifier
@@ -421,10 +425,11 @@ and canonically-equivalent collection pairs as `names` warnings. `fsck`
 reports the same as `names` warnings (exit 4), and also flags names (check
 `names`) and snapshot `_id`s (check `ids`) holding an unpaired UTF-16
 surrogate, which 0.7.0 refuses as write targets. `fsck` does not decode the
-log; `dump --json` covers every live row. It reports non-NFC and ill-formed
-names, non-NFC and ill-formed `_id`s, and groups of canonically-equivalent
-`_id`s in its `legacy` field (or as stderr warnings). Keep the raw dump
-before any repair.
+log; `dump` covers every live row and reports non-NFC and ill-formed names,
+non-NFC and ill-formed `_id`s, and groups of canonically-equivalent `_id`s
+as stderr warnings. Keep the raw dump before any repair. For a structured
+report, run `dump --json` separately: it appends a success envelope with a
+`legacy` field to stdout, so its output cannot be restored as NDJSON.
 
 **Legacy `_id`s.** Rows under a non-NFC `_id` still read (`get`, `where`,
 `delete`), but `update` and `replace` refuse them. To keep one writable:
@@ -433,12 +438,14 @@ equivalent to the original (omit `_id` for a UUID), then delete the
 original. For canonically-equivalent pairs, copy both under fresh ids, then
 delete both.
 
-**Legacy names.** A non-NFC name's data is read-only through the SDK and
-HTTP; `baerly inspect`, `export`, `admin dump` and `fsck` still read it. On
-R2 the normalized spelling addresses the legacy objects, so reads and writes
-under it refuse with `InvalidConfig` instead of showing an empty
-collection. Dump and restore under a name that is not canonically
-equivalent to the original:
+**Legacy names.** The SDK and HTTP reject non-NFC names for reads and
+writes; `baerly inspect`, `export`, `admin dump` and `fsck` still read their
+data. On R2 a normalized collection name can address legacy objects;
+reads and folds that encounter the other collection spelling refuse with
+`InvalidConfig`. Stored records do not identify the app or tenant, so a
+normalized legacy app or tenant can still read and modify the same data.
+Dump and restore under a name that is not canonically equivalent to the
+original:
 
 ```sh
 baerly admin dump    --bucket=$B --app=app --tenant=t --collection=<legacy name> > rows.ndjson
