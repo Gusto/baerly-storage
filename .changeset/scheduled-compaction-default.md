@@ -27,17 +27,19 @@ folding tails of 1–49 (more snapshot rewrites on a hot Paid cron; an
 idle tick still costs only the `current.json` GET + tail probe).
 `CLOUDFLARE_FREE_TIER` still carries an explicit 20. It fits one
 `runScheduledMaintenance` call on Workers Free with the R2 binding; on Workers
-Free with S3 over HTTP, alternate `compact()` and `runGc()` instead. Callers already passing
-`{ compact: { minEntriesToCompact: N } }` to batch folds are unchanged.
-If you relied on the bare call **not** folding small tails — e.g. to
-batch snapshot rewrites on a write-amplification-sensitive host — pass
-the floor you want:
+Free with S3 over HTTP, alternate `compact()` and `runGc()` instead. The floor is no longer configurable: `minEntriesToCompact` left the
+public options when scheduled maintenance became addressed by collection
+(see the entry of this release where `/maintenance` "exports one function"). A caller that passed
+`{ compact: { minEntriesToCompact: N } }` to batch folds drops the option;
+every Node and `"cf-paid"` scheduled pass folds what is pending, and
+`"cf-free"` keeps its 20-entry slice. To batch snapshot rewrites on a
+write-amplification-sensitive host, schedule passes less often:
 
 ```ts
-await runScheduledMaintenance(
-  args,
-  { compact: { minEntriesToCompact: 100 } }, // previous effective default
-);
+// before
+await runScheduledMaintenance(args, { compact: { minEntriesToCompact: 100 } });
+// after: no floor option; run the pass on a slower cron instead
+await runScheduledMaintenance({ storage, app, tenant, collection });
 ```
 
 Every fold rewrites the entire snapshot; at a 5-minute cadence the new

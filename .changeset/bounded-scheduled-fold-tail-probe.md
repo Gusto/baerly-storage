@@ -22,8 +22,7 @@ from that checkpoint.
 The exact Free-tier per-phase maxima are now pinned: compaction 49 operations
 and GC 22.
 
-If you exhaustively switch on `CompactResult.skippedReason`, handle the new
-case:
+`CompactResult` and the tier profiles are no longer published (see the entry of this release where `/maintenance` "exports one function"); a checkpointed pass now reports `deferred: { reason: "budget" }`:
 
 ```ts
 // before
@@ -32,10 +31,8 @@ switch (result.skippedReason) {
 }
 
 // after
-switch (result.skippedReason) {
-  case "probe-budget-checkpointed":
-    // No snapshot was published; allow the next scheduled tick to resume.
-    break;
-  // existing cases
+const res = await runScheduledMaintenance(target, { tier: "cf-free" });
+if (res.deferred?.reason === "budget") {
+  // No snapshot was published; the next scheduled pass resumes.
 }
 ```

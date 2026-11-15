@@ -28,9 +28,7 @@ rows had tripped, where it does nothing.
 - **Metrics.** `db.compaction.deferred_total` gains a `gate` label, and the new
   `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total`
   carry the dimension onto the canonical line, which drops labels. A deferral
-  is counted once: `compact()` no longer emits the counter and instead returns
-  `deferral: { dimension, snapshotBytes, snapshotRows }` on its `"deferred"`
-  result.
+  is counted once per deferral.
 - **Rebuild-gate deferrals.** When the stored snapshot is under `C` but the
   rebuilt one is over it (the usual way bytes first cross `C`), the write tick
   now signals and refreshes `tail_hint` like any other deferral, instead of
@@ -44,7 +42,5 @@ rows had tripped, where it does nothing.
   maintenance env value the adapters would reject is a stderr warning rather
   than a failure, so the exit code stays 0.
 
-`MaintenanceDispatch` gains an optional `warn` sink, which both shipped adapters
-set. A custom adapter that builds its own `MaintenanceDispatch` gets only the
-`console.warn` line until it sets `warn: logMaintenanceWarning` (exported from
-`@gusto/baerly-storage/observability`).
+Both shipped adapters (`baerlyWorker`, `baerlyNode`) bind the structured
+`warn` sink; the dispatch types are not published.

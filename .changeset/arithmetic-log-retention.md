@@ -18,9 +18,9 @@ identically on every backend.
 // before
 const { marked } = await runGc(args);
 console.log(marked.stale_log);
-// after: the member is gone. Log retirement runs in the maintenance pass
-// that reaches it (scheduled maintenance, or a write tick that did not fold).
-const { marked } = await runGc(args);
+// after: runGc is no longer published. Log retirement runs in the maintenance
+// pass that reaches it (scheduled maintenance, or a write tick that did not fold).
+const { gcDeleted } = await runScheduledMaintenance({ storage, app, tenant, collection });
 ```
 
 Remove reads of `RunGcResult.marked.stale_log`. Code that relied on GC listing `log/` must not; keys are computed from the sequence window.

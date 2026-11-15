@@ -334,7 +334,10 @@ writers. Then roll back one of two ways:
    such a value in a field an index you keep declares (`baerly admin dump`
    lists every row). Then roll back and run 0.6's
    `baerly admin rebuild-index` once per kept index of each affected
-   collection; it rebuilds the markers from the snapshot and log.
+   collection; it rebuilds the markers from the snapshot and log. For a
+   composite index (`on: ["status", "owner"]`) pass `--config=<path>` to
+   the 0.6 config: `--on` takes one field, so `--on=status,owner` names a
+   single field called `status,owner`.
 
 Either way, finish the index repair and check that indexed queries return
 the rows `baerly admin dump` shows before reopening traffic to 0.6.

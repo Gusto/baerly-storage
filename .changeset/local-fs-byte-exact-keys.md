@@ -54,4 +54,4 @@ baerly admin dump    --bucket=file:///old-data --app=app --tenant=t --collection
 baerly admin restore --bucket=file:///new-data --app=app --tenant=t --collection=tickets < tickets.ndjson   # this release
 ```
 
-Repeat per collection. A directory whose names are all lowercase ASCII and not dot-prefixed is adopted as-is and needs nothing.
+Repeat per collection. A directory whose names are all lowercase ASCII, not dot-prefixed, and that holds no snapshot is adopted as-is and needs nothing.
