@@ -191,23 +191,42 @@ function spawnCollector(
 }
 
 /**
- * Reads the already-collected event for a run, or `undefined` when this run
- * has not been collected yet (either file missing, or the event unparseable).
+ * Reads the already-collected event for a run, or `undefined` when either
+ * artifact is missing or the event does not decode. Other read failures are
+ * surfaced with their path so collection cannot overwrite unreadable evidence.
  */
-async function readCollectedEvent(
+export async function readCollectedEvent(
   outDir: string,
   runId: string,
 ): Promise<WorkloadCeilingRawEvent | undefined> {
   const rawPath = resolve(outDir, `raw-${runId}.json`);
   const eventPath = resolve(outDir, `event-${runId}.json`);
-  let eventText: string;
-  try {
-    [, eventText] = await Promise.all([readFile(rawPath), readFile(eventPath, "utf-8")]);
-  } catch {
+
+  const [rawResult, eventResult] = await Promise.allSettled([
+    readFile(rawPath),
+    readFile(eventPath, "utf-8"),
+  ]);
+  for (const [path, result] of [
+    [rawPath, rawResult],
+    [eventPath, eventResult],
+  ] as const) {
+    if (result.status === "rejected") {
+      const reason = result.reason;
+      const code =
+        reason !== null && typeof reason === "object"
+          ? (reason as { code?: string }).code
+          : undefined;
+      if (code !== "ENOENT") {
+        throw new Error(`Failed to read collected evidence file ${path}`, { cause: reason });
+      }
+    }
+  }
+  if (rawResult.status === "rejected" || eventResult.status === "rejected") {
     return undefined;
   }
+
   try {
-    return decodeWorkloadCeilingRawEvent(eventText);
+    return decodeWorkloadCeilingRawEvent(eventResult.value);
   } catch (error) {
     // Still "not collected" — the run is re-queried and the file overwritten,
     // which is the recovery we want. But a file that exists and does not

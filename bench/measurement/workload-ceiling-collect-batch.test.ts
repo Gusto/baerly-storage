@@ -2,16 +2,37 @@
  * Tests for workload-ceiling-collect-batch.ts — the batch collector's
  * retry policy and evidence-status reporting (evidence-contract v2).
  *
- * Pure — no network, no spawning, no I/O: the retry driver is exercised
- * through injected `collect`/`readExisting`/`sleep` functions.
+ * No network or spawning: retry behavior is injected, and filesystem reads
+ * are stubbed for the existing-artifact failure cases.
  */
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   WORKLOAD_CEILING_EVIDENCE_CONTRACT_ID,
+  encodeWorkloadCeilingRawEvent,
   type WorkloadCeilingInvocationRecord,
   type WorkloadCeilingRawEvent,
 } from "./workload-ceiling-harness.ts";
-import { collectWithRetry, isFinishedCollection } from "./workload-ceiling-collect-batch.ts";
+import {
+  collectWithRetry,
+  isFinishedCollection,
+  readCollectedEvent,
+  type CollectionAttempt,
+} from "./workload-ceiling-collect-batch.ts";
+import { resolve } from "node:path";
+import type { readFile as nodeReadFile } from "node:fs/promises";
+
+type ReadFileStub = (...args: unknown[]) => Promise<string | Buffer>;
+type CollectStub = (record: WorkloadCeilingInvocationRecord) => Promise<CollectionAttempt>;
+
+const { readFileMock } = vi.hoisted(() => ({ readFileMock: vi.fn<ReadFileStub>() }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<Record<string, unknown>>();
+  return { ...original, readFile: readFileMock as unknown as typeof nodeReadFile };
+});
+
+beforeEach(() => {
+  readFileMock.mockReset();
+});
 
 const record = (runId: string, over: Partial<WorkloadCeilingInvocationRecord> = {}) =>
   ({
@@ -307,5 +328,143 @@ describe("collectWithRetry", () => {
       {} as Record<string, number>,
     );
     expect(counts).toEqual({ resolved: 1, missing: 1, ambiguous: 1 });
+  });
+});
+
+describe("readCollectedEvent", () => {
+  const outDir = "/capture/sweep/arm";
+  const runId = "run-1";
+  const rawPath = resolve(outDir, `raw-${runId}.json`);
+  const eventPath = resolve(outDir, `event-${runId}.json`);
+
+  const ioError = (code: string) => Object.assign(new Error(code), { code });
+  const rejectOnNextTurn = (error: Error) =>
+    new Promise<never>((_resolve, reject) => {
+      queueMicrotask(() => reject(error));
+    });
+
+  for (const failedPath of [rawPath, eventPath]) {
+    for (const missingCompletesFirst of [false, true]) {
+      test(`${failedPath.endsWith("raw-run-1.json") ? "raw" : "event"} read error dominates ENOENT when ${missingCompletesFirst ? "ENOENT" : "the other error"} completes first`, async () => {
+        const failure = ioError(failedPath === rawPath ? "EACCES" : "EIO");
+        const missing = ioError("ENOENT");
+        const storedArtifacts = new Map([
+          [rawPath, "existing raw bytes"],
+          [eventPath, "existing event bytes"],
+        ]);
+        const before = new Map(storedArtifacts);
+        readFileMock.mockImplementation((path: unknown) => {
+          const requestedPath = String(path);
+          const isFailed = requestedPath === failedPath;
+          const error = isFailed ? failure : missing;
+          const shouldDelay = isFailed ? missingCompletesFirst : !missingCompletesFirst;
+          return shouldDelay ? rejectOnNextTurn(error) : Promise.reject(error);
+        });
+        const collect = vi.fn<CollectStub>(async () => {
+          storedArtifacts.set(rawPath, "replacement raw bytes");
+          storedArtifacts.set(eventPath, "replacement event bytes");
+          return {};
+        });
+
+        await expect(
+          collectWithRetry([record(runId)], {
+            retries: 0,
+            retryDelayMs: 0,
+            readExisting: () => readCollectedEvent(outDir, runId),
+            collect,
+            sleep: async () => {},
+          }),
+        ).rejects.toMatchObject({
+          message: expect.stringContaining(failedPath),
+          cause: failure,
+        });
+
+        expect(collect).not.toHaveBeenCalled();
+        expect(storedArtifacts).toEqual(before);
+        expect(readFileMock).toHaveBeenCalledTimes(2);
+      });
+    }
+  }
+
+  test("ENOENT on both files allows collection", async () => {
+    readFileMock.mockRejectedValue(ioError("ENOENT"));
+    const collect = vi.fn<CollectStub>(async () => ({
+      event: event({ status: "resolved", outcome: "success", cpu_ms: 7 }),
+    }));
+
+    const outcomes = await collectWithRetry([record(runId)], {
+      retries: 0,
+      retryDelayMs: 0,
+      readExisting: () => readCollectedEvent(outDir, runId),
+      collect,
+      sleep: async () => {},
+    });
+
+    expect(collect).toHaveBeenCalledOnce();
+    expect(outcomes[0]!.success).toBe(true);
+  });
+
+  for (const missingPath of [rawPath, eventPath]) {
+    test(`ENOENT for ${missingPath.endsWith("raw-run-1.json") ? "raw" : "event"} allows collection when the other file is readable`, async () => {
+      const existing = event({ status: "resolved", outcome: "success", cpu_ms: 7 });
+      readFileMock.mockImplementation((path: unknown) => {
+        const requestedPath = String(path);
+        if (requestedPath === missingPath) {
+          return Promise.reject(ioError("ENOENT"));
+        }
+        return requestedPath === eventPath
+          ? Promise.resolve(encodeWorkloadCeilingRawEvent(existing))
+          : Promise.resolve(Buffer.from("raw"));
+      });
+      const collect = vi.fn<CollectStub>(async () => ({
+        event: event({ status: "resolved", outcome: "success", cpu_ms: 8 }),
+      }));
+
+      const outcomes = await collectWithRetry([record(runId)], {
+        retries: 0,
+        retryDelayMs: 0,
+        readExisting: () => readCollectedEvent(outDir, runId),
+        collect,
+        sleep: async () => {},
+      });
+
+      expect(collect).toHaveBeenCalledOnce();
+      expect(outcomes[0]!.success).toBe(true);
+    });
+  }
+
+  test("a readable existing record is reused without collection", async () => {
+    const existing = event({ status: "resolved", outcome: "success", cpu_ms: 7 });
+    readFileMock.mockImplementation((path: unknown) =>
+      String(path) === eventPath
+        ? Promise.resolve(encodeWorkloadCeilingRawEvent(existing))
+        : Promise.resolve(Buffer.from("raw")),
+    );
+    const collect = vi.fn<CollectStub>(async () => ({}));
+
+    const outcomes = await collectWithRetry([record(runId)], {
+      retries: 0,
+      retryDelayMs: 0,
+      readExisting: () => readCollectedEvent(outDir, runId),
+      collect,
+      sleep: async () => {},
+    });
+
+    expect(collect).not.toHaveBeenCalled();
+    expect(outcomes[0]!.attempts).toBe(0);
+    expect(outcomes[0]!.evidence_status).toBe("resolved");
+  });
+
+  test("an unreadable event retains the existing codec recovery behavior", async () => {
+    readFileMock.mockImplementation((path: unknown) =>
+      String(path) === eventPath
+        ? Promise.resolve("not-json")
+        : Promise.resolve(Buffer.from("raw")),
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(readCollectedEvent(outDir, runId)).resolves.toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("exists but does not decode"));
+    errorSpy.mockRestore();
   });
 });
