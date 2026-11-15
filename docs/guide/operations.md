@@ -33,7 +33,8 @@ bucket check.
 # Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
 baerly doctor --target=cloudflare
 
-# All targets: live conditional-write probe against the production bucket.
+# All targets: live conditional-write and LIST-encoding probe against the
+# production bucket.
 baerly doctor --bucket="$BUCKET_URI"
 ```
 
@@ -41,10 +42,14 @@ baerly doctor --bucket="$BUCKET_URI"
 - The bucket check validates the object-store commit rule: when several
   writers try to create the same fresh log object, exactly one must win;
   stale `If-Match` updates and create-if-absent writes over existing keys
-  must fail.
+  must fail. It also checks that LIST returns keys holding `%`, spaces,
+  `+`, and `&<>"'` byte-for-byte as written; a backend or gateway that
+  ignores `encoding-type=url` fails this check.
 
 `baerly doctor --bucket` writes and deletes throwaway sentinels to prove
-the bucket honors `If-None-Match: "*"` and `If-Match`. It does not
+the bucket honors `If-None-Match: "*"` and `If-Match` and lists keys
+exactly; a sentinel it cannot delete is reported as a warning naming the
+key. It does not
 migrate or validate an existing baerly-storage prefix.
 
 For new buckets, skip this note: buckets written by the old

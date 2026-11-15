@@ -310,6 +310,12 @@ exit 2 means the verbs aren't honoured — do not deploy. Cloudflare
 preflight fails. Self-hosted Node deployments run the doctor command
 manually because there is no generic deploy wrapper.
 
+`baerly doctor --bucket` also checks that LIST (`encoding-type=url`)
+returns keys holding `%`, spaces, `+`, and XML-special characters
+byte-for-byte, and names the mismatch (left encoded, decoded twice, or
+decoded wrongly) when it does not. The deploy preflight runs only the
+conditional-write probe.
+
 > **Load-bearing prerequisite — concurrent create-if-absent is
 > exactly-one-winner.** Sequential rejection ("`If-None-Match: "*"`
 > fails when the key already exists") is necessary but **not

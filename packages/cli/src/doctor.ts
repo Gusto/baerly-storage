@@ -4,8 +4,11 @@
  * Two modes:
  *   - `--bucket <uri>` — connect to a live bucket and probe its CAS
  *     support (the protocol's load-bearing backend prerequisite). This
- *     mode WRITES + deletes one throwaway sentinel; see
- *     {@link doctorCas}. Independent of `baerly.config.ts` / `--target`.
+ *     mode WRITES + deletes throwaway sentinels; see
+ *     {@link doctorCas}. Then runs {@link doctorListEncoding}, which
+ *     writes, lists, and deletes two sentinels whose keys hold `%`,
+ *     spaces, `+`, and XML-special characters, and checks LIST returns
+ *     them byte-for-byte. Independent of `baerly.config.ts` / `--target`.
  *     For `gcs://` URIs, also runs the GCS-specific bucket-config checks
  *     in {@link doctorGcsConfig} (an active Object Versioning probe plus
  *     a static soft-delete advisory) and merges their findings into the
@@ -42,6 +45,7 @@ import { loadAppConfig } from "./config.ts";
 import { doctorCas } from "./doctor/cas.ts";
 import { doctorCloudflare, mergeReports, type DoctorReport } from "./doctor/cloudflare.ts";
 import { doctorGcsConfig, GCS_STALE_GENERATION_PROBE_VALUE } from "./doctor/gcs.ts";
+import { doctorListEncoding } from "./doctor/list-encoding.ts";
 import { defaultRunner } from "./runner.ts";
 import { color, isJsonMode } from "./output.ts";
 import { defineBaerlySubcommand, JSON_ARG } from "./subcommand.ts";
@@ -56,7 +60,7 @@ const DOCTOR_ARGS = {
   bucket: {
     type: "string",
     description:
-      "Live-probe a bucket's CAS support (writes + deletes one sentinel; verifies If-Match / If-None-Match are honoured). s3://, gcs://, file:///, or memory:// URI. For gcs://, also runs GCS-specific bucket-config checks (Object Versioning probe + soft-delete advisory). Independent of --target.",
+      "Live-probe a bucket's CAS support (verifies If-Match / If-None-Match are honoured) and LIST key encoding (listed keys must match written keys byte-for-byte); writes + deletes throwaway sentinels. s3://, gcs://, file:///, or memory:// URI. For gcs://, also runs GCS-specific bucket-config checks (Object Versioning probe + soft-delete advisory). Independent of --target.",
     valueHint: "s3://bucket/prefix | gcs://bucket",
   },
   fix: {
@@ -140,12 +144,16 @@ const bundle = defineBaerlySubcommand({
         const report = await doctorCas(storage, keyPrefix, {
           staleEtag: GCS_STALE_GENERATION_PROBE_VALUE,
         });
+        const listReport = await doctorListEncoding(storage, keyPrefix);
         const gcsReport = await doctorGcsConfig(gcs);
-        const merged = mergeReports([report, gcsReport]);
+        const merged = mergeReports([report, listReport, gcsReport]);
         renderReport({ kind: "bucket", value: args.bucket }, merged);
         return merged.status === "error" ? 2 : 0;
       }
-      const report = await doctorCas(storage, keyPrefix);
+      const report = mergeReports([
+        await doctorCas(storage, keyPrefix),
+        await doctorListEncoding(storage, keyPrefix),
+      ]);
       renderReport({ kind: "bucket", value: args.bucket }, report);
       return report.status === "error" ? 2 : 0;
     }
