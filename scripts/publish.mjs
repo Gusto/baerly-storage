@@ -111,6 +111,14 @@ if (dryRun) {
     console.log(`   ${pkg.name}: ${statusOf(pkg.name)}`);
   }
   console.log("");
+  if (problems.length > 0) {
+    console.error("✗ RELEASE DRY-RUN FAILED — issues:");
+    for (const p of problems) {
+      console.error(`   - ${p}`);
+    }
+    console.error("");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
