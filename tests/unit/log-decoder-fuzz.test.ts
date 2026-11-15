@@ -374,3 +374,54 @@ describe("log decoder mutation fuzz: lsnParts", () => {
     },
   );
 });
+
+/**
+ * The mutation fuzz above reaches these only by chance: the seq token is
+ * 11 of ~40 characters and each case needs one specific edit. Loosening
+ * `lsnParts` to accept any of them still passes the fuzz properties above,
+ * so each is pinned directly. The lsn shape is `<time>_<session>_<seq>`.
+ */
+describe("log decoder mutation fuzz: lsnParts non-canonical seqs", () => {
+  const lsnWith = (token: string): string => `time_session_${token}`;
+  const maxSeqToken = countKey(MAX_SEQ);
+  const firstSeqToken = countKey(0);
+
+  test("canonical boundary seqs decode: 0 and the largest safe integer", () => {
+    expect(lsnParts(lsnWith(firstSeqToken))).toEqual({ session: "session", seq: 0 });
+    expect(lsnParts(lsnWith(maxSeqToken))).toEqual({ session: "session", seq: MAX_SEQ });
+  });
+
+  test.each([
+    ["extra leading digit", `0${firstSeqToken}`],
+    ["extra trailing digit", `${firstSeqToken}0`],
+    ["one char short", firstSeqToken.slice(1)],
+    ["empty", ""],
+    ["uppercase digits", firstSeqToken.toUpperCase()],
+    ["letter above v", `${firstSeqToken.slice(0, -1)}w`],
+    ["letter z", `${firstSeqToken.slice(0, -1)}z`],
+    ["sign", `-${firstSeqToken.slice(1)}`],
+    ["plus sign", `+${firstSeqToken.slice(1)}`],
+    ["leading space", ` ${firstSeqToken.slice(1)}`],
+    ["decimal point", `${firstSeqToken.slice(0, -1)}.`],
+    ["exponent", "1e3"],
+    ["short canonical-looking", "01"],
+    // One past MAX_SEQ decodes to seq -1, a safe integer, so only the
+    // sign check refuses it; the all-`v` token decodes far below the
+    // safe range.
+    ["one past the safe range", (MAX_SEQ + 1).toString(32).padStart(SEQ_CHARS, "0")],
+    ["largest 11-char token", "v".repeat(SEQ_CHARS)],
+  ])("rejects a non-canonical seq token: %s", (_label, token) => {
+    expect(() => lsnParts(lsnWith(token))).toThrow(
+      expect.objectContaining({ code: "InvalidResponse" }),
+    );
+  });
+
+  test.each([
+    ["trailing empty segment", `${lsnWith(firstSeqToken)}_`],
+    ["extra segment", `${lsnWith(firstSeqToken)}_x`],
+    ["missing segment", `session_${firstSeqToken}`],
+    ["empty string", ""],
+  ])("rejects a wrong segment count: %s", (_label, lsn) => {
+    expect(() => lsnParts(lsn)).toThrow(expect.objectContaining({ code: "InvalidResponse" }));
+  });
+});
