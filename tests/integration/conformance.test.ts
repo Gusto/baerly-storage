@@ -18,7 +18,7 @@
  */
 import { AwsClient } from "aws4fetch";
 import { fc } from "@fast-check/vitest";
-import { describe } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { DEFAULT_GCS_ENDPOINT, GcsHttpStorage, S3HttpStorage } from "@baerly/adapter-node";
 // `goog4Signer` is not on the `/node` barrel (see adapter-node/src/index.ts);
@@ -31,6 +31,7 @@ import {
   defineStorageConformanceSuite,
 } from "@baerly/protocol/conformance";
 
+import { doctorListEncoding } from "../../packages/cli/src/doctor/list-encoding.ts";
 import { createBucket } from "../fixtures/s3-fixtures.ts";
 import { type EndpointCreds, loadEndpointCreds } from "../fixtures/endpoint-creds.ts";
 import { type GateId } from "../setup/gate-manifest.ts";
@@ -165,31 +166,38 @@ describe("conformance", () => {
           ...(isGcs && { staleEtag: "1" }),
         };
       }
+      const makeStorage = async (): Promise<GcsHttpStorage | S3HttpStorage> => {
+        // `createBucket` tolerates 409 BucketAlreadyOwnedByYou, so
+        // re-runs against persistent buckets (Minio dev stack, real
+        // cloud buckets) don't fail the per-test factory. Skip for
+        // remote endpoints where the bucket is provisioned out-of-
+        // band (AWS / GCS / R2 buckets in `credentials/*.json` are
+        // expected to exist already).
+        if (isMinio) {
+          await createBucket(signer, c.endpoint, c.bucket);
+        }
+        // The classes share {bucket, sign} but diverge on `endpoint`. The
+        // native GcsHttpStorage pins the GCS XML-API host and deliberately
+        // ignores the creds-file `endpoint` (an S3-interop URL); construct
+        // it off DEFAULT_GCS_ENDPOINT to match the `gcsStorage` factory
+        // rather than threading `c.endpoint` through. Only the S3 family
+        // (aws / minio / R2) consumes the creds endpoint.
+        return isGcs
+          ? new GcsHttpStorage({ endpoint: DEFAULT_GCS_ENDPOINT, bucket: c.bucket, sign })
+          : new S3HttpStorage({ endpoint: c.endpoint, bucket: c.bucket, sign });
+      };
       defineStorageConformanceSuite(
         `${isGcs ? "GcsHttpStorage" : "S3HttpStorage"} @ ${ep.name}`,
-        async () => {
-          // `createBucket` tolerates 409 BucketAlreadyOwnedByYou, so
-          // re-runs against persistent buckets (Minio dev stack, real
-          // cloud buckets) don't fail the per-test factory. Skip for
-          // remote endpoints where the bucket is provisioned out-of-
-          // band (AWS / GCS / R2 buckets in `credentials/*.json` are
-          // expected to exist already).
-          if (isMinio) {
-            await createBucket(signer, c.endpoint, c.bucket);
-          }
-          // The classes share {bucket, sign} but diverge on `endpoint`. The
-          // native GcsHttpStorage pins the GCS XML-API host and deliberately
-          // ignores the creds-file `endpoint` (an S3-interop URL); construct
-          // it off DEFAULT_GCS_ENDPOINT to match the `gcsStorage` factory
-          // rather than threading `c.endpoint` through. Only the S3 family
-          // (aws / minio / R2) consumes the creds endpoint.
-          const storage = isGcs
-            ? new GcsHttpStorage({ endpoint: DEFAULT_GCS_ENDPOINT, bucket: c.bucket, sign })
-            : new S3HttpStorage({ endpoint: c.endpoint, bucket: c.bucket, sign });
-          return { storage };
-        },
+        async () => ({ storage: await makeStorage() }),
         conformanceOptions,
       );
+      // The live `baerly doctor --bucket` LIST key-encoding probe: listed
+      // keys holding `%`, spaces, `+`, and XML-special characters must
+      // match the written keys byte-for-byte on every real endpoint.
+      test(`baerly doctor list-encoding probe @ ${ep.name}`, { timeout: 60_000 }, async () => {
+        const report = await doctorListEncoding(await makeStorage(), "");
+        expect(report.findings.filter((f) => f.severity !== "ok")).toEqual([]);
+      });
     });
   }
 });
