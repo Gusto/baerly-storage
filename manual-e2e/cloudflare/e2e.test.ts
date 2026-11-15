@@ -210,7 +210,11 @@ describe.runIf(gate("deploy-cloudflare", CF_URL !== undefined && SECRET !== unde
     const R2_BUCKET = process.env["CF_R2_BUCKET"] ?? "minimal-cloudflare";
 
     const cascadeReady =
-      R2_ENDPOINT !== undefined && R2_ACCESS !== undefined && R2_SECRET !== undefined;
+      CF_URL !== undefined &&
+      SECRET !== undefined &&
+      R2_ENDPOINT !== undefined &&
+      R2_ACCESS !== undefined &&
+      R2_SECRET !== undefined;
 
     describe.runIf(gate("deploy-cloudflare-r2-cascade", cascadeReady))(
       "conformance cascade (via R2 S3-compat)",

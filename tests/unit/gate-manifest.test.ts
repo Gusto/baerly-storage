@@ -66,7 +66,7 @@ describe("gate ledger in a real vitest run", () => {
   const config = join(import.meta.dirname, "../fixtures/gate-manifest/vitest.config.ts");
   const vitestBin = join(import.meta.dirname, "../../node_modules/vitest/vitest.mjs");
 
-  const runFixture = async (gateEnv: Record<string, string>) => {
+  const runVitest = async (gateEnv: Record<string, string>, args = ["--config", config]) => {
     const env: Record<string, string | undefined> = { ...process.env };
     for (const key of Object.keys(env)) {
       // Drop the parent worker's vitest state and any ambient gate env so
@@ -75,12 +75,15 @@ describe("gate ledger in a real vitest run", () => {
         key.startsWith("VITEST") ||
         key === "BAERLY_REQUIRED_GATES" ||
         key === "CONFORMANCE" ||
-        key === "MINIO"
+        key === "MINIO" ||
+        key === "NODE_DEPLOY_URL" ||
+        key === "CF_DEPLOY_URL" ||
+        key === "SHARED_SECRET"
       ) {
         delete env[key];
       }
     }
-    return execa("node", [vitestBin, "run", "--config", config], {
+    return execa("node", [vitestBin, "run", ...args], {
       env: { ...env, ...gateEnv },
       extendEnv: false,
       reject: false,
@@ -90,9 +93,9 @@ describe("gate ledger in a real vitest run", () => {
 
   test("skips nobody expected leave the run green; an expected skip turns it red", async () => {
     const [bare, required, optedIn] = await Promise.all([
-      runFixture({}),
-      runFixture({ BAERLY_REQUIRED_GATES: "sqlite" }),
-      runFixture({ CONFORMANCE: "1" }),
+      runVitest({}),
+      runVitest({ BAERLY_REQUIRED_GATES: "sqlite" }),
+      runVitest({ CONFORMANCE: "1" }),
     ]);
 
     // The output rides along so a failure shows the nested run's log.
@@ -105,4 +108,53 @@ describe("gate ledger in a real vitest run", () => {
     expect({ exitCode: optedIn.exitCode, output: optedIn.all }).toMatchObject({ exitCode: 1 });
     expect(optedIn.all).toContain('gate "conformance-aws" was expected to run but skipped');
   });
+
+  const deploys: {
+    target: string;
+    gate: GateRecord["id"];
+    url: string;
+    storage: Record<string, string>;
+  }[] = [
+    {
+      target: "node",
+      gate: "deploy-node-s3-cascade",
+      url: "NODE_DEPLOY_URL",
+      storage: {
+        AWS_ACCESS_KEY_ID: "test-access",
+        AWS_SECRET_ACCESS_KEY: "test-secret",
+        BUCKET: "test-bucket",
+      },
+    },
+    {
+      target: "cloudflare",
+      gate: "deploy-cloudflare-r2-cascade",
+      url: "CF_DEPLOY_URL",
+      storage: {
+        CF_R2_S3_ENDPOINT: "https://storage.invalid",
+        CF_R2_ACCESS_KEY_ID: "test-access",
+        CF_R2_SECRET_ACCESS_KEY: "test-secret",
+      },
+    },
+  ];
+
+  for (const deploy of deploys) {
+    test.each([deploy.url, "SHARED_SECRET"])(
+      `required ${deploy.target} cascade fails when %s is missing`,
+      async (missing) => {
+        const env: Record<string, string> = {
+          ...deploy.storage,
+          [deploy.url]: "https://deploy.invalid",
+          SHARED_SECRET: "test-secret",
+          BAERLY_REQUIRED_GATES: deploy.gate,
+        };
+        delete env[missing];
+        const result = await runVitest(env, [
+          "--project=default",
+          `manual-e2e/${deploy.target}/e2e.test.ts`,
+        ]);
+        expect({ exitCode: result.exitCode, output: result.all }).toMatchObject({ exitCode: 1 });
+        expect(result.all).toContain(`gate "${deploy.gate}" was expected to run but skipped`);
+      },
+    );
+  }
 });
