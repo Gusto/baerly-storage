@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import {
@@ -11,7 +12,7 @@ import {
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
   WRITE_TICK_MIN_ENTRIES_TO_COMPACT,
 } from "@baerly/protocol";
-import { expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 
 import {
   alignedManifestBoundary,
@@ -72,7 +73,6 @@ const resolveCommitSha = (): string => {
 const DETERMINISTIC_SEED = 20260803 as const;
 const K_SWEEP = [8, 16, 20, 32, 64, 200] as const;
 const SYNTHETIC_LOG_LENGTH = 640;
-const REPORT_ROOT = "bench/results/fold-boundary-model";
 const MODEL_DIRECTORY = "tests/model/fold-boundary";
 /**
  * Every file whose bytes contributed to the numbers in the emitted report.
@@ -487,12 +487,13 @@ const declaredPropertyIds = async (repoRoot: string): Promise<ReadonlySet<string
   return new Set(sources.flatMap(declaredPropertyIdsInSource));
 };
 
+/** Writes one report directory under `reportRoot` and returns its path. */
 const writeReport = async (
-  repoRoot: string,
+  reportRoot: string,
   payload: EvidencePayload,
   markdown: string,
 ): Promise<string> => {
-  const root = resolve(repoRoot, REPORT_ROOT);
+  const root = resolve(reportRoot);
   await mkdir(root, { recursive: true });
   const timestamp = payload.generatedAtUtc.replaceAll(":", "-");
   let suffix = 0;
@@ -1276,8 +1277,20 @@ test("R4_payloadIsSelfConsistentAndFullyProvenanced", async () => {
   expect(payload.modelParameters.budget).toEqual(reportBudget());
 });
 
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
+
 test("R5_reportWriteIsCollisionSafeAndRoundTrips", async () => {
   const repoRoot = process.cwd();
+  // Reports go to a throwaway directory so a test run leaves nothing under
+  // bench/results/.
+  const reportRoot = await mkdtemp(join(tmpdir(), "baerly-fold-boundary-report-"));
+  temporaryRoots.push(reportRoot);
   const payload = await buildPayload({
     repoRoot,
     model: scenarios(),
@@ -1285,12 +1298,12 @@ test("R5_reportWriteIsCollisionSafeAndRoundTrips", async () => {
   });
   const markdown = renderMarkdown(payload);
 
-  const firstDirectory = await writeReport(repoRoot, payload, markdown);
+  const firstDirectory = await writeReport(reportRoot, payload, markdown);
   const firstJsonBeforeCollision = await readFile(join(firstDirectory, "report.json"), "utf8");
   const firstMarkdownBeforeCollision = await readFile(join(firstDirectory, "report.md"), "utf8");
-  const secondDirectory = await writeReport(repoRoot, payload, markdown);
+  const secondDirectory = await writeReport(reportRoot, payload, markdown);
   const reportBaseDirectory = join(
-    resolve(repoRoot, REPORT_ROOT),
+    resolve(reportRoot),
     payload.generatedAtUtc.replaceAll(":", "-"),
   );
   const directorySuffix = (directory: string): number =>
