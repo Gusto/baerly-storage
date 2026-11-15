@@ -2,7 +2,7 @@
 title: Upgrading to 0.7.0
 audience: integrator
 summary: Old-to-new migration for 0.7.0, organized by what an app author and an operator must do.
-last-reviewed: 2026-11-13
+last-reviewed: 2026-11-15
 tags: [upgrade, migration, breaking-changes]
 related: ["backups.md", "operations.md", "../about/workload-fit.md", "../contributing/conventions/versioning.md"]
 ---
@@ -17,7 +17,7 @@ them by what you must do. The `.d.ts` types win over this page.
 Pick your starting version:
 
 - **0.6.0:** in-place. The bucket format (`current.json` schema 3) is
-  unchanged. Deploy 0.7.0 over the same bucket, then follow sections 1 to 6.
+  unchanged. Deploy 0.7.0 over the same bucket, then follow sections 1 to 7.
 - **0.1.0:** refused in place (`current.json` schema 1). Dump with the
   0.1.0 `baerly`, restore into an empty target with 0.7.0 (section 5).
   Versions between 0.1.0 and 0.6.0 are not covered here; run
@@ -31,7 +31,7 @@ does not check the new conditions.
 reads a bucket 0.7.0 wrote, in a mixed fleet during a rolling deploy or
 after a rollback, misses the rows 0.7.0 wrote from indexed queries until
 0.6.0's `baerly admin rebuild-index` runs for each index. Finish the
-rollout before relying on indexed reads, and run that repair if you roll
+rollout before relying on indexed reads, and follow section 6 if you roll
 back.
 
 ## 1. App code: errors
@@ -66,6 +66,7 @@ New codes and what to do:
 | `CapacityExceeded` | 409 | no | Not retriable unchanged. A single write commits nothing when refused. A multi-row `where(...).update()` / `.delete()` refused part-way (including by a request's storage budget) keeps the rows it already committed: re-read, then retry on a fresh request or narrow the query. Delete or shrink rows to make room; reads and deletes keep working. Host-side remedies are in section 4. |
 | `MaintenancePending` | 503 + `Retry-After` | yes | Nothing committed. Wait `err.retryAfter` seconds, repeat. |
 | `InvalidConfig` | 400 | no | The input is outside the write domain (sections 2 and 3). |
+| `CursorExpired` | 410 | no | A `/v1/since` cursor can no longer resume. Re-read, then restart with `cursor: ""` (section 3). |
 
 ```ts
 import { BaerlyError } from "@gusto/baerly-storage";
@@ -181,6 +182,23 @@ await tasks.insert({ due: new Date(0), score: NaN, tags: new Map() });
 await tasks.insert({ due: new Date(0).toISOString(), score: null, tags: {} });
 ```
 
+**A document is at most 1 MiB.** `insert`, `replace` and `update` (by id
+or by predicate) throw `InvalidConfig` (400) before writing when the
+resulting row would encode to more than 1,048,576 bytes of JSON, `_id`
+included. `update` checks each merged row, not the patch, so repeated
+patches can no longer grow a row without bound; a multi-row update with
+one over-cap row commits none. A row an earlier release stored over the
+cap stays readable and deletable, and an update that shrinks it under the
+cap commits. `PayloadTooLarge` (413) still means the request body itself
+was too large.
+
+```ts
+// before: one row that keeps growing (now refused once it passes 1 MiB)
+await db.collection("threads").update(threadId, { messages: [...messages, next] });
+// after: one row per item, keyed back to its parent
+await db.collection("messages").insert({ threadId, ...next });
+```
+
 **Reads fold authoritative state.** Every read and every mutation target
 is selected from the full snapshot plus the committed log. Declared
 `indexes` do not make a read cheaper (section 6), so every query costs the
@@ -219,6 +237,27 @@ const db = Db.create({ storage, app, tenant: claims.org.normalize("NFC") });
   refused with `CapacityExceeded` before it is sent; a read that cannot fit
   is refused whole, never truncated. `GET /v1/since` ends a long-poll early
   instead of failing (about 22 s on Free + S3).
+- `GET /v1/since` answers a cursor that can no longer resume (its changes
+  are no longer retained, or `baerly admin restore --force` truncated the
+  generation it came from) with `CursorExpired` (410). 0.6.0 answered
+  `SchemaError` (400), which still means a malformed cursor. Re-read your
+  rows, then restart with `cursor: ""`; the changes in between are not
+  replayed. The React subscription poll does this itself and now parks on
+  a `SchemaError` until `refetch()`.
+
+```ts
+// before: a hand-rolled /v1/since consumer
+if (res.status === 400 && body.error.code === "SchemaError" && cursor !== "") cursor = "";
+// after
+if (res.status === 410 && body.error.code === "CursorExpired") cursor = ""; // re-read your rows first
+```
+
+- `createBaerlyClient({ onWarning })` is new and optional: it receives
+  `{ code: "CapacityWarning", message, method, path }` for each response
+  carrying `Baerly-Capacity-Warning`, so an HTTP client learns a collection
+  is near its host's capacity before writes fail with `CapacityExceeded`.
+  A cross-origin browser app also needs its CORS layer to list that header
+  in `Access-Control-Expose-Headers`.
 
 ## 4. Operators and hosts
 
@@ -236,47 +275,90 @@ the Node adapter, or export it with `baerly admin dump`. `baerly admin restore` 
 check.
 
 **Maintenance env validation.** Invalid values fail loudly instead of
-silently disabling maintenance. Node answers `InvalidConfig`; Cloudflare
-surfaces a Worker exception.
+silently falling back. Node answers `InvalidConfig`; Cloudflare surfaces a
+Worker exception. Health, spec and dev routes stay up, and the error clears
+once the value is fixed, with no restart. No value is trimmed.
 
 | Before | Now |
 | --- | --- |
 | `BAERLY_MAINTENANCE_DISABLE=yes` / `no` | `true` / `false` (or `1` / `0`, or unset) |
-| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES=0` or negative | unset, or a positive number |
+| `BAERLY_MAINTENANCE_MAX_FOLD_BYTES=0`, negative, `8mb`, `1e6`, `0x400`, `" 1024 "` | unset, or a plain positive decimal byte count (`8388608`) |
+| `BAERLY_MAINTENANCE_PROFILE=CF-PAID` / `cf_paid` / `paid` | `cf-paid` exactly |
+| `BAERLY_MAINTENANCE_PROFILE=free` (meant as the default) | unset, or `cf-free` |
 
-**Host tiers.** The per-profile ceilings, the fold-at-7-pending rule on
-Workers Free with non-R2 storage, and `CLOUDFLARE_FREE_TIER` /
-`CLOUDFLARE_PAID_TIER` constants changed. `CLOUDFLARE_FREE_TIER.compact
-.minEntriesToCompact` dropped from 50 to 20. `CLOUDFLARE_PAID_TIER`'s
-scheduled floor dropped from 50 to 1, so a Paid cron now folds tails of 1 to
-49 entries. Check
-[workload-fit.md](../about/workload-fit.md) for the current table.
+**Scheduled maintenance.** Optional, as before: every write already runs
+bounded maintenance in band. `@gusto/baerly-storage/maintenance` now
+exports one function, addressed by collection and sized by `tier` (the
+`BAERLY_MAINTENANCE_PROFILE` vocabulary: `"cf-free"`, `"cf-paid"`, or the
+unbounded default `"node"`). `compact`, `runGc`, their option and result
+types, `MaintenanceArgs`, `MaintenanceProfile`, `MAINTENANCE_PROFILE_*`,
+`CLOUDFLARE_FREE_TIER` / `CLOUDFLARE_PAID_TIER` and (from `/cloudflare`)
+`resolveCfMaintenanceProfile` are gone.
 
-- **Workers Free + R2 binding:** one `runScheduledMaintenance(args,
-  CLOUDFLARE_FREE_TIER)` per invocation now fits; the even/odd-minute
-  alternation is no longer needed. `runScheduledMaintenance`'s default
-  `minEntriesToCompact` is 1 (was 100).
-- **Workers Free + S3 over HTTP (best effort):** keep alternating direct
-  `compact()` and `runGc()` calls. Accepted limits on this host: past a
-  pending tail of about 9 entries a worst-case update cannot fold in its
-  write tick, so the tail does not shorten there
-  <!-- TODO(option-c): re-measure after markers are dropped -->; and a scheduled `compact()` whose `tail_hint`
-  is about 20 or more entries stale does not fit the 45 calls, so every later
-  pass stops at the same point. Use the R2 binding for request headroom.
-- **Workers Paid:** `CLOUDFLARE_PAID_TIER` walks at most 1,000 log slots per
-  compaction pass. If you switch on `CompactResult.skippedReason`, handle the
-  new `"probe-budget-checkpointed"` case.
+```ts
+// before
+import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
+const res = await runScheduledMaintenance({
+  storage,
+  currentJsonKey: "app/helpdesk/tenant/acme/manifests/tickets/current.json",
+});
+console.log(res.compact.entriesFolded, res.gc.swept);
+// after
+import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
+const target = { storage, app: "helpdesk", tenant: "acme", collection: "tickets" };
+const res = await runScheduledMaintenance(target); // Node: one unbounded pass
+console.log(res.folded, res.gcDeleted);
+
+// before (Cloudflare, R2 binding)
+await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER); // or CLOUDFLARE_PAID_TIER
+// after
+await runScheduledMaintenance(target, { tier: "cf-free" }); // or "cf-paid"
+
+// before (Workers Free, S3 over HTTP)
+if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
+  await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
+} else {
+  await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
+}
+// after
+const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
+await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
+
+// before
+const profile = resolveCfMaintenanceProfile((k) => env[k]);
+// after
+const tier = env.BAERLY_MAINTENANCE_PROFILE === "cf-paid" ? "cf-paid" : "cf-free";
+```
+
+- The result is `{ folded, deferred?: { reason }, gcDeleted, pending }`.
+  `deferred.reason` is `"contention"` (a concurrent write or pass won) or
+  `"budget"` (the pass saved its progress locating the tail; the next pass
+  continues). It replaces `CompactResult.skippedReason`, including
+  `"probe-budget-checkpointed"`.
+- `minEntriesToCompact` is no longer an option. Node and `"cf-paid"` passes
+  fold any pending write (0.6.0's bare call skipped tails under 100, and
+  `CLOUDFLARE_PAID_TIER` under 50), so a hot Paid cron rewrites the snapshot
+  more often. Under `"cf-free"` a pass folds one 20-entry slice only when at
+  least 20 entries are pending.
+- Workers Free with the R2 binding fits one whole pass per invocation; the
+  even/odd-minute alternation is needed only for storage over `fetch`.
+  Run one collection per Cloudflare invocation. Invalid names and unknown
+  `tier` / `phase` values throw `InvalidConfig` before any storage call.
+
+**Host tiers.** Per-host ceilings, the pending-tail limits on Workers Free
+with S3 over HTTP, and which host is a guaranteed tier changed. Read the
+current figures in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers)
+rather than any you noted from 0.6.0.
 
 **Fold-ceiling signals.** A collection past the fold ceiling now logs a
-`fold_deferred` warning (category `["baerly", "maintenance"]`) on each
-first deferral and then at most once per 1,000 writes. `compact()` returns
-`deferral: { dimension, snapshotBytes, snapshotRows }` on its `"deferred"`
-result and no longer emits `db.compaction.deferred_total` itself; that
-counter gains a `gate` label, and `db.compaction.deferred_bytes_total` /
-`db.compaction.deferred_rows_total` are new. `baerly inspect` reports
-`fold_gate` per host profile. A custom `MaintenanceDispatch` gains an
-optional `warn` sink; set `warn: logMaintenanceWarning` (from
-`@gusto/baerly-storage/observability`) or it gets only a `console.warn`.
+`fold_deferred` warning (category `["baerly", "maintenance"]`) on its first
+deferral and then at most once per 1,000 writes. `db.compaction.deferred_total`
+gains a `gate` label, and `db.compaction.deferred_bytes_total` /
+`db.compaction.deferred_rows_total` are new. A scheduled pass below its
+fold floor with a live tail counts `db.compaction.below_min_total`.
+`baerly inspect` reports `fold_gate` per host profile; `inspect --json` is a
+storage-format diagnostic, not a stable contract, so do not build automation
+on its fields.
 
 **Storage retries.** Retry now happens at one layer, 3 attempts per request.
 `S3HttpStorage` and `GcsHttpStorage` `retries` defaults to `2` (was `8`); a
@@ -305,16 +387,17 @@ const { etag } = await storage.put(key, body);
 - No `content/<sha>.json` objects are written. Direct bucket readers must
   read `entry.after` from the log entry (see the `stop-writing-content-objects`
   changeset). Legacy content objects are left inert.
-- `RunGcResult.marked.orphan_content` and `RunGcResult.marked.stale_log` are
-  removed. GC no longer LISTs `log/`; retention is by sequence window.
-- `InternalMaintenanceOptions` is no longer exported.
-- `Db.getLogEntry` / `probeLogTail` (`@internal`) take `current.json` and
-  reject a sequence below the floor.
+- GC no longer marks orphan content or stale log objects (0.6.0's
+  `RunGcResult.marked.orphan_content` / `stale_log`); it no longer LISTs
+  `log/`, and old log objects are retired by sequence window. Count
+  deletions with `MaintenanceResult.gcDeleted`.
 
 **Local-fs.** `LocalFsStorage` (and `baerlyDev()`) now stores keys
 byte-exact on disk and writes a `.baerly-localfs.json` marker. An existing
 data directory is adopted only when every name already reads the same under
-the new encoding (lowercase ASCII names, nothing dot-prefixed); otherwise
+the new encoding: lowercase ASCII names, nothing dot-prefixed, and no
+collection ever folded (a fold writes `snapshot/L9/`, which now encodes as
+`snapshot/%4c9/`, so any directory 0.6.0 compacted is refused). Otherwise
 every operation throws `InvalidConfig` listing the paths. There is no
 in-place migration: dump with 0.6.0, restore into a fresh directory with
 0.7.0. Keys a case-folding filesystem already merged cannot be recovered.
@@ -335,10 +418,13 @@ baerly admin dump  --bucket=s3://my-bucket --app=app --tenant=t --collection=tic
 `usage` scans only the `--tenant` you pass: list every tenant your verifier
 can mint and scan each. It reports non-NFC app, tenant and collection names
 and canonically-equivalent collection pairs as `names` warnings. `fsck`
-reports the same as `names` warnings (exit 4). `dump --json` reports
-non-NFC names, non-NFC `_id`s and groups of canonically-equivalent `_id`s in
-its `legacy` field (or as stderr warnings). Keep the raw dump before any
-repair.
+reports the same as `names` warnings (exit 4), and also flags names (check
+`names`) and snapshot `_id`s (check `ids`) holding an unpaired UTF-16
+surrogate, which 0.7.0 refuses as write targets. `fsck` does not decode the
+log; `dump --json` covers every live row. It reports non-NFC and ill-formed
+names, non-NFC and ill-formed `_id`s, and groups of canonically-equivalent
+`_id`s in its `legacy` field (or as stderr warnings). Keep the raw dump
+before any repair.
 
 **Legacy `_id`s.** Rows under a non-NFC `_id` still read (`get`, `where`,
 `delete`), but `update` and `replace` refuse them. To keep one writable:
@@ -372,6 +458,9 @@ over. `baerly admin restore` now:
   rules, or is not NFC, with `InvalidConfig` (exit 1) naming the line number
   and the escaped `_id`;
 - refuses values outside plain JSON (for example `1e999`);
+- refuses a line whose row encodes to more than 1 MiB, naming the line
+  number. Split such a row in the NDJSON (section 2) before restoring; in
+  place, an oversized row stays readable and deletable;
 - reports how many rows were already committed on every failure. Restore
   commits row by row: rows before the failing line stay committed, the
   failing line and later lines do not. Fix the dump, then restore into a
@@ -411,8 +500,58 @@ log for every query, so markers were pure write cost.
   bucket key prefix, if any). No cleanup is required for correctness.
 - Mixed fleet or rollback: a 0.6.0 node reading a bucket 0.7.0 wrote misses
   0.7.0-written rows on indexed queries until 0.6.0's
-  `baerly admin rebuild-index` runs for each index. Do not delete the
+  `baerly admin rebuild-index` runs for each index. That rebuild aborts on
+  a value 0.6.0 refused in an indexed field (an array, or a value too long
+  for a marker key), so stop writers first and follow the rollback steps in
+  [backups.md](backups.md#legacy-index-markers). Do not delete the
   `index/` prefix while a rollback is still possible.
+- Rebuild a composite index (`on: ["status", "owner"]`) with `--config`:
+  0.6.0's `--on` takes one field, so `--on=status,owner` names a single
+  field called `status,owner` and rebuilds the wrong markers.
+
+```sh
+# 0.6.0 binary, once per kept index
+baerly admin rebuild-index --bucket=$B --app=app --tenant=t --collection=tickets --index=by_status --on=status
+baerly admin rebuild-index --bucket=$B --app=app --tenant=t --collection=tickets --index=by_status_owner --config=./baerly.config.mjs
+```
+
+## 7. Removed and renamed exports
+
+The published barrels no longer carry kernel internals; none was in
+`API.md`. Use the collection API (`db.collection(name)`) and `/v1/since`
+for reads, and `runScheduledMaintenance` (section 4) for maintenance.
+
+- `@gusto/baerly-storage` no longer exports `SnapshotBody`,
+  `encodeSnapshotBody`, `snapshotKey`, `loadSnapshotAsMap`, `walkLogRange`,
+  `probeTailFrom`, `resolveVerifier`, `collectionsToMaps` or
+  `validateOrThrow`. `SchemaIssue` and `SchemaValidator` stay.
+- `Db` loses its `@internal` read seams `collectionReadContext`,
+  `getCurrentJson`, `getLogEntry`, `probeLogTail` and `probeLogChunk`, so
+  `CurrentJson` and `TailProbeChunk` leave the public types.
+- `@gusto/baerly-storage/maintenance` exports only `runScheduledMaintenance`,
+  `MaintenanceTarget`, `MaintenanceOptions` and `MaintenanceResult`. Also
+  gone from it: `runBoundedMaintenance`, `dispatchWriteTick`,
+  `MaintenanceDispatch`, `parseMaintenanceEnv`, the fold-ceiling helpers,
+  `InternalMaintenanceOptions` and `rebuildIndex`. `baerlyWorker` /
+  `baerlyNode` wire the in-band write tick; it needs no import.
+- `@gusto/baerly-storage/observability` no longer exports
+  `logMaintenanceWarning`, `flushUnauthorizedAndRespond` or `ReadEnvelope`,
+  and `ObservabilityContext` / `ObservabilityContextInit` drop their
+  `maintenance` and `readEnvelope` fields. Work inside a context you create
+  runs write-tick maintenance inline at the default caps.
+- `ensureTable` (from `@gusto/baerly-storage/dev`) takes the collection
+  under `collection`, not `table`, with no alias: `table` is a type error
+  and, at runtime, `InvalidConfig`. Projects that only use the `baerlyDev`
+  Vite plugin need no change.
+
+```ts
+// before
+import { loadSnapshotAsMap, walkLogRange } from "@gusto/baerly-storage";
+await ensureTable(storage, { app: "helpdesk", tenant: "demo", table: "tickets" });
+// after
+const rows = await db.collection("tickets").all();
+await ensureTable(storage, { app: "helpdesk", tenant: "demo", collection: "tickets" });
+```
 
 ## Dependency bumps
 
