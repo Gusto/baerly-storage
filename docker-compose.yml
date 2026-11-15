@@ -2,7 +2,10 @@ name: baerly-storage
 
 services:
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # MinIO stopped publishing minio/minio (Docker Hub and quay.io) and archived
+    # its repo. Chainguard rebuilds MinIO from source; its free tier ships only
+    # `latest`, so the digest is the pin. Bump it deliberately.
+    image: cgr.dev/chainguard/minio:latest@sha256:18c8fa28697b25e0f34c6faae171079e88a03efb8e76a21d3b5d07b4e3cbef3e
     command: server /data/minio --console-address :9090
     ports:
       - ${BAERLY_MINIO_HOST_PORT:-9102}:9000
@@ -11,7 +14,9 @@ services:
       MINIO_ROOT_USER: ${BAERLY_MINIO_ROOT_USER:-baerly}
       MINIO_ROOT_PASSWORD: ${BAERLY_MINIO_ROOT_PASSWORD:-baerly-local-dev}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      # The image has no curl; `mc ready` probes /minio/health/cluster, and its
+      # retry loop is cut off by `timeout` below, so an unready server fails.
+      test: ["CMD", "mc", "ready", "local"]
       interval: 2s
       timeout: 2s
       retries: 30
