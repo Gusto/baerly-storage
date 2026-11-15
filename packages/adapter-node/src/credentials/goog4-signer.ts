@@ -1,5 +1,6 @@
 import { sha256Hex } from "@baerly/protocol";
 import type { Credentials, CredentialsProvider } from "./types.ts";
+import { credentialResolver } from "./resolve.ts";
 
 /** GOOG4 signing-key prefix (vs AWS SigV4's "AWS4"). @see https://docs.cloud.google.com/storage/docs/authentication/signatures */
 const GOOG4_KEY_PREFIX = "GOOG4";
@@ -168,8 +169,7 @@ export interface Goog4SignerOptions {
 
 export function goog4Signer(opts: Goog4SignerOptions): (req: Request) => Promise<Request> {
   const now = opts.now ?? (() => Date.now());
-  const resolve = async (): Promise<Credentials> =>
-    typeof opts.credentials === "function" ? opts.credentials() : opts.credentials;
+  const resolve = credentialResolver(opts.credentials, now, (creds) => creds);
 
   return async (req) => {
     const creds = await resolve();

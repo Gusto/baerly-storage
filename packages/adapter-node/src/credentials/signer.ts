@@ -1,7 +1,6 @@
 import { AwsClient } from "aws4fetch";
 import type { Credentials, CredentialsProvider } from "./types.ts";
-
-const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+import { credentialResolver } from "./resolve.ts";
 
 function buildAwsClient(creds: Credentials, region: string): AwsClient {
   return new AwsClient({
@@ -26,30 +25,9 @@ export function refreshingSigner(opts: {
     return (req) => aws.sign(req);
   }
 
-  const provider = opts.credentials;
-  let cached: { aws: AwsClient; expiresAt: number } | null = null;
-  let inFlight: Promise<AwsClient> | null = null;
-
-  const resolve = async (): Promise<AwsClient> => {
-    if (cached !== null && cached.expiresAt - REFRESH_BUFFER_MS > now()) {
-      return cached.aws;
-    }
-    if (inFlight !== null) {
-      return inFlight;
-    }
-    inFlight = (async () => {
-      try {
-        const creds = await provider();
-        const aws = buildAwsClient(creds, region);
-        const expiresAt = creds.expiration?.getTime() ?? Number.POSITIVE_INFINITY;
-        cached = { aws, expiresAt };
-        return aws;
-      } finally {
-        inFlight = null;
-      }
-    })();
-    return inFlight;
-  };
+  const resolve = credentialResolver(opts.credentials, now, (creds) =>
+    buildAwsClient(creds, region),
+  );
 
   return async (req) => {
     const aws = await resolve();

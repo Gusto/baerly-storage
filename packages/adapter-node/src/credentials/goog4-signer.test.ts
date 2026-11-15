@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { gate } from "../../../../tests/setup/gates.ts";
+import type { Credentials } from "./types.ts";
 import {
   goog4CanonicalRequest,
   goog4Signer,
@@ -260,17 +261,122 @@ describe("goog4Signer", () => {
     expect(signed.headers.get("x-goog-content-sha256")).toBe(EMPTY_SHA256);
   });
 
-  test("resolves a CredentialsProvider on each sign()", async () => {
+  test("lazily resolves a provider without expiration once for the signer lifetime", async () => {
     let calls = 0;
+    let currentTime = Date.parse("2025-01-01T00:00:00Z");
     const sign = goog4Signer({
       credentials: async () => {
         calls += 1;
-        return { accessKeyId: "GOOG_ID", secretAccessKey: "SECRET" };
+        return { accessKeyId: `GOOG_ID_${calls}`, secretAccessKey: "SECRET" };
       },
-      now: () => Date.parse("2025-01-01T00:00:00Z"),
+      now: () => currentTime,
     });
-    await sign(new Request("https://storage.googleapis.com/b/k", { method: "GET" }));
-    await sign(new Request("https://storage.googleapis.com/b/k", { method: "GET" }));
+    expect(calls).toBe(0);
+    const first = await sign(new Request("https://storage.googleapis.com/b/k"));
+    currentTime += 24 * 60 * 60_000;
+    const second = await sign(new Request("https://storage.googleapis.com/b/k"));
+    expect(calls).toBe(1);
+    expect(first.headers.get("Authorization")).toContain("Credential=GOOG_ID_1/");
+    expect(second.headers.get("Authorization")).toContain("Credential=GOOG_ID_1/");
+  });
+
+  test("single-flights first use and refreshes exactly at the five-minute expiration buffer", async () => {
+    let currentTime = Date.parse("2025-01-01T00:00:00Z");
+    const expiration = currentTime + 60 * 60_000;
+    const pending: Array<(credentials: Credentials) => void> = [];
+    const sign = goog4Signer({
+      credentials: () => new Promise<Credentials>((resolve) => pending.push(resolve)),
+      now: () => currentTime,
+    });
+    const request = () => sign(new Request("https://storage.googleapis.com/b/k"));
+    const first = [request(), request(), request()];
+    await Promise.resolve();
+    expect(pending).toHaveLength(1);
+    pending[0]!({
+      accessKeyId: "FIRST",
+      secretAccessKey: "SECRET",
+      expiration: new Date(expiration),
+    });
+    for (const signed of await Promise.all(first)) {
+      expect(signed.headers.get("Authorization")).toContain("Credential=FIRST/");
+    }
+    currentTime = expiration - 5 * 60_000 - 1;
+    const cached = await request();
+    expect(cached.headers.get("Authorization")).toContain("Credential=FIRST/");
+    expect(pending).toHaveLength(1);
+    currentTime += 1;
+    const refreshed = [request(), request(), request()];
+    await Promise.resolve();
+    expect(pending).toHaveLength(2);
+    pending[1]!({
+      accessKeyId: "SECOND",
+      secretAccessKey: "ROTATED",
+      expiration: new Date(currentTime + 60 * 60_000),
+    });
+    for (const signed of await Promise.all(refreshed)) {
+      const expected = await goog4Signer({
+        credentials: { accessKeyId: "SECOND", secretAccessKey: "ROTATED" },
+        now: () => currentTime,
+      })(new Request("https://storage.googleapis.com/b/k"));
+      expect(signed.headers.get("Authorization")).toBe(expected.headers.get("Authorization"));
+    }
+    await request();
+    expect(pending).toHaveLength(2);
+  });
+
+  test.each([false, true])(
+    "retries after a shared provider failure (refresh=%s)",
+    async (refresh) => {
+      let currentTime = Date.parse("2025-01-01T00:00:00Z");
+      let calls = 0;
+      const failure = new Error("synthetic provider failure");
+      const sign = goog4Signer({
+        credentials: async () => {
+          calls += 1;
+          if (calls === (refresh ? 2 : 1)) {
+            throw failure;
+          }
+          return {
+            accessKeyId: `GOOG_ID_${calls}`,
+            secretAccessKey: "SECRET",
+            expiration: new Date(currentTime + 60 * 60_000),
+          };
+        },
+        now: () => currentTime,
+      });
+      const request = () => sign(new Request("https://storage.googleapis.com/b/k"));
+      if (refresh) {
+        await request();
+        currentTime += 60 * 60_000;
+      }
+      const results = await Promise.allSettled([request(), request(), request()]);
+      expect(results).toEqual(
+        Array.from({ length: 3 }, () => ({ status: "rejected", reason: failure })),
+      );
+      expect(calls).toBe(refresh ? 2 : 1);
+      const recovered = await request();
+      expect(calls).toBe(refresh ? 3 : 2);
+      expect(recovered.headers.get("Authorization")).toContain(`Credential=GOOG_ID_${calls}/`);
+      await request();
+      expect(calls).toBe(refresh ? 3 : 2);
+    },
+  );
+
+  test("recovers when a provider throws synchronously", async () => {
+    let calls = 0;
+    const failure = new Error("synthetic synchronous failure");
+    const sign = goog4Signer({
+      credentials: () => {
+        calls += 1;
+        if (calls === 1) {
+          throw failure;
+        }
+        return Promise.resolve({ accessKeyId: "RECOVERED", secretAccessKey: "SECRET" });
+      },
+    });
+    await expect(sign(new Request("https://storage.googleapis.com/b/k"))).rejects.toBe(failure);
+    const signed = await sign(new Request("https://storage.googleapis.com/b/k"));
+    expect(signed.headers.get("Authorization")).toContain("Credential=RECOVERED/");
     expect(calls).toBe(2);
   });
 
