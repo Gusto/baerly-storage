@@ -1262,7 +1262,11 @@ interface StoredRow<T extends DocumentData> {
   readonly doc: T;
 }
 
-/** {@link runRead}, keeping each row's storage key. */
+/**
+ * {@link runRead}, keeping each row's storage key. Every call, a write
+ * verb's pre-commit read included, records its work (see
+ * {@link recordReadWork}).
+ */
 const runReadRows = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
@@ -1297,6 +1301,7 @@ const runReadRows = async <T extends DocumentData>(
   // not-found head still emits a well-defined cursor so the wire shape
   // never carries `""`.
   if (head === null) {
+    recordReadWork(ctx.collectionName, 0, 0, 0);
     return { rows: [], manifestPointer: "m1:0000000000000", fresh, tail: 0 };
   }
 
@@ -1370,6 +1375,15 @@ const runReadRows = async <T extends DocumentData>(
     rows = rows.slice(0, state.limit);
   }
 
+  // Counts the fold already holds: `docs` is not touched after Step 3, so
+  // its size is still the live set before predicate, order and limit.
+  recordReadWork(
+    ctx.collectionName,
+    baseDocs.size + entries.length + probe.entries.length,
+    docs.size,
+    rows.length,
+  );
+
   return {
     rows,
     manifestPointer: serializeManifestPointer(head.json, tail),
@@ -1377,6 +1391,34 @@ const runReadRows = async <T extends DocumentData>(
     tail,
     folded: { head: head.json, base: baseDocs, tail: [...entries, ...probe.entries] },
   };
+};
+
+/**
+ * Emit one read's work onto the request's canonical line (the
+ * `db.read.*` counters; units in `@baerly/protocol`'s `MetricsRecorder`
+ * catalog). Takes counts the read already holds, so it adds no storage
+ * call and no pass over the rows. Outside an observability scope it
+ * returns before allocating anything; inside one it adds three
+ * recorder rows per read.
+ *
+ * @param decoded Snapshot rows plus log entries decoded by the fold.
+ * @param live Documents live after the fold, before predicate and limit.
+ * @param returned Rows left after predicate, order and limit.
+ */
+const recordReadWork = (
+  collection: string,
+  decoded: number,
+  live: number,
+  returned: number,
+): void => {
+  const recorder = getCurrentContext()?.recorder;
+  if (recorder === undefined) {
+    return;
+  }
+  const labels = { collection };
+  recorder.counter("db.read.decoded_entries_total", decoded, labels);
+  recorder.counter("db.read.live_documents_total", live, labels);
+  recorder.counter("db.read.returned_rows_total", returned, labels);
 };
 
 /**

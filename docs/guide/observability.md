@@ -2,7 +2,7 @@
 title: Observability
 audience: operator
 summary: "Operator signals, first-response actions, sinks, cost-ballooning anti-patterns, and known gaps. Canonical log-line shape lives in dist/API.md."
-last-reviewed: 2026-11-13
+last-reviewed: 2026-11-15
 tags: [observability, operations, logging]
 related:
   [
@@ -109,12 +109,16 @@ outcome):
   "method": "GET",
   "path": "/v1/c/tickets",
   "db.storage.class_a_ops_total": 0,
-  "db.storage.class_b_ops_total": 3
+  "db.storage.class_b_ops_total": 3,
+  "db.read.decoded_entries_total": 412,
+  "db.read.live_documents_total": 380,
+  "db.read.returned_rows_total": 20
 }
 ```
 
 `summarize()` only emits keys for counters actually observed. A pure
-read line carries the `db.storage.*` op counters but not the
+read line carries the `db.storage.*` op counters and the `db.read.*`
+read-work counters (see [Read work](#read-work)), but not the
 `db.compaction.*` counters. Those counters appear only when write-tick
 maintenance runs before the canonical line flushes.
 
@@ -351,6 +355,29 @@ calls in the canonical line. The Worker emits no `cache_status` field and
 makes no Cache API calls. Post-response write-tick maintenance still runs
 through `ctx.waitUntil`; its work may finish after the request's canonical
 line has flushed.
+
+## Read work
+
+Every collection read adds three counters to the canonical line. They
+measure what the read materialized, on every host, from counts the fold
+already holds:
+
+| Counter | Unit |
+| --- | --- |
+| `db.read.decoded_entries_total` | Snapshot rows plus log entries decoded, before predicate and limit. Entries, not documents: an `_id` updated twice since the last fold counts three times, and a deleted row counts its `I` and its `D`. |
+| `db.read.live_documents_total` | Distinct documents live after the fold, before predicate, order and limit. |
+| `db.read.returned_rows_total` | Rows left after predicate, order and limit: the rows returned, the rows `count()` counts, or the rows a write verb's read matched. |
+
+A write verb's pre-commit read counts too, so an insert's line reports the
+fold its `_id` check ran. Several reads in one request sum. A
+never-provisioned collection reports zeros.
+
+A point read or a `limit(1)` read still folds the whole collection, so a
+large `decoded_entries` beside one returned row is that read's real cost.
+Decoded entries well above live documents mean the log tail holds many
+updates and deletes since the last fold. These counters carry no
+threshold or cap; compare them with `db.storage.*` and `duration_ms` when
+a read is slower than expected.
 
 ## Cross-references
 

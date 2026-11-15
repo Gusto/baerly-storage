@@ -48,6 +48,22 @@
  *     An SDK-minted insert (`mintedId`) found its identical row already
  *     stored and returned it as the original success, committing nothing.
  *     A rate tracks clients retransmitting inserts after lost responses.
+ *   - `db.read.decoded_entries_total` / `db.read.live_documents_total` /
+ *     `db.read.returned_rows_total` — counters, labelled by `collection`,
+ *     emitted together by every collection read (a read terminal, or a
+ *     write verb's pre-commit read). Units:
+ *     - decoded entries: snapshot rows plus log entries the fold decoded,
+ *       before predicate and limit. Entries, not documents: an `_id`
+ *       updated twice since the last fold counts three times, and a
+ *       deleted row still counts its `I` and its `D`.
+ *     - live documents: distinct documents live once the fold completes,
+ *       before predicate, order and limit.
+ *     - returned rows: rows left after predicate, order and limit — the
+ *       rows a read returns, the rows `count()` counts, or the rows a write
+ *       verb's read matched.
+ *     A never-provisioned collection reports zeros. A point read still
+ *     folds the whole collection, so a large decoded count beside one
+ *     returned row is that read's actual work. No threshold or cap attaches.
  *   - `db.manifest.lag_window_depth` — gauge (alert at >100)
  *   - `db.gc.entries_swept_per_second` — gauge (livelock indicator when <writes/s)
  *   - `db.orphan.candidate_count` — gauge (`gc/pending.json` depth)

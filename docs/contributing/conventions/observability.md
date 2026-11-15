@@ -2,7 +2,7 @@
 title: Conventions for observability code
 audience: coder
 summary: One canonical line per unit-of-work, field attachment, DEBUG vs INFO, test patterns.
-last-reviewed: 2026-11-13
+last-reviewed: 2026-11-15
 tags: [conventions, observability]
 related: ["../../guide/observability.md", "tests.md"]
 ---
@@ -201,6 +201,25 @@ The load-bearing kernel metrics today (canonical list in
   and returned it as the original success, committing nothing. A replay
   records no write metric, so this is its only signal; a rate tracks
   clients retransmitting inserts after lost responses.
+- `db.read.decoded_entries_total` / `db.read.live_documents_total` /
+  `db.read.returned_rows_total` — counters, labelled by `collection`,
+  emitted together by every collection read: a read terminal, or a write
+  verb's pre-commit read. `runReadRows` in `packages/server/src/query.ts`
+  records them from counts the fold already holds, so they add no storage
+  call and no pass over the rows; outside an observability scope they
+  allocate nothing. Units:
+  - decoded entries: snapshot rows plus log entries the fold decoded,
+    before predicate and limit. Entries, not documents — an `_id`
+    updated twice since the last fold counts three times, and a deleted
+    row still counts its `I` and its `D`.
+  - live documents: distinct documents live once the fold completes,
+    before predicate, order and limit.
+  - returned rows: rows left after predicate, order and limit — the rows
+    a read returns, the rows `count()` counts, or the rows a write verb's
+    read matched.
+
+  A never-provisioned collection reports zeros. No threshold, warning or
+  cap attaches to them.
 - `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`
   loss counter.
 - `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.
@@ -252,8 +271,8 @@ The load-bearing kernel metrics today (canonical list in
   storage decorator's S3-pricing rollup.
 
 Don't invent new namespaces casually. New subsystem? Pick from the
-existing set (`write`, `r2`, `manifest`, `gc`, `orphan`, `compact`,
-`storage`) or discuss with maintainers before adding `db.newthing.*`
+existing set (`write`, `read`, `r2`, `manifest`, `gc`, `orphan`,
+`compact`, `storage`) or discuss with maintainers before adding `db.newthing.*`
 — metric names are a contract.
 
 ### Rejected naming alternatives

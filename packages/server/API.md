@@ -831,6 +831,7 @@ options.
 | `db.storage.<op>.duration_ms_sum` / `_count`   | Per-call duration histogram.                                                         |
 | `db.write.class_a_ops_per_logical_write_*`     | Writer's per-`commit()` Class-A-op count.                                            |
 | `db.r2.put.412_total` / `429_total`            | CAS conflicts (412) and storage rate-limit hits (429).                               |
+| `db.read.<unit>_total`                         | `decoded_entries` (snapshot rows + log entries), `live_documents`, `returned_rows`.  |
 | `error.code` / `error.message` / `error.stack` | Failure-path only. `error.code` is `BaerlyErrorCode`.                                |
 
 Class-A / Class-B totals are the load-bearing fields — the cost
