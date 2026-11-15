@@ -127,6 +127,25 @@ describe("refreshingSigner — concurrency", () => {
     expect(calls).toBe(1);
   });
 
+  test("clears in-flight when a provider throws synchronously", async () => {
+    let calls = 0;
+    const failure = new Error("synthetic synchronous failure");
+    const sign = refreshingSigner({
+      region: "us-east-1",
+      credentials: () => {
+        calls += 1;
+        if (calls === 1) {
+          throw failure;
+        }
+        return Promise.resolve({ accessKeyId: "RECOVERED", secretAccessKey: "SECRET" });
+      },
+    });
+    await expect(sign(new Request("https://s3.us-east-1.amazonaws.com/b/k"))).rejects.toBe(failure);
+    const signed = await sign(new Request("https://s3.us-east-1.amazonaws.com/b/k"));
+    expect(signed.headers.get("Authorization")).toContain("Credential=RECOVERED/");
+    expect(calls).toBe(2);
+  });
+
   test("clears in-flight after provider rejects so the next call retries", async () => {
     let calls = 0;
     const errors: Error[] = [];

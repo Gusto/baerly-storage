@@ -51,9 +51,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 98031,
-      "gz": 32593,
-      "minGz": 10288,
+      "raw": 98826,
+      "gz": 32875,
+      "minGz": 10418,
       "note": "Worker-safe GCS entry, so consumer-facing. Smaller than s3.js because the GOOG4 signer is lighter than aws4fetch."
     },
     "http.js": {
@@ -102,12 +102,12 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 756645,
+      "raw": 756983,
       "note": "server-only aggregator. Raw-only dep-creep tripwire; live-external-import creep is caught separately by the bare-specifier allowlist test."
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 765603,
+      "raw": 765941,
       "note": "dev-only aggregator. Raw-only dep-creep tripwire; see node.js."
     }
   }
