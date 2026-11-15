@@ -556,10 +556,9 @@ section) instead of poking `/v1/since` by hand; hand-rolled
 subscribers in other frameworks `fetch` it directly. The wire shape
 above is the public contract; there is no cursor-tailing helper.
 
-**Handle `410 CursorExpired` or your loop will spin.** On resume it
-means the cursor is permanently dead: its changes are no longer
-retained, or `restore --force` truncated them. It never clears on
-retry: back off, re-read, then restart with `cursor=` (empty).
+**Handle `410 CursorExpired` or your loop will spin.** The cursor never
+works again: back off, re-read, then restart with `cursor=` (empty).
+Causes: RECIPES.md, `CursorExpired`.
 
 ## React: `createBaerlyReact`
 
