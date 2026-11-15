@@ -2,8 +2,10 @@ name: test-infra
 
 # Deterministic local-container suites (Minio + Postgres + SQLite) that are
 # too heavy for the PR hot path but too valuable to leave manual-only.
-# Run ON DEMAND via workflow_dispatch. NOT triggered on pull_request — the PR
-# gate stays the cheap `ci` job.
+# Run ON DEMAND via workflow_dispatch, and on pull requests that touch the
+# stack definition itself (compose file, docker/ config, this workflow) — the
+# only changes `ci` cannot catch, since it never starts the containers. Other
+# PRs stay on the cheap `ci` job.
 #
 # NIGHTLY (opt-in): uncomment the `schedule:` block below to promote this to
 # an enforced nightly. A failing scheduled run then surfaces via GitHub's
@@ -13,6 +15,11 @@ on:
   # schedule:
   #   - cron: "0 7 * * *" # 07:00 UTC nightly
   workflow_dispatch: {}
+  pull_request:
+    paths:
+      - docker-compose.yml
+      - docker/**
+      - .github/workflows/test-infra.yml
 
 # No cancel-in-progress: for infra runs we want the result, not a
 # cancellation (two overlapping manual dispatches — or a manual run
