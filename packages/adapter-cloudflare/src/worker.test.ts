@@ -199,7 +199,7 @@ describe("baerlyWorker observability", () => {
     expect(classA).toBeGreaterThanOrEqual(1);
   });
 
-  test("cache-miss read emits a canonical line with class_b_ops>0, outcome=read, cache_status=miss", async () => {
+  test("point read emits a canonical line with storage work and outcome=read", async () => {
     const bucket = getBinding();
     const tenant = `obs-miss-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -217,8 +217,7 @@ describe("baerlyWorker observability", () => {
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => mockExecutionContext();
 
-    // Seed one doc via a sink-less handler so the GET below has a
-    // body to fetch (per-doc URLs are the only cached shape).
+    // Seed one doc before collecting the read's storage work.
     const seeder = baerlyWorker(() => ({ verifier, config: testConfig }));
     await seeder.fetch!(
       new Request("https://x/v1/c/c", {
@@ -237,8 +236,7 @@ describe("baerlyWorker observability", () => {
       observability: { level: "debug", sink },
     }));
 
-    // Cold-cache GET (the cache is per-isolate and the tenant key is
-    // unique to this test, so this is guaranteed to be a miss).
+    // Read the row through the Worker.
     const res = await handler.fetch!(
       new Request("https://x/v1/c/c/obs-miss-1", { method: "GET" }) as Request<
         unknown,
@@ -253,21 +251,12 @@ describe("baerlyWorker observability", () => {
     expect(line).toBeDefined();
     const props = line!.properties as Record<string, unknown>;
     expect(props["outcome"]).toBe("read");
-    // The adapter stamps `cache_status` on every HTTP canonical
-    // line — see `worker-cache-discriminator.test.ts` for the full
-    // hit/miss/bypass matrix.
-    expect(props["cache_status"]).toBe("miss");
+    expect(props).not.toHaveProperty("cache_status");
     // class-B ops fire on the read path (GETs against current.json).
     expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
   });
 
-  test("cache-hit read still emits a canonical line with cache_status=hit", async () => {
-    // The adapter constructs the canonical-line context up front so
-    // hits flow through the same `flushCanonicalLine` path as
-    // misses, only stamped with `cache_status: "hit"`. Operators
-    // distinguish hit vs miss directly from the log stream — no CDN
-    // dashboard required. The full coverage matrix (miss-then-hit,
-    // bypass) lives in `worker-cache-discriminator.test.ts`.
+  test("repeated point reads still emit storage work on their canonical line", async () => {
     const bucket = getBinding();
     const tenant = `obs-hit-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
@@ -285,7 +274,7 @@ describe("baerlyWorker observability", () => {
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => mockExecutionContext();
 
-    // Seed one doc, then warm the cache via a sink-less handler so
+    // Seed one doc, then read once via a sink-less handler so
     // its canonical lines don't pollute the assertion below.
     const warm = baerlyWorker(() => ({ verifier, config: testConfig }));
     await warm.fetch!(
@@ -304,7 +293,7 @@ describe("baerlyWorker observability", () => {
       makeExec(),
     );
 
-    // Now wire the sink and fire the cache-hit GET.
+    // Collect the repeated read's canonical line.
     const { records, sink } = collectingSink();
     const hit = baerlyWorker(() => ({
       config: testConfig,
@@ -320,7 +309,8 @@ describe("baerlyWorker observability", () => {
     const line = findCanonical(records, "http");
     expect(line).toBeDefined();
     const props = line!.properties as Record<string, unknown>;
-    expect(props["cache_status"]).toBe("hit");
+    expect(props).not.toHaveProperty("cache_status");
+    expect(props["db.storage.class_b_ops_total"]).toBeGreaterThanOrEqual(1);
     expect(props["outcome"]).toBe("read");
     expect(props["status"]).toBe(200);
   });
@@ -456,10 +446,8 @@ describe("baerlyWorker observability", () => {
     expect(props["path"]).toBe("/v1/c/c");
   });
 
-  // Matches Node: a throw around `app.fetch` (here the Cache API) is a
-  // mapped envelope with one canonical line carrying the mapped status,
-  // not a rethrow that workerd answers with its own error page.
-  test("a withReadCache throw maps to an error envelope with one canonical line", async () => {
+  // Cache API availability cannot affect storage-backed point reads.
+  test("a broken Cache API does not affect the router or its canonical line", async () => {
     const { records, sink } = collectingSink();
     const handler = baerlyWorker(() => ({
       config: testConfig,
@@ -485,18 +473,17 @@ describe("baerlyWorker observability", () => {
     } finally {
       cache.match = originalMatch;
     }
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toBe("application/json");
     const body = (await res.json()) as { error?: { code?: string } };
-    expect(body.error?.code).toBe("NetworkError");
+    expect(body.error?.code).toBe("NotFound");
 
     const lines = records.filter(
       (r) => r.message.join("") === "canonical" && r.category.join(".") === "baerly.http",
     );
     expect(lines).toHaveLength(1);
     const props = lines[0]!.properties as Record<string, unknown>;
-    expect(props["status"]).toBe(502);
-    expect(props["error"]).toBeDefined();
+    expect(props["status"]).toBe(404);
   });
 });
 

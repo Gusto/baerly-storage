@@ -126,8 +126,11 @@ retries and 45 calls of the 50 budgeted, are:
 | Pending tail length | 8 entries |
 
 A write costs 7 + tail calls and its worst request, write plus
-maintenance, 31 (30 storage calls plus one Cache API call); any read at
+maintenance, 30 storage calls; any read at
 the longest 8-entry tail costs 11, an `$in` of any size included.
+Point reads always reach storage; repeated reads pay the same cost. The
+removed response cache's allowance stays headroom, with no increase to
+platform limits, fold/GC thresholds or the supported read envelope.
 Declared indexes change none of these. One consequence of the budget is
 accepted on this host:
 

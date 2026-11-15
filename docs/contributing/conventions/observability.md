@@ -184,9 +184,10 @@ The load-bearing kernel metrics today (canonical list in
   `collection` and `phase` (`delete-floor-check`, the only post-commit
   step). The request ledger refused a storage call of a step that runs
   after a known commit; the step was skipped and the commit stands. The
-  floor check runs inside the commit's ledger hold, so a count means a call outside every hold (the read
-  cache's post-write invalidation) or a platform cap below the ledger's
-  limit cut into it.
+  floor check runs inside the commit's ledger hold, so a count means an
+  unrefusable call outside every hold or a platform cap below the ledger's
+  limit cut into it. The production Worker makes no Cache API
+  calls.
 - `db.write.unresolved_create_total` — writer counter, labelled by
   `collection`. A rejected committing create could not be resolved by
   readback, so the commit failed with `AmbiguousCommit`. Any sustained rate

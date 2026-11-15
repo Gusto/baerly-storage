@@ -263,10 +263,6 @@ describe.runIf(gate("deploy-node", NODE_URL !== undefined && SECRET !== undefine
           options: {
             bearerToken: SECRET!,
             tenantPrefix: TENANT,
-            // Node listener has no `caches.default`; the conditional-
-            // GET block falls through to plain 200 + body as on the
-            // Minio variant.
-            supportsCacheApi: false,
           },
         });
       },

@@ -344,13 +344,13 @@ they will **never clobber a config you installed first**:
   line is one unit of work. A loop emitting 1000 of them per
   request defeats the sampling story.
 
-## Known gaps
+## Cloudflare reads
 
-- **`invalidateOnWrite` is unobserved.** The CF adapter runs cache
-  invalidation inside `ctx.waitUntil` after the response is sent —
-  by then the canonical line for the request has already flushed,
-  and the invalidator itself doesn't emit any metrics. Failures
-  surface only on the Worker's process log.
+Every point read reaches storage, so repeated reads include their storage
+calls in the canonical line. The Worker emits no `cache_status` field and
+makes no Cache API calls. Post-response write-tick maintenance still runs
+through `ctx.waitUntil`; its work may finish after the request's canonical
+line has flushed.
 
 ## Cross-references
 

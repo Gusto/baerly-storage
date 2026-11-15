@@ -78,20 +78,6 @@ export interface HttpConformanceOptions {
    * would time out the test runner.
    */
   readonly supportsSinceTimeoutOverride?: boolean;
-  /**
-   * When true, the conditional-GET block additionally exercises the
-   * Cache API path (ticket 27): a second GET issued within the same
-   * test run hits `caches.default` and still respects `If-None-Match`
-   * → 304. Workerd-only: the Node listener has no `caches.default`.
-   *
-   * Even when `true`, the cascade tolerates a 200 fall-through: the
-   * router does not emit `ETag` headers on the GET response
-   * today, so the Worker cache layer has no etag to compare against
-   * and the 304-rewrite branch never fires. The assertion is "either
-   * 304 or 200 with the body" — the load-bearing invariant is that
-   * the cached path doesn't corrupt the doc shape.
-   */
-  readonly supportsCacheApi?: boolean;
   /** Tenant prefix the test Verifier maps to. Default: `conformance-tenant`. */
   readonly tenantPrefix?: string;
   /** Bearer token the test Verifier accepts. Default: `test-token`. */
@@ -251,7 +237,6 @@ export const runHttpConformanceCascade = (opts: {
   const supportsCAS = o.supportsCAS ?? false;
   const supportsLongPoll = o.supportsLongPoll ?? true;
   const supportsSinceTimeoutOverride = o.supportsSinceTimeoutOverride ?? false;
-  const supportsCacheApi = o.supportsCacheApi ?? false;
   const tenantPrefix = o.tenantPrefix ?? CONFORMANCE_TENANT;
   const bearerToken = o.bearerToken ?? CONFORMANCE_BEARER;
   const bodyArb = o.bodyArb ?? DEFAULT_BODY_ARB;
@@ -260,7 +245,6 @@ export const runHttpConformanceCascade = (opts: {
   // not currently exercised because UUIDv7 ids are produced by the
   // server (lowercase hex by construction).
   void (o.caseSensitiveKeys ?? true);
-  void supportsCacheApi; // referenced in the JSDoc only on this branch.
   void tenantPrefix; // verifier-side concern; no test asserts on the value.
 
   const doFetch = opts.fetch;
@@ -1305,14 +1289,6 @@ export const runHttpConformanceCascade = (opts: {
       test("(c) manifest_pointer advances + fresh:true after a concurrent writer commits", async () => {
         const table = await mintTable("meta-advance");
         await postDoc(table, { v: 1 });
-        // Read through the LIST endpoint: the Workerd adapter's
-        // Cache-API layer (`adapter-cloudflare/src/cache.ts`) busts
-        // the list URL on every POST/PATCH/DELETE, so a second POST
-        // forces the second read to re-anchor against the new
-        // `current.json`. Reading a per-doc URL whose specific
-        // `(table, id)` cache entry wasn't busted by the second POST
-        // would re-serve the cached r1 envelope and the cursor would
-        // not advance.
         const res1 = await doFetch(authedRequest("GET", `/v1/c/${table}`));
         const r1 = (await res1.json()) as MetaBody;
         // Concurrent writer bumps tail_hint → pointer changes.

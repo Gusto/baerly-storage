@@ -280,10 +280,7 @@ describe.runIf(gate("deploy-cloudflare", CF_URL !== undefined && SECRET !== unde
             });
           },
           options: {
-            // Real CF deploy doesn't emit ETag headers either; CAS
-            // skip stays the default. Cache API is in play (ticket 27)
-            // but the cascade tolerates 200 fall-through.
-            supportsCacheApi: true,
+            // The router has no HTTP If-Match support; keep the CAS default.
             // Real fetch on a real deploy carries AbortSignal cleanly;
             // keep the default `supportsAbort: true`.
             bearerToken: SECRET!,

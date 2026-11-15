@@ -102,9 +102,8 @@ export function createRouter(options: CreateRouterOptions): Hono {
   // The router intentionally does NOT mount an observability
   // middleware. Production adapters (`@baerly/adapter-cloudflare`,
   // `@baerly/adapter-node`) open their own `ObservabilityContext`
-  // BEFORE calling `createRouter().fetch` so they can stamp adapter-
-  // owned fields (e.g. `cache_status`) before the cache wrapper
-  // short-circuits. Standalone callers (tests, one-off harnesses) wrap
+  // BEFORE calling `createRouter().fetch` so verifier and storage work
+  // share the request's canonical line. Standalone callers wrap
   // their request via `withHttpObservability` from
   // `@baerly/server`. Either way, one unit-of-work → exactly one
   // canonical line.

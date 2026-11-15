@@ -366,8 +366,8 @@ describe("early fold when storage is reached through fetch on Workers Free", () 
   });
 });
 
-describe("Cache API calls the free-fetch request-count cells add", () => {
-  test("each request kind makes exactly the calls the cells charge", async () => {
+describe("Worker adds no Cache API overhead to the free-fetch request-count cells", () => {
+  test("each request kind adds zero cache calls before and after waitUntil", async () => {
     const tenant = tenantId("cachecalls");
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
     const handler = baerlyWorker<BaerlyEnv>(() => ({
@@ -413,8 +413,9 @@ describe("Cache API calls the free-fetch request-count cells add", () => {
       await expect(send("GET", `/v1/c/c?where=${where}`)).resolves.toBe(
         FREE_FETCH_CACHE_API_CALLS["indexed-query"],
       );
-      // `mixed` rotates inserts, updates and deletes; it is charged its
-      // most expensive member.
+      await expect(send("PUT", "/v1/c/c/a", { doc: { f0: "z" } })).resolves.toBe(0);
+      await expect(send("GET", "/v1/c/c/a")).resolves.toBe(0);
+      // `mixed` includes deletes.
       await expect(send("DELETE", "/v1/c/c/a")).resolves.toBe(FREE_FETCH_CACHE_API_CALLS.mixed);
     } finally {
       for (const spy of spies) {

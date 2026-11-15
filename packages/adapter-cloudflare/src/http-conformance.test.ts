@@ -23,11 +23,7 @@
  * without going through `SELF.fetch` (there is no "create table"
  * HTTP route).
  *
- * `supportsCacheApi: true` opts the conditional-GET block into the
- * Workerd-only assertion that `caches.default` doesn't corrupt the
- * doc shape on a second GET — but the cascade tolerates a 200
- * fall-through there too, because the router doesn't emit
- * `ETag` response headers and the cache layer has no etag to match.
+ * Point reads are storage-backed on every invocation.
  */
 
 import { describe } from "vitest";
@@ -70,9 +66,6 @@ describe("HTTP conformance", () => {
       });
     },
     options: {
-      // Workerd serves through `caches.default` for read paths. The
-      // cascade's conditional-GET block tolerates 200 OR 304.
-      supportsCacheApi: true,
       // SELF.fetch on Workerd surfaces an AbortError as an unhandled
       // rejection in addition to the rejected promise the test catches;
       // vitest flags that as a fatal error even though the assertion
