@@ -227,7 +227,8 @@
     "bench:collection-fanout": "node --import ./bench/register-hooks.mjs bench/collection-fanout.ts",
     "bench:cpu-factor:build": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/build.ts",
     "bench:cpu-factor:node-baseline": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/node-baseline.ts",
-    "bench:cpu-factor:analyze": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/analyze-run.ts"
+    "bench:cpu-factor:analyze": "node --import ./bench/register-hooks.mjs bench/cpu-factor-worker/analyze-run.ts",
+    "eval": "node --import ./bench/register-hooks.mjs --import ./eval/resolve-package.mjs eval/cli.ts"
   },
   "dependencies": {
     "@logtape/logtape": "^2.3.5"
@@ -278,7 +279,8 @@
     "rollup-license-plugin": "3.2.1",
     "vite": "^8.3.5",
     "vitest": "^5.0.5",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "^4 || ^5",

@@ -198,6 +198,12 @@ export default defineConfig({
             // when the deploy URL env vars are unset. Opt in via `pnpm
             // test:manual-e2e` after deploying per `manual-e2e/README.md`.
             "manual-e2e/**/*.test.ts",
+            // Zero-shot LLM eval harness self-tests. These run unconditionally
+            // on every `pnpm test` — they are deterministic, read the built
+            // dist/ surface, and verify harness mechanics without spawning `claude`.
+            // The eval run itself (`pnpm eval` → eval/cli.ts) is opt-in and
+            // needs the Claude Code login; no `describe.runIf` exists in these files.
+            "eval/**/*.test.ts",
           ],
           exclude: [
             ...configDefaults.exclude,

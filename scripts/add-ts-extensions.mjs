@@ -34,6 +34,8 @@ const GLOBS = [
   "bench/**/*.ts",
   "bench/**/*.tsx",
   "deploy/**/*.ts",
+  "eval/**/*.ts",
+  "eval/**/*.tsx",
   "examples/*/apps/*/src/**/*.ts",
   "examples/*/apps/*/src/**/*.tsx",
   "examples/*/apps/*/*.config.ts",

@@ -44,6 +44,14 @@ bench/results/load/*
 # under presets/ is checked in — see scripts/fetch-bench-fixtures.sh).
 bench/fixtures/
 
+# Eval harness outputs (per-run JSON)
+eval/results/*.json
+!eval/results/.gitkeep
+
+# Eval per-attempt solution sandboxes — created inside the repo tree (not
+# /tmp) so generated solutions resolve node_modules deps like a real app.
+eval/.sandboxes/
+
 # Vite / Vitest / Rolldown caches
 .vite/
 .vitest/

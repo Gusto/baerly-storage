@@ -1,0 +1,15 @@
+{
+  "model": "claude-opus-4-8",
+  "surface_kind": "api-md+dts",
+  "runs": 5,
+  "aggregate_pass_rate": null,
+  "tasks": [
+    { "name": "insert-get", "pass_rate": null },
+    { "name": "where-eq", "pass_rate": null },
+    { "name": "range-dsl", "pass_rate": null },
+    { "name": "delete-by-status", "pass_rate": null },
+    { "name": "schema-validate", "pass_rate": null },
+    { "name": "get-by-id", "pass_rate": null }
+  ],
+  "note": "Seeded placeholder. Refresh with `pnpm eval` (ANTHROPIC_API_KEY required, costs tokens). pass_rate=null means not yet measured."
+}
