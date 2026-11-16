@@ -26,7 +26,7 @@ To ship a production Dockerfile alongside, scaffold with
 
 ## What you got
 
-```
+```text
 react-node/
 ├── package.json              # one package, all deps
 ├── tsconfig.json             # project-references stub

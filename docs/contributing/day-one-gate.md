@@ -101,7 +101,7 @@ DAY_ONE_TARGETS=cloudflare,node pnpm gate:day-one
 
 Output (success):
 
-```
+```text
 day-one handshake — node target
   [+0 ms] start
   [+11023 ms] scaffold-complete
@@ -116,7 +116,7 @@ SUMMARY day-one-node ms=27510 stages=start:0;scaffold-complete:11023;install-com
 
 Output (failure):
 
-```
+```text
 ✗ day-one handshake — cloudflare target
   AssertionError: expected 312050 to be less than 300000
 ```

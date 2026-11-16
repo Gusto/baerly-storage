@@ -45,7 +45,7 @@ The key constraint is **type-stable, delete-aware coalescing**. A _patch window_
 
 Start with a document. The examples use JS-like object literals for readability; wire JSON must quote keys and omit comments.
 
-```
+```text
 doc = {
 	a: "foo",
 	b: "bar",
@@ -58,7 +58,7 @@ doc = {
 
 In an object patch, `null` means "remove this member." This patch deletes `nested.d`:
 
-```
+```text
 {
 	nested: {
 		d: null
@@ -68,7 +68,7 @@ In an object patch, `null` means "remove this member." This patch deletes `neste
 
 Ordinary values add or replace fields. This patch adds `nested.new`:
 
-```
+```text
 {
 	nested: {
 		new: "value"
@@ -78,7 +78,7 @@ Ordinary values add or replace fields. This patch adds `nested.new`:
 
 One merge patch can combine adds, replacements, and deletes at different levels of the object:
 
-```
+```text
 {
 	b: "new value", // update b
 	nested: {
@@ -94,7 +94,7 @@ One merge patch can combine adds, replacements, and deletes at different levels 
 
 If a JSON document is the state of a system, a merge patch is a state transition. The target state may be large; the transmitted patch only names the fields that change.
 
-```
+```text
 state_t+1 = merge(state_t, patch_t)
 ```
 
@@ -116,7 +116,7 @@ baerly-storage's implementation also skips three object-member names during merg
 
 `JSON Patch` ([RFC 6902](https://datatracker.ietf.org/doc/html/rfc6902)) updates a document by applying a sequence of operations.
 
-```
+```text
 [
  { "op": "add", "path": "/baz", "value": "qux" },
  { "op": ...}
@@ -135,13 +135,13 @@ Use JSON Patch when the document model needs those extra operations. baerly-stor
 
 An associative binary function can be grouped in any way on a sequence and still produce the same result. That property is what makes compaction possible: adjacent elements can be summarized without asking where the summary will later be grouped.
 
-```
+```text
 merge(merge(a, b), c) == merge(a, merge(b, c)) // NOT TRUE IN GENERAL
 ```
 
 The subtlety is that `merge` has different branches for objects and non-objects. When a path changes kind, grouping can change which branch runs.
 
-```
+```text
 merge(merge(0, {}), 0) = 0
 !==
 merge(0, merge({}, 0)) = {}
@@ -153,7 +153,7 @@ merge(0, merge({}, 0)) = {}
 
 The simplest structured patch window has two constraints: paths keep a stable JSON kind, and the window does not use `null` deletes. Under those constraints, regrouping does not change which branch of `merge` runs, so `merge` _is_ associative.
 
-```
+```text
 merge(merge(a, b), c) == merge(a, merge(b, c)) for structured docs
 ```
 
@@ -169,7 +169,7 @@ Associativity is useful for networked write coalescing. In a structured window, 
 
 In a sparse-patch model, if two patches manipulate non-overlapping parts of the document, they can be applied in either order and produce the same result.
 
-```
+```text
 merge(merge(s, a), b) == merge(merge(s, b), a) if b intersect a == empty
 ```
 
@@ -181,7 +181,7 @@ Non-overlap means no written path in one patch is equal to, an ancestor of, or a
 
 When two patches touch the same field, order matters. For example, one writer may delete a resource:
 
-```
+```text
 {
 	resource1: null
 }
@@ -189,7 +189,7 @@ When two patches touch the same field, order matters. For example, one writer ma
 
 while another updates the same resource:
 
-```
+```text
 {
 	resource1: "new value"
 }
@@ -203,7 +203,7 @@ If the patches are applied DELETE, UPDATE, the final value of `resource1` is `"n
 
 If you apply the same patch twice in a row on top of a state, the second application has no further effect:
 
-```
+```text
 merge(merge(s, a), a) = merge(s, a)
 ```
 
@@ -219,7 +219,7 @@ This is the narrow retry property: an accidental duplicate application immediate
 
 Patching anything with `undefined` returns the original value:
 
-```
+```text
 merge(x, undefined) = x
 ```
 
@@ -233,13 +233,13 @@ Root identity needs a separate implementation value. JSON on the wire has no `un
 
 Patching an object with the empty object does not modify it:
 
-```
+```text
 merge({a:""}, {}) = {a:""}
 ```
 
 That makes `{}` look like the identity patch. It is not, because object patches replace scalar targets:
 
-```
+```text
 merge(0, {}) = {} // not 0
 ```
 
@@ -253,7 +253,7 @@ Thus, `{}` is not the identity patch over all JSON values. If scalars were forbi
 
 Given a base state, an ordered list of patches can be replayed by folding `merge` over the list:
 
-```
+```text
 state = fold(merge, base, patches)
 ```
 
@@ -265,7 +265,7 @@ baerly-storage's current committed `U` log entries are full post-images, so the 
 
 Coalescing means replacing an ordered patch window with one summary patch:
 
-```
+```text
 log_patch = fold(merge, undefined, patches)
 ```
 
@@ -293,7 +293,7 @@ This is not the same as re-merging a coalesced patch onto an arbitrary downstrea
 
 Suppose a client optimistically folded the patches it had received while one entry was still missing. Replaying the complete ordered set can repair that local view.
 
-```
+```text
 fold(merge, base, [a, b, c]) =
 	fold(merge, fold(merge, base, [a, c]), [b, c]) // we skipped b in first fold
 ```
@@ -315,7 +315,7 @@ This is useful for optimistic local views. It is not baerly-storage's recovery r
 
 If `merge` is the forward step `s_1 = merge(s_0, p)`, then `diff` asks for a patch that moves one known state to another known state. Given target state `b` and base state `a`, `diff(b, a)` produces a patch that moves `a` to `b`:
 
-```
+```text
 merge(a, diff(b, a)) == b
 ```
 
@@ -325,7 +325,7 @@ merge(a, diff(b, a)) == b
 
 ### Identity is `undefined`
 
-```
+```text
 diff(a, undefined) = a
 ```
 
@@ -345,7 +345,7 @@ Diffing a doc with itself yields the identity patch.
 
 For a fixed base and target, the diff patch has this state-relative property:
 
-```
+```text
 diff(target, base) = patch <=> merge(base, patch) = target
 ```
 

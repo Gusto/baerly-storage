@@ -48,7 +48,7 @@ arrive percent-encoded instead of entity-escaped (`%26` not `&amp;`, `%3C`
 not `&lt;`). Uploading keys `&lt`, `<![CDATA[...]]>`, `foo<Contents>`
 through the S3 console yields:
 
-```
+```xml
 <Key>%26lt</Key>
 <Key>%3C%21%5BCDATA%5B...%5D%5D%3E</Key>
 <Key>foo%3CContents%3E</Key>
@@ -65,7 +65,7 @@ calls out `&$@=;/:+,?`, multiple spaces, ASCII `0–31`, and (to avoid)
 `\{^}%\]">[~#|` plus ASCII `128–255`. Under `encoding-type=url` these are
 all just more `%HH`:
 
-```
+```xml
 <Key>%26%24%40%3D%3B++%3A%2B%2C%3F</Key>          <!-- &$@=;  :+,? -->
 <Key>%5C%7B%5E%7D%25%5C%5D%22%3E%5B%7E%23%7C</Key> <!-- \{^}%\]">[~#| -->
 ```

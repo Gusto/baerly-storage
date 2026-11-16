@@ -563,7 +563,7 @@ writes or reclaims. For a `Db` constructed with `app="tickets"` and `tenant="acm
 that prefix is the tree root below — shown once here, then omitted
 from the table that follows:
 
-```
+```text
 app/tickets/tenant/acme/manifests/<collection>/
 ├── current.json                   ← compaction state (compactor-owned)
 ├── log/
