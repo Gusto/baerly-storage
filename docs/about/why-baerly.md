@@ -2,8 +2,8 @@
 title: Why baerly-storage
 audience: product
 summary: >
-  The six things baerly-storage is built to be — LLM-legible, no-ceremony,
-  safe to hand off, data in your bucket, no new vendor, no resident service,
+  The six things baerly-storage is built to be — legible to LLMs and safe to
+  hand off, data in your bucket, no new vendor, no resident service,
   idle-to-zero cost, and a mechanical exit.
 last-reviewed: 2026-07-01
 tags: [positioning, product]
