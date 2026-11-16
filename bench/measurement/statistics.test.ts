@@ -789,8 +789,8 @@ describe("ols-qr-v1", () => {
     // Emitted records must be Object.is-comparable, so no -0 escapes. The
     // reachable path is an exactly zero coefficient over a negative Householder
     // pivot — which the noisy vector below produces, since its true intercept is
-    // exactly 0. (canonical-json.ts normalizes -0 to 0 rather than rejecting it,
-    // so this guards record stability, not serializability.)
+    // exactly 0. (JSON serialization writes -0 as 0, so this guards record
+    // stability, not serializability.)
     const r = olsQr({
       columns: ["intercept", "x"],
       rows: [
@@ -994,12 +994,11 @@ describe("contract surface", () => {
 
 describe("canonical-JSON safety", () => {
   /**
-   * `canonical-json.ts` REJECTS `undefined` (`undefined-value`) and `NaN` /
-   * `±Infinity` (`non-finite-number`), so a single one of those reaching a
-   * result object becomes an opaque rejection inside Plan J. It NORMALIZES `-0`
-   * to `0` rather than rejecting it; `-0` is asserted here anyway so emitted
-   * records stay `Object.is`-comparable and snapshot-stable. This walks every
-   * number of every result shape.
+   * A canonical JSON serializer rejects `undefined` and `NaN` / `±Infinity`,
+   * so a single one of those reaching a result object becomes an opaque
+   * rejection downstream. `-0` serializes as `0`; it is asserted here anyway
+   * so emitted records stay `Object.is`-comparable and snapshot-stable. This
+   * walks every number of every result shape.
    */
   const assertEmittable = (value: unknown, path = "$"): void => {
     if (typeof value === "number") {

@@ -88,7 +88,6 @@
     "bench/cpu-factor-worker/src/fixtures.d.ts",
 
     "packages/adapter-cloudflare/src",
-    "bench/workload-ceiling-worker/src",
     "tests/fixtures/mock-execution-context.ts",
     "tests/integration/public-surface.test.ts",
     "tests/integration/s3-worker-e2e.test.ts",
