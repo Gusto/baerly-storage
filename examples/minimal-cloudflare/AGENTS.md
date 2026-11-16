@@ -83,6 +83,7 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
   - **Indexes**: don't declare them; a read always folds the whole collection. `API.md`, section `defineConfig`.
   - **Schemas** (StandardSchema validators, `SchemaError`): `API.md`, section `defineConfig`.
   - **HTTP wire format** (calling `/v1/*` directly): `API.md#http-wire-format`.
+  - **Verifier presets** (`sharedSecret`, `bearerJwt`, `cloudflareAccess`, `tenantPrefix`): `API.md#verifier-presets`. Refreshing a client token on 401, logging, tracing: `RECIPES.md#recipe--wrapping-the-client-fetch`. Serving `/v1/*` behind your own gate: `RECIPES.md#recipe--authoring-a-gated-adapter`.
   - **Errors by message** (`RECIPES.md`, one entry per error string) and the shared anti-patterns: `RECIPES.md#anti-patterns-compile-clean-but-wrong`.
 
 <!-- library:end -->
