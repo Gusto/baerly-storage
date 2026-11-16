@@ -371,7 +371,8 @@ commit time over the entries the read could not see:
 
 The insert decision runs first, so a peer's live row is `AlreadyExists`
 whatever the capacity re-check says. Direct `Writer` commits are not
-checked.
+checked. Why refusals are growth-only, stateless and coded this way:
+[ADR-008](../adr/008-growth-refusal-and-retry-contract.md).
 
 ### Update and delete: decided on the newest row version
 
