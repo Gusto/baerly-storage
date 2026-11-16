@@ -64,8 +64,11 @@ Anti-patterns that compile but are wrong:
   only: \`.where({ field: value }).all()\` (object literal, equality)
   or \`.where(q => q.gte("field", n)).all()\` (callback DSL,
   operators: \`eq\` / \`gt\` / \`gte\` / \`lt\` / \`lte\` / \`in\`).
-- \`.all()\` on a hot path — page or cursor-iterate. \`.all()\` is for
-  bounded result sets only.
+- Paging or cursor-iterating \`.all()\` — there is no offset, page or
+  cursor API. Bound every read instead: scope it with
+  \`.where(...)\` and cap it with \`.limit(n)\` (plus \`.order(...)\` for a
+  stable top N). Each read still folds the whole collection, so a limit
+  caps the rows returned, not the work done.
 ${BLOCK_END}
 `;
 

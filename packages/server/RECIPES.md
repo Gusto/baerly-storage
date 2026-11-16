@@ -137,7 +137,7 @@ Retrying is an explicit at-least-once choice and may repeat logical work: a same
 - Don't mutate `VerifierResult.tenantPrefix` between the verifier and `Db.create` — the dispatcher pins the tenant from the verifier's return.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes `null`.
 - Raw SQL / `WHERE` clauses / hand-built query AST — the only query surface is the `.where(...)` method chain.
-- `.all()` on a hot path — page or cursor-iterate; `.all()` is for bounded result sets.
+- Paging or cursor-iterating `.all()`: there is no offset, page or cursor API. Bound every read instead: scope it with `.where(...)` and cap it with `.limit(n)` (plus `.order(...)` for a stable top N). Each read still folds the whole collection, so a limit caps the rows returned, not the work done. Under `baerlyWorker`, a read that needs more work than one request allows is refused with `CapacityExceeded` (see above); other hosts do not bound reads.
 - Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and `.all()`) returns the **whole collection** — there is no default row cap, and auth pins a tenant, not a row owner. Scope non-owner reads in your own route: inject a `where owner_id = <verified id>` predicate and clamp `limit = min(requested ?? MAX, MAX)`. Rejecting `?limit` backfires — it forces the uncapped path. See `docs/guide/auth.md` § Authorization Boundary.
 
 ## Recipe — wrapping the client `fetch`
