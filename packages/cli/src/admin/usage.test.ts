@@ -16,8 +16,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { MemoryStorage, type LogEntry } from "@baerly/protocol";
+import {
+  createCurrentJson,
+  type CurrentJson,
+  MemoryStorage,
+  type LogEntry,
+} from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
+import { logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
+import { wrapCountingStorage } from "../../../../tests/fixtures/counting-storage.ts";
 import {
   M_SIZE_WRITES_PER_MIN_PER_COLLECTION,
   discoverCollections,
@@ -34,6 +41,8 @@ interface SeedOpts {
   readonly windowMinutes: number;
   /** First commit_ts in epoch-ms; defaults to a stable fixture date. */
   readonly startMs?: number;
+  /** First sequence number; defaults to zero. */
+  readonly startSeq?: number;
 }
 
 const seedLogEntries = async (
@@ -45,10 +54,12 @@ const seedLogEntries = async (
 ): Promise<void> => {
   const { count, windowMinutes } = opts;
   const startMs = opts.startMs ?? Date.UTC(2026, 0, 1, 0, 0, 0);
+  const startSeq = opts.startSeq ?? 0;
   const prefix = `app/${app}/tenant/${tenant}/manifests/${collection}/log`;
-  for (let seq = 0; seq < count; seq++) {
+  for (let offset = 0; offset < count; offset++) {
+    const seq = startSeq + offset;
     const t =
-      count === 1 ? startMs : startMs + Math.round((seq * windowMinutes * 60_000) / (count - 1));
+      count === 1 ? startMs : startMs + Math.round((offset * windowMinutes * 60_000) / (count - 1));
     const entry: LogEntry = {
       lsn: `dummy_${seq.toString(16).padStart(6, "0")}_00`,
       commit_ts: new Date(t).toISOString(),
@@ -63,6 +74,20 @@ const seedLogEntries = async (
       contentType: "application/json",
     });
   }
+};
+
+const seedCurrent = async (
+  storage: MemoryStorage,
+  app: string,
+  tenant: string,
+  collection: string,
+  overrides: Partial<CurrentJson>,
+): Promise<void> => {
+  await createCurrentJson(
+    storage,
+    `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`,
+    logStateCurrentJson(overrides),
+  );
 };
 
 describe("estimateWritesPerMin", () => {
@@ -155,6 +180,81 @@ describe("estimateWritesPerMin", () => {
     const v = await estimateWritesPerMin(storage, "x", "y", "z", { sampleSize: 6 });
     expect(v.severity).toBe("info");
     expect(v.writesPerMin).toBeCloseTo(1, 2);
+  });
+
+  test("sampling storage work is independent of historical log depth", async () => {
+    const measure = async (count: number) => {
+      const inner = new MemoryStorage();
+      await seedLogEntries(inner, "x", "y", "z", {
+        count,
+        windowMinutes: count - 1,
+      });
+      await seedCurrent(inner, "x", "y", "z", {
+        log_seq_start: 0,
+        tail_hint: count - 10,
+      });
+      const counted = wrapCountingStorage(inner);
+      const verdict = await estimateWritesPerMin(counted.storage, "x", "y", "z", {
+        sampleSize: 6,
+      });
+      return { counted, verdict };
+    };
+
+    const shallow = await measure(20);
+    const deep = await measure(10_000);
+
+    expect(shallow.verdict.writesPerMin).toBeCloseTo(1, 2);
+    expect(deep.verdict.writesPerMin).toBeCloseTo(1, 2);
+    expect(shallow.counted.lists).toBe(0);
+    expect(deep.counted.lists).toBe(0);
+    expect(deep.counted.gets).toBe(shallow.counted.gets);
+    expect(deep.counted.gets).toBeLessThanOrEqual(20);
+  });
+
+  test("tail_hint is a lower bound and the estimator samples committed entries beyond it", async () => {
+    const storage = new MemoryStorage();
+    const startMs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    await seedLogEntries(storage, "x", "y", "z", {
+      count: 120,
+      windowMinutes: 119,
+      startMs,
+    });
+    await seedLogEntries(storage, "x", "y", "z", {
+      count: 10,
+      windowMinutes: 9 / 60,
+      startMs: startMs + 120 * 60_000,
+      startSeq: 120,
+    });
+    await seedCurrent(storage, "x", "y", "z", {
+      log_seq_start: 0,
+      tail_hint: 120,
+    });
+
+    const verdict = await estimateWritesPerMin(storage, "x", "y", "z", { sampleSize: 6 });
+    expect(verdict.writesPerMin).toBeCloseTo(60, 2);
+    expect(verdict.message).toContain("sampled 6 entries");
+  });
+
+  test("post-compaction sampling never probes below log_seq_start", async () => {
+    const inner = new MemoryStorage();
+    await seedLogEntries(inner, "x", "y", "z", {
+      count: 8,
+      windowMinutes: 7,
+      startSeq: 1_000,
+    });
+    await seedCurrent(inner, "x", "y", "z", {
+      snapshot: "manifests/z/snapshot/test.json",
+      log_seq_start: 1_000,
+      tail_hint: 1_005,
+    });
+    const counted = wrapCountingStorage(inner);
+
+    const verdict = await estimateWritesPerMin(counted.storage, "x", "y", "z");
+
+    expect(verdict.writesPerMin).toBeCloseTo(1, 2);
+    expect(verdict.message).toContain("sampled 8 entries");
+    expect(counted.lists).toBe(0);
+    expect(counted.gets).toBeLessThanOrEqual(15);
   });
 
   test("M_SIZE_WRITES_PER_MIN_PER_COLLECTION matches the documented thesis", () => {
