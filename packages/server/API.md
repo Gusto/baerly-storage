@@ -36,7 +36,7 @@ import { defineConfig, type RowOf } from "@gusto/baerly-storage/config";
 //   so `baerly.config.ts` siblings (e.g. `types.ts`) can import the inferred
 //   row type without reaching into the server barrel.
 
-// HTTP helpers — for embed-by-hand routers that don't mount `createRouter`
+// HTTP router + error mapping — custom adapters and embed-by-hand routes
 import { createRouter, mapError } from "@gusto/baerly-storage/http";
 
 // Browser / Node client (HTTP)
@@ -548,7 +548,7 @@ baerlyNode({
 
 **Local dev (`wrangler dev`, no Vite).** Declare `auth: "none"` in `baerly.config.ts` for the dev posture — the adapter synthesizes a verifier that pins every request to `config.tenant` without consulting the `Authorization` header. Swap to `auth: "shared-secret"` (or pass a custom `Verifier` on the factory) when you're ready to gate by wire credentials. Production CF Worker recipes layer CF Access in front of the Worker route; the verifier reads the resulting JWT:
 
-**`auth` only gates the kernel's HTTP router.** `auth: "none"` / `"shared-secret"` is read by `baerlyWorker` / `baerlyNode` / the underlying `createRouter` — it controls who can hit `/v1/*`. If you use `Db` directly (no `createRouter`, no `baerlyWorker`/`baerlyNode`, e.g. server-internal jobs or your own Hono router), `auth` is inert: every `Db.create` callsite already carries an explicit `tenant:`, and your handler's own auth layer decides who reaches the call. Set `auth: "none"` in the config to silence the typecheck requirement in that case.
+**`auth` is enforced only by `baerlyWorker` / `baerlyNode`** (the dev Vite plugin and `baerly doctor` also read it). They resolve the verifier (from `auth`, or the `verifier:` override) and run it before building the per-request `Db` and router. `createRouter` has no auth seam: it serves every request it receives as its `Db`'s tenant. If you call `Db` or `createRouter` yourself (server-internal jobs, your own router), `auth` is inert and your code must authenticate and pick the tenant; set `auth: "none"` to satisfy the required field.
 
 ```ts
 // baerly.config.ts

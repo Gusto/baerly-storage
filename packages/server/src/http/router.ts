@@ -13,10 +13,8 @@
  * load-balancer probe.
  *
  * `GET /v1/since` is appended to the same factory (see `./since.ts`
- * for the long-poll core). The Cloudflare adapter wraps Worker-side
- * GETs with `caches.default` *outside* `createRouter` so the router
- * stays platform-agnostic; that wrapper EXCLUDES `/v1/since` —
- * long-poll idleness is not a cache hit.
+ * for the long-poll core). No adapter caches responses: every read
+ * this router serves, on every host, reaches storage.
  */
 
 import { Hono } from "hono/tiny";
@@ -61,7 +59,9 @@ import { longPollSince } from "./since.ts";
  *   is stateless and per-request — `app.fetch(req)` is the only
  *   entry point. The Verifier runs in the adapter (see `worker.ts` /
  *   `server.ts`) before `createRouter` is called; the router itself
- *   has no auth seam.
+ *   has no auth seam, so it serves every request it receives as the
+ *   `db`'s tenant. A custom adapter authenticates first, derives the
+ *   tenant from the verified identity, and builds the `Db` from it.
  */
 export interface CreateRouterOptions {
   readonly db: Db<BaerlyConfig>;
@@ -84,16 +84,23 @@ export interface CreateRouterOptions {
  *  - `GET    /v1/count?collection=<name>&where=<json>` → scalar `{ count: N }`.
  *  - `GET    /v1/since?collection=<name>&cursor=<opaque>` → long-poll log.
  *
+ * Routes are matched at `/v1/...`: strip any mount prefix from the
+ * request URL before `app.fetch(req)`. Bare `createRouter` adds no
+ * auth, no `/v1/healthz` or `/v1/spec`, and no canonical log line;
+ * writes still run write-tick maintenance, under the default profile
+ * rather than the one a stock adapter selects for its host.
+ *
  * @example
  * ```ts
- * import { createRouter, Db } from "@gusto/baerly-storage";
- * import { MemoryStorage } from "@gusto/baerly-storage";
+ * import { Db, MemoryStorage } from "@gusto/baerly-storage";
+ * import { createRouter } from "@gusto/baerly-storage/http";
  *
+ * // Tests and local tools only: every request is served as tenant "acme".
  * const db = Db.create({ storage: new MemoryStorage(), app: "tickets", tenant: "acme" });
  * const app = createRouter({ db });
- * // CF Workers:
- * export default { async fetch(req: Request) { return app.fetch(req); } };
+ * const res = await app.fetch(new Request("http://localhost/v1/c/tickets"));
  * ```
+
  */
 export function createRouter(options: CreateRouterOptions): Hono {
   const { db, sinceTimeoutMs, sincePollIntervalMs } = options;
@@ -241,11 +248,6 @@ export function createRouter(options: CreateRouterOptions): Hono {
   });
 
   // Long-poll — GET /v1/since?collection=<name>&cursor=<opaque>
-  //
-  // Cache-API note: the Cloudflare adapter's `caches.default` wrapper
-  // explicitly EXCLUDES `/v1/since` — long-poll idleness is not a
-  // cache hit. The adapter middleware MUST check the path before
-  // consulting the cache. Do NOT add cache reads here.
   app.get("/v1/since", async (c) => {
     // The router does NOT set `c.var.db`; the adapter resolves the
     // Verifier BEFORE `createRouter` is called and the resulting `db`
