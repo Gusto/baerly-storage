@@ -1,13 +1,14 @@
 /**
  * Unit tests for the pure projection math in `./project.ts`.
- * Zero I/O — every case constructs a `ProviderPricing` literal,
- * calls `project()`, asserts on the returned `Trajectory`.
+ * Zero I/O — expected bands and monthly operation counts are derived
+ * from literal provider rates and profile amplification values.
  */
 
 import { describe, expect, test } from "vitest";
 import {
   GRADUATION_ADVISORY_WRITES_PER_MIN,
   GRADUATION_CLASS_A_PER_MONTH,
+  type CostProfile,
   type ProviderPricing,
   project,
 } from "./project.ts";
@@ -18,7 +19,6 @@ const R2: ProviderPricing = {
   usdPerMillionClassA: 4.5,
   freeStorageGb: 10,
   usdPerGbMonth: 0.015,
-  effectiveWriteAmp: 2,
 };
 
 const AWS_S3: ProviderPricing = {
@@ -27,7 +27,14 @@ const AWS_S3: ProviderPricing = {
   usdPerMillionClassA: 5,
   freeStorageGb: 0,
   usdPerGbMonth: 0.023,
-  effectiveWriteAmp: 3,
+};
+
+const GCS: ProviderPricing = {
+  provider: "gcs",
+  freeClassAPerMonth: 5_000,
+  usdPerMillionClassA: 5,
+  freeStorageGb: 5,
+  usdPerGbMonth: 0.02,
 };
 
 const SELF_HOSTED: ProviderPricing = {
@@ -36,133 +43,117 @@ const SELF_HOSTED: ProviderPricing = {
   usdPerMillionClassA: Number.NaN,
   freeStorageGb: 0,
   usdPerGbMonth: Number.NaN,
-  effectiveWriteAmp: 3,
 };
 
+const DEV: ProviderPricing = {
+  provider: "dev",
+  freeClassAPerMonth: 0,
+  usdPerMillionClassA: Number.NaN,
+  freeStorageGb: 0,
+  usdPerGbMonth: Number.NaN,
+};
+
+const CF_FREE: CostProfile = { profile: "cf-free", effectiveWriteAmp: 2 };
+const NODE: CostProfile = { profile: "node", effectiveWriteAmp: 3 };
+
+const writesPerMinForAwsCost = (usd: number): number =>
+  ((usd / 5) * 1_000_000) / (60 * 24 * 30 * 3);
+
 describe("project", () => {
-  test("returns null when writesPerMin is NaN (no-data case)", () => {
-    expect(project(Number.NaN, 0, R2)).toBeNull();
+  test.each([
+    { usd: 0.001, expected: "<$25" },
+    { usd: 24.999, expected: "<$25" },
+    { usd: 25, expected: "$25-$50" },
+    { usd: 49.999, expected: "$25-$50" },
+    { usd: 50, expected: "$50-$100" },
+    { usd: 99.999, expected: "$50-$100" },
+    { usd: 100, expected: "$100-$250" },
+    { usd: 249.999, expected: "$100-$250" },
+    { usd: 250, expected: "$250-$500" },
+    { usd: 499.999, expected: "$250-$500" },
+    { usd: 500, expected: "$500+" },
+  ] as const)("AWS modeled cost $usd maps to $expected", ({ usd, expected }) => {
+    const trajectory = project(writesPerMinForAwsCost(usd), 0, AWS_S3, NODE);
+    expect(trajectory?.projectedUsdBand).toBe(expected);
   });
 
-  test("R2 inside free tier: projectedUsdPerMonth is exactly 0 and withinFreeTier is true", () => {
-    // 0.5 writes/min × 60 × 24 × 30 × 2 = 43,200 Class A/mo — well under 1M.
-    const t = project(0.5, 0, R2);
-    expect(t).not.toBeNull();
-    expect(t!.classAPerMonth).toBe(43_200);
-    expect(t!.withinFreeTier).toBe(true);
-    expect(t!.projectedUsdPerMonth).toBe(0);
-    expect(t!.provider).toBe("r2");
+  test.each([
+    { name: "Worker+R2", pricing: R2, profile: CF_FREE, classA: 86_400 },
+    { name: "Node+R2", pricing: R2, profile: NODE, classA: 129_600 },
+    { name: "Node+S3", pricing: AWS_S3, profile: NODE, classA: 129_600 },
+    { name: "Node+GCS", pricing: GCS, profile: NODE, classA: 129_600 },
+  ])("$name combines provider pricing with host amplification", ({ pricing, profile, classA }) => {
+    const trajectory = project(1, 0, pricing, profile);
+    expect(trajectory).toMatchObject({
+      provider: pricing.provider,
+      profile: profile.profile,
+      classAPerMonth: classA,
+    });
   });
 
-  test("R2 above free tier: projectedUsdPerMonth uses paid math on the overage", () => {
-    // 15 writes/min × 60 × 24 × 30 × 2 = 1,296,000 Class A/mo.
-    // Overage: 296,000. Cost: 0.296 × $4.50 = $1.332.
-    const t = project(15, 0, R2);
-    expect(t).not.toBeNull();
-    expect(t!.classAPerMonth).toBe(1_296_000);
-    expect(t!.withinFreeTier).toBe(false);
-    expect(t!.projectedUsdPerMonth).toBeCloseTo(1.332, 3);
+  test("returns null when writesPerMin is NaN", () => {
+    expect(project(Number.NaN, 0, R2, CF_FREE)).toBeNull();
   });
 
-  test("AWS S3 (no free tier): bill starts at the first op", () => {
-    // 0.5 writes/min × 60 × 24 × 30 × 3 = 64,800/mo × $5/1M = $0.324.
-    const t = project(0.5, 0, AWS_S3);
-    expect(t).not.toBeNull();
-    expect(t!.withinFreeTier).toBe(false);
-    expect(t!.projectedUsdPerMonth).toBeCloseTo(0.324, 3);
+  test("R2 inside the modeled free tier maps to $0", () => {
+    const trajectory = project(0.5, 0, R2, CF_FREE);
+    expect(trajectory).toMatchObject({
+      classAPerMonth: 43_200,
+      withinFreeTier: true,
+      projectedUsdBand: "$0",
+      provider: "r2",
+      profile: "cf-free",
+    });
   });
 
-  test("self-hosted: projectedUsdPerMonth and percentOfFreeTier are null; percentages still computed", () => {
-    const t = project(15, 0, SELF_HOSTED);
-    expect(t).not.toBeNull();
-    expect(t!.projectedUsdPerMonth).toBeNull();
-    expect(t!.percentOfFreeTier).toBeNull();
-    expect(t!.classAPerMonth).toBe(1_944_000);
-    expect(t!.percentOfGraduation).toBeCloseTo((1_944_000 / GRADUATION_CLASS_A_PER_MONTH) * 100, 3);
+  test("GCS inside the eligible-region allowance maps to $0", () => {
+    const writesPerMin = 5_000 / (60 * 24 * 30 * 3);
+    const trajectory = project(writesPerMin, 0, GCS, NODE);
+    expect(trajectory?.classAPerMonth).toBe(5_000);
+    expect(trajectory?.withinFreeTier).toBe(true);
+    expect(trajectory?.projectedUsdBand).toBe("$0");
   });
 
-  test("write-amp constant: classAPerMonth = writesPerMin × 60 × 24 × 30 × effectiveWriteAmp", () => {
-    const t = project(1, 0, R2);
-    expect(t!.classAPerMonth).toBe(1 * 60 * 24 * 30 * 2);
+  test("the smallest positive R2 overage maps to <$25 without rounding to $0", () => {
+    const writesPerMin = (1_000_000 + 1) / (60 * 24 * 30 * 2);
+    const trajectory = project(writesPerMin, 0, R2, CF_FREE);
+    expect(trajectory?.classAPerMonth).toBe(1_000_001);
+    expect(trajectory?.withinFreeTier).toBe(false);
+    expect(trajectory?.projectedUsdBand).toBe("<$25");
   });
 
-  test("percentOfGraduation: 50M Class A/mo → 100%", () => {
-    // Need writesPerMin such that writesPerMin × 60 × 24 × 30 × 2 = 50_000_000.
-    const wpm = GRADUATION_CLASS_A_PER_MONTH / (60 * 24 * 30 * 2);
-    const t = project(wpm, 0, R2);
-    expect(t!.percentOfGraduation).toBeCloseTo(100, 3);
+  test("a modeled provider without a free allowance does not report $0", () => {
+    const trajectory = project(0, 0, AWS_S3, NODE);
+    expect(trajectory?.withinFreeTier).toBe(false);
+    expect(trajectory?.projectedUsdBand).toBe("<$25");
   });
 
-  test("R2 at the real 1M Class A ceiling stays inside the free tier", () => {
-    // Need writesPerMin such that classAPerMonth = 1_000_000.
-    const wpm = 1_000_000 / (60 * 24 * 30 * 2);
-    const t = project(wpm, 0, R2);
-    expect(t!.classAPerMonth).toBe(1_000_000);
-    expect(t!.percentOfFreeTier).toBeCloseTo(100, 3);
-    expect(t!.withinFreeTier).toBe(true);
-    expect(t!.projectedUsdPerMonth).toBe(0);
+  test.each([
+    ["self-hosted", SELF_HOSTED],
+    ["dev", DEV],
+  ] as const)("%s has no dollar band", (_name, pricing) => {
+    const trajectory = project(15, 0, pricing, NODE);
+    expect(trajectory?.projectedUsdBand).toBeNull();
+    expect(trajectory?.percentOfFreeTier).toBeNull();
+    expect(trajectory?.classAPerMonth).toBe(1_944_000);
   });
 
-  test("R2 over storage free tier alone: storage overage billed at $0.015/GB-mo", () => {
-    // 15 GB stored, tiny rate keeps Class A inside free tier
-    // → storage overage 5 GB × $0.015 = $0.075
-    const t = project(0.001, 15 * 1024 * 1024 * 1024, R2);
-    expect(t).not.toBeNull();
-    expect(t!.withinFreeTier).toBe(false); // storage exceeds free tier
-    expect(t!.projectedUsdPerMonth).toBeCloseTo(5 * 0.015, 4);
+  test("storage overage contributes to the exact internal cost before banding", () => {
+    const trajectory = project(0.001, 15 * 1024 * 1024 * 1024, R2, CF_FREE);
+    expect(trajectory?.withinFreeTier).toBe(false);
+    expect(trajectory?.projectedUsdBand).toBe("<$25");
   });
 
-  test("R2 with both Class A AND storage overages: bill sums both terms", () => {
-    // 15 writes/min → 1,296,000 Class A (overage 296,000 → $1.332)
-    // 15 GB stored → storage overage 5 GB → $0.075
-    // Expected total: $1.407
-    const t = project(15, 15 * 1024 * 1024 * 1024, R2);
-    expect(t).not.toBeNull();
-    expect(t!.projectedUsdPerMonth).toBeCloseTo(1.332 + 5 * 0.015, 3);
+  test("the 50M Class A graduation boundary remains exact", () => {
+    const writesPerMin = GRADUATION_CLASS_A_PER_MONTH / (60 * 24 * 30 * 2);
+    const trajectory = project(writesPerMin, 0, R2, CF_FREE);
+    expect(trajectory?.percentOfGraduation).toBeCloseTo(100, 3);
   });
 
-  test("R2 between 50% and 100% of free tier: still withinFreeTier=true, percentOfFreeTier in [50, 100]", () => {
-    // classAPerMonth = 750_000 → 75% of free tier (1M).
-    // writesPerMin = 750_000 / (60 × 24 × 30 × 2) ≈ 8.68.
-    const wpm = 750_000 / (60 * 24 * 30 * 2);
-    const t = project(wpm, 0, R2);
-    expect(t).not.toBeNull();
-    expect(t!.withinFreeTier).toBe(true);
-    expect(t!.percentOfFreeTier).not.toBeNull();
-    expect(t!.percentOfFreeTier!).toBeGreaterThanOrEqual(50);
-    expect(t!.percentOfFreeTier!).toBeLessThan(100);
-  });
-
-  test("percentOfAdvisory: exactly at the 100-writes/min advisory rate → 100%, on every provider", () => {
-    // The advisory is a write-RATE crossing, not an absolute Class A count,
-    // so a provider's write-amp must NOT shift where it fires.
-    const r2 = project(GRADUATION_ADVISORY_WRITES_PER_MIN, 0, R2);
-    const s3 = project(GRADUATION_ADVISORY_WRITES_PER_MIN, 0, AWS_S3);
-    expect(r2).not.toBeNull();
-    expect(s3).not.toBeNull();
-    expect(r2!.percentOfAdvisory).toBeCloseTo(100, 3);
-    expect(s3!.percentOfAdvisory).toBeCloseTo(100, 3);
-  });
-
-  test("percentOfAdvisory: at half the advisory write rate → 50%", () => {
-    const t = project(GRADUATION_ADVISORY_WRITES_PER_MIN / 2, 0, R2);
-    expect(t).not.toBeNull();
-    expect(t!.percentOfAdvisory).toBeCloseTo(50, 3);
-  });
-
-  test("percentOfAdvisory: at the 50M Class A/mo R2 graduation rate → well past 100%", () => {
-    // R2 graduation rate (writesPerMin), expressed as a percent of the
-    // 100-writes/min advisory: ~578.7 writes/min ⇒ ~579%.
-    const wpm = GRADUATION_CLASS_A_PER_MONTH / (60 * 24 * 30 * 2);
-    const t = project(wpm, 0, R2);
-    expect(t).not.toBeNull();
-    expect(t!.percentOfAdvisory).toBeCloseTo((wpm / GRADUATION_ADVISORY_WRITES_PER_MIN) * 100, 1);
-    expect(t!.percentOfAdvisory).toBeGreaterThan(100);
-  });
-
-  test("percentOfAdvisory is always finite (self-hosted provider)", () => {
-    const t = project(100, 0, SELF_HOSTED);
-    expect(t).not.toBeNull();
-    expect(Number.isFinite(t!.percentOfAdvisory)).toBe(true);
+  test("the advisory is keyed to write rate rather than provider/profile amplification", () => {
+    const r2 = project(GRADUATION_ADVISORY_WRITES_PER_MIN, 0, R2, CF_FREE);
+    const s3 = project(GRADUATION_ADVISORY_WRITES_PER_MIN, 0, AWS_S3, NODE);
+    expect(r2?.percentOfAdvisory).toBeCloseTo(100, 3);
+    expect(s3?.percentOfAdvisory).toBeCloseTo(100, 3);
   });
 });

@@ -68,13 +68,17 @@ const seedEntries = async (storage: Storage, count: number): Promise<void> => {
  * past-graduation suppression test, where the only thing that matters is
  * landing deterministically above the 50M Class A/mo hard trigger.
  */
-const seedEntriesDeterministic = async (storage: Storage, count: number): Promise<void> => {
+const seedEntriesDeterministic = async (
+  storage: Storage,
+  count: number,
+  stepMs = 1,
+): Promise<void> => {
   const baseMs = Date.parse("2026-01-01T00:00:00.000Z");
   for (let seq = 0; seq < count; seq++) {
     const body = new TextEncoder().encode(
       JSON.stringify({
         lsn: `00000000_test_${String(seq).padStart(4, "0")}`,
-        commit_ts: new Date(baseMs + seq).toISOString(),
+        commit_ts: new Date(baseMs + seq * stepMs).toISOString(),
         op: "I",
         collection: COLL,
         session: "cost-test",
@@ -119,13 +123,35 @@ describe("baerly cost", () => {
     }
     expect(exitCode).toBe(0);
     const envelope = JSON.parse(stdout.captured.join("").trim()) as {
-      result: { command: string; collection: string; trajectory: Trajectory };
+      result: {
+        command: string;
+        collection: string;
+        scope: Record<string, unknown>;
+        assumptions: Record<string, unknown>;
+        trajectory: Trajectory;
+      };
     };
     expect(envelope.result.command).toBe("cost");
     expect(envelope.result.collection).toBe(COLL);
     expect(envelope.result.trajectory.provider).toBe("r2");
+    expect(envelope.result.trajectory.profile).toBe("cf-free");
     expect(envelope.result.trajectory.classAPerMonth).toBeGreaterThan(0);
     expect(typeof envelope.result.trajectory.withinFreeTier).toBe("boolean");
+    expect(envelope.result.scope).toEqual({
+      kind: "collection",
+      collection: COLL,
+      includesOtherAccountUsage: false,
+      includesStoredBytes: false,
+    });
+    expect(envelope.result.assumptions).toEqual({
+      pricingProvider: "r2",
+      maintenanceProfile: "cf-free",
+      maintenanceProfileSource: "inferred",
+      otherAccountClassAPerMonth: 0,
+      storedBytes: 0,
+    });
+    expect(envelope.result.trajectory).toHaveProperty("projectedUsdBand");
+    expect(envelope.result.trajectory).not.toHaveProperty("projectedUsdPerMonth");
   });
 
   test("--provider=r2 text mode renders a trajectory footer block", async () => {
@@ -151,9 +177,9 @@ describe("baerly cost", () => {
     expect(text).toContain("trajectory:");
     expect(text).toContain("writes/min");
     expect(text).toContain("Class A/mo");
-    expect(text).toContain("selected collection's write-operation projection");
-    expect(text).toContain("Storage is excluded");
-    expect(text).toContain("R2 free-tier status assumes no other account usage");
+    expect(text).toContain("selected collection only");
+    expect(text).toContain("storage and other account usage excluded");
+    expect(text).toContain("provider=r2; profile=cf-free (inferred)");
   });
 
   test("--provider=self-hosted emits a Trajectory with null usd", async () => {
@@ -179,13 +205,13 @@ describe("baerly cost", () => {
       result: { trajectory: Trajectory };
     };
     expect(envelope.result.trajectory.provider).toBe("self-hosted");
-    expect(envelope.result.trajectory.projectedUsdPerMonth).toBeNull();
+    expect(envelope.result.trajectory.projectedUsdBand).toBeNull();
     expect(envelope.result.trajectory.percentOfGraduation).toBeGreaterThanOrEqual(0);
   });
 
   test("--provider=aws-s3 emits a paid Trajectory (no free tier)", async () => {
     await provision(storage);
-    await seedEntries(storage, 3);
+    await seedEntriesDeterministic(storage, 3, 60_000);
 
     const stdout = captureStream(process.stdout);
     let exitCode: number;
@@ -207,7 +233,141 @@ describe("baerly cost", () => {
     };
     expect(envelope.result.trajectory.provider).toBe("aws-s3");
     expect(envelope.result.trajectory.withinFreeTier).toBe(false);
-    expect(envelope.result.trajectory.projectedUsdPerMonth).toBeGreaterThan(0);
+    expect(envelope.result.trajectory.projectedUsdBand).toBe("<$25");
+  });
+
+  test("--provider=r2 --profile=node overrides the inferred host amplification", async () => {
+    await provision(storage);
+    await seedEntriesDeterministic(storage, 3, 60_000);
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=r2",
+        "--profile=node",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { assumptions: Record<string, unknown>; trajectory: Trajectory };
+    };
+    expect(envelope.result.trajectory.profile).toBe("node");
+    expect(envelope.result.trajectory.classAPerMonth).toBe(129_600);
+    expect(envelope.result.assumptions).toMatchObject({
+      maintenanceProfile: "node",
+      maintenanceProfileSource: "explicit",
+    });
+  });
+
+  test("--provider=aws-s3 renders a paid low-cost band without decimal dollars", async () => {
+    await provision(storage);
+    await seedEntriesDeterministic(storage, 3, 60_000);
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=aws-s3",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const text = stdout.captured.join("");
+    expect(text).toContain("<$25/mo");
+    expect(text).not.toMatch(/\$\d+\.\d{1,2}/);
+  });
+
+  test("--provider=gcs defaults to node and discloses conditional pricing assumptions", async () => {
+    await provision(storage);
+    await seedEntries(storage, 3);
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=gcs",
+        "--json",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(stdout.captured.join("").trim()) as {
+      result: { assumptions: Record<string, unknown>; trajectory: Trajectory };
+    };
+    expect(envelope.result.assumptions).toEqual({
+      pricingProvider: "gcs",
+      maintenanceProfile: "node",
+      maintenanceProfileSource: "inferred",
+      otherAccountClassAPerMonth: 0,
+      storedBytes: 0,
+      pricingBasis: {
+        storageClass: "Standard",
+        namespace: "flat",
+        locationPricing: "regional",
+        freeAllowance: {
+          classAOperationsPerMonth: 5_000,
+          storageGbMonth: 5,
+          eligibleRegions: ["us-west1", "us-central1", "us-east1"],
+        },
+      },
+      unmodeled: [
+        "hierarchical-namespace",
+        "dual-or-multi-region-pricing",
+        "egress",
+        "soft-delete-retention",
+      ],
+    });
+    expect(envelope.result.trajectory.provider).toBe("gcs");
+    expect(envelope.result.trajectory.profile).toBe("node");
+    expect(envelope.result.trajectory.percentOfFreeTier).toBe(
+      (envelope.result.trajectory.classAPerMonth / 5_000) * 100,
+    );
+  });
+
+  test("--provider=gcs text discloses pricing basis and unmodeled bucket settings", async () => {
+    await provision(storage);
+    await seedEntries(storage, 3);
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=gcs",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const text = stdout.captured.join("");
+    expect(text).toContain("GCS Standard storage; flat namespace; regional pricing");
+    expect(text).toContain(
+      "5,000 Class A ops and 5 GB-month free allowance assumes us-west1, us-central1, or us-east1",
+    );
+    expect(text).toContain(
+      "actual HNS, dual/multi-region pricing, egress, and soft-delete retention are not detected or modeled",
+    );
   });
 
   test("dev backend (file://) without --provider override exits 1 (InvalidConfig)", async () => {
@@ -267,6 +427,25 @@ describe("baerly cost", () => {
     }
     expect(exitCode).toBe(1);
     expect(stderr.captured.join("")).toContain("--provider must be one of");
+  });
+
+  test("unknown --profile rejected with exit 1", async () => {
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=r2",
+        "--profile=not-a-real-profile",
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("--profile must be one of");
   });
 
   test("missing --app/--tenant + no baerly.config surfaces InvalidConfig (exit 1)", async () => {
@@ -361,11 +540,11 @@ describe("baerly cost", () => {
     const text = stdout.captured.join("");
     // The high rate (>> 100 writes/min) should trigger the advisory.
     expect(text).toContain("advisory:");
-    expect(text).toContain("~$34/mo on R2");
+    expect(text).toContain("~$25-$50/mo on R2");
     expect(text).toContain("50M Class A/mo");
   });
 
-  test("--provider=aws-s3 text mode: advisory shows S3 figure (~$65/mo on S3), not R2", async () => {
+  test("--provider=aws-s3 text mode: advisory shows the S3 cost band, not R2", async () => {
     await provision(storage);
     await seedEntries(storage, 3);
 
@@ -386,12 +565,35 @@ describe("baerly cost", () => {
     const text = stdout.captured.join("");
     // High rate (>> 100 writes/min) should trigger the advisory.
     expect(text).toContain("advisory:");
-    expect(text).toContain("~$65/mo on S3");
+    expect(text).toContain("~$50-$100/mo on S3");
     // Must NOT show the R2 figure for an S3 user.
-    expect(text).not.toContain("~$34/mo on R2");
+    expect(text).not.toContain("on R2");
     // The hard-trigger line must not leak an R2 dollar figure either.
     expect(text).not.toContain("on R2");
     expect(text).toContain("50M Class A/mo");
+  });
+
+  test("--provider=gcs text mode: advisory names GCS rather than S3", async () => {
+    await provision(storage);
+    await seedEntries(storage, 3);
+
+    const stdout = captureStream(process.stdout);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=gcs",
+      ]);
+    } finally {
+      stdout.restore();
+    }
+    expect(exitCode).toBe(0);
+    const text = stdout.captured.join("");
+    expect(text).toContain("~$50-$100/mo on GCS");
+    expect(text).not.toContain("on S3");
   });
 
   test("--provider=r2 JSON mode: trajectory includes percentOfAdvisory field", async () => {

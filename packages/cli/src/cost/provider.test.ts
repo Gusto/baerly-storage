@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { detectProvider, pricingFor } from "./provider.ts";
+import { costProfileFor, defaultCostProfileFor, detectProvider, pricingFor } from "./provider.ts";
 
 describe("detectProvider", () => {
   test("file:// → dev", () => {
@@ -14,6 +14,10 @@ describe("detectProvider", () => {
 
   test("memory:// → dev", () => {
     expect(detectProvider({ bucketUri: "memory://test-bucket" })).toBe("dev");
+  });
+
+  test("gcs:// → gcs", () => {
+    expect(detectProvider({ bucketUri: "gcs://my-bucket" })).toBe("gcs");
   });
 
   test("s3:// + R2 endpoint → r2", () => {
@@ -79,7 +83,6 @@ describe("pricingFor", () => {
     expect(p.usdPerMillionClassA).toBe(4.5);
     expect(p.freeStorageGb).toBe(10);
     expect(p.usdPerGbMonth).toBe(0.015);
-    expect(p.effectiveWriteAmp).toBe(2);
   });
 
   test("aws-s3: no free tier (12-month new-account tier intentionally excluded)", () => {
@@ -88,7 +91,17 @@ describe("pricingFor", () => {
     expect(p.freeStorageGb).toBe(0);
     expect(p.usdPerMillionClassA).toBe(5);
     expect(p.usdPerGbMonth).toBe(0.023);
-    expect(p.effectiveWriteAmp).toBe(3);
+  });
+
+  test("gcs: Standard regional flat-namespace rates and eligible-region allowance", () => {
+    const p = pricingFor("gcs");
+    expect(p).toEqual({
+      provider: "gcs",
+      freeClassAPerMonth: 5_000,
+      usdPerMillionClassA: 5,
+      freeStorageGb: 5,
+      usdPerGbMonth: 0.02,
+    });
   });
 
   test("self-hosted: NaN dollar fields, 0 free tiers", () => {
@@ -96,13 +109,34 @@ describe("pricingFor", () => {
     expect(Number.isNaN(p.usdPerMillionClassA)).toBe(true);
     expect(Number.isNaN(p.usdPerGbMonth)).toBe(true);
     expect(p.freeClassAPerMonth).toBe(0);
-    expect(p.effectiveWriteAmp).toBe(3);
   });
 
   test("dev: NaN dollar fields, 0 free tiers (same shape as self-hosted)", () => {
     const p = pricingFor("dev");
     expect(Number.isNaN(p.usdPerMillionClassA)).toBe(true);
     expect(Number.isNaN(p.usdPerGbMonth)).toBe(true);
-    expect(p.effectiveWriteAmp).toBe(3);
+  });
+});
+
+describe("cost profiles", () => {
+  test.each([
+    ["r2", "cf-free"],
+    ["aws-s3", "node"],
+    ["gcs", "node"],
+    ["self-hosted", "node"],
+    ["dev", "node"],
+  ] as const)("%s defaults to %s", (provider, expected) => {
+    expect(defaultCostProfileFor(provider)).toBe(expected);
+  });
+
+  test("measured amplification is owned by the selected host profile", () => {
+    expect(costProfileFor("cf-free")).toEqual({
+      profile: "cf-free",
+      effectiveWriteAmp: 2,
+    });
+    expect(costProfileFor("node")).toEqual({
+      profile: "node",
+      effectiveWriteAmp: 3,
+    });
   });
 });

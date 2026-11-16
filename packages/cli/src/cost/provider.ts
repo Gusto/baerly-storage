@@ -6,6 +6,7 @@
  * Detection rules (first match wins):
  *   - `file://*`               → "dev"
  *   - `memory://*`             → "dev"
+ *   - `gcs://*`                → "gcs"
  *   - `s3://*` + endpoint matching `*.r2.cloudflarestorage.com` → "r2"
  *   - `s3://*` + endpoint matching `*.amazonaws.com`            → "aws-s3"
  *   - `s3://*` + no endpoint                                    → "aws-s3"
@@ -16,9 +17,9 @@
  * wrong (e.g., a self-hosted S3 gateway in front of R2).
  */
 
-import type { ProviderPricing } from "./project.ts";
+import type { CostProfile, CostProfileTag, ProviderPricing, ProviderTag } from "./project.ts";
 
-export type ProviderTag = ProviderPricing["provider"];
+export type { ProviderTag } from "./project.ts";
 
 export interface DetectArgs {
   /** Raw bucket URI as passed on the CLI (s3://, file://, memory://). */
@@ -38,6 +39,9 @@ export const detectProvider = (args: DetectArgs): ProviderTag => {
   }
   if (args.bucketUri.startsWith("memory://")) {
     return "dev";
+  }
+  if (args.bucketUri.startsWith("gcs://")) {
+    return "gcs";
   }
   if (!args.bucketUri.startsWith("s3://")) {
     return "self-hosted";
@@ -67,7 +71,6 @@ const R2_PRICING: ProviderPricing = {
   usdPerMillionClassA: 4.5,
   freeStorageGb: 10,
   usdPerGbMonth: 0.015,
-  effectiveWriteAmp: 2,
 };
 
 /**
@@ -82,7 +85,19 @@ const AWS_S3_PRICING: ProviderPricing = {
   usdPerMillionClassA: 5,
   freeStorageGb: 0,
   usdPerGbMonth: 0.023,
-  effectiveWriteAmp: 3,
+};
+
+/**
+ * Google Cloud Storage Standard, flat-namespace, regional price table.
+ * The allowance applies only in the eligible US regions documented by
+ * `docs/about/cost-model.md`; the CLI discloses that condition.
+ */
+const GCS_PRICING: ProviderPricing = {
+  provider: "gcs",
+  freeClassAPerMonth: 5_000,
+  usdPerMillionClassA: 5,
+  freeStorageGb: 5,
+  usdPerGbMonth: 0.02,
 };
 
 const SELF_HOSTED_PRICING: ProviderPricing = {
@@ -91,7 +106,6 @@ const SELF_HOSTED_PRICING: ProviderPricing = {
   usdPerMillionClassA: Number.NaN,
   freeStorageGb: 0,
   usdPerGbMonth: Number.NaN,
-  effectiveWriteAmp: 3,
 };
 
 const DEV_PRICING: ProviderPricing = {
@@ -100,8 +114,23 @@ const DEV_PRICING: ProviderPricing = {
   usdPerMillionClassA: Number.NaN,
   freeStorageGb: 0,
   usdPerGbMonth: Number.NaN,
+};
+
+const CF_FREE_PROFILE: CostProfile = {
+  profile: "cf-free",
+  effectiveWriteAmp: 2,
+};
+
+const NODE_PROFILE: CostProfile = {
+  profile: "node",
   effectiveWriteAmp: 3,
 };
+
+export const costProfileFor = (profile: CostProfileTag): CostProfile =>
+  profile === "cf-free" ? CF_FREE_PROFILE : NODE_PROFILE;
+
+export const defaultCostProfileFor = (provider: ProviderTag): CostProfileTag =>
+  provider === "r2" ? "cf-free" : "node";
 
 export const pricingFor = (provider: ProviderTag): ProviderPricing => {
   switch (provider) {
@@ -110,6 +139,9 @@ export const pricingFor = (provider: ProviderTag): ProviderPricing => {
     }
     case "aws-s3": {
       return AWS_S3_PRICING;
+    }
+    case "gcs": {
+      return GCS_PRICING;
     }
     case "self-hosted": {
       return SELF_HOSTED_PRICING;
