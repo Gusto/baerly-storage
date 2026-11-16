@@ -43,13 +43,11 @@ async function main(): Promise<void> {
         await setup(db);
       }
     }
-    if (typeof sol.main !== "function") {
-      verdict = { pass: false, reason: "solution.ts does not export `main`" };
-    } else {
-      const result = await sol.main(db);
-      const { check } = await import(`${taskDir}/check.ts`);
-      verdict = await check(db, result);
-    }
+    // Tasks that grade an exported helper (no `main`) get `undefined` as the result;
+    // a task that needs `main`'s return value fails in its own check.
+    const result = typeof sol.main === "function" ? await sol.main(db) : undefined;
+    const { check } = await import(`${taskDir}/check.ts`);
+    verdict = await check(db, result);
   } catch (error) {
     verdict = { pass: false, reason: `runtime error: ${(error as Error).message}` };
   }
