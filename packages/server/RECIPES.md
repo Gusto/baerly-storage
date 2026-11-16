@@ -201,6 +201,102 @@ Dispatch only `/db/*` requests to `handleDb`. The router maps its own errors to 
 
 **What the stock adapters add.** `baerlyWorker` and `baerlyNode` do more than run the verifier: they serve `/v1/healthz` and `/v1/spec`, emit the canonical log line, and select the host's maintenance profile. A bare `createRouter` still runs write-tick maintenance on writes, but under the default profile, the smallest one, on every host: its fold ceilings are the Workers Free ones, so a collection refuses growth with `CapacityExceeded` sooner than under `baerlyNode`. It does not read the operator's maintenance settings, and on Workers it folds before the response rather than in `ctx.waitUntil`, and neither budgets storage calls against the invocation's subrequest limit nor bounds reads. When you need that behavior, keep the stock adapter and gate in front of it: pass your policy as its `verifier`, or check the request and strip your prefix before delegating, to `baerlyNode(...).fetch(req)` on Node (see API.md, "Recipe — custom routes in front of `baerlyNode`") or `baerlyWorker(...).fetch(req, env, ctx)` on Workers (see API.md, "Recipe — server-stamped trusted fields").
 
+## Recipe — storage credentials on Node
+
+The Node storage factories (`s3Storage`, `r2Storage`, `minioStorage`, `gcsStorage` from `@gusto/baerly-storage/node`) take one `credentials` field: either a static `Credentials` object or a `CredentialsProvider`, an async function returning one. On Workers, use the R2 binding (`r2BindingStorage(env.BUCKET)`) instead; it needs no credentials.
+
+```ts
+type Credentials = {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly sessionToken?: string;
+  readonly expiration?: Date; // absent ⇒ static
+};
+type CredentialsProvider = () => Promise<Credentials>;
+```
+
+`gcsStorage` signs GOOG4-HMAC-SHA256 with a GCS HMAC key (Cloud Console → Cloud Storage → Settings → Interoperability): pass the access ID as `accessKeyId` and the secret as `secretAccessKey`. Service-account keys, OAuth and ADC are not supported.
+
+### Static credentials
+
+```ts
+import { s3Storage } from "@gusto/baerly-storage/node";
+
+export const storage = s3Storage({
+  region: process.env["AWS_REGION"] ?? "us-east-1",
+  bucket: process.env["BUCKET"]!,
+  credentials: {
+    accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+    secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+  },
+});
+```
+
+`resolveStorageFromEnv()` builds the same thing from `BUCKET` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (plus `R2_ACCOUNT_ID` for R2); use a factory directly when you need a provider below.
+
+### Expiration and refresh
+
+A provider is called on the first signed request. The signer caches what it returns until five minutes before `expiration`, then calls the provider again; concurrent requests share one in-flight call, and a rejected call is retried on the next request. A result without `expiration` is cached for the life of the storage handle, so a provider of rotating credentials must return the credentials' real `expiration` on every result; otherwise storage requests start failing once the first credentials expire.
+
+### EKS: `fromEks()`
+
+```ts
+import { fromEks, s3Storage } from "@gusto/baerly-storage/node";
+
+export const storage = s3Storage({
+  region: process.env["AWS_REGION"] ?? "us-east-1",
+  bucket: process.env["BUCKET"]!,
+  credentials: fromEks(),
+});
+```
+
+`fromEks()` checks the environment on every call: EKS Pod Identity when `AWS_CONTAINER_CREDENTIALS_FULL_URI` is set (it also reads the token file named by `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`), else IRSA when `AWS_WEB_IDENTITY_TOKEN_FILE` is set (it also needs `AWS_ROLE_ARN`, exchanges the token with STS `AssumeRoleWithWebIdentity`, and honors `AWS_ROLE_SESSION_NAME` and `AWS_REGION` / `AWS_DEFAULT_REGION`), else it throws `InvalidConfig`. To pin one mechanism, use `fromEksPodIdentity()` or `fromWebIdentity()` from the same subpath. All three return `expiration`, so refresh is automatic.
+
+### Your own provider
+
+```ts
+import { type CredentialsProvider, s3Storage } from "@gusto/baerly-storage/node";
+
+// Stand-in for your secrets store; it must report when the credentials expire.
+declare function fetchFromVault(): Promise<{
+  id: string;
+  secret: string;
+  token: string;
+  expiresAt: string;
+}>;
+
+const fromVault: CredentialsProvider = async () => {
+  const s = await fetchFromVault();
+  return {
+    accessKeyId: s.id,
+    secretAccessKey: s.secret,
+    sessionToken: s.token,
+    expiration: new Date(s.expiresAt),
+  };
+};
+
+export const storage = s3Storage({
+  region: "us-east-1",
+  bucket: "my-bucket",
+  credentials: fromVault,
+});
+```
+
+### AWS SDK credential providers
+
+The `Credentials` shape matches the AWS SDK's `AwsCredentialIdentity`, so any provider from `@aws-sdk/credential-providers` (ECS task roles, EC2 instance metadata, SSO, `~/.aws/config` profiles, the default Node chain) passes through unchanged, `expiration` included. baerly-storage does not depend on the AWS SDK; add `@aws-sdk/credential-providers` to your app when you need one.
+
+```ts
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
+import { s3Storage } from "@gusto/baerly-storage/node";
+
+export const storage = s3Storage({
+  region: process.env["AWS_REGION"] ?? "us-east-1",
+  bucket: process.env["BUCKET"]!,
+  credentials: fromNodeProviderChain(),
+});
+```
+
 ## Recipe — wrapping the client `fetch`
 
 `createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns: logging, tracing, auth refresh. The `Fetcher` type, exported from `@gusto/baerly-storage/client`, is `(req: Request) => Promise<Response>`.

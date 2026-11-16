@@ -569,7 +569,7 @@ import config from "../../baerly.config.ts";
 export default baerlyWorker(() => ({ config }));
 ```
 
-`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from `@gusto/baerly-storage/node` are re-exports of one factory family — same shape (bucket + credentials), all hide their request signer (SigV4 for S3/R2/MinIO, GOOG4-HMAC for GCS) and XML parsing behind the package boundary.
+`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from `@gusto/baerly-storage/node` are re-exports of one factory family — same shape (bucket + credentials), all hide their request signer (SigV4 for S3/R2/MinIO, GOOG4-HMAC for GCS) and XML parsing behind the package boundary. `credentials` takes static keys or an async provider (EKS, expiring, AWS SDK): RECIPES.md, "Recipe — storage credentials on Node".
 
 ### Verifier presets
 
