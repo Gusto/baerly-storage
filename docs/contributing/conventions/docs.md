@@ -27,8 +27,10 @@ Conventions for content under `docs/`.
 
 ## Style
 
-- Markdown line wrap ~80 chars (matches existing `spec/sync-protocol.md` and
-  `spec/causal-consistency-checking.md`).
+- Markdown is formatted by oxfmt (`pnpm format`; the pre-commit hook runs
+  it on staged files). Don't hand-wrap prose: one line per paragraph. Use
+  `<!-- prettier-ignore -->` only where a layout is deliberate.
+- Every code fence names a language (`text` when none fits).
 - Mermaid blocks render on GitHub — use them for diagrams.
 - Inline code paths are `packages/<pkg>/src/<file>.ts` (relative to
   repo root).

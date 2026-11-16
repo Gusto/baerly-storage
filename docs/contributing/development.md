@@ -228,8 +228,8 @@ It is green on `main`, so a local failure usually means the current
 branch introduced a formatting violation. Run `pnpm format` to write the
 oxfmt result in place, then re-run. `format:check` (`oxfmt --check .`,
 whole-repo) is part of `pnpm verify`, and the lefthook pre-commit hook
-also runs `oxfmt` on staged code/markup. Markdown is outside oxfmt;
-`verify:docs` validates Markdown instead of reformatting it.
+also runs `oxfmt` on staged code, markup and Markdown. `verify:docs`
+separately validates Markdown links, anchors, frontmatter and Mermaid.
 
 ### Lefthook's typecheck fails on an import you didn't touch
 
