@@ -26,15 +26,14 @@ import { createServer, request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   type BaerlyConfig,
-  CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
-  createCurrentJson,
   type SchemaValidator,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
 import { createApp } from "./app.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",
@@ -57,15 +56,7 @@ interface BaseEnvelope {
  */
 const provisionTable = async (storage: Storage, table: string): Promise<void> => {
   const key = `app/tickets/tenant/acme/manifests/${table}/current.json`;
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "server-routes-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, key, "server-routes-test");
 };
 
 const withServer = async <T>(

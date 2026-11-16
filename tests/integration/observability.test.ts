@@ -61,6 +61,7 @@ import {
   createObservabilityContext,
   logMaintenanceWarning,
 } from "@baerly/server/_internal/observability";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -122,15 +123,7 @@ const countingProxy = (inner: Storage): CountingProxy => {
 };
 
 const bootstrap = async (storage: Storage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "phase9-observability", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, "phase9-observability");
 };
 
 const collectingSink = (): { records: LogRecord[]; sink: Sink } => {

@@ -8,10 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type BaerlyAppConfig,
-  CURRENT_JSON_SCHEMA_VERSION,
   MemoryStorage,
   COMMIT_CLASS_A_FLOOR,
-  createCurrentJson,
   type Storage,
   type Verifier,
 } from "@baerly/protocol";
@@ -20,6 +18,7 @@ import { LocalFsStorage } from "@baerly/dev";
 import { baerlyNode } from "@baerly/adapter-node";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { wrapCountingStorage, type CountingStorage } from "../fixtures/counting-storage.ts";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 interface Variant {
   readonly label: "memory" | "local-fs";
@@ -59,15 +58,7 @@ const TABLE = "tickets";
  */
 const provisionTable = async (storage: Storage): Promise<void> => {
   const key = `app/${APP}/tenant/${TENANT}/manifests/${TABLE}/current.json`;
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "http-cost-shape-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, key, "http-cost-shape-test");
 };
 
 for (const variant of VARIANTS) {

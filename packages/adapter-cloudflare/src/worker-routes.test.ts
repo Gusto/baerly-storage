@@ -16,8 +16,6 @@
 import { describe, expect, test } from "vitest";
 import {
   type BaerlyAppConfig,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
   BaerlyError,
   type SchemaValidator,
   type Verifier,
@@ -25,6 +23,7 @@ import {
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const trivialVerifier: Verifier = async () => ({
   tenantPrefix: "acme",
@@ -91,15 +90,7 @@ const provisionTable = async (bucket: R2Bucket, table: string, tenant = "acme"):
   const storage = r2BindingStorage(bucket);
   const key = `app/tickets/tenant/${tenant}/manifests/${table}/current.json`;
   try {
-    await createCurrentJson(storage, key, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "worker-routes-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(storage, key, "worker-routes-test");
   } catch (error) {
     if (error instanceof BaerlyError && error.code === "WriteConflict") {
       return;

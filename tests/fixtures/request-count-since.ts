@@ -18,8 +18,6 @@
 import {
   CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
   MemoryStorage,
   type RequestPool,
 } from "@baerly/protocol";
@@ -31,6 +29,7 @@ import {
 } from "../../packages/server/src/observability/context.ts";
 import { chargedStorage } from "./ledgered-storage.ts";
 import type { CallCounts } from "./request-counting-storage.ts";
+import { provisionCollection } from "./log-state.ts";
 
 const APP = "rc";
 const TENANT = "t";
@@ -52,15 +51,7 @@ const FREE_LIMITS = {
 
 const seed = async (tail: number): Promise<MemoryStorage> => {
   const storage = new MemoryStorage();
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "request-count-since", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, "request-count-since");
   const coll = Db.create({ storage, app: APP, tenant: TENANT }).collection(COLL);
   await runWithContext(
     createObservabilityContext({ maintenance: { disabled: true } }),

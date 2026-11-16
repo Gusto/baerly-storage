@@ -12,7 +12,6 @@
 import {
   BaerlyError,
   CF_PAID_COMPACT_TAIL_PROBE_GETS,
-  CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   casUpdateCurrentJson,
   type CurrentJson,
@@ -66,22 +65,18 @@ import { createObservabilityContext, runWithContext } from "./observability/cont
 import { RequestScopedMetricsRecorder } from "./observability/recorder.ts";
 import { Writer } from "./writer.ts";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
-import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
+import {
+  logStateCurrentJson,
+  seedLogEntries,
+  provisionCollection,
+} from "../../../tests/fixtures/log-state.ts";
 
 const KEY = "app/t/tenant/x/manifests/c/current.json";
 const COLL = "c";
 const COLLECTION_PREFIX = "app/t/tenant/x/manifests/c";
 
 const bootstrap = async (storage: MemoryStorage, key: string): Promise<void> => {
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "maintenance-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, key, "maintenance-test");
 };
 
 describe("runMaintenancePass", () => {
@@ -477,16 +472,7 @@ describe("crossesGcBoundary", () => {
 });
 
 describe("estimateTailBytes", () => {
-  const base = (over: Partial<CurrentJson>): CurrentJson => ({
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "t", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-    ...over,
-  });
+  const base = logStateCurrentJson;
 
   test("(observedTail − log_seq_start) × mean_entry_bytes once a mean is stamped", () => {
     const cur = base({ log_seq_start: 10, mean_entry_bytes: 1000 });
@@ -529,16 +515,7 @@ describe("estimateTailBytes", () => {
 });
 
 describe("shouldFireMaintenance", () => {
-  const base = (over: Partial<CurrentJson>): CurrentJson => ({
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "t", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-    ...over,
-  });
+  const base = logStateCurrentJson;
 
   test("fires on a crossed GC boundary even when ratio is cold", () => {
     // Drives PURELY off tail_hint / log_seq_start / mean_entry_bytes.
@@ -623,15 +600,7 @@ const countingStorage = (inner: Storage): Counting => {
 
 /** Seed `n` real log entries via the Writer (no snapshot yet). */
 const seedLog = async (storage: Storage, key: string, coll: string, n: number): Promise<void> => {
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "bounded-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, key, "bounded-test");
   const writer = new Writer({ storage, currentJsonKey: key });
   for (let i = 0; i < n; i++) {
     await writer.commit({

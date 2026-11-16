@@ -12,8 +12,6 @@
 import {
   CAPACITY_BYTES_MARGIN,
   CODE_RESOLUTIONS,
-  createCurrentJson,
-  CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
   type LogEntry,
   MAINTENANCE_PROFILE_CF_FREE,
@@ -29,6 +27,7 @@ import { runBoundedMaintenance } from "./maintenance.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { projectSnapshot } from "./snapshot-projection.ts";
 import { Writer } from "./writer.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const COLLECTION = "c";
 const ceilings = { maxFoldRows: 10, maxFoldBytes: 100_000, maxFoldEntriesPerPass: 20 };
@@ -552,15 +551,7 @@ describe("projectSnapshot matches the compactor's encoding", () => {
     "projected rows and bytes at the fold end are exact, and within CAPACITY_BYTES_MARGIN without it",
     async ({ first, second }) => {
       const storage = new MemoryStorage();
-      await createCurrentJson(storage, KEY, {
-        schema_version: CURRENT_JSON_SCHEMA_VERSION,
-        snapshot: null,
-        tail_hint: 0,
-        log_seq_start: 0,
-        writer_fence: { epoch: 0, owner: "capacity-test", claimed_at: "" },
-        snapshot_bytes: 0,
-        snapshot_rows: 0,
-      });
+      await provisionCollection(storage, KEY, "capacity-test");
       const writer = new Writer({ storage, currentJsonKey: KEY });
       const live = new Set<string>();
       const run = async (ops: typeof first) => {
@@ -628,15 +619,7 @@ describe("projectSnapshot predicts compact()'s bytes cut", () => {
     "a bounded fold publishes the longest prefix of its pass that the projection fits within C, byte for byte",
     async ({ first, second, pass, room }) => {
       const storage = new MemoryStorage();
-      await createCurrentJson(storage, KEY, {
-        schema_version: CURRENT_JSON_SCHEMA_VERSION,
-        snapshot: null,
-        tail_hint: 0,
-        log_seq_start: 0,
-        writer_fence: { epoch: 0, owner: "capacity-test", claimed_at: "" },
-        snapshot_bytes: 0,
-        snapshot_rows: 0,
-      });
+      await provisionCollection(storage, KEY, "capacity-test");
       const writer = new Writer({ storage, currentJsonKey: KEY });
       const live = new Set<string>();
       const run = async (ops: typeof first) => {
@@ -753,15 +736,7 @@ describe("capacityDecision agrees with what compact() folds on the host", () => 
       // Build the state on an unbounded host, as a collection written
       // under a larger ceiling would be.
       const storage = new MemoryStorage();
-      await createCurrentJson(storage, KEY, {
-        schema_version: CURRENT_JSON_SCHEMA_VERSION,
-        snapshot: null,
-        tail_hint: 0,
-        log_seq_start: 0,
-        writer_fence: { epoch: 0, owner: "capacity-test", claimed_at: "" },
-        snapshot_bytes: 0,
-        snapshot_rows: 0,
-      });
+      await provisionCollection(storage, KEY, "capacity-test");
       const writer = new Writer({ storage, currentJsonKey: KEY });
       const live = new Map<string, DocumentData>();
       let seq = 0;

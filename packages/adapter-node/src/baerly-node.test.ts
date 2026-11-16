@@ -15,6 +15,7 @@ import { createObservabilityContext } from "@baerly/server/_internal/observabili
 import { Writer } from "@baerly/server/_internal/testing";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { baerlyNode, type BaerlyNodeHandle } from "./baerly-node.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const sharedDevVerifier: Verifier = async () => ({
   tenantPrefix: "test-tenant",
@@ -307,15 +308,11 @@ describe("baerlyNode config.auth synthesis", () => {
   test('auth: "none" without `verifier:` resolves every request to config.tenant', async () => {
     const tenant = "auth-none-tenant";
     const storage = new MemoryStorage();
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "auth-none-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/c/current.json`,
+      "auth-none-test",
+    );
     const config: BaerlyAppConfig = {
       app: "t",
       tenant,
@@ -340,15 +337,11 @@ describe("baerlyNode config.auth synthesis", () => {
   test('auth: "shared-secret" with env.SHARED_SECRET present accepts the bearer and rejects without', async () => {
     const tenant = "auth-ss-tenant";
     const storage = new MemoryStorage();
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "auth-ss-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/c/current.json`,
+      "auth-ss-test",
+    );
     const config: BaerlyAppConfig = {
       app: "t",
       tenant,

@@ -14,8 +14,6 @@
 
 import {
   casUpdateCurrentJson,
-  createCurrentJson,
-  CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
   GC_STARVATION_GUARD,
   type IndexDefinition,
@@ -36,6 +34,7 @@ import { chargedStorage } from "./ledgered-storage.ts";
 import { FREE_FETCH_INDEXES, freeFetchCells } from "./request-count-free-fetch.ts";
 import { sinceCells } from "./request-count-since.ts";
 import type { CallCounts } from "./request-counting-storage.ts";
+import { provisionCollection } from "./log-state.ts";
 
 const APP = "rc";
 const TENANT = "t";
@@ -127,15 +126,7 @@ const cloneStorage = async (src: MemoryStorage): Promise<MemoryStorage> => {
  */
 const buildState = async (spec: StateSpec): Promise<MemoryStorage> => {
   const storage = new MemoryStorage();
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "request-count-grid", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, "request-count-grid");
   const coll = makeDb(storage, spec.indexes).collection(COLL);
   await withoutTicks(async () => {
     for (let i = 0; i < spec.snapshot; i++) {

@@ -13,8 +13,6 @@ import {
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_PAID_REQUEST_LIMIT,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
   MemoryStorage,
   readCurrentJson,
   type RequestLedger,
@@ -32,6 +30,7 @@ import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-con
 import { CallTally, totalCalls } from "../../../tests/fixtures/request-counting-storage.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv, cfReadEnvelope, cfRequestLedger } from "./worker.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const testConfig: BaerlyAppConfig = {
   app: "t",
@@ -98,15 +97,7 @@ describe("a Worker request runs under one ledger", () => {
     const tenant = tenantId("ledger-refuse");
     const inner = new MemoryStorage();
     const key = `app/t/tenant/${tenant}/manifests/c/current.json`;
-    await createCurrentJson(inner, key, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "ledger-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(inner, key, "ledger-test");
     // An unfolded tail longer than the external limit: a read replays it.
     const writer = new Writer({ storage: inner, currentJsonKey: key });
     await runWithContext(
@@ -196,15 +187,7 @@ describe("an idle /v1/since long-poll on Workers Free with storage over fetch", 
     const tenant = tenantId("ledger-since");
     const inner = new MemoryStorage();
     const key = `app/t/tenant/${tenant}/manifests/c/current.json`;
-    await createCurrentJson(inner, key, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "ledger-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(inner, key, "ledger-test");
     const issued = new CallTally();
     const ledgers: RequestLedger[] = [];
     const verifier: Verifier = async () => {

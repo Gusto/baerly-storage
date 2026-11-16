@@ -6,26 +6,18 @@
  * 413 envelope through the cascade.
  */
 
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  MemoryStorage,
-  type Verifier,
-  createCurrentJson,
-} from "@baerly/protocol";
+import { MemoryStorage, type Verifier } from "@baerly/protocol";
 import { Hono } from "hono/tiny";
 import { describe, expect, test } from "vitest";
 import { createApp } from "./app.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const provision = async (storage: MemoryStorage, tenant: string, table: string): Promise<void> => {
-  await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "app-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(
+    storage,
+    `app/t/tenant/${tenant}/manifests/${table}/current.json`,
+    "app-test",
+  );
 };
 
 describe("createApp", () => {

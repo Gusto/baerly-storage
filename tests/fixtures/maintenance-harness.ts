@@ -19,13 +19,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentData,
   MemoryStorage,
   type Storage,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
+import { logStateCurrentJson } from "./log-state.ts";
 
 export const APP = "app";
 export const TENANT = "tenant";
@@ -66,16 +66,14 @@ export const bootstrap = async (
   owner: string,
   meanEntryBytes?: number,
 ): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner, claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-    ...(meanEntryBytes !== undefined && { mean_entry_bytes: meanEntryBytes }),
-  });
+  await createCurrentJson(
+    storage,
+    CURRENT_JSON_KEY,
+    logStateCurrentJson({
+      writer_fence: { epoch: 0, owner, claimed_at: "" },
+      ...(meanEntryBytes !== undefined && { mean_entry_bytes: meanEntryBytes }),
+    }),
+  );
 };
 
 /** Stable sort by `_id` so cross-profile / pre-vs-post deep-equals are order-insensitive. */

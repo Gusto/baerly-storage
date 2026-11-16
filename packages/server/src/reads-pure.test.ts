@@ -23,9 +23,7 @@
  */
 
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   casUpdateCurrentJson,
-  createCurrentJson,
   type CurrentJson,
   MAINTENANCE_MIN_LIVE_BYTES,
   MemoryStorage,
@@ -40,6 +38,7 @@ import {
 import { Db } from "./db.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { Writer } from "./writer.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -65,15 +64,7 @@ const makeDb = (storage: Storage): Db => Db.create({ storage, app: APP, tenant: 
 const seedOverRatio = async (n: number): Promise<MemoryStorage> => {
   const storage = new MemoryStorage();
   const key = currentJsonKey();
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "reads-pure-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, key, "reads-pure-test");
   const writer = new Writer({ storage, currentJsonKey: key });
   for (let i = 0; i < n; i++) {
     await writer.commit({
