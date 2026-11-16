@@ -44,6 +44,10 @@ rejected designs.
   — _candidate layout; not active, and adoption is not decided. If adopted,
   the live contract moves into
   [spec/sync-protocol.md](../spec/sync-protocol.md)._
+- [008 — Growth refusal and retry contract](./008-growth-refusal-and-retry-contract.md)
+  — _commit-time check and retry layering in
+  [spec/sync-protocol.md](../spec/sync-protocol.md#capacity-the-commit-time-re-check);
+  per-code semantics in `packages/protocol/src/errors.ts`._
 
 ## Decisions that live elsewhere
 
