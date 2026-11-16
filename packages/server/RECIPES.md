@@ -10,7 +10,19 @@
 
 ### `BaerlyError code="SchemaError"` on insert/update/replace
 
-**Cause:** the document failed schema validation, OR the body is not valid JSON / contains an array where `DocumentValue` is required, OR a `null` field value (use `.optional()`; `null` in an _update patch_ is the RFC 7386 deletion sentinel, not a storable value). **Fix:** read `error.issues` (each `{ path, message }`) for the offending field path. Declare `_id: z.string()` (required) in your schema — the validator runs on the post-image, so optional `_id` is wrong.
+**Cause:** the document failed schema validation (including a `null` your schema does not allow: `.optional()` rejects `null`), OR the body is not valid JSON / contains an array where `DocumentValue` is required. **Fix:** read `error.issues` (each `{ path, message }`) for the offending field path. Declare `_id: z.string()` (required) in your schema — the validator runs on the post-image, so optional `_id` is wrong.
+
+### `Type 'null' is not assignable to type 'DocumentValue'` (TS2322)
+
+**Cause:** `null` is not part of the typed document contract. `DocumentValue` excludes it, so `insert`, `replace` and `update` reject a `null` value at compile time, even on a collection whose schema uses `.nullable()` (the row type then admits `null`, the write types still do not).
+
+The runtime is more permissive:
+
+- `insert` and `replace` (in-process and over HTTP) store `null` at any depth as written, and reads return it. With a bound schema, the schema decides: `.optional()` rejects `null` with `SchemaError`, `.nullable()` accepts it.
+- In an `update` patch, a `null` member deletes that field (RFC 7386). A patch object written under a field that is absent or not an object is stored as written, nulls included.
+- A predicate cannot match `null`: `.where({ field: null })` throws `InvalidConfig`, and no other value matches a stored `null`.
+
+**Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove a field from a row, `replace` it without that field. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.
 
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
@@ -135,7 +147,7 @@ Retrying is an explicit at-least-once choice and may repeat logical work: a same
 - Don't widen branded types (`UUID`, `ContentVersionId`) with `as string`.
 - Don't put `SHARED_SECRET` in the SPA bundle — it is server-to-server only.
 - Don't mutate `VerifierResult.tenantPrefix` between the verifier and `Db.create` — the dispatcher pins the tenant from the verifier's return.
-- `z.string().nullable()` in a schema — `DocumentValue` excludes `null`.
+- `z.string().nullable()` in a schema: the runtime stores the `null`, but the typed write contract excludes it (`DocumentValue` has no `null`). Use `.optional()`; see the TS2322 entry above.
 - Raw SQL / `WHERE` clauses / hand-built query AST — the only query surface is the `.where(...)` method chain.
 - Paging or cursor-iterating `.all()`: there is no offset, page or cursor API. Bound every read instead: scope it with `.where(...)` and cap it with `.limit(n)` (plus `.order(...)` for a stable top N). Each read still folds the whole collection, so a limit caps the rows returned, not the work done. Under `baerlyWorker`, a read that needs more work than one request allows is refused with `CapacityExceeded` (see above); other hosts do not bound reads.
 - Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and `.all()`) returns the **whole collection** — there is no default row cap, and auth pins a tenant, not a row owner. Scope non-owner reads in your own route: inject a `where owner_id = <verified id>` predicate and clamp `limit = min(requested ?? MAX, MAX)`. Rejecting `?limit` backfires — it forces the uncapped path. See `docs/guide/auth.md` § Authorization Boundary.

@@ -238,7 +238,7 @@ await db.collection("tickets").where({ status: "closed" }).delete();
 
 Every row type must satisfy `{ [k: string]: DocumentValue }` where `DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
 
-Note: `null` is intentionally NOT a valid stored value. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel; allowing it as a stored value would collapse "this field is null" with "delete this field". Use `.optional()` in your schema for absent values.
+Note: `null` is not part of the typed contract. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel, so a stored `null` would collapse "this field is null" with "delete this field". Use `.optional()` in your schema for absent values. The runtime still stores a `null` that reaches `insert` / `replace` (RECIPES.md, TS2322).
 
 Two ways to get a typed row:
 
