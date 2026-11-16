@@ -589,8 +589,8 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
             `CF free-tier safe ceiling (${CF_FREE_MAX_SAFE_FOLD_BYTES} bytes). On a free ` +
             `Worker a fold this large may exceed the invocation's CPU or memory resources (the ~10 ms ` +
             `CPU limit); if it is terminated mid-rebuild the current.json CAS does not land, so ` +
-            `that fold does not advance and the tail can grow. Remedies: run on CF PAID (raised CPU limits), self-host on ` +
-            `NODE, or wait for §11 chunked snapshots. Leave this var unset on free CF.`,
+            `that fold does not advance and the tail can grow. Remedies: run on CF PAID (raised CPU limits) ` +
+            `or self-host on NODE. Leave this var unset on free CF.`,
         );
       }
       maintenanceCeilingChecked = true;

@@ -906,9 +906,8 @@ export const MAINTENANCE_MAX_FOLD_BYTES_DEFAULT: number = 512 * 1024;
  * extrapolation to ~1 MiB are sizing estimates, not observed platform
  * limits; anything strictly larger is simply outside the budget
  * this constant documents. On CF **paid**
- * (raised CPU limits), Node, or once §11 chunked snapshots land, a
- * larger ceiling is fine — hence this is a one-time `console.warn` at
- * handler init, NOT a hard rejection.
+ * (raised CPU limits) or Node, a larger ceiling is fine — hence this is
+ * a one-time `console.warn` at handler init, NOT a hard rejection.
  *
  * @see packages/adapter-cloudflare/src/worker.ts
  * @see packages/server/src/maintenance.ts
