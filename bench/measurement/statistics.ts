@@ -94,8 +94,7 @@ const MAX_UINT32 = 4_294_967_295;
  * exactly zero OLS coefficient divided by a Householder pivot yields `-0`
  * whenever that pivot is negative, which it routinely is.
  *
- * Note that `canonical-json.ts` NORMALIZES `-0` to `0` — it does not reject it,
- * and there is no `negative-zero` rejection reason — so this is not what keeps
+ * `JSON.stringify` already writes `-0` as `0`, so this is not what keeps
  * serialization working. What it buys is that the in-memory record is
  * `Object.is`-comparable and snapshot-stable BEFORE serialization, independent
  * of how any downstream serializer treats signed zero.

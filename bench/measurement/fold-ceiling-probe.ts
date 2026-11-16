@@ -5,8 +5,8 @@
  * CPU is process.cpuUsage() on this Node host. Peak memory is a sampled heap
  * delta, not total process or Worker isolate memory. Neither measurement
  * establishes a production ceiling. Separate byte and row maxima also do not
- * establish a jointly safe workload envelope. Cloudflare admission belongs to
- * the workload-ceiling program's matched deployed study.
+ * establish a jointly safe workload envelope. Cloudflare admission needs a
+ * deployed Workers measurement.
  *
  * No module-scope execution; fold-ceiling-probe-run.ts owns the sweep.
  */
