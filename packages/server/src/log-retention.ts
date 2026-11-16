@@ -22,6 +22,7 @@ import {
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
+import { collectionFromCurrentJsonKey } from "./collection-key.ts";
 
 /** A half-open `[start, end)` sequence range. Empty when equal. */
 export interface RetirableRange {
@@ -204,7 +205,7 @@ export async function retireLogRange(
   // write-tick path, where the retirement pass runs inline on the commit
   // ack. One failure rejects the aggregate while the landed DELETEs stay
   // durable; the floor already authorizes every slot in the range.
-  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
+  const { prefix: collectionPrefix } = collectionFromCurrentJsonKey(currentJsonKey);
   await Promise.all(
     Array.from({ length: range.end - range.start }, (_, i) =>
       storage.delete(logObjectKey(collectionPrefix, range.start + i), readOpts),

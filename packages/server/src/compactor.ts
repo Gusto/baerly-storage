@@ -55,6 +55,7 @@ import { requireIntegerOption } from "./option-guards.ts";
 import { walkLogRangeWithBytes } from "./log-walk.ts";
 import { probeTailChunk, probeTailFrom, type TailProbeChunk } from "./log-tail.ts";
 import { getCurrentContext } from "./observability/context.ts";
+import { collectionFromCurrentJsonKey } from "./collection-key.ts";
 import {
   encodeSnapshotBody,
   loadSnapshotAsMap,
@@ -287,8 +288,8 @@ export const compactInternal = async (
   // Each ceiling: `undefined ⇒ no ceiling` (treated as `Infinity`).
   const ceilingBytes = internal.ceilingBytes ?? Number.POSITIVE_INFINITY;
   const ceilingEntries = internal.ceilingEntries ?? Number.POSITIVE_INFINITY;
-  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+  const { prefix: collectionPrefix, name: collectionName } =
+    collectionFromCurrentJsonKey(currentJsonKey);
 
   // Validate the options that feed seq arithmetic, before any I/O.
   // `InternalCompactOptions` is an unvalidated seam — reached by JS

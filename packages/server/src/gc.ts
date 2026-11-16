@@ -118,6 +118,7 @@ import {
   readGcPending,
 } from "@baerly/protocol";
 import { getCurrentContext } from "./observability/context.ts";
+import { collectionFromCurrentJsonKey } from "./collection-key.ts";
 
 const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
@@ -246,8 +247,8 @@ export const runGc = async (
   const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = internal.now ?? ((): Date => new Date());
-  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  const collectionName = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+  const { prefix: collectionPrefix, name: collectionName } =
+    collectionFromCurrentJsonKey(currentJsonKey);
   const pendingKey = gcPendingKey(collectionPrefix);
   const signal = options.signal;
   const signalOpts = signal !== undefined ? { signal } : undefined;
