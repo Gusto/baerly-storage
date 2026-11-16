@@ -13,8 +13,8 @@ const throwBaerlyError: CodecFail = (code, message, cause) => {
  *
  * This checks identity only. It does not validate `docId` against the
  * `utf8-scalar-v1` domain, and it does not validate any other field of the
- * document. Callers that need the scalar domain call `assertCodecDocId` or
- * `assertSnapshotDocId` first.
+ * document. Callers that need the scalar domain call `assertSnapshotDocId`
+ * first.
  *
  * `code` selects the failure polarity: `InvalidConfig` for caller input,
  * `InvalidResponse` for stored input. Failures go through `fail` when given,
