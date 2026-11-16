@@ -70,6 +70,7 @@ import {
   resolveCfMaintenanceProfile,
 } from "./worker.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
+import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
 
 const testConfig: BaerlyAppConfig = {
   app: "test-app",
@@ -77,14 +78,6 @@ const testConfig: BaerlyAppConfig = {
   target: "cloudflare",
   auth: "none",
   collections: {},
-};
-
-const getBinding = (): R2Bucket => {
-  const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
-  if (bucket === undefined) {
-    throw new Error("worker-maintenance.test: globalThis.__BAERLY_R2_BINDING__ missing");
-  }
-  return bucket;
 };
 
 const KEY = (tenant: string): string => `app/t/tenant/${tenant}/manifests/c/current.json`;

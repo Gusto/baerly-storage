@@ -26,6 +26,7 @@
     "packages/adapter-cloudflare/src",
     "bench/cpu-factor-worker/src",
     "tests/fixtures/mock-execution-context.ts",
+    "tests/fixtures/r2-bucket.ts",
     "tests/integration/public-surface.test.ts",
     "tests/integration/s3-worker-e2e.test.ts",
     "tests/setup/http-conformance-worker.ts",

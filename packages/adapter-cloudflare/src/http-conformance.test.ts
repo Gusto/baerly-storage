@@ -32,18 +32,9 @@ import { CURRENT_JSON_SCHEMA_VERSION, createCurrentJson } from "@baerly/protocol
 import { runHttpConformanceCascade } from "../../../tests/fixtures/http-conformance-cascade.ts";
 import { CONFORMANCE_TENANT } from "../../../tests/fixtures/test-verifier.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
+import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
 
 const APP = "http-conf";
-
-const getBinding = (): R2Bucket => {
-  const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
-  if (bucket === undefined) {
-    throw new Error(
-      "http-conformance: globalThis.__BAERLY_R2_BINDING__ missing — expected wiring from tests/setup/r2-binding.ts under the cloudflare-pool vitest project",
-    );
-  }
-  return bucket;
-};
 
 describe("HTTP conformance", () => {
   runHttpConformanceCascade({

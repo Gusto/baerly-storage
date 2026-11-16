@@ -25,6 +25,7 @@ import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 import { trivialVerifier, denyVerifier } from "../../../tests/fixtures/test-verifier.ts";
+import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
 
 /**
  * Baseline `BaerlyAppConfig` for the route tests. Cases that exercise
@@ -39,14 +40,6 @@ const baseConfig: BaerlyAppConfig = {
   target: "cloudflare",
   auth: "none",
   collections: {},
-};
-
-const getBinding = (): R2Bucket => {
-  const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
-  if (bucket === undefined) {
-    throw new Error("worker-routes.test: globalThis.__BAERLY_R2_BINDING__ missing");
-  }
-  return bucket;
 };
 
 const makeEnv = (bucket: R2Bucket): BaerlyEnv => ({
