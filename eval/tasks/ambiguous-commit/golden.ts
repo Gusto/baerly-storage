@@ -14,6 +14,3 @@ export async function insertOnce(tickets: Collection, doc: { _id: string }) {
     return _id;
   }
 }
-export async function main() {
-  return undefined;
-}

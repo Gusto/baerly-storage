@@ -14,6 +14,3 @@ export async function withRetry<T>(
     }
   }
 }
-export async function main() {
-  return undefined;
-}
