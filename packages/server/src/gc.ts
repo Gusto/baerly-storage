@@ -27,9 +27,7 @@
  * Workers) opt INTO caps via the `CLOUDFLARE_FREE_TIER` /
  * `CLOUDFLARE_PAID_TIER` profiles' mark and sweep knobs
  * (`InternalRunGcOptions`, not on the public `RunGcOptions`); the
- * per-pass worst cases are on `CLOUDFLARE_FREE_TIER`. On Free with
- * storage over `fetch`, run this phase alone in an invocation and
- * alternate it with a direct bounded `compact()` invocation.
+ * per-pass worst cases are on `CLOUDFLARE_FREE_TIER`.
  *
  * One category of orphan:
  *   - `orphan-snapshot`: a canonical

@@ -291,14 +291,19 @@ const CF_FREE_FETCH_TICK = {
  * exists for direct unit coverage.
  *
  * `storage` is the Worker's base storage. On the free profile, storage
- * other than the R2 binding (`S3HttpStorage`, or any wrapper) spends one
- * of Free's 50 external subrequests per call, so the write tick folds as
- * soon as the live tail reaches {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES}
- * entries, and a GC slice sweeps at most {@link CF_FREE_FETCH_GC_MAX_SWEEPS}
+ * other than the R2 binding (`S3HttpStorage`, or any wrapper) is charged
+ * to the 45-call `external` pool, so the write tick folds as soon as the
+ * live tail reaches {@link CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES} entries,
+ * and a GC slice sweeps at most {@link CF_FREE_FETCH_GC_MAX_SWEEPS}
  * snapshots: a write replays the tail, and on a longer tail or a larger
  * sweep the write plus the tick it dispatches no longer fit in one
- * request. Detected from the storage itself, so it needs no
- * configuration. Absent ⇒ treated as the R2 binding.
+ * request. Workers Free + S3 is not a supported host, but the Worker
+ * cannot tell Free from Paid: `cf-free` caps fetch storage at 45 calls so
+ * a request past Free's 50 gets a typed `CapacityExceeded` instead of the
+ * platform throwing at call 51, and this tick keeps ordinary requests
+ * inside that cap (a Paid Worker on S3 that has not set `cf-paid` runs
+ * here). Detected from the storage itself, so it needs no configuration.
+ * Absent ⇒ treated as the R2 binding.
  */
 export const cfMaintenanceDispatch = (
   ctx: ExecutionContext,
@@ -342,9 +347,8 @@ export const cfMaintenanceDispatch = (
  * triggers or persist a collection cursor instead of looping tenants /
  * collections. With the R2 binding, Free and Paid may run one whole
  * `runScheduledMaintenance(target, { tier })` pass per invocation, `tier`
- * being the `BAERLY_MAINTENANCE_PROFILE` value. On Free with storage over
- * `fetch`, alternate `phase: "compact"` and `phase: "gc"` across
- * invocations.
+ * being the `BAERLY_MAINTENANCE_PROFILE` value. S3 storage needs Paid
+ * with `tier: "cf-paid"`.
  */
 export type WorkerScheduledHandler = (
   event: ScheduledController,
@@ -374,9 +378,12 @@ export interface BaerlyWorkerOptions {
    * from a Worker — e.g. `new S3HttpStorage(...)` +
    * `sigV4Signer(...)` from `@gusto/baerly-storage/s3`. Resolved once
    * per isolate inside the factory (where `env` is in scope), same as
-   * the R2 binding. On the free profile, storage other than the R2
-   * binding spends Free's 50 external subrequests, so the write tick
-   * folds after a few writes instead of on the ratio trigger.
+   * the R2 binding. S3 storage needs Workers Paid with
+   * `BAERLY_MAINTENANCE_PROFILE=cf-paid`; Workers Free + S3 is not
+   * supported. Under the free profile, storage other than the R2 binding
+   * is held to 45 calls per request (a typed `CapacityExceeded` past it,
+   * not the platform's throw at call 51), so the write tick folds after a
+   * few writes instead of on the ratio trigger.
    */
   readonly storage?: Storage;
   /**

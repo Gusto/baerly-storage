@@ -215,11 +215,11 @@ export const STORAGE_RETRY_MAX_DELAY_MILLIS: number = 20_000;
 export const CF_FREE_INTERNAL_REQUEST_LIMIT: number = 900;
 
 /**
- * Request-ledger limit on the `external` pool on Workers Free: storage
- * calls that leave through `fetch` (S3 over HTTP, GCS). Free allows 50
- * external subrequests per invocation, and a
- * `fetch` past the 50th throws before it is sent (observed at exactly
- * call 51). 45 keeps 5 for calls outside the ledger: the verifier's JWKS
+ * Request-ledger limit on the `external` pool under the `cf-free`
+ * profile: storage calls that leave through `fetch` (S3 over HTTP, GCS).
+ * Only fetch storage charges this pool; R2 binding calls do not. Free
+ * allows 50 external subrequests per invocation, and a `fetch` past the
+ * 50th throws before it is sent (observed at exactly call 51). 45 keeps 5 for calls outside the ledger: the verifier's JWKS
  * fetch on a cold isolate and app code in the same Worker. The removed
  * response cache's allowance stays headroom; this limit is unchanged.
  * `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` and `CF_FREE_FETCH_GC_MAX_SWEEPS`
@@ -732,16 +732,25 @@ export const MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS: number = 2 * STORAGE_RETRY_M
 export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
 
 /**
- * Live-tail length at which the write tick folds on Workers Free when the
- * Worker reaches its bucket through `fetch` (S3 over HTTP) rather than the
- * R2 binding, whatever the tail-to-snapshot ratio. The Cloudflare adapter
- * detects that host from the storage it was given and threads this as
- * `foldAtTailEntries`, with {@link CF_FREE_FETCH_GC_MAX_SWEEPS}; Free with
- * the R2 binding, Paid, and Node keep the ratio trigger alone.
+ * Live-tail length at which the write tick folds under the `cf-free`
+ * profile when the Worker reaches its bucket through `fetch` (S3 over
+ * HTTP) rather than the R2 binding, whatever the tail-to-snapshot ratio.
+ * The Cloudflare adapter detects that from the storage it was given and
+ * threads this as `foldAtTailEntries`, with
+ * {@link CF_FREE_FETCH_GC_MAX_SWEEPS}; Free with the R2 binding, `cf-paid`,
+ * and Node keep the ratio trigger alone.
  *
- * **Why the ratio trigger fails there.** Every storage call on that host is
- * one of Free's 50 external subrequests per invocation; the budget is 45,
- * leaving 5 for the verifier and platform. The Cloudflare limits page counts
+ * Workers Free + S3 is not a supported host. A Worker cannot tell Free
+ * from Paid, so `cf-free` caps storage over `fetch` at
+ * {@link CF_FREE_EXTERNAL_REQUEST_LIMIT} calls: a request past Free's 50
+ * gets a typed `CapacityExceeded` instead of the platform throwing at call
+ * 51. This trigger keeps ordinary requests inside that cap, including a
+ * Paid Worker on S3 that has not set `cf-paid`.
+ *
+ * **Why the ratio trigger fails there.** Every storage call there is
+ * charged to the `external` pool, {@link CF_FREE_EXTERNAL_REQUEST_LIMIT}
+ * (45) of Free's 50 external subrequests per invocation, leaving 5 for the
+ * verifier and platform. The Cloudflare limits page counts
  * subrequests per invocation and does not exempt `ctx.waitUntil` work, so
  * the tick a write dispatches is assumed to share the write's cap. A write
  * and a read both replay the live tail, one GET per entry, so a request
@@ -771,14 +780,14 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
  * `D = 3`, set by the GC arm. `T = 8`, `D = 2` would only match snapshot
  * creation at the guaranteed GC cadence; `T = 7`, `D = 3` leaves sweep
  * throughput headroom. The 15 calls of room left are deliberately unspent:
- * a later fold trigger moves the snapshot-creation rate, the GC throughput
- * argument on {@link CF_FREE_FETCH_GC_MAX_SWEEPS} and the documented Free +
- * S3 envelope, so raising `T` is a measured change of its own.
+ * a later fold trigger moves the snapshot-creation rate and the GC
+ * throughput argument on {@link CF_FREE_FETCH_GC_MAX_SWEEPS}, so raising
+ * `T` is a measured change of its own.
  * The longest live tail a read then sees is `T + 1` = 8: any read, with or
  * without declared indexes (`$in` included), costs 11. Every point read
  * pays this storage-backed cost, even when repeated.
  * Retried calls (up to `STORAGE_RETRY_MAX_ATTEMPTS` each) are outside this
- * budget: that host is best effort.
+ * budget.
  *
  * Changing this value, a fold or GC cost, or the GC cadence moves the
  * `free-fetch:*` cells; `tests/unit/request-counts.test.ts` asserts they
@@ -791,8 +800,8 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS: number = 2;
 export const CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES: number = 7;
 
 /**
- * Most replaced snapshots one write-tick GC slice deletes on Workers Free
- * when storage is reached through `fetch`; replaces
+ * Most replaced snapshots one write-tick GC slice deletes under the
+ * `cf-free` profile when storage is reached through `fetch`; replaces
  * {@link WRITE_TICK_GC_MAX_SWEEPS} (10) there. Each DELETE is one of the
  * request's external subrequests, and a full 10-delete slice on top of the
  * write that dispatched it exceeds the 45-call budget at the tail lengths a
