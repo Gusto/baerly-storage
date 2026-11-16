@@ -31,7 +31,7 @@
 //     and chain it into normalise().
 //
 import { describe, test, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "../..");
@@ -137,4 +137,62 @@ describe("AGENTS.md Pattern drift fence", () => {
     expect(nodeMin).toBe(cfMin);
     expect(nodeReact).toBe(cfMin);
   });
+});
+
+// The scaffolds point at the installed API.md / RECIPES.md instead of
+// restating them. `node_modules/@gusto/baerly-storage/dist/{API,RECIPES}.md`
+// are byte copies of `packages/server/{API,RECIPES}.md` (dist-docs.test.ts),
+// so a pointer resolves iff the file and heading exist in the source.
+const SHIPPED_SOURCE: Record<string, string> = {
+  "API.md": "packages/server/API.md",
+  "RECIPES.md": "packages/server/RECIPES.md",
+  "CHANGELOG.md": "CHANGELOG.md",
+};
+
+// GitHub heading slug: lowercase, drop everything but letters, digits,
+// `-`, `_` and spaces, then spaces become hyphens.
+function slug(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}\- _]/gu, "")
+    .replace(/ /g, "-");
+}
+
+function headingSlugs(markdown: string): Set<string> {
+  const slugs = new Set<string>();
+  let fenced = false;
+  for (const line of markdown.split("\n")) {
+    if (/^\s*```/.test(line)) {
+      fenced = !fenced;
+    }
+    const heading = fenced ? undefined : /^#{1,6}\s+(.*?)\s*$/.exec(line)?.[1];
+    if (heading !== undefined) {
+      slugs.add(slug(heading));
+    }
+  }
+  return slugs;
+}
+
+describe("AGENTS.md installed-doc pointers", () => {
+  for (const name of ["minimal-cloudflare", "react-cloudflare", "minimal-node", "react-node"]) {
+    test(`${name}: every dist/*.md pointer and #anchor resolves`, () => {
+      const text = read(name);
+      const files = [
+        ...text.matchAll(/node_modules\/@gusto\/baerly-storage\/dist\/([A-Za-z]+\.md)/g),
+      ].map((m) => m[1]!);
+      expect(files.length).toBeGreaterThan(0);
+      for (const file of files) {
+        const source = SHIPPED_SOURCE[file];
+        expect(source, `${file} is not a shipped doc`).toBeDefined();
+        expect(existsSync(join(ROOT, source!)), `${source} missing`).toBe(true);
+      }
+      // Anchors are written `API.md#x` or `RECIPES.md#x`, bare or after dist/.
+      const anchors = [...text.matchAll(/\b(API\.md|RECIPES\.md)#([a-z0-9_-]+)/g)];
+      expect(anchors.length).toBeGreaterThan(0);
+      for (const [, file, anchor] of anchors) {
+        const slugs = headingSlugs(readFileSync(join(ROOT, SHIPPED_SOURCE[file!]!), "utf8"));
+        expect(slugs.has(anchor!), `${file}#${anchor} has no matching heading`).toBe(true);
+      }
+    });
+  }
 });
