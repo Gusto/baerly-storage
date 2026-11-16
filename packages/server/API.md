@@ -7,23 +7,9 @@ tags: [agent-quickref, baerly]
 
 # baerly-storage — public API quickref
 
-This file ships in `dist/API.md` so a freshly-installed
-`node_modules/@gusto/baerly-storage/dist/API.md` is one `cat` away from the
-full public surface. (It is named `API.md` rather than `AGENTS.md` to
-avoid colliding with the scaffolded user app's own `AGENTS.md` at the
-project root.) It is hand-curated; the `.d.ts` files in this same
-directory remain the source of truth (the bundler chunks them across
-`index-*.d.ts` / `client-*.d.ts` / `db-*.d.ts` / etc., so they're
-noisy to read flat — read this first, drop into the `.d.ts` chunks
-only for exact signatures).
+This file ships in `dist/API.md` so a freshly-installed `node_modules/@gusto/baerly-storage/dist/API.md` is one `cat` away from the full public surface. (It is named `API.md` rather than `AGENTS.md` to avoid colliding with the scaffolded user app's own `AGENTS.md` at the project root.) It is hand-curated; the `.d.ts` files in this same directory remain the source of truth (the bundler chunks them across `index-*.d.ts` / `client-*.d.ts` / `db-*.d.ts` / etc., so they're noisy to read flat — read this first, drop into the `.d.ts` chunks only for exact signatures).
 
-The public surface is intentionally small and **closed**: the absence
-of a method is a design choice, not an undocumented gap. Every
-unsupported operation is a compile error — the type system enforces the
-vocabulary rather than surfacing a runtime "not implemented", so an agent
-reaches the correct call zero-shot without inventing ceremony the kernel
-doesn't support. The predicate operator set is the concrete example
-(see [Predicates](#predicates)).
+The public surface is intentionally small and **closed**: the absence of a method is a design choice, not an undocumented gap. Every unsupported operation is a compile error — the type system enforces the vocabulary rather than surfacing a runtime "not implemented", so an agent reaches the correct call zero-shot without inventing ceremony the kernel doesn't support. The predicate operator set is the concrete example (see [Predicates](#predicates)).
 
 ## Imports cheat sheet
 
@@ -85,11 +71,9 @@ import { LocalFsStorage } from "@gusto/baerly-storage/dev";
 
 ## `Db.create({ storage, app, tenant, config? })`
 
-*When NOT to use: in a browser/SPA — use `createBaerlyClient` (HTTP) instead; `Db` is the in-process server surface.*
+_When NOT to use: in a browser/SPA — use `createBaerlyClient` (HTTP) instead; `Db` is the in-process server surface._
 
-One `Db` per `(app, tenant)` request. The constructor is private —
-always go through `Db.create`. Collections are auto-provisioned on first
-write (no `ensureCollection` step).
+One `Db` per `(app, tenant)` request. The constructor is private — always go through `Db.create`. Collections are auto-provisioned on first write (no `ensureCollection` step).
 
 ```ts
 import { Db, MemoryStorage } from "@gusto/baerly-storage";
@@ -107,13 +91,7 @@ await db.collection("tickets").insert({ title: "first ticket", status: "open" })
 const open = await db.collection("tickets").where({ status: "open" }).all();
 ```
 
-**`MemoryStorage` is per-instance.** Each `new MemoryStorage()`
-backs an independent in-process bucket — two `Db` instances built
-against two `new MemoryStorage()`s see two empty, isolated stores.
-This is what makes it the canonical test fixture: one fresh instance
-per test gives a hermetic bucket without `beforeEach` cleanup. Pass
-the _same_ `MemoryStorage` instance to multiple `Db` constructors
-when you want two writers contending on one bucket.
+**`MemoryStorage` is per-instance.** Each `new MemoryStorage()` backs an independent in-process bucket — two `Db` instances built against two `new MemoryStorage()`s see two empty, isolated stores. This is what makes it the canonical test fixture: one fresh instance per test gives a hermetic bucket without `beforeEach` cleanup. Pass the _same_ `MemoryStorage` instance to multiple `Db` constructors when you want two writers contending on one bucket.
 
 Full `Db.create` config:
 
@@ -126,10 +104,7 @@ Db.create<TConfig>({
 });
 ```
 
-**`Db<typeof config>` is a usable type.** `Db.create({ ..., config })`
-returns `Db<typeof config>`, and that type is exported from the root
-barrel — so a test or DI helper can pin it without inferring through
-the factory call site:
+**`Db<typeof config>` is a usable type.** `Db.create({ ..., config })` returns `Db<typeof config>`, and that type is exported from the root barrel — so a test or DI helper can pin it without inferring through the factory call site:
 
 ```ts
 import type { Db } from "@gusto/baerly-storage";
@@ -141,18 +116,13 @@ export function setDbForTesting(db: Db<typeof config>) {
 }
 ```
 
-The narrowed `Db<typeof config>` carries the same `collection(name)`
-overloads as the inferred return; `Db` (no parameter) widens to
-`Db<UnboundConfig>` and accepts any string collection name.
+The narrowed `Db<typeof config>` carries the same `collection(name)` overloads as the inferred return; `Db` (no parameter) widens to `Db<UnboundConfig>` and accepts any string collection name.
 
 ## `db.collection(name)` → `Collection<T>`
 
-*When NOT to use: from the browser — call collection verbs over HTTP via `createBaerlyClient`.*
+_When NOT to use: from the browser — call collection verbs over HTTP via `createBaerlyClient`._
 
-`Collection<T>` carries the common-case verbs directly (collection-level
-reads plus by-primary-key mutations). Modifiers (`where`, `order`,
-`limit`) return a `Query<T>` for bulk-by-predicate work. Terminals fire
-I/O on the spot.
+`Collection<T>` carries the common-case verbs directly (collection-level reads plus by-primary-key mutations). Modifiers (`where`, `order`, `limit`) return a `Query<T>` for bulk-by-predicate work. Terminals fire I/O on the spot.
 
 ```ts
 interface Collection<T extends DocumentData = DocumentData> {
@@ -174,8 +144,7 @@ interface Collection<T extends DocumentData = DocumentData> {
 }
 ```
 
-`Query<T>` keeps the chainable read terminals and the predicate-aware
-bulk mutation verbs:
+`Query<T>` keeps the chainable read terminals and the predicate-aware bulk mutation verbs:
 
 ```ts
 interface Query<T> extends /* Collection<T>'s modifiers */ {
@@ -187,33 +156,18 @@ interface Query<T> extends /* Collection<T>'s modifiers */ {
 }
 ```
 
-`replace` is by-id only — `Collection<T>.replace(id, doc)` throws
-`NotFound` on missing id. There is no predicate-form `.replace(doc)`
-on `Query<T>`: a strict-cardinality-1 verb is redundant ceremony to
-the by-id form (the public surface is additive-only locked, so a second
-type-valid path to one capability is redundancy).
+`replace` is by-id only — `Collection<T>.replace(id, doc)` throws `NotFound` on missing id. There is no predicate-form `.replace(doc)` on `Query<T>`: a strict-cardinality-1 verb is redundant ceremony to the by-id form (the public surface is additive-only locked, so a second type-valid path to one capability is redundancy).
 
 ### Predicates
 
 Two shapes, both legal on `.where(...)`:
 
-1. **Object literal** — equality only. Top-level, dotted-path, or
-   nested literal sub-predicate. Multi-field is implicit AND.
-2. **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`.
-   The methods on `PredicateBuilder<T>` ARE the supported operator
-   vocabulary; methods absent from the type (`or`, `not`, `regex`,
-   `ne`, `exists`) do not exist and won't typecheck.
+1. **Object literal** — equality only. Top-level, dotted-path, or nested literal sub-predicate. Multi-field is implicit AND.
+2. **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`. The methods on `PredicateBuilder<T>` ARE the supported operator vocabulary; methods absent from the type (`or`, `not`, `regex`, `ne`, `exists`) do not exist and won't typecheck.
 
-Chained `.where(...).where(...)` AND-merges across calls and across
-shapes. Both forms normalise to one wire format (a flat clause list,
-`{ clauses: PredicateClause[] }`); the HTTP `?where=` param carries
-that wire JSON.
+Chained `.where(...).where(...)` AND-merges across calls and across shapes. Both forms normalise to one wire format (a flat clause list, `{ clauses: PredicateClause[] }`); the HTTP `?where=` param carries that wire JSON.
 
-By-`_id` lookups go through `.get(id)` / `.update(id, patch)` /
-`.replace(id, doc)` / `.delete(id)`, **not** `.where({ _id: id })`.
-`_id` is excluded from `Path<T>` (and so from `PredicateBuilder<T>`),
-so `.where({ _id: ... })` is a compile-time TS error. Nested `_id`
-paths (`author._id`) on referenced documents are still allowed.
+By-`_id` lookups go through `.get(id)` / `.update(id, patch)` / `.replace(id, doc)` / `.delete(id)`, **not** `.where({ _id: id })`. `_id` is excluded from `Path<T>` (and so from `PredicateBuilder<T>`), so `.where({ _id: ... })` is a compile-time TS error. Nested `_id` paths (`author._id`) on referenced documents are still allowed.
 
 ```ts
 db.collection("tickets").where({ status: "open" }).all();
@@ -245,13 +199,11 @@ interface PredicateWire {
 }
 ```
 
-Example: `.where({ status: "open" })` → `{"clauses":[{"op":"eq","field":"status","value":"open"}]}`.
-The empty wire `{"clauses":[]}` matches every document.
+Example: `.where({ status: "open" })` → `{"clauses":[{"op":"eq","field":"status","value":"open"}]}`. The empty wire `{"clauses":[]}` matches every document.
 
 ## Mutations
 
-By-id (the common case) lives on `Collection<T>`; predicate-aware bulk
-verbs live on `Query<T>` after `.where(...)`.
+By-id (the common case) lives on `Collection<T>`; predicate-aware bulk verbs live on `Query<T>` after `.where(...)`.
 
 ```ts
 await db.collection("tickets").insert({ status: "open", title: "ship it" });
@@ -284,26 +236,15 @@ await db.collection("tickets").where({ status: "closed" }).delete();
 
 ## `DocumentData` — row shape constraint
 
-Every row type must satisfy
-`{ [k: string]: DocumentValue }` where
-`DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
+Every row type must satisfy `{ [k: string]: DocumentValue }` where `DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
 
-Note: `null` is intentionally NOT a valid stored value. In a
-JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion
-sentinel; allowing it as a stored value would collapse "this field is
-null" with "delete this field". Use `.optional()` in your schema for
-absent values.
+Note: `null` is intentionally NOT a valid stored value. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel; allowing it as a stored value would collapse "this field is null" with "delete this field". Use `.optional()` in your schema for absent values.
 
 Two ways to get a typed row:
 
-1. **Bind the config** (preferred). Declare collection in
-   `baerly.config.ts` with a schema; pass `config` to `Db.create` /
-   `createBaerlyClient`. `db.collection("tickets")` returns
-   `Collection<RowOf<TConfig, "tickets">>`. No generic, no cast.
+1. **Bind the config** (preferred). Declare collection in `baerly.config.ts` with a schema; pass `config` to `Db.create` / `createBaerlyClient`. `db.collection("tickets")` returns `Collection<RowOf<TConfig, "tickets">>`. No generic, no cast.
 
-   `RowOf<TConfig, "tickets">` is also a usable type when you need
-   to name the row shape outside the chain — route-handler return
-   types, response-schema bridges, helpers that take a row by hand:
+   `RowOf<TConfig, "tickets">` is also a usable type when you need to name the row shape outside the chain — route-handler return types, response-schema bridges, helpers that take a row by hand:
 
    ```ts
    import type { RowOf } from "@gusto/baerly-storage";
@@ -314,8 +255,7 @@ Two ways to get a typed row:
    //   `CollectionNames<typeof config>` is the union of valid names.
    ```
 
-2. **Falls back to `DocumentData`** when no config is bound. Cast at
-   the construction site for a narrower row shape:
+2. **Falls back to `DocumentData`** when no config is bound. Cast at the construction site for a narrower row shape:
    ```ts
    import type { Collection, DocumentData } from "@gusto/baerly-storage";
    interface Bookmark extends DocumentData {
@@ -325,14 +265,11 @@ Two ways to get a typed row:
    const bookmarks = db.collection("bookmarks") as Collection<Bookmark>;
    await bookmarks.all();
    ```
-   A plain `interface Bookmark { _id: string; url: string }` (no
-   index signature) fails the `T extends DocumentData` constraint by
-   design — the constraint keeps the row JSON-compatible.
+   A plain `interface Bookmark { _id: string; url: string }` (no index signature) fails the `T extends DocumentData` constraint by design — the constraint keeps the row JSON-compatible.
 
 ## Errors
 
-`BaerlyError` is the single error class. Discriminate by `code`, not
-`instanceof` (the code string survives realm boundaries):
+`BaerlyError` is the single error class. Discriminate by `code`, not `instanceof` (the code string survives realm boundaries):
 
 ```ts
 try {
@@ -365,17 +302,11 @@ try {
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |
 | `UnsatisfiablePredicate` | 400  | Predicate contradicts itself (empty `in`, …)     |
 
-Only `NetworkError`, `WriteConflict` and `MaintenancePending` are `retriable`. Recovery:
-[RECIPES.md](RECIPES.md#ambiguouscommit-recovery).
+Only `NetworkError`, `WriteConflict` and `MaintenancePending` are `retriable`. Recovery: [RECIPES.md](RECIPES.md#ambiguouscommit-recovery).
 
 ### Mapping errors to HTTP yourself
 
-`baerlyWorker`, `baerlyNode`, and `createRouter` (from
-`@gusto/baerly-storage/http`) already translate `BaerlyError` → HTTP
-status + wire envelope per the table above. For an **embed-by-hand**
-router (your own Hono / Express / Fastify app calling `Db` directly),
-use `mapError` from the same subpath; it returns the envelope and
-status (set `Retry-After` from `envelope.error.retryAfter` yourself):
+`baerlyWorker`, `baerlyNode`, and `createRouter` (from `@gusto/baerly-storage/http`) already translate `BaerlyError` → HTTP status + wire envelope per the table above. For an **embed-by-hand** router (your own Hono / Express / Fastify app calling `Db` directly), use `mapError` from the same subpath; it returns the envelope and status (set `Retry-After` from `envelope.error.retryAfter` yourself):
 
 ```ts
 import { mapError } from "@gusto/baerly-storage/http";
@@ -391,20 +322,11 @@ app.post("/notes", async (c) => {
 });
 ```
 
-`mapError` accepts any thrown value. Caller-facing codes (`SchemaError`,
-`NotFound`, `PayloadTooLarge`, `CapacityExceeded`, `AlreadyExists`,
-predicate `InvalidConfig`) keep their message. Diagnostics (`Internal`,
-`NetworkError`, `InvalidResponse`, storage `AccessDenied` /
-`InvalidConfig`, `WriteConflict`) keep code/status/`retriable` with a
-generic wire message; the full error goes to observability. Other throws
-become `500 Internal`, message redacted. The status/envelope shape is
-locked.
+`mapError` accepts any thrown value. Caller-facing codes (`SchemaError`, `NotFound`, `PayloadTooLarge`, `CapacityExceeded`, `AlreadyExists`, predicate `InvalidConfig`) keep their message. Diagnostics (`Internal`, `NetworkError`, `InvalidResponse`, storage `AccessDenied` / `InvalidConfig`, `WriteConflict`) keep code/status/`retriable` with a generic wire message; the full error goes to observability. Other throws become `500 Internal`, message redacted. The status/envelope shape is locked.
 
 ## `defineConfig({ app, tenant, target, collections })`
 
-Scaffold-aware: lives at `@gusto/baerly-storage/config`. Holds both deploy
-metadata (`app`, `tenant`, `target`, `domain`, `cloudflareAccess`,
-`requiredSecrets`, `observability`) AND the runtime schema map.
+Scaffold-aware: lives at `@gusto/baerly-storage/config`. Holds both deploy metadata (`app`, `tenant`, `target`, `domain`, `cloudflareAccess`, `requiredSecrets`, `observability`) AND the runtime schema map.
 
 ```ts
 import { defineConfig } from "@gusto/baerly-storage/config";
@@ -429,39 +351,17 @@ export default defineConfig({
 });
 ```
 
-Schemas: any [StandardSchema v1](https://standardschema.dev) validator
-(Zod 3.24+, Valibot 0.36+, ArkType 2.0+). Validation runs on the
-post-image: `update` and `replace` see the full doc, not just the
-patch. Failures → `BaerlyError{code:"SchemaError", issues:[…]}`,
-mapped to HTTP 400. Validation is write-path only — reads, export, and
-replay never re-validate, so a schema change never retroactively rejects
-existing rows.
+Schemas: any [StandardSchema v1](https://standardschema.dev) validator (Zod 3.24+, Valibot 0.36+, ArkType 2.0+). Validation runs on the post-image: `update` and `replace` see the full doc, not just the patch. Failures → `BaerlyError{code:"SchemaError", issues:[…]}`, mapped to HTTP 400. Validation is write-path only — reads, export, and replay never re-validate, so a schema change never retroactively rejects existing rows.
 
-**Author `_id` as required, not `.optional()`.** The validator runs
-on the post-image — by the time it fires, the server has already
-filled in a UUIDv7 `_id` for inserts that omit it, so every row the
-validator sees has `_id` present. Declaring `_id: z.string()`
-(required) matches that runtime invariant. `Collection<T>.insert`
-still accepts a doc without `_id` (the public signature is
-`insert(doc: Partial<T> & DocumentData)`), so authoring `_id` as
-required does not break the "omit and let the server mint it" path.
-The win is on the read side: `db.collection("tickets").all()` is
-typed `Ticket[]` with `_id: string` (required), so route handlers
-and response schemas don't need a parallel "\_id-required" row type.
+**Author `_id` as required, not `.optional()`.** The validator runs on the post-image — by the time it fires, the server has already filled in a UUIDv7 `_id` for inserts that omit it, so every row the validator sees has `_id` present. Declaring `_id: z.string()` (required) matches that runtime invariant. `Collection<T>.insert` still accepts a doc without `_id` (the public signature is `insert(doc: Partial<T> & DocumentData)`), so authoring `_id` as required does not break the "omit and let the server mint it" path. The win is on the read side: `db.collection("tickets").all()` is typed `Ticket[]` with `_id: string` (required), so route handlers and response schemas don't need a parallel "\_id-required" row type.
 
-`_id` is server-minted (UUIDv7, sorts by mint time) — there is no
-exported id generator, and minting one client-side is unsupported.
-For a write that must reference its own id, write the parent first and
-read back the `_id` the server returns; design cross-collection writes
-parent-first with cleanup, not by pre-minting ids.
+`_id` is server-minted (UUIDv7, sorts by mint time) — there is no exported id generator, and minting one client-side is unsupported. For a write that must reference its own id, write the parent first and read back the `_id` the server returns; design cross-collection writes parent-first with cleanup, not by pre-minting ids.
 
-Do not declare `indexes`: they are validated at `Db.create` but never
-speed up or change a read, which folds the whole snapshot and log, and
-change no storage call a write makes.
+Do not declare `indexes`: they are validated at `Db.create` but never speed up or change a read, which folds the whole snapshot and log, and change no storage call a write makes.
 
 ## `createBaerlyClient` (browser / Node HTTP client)
 
-*When NOT to use: server-side in the same process as `Db` — call `Db`/`Collection` directly; the client is for out-of-process / browser callers.*
+_When NOT to use: server-side in the same process as `Db` — call `Db`/`Collection` directly; the client is for out-of-process / browser callers._
 
 ```ts
 import type config from "./baerly.config"; // type-only — server adapter stays out of the SPA bundle
@@ -474,8 +374,7 @@ const client = createBaerlyClient<typeof config>({
 await client.collection("tickets").where({ status: "open" }).all();
 ```
 
-`ClientCollection<T>` mirrors `Collection<T>` but every terminal accepts a
-trailing `TerminalOptions`:
+`ClientCollection<T>` mirrors `Collection<T>` but every terminal accepts a trailing `TerminalOptions`:
 
 ```ts
 interface TerminalOptions {
@@ -485,19 +384,13 @@ interface TerminalOptions {
 await client.collection("tickets").all({ signal: ac.signal });
 ```
 
-That extra options bag is the **only** API difference between
-`Collection<T>` and `ClientCollection<T>`. Same modifiers, same terminals,
-same predicates.
+That extra options bag is the **only** API difference between `Collection<T>` and `ClientCollection<T>`. Same modifiers, same terminals, same predicates.
 
 `onWarning(w)` gets server warnings on successful writes; see RECIPES.md, `CapacityExceeded`.
 
 ## Long-poll: `/v1/since`
 
-`GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that
-streams mutations without WebSockets. The server holds the request
-open for ~25 s; if new log entries land in that window it flushes
-them immediately, otherwise it returns an empty batch with the
-cursor unchanged.
+`GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that streams mutations without WebSockets. The server holds the request open for ~25 s; if new log entries land in that window it flushes them immediately, otherwise it returns an empty batch with the cursor unchanged.
 
 ```ts
 // Wire shape (returned raw — not wrapped in HttpOkEnvelope):
@@ -519,21 +412,9 @@ interface LogEntry {
 }
 ```
 
-**Cursor priming.** First call: pass `cursor=` (empty string). The
-server's fast path returns immediately _iff_ the log already has
-entries for this collection — you get `events: [...]` and an opaque
-`next_cursor`. **If the collection is empty,
-the first call blocks for the full long-poll budget (~25 s) before
-returning `events: []` with `next_cursor: ''`.** Either prime by
-inserting one row first if you need an immediate response, or budget
-your client / test for the full timeout. Subsequent calls pass the
-returned cursor back — treat it as an opaque string, and
-`events` is empty iff the budget elapsed with no new writes
-(`next_cursor` unchanged).
+**Cursor priming.** First call: pass `cursor=` (empty string). The server's fast path returns immediately _iff_ the log already has entries for this collection — you get `events: [...]` and an opaque `next_cursor`. **If the collection is empty, the first call blocks for the full long-poll budget (~25 s) before returning `events: []` with `next_cursor: ''`.** Either prime by inserting one row first if you need an immediate response, or budget your client / test for the full timeout. Subsequent calls pass the returned cursor back — treat it as an opaque string, and `events` is empty iff the budget elapsed with no new writes (`next_cursor` unchanged).
 
-**Test-mode tuning.** Vitest's default per-test timeout is 5 s; the
-long-poll's 25 s budget will dominate that. Shrink it on the worker
-factory under a test-only env switch:
+**Test-mode tuning.** Vitest's default per-test timeout is 5 s; the long-poll's 25 s budget will dominate that. Shrink it on the worker factory under a test-only env switch:
 
 ```ts
 export default baerlyWorker((env) => ({
@@ -545,33 +426,15 @@ export default baerlyWorker((env) => ({
 }));
 ```
 
-In `vitest.config.mts`'s miniflare bindings, set them as numbers
-(`SINCE_TIMEOUT_MS: 2000`, `SINCE_POLL_INTERVAL_MS: 50`) so the
-factory sees `number | undefined` without runtime coercion. Don't
-shrink `sinceTimeoutMs` in production code paths — it multiplies the
-R2 class-A op count per idle long-poll connection.
+In `vitest.config.mts`'s miniflare bindings, set them as numbers (`SINCE_TIMEOUT_MS: 2000`, `SINCE_POLL_INTERVAL_MS: 50`) so the factory sees `number | undefined` without runtime coercion. Don't shrink `sinceTimeoutMs` in production code paths — it multiplies the R2 class-A op count per idle long-poll connection.
 
-React apps use `@gusto/baerly-storage/client/react` (see next
-section) instead of poking `/v1/since` by hand; hand-rolled
-subscribers in other frameworks `fetch` it directly. The wire shape
-above is the public contract; there is no cursor-tailing helper.
+React apps use `@gusto/baerly-storage/client/react` (see next section) instead of poking `/v1/since` by hand; hand-rolled subscribers in other frameworks `fetch` it directly. The wire shape above is the public contract; there is no cursor-tailing helper.
 
-**Handle `410 CursorExpired` or your loop will spin.** The cursor never
-works again: back off, re-read, then restart with `cursor=` (empty).
-Causes: RECIPES.md, `CursorExpired`.
+**Handle `410 CursorExpired` or your loop will spin.** The cursor never works again: back off, re-read, then restart with `cursor=` (empty). Causes: RECIPES.md, `CursorExpired`.
 
 ## React: `createBaerlyReact`
 
-`@gusto/baerly-storage/client/react` exports one factory,
-`createBaerlyReact<typeof config>()`. Call it once and export the
-result; it returns `{ BaerlyProvider, useQuery, useMutation,
-useBaerlyClient }` all bound to your config, so a `useQuery` /
-`useMutation` callback's `c.collection("notes")` infers the real row
-type — **no `as Promise<Note[]>` cast**. (React context can't carry a
-generic to the hooks; binding once at the factory is what threads it.)
-The provider owns a shared `/v1/since` long-poll per `(client,
-collection)`; idle cycles cost zero list reads, and any non-empty batch
-invalidates every `useQuery` whose chain touches the firing collection.
+`@gusto/baerly-storage/client/react` exports one factory, `createBaerlyReact<typeof config>()`. Call it once and export the result; it returns `{ BaerlyProvider, useQuery, useMutation, useBaerlyClient }` all bound to your config, so a `useQuery` / `useMutation` callback's `c.collection("notes")` infers the real row type — **no `as Promise<Note[]>` cast**. (React context can't carry a generic to the hooks; binding once at the factory is what threads it.) The provider owns a shared `/v1/since` long-poll per `(client, collection)`; idle cycles cost zero list reads, and any non-empty batch invalidates every `useQuery` whose chain touches the firing collection.
 
 ```ts
 // src/web/client.ts — wire the client + bound hooks once.
@@ -613,16 +476,11 @@ const [mutate, { isPending, error }] = useMutation();
 await mutate((c) => c.collection("notes").insert({ body }));
 ```
 
-> No type parameter (`createBaerlyReact()`) gives an unbound surface —
-> collection names widen to `string`, rows to `DocumentData` — matching
-> the in-process `Db.collection` fallback. There are no loose hooks to
-> import directly: an unbound hook can't see the config, so binding at
-> the factory is the only path.
+> No type parameter (`createBaerlyReact()`) gives an unbound surface — collection names widen to `string`, rows to `DocumentData` — matching the in-process `Db.collection` fallback. There are no loose hooks to import directly: an unbound hook can't see the config, so binding at the factory is the only path.
 
 ## HTTP wire format
 
-The JS SDK is the canonical path. Reach for `curl` only when
-debugging. Mutation bodies are wrapped:
+The JS SDK is the canonical path. Reach for `curl` only when debugging. Mutation bodies are wrapped:
 
 | Route                          | Body              | Response         |
 | ------------------------------ | ----------------- | ---------------- |
@@ -631,57 +489,31 @@ debugging. Mutation bodies are wrapped:
 | `PUT    /v1/c/:collection/:id` | `{"doc":{...}}`   | `200 {modified}` |
 | `DELETE /v1/c/:collection/:id` | —                 | `204`            |
 
-Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
-`GET /v1/since?collection=…&cursor=…`) take no body and return
-`{ data, _meta }` or a route-specific envelope. A flat `POST` body
-(no `doc` wrapper) returns
-`400 SchemaError "Request body must be { doc: object }"` — wording is
-locked by `assertJsonBodyField` in the kernel.
-`POST` accepts `"mintedId"` (UUIDv7 = `doc._id`): resends replay a matching
-live row, else `AlreadyExists`. Deletion permits reinsertion; each auto-ID
-`insert(doc)` mints anew. See RECIPES.md.
+Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`, `GET /v1/since?collection=…&cursor=…`) take no body and return `{ data, _meta }` or a route-specific envelope. A flat `POST` body (no `doc` wrapper) returns `400 SchemaError "Request body must be { doc: object }"` — wording is locked by `assertJsonBodyField` in the kernel. `POST` accepts `"mintedId"` (UUIDv7 = `doc._id`): resends replay a matching live row, else `AlreadyExists`. Deletion permits reinsertion; each auto-ID `insert(doc)` mints anew. See RECIPES.md.
 
 ### Liveness probe (`GET /v1/healthz`)
 
-`baerlyWorker` and `baerlyNode` both mount an anonymous
-`GET /v1/healthz` → `200 {"ok":true}`. It is checked **before** the
-verifier and observability, so it never 401s and never floods your
-logs — wire your platform's liveness/readiness probe straight to it.
-If your probe path is fixed to something else (a k8s readiness path,
-say), put a custom route in front of the kernel (see "Recipe — custom
-routes in front of `baerlyNode`" below).
+`baerlyWorker` and `baerlyNode` both mount an anonymous `GET /v1/healthz` → `200 {"ok":true}`. It is checked **before** the verifier and observability, so it never 401s and never floods your logs — wire your platform's liveness/readiness probe straight to it. If your probe path is fixed to something else (a k8s readiness path, say), put a custom route in front of the kernel (see "Recipe — custom routes in front of `baerlyNode`" below).
 
 ### Machine contract (`GET /v1/spec`)
 
-`baerlyWorker` and `baerlyNode` both mount an anonymous
-`GET /v1/spec` → the machine-readable contract IR (error codes +
-HTTP status, predicate operators, method/route tables) — the same
-data shipped as `dist/baerly.spec.json`. It runs the verifier
-tolerantly: an unauthenticated probe gets the static contract (no
-401), and a request that the verifier accepts additionally gets a
-`collections` array of declared collection + index names.
+`baerlyWorker` and `baerlyNode` both mount an anonymous `GET /v1/spec` → the machine-readable contract IR (error codes + HTTP status, predicate operators, method/route tables) — the same data shipped as `dist/baerly.spec.json`. It runs the verifier tolerantly: an unauthenticated probe gets the static contract (no 401), and a request that the verifier accepts additionally gets a `collections` array of declared collection + index names.
 
 ### Read modifiers (query params)
 
-`GET /v1/c/:collection` accepts three JSON-encoded query params; all are
-optional and compose:
+`GET /v1/c/:collection` accepts three JSON-encoded query params; all are optional and compose:
 
-| Param     | Encodes                                   | Wire example                              |
-| --------- | ----------------------------------------- | ----------------------------------------- |
-| `?where=` | `PredicateWire` (see "Wire format" above) | `?where=%7B%22clauses%22%3A%5B%5D%7D`     |
-| `?order=` | `{ [field]: "asc" \| "desc" }`            | `?order=%7B%22sent_at%22%3A%22desc%22%7D` |
-| `?limit=` | bare integer (no JSON wrapper)            | `?limit=50`                               |
+| Param | Encodes | Wire example |
+| --- | --- | --- |
+| `?where=` | `PredicateWire` (see "Wire format" above) | `?where=%7B%22clauses%22%3A%5B%5D%7D` |
+| `?order=` | `{ [field]: "asc" \| "desc" }` | `?order=%7B%22sent_at%22%3A%22desc%22%7D` |
+| `?limit=` | bare integer (no JSON wrapper) | `?limit=50` |
 
-`?order=` and `?where=` are JSON, **not** Rails-style `field:asc` —
-the kernel `JSON.parse`s them and returns `400 SchemaError` on a flat
-string. Always `encodeURIComponent(JSON.stringify(spec))`. The JS SDK
-(`createBaerlyClient`) and the React hooks build these for you; reach
-for raw URLs only when scripting or when porting another framework's
-client.
+`?order=` and `?where=` are JSON, **not** Rails-style `field:asc` — the kernel `JSON.parse`s them and returns `400 SchemaError` on a flat string. Always `encodeURIComponent(JSON.stringify(spec))`. The JS SDK (`createBaerlyClient`) and the React hooks build these for you; reach for raw URLs only when scripting or when porting another framework's client.
 
 ## Adapter factories
 
-*On Cloudflare Workers use `r2BindingStorage(env.BUCKET)` (the R2 binding), NOT the S3-credentials factory — credential-based factories assume `fetch` + Node TLS, not the Workers runtime.*
+_On Cloudflare Workers use `r2BindingStorage(env.BUCKET)` (the R2 binding), NOT the S3-credentials factory — credential-based factories assume `fetch` + Node TLS, not the Workers runtime._
 
 ```ts
 // Cloudflare Worker entry
@@ -710,28 +542,11 @@ baerlyNode({
 }).listen(PORT);
 ```
 
-**Single-tenant CF Access.** Vanilla CF Access JWTs carry `sub`/`email`
-but no `tenant` claim. Pin the tenant from env instead of a claim:
-`cloudflareAccess({ teamDomain, audienceTag, tenantPrefix: "main" })`.
-Same option is available on `bearerJwt`.
+**Single-tenant CF Access.** Vanilla CF Access JWTs carry `sub`/`email` but no `tenant` claim. Pin the tenant from env instead of a claim: `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix: "main" })`. Same option is available on `bearerJwt`.
 
-**Local dev (`wrangler dev`, no Vite).** Declare `auth: "none"` in
-`baerly.config.ts` for the dev posture — the adapter synthesizes a
-verifier that pins every request to `config.tenant` without consulting
-the `Authorization` header. Swap to `auth: "shared-secret"` (or pass a
-custom `Verifier` on the factory) when you're ready to gate by wire
-credentials. Production CF Worker recipes layer CF Access in front of
-the Worker route; the verifier reads the resulting JWT:
+**Local dev (`wrangler dev`, no Vite).** Declare `auth: "none"` in `baerly.config.ts` for the dev posture — the adapter synthesizes a verifier that pins every request to `config.tenant` without consulting the `Authorization` header. Swap to `auth: "shared-secret"` (or pass a custom `Verifier` on the factory) when you're ready to gate by wire credentials. Production CF Worker recipes layer CF Access in front of the Worker route; the verifier reads the resulting JWT:
 
-**`auth` only gates the kernel's HTTP router.** `auth: "none"` /
-`"shared-secret"` is read by `baerlyWorker` / `baerlyNode` / the
-underlying `createRouter` — it controls who can hit `/v1/*`. If you
-use `Db` directly (no `createRouter`, no `baerlyWorker`/`baerlyNode`,
-e.g. server-internal jobs or your own Hono router), `auth` is
-inert: every `Db.create` callsite already carries an explicit
-`tenant:`, and your handler's own auth layer decides who reaches
-the call. Set `auth: "none"` in the config to silence the typecheck
-requirement in that case.
+**`auth` only gates the kernel's HTTP router.** `auth: "none"` / `"shared-secret"` is read by `baerlyWorker` / `baerlyNode` / the underlying `createRouter` — it controls who can hit `/v1/*`. If you use `Db` directly (no `createRouter`, no `baerlyWorker`/`baerlyNode`, e.g. server-internal jobs or your own Hono router), `auth` is inert: every `Db.create` callsite already carries an explicit `tenant:`, and your handler's own auth layer decides who reaches the call. Set `auth: "none"` in the config to silence the typecheck requirement in that case.
 
 ```ts
 // baerly.config.ts
@@ -741,9 +556,7 @@ export default defineConfig({
   tenant: "main",
   target: "cloudflare",
   auth: "none", // dev only — production swaps to "shared-secret" or a custom Verifier
-  collections: {
-    /* … */
-  },
+  collections: {/* … */},
 });
 
 // src/server/index.ts
@@ -752,53 +565,29 @@ import config from "../../baerly.config.ts";
 export default baerlyWorker(() => ({ config }));
 ```
 
-`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from
-`@gusto/baerly-storage/node` are re-exports of one factory family — same
-shape (bucket + credentials), all hide their request signer (SigV4 for
-S3/R2/MinIO, GOOG4-HMAC for GCS) and XML parsing behind the package
-boundary.
+`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from `@gusto/baerly-storage/node` are re-exports of one factory family — same shape (bucket + credentials), all hide their request signer (SigV4 for S3/R2/MinIO, GOOG4-HMAC for GCS) and XML parsing behind the package boundary.
 
 ### Verifier presets
 
-`@gusto/baerly-storage/auth` ships three `Verifier` functions you can pass
-to `baerlyWorker({ verifier })` or `baerlyNode({ verifier })`. Each
-returns `VerifierResult | null` (null = 401 unauth; thrown
-`BaerlyError` = 500 operator fault — the dispatcher splits the
-codes deliberately so on-call paging targets operator faults only).
+`@gusto/baerly-storage/auth` ships three `Verifier` functions you can pass to `baerlyWorker({ verifier })` or `baerlyNode({ verifier })`. Each returns `VerifierResult | null` (null = 401 unauth; thrown `BaerlyError` = 500 operator fault — the dispatcher splits the codes deliberately so on-call paging targets operator faults only).
 
-| Preset             | Identity source                                               | Tenant derivation                                                                 |
-| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `sharedSecret`     | `Authorization: Bearer <secret>` with constant-time compare   | `tenantPrefix:` option (single-tenant only)                                       |
-| `bearerJwt`        | JWT over JWKS, `iss` + `aud` + `alg` allowlist                | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
-| `cloudflareAccess` | `Cf-Access-Jwt-Assertion` header (thin shim over `bearerJwt`) | Same as `bearerJwt`                                                               |
+| Preset | Identity source | Tenant derivation |
+| --- | --- | --- |
+| `sharedSecret` | `Authorization: Bearer <secret>` with constant-time compare | `tenantPrefix:` option (single-tenant only) |
+| `bearerJwt` | JWT over JWKS, `iss` + `aud` + `alg` allowlist | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
+| `cloudflareAccess` | `Cf-Access-Jwt-Assertion` header (thin shim over `bearerJwt`) | Same as `bearerJwt` |
 
 ```ts
 import { sharedSecret, bearerJwt, cloudflareAccess } from "@gusto/baerly-storage/auth";
 ```
 
-**`tenantPrefix:` (on `bearerJwt` and `cloudflareAccess`).** Pins
-every verified request to a fixed tenant, bypassing claim lookup.
-Use this in single-tenant deployments where the IdP doesn't ship a
-tenant claim — the default `tenantClaim: "tenant"` would 401 every
-request because vanilla CF Access JWTs carry only `sub`/`email`.
-Signature, audience, and expiry checks are still enforced; only
-tenant derivation is replaced.
+**`tenantPrefix:` (on `bearerJwt` and `cloudflareAccess`).** Pins every verified request to a fixed tenant, bypassing claim lookup. Use this in single-tenant deployments where the IdP doesn't ship a tenant claim — the default `tenantClaim: "tenant"` would 401 every request because vanilla CF Access JWTs carry only `sub`/`email`. Signature, audience, and expiry checks are still enforced; only tenant derivation is replaced.
 
-**Why a function and not a class?** The source repo's
-`docs/guide/auth.md` records the properties the shape upholds and the
-rejected alternatives (class hierarchy, middleware chain, closed enum,
-kernel-side composition).
+**Why a function and not a class?** The source repo's `docs/guide/auth.md` records the properties the shape upholds and the rejected alternatives (class hierarchy, middleware chain, closed enum, kernel-side composition).
 
 ## Observability
 
-`baerlyWorker` and `baerlyNode` emit **one canonical log line per
-HTTP request** on stdout (default level `info`). Background work
-(compactor / GC / `runScheduledMaintenance`) emits a separate
-`unit_of_work: "maintenance"` line per tick. The Cloudflare adapter
-is JSON-only (Workers have no TTY); the Node adapter auto-selects a
-human-readable single-line shape when `process.stdout.isTTY ===
-true`. Sinks plug in via `observability.sink` on the factory
-options.
+`baerlyWorker` and `baerlyNode` emit **one canonical log line per HTTP request** on stdout (default level `info`). Background work (compactor / GC / `runScheduledMaintenance`) emits a separate `unit_of_work: "maintenance"` line per tick. The Cloudflare adapter is JSON-only (Workers have no TTY); the Node adapter auto-selects a human-readable single-line shape when `process.stdout.isTTY === true`. Sinks plug in via `observability.sink` on the factory options.
 
 ```json
 {
@@ -819,24 +608,22 @@ options.
 
 ### Field reference
 
-| Field                                          | Meaning                                                                              |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `request_id`                                   | Correlation key. Set from `X-Request-Id` if provided, else minted fresh.             |
-| `method` / `path` / `status`                   | HTTP request line + response code.                                                   |
-| `duration_ms`                                  | `performance.now()` delta, monotonic wall-clock.                                     |
-| `outcome`                                      | `"read"`/`"committed"` (<400), `"conflict"` (409), `"refused"` (capacity), `"error"`. |
-| `db.storage.class_a_ops_total`                 | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant.                       |
-| `db.storage.class_b_ops_total`                 | GET count. S3-pricing Class B.                                                       |
-| `db.storage.<op>.calls_total`                  | Per-op breakdown for `get` / `put` / `delete` / `list`.                              |
-| `db.storage.<op>.duration_ms_sum` / `_count`   | Per-call duration histogram.                                                         |
-| `db.write.class_a_ops_per_logical_write_*`     | Writer's per-`commit()` Class-A-op count.                                            |
-| `db.r2.put.412_total` / `429_total`            | CAS conflicts (412) and storage rate-limit hits (429).                               |
-| `db.read.<unit>_total`                         | `decoded_entries` (snapshot rows + log entries), `live_documents`, `returned_rows`.  |
-| `error.code` / `error.message` / `error.stack` | Failure-path only. `error.code` is `BaerlyErrorCode`.                                |
+| Field | Meaning |
+| --- | --- |
+| `request_id` | Correlation key. Set from `X-Request-Id` if provided, else minted fresh. |
+| `method` / `path` / `status` | HTTP request line + response code. |
+| `duration_ms` | `performance.now()` delta, monotonic wall-clock. |
+| `outcome` | `"read"`/`"committed"` (<400), `"conflict"` (409), `"refused"` (capacity), `"error"`. |
+| `db.storage.class_a_ops_total` | PUT + DELETE + LIST count. S3-pricing Class A — cost-dominant. |
+| `db.storage.class_b_ops_total` | GET count. S3-pricing Class B. |
+| `db.storage.<op>.calls_total` | Per-op breakdown for `get` / `put` / `delete` / `list`. |
+| `db.storage.<op>.duration_ms_sum` / `_count` | Per-call duration histogram. |
+| `db.write.class_a_ops_per_logical_write_*` | Writer's per-`commit()` Class-A-op count. |
+| `db.r2.put.412_total` / `429_total` | CAS conflicts (412) and storage rate-limit hits (429). |
+| `db.read.<unit>_total` | `decoded_entries` (snapshot rows + log entries), `live_documents`, `returned_rows`. |
+| `error.code` / `error.message` / `error.stack` | Failure-path only. `error.code` is `BaerlyErrorCode`. |
 
-Class-A / Class-B totals are the load-bearing fields — the cost
-model puts a per-request ceiling on Class-A ops and the canonical
-line is how you verify a deployed service stays under it.
+Class-A / Class-B totals are the load-bearing fields — the cost model puts a per-request ceiling on Class-A ops and the canonical line is how you verify a deployed service stays under it.
 
 ### Log levels
 
@@ -847,20 +634,11 @@ line is how you verify a deployed service stays under it.
 | `info`  | Default. Adds 2xx canonical lines and lifecycle events.         |
 | `debug` | Adds per-storage-op events. **High volume**; off in production. |
 
-Set `LOG_LEVEL` env var or the typed `observability.level` factory
-option. Sink wiring (Workers Analytics Engine, OTel, Datadog) lives
-in the source repo's `docs/guide/observability.md`.
+Set `LOG_LEVEL` env var or the typed `observability.level` factory option. Sink wiring (Workers Analytics Engine, OTel, Datadog) lives in the source repo's `docs/guide/observability.md`.
 
 ## Recipe — server-stamped trusted fields
 
-Use this shape when a column must come from the verified identity
-rather than the client request body (`sender_sub` on chat messages,
-`owner_id` on user-owned rows, `created_by` on audit logs). The
-HTTP routes `baerlyWorker` mounts under `/v1/c/:collection` accept the
-doc verbatim from the request body — they don't read the verifier
-identity into the row. Stamp it yourself in a custom route, then
-block direct client writes to the same collection so a malicious
-client can't supply the field by hand.
+Use this shape when a column must come from the verified identity rather than the client request body (`sender_sub` on chat messages, `owner_id` on user-owned rows, `created_by` on audit logs). The HTTP routes `baerlyWorker` mounts under `/v1/c/:collection` accept the doc verbatim from the request body — they don't read the verifier identity into the row. Stamp it yourself in a custom route, then block direct client writes to the same collection so a malicious client can't supply the field by hand.
 
 ```ts
 // src/server/index.ts
@@ -921,30 +699,13 @@ export default {
 } satisfies ExportedHandler<BaerlyEnv>;
 ```
 
-The client reads via the normal `GET /v1/c/messages` route and tails
-via `GET /v1/since?collection=messages&cursor=…` — both still served by
-`inner`. Only writes go through `/api/messages`. Reads stay uncapped and
-tenant-wide — scope and clamp them in your route too (see RECIPES.md).
+The client reads via the normal `GET /v1/c/messages` route and tails via `GET /v1/since?collection=messages&cursor=…` — both still served by `inner`. Only writes go through `/api/messages`. Reads stay uncapped and tenant-wide — scope and clamp them in your route too (see RECIPES.md).
 
-**Known limitations of this recipe.** The custom-route `Db.create` is
-a second instance — it doesn't share `baerlyWorker`'s
-`observableStorage(...)` wrapping (so custom-route writes don't land
-in the canonical-line storage counters). Worker point reads always reach
-storage and see direct SDK writes. For small chat-shaped apps the
-observability gap is being tracked as a follow-up. If you also need
-PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for
-each verb.
+**Known limitations of this recipe.** The custom-route `Db.create` is a second instance — it doesn't share `baerlyWorker`'s `observableStorage(...)` wrapping (so custom-route writes don't land in the canonical-line storage counters). Worker point reads always reach storage and see direct SDK writes. For small chat-shaped apps the observability gap is being tracked as a follow-up. If you also need PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for each verb.
 
 ## Recipe — custom routes in front of `baerlyNode`
 
-`baerlyNode(...).listen(port)` is the shortcut for the common case:
-no custom routes, the kernel owns the whole port. To put your own
-route in front of the kernel (a fixed-path health probe, a
-trusted-stamp write route à la the recipe above), grab the
-web-standard `fetch` handler off the handle instead of calling
-`.listen()`, and serve it yourself. `serve()` here is the same
-`@hono/node-server` entry `.listen()` uses internally — you're just
-taking ownership of the dispatch:
+`baerlyNode(...).listen(port)` is the shortcut for the common case: no custom routes, the kernel owns the whole port. To put your own route in front of the kernel (a fixed-path health probe, a trusted-stamp write route à la the recipe above), grab the web-standard `fetch` handler off the handle instead of calling `.listen()`, and serve it yourself. `serve()` here is the same `@hono/node-server` entry `.listen()` uses internally — you're just taking ownership of the dispatch:
 
 ```ts
 // src/server/index.ts
@@ -965,33 +726,20 @@ serve({
 });
 ```
 
-The handle's `fetch` is the documented embedding seam (it's also what
-the Vite dev middleware and tests consume) — there's no separate
-`createApp` to reach for. If you don't need a _custom_ probe path,
-skip all of this and point your platform at the built-in
-`GET /v1/healthz` (see above).
+The handle's `fetch` is the documented embedding seam (it's also what the Vite dev middleware and tests consume) — there's no separate `createApp` to reach for. If you don't need a _custom_ probe path, skip all of this and point your platform at the built-in `GET /v1/healthz` (see above).
 
-> **Monorepo note.** `@hono/node-server` (and its `hono` peer) ship
-> as dependencies of the Node adapter, so the `serve` import resolves
-> out of the box in a scaffolded app. In a monorepo that prunes
-> unused peers (e.g. `yarn workspaces focus` in CI), add
-> `@hono/node-server` to the app's own `dependencies` so the import
-> survives the prune.
+> **Monorepo note.** `@hono/node-server` (and its `hono` peer) ship as dependencies of the Node adapter, so the `serve` import resolves out of the box in a scaffolded app. In a monorepo that prunes unused peers (e.g. `yarn workspaces focus` in CI), add `@hono/node-server` to the app's own `dependencies` so the import survives the prune.
 
 ## Recipe — wrapping the client `fetch`
 
-`createBaerlyClient({ fetch: customFetcher })` is the one composable
-seam for cross-cutting HTTP concerns. The `Fetcher` type is one
-line:
+`createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns. The `Fetcher` type is one line:
 
 ```ts
 import { type Fetcher } from "@gusto/baerly-storage/client";
 // type Fetcher = (req: Request) => Promise<Response>;
 ```
 
-Wrappers compose as ordinary JavaScript functions: outermost sees
-the request first and the response last; innermost is closest to
-the network. Three recipes cover the common cases.
+Wrappers compose as ordinary JavaScript functions: outermost sees the request first and the response last; innermost is closest to the network. Three recipes cover the common cases.
 
 ### Hook callbacks (success / error)
 
@@ -1025,9 +773,7 @@ const client = createBaerlyClient({
 });
 ```
 
-`onSuccess` fires for **any** HTTP response that completes — 4xx and
-5xx included, because those are not thrown exceptions. Branch on
-`res.ok` if you want "2xx only."
+`onSuccess` fires for **any** HTTP response that completes — 4xx and 5xx included, because those are not thrown exceptions. Branch on `res.ok` if you want "2xx only."
 
 ### Retry on transient failures (GET only)
 
@@ -1044,12 +790,7 @@ const withRetry =
   };
 ```
 
-Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have
-succeeded on the server even when the client sees a 5xx (commit
-fence then network drop). Writes are CAS-guarded so duplicates
-don't corrupt state — but they may surface as `PreconditionFailed`.
-The `req.clone()` is required because a `Request` body is a
-one-shot stream.
+Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have succeeded on the server even when the client sees a 5xx (commit fence then network drop). Writes are CAS-guarded so duplicates don't corrupt state — but they may surface as `PreconditionFailed`. The `req.clone()` is required because a `Request` body is a one-shot stream.
 
 ### Refresh credentials on 401
 
@@ -1070,41 +811,26 @@ const withAuthRefresh =
   };
 ```
 
-If the refreshed call also returns 401, the wrapper returns that
-response unchanged — no second retry, avoiding an infinite refresh
-loop on a stale/revoked token. Wire sign-out / re-auth-prompt into
-the caller, not into this wrapper.
+If the refreshed call also returns 401, the wrapper returns that response unchanged — no second retry, avoiding an infinite refresh loop on a stale/revoked token. Wire sign-out / re-auth-prompt into the caller, not into this wrapper.
 
 ### Long-poll calls (`GET /v1/since`)
 
-The long-poll path routes through the same `Fetcher`. Retry,
-logging, and auth-refresh wrappers apply uniformly. If a wrapper
-needs to distinguish long-poll from one-shot reads, inspect
-`req.url` for `/v1/since`. Most wrappers don't need to.
+The long-poll path routes through the same `Fetcher`. Retry, logging, and auth-refresh wrappers apply uniformly. If a wrapper needs to distinguish long-poll from one-shot reads, inspect `req.url` for `/v1/since`. Most wrappers don't need to.
 
 ### Composition order
 
-The outer wrapper sees retries — `withRetry(withLogging(fetch))` logs
-each attempt; `withLogging(withRetry(fetch))` logs the final outcome
-once. Pick by what you want to observe.
+The outer wrapper sees retries — `withRetry(withLogging(fetch))` logs each attempt; `withLogging(withRetry(fetch))` logs the final outcome once. Pick by what you want to observe.
 
 ## Anti-patterns
 
-A few that compile but are wrong (full list, keyed by the exact error
-string you see: `cat node_modules/@gusto/baerly-storage/dist/RECIPES.md`):
+A few that compile but are wrong (full list, keyed by the exact error string you see: `cat node_modules/@gusto/baerly-storage/dist/RECIPES.md`):
 
 - Don't widen branded types (`UUID`, `ContentVersionId`) with `as string`.
 - Don't put `SHARED_SECRET` in the SPA bundle — it's server-to-server only.
 
 ## Where to look next
 
-- **A call you expected doesn't type-check?** The public surface is
-  additive-only locked, but the rare breaking change carries an
-  old→new migration in `dist/CHANGELOG.md` (`cat dist/CHANGELOG.md`). The
-  `.d.ts` types are canonical; the changelog is the recovery path.
-- Per-symbol JSDoc: read the `.d.ts` chunks in this directory
-  (`db-*.d.ts`, `index-*.d.ts`, `client-*.d.ts`, …) — the bundler
-  splits them; `cat dist/*.d.ts` gives the union.
-- Theoretical foundations + cost model: the repository's `docs/`
-  tree (`docs/about/`, `docs/spec/`).
+- **A call you expected doesn't type-check?** The public surface is additive-only locked, but the rare breaking change carries an old→new migration in `dist/CHANGELOG.md` (`cat dist/CHANGELOG.md`). The `.d.ts` types are canonical; the changelog is the recovery path.
+- Per-symbol JSDoc: read the `.d.ts` chunks in this directory (`db-*.d.ts`, `index-*.d.ts`, `client-*.d.ts`, …) — the bundler splits them; `cat dist/*.d.ts` gives the union.
+- Theoretical foundations + cost model: the repository's `docs/` tree (`docs/about/`, `docs/spec/`).
 - Common mistakes & recipes: `cat node_modules/@gusto/baerly-storage/dist/RECIPES.md`; deeper guides in the repo's `docs/guide/`.

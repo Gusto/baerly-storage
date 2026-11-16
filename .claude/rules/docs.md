@@ -12,5 +12,4 @@ related: ["../../docs/contributing/conventions/docs.md"]
 
 # docs/ rules
 
-Canonical content lives at [`docs/contributing/conventions/docs.md`](../../docs/contributing/conventions/docs.md).
-Read that file before editing anything under `docs/`.
+Canonical content lives at [`docs/contributing/conventions/docs.md`](../../docs/contributing/conventions/docs.md). Read that file before editing anything under `docs/`.

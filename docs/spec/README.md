@@ -10,56 +10,31 @@ related: [sync-protocol.md, log-entry-shape.md]
 
 # `docs/spec/` — protocol & contracts
 
-Stable specs and protocol-adjacent analyses. The "what" lives here;
-implementation lives in `packages/`. Entries are grouped by role; the
-same grouping is recorded per file as the `doc_type:` frontmatter field.
+Stable specs and protocol-adjacent analyses. The "what" lives here; implementation lives in `packages/`. Entries are grouped by role; the same grouping is recorded per file as the `doc_type:` frontmatter field.
 
 ## Current contracts
 
 Binding descriptions of how the live protocol behaves today.
 
-- [sync-protocol.md](sync-protocol.md) — atomic document writes over
-  object storage via single-write commit: the numbered `log/<seq>`
-  create is the commit, `current.json` is compaction state, and readers
-  discover the tail by forward-probe. Decision record:
-  [ADR-004](../adr/004-single-write-commit.md).
-- [storage-compatibility.md](storage-compatibility.md) — the minimal S3 API
-  surface the protocol depends on.
-- [capabilities.md](capabilities.md) — required-vs-optional storage
-  capability split (CAS mandatory; supportsAbort optional).
-- [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire
-  contract. Debezium-style CDC envelope; versionless/additive-only
-  `0.3.0` public early-access baseline, with pre-1.0 breaks following
-  the compatibility policy recorded there.
+- [sync-protocol.md](sync-protocol.md) — atomic document writes over object storage via single-write commit: the numbered `log/<seq>` create is the commit, `current.json` is compaction state, and readers discover the tail by forward-probe. Decision record: [ADR-004](../adr/004-single-write-commit.md).
+- [storage-compatibility.md](storage-compatibility.md) — the minimal S3 API surface the protocol depends on.
+- [capabilities.md](capabilities.md) — required-vs-optional storage capability split (CAS mandatory; supportsAbort optional).
+- [log-entry-shape.md](log-entry-shape.md) — the `LogEntry` wire contract. Debezium-style CDC envelope; versionless/additive-only `0.3.0` public early-access baseline, with pre-1.0 breaks following the compatibility policy recorded there.
 
 ## Semantic references
 
-- [json-merge-patch.md](json-merge-patch.md) — RFC 7396 plus the
-  algebraic properties and boundaries for safe sparse-patch handling.
-  API updates accept merge patches; committed `U` log entries are full
-  post-images, not coalesced patches.
+- [json-merge-patch.md](json-merge-patch.md) — RFC 7396 plus the algebraic properties and boundaries for safe sparse-patch handling. API updates accept merge patches; committed `U` log entries are full post-images, not coalesced patches.
 
 ## Verification
 
-- [causal-consistency-checking.md](causal-consistency-checking.md)
-  — the low-complexity property-checking technique used to verify
-  the sync protocol stays causally consistent under fault injection.
-- [scale-ceilings.md](scale-ceilings.md) — where every published scale
-  limit comes from: the fold cost model, the measured per-host snapshot
-  ceilings `C` / `E`, collection fan-out, and the hot-prefix write wall.
-  The `about/` pages state the figures a reader acts on; this one owns
-  their provenance.
+- [causal-consistency-checking.md](causal-consistency-checking.md) — the low-complexity property-checking technique used to verify the sync protocol stays causally consistent under fault injection.
+- [scale-ceilings.md](scale-ceilings.md) — where every published scale limit comes from: the fold cost model, the measured per-host snapshot ceilings `C` / `E`, collection fan-out, and the hot-prefix write wall. The `about/` pages state the figures a reader acts on; this one owns their provenance.
 
 ## Adapter edge cases
 
-- [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md) — edge cases
-  for `ListObjectsV2` XML responses; companion to
-  `manual-e2e/fixtures/s3-key-escaping/`.
+- [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md) — edge cases for `ListObjectsV2` XML responses; companion to `manual-e2e/fixtures/s3-key-escaping/`.
 
 ## Historical, rationale & evidence
 
-- [prior-art.md](prior-art.md) — comparison against object-storage
-  databases and adjacent coordination systems.
-- [attachments/](attachments/) — regenerated benchmark baselines and
-  rendering evidence referenced by the specs above; treated as
-  unformatted data, not prose.
+- [prior-art.md](prior-art.md) — comparison against object-storage databases and adjacent coordination systems.
+- [attachments/](attachments/) — regenerated benchmark baselines and rendering evidence referenced by the specs above; treated as unformatted data, not prose.

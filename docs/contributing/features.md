@@ -9,24 +9,13 @@ related: ["../architecture.md", "../spec/README.md", "../adr/README.md"]
 
 # Features → code map
 
-A feature-oriented index for agents and humans landing in the repo who
-know _what_ they want to change but not _where_ it lives. Each row is a
-user-facing capability and the source files, tests, and docs that
-implement or describe it.
+A feature-oriented index for agents and humans landing in the repo who know _what_ they want to change but not _where_ it lives. Each row is a user-facing capability and the source files, tests, and docs that implement or describe it.
 
-For a code-oriented view (read-this-first lifecycle), see the module map
-in [CLAUDE.md](../../CLAUDE.md) and [architecture.md](../architecture.md).
+For a code-oriented view (read-this-first lifecycle), see the module map in [CLAUDE.md](../../CLAUDE.md) and [architecture.md](../architecture.md).
 
 ## Public API surface
 
-The `Db` class is the entry point. `db.collection<T>(name)` returns a
-typed `Collection<T>` carrying the locked SQL-shape API
-(`first` / `all` / `count` / `get` / `insert` / `update` / `replace` /
-`delete`) and the predicate AST (`where` / `order` / `limit`).
-All public methods carry JSDoc with `@example` blocks — your IDE or
-`tsgo` is the canonical reference. Change notifications are
-delivered out-of-band by the HTTP
-`/v1/since?collection=<name>&cursor=<opaque>` long-poll route.
+The `Db` class is the entry point. `db.collection<T>(name)` returns a typed `Collection<T>` carrying the locked SQL-shape API (`first` / `all` / `count` / `get` / `insert` / `update` / `replace` / `delete`) and the predicate AST (`where` / `order` / `limit`). All public methods carry JSDoc with `@example` blocks — your IDE or `tsgo` is the canonical reference. Change notifications are delivered out-of-band by the HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route.
 
 - [`packages/server/src/db.ts`](../../packages/server/src/db.ts) — `Db` class
 - [`packages/server/src/collection.ts`](../../packages/server/src/collection.ts) — `Collection<T>` verbs
@@ -34,120 +23,65 @@ delivered out-of-band by the HTTP
 
 ## Causal consistency
 
-The hard invariant of the system. Writes from one client become visible
-to others in an order consistent with happened-before.
+The hard invariant of the system. Writes from one client become visible to others in an order consistent with happened-before.
 
-- Implementation: [`packages/server/src/writer.ts`](../../packages/server/src/writer.ts),
-  [`packages/server/src/query.ts`](../../packages/server/src/query.ts)
-- Constants: [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
-  (`LAG_WINDOW_MILLIS` clock-skew tolerance)
-- Tests:
-  [`tests/unit/consistency.test.ts`](../../tests/unit/consistency.test.ts)
-  (state-machine model),
-  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts)
-  (property-based, runs against Toxiproxy)
-- Theory: [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md),
-  [`docs/spec/causal-consistency-checking.md`](../spec/causal-consistency-checking.md)
+- Implementation: [`packages/server/src/writer.ts`](../../packages/server/src/writer.ts), [`packages/server/src/query.ts`](../../packages/server/src/query.ts)
+- Constants: [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts) (`LAG_WINDOW_MILLIS` clock-skew tolerance)
+- Tests: [`tests/unit/consistency.test.ts`](../../tests/unit/consistency.test.ts) (state-machine model), [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts) (property-based, runs against Toxiproxy)
+- Theory: [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md), [`docs/spec/causal-consistency-checking.md`](../spec/causal-consistency-checking.md)
 
 ## JSON Merge Patch (RFC 7386)
 
 How partial updates merge into existing documents.
 
 - Implementation: [`packages/protocol/src/json.ts`](../../packages/protocol/src/json.ts)
-- Tests: [`packages/protocol/src/json.test.ts`](../../packages/protocol/src/json.test.ts)
-  (always green — pure unit test)
+- Tests: [`packages/protocol/src/json.test.ts`](../../packages/protocol/src/json.test.ts) (always green — pure unit test)
 - Docs: [`docs/spec/json-merge-patch.md`](../spec/json-merge-patch.md)
 
 ## Vendorless S3 client
 
-Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship
-`@aws-sdk/client-s3`. The implementation lives in the Node adapter as
-one impl of the `Storage` interface; consumers can substitute their
-own.
+Direct HTTP to S3-compatible APIs via `aws4fetch`. We don't ship `@aws-sdk/client-s3`. The implementation lives in the Node adapter as one impl of the `Storage` interface; consumers can substitute their own.
 
-- Implementation: [`packages/adapter-node/src/s3-http.ts`](../../packages/adapter-node/src/s3-http.ts)
-  (`S3HttpStorage`), [`packages/adapter-node/src/xml.ts`](../../packages/adapter-node/src/xml.ts)
-  (XML parsing for ListObjectsV2)
-- Tests: [`packages/adapter-node/src/s3-http.test.ts`](../../packages/adapter-node/src/s3-http.test.ts)
-  (pure-unit, vi.fn-stubbed fetch),
-  [`packages/adapter-node/src/xml.test.ts`](../../packages/adapter-node/src/xml.test.ts),
-  [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts)
-  (multi-backend, needs credentials)
-- Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md),
-  [`docs/spec/s3-xml-escaping-cases.md`](../spec/s3-xml-escaping-cases.md)
+- Implementation: [`packages/adapter-node/src/s3-http.ts`](../../packages/adapter-node/src/s3-http.ts) (`S3HttpStorage`), [`packages/adapter-node/src/xml.ts`](../../packages/adapter-node/src/xml.ts) (XML parsing for ListObjectsV2)
+- Tests: [`packages/adapter-node/src/s3-http.test.ts`](../../packages/adapter-node/src/s3-http.test.ts) (pure-unit, vi.fn-stubbed fetch), [`packages/adapter-node/src/xml.test.ts`](../../packages/adapter-node/src/xml.test.ts), [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts) (multi-backend, needs credentials)
+- Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md), [`docs/spec/s3-xml-escaping-cases.md`](../spec/s3-xml-escaping-cases.md)
 
 ## Native GCS client
 
-Google Cloud Storage over its **native** XML API — not the S3-interop
-endpoint, which scopes `If-Match` / `If-None-Match` to reads and cannot
-linearize the commit log. `GcsHttpStorage` drives GCS's own generation
-preconditions (`x-goog-if-generation-match`), signs with GOOG4-HMAC-SHA256
-(dependency-free WebCrypto, not `aws4fetch`), and carries the object
-`generation` as the opaque `Storage` etag. Reached via the `gcsStorage`
-factory (Node-only, HMAC interop keys) and the `gcs://` CLI bucket URI.
+Google Cloud Storage over its **native** XML API — not the S3-interop endpoint, which scopes `If-Match` / `If-None-Match` to reads and cannot linearize the commit log. `GcsHttpStorage` drives GCS's own generation preconditions (`x-goog-if-generation-match`), signs with GOOG4-HMAC-SHA256 (dependency-free WebCrypto, not `aws4fetch`), and carries the object `generation` as the opaque `Storage` etag. Reached via the `gcsStorage` factory (Node-only, HMAC interop keys) and the `gcs://` CLI bucket URI.
 
-- Implementation: [`packages/adapter-node/src/gcs-http.ts`](../../packages/adapter-node/src/gcs-http.ts)
-  (`GcsHttpStorage`), [`packages/adapter-node/src/storage-factories.ts`](../../packages/adapter-node/src/storage-factories.ts)
-  (`gcsStorage` factory), [`packages/adapter-node/src/gcs.ts`](../../packages/adapter-node/src/gcs.ts)
-  (curated `@gusto/baerly-storage/gcs` barrel), [`packages/adapter-node/src/credentials/goog4-signer.ts`](../../packages/adapter-node/src/credentials/goog4-signer.ts)
-  (GOOG4-HMAC signer), [`packages/adapter-node/src/gcs-admin.ts`](../../packages/adapter-node/src/gcs-admin.ts)
-  (Object Versioning probe for `doctor`)
-- Tests: [`packages/adapter-node/src/gcs-http.test.ts`](../../packages/adapter-node/src/gcs-http.test.ts)
-  (pure-unit, vi.fn-stubbed fetch),
-  [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts)
-  (`gcs` variant, needs credentials),
-  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts)
-  (`node-gcs` multi-writer causal cascade)
-- CLI: [`packages/cli/src/doctor/gcs.ts`](../../packages/cli/src/doctor/gcs.ts)
-  (`baerly doctor --bucket=gcs://` config checks)
-- Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md#native-gcs-xml-api),
-  [`docs/adr/006-native-gcs-adapter.md`](../adr/006-native-gcs-adapter.md)
+- Implementation: [`packages/adapter-node/src/gcs-http.ts`](../../packages/adapter-node/src/gcs-http.ts) (`GcsHttpStorage`), [`packages/adapter-node/src/storage-factories.ts`](../../packages/adapter-node/src/storage-factories.ts) (`gcsStorage` factory), [`packages/adapter-node/src/gcs.ts`](../../packages/adapter-node/src/gcs.ts) (curated `@gusto/baerly-storage/gcs` barrel), [`packages/adapter-node/src/credentials/goog4-signer.ts`](../../packages/adapter-node/src/credentials/goog4-signer.ts) (GOOG4-HMAC signer), [`packages/adapter-node/src/gcs-admin.ts`](../../packages/adapter-node/src/gcs-admin.ts) (Object Versioning probe for `doctor`)
+- Tests: [`packages/adapter-node/src/gcs-http.test.ts`](../../packages/adapter-node/src/gcs-http.test.ts) (pure-unit, vi.fn-stubbed fetch), [`tests/integration/conformance.test.ts`](../../tests/integration/conformance.test.ts) (`gcs` variant, needs credentials), [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts) (`node-gcs` multi-writer causal cascade)
+- CLI: [`packages/cli/src/doctor/gcs.ts`](../../packages/cli/src/doctor/gcs.ts) (`baerly doctor --bucket=gcs://` config checks)
+- Docs: [`docs/spec/storage-compatibility.md`](../spec/storage-compatibility.md#native-gcs-xml-api), [`docs/adr/006-native-gcs-adapter.md`](../adr/006-native-gcs-adapter.md)
 
 ## Time / clock-skew tolerance
 
-The protocol assumes loosely-synchronized clocks for log timestamps
-that downstream consumers inspect. Kernel ordering is by monotonic
-per-collection `seq`, not by wall-clock time; `LAG_WINDOW_MILLIS` is
-the named tolerance/property-test bound, not a reader-side rejection
-filter.
+The protocol assumes loosely-synchronized clocks for log timestamps that downstream consumers inspect. Kernel ordering is by monotonic per-collection `seq`, not by wall-clock time; `LAG_WINDOW_MILLIS` is the named tolerance/property-test bound, not a reader-side rejection filter.
 
-- Implementation: [`packages/protocol/src/time.ts`](../../packages/protocol/src/time.ts),
-  [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
+- Implementation: [`packages/protocol/src/time.ts`](../../packages/protocol/src/time.ts), [`packages/protocol/src/constants.ts`](../../packages/protocol/src/constants.ts)
 - Tests: [`packages/protocol/src/time.test.ts`](../../packages/protocol/src/time.test.ts)
 
 ## Error model
 
-Discriminated-union errors. Match on `error.code`, never `instanceof`.
-Rationale lives in the JSDoc on `BaerlyError`.
+Discriminated-union errors. Match on `error.code`, never `instanceof`. Rationale lives in the JSDoc on `BaerlyError`.
 
 - Implementation: [`packages/protocol/src/errors.ts`](../../packages/protocol/src/errors.ts)
 
 ## Branded types
 
-Nominal typing on top of `string` to keep UUIDs and content version
-IDs from being confused at protocol boundaries. See the
-"Conventions" section of [`CLAUDE.md`](../../CLAUDE.md).
+Nominal typing on top of `string` to keep UUIDs and content version IDs from being confused at protocol boundaries. See the "Conventions" section of [`CLAUDE.md`](../../CLAUDE.md).
 
-- Implementation: [`packages/protocol/src/types.ts`](../../packages/protocol/src/types.ts) (definitions and
-  boundary helpers `uuid()`, `uuidv7()`)
+- Implementation: [`packages/protocol/src/types.ts`](../../packages/protocol/src/types.ts) (definitions and boundary helpers `uuid()`, `uuidv7()`)
 
 ## Hashing / content addressing
 
 - Implementation: [`packages/protocol/src/hashing.ts`](../../packages/protocol/src/hashing.ts)
-- Tests:
-  [`packages/protocol/src/hashing.test.ts`](../../packages/protocol/src/hashing.test.ts)
-  (always green)
+- Tests: [`packages/protocol/src/hashing.test.ts`](../../packages/protocol/src/hashing.test.ts) (always green)
 
 ## Secondary indexes
 
-Indexes are declared under `BaerlyConfig.collections[*].indexes` and
-validated at `Db.create`. A declaration changes no storage call: writers
-maintain no index objects, and buckets from before 0.7 keep inert markers
-under `index/`
-([Legacy index markers](../spec/sync-protocol.md#legacy-index-markers)).
-Reads always fold the authoritative snapshot and log; index declarations
-do not accelerate reads or affect query membership. There is no
-manual-hint API on `Query<T>`.
+Indexes are declared under `BaerlyConfig.collections[*].indexes` and validated at `Db.create`. A declaration changes no storage call: writers maintain no index objects, and buckets from before 0.7 keep inert markers under `index/` ([Legacy index markers](../spec/sync-protocol.md#legacy-index-markers)). Reads always fold the authoritative snapshot and log; index declarations do not accelerate reads or affect query membership. There is no manual-hint API on `Query<T>`.
 
 ### Declaring an index
 
@@ -172,162 +106,67 @@ export default defineConfig({
 });
 ```
 
-`CollectionDefinition` is defined in
-[`packages/protocol/src/app-config.ts`](../../packages/protocol/src/app-config.ts);
-the per-index type lives at
-[`packages/protocol/src/indexes.ts`](../../packages/protocol/src/indexes.ts)
-as `IndexDefinition`. Server runtime helpers in
-[`packages/server/src/config.ts`](../../packages/server/src/config.ts)
-and
-[`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts)
-validate those protocol-owned shapes.
+`CollectionDefinition` is defined in [`packages/protocol/src/app-config.ts`](../../packages/protocol/src/app-config.ts); the per-index type lives at [`packages/protocol/src/indexes.ts`](../../packages/protocol/src/indexes.ts) as `IndexDefinition`. Server runtime helpers in [`packages/server/src/config.ts`](../../packages/server/src/config.ts) and [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts) validate those protocol-owned shapes.
 
 ### Read correctness
 
-Every read and mutation selection folds the complete snapshot and log,
-then applies the predicate, order, and limit. Declared, newly declared and
-filtered indexes, and any legacy markers, all leave query results
-unchanged. An empty result still pays the
-full fold cost; reads issue no index LISTs.
+Every read and mutation selection folds the complete snapshot and log, then applies the predicate, order, and limit. Declared, newly declared and filtered indexes, and any legacy markers, all leave query results unchanged. An empty result still pays the full fold cost; reads issue no index LISTs.
 
 ### Pointers
 
 - Declaration validation: [`packages/server/src/indexes.ts`](../../packages/server/src/indexes.ts).
 - Reads and mutation selection: [`packages/server/src/query.ts`](../../packages/server/src/query.ts).
-- Regression coverage: [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts),
-  [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts),
-  and [`tests/unit/declared-indexes-inert.test.ts`](../../tests/unit/declared-indexes-inert.test.ts)
-  (a declaration changes no storage call).
+- Regression coverage: [`packages/server/src/query.test.ts`](../../packages/server/src/query.test.ts), [`tests/integration/randomized.test.ts`](../../tests/integration/randomized.test.ts), and [`tests/unit/declared-indexes-inert.test.ts`](../../tests/unit/declared-indexes-inert.test.ts) (a declaration changes no storage call).
 - Contract: [Read algorithm](../spec/sync-protocol.md#read-algorithm).
 
 ## SQL export (`baerly export --target=postgres|sqlite|d1`)
 
-One-shot snapshot dump of a baerly-storage collection into a SQL-native
-database. Per-column types are inferred from the materialised L9
-snapshot (string / number / boolean / nested-object → SQL type per
-target dialect); `_id` is always emitted as the primary key.
-Implementation lives under `packages/cli/src/export/` as private CLI
-modules — exposed only through the `baerly` CLI surface, not as a
-publishable package.
+One-shot snapshot dump of a baerly-storage collection into a SQL-native database. Per-column types are inferred from the materialised L9 snapshot (string / number / boolean / nested-object → SQL type per target dialect); `_id` is always emitted as the primary key. Implementation lives under `packages/cli/src/export/` as private CLI modules — exposed only through the `baerly` CLI surface, not as a publishable package.
 
-- Implementation:
-  [`packages/cli/src/export/plan.ts`](../../packages/cli/src/export/plan.ts)
-  (`inferPlanForCollection`, `loadMaterialisedView`),
-  [`packages/cli/src/export/ddl.ts`](../../packages/cli/src/export/ddl.ts)
-  (`emitCreateTable`),
-  [`packages/cli/src/export/rows.ts`](../../packages/cli/src/export/rows.ts)
-  (`emitInsertStatements`),
-  [`packages/cli/src/export/sql-escape.ts`](../../packages/cli/src/export/sql-escape.ts)
-  (`quoteIdentifier`, `quoteValue`)
-- Tests:
-  [`packages/cli/src/export/plan.test.ts`](../../packages/cli/src/export/plan.test.ts),
-  [`packages/cli/src/export/ddl.test.ts`](../../packages/cli/src/export/ddl.test.ts),
-  [`packages/cli/src/export/rows.test.ts`](../../packages/cli/src/export/rows.test.ts),
-  [`packages/cli/src/export/sql-escape.test.ts`](../../packages/cli/src/export/sql-escape.test.ts)
+- Implementation: [`packages/cli/src/export/plan.ts`](../../packages/cli/src/export/plan.ts) (`inferPlanForCollection`, `loadMaterialisedView`), [`packages/cli/src/export/ddl.ts`](../../packages/cli/src/export/ddl.ts) (`emitCreateTable`), [`packages/cli/src/export/rows.ts`](../../packages/cli/src/export/rows.ts) (`emitInsertStatements`), [`packages/cli/src/export/sql-escape.ts`](../../packages/cli/src/export/sql-escape.ts) (`quoteIdentifier`, `quoteValue`)
+- Tests: [`packages/cli/src/export/plan.test.ts`](../../packages/cli/src/export/plan.test.ts), [`packages/cli/src/export/ddl.test.ts`](../../packages/cli/src/export/ddl.test.ts), [`packages/cli/src/export/rows.test.ts`](../../packages/cli/src/export/rows.test.ts), [`packages/cli/src/export/sql-escape.test.ts`](../../packages/cli/src/export/sql-escape.test.ts)
 
 ## Export round-trip (`pnpm test:export-round-trip`)
 
-Phase 9 gate; ensures byte-equal preservation across `export →
-SQLite → restore`. Seeds a `LocalFsStorage`-backed baerly-storage bucket,
-runs the `packages/cli/src/export/` pipeline against the `sqlite3` CLI binary
-(auto-skips when absent), re-imports the SQL dump through `baerly
-admin restore`, and asserts byte-equal `baerly admin dump` between
-the source and restored buckets. Uses
-[`serializeExportPlan` / `deserializeExportPlan`](../../packages/cli/src/export/plan-sidecar.ts)
-to coerce SQLite values back to their original JS types.
+Phase 9 gate; ensures byte-equal preservation across `export → SQLite → restore`. Seeds a `LocalFsStorage`-backed baerly-storage bucket, runs the `packages/cli/src/export/` pipeline against the `sqlite3` CLI binary (auto-skips when absent), re-imports the SQL dump through `baerly admin restore`, and asserts byte-equal `baerly admin dump` between the source and restored buckets. Uses [`serializeExportPlan` / `deserializeExportPlan`](../../packages/cli/src/export/plan-sidecar.ts) to coerce SQLite values back to their original JS types.
 
-- Tests:
-  [`tests/integration/export-round-trip.test.ts`](../../tests/integration/export-round-trip.test.ts),
-  [`packages/cli/src/export/plan-sidecar.test.ts`](../../packages/cli/src/export/plan-sidecar.test.ts)
+- Tests: [`tests/integration/export-round-trip.test.ts`](../../tests/integration/export-round-trip.test.ts), [`packages/cli/src/export/plan-sidecar.test.ts`](../../packages/cli/src/export/plan-sidecar.test.ts)
 
 ## Observability
 
-Canonical one-line-per-unit-of-work log plus a pluggable
-`MetricsRecorder` (counter / gauge / histogram). The canonical line's
-`class_a_ops_total` is asserted equal to the physical bucket op count
-by the cost-model gate test — the line is a faithful source of truth
-for per-request S3 spend.
+Canonical one-line-per-unit-of-work log plus a pluggable `MetricsRecorder` (counter / gauge / histogram). The canonical line's `class_a_ops_total` is asserted equal to the physical bucket op count by the cost-model gate test — the line is a faithful source of truth for per-request S3 spend.
 
-- Implementation:
-  [`packages/server/src/observability/`](../../packages/server/src/observability/)
-- Tests:
-  [`tests/integration/observability.test.ts`](../../tests/integration/observability.test.ts)
-- Docs: [`docs/guide/observability.md`](../guide/observability.md),
-  [`docs/contributing/conventions/observability.md`](./conventions/observability.md)
-  (includes metric-name conventions, rejected alternatives, and
-  prohibited patterns)
+- Implementation: [`packages/server/src/observability/`](../../packages/server/src/observability/)
+- Tests: [`tests/integration/observability.test.ts`](../../tests/integration/observability.test.ts)
+- Docs: [`docs/guide/observability.md`](../guide/observability.md), [`docs/contributing/conventions/observability.md`](./conventions/observability.md) (includes metric-name conventions, rejected alternatives, and prohibited patterns)
 
 ## Optional collection schemas (`CollectionDefinition.schema`)
 
-Apps may attach a StandardSchemaV1-compatible validator (Zod 3.24+,
-Valibot 0.36+, ArkType 2.0+, or any future library implementing the
-spec) to each collection in `baerly.config.ts`. The server runs the
-validator on every `insert` / `update` / `replace` post-image and
-throws `BaerlyError{code:"SchemaError"}` carrying a structured
-`issues: [{path, message}]` array on failure. No schema declared =
-zero overhead.
+Apps may attach a StandardSchemaV1-compatible validator (Zod 3.24+, Valibot 0.36+, ArkType 2.0+, or any future library implementing the spec) to each collection in `baerly.config.ts`. The server runs the validator on every `insert` / `update` / `replace` post-image and throws `BaerlyError{code:"SchemaError"}` carrying a structured `issues: [{path, message}]` array on failure. No schema declared = zero overhead.
 
-- Implementation:
-  [`packages/server/src/schema.ts`](../../packages/server/src/schema.ts)
-  (`SchemaValidator`, `SchemaIssue`, `validateOrThrow`),
-  [`packages/server/src/config.ts`](../../packages/server/src/config.ts)
-  (`CollectionDefinition.schema`),
-  [`packages/server/src/query.ts`](../../packages/server/src/query.ts)
-  (validation hooks in `runInsert` / `runUpdate` / `runReplaceById`)
-- Tests:
-  [`packages/server/src/schema.test.ts`](../../packages/server/src/schema.test.ts),
-  [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts)
-  (schema-validation block in the cascade)
+- Implementation: [`packages/server/src/schema.ts`](../../packages/server/src/schema.ts) (`SchemaValidator`, `SchemaIssue`, `validateOrThrow`), [`packages/server/src/config.ts`](../../packages/server/src/config.ts) (`CollectionDefinition.schema`), [`packages/server/src/query.ts`](../../packages/server/src/query.ts) (validation hooks in `runInsert` / `runUpdate` / `runReplaceById`)
+- Tests: [`packages/server/src/schema.test.ts`](../../packages/server/src/schema.test.ts), [`tests/integration/collection-api.test.ts`](../../tests/integration/collection-api.test.ts) (schema-validation block in the cascade)
 - Docs: [`docs/extending.md`](./extending.md) §"Declare a schema for a collection"
 
 ## Operator CLI — `baerly inspect`
 
-Reads `current.json` + snapshot + live log tail and prints a
-read-only summary of one collection (tail_hint, log_seq_start,
-writer_fence, materialised row count). `--json` is a storage-format
-diagnostic, not a stable contract: its fields follow the storage format
-and can change in any release.
+Reads `current.json` + snapshot + live log tail and prints a read-only summary of one collection (tail_hint, log_seq_start, writer_fence, materialised row count). `--json` is a storage-format diagnostic, not a stable contract: its fields follow the storage format and can change in any release.
 
-Bolt-on (adding baerly-storage to an existing Cloudflare Worker project) lives
-in `@gusto/create-baerly-storage`: `pnpm create @gusto/baerly-storage@latest .` detects `wrangler.jsonc` and
-dispatches to the bolt-on flow. See
-[`docs/guide/add-to-existing-cf-worker.md`](../guide/add-to-existing-cf-worker.md).
+Bolt-on (adding baerly-storage to an existing Cloudflare Worker project) lives in `@gusto/create-baerly-storage`: `pnpm create @gusto/baerly-storage@latest .` detects `wrangler.jsonc` and dispatches to the bolt-on flow. See [`docs/guide/add-to-existing-cf-worker.md`](../guide/add-to-existing-cf-worker.md).
 
-- Implementation:
-  [`packages/cli/src/inspect.ts`](../../packages/cli/src/inspect.ts)
-- Tests:
-  [`packages/cli/src/inspect.test.ts`](../../packages/cli/src/inspect.test.ts)
+- Implementation: [`packages/cli/src/inspect.ts`](../../packages/cli/src/inspect.ts)
+- Tests: [`packages/cli/src/inspect.test.ts`](../../packages/cli/src/inspect.test.ts)
 
 ## Operator CLI — `baerly admin dump` / `baerly admin restore`
 
-Canonical NDJSON serialisation of one collection's materialised
-view (`dump`) and its inverse (`restore`). `dump` emits
-`{"_id":"...",...}` per line with recursively sorted keys, ASCII-
-lex row order, and no BOM — a byte-stable format the export
-round-trip test (`pnpm test:export-round-trip`) gates against.
-`restore` streams NDJSON from stdin and commits one `op:"I"` per
-row through `Writer`; refuses an existing `current.json`
-unless `--force` truncates first.
+Canonical NDJSON serialisation of one collection's materialised view (`dump`) and its inverse (`restore`). `dump` emits `{"_id":"...",...}` per line with recursively sorted keys, ASCII- lex row order, and no BOM — a byte-stable format the export round-trip test (`pnpm test:export-round-trip`) gates against. `restore` streams NDJSON from stdin and commits one `op:"I"` per row through `Writer`; refuses an existing `current.json` unless `--force` truncates first.
 
-- Implementation:
-  [`packages/cli/src/admin/dump.ts`](../../packages/cli/src/admin/dump.ts),
-  [`packages/cli/src/admin/restore.ts`](../../packages/cli/src/admin/restore.ts)
-- Tests:
-  [`packages/cli/src/admin/dump.test.ts`](../../packages/cli/src/admin/dump.test.ts),
-  [`packages/cli/src/admin/restore.test.ts`](../../packages/cli/src/admin/restore.test.ts)
+- Implementation: [`packages/cli/src/admin/dump.ts`](../../packages/cli/src/admin/dump.ts), [`packages/cli/src/admin/restore.ts`](../../packages/cli/src/admin/restore.ts)
+- Tests: [`packages/cli/src/admin/dump.test.ts`](../../packages/cli/src/admin/dump.test.ts), [`packages/cli/src/admin/restore.test.ts`](../../packages/cli/src/admin/restore.test.ts)
 
 ## Operator CLI — `baerly admin fsck`
 
-Read-only consistency walk for one collection. Verifies
-`current.json` parses, the snapshot body's content hash matches
-its filename hash, the trusted log range `[log_seq_start, tail_hint)`
-has no holes. As a migration preflight it also flags non-NFC names, and
-names or snapshot `_id`s with an unpaired UTF-16 surrogate. It never
-reads the `index/` prefix. Exit 4 on any finding —
-distinguished from exit 2 ("command itself failed") so CI can
-wire `fsck` as a regression gate.
+Read-only consistency walk for one collection. Verifies `current.json` parses, the snapshot body's content hash matches its filename hash, the trusted log range `[log_seq_start, tail_hint)` has no holes. As a migration preflight it also flags non-NFC names, and names or snapshot `_id`s with an unpaired UTF-16 surrogate. It never reads the `index/` prefix. Exit 4 on any finding — distinguished from exit 2 ("command itself failed") so CI can wire `fsck` as a regression gate.
 
-- Implementation:
-  [`packages/cli/src/admin/fsck.ts`](../../packages/cli/src/admin/fsck.ts)
-- Tests:
-  [`packages/cli/src/admin/fsck.test.ts`](../../packages/cli/src/admin/fsck.test.ts)
+- Implementation: [`packages/cli/src/admin/fsck.ts`](../../packages/cli/src/admin/fsck.ts)
+- Tests: [`packages/cli/src/admin/fsck.test.ts`](../../packages/cli/src/admin/fsck.test.ts)

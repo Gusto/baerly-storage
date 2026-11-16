@@ -9,9 +9,7 @@ related: ["publishing.md"]
 
 # Day-one handshake gate (`pnpm gate:day-one`)
 
-The day-one gate asserts that a non-engineer + Claude can go from
-`pnpm create @gusto/baerly-storage@latest` (post-publish) to a working
-`client.collection().insert()` inside the day-one SLO:
+The day-one gate asserts that a non-engineer + Claude can go from `pnpm create @gusto/baerly-storage@latest` (post-publish) to a working `client.collection().insert()` inside the day-one SLO:
 
 - Cloudflare target: **< 5 min cold**
 - Node target: **< 3 min local**
@@ -20,17 +18,14 @@ Without any manual credential editing.
 
 ## Local install
 
-`@gusto/baerly-storage` + `@gusto/create-baerly-storage` publish
-publicly to npmjs.com (`access: "public"`), so anyone can scaffold
-from the registry without auth:
+`@gusto/baerly-storage` + `@gusto/create-baerly-storage` publish publicly to npmjs.com (`access: "public"`), so anyone can scaffold from the registry without auth:
 
 ```sh
 pnpm create @gusto/baerly-storage@latest -- gate-smoke --target=node --json
 cd gate-smoke && pnpm install && pnpm dev
 ```
 
-To validate from inside this clone without going through the
-registry (useful during scaffolder changes):
+To validate from inside this clone without going through the registry (useful during scaffolder changes):
 
 ```sh
 pnpm install && pnpm -r build
@@ -46,20 +41,15 @@ node ../packages/create-baerly-storage/dist/index.js gate-smoke \
 cd gate-smoke && pnpm install && pnpm dev
 ```
 
-The gate's `SUMMARY` assertions and stage names below are unchanged
-by which invocation path you use.
+The gate's `SUMMARY` assertions and stage names below are unchanged by which invocation path you use.
 
 ## When to run
 
 - Before a release.
-- After any change to `pnpm create @gusto/baerly-storage` (ticket 38), the deploy
-  templates (tickets 39/40), or the auth presets (ticket 37).
-- After a `wrangler` major-version bump (the `--x-provision
---x-auto-create` flags are experimental; renames break the gate).
+- After any change to `pnpm create @gusto/baerly-storage` (ticket 38), the deploy templates (tickets 39/40), or the auth presets (ticket 37).
+- After a `wrangler` major-version bump (the `--x-provision --x-auto-create` flags are experimental; renames break the gate).
 
-The gate is **NOT** part of `pnpm verify` or `pnpm test`. It takes
-minutes per run and burns small amounts of cloud quota; run it
-manually.
+The gate is **NOT** part of `pnpm verify` or `pnpm test`. It takes minutes per run and burns small amounts of cloud quota; run it manually.
 
 ## Lifecycle
 
@@ -73,15 +63,13 @@ export SHARED_SECRET="$(openssl rand -hex 32)"
 
 #### Node target (default)
 
-No extra credentials. The gate spawns the scaffold's Node server
-locally (`src/server/index.ts`) and talks to it on a free port.
+No extra credentials. The gate spawns the scaffold's Node server locally (`src/server/index.ts`) and talks to it on a free port.
 
 #### Cloudflare target
 
 Provision in the Cloudflare dashboard once:
 
-- API token with `Workers Scripts:Edit`, `R2:Edit`, `Account:Read`
-  scopes. Save as `CF_API_TOKEN`.
+- API token with `Workers Scripts:Edit`, `R2:Edit`, `Account:Read` scopes. Save as `CF_API_TOKEN`.
 - Note the Cloudflare account id. Save as `CF_ACCOUNT_ID`.
 
 ```sh
@@ -121,14 +109,11 @@ Output (failure):
   AssertionError: expected 312050 to be less than 300000
 ```
 
-The budget violation pinpoints the regression: the per-stage stamps
-in the `SUMMARY` line tell you which step exceeded the budget.
+The budget violation pinpoints the regression: the per-stage stamps in the `SUMMARY` line tell you which step exceeded the budget.
 
 ### 4. Tear down
 
-The gate's `afterAll` blocks delete the temp scaffold directory and
-best-effort-delete the Cloudflare Worker (`wrangler delete
-day-one-<unix-ms>`). If the gate process is killed before teardown:
+The gate's `afterAll` blocks delete the temp scaffold directory and best-effort-delete the Cloudflare Worker (`wrangler delete day-one-<unix-ms>`). If the gate process is killed before teardown:
 
 ```sh
 # List leftover scaffolds (under /tmp/baerly-day-one-*)
@@ -141,8 +126,7 @@ wrangler list | grep day-one-
 wrangler delete day-one-<unix-ms>
 ```
 
-R2 buckets created by `--x-provision --x-auto-create` survive the
-Worker deletion. Sweep with:
+R2 buckets created by `--x-provision --x-auto-create` survive the Worker deletion. Sweep with:
 
 ```sh
 wrangler r2 bucket list | grep day-one-
@@ -151,16 +135,12 @@ wrangler r2 bucket delete <name>
 
 ## What the budgets measure
 
-- **`scaffold-complete`** — `pnpm create @gusto/baerly-storage@latest`
-  returned.
-- **`install-complete`** — `pnpm install` inside the scaffold
-  returned.
+- **`scaffold-complete`** — `pnpm create @gusto/baerly-storage@latest` returned.
+- **`install-complete`** — `pnpm install` inside the scaffold returned.
 - **`server-ready`** (Node) — the scaffold's `/v1/healthz` returned 200.
 - **`deploy-complete`** (CF) — `baerly deploy` returned.
-- **`deploy-url-resolved`** (CF) — `.baerly/deploy.json` exists +
-  parses.
-- **`no-manual-env-edit`** — `.env` mtime is within the gate budget
-  (proves it wasn't hand-edited after `pnpm install`).
+- **`deploy-url-resolved`** (CF) — `.baerly/deploy.json` exists + parses.
+- **`no-manual-env-edit`** — `.env` mtime is within the gate budget (proves it wasn't hand-edited after `pnpm install`).
 - **`first-write`** — `client.collection().insert()` returned a `_id`.
 - **`first-read`** — `client.collection().get(id)` round-tripped the doc.
 
@@ -171,15 +151,14 @@ DAY_ONE_BUDGET_NODE_MS=120000 DAY_ONE_TARGETS=node pnpm gate:day-one
 # 2 min instead of 3
 ```
 
-The default budgets are the day-one SLO. Don't loosen them in CI;
-loosen only for local-debug runs.
+The default budgets are the day-one SLO. Don't loosen them in CI; loosen only for local-debug runs.
 
 ## Failure modes (with fixes)
 
-| Symptom                                                 | Cause                                      | Fix                                                     |
-| ------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
-| `assertNoManualEnvEdit: ... older than the gate budget` | `.env` was on disk before the scaffold ran | `rm -rf` the temp dir; re-run.                          |
-| `wrangler: not found`                                   | `wrangler` not installed                   | `pnpm i -g wrangler` or via `pnpm dlx`.                 |
-| CF gate: `Unauthorized`                                 | API token missing R2:Edit                  | Recreate token with all three scopes.                   |
-| Node gate: `EADDRINUSE`                                 | Port collision with another process        | `pickFreePort` should prevent; if it fires, file a bug. |
-| `wrangler delete <name> failed` in afterAll             | Worker already removed / billing scope     | Manual sweep (see Tear down).                           |
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `assertNoManualEnvEdit: ... older than the gate budget` | `.env` was on disk before the scaffold ran | `rm -rf` the temp dir; re-run. |
+| `wrangler: not found` | `wrangler` not installed | `pnpm i -g wrangler` or via `pnpm dlx`. |
+| CF gate: `Unauthorized` | API token missing R2:Edit | Recreate token with all three scopes. |
+| Node gate: `EADDRINUSE` | Port collision with another process | `pickFreePort` should prevent; if it fires, file a bug. |
+| `wrangler delete <name> failed` in afterAll | Worker already removed / billing scope | Manual sweep (see Tear down). |

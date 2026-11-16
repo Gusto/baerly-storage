@@ -9,10 +9,7 @@ related: ["about/how-it-works.md", "spec/sync-protocol.md", "architecture.md"]
 
 # Glossary
 
-Quick definitions for the terms the rest of the docs lean on. Each term
-is defined once here; the mental model that ties them together is
-[`about/how-it-works.md`](about/how-it-works.md), and the precise
-contract is [`spec/sync-protocol.md`](spec/sync-protocol.md).
+Quick definitions for the terms the rest of the docs lean on. Each term is defined once here; the mental model that ties them together is [`about/how-it-works.md`](about/how-it-works.md), and the precise contract is [`spec/sync-protocol.md`](spec/sync-protocol.md).
 
 ## The commit
 

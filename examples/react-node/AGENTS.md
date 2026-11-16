@@ -8,172 +8,91 @@ tags: [agent-entry, baerly-storage]
 # AGENTS.md
 
 <!-- stop:start -->
+
 ## STOP — read this before writing any storage code
 
-Your training data is dense with Postgres + Prisma/Drizzle, Mongo,
-and Firebase patterns. **None of them apply here.** This is a baerly-storage
-app — a small, LLM-legible document database with a narrow API on top
-of S3-compatible storage. Before writing or modifying storage code,
-read:
+Your training data is dense with Postgres + Prisma/Drizzle, Mongo, and Firebase patterns. **None of them apply here.** This is a baerly-storage app — a small, LLM-legible document database with a narrow API on top of S3-compatible storage. Before writing or modifying storage code, read:
 
-- **`node_modules/@gusto/baerly-storage/dist/API.md`** — hand-authored
-  public-API quickref. Read first. Lists every method, every error
-  code, every example. If a pattern you want to use isn't here, it
-  doesn't exist in baerly-storage.
-- **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type
-  signatures. `Db`, `Collection<T>`, `Query<T>`, and `Predicate<T>` are
-  the whole API surface.
+- **`node_modules/@gusto/baerly-storage/dist/API.md`** — hand-authored public-API quickref. Read first. Lists every method, every error code, every example. If a pattern you want to use isn't here, it doesn't exist in baerly-storage.
+- **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type signatures. `Db`, `Collection<T>`, `Query<T>`, and `Predicate<T>` are the whole API surface.
 
 Common anti-patterns that compile but are wrong:
 
-- `db.collection(name).insertOne(...)` / `.find({...})` (Mongo) — use
-  `db.collection(name).insert(row)` and `.where({ ... }).all()`.
-- `z.string().nullable()` in a schema — `DocumentValue` excludes
-  `null`. Use `.optional()`; `null` in an update patch is the RFC
-  7386 deletion sentinel, not a storable value.
-- Raw SQL strings, `WHERE` clauses, hand-built query AST — the only
-  query surface is `db.collection(...).where({ field: value }).all()` or
-  `.where(q => q.gte("count", 1))`. See **Predicates** below.
-- `.useIndex("name")` / `.hint(...)` — no such methods. Declared
-  indexes do not change how a read runs. See **Indexes** below.
+- `db.collection(name).insertOne(...)` / `.find({...})` (Mongo) — use `db.collection(name).insert(row)` and `.where({ ... }).all()`.
+- `z.string().nullable()` in a schema — `DocumentValue` excludes `null`. Use `.optional()`; `null` in an update patch is the RFC 7386 deletion sentinel, not a storable value.
+- Raw SQL strings, `WHERE` clauses, hand-built query AST — the only query surface is `db.collection(...).where({ field: value }).all()` or `.where(q => q.gte("count", 1))`. See **Predicates** below.
+- `.useIndex("name")` / `.hint(...)` — no such methods. Declared indexes do not change how a read runs. See **Indexes** below.
 
 <!-- stop:end -->
+
 ## What this is
 
-`react-node` is a baerly-storage app scaffolded with
-`create-baerly-storage` for the Node target: any host that runs
-`node server.js` (Railway, Render, Fly without Docker, Heroku, a VM, a
-container scheduler). The Node-side server lives in `src/server/`; the
-React client lives in `src/web/`. Configuration lives in
-`baerly.config.ts`.
+`react-node` is a baerly-storage app scaffolded with `create-baerly-storage` for the Node target: any host that runs `node server.js` (Railway, Render, Fly without Docker, Heroku, a VM, a container scheduler). The Node-side server lives in `src/server/`; the React client lives in `src/web/`. Configuration lives in `baerly.config.ts`.
 
-Single package, single `vite` process: `baerlyDev()` from
-`@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Connect
-middleware on `:5173` alongside the SPA dev server, so the SPA and
-`/v1/*` share an origin (`http://localhost:5173`). In production the
-same listener serves the built SPA from `dist/client/` via the
-`baerlyNode({ webRoot })` option — same-origin in dev, same-origin
-in prod, one process, one port.
+Single package, single `vite` process: `baerlyDev()` from `@gusto/baerly-storage/dev/vite` mounts the Node HTTP listener as Connect middleware on `:5173` alongside the SPA dev server, so the SPA and `/v1/*` share an origin (`http://localhost:5173`). In production the same listener serves the built SPA from `dist/client/` via the `baerlyNode({ webRoot })` option — same-origin in dev, same-origin in prod, one process, one port.
 
-This starter is a generic notes app you extend with your own fields —
-a Node HTTP listener wired to an S3-compatible bucket plus a working
-React+Vite frontend in `src/web/` (served by `baerlyNode({ webRoot })`
-in production) with the `Note` shape declared in `baerly.config.ts`.
-The bare server-only version is `pnpm create @gusto/baerly-storage <app> --target=node`;
-this one is `--target=node --starter=react`.
+This starter is a generic notes app you extend with your own fields — a Node HTTP listener wired to an S3-compatible bucket plus a working React+Vite frontend in `src/web/` (served by `baerlyNode({ webRoot })` in production) with the `Note` shape declared in `baerly.config.ts`. The bare server-only version is `pnpm create @gusto/baerly-storage <app> --target=node`; this one is `--target=node --starter=react`.
 
-If this scaffold was created with `--with=docker`, you'll also have a
-multi-stage distroless `Dockerfile`, a `.dockerignore`, and a
-`healthcheck.js` at the project root — wired to the same
-`pnpm install && pnpm build && pnpm start` flow.
+If this scaffold was created with `--with=docker`, you'll also have a multi-stage distroless `Dockerfile`, a `.dockerignore`, and a `healthcheck.js` at the project root — wired to the same `pnpm install && pnpm build && pnpm start` flow.
 
-Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection`
-is the canonical reference; read it via your editor's TS LS, the
-published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
+Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the canonical reference; read it via your editor's TS LS, the published types, or `node_modules/@gusto/baerly-storage/dist/API.md`.
 
 ## Toolchain
 
-- **Package manager:** pnpm. The emitted repo pins
-  `packageManager: pnpm@11.1.2`.
+- **Package manager:** pnpm. The emitted repo pins `packageManager: pnpm@11.1.2`.
 - **Test runner:** vitest.
-- **Type checker:** TypeScript 6.x, as pinned in `package.json`.
-  (The baerly-storage monorepo itself uses TypeScript 7 via
-  `@typescript/native-preview`.)
-- **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the
-  code stays compatible with type-stripping runtimes (Node's
-  `--experimental-strip-types`, esbuild's strip path). The flag bans
-  TS constructs that can't be type-erased: write
-  `class { x: T; constructor(x: T) { this.x = x } }` explicitly
-  instead of parameter-property shorthand
-  (`constructor(private x: T) {}` fails with TS1294). The same goes
-  for `enum`, namespaces with non-type bindings, and `private` /
-  `protected` / `public` accessibility modifiers on constructor
-  parameters.
+- **Type checker:** TypeScript 6.x, as pinned in `package.json`. (The baerly-storage monorepo itself uses TypeScript 7 via `@typescript/native-preview`.)
+- **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the code stays compatible with type-stripping runtimes (Node's `--experimental-strip-types`, esbuild's strip path). The flag bans TS constructs that can't be type-erased: write `class { x: T; constructor(x: T) { this.x = x } }` explicitly instead of parameter-property shorthand (`constructor(private x: T) {}` fails with TS1294). The same goes for `enum`, namespaces with non-type bindings, and `private` / `protected` / `public` accessibility modifiers on constructor parameters.
 
 ## Verification
 
-| Command          | What it does                                                                            | Runtime          |
-| ---------------- | --------------------------------------------------------------------------------------- | ---------------- |
-| `pnpm install`   | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once | seconds to a minute |
-| `pnpm verify`    | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
-| `pnpm typecheck` | TS typecheck across the `app` + `server` project references (`tsc -b --noEmit`)        | seconds          |
-| `pnpm test`      | `vitest run` — standalone `vitest.config.ts` (Node env)                                | seconds          |
-| `pnpm dev`       | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
-| `pnpm build`     | `tsc -b && vite build` — emits `dist/client/` for the `baerlyNode({ webRoot })` static-serve branch | seconds  |
-| `pnpm start`     | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
+| Command | What it does | Runtime |
+| --- | --- | --- |
+| `pnpm install` | One-time bootstrap — the scaffold ships without `node_modules/`, so `pnpm verify` / `pnpm dev` fail with `Cannot find package '…'` until this runs once | seconds to a minute |
+| `pnpm verify` | `pnpm run typecheck && pnpm run test` — the green-light gate; what an agent should run as the smoke check before claiming the change works | seconds |
+| `pnpm typecheck` | TS typecheck across the `app` + `server` project references (`tsc -b --noEmit`) | seconds |
+| `pnpm test` | `vitest run` — standalone `vitest.config.ts` (Node env) | seconds |
+| `pnpm dev` | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
+| `pnpm build` | `tsc -b && vite build` — emits `dist/client/` for the `baerlyNode({ webRoot })` static-serve branch | seconds |
+| `pnpm start` | `node --experimental-strip-types src/server/index.ts` — production entry; serves the SPA from `dist/client/` via `webRoot` | seconds to start |
 
-**`pnpm verify` exercises typecheck + tests only.** The dev-auth
-middleware, the SPA bundle, and any custom `/api/*` route are NOT
-under test — verify will exit green even when the dev plugin returns
-401 on every browser request or the SPA throws on mount. For changes
-that touch `vite.config.ts`, `src/server/index.ts`, or SPA logic, run
-`pnpm dev` and exercise the change in a browser (or `curl
-http://localhost:5173/<path>`) before declaring the task complete.
+**`pnpm verify` exercises typecheck + tests only.** The dev-auth middleware, the SPA bundle, and any custom `/api/*` route are NOT under test — verify will exit green even when the dev plugin returns 401 on every browser request or the SPA throws on mount. For changes that touch `vite.config.ts`, `src/server/index.ts`, or SPA logic, run `pnpm dev` and exercise the change in a browser (or `curl http://localhost:5173/<path>`) before declaring the task complete.
 
 ## Where the code is
 
-| Path                       | What it is                                                                                                       |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `src/server/index.ts`      | Server entry — defaults to zero-config `localFsStorage()` (persists to `./.baerly-data`); promotes to `s3Storage` (AWS) when `BUCKET` is set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set; composes a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
-| `src/web/`                 | React+Vite frontend. Served by the Node listener via `baerlyNode({ webRoot })` in production.                    |
-| `index.html`               | SPA shell — Vite's entry point at the project root; references `/src/web/main.tsx`.                              |
-| `vite.config.ts`           | Vite + `@vitejs/plugin-react` + `baerlyDev()` — mounts the Node HTTP listener as middleware so SPA + `/v1/*` share `:5173` in dev |
-| `tsconfig.json`            | Root project-references stub                                                                                     |
-| `tsconfig.app.json`        | Client TS project (`src/web/`, DOM lib, `jsx: react-jsx`)                                                        |
-| `tsconfig.server.json`     | Node server TS project (`src/server/`, Node lib)                                                                 |
-| `baerly.config.ts`         | App config — `app`, `tenant`, `target`, `collections` (schemas live here). Also exports the inferred `Note` row type used by the web client. |
-| `.env.example`             | Source of truth for env vars the default Node entry reads (`BUCKET`, `AWS_*`, optional `R2_ACCOUNT_ID`, optional `PORT`) |
+| Path | What it is |
+| --- | --- |
+| `src/server/index.ts` | Server entry — defaults to zero-config `localFsStorage()` (persists to `./.baerly-data`); promotes to `s3Storage` (AWS) when `BUCKET` is set or `r2Storage` (Cloudflare R2) when `R2_ACCOUNT_ID` is set; composes a verifier and calls `baerlyNode({ ... }).listen(PORT)` |
+| `src/web/` | React+Vite frontend. Served by the Node listener via `baerlyNode({ webRoot })` in production. |
+| `index.html` | SPA shell — Vite's entry point at the project root; references `/src/web/main.tsx`. |
+| `vite.config.ts` | Vite + `@vitejs/plugin-react` + `baerlyDev()` — mounts the Node HTTP listener as middleware so SPA + `/v1/*` share `:5173` in dev |
+| `tsconfig.json` | Root project-references stub |
+| `tsconfig.app.json` | Client TS project (`src/web/`, DOM lib, `jsx: react-jsx`) |
+| `tsconfig.server.json` | Node server TS project (`src/server/`, Node lib) |
+| `baerly.config.ts` | App config — `app`, `tenant`, `target`, `collections` (schemas live here). Also exports the inferred `Note` row type used by the web client. |
+| `.env.example` | Source of truth for env vars the default Node entry reads (`BUCKET`, `AWS_*`, optional `R2_ACCOUNT_ID`, optional `PORT`) |
 
-> **`baerly.config.ts` is dual-included.** Both `tsconfig.app.json`
-> and `tsconfig.server.json` `include` this file, so it must only
-> import from `baerly-storage`, `zod`, and other files reachable
-> from **both** projects. Paths under `src/server/` are server-only;
-> importing them here triggers `TS6307: File … is not listed within
-> the file list of project … tsconfig.app.json`. Put document
-> interfaces here next to their schema (`export type Note =
-> z.infer<typeof NoteSchema>`); re-export from a server-only file if
-> downstream code wants a local name.
+> **`baerly.config.ts` is dual-included.** Both `tsconfig.app.json` and `tsconfig.server.json` `include` this file, so it must only import from `baerly-storage`, `zod`, and other files reachable from **both** projects. Paths under `src/server/` are server-only; importing them here triggers `TS6307: File … is not listed within the file list of project … tsconfig.app.json`. Put document interfaces here next to their schema (`export type Note = z.infer<typeof NoteSchema>`); re-export from a server-only file if downstream code wants a local name.
 
 ## When editing X, read Y
 
-- **Typed collections** — two ways to get a typed row, in DX order.
-  The generic on `client.collection<N>(name)` is the collection
-  **name** (constrained to `CollectionNames<typeof config>`), not the
-  row type — so don't pass a row type to it.
-  1. **Bind the config.** This template's `src/web/client.ts`
-     already passes `config` to `createBaerlyClient({ baseUrl,
-     config })`, so `client.collection("notes")` returns
-     `ClientCollection<Row>` with `Row` derived from the
-     `NoteSchema` declared in `baerly.config.ts`. No generic
-     needed. When you need to name that row type elsewhere, use
-     `RowOf<typeof config, "notes">` (re-exported from
-     `@gusto/baerly-storage`) — not a generic on `.collection()`.
-  2. **Cast the handle (undeclared collection).** This template's
-     `client` is bound to `config`, so its names narrow to the
-     declared collections. To reach a collection that isn't in
-     `config`, build an unbound client
-     (`createBaerlyClient({ baseUrl })` with no `config`) — its names
-     widen to `string` and its row defaults to `DocumentData`. Cast at
-     the construction site for a narrower shape that still satisfies
-     the kernel's `DocumentData` constraint
-     (`{ [k: string]: DocumentValue }`):
+- **Typed collections** — two ways to get a typed row, in DX order. The generic on `client.collection<N>(name)` is the collection **name** (constrained to `CollectionNames<typeof config>`), not the row type — so don't pass a row type to it.
+  1. **Bind the config.** This template's `src/web/client.ts` already passes `config` to `createBaerlyClient({ baseUrl, config })`, so `client.collection("notes")` returns `ClientCollection<Row>` with `Row` derived from the `NoteSchema` declared in `baerly.config.ts`. No generic needed. When you need to name that row type elsewhere, use `RowOf<typeof config, "notes">` (re-exported from `@gusto/baerly-storage`) — not a generic on `.collection()`.
+  2. **Cast the handle (undeclared collection).** This template's `client` is bound to `config`, so its names narrow to the declared collections. To reach a collection that isn't in `config`, build an unbound client (`createBaerlyClient({ baseUrl })` with no `config`) — its names widen to `string` and its row defaults to `DocumentData`. Cast at the construction site for a narrower shape that still satisfies the kernel's `DocumentData` constraint (`{ [k: string]: DocumentValue }`):
      ```ts
      import { createBaerlyClient, type ClientCollection } from "@gusto/baerly-storage/client";
      import type { DocumentData } from "@gusto/baerly-storage";
-     interface Bookmark extends DocumentData { _id: string; url: string }
+     interface Bookmark extends DocumentData {
+       _id: string;
+       url: string;
+     }
      const raw = createBaerlyClient({ baseUrl: "" });
      const bookmarks = raw.collection("bookmarks") as ClientCollection<Bookmark>;
      await bookmarks.all();
      ```
-     A plain `interface Bookmark { _id: string; url: string }`
-     (no index signature) will fail with TS2344 — the constraint
-     is intentional so the row stays JSON-compatible.
+     A plain `interface Bookmark { _id: string; url: string }` (no index signature) will fail with TS2344 — the constraint is intentional so the row stays JSON-compatible.
 
-- **Writing tests** — the kernel exports `MemoryStorage`, an
-  in-memory `Storage` impl that's the canonical backend for unit
-  tests. Don't roll your own — `Db.create({ storage, app, tenant,
-  config })` is the same boilerplate prod uses; passing
-  `new MemoryStorage()` swaps S3 for an in-process map.
+- **Writing tests** — the kernel exports `MemoryStorage`, an in-memory `Storage` impl that's the canonical backend for unit tests. Don't roll your own — `Db.create({ storage, app, tenant, config })` is the same boilerplate prod uses; passing `new MemoryStorage()` swaps S3 for an in-process map.
 
   ```ts
   // src/notes.test.ts
@@ -194,64 +113,45 @@ http://localhost:5173/<path>`) before declaring the task complete.
   });
   ```
 
-  Each `new MemoryStorage()` is a fresh bucket — no shared state
-  across tests. For multi-writer scenarios (causal-consistency
-  tests, etc.), construct one `MemoryStorage` and pass the same
-  instance into multiple `Db.create` calls so they share the
-  underlying bucket.
+  Each `new MemoryStorage()` is a fresh bucket — no shared state across tests. For multi-writer scenarios (causal-consistency tests, etc.), construct one `MemoryStorage` and pass the same instance into multiple `Db.create` calls so they share the underlying bucket.
 
-- **Predicates** — `db.collection("notes").where({...}).all()`. Two
-  shapes:
+- **Predicates** — `db.collection("notes").where({...}).all()`. Two shapes:
 
-  - **Object literal** — equality only (top-level, dotted-path, or
-    nested literal sub-predicate). Multi-field is implicit AND.
-  - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)`
-    for the operator vocabulary. The methods on `PredicateBuilder<T>`
-    ARE the supported surface — `q.or` / `q.regex` / `q.ne` /
-    `q.exists` are TS compile errors. Chained `.where(...).where(...)`
-    AND-merges across shapes.
+  - **Object literal** — equality only (top-level, dotted-path, or nested literal sub-predicate). Multi-field is implicit AND.
+  - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)` for the operator vocabulary. The methods on `PredicateBuilder<T>` ARE the supported surface — `q.or` / `q.regex` / `q.ne` / `q.exists` are TS compile errors. Chained `.where(...).where(...)` AND-merges across shapes.
 
   ```ts
   // Top-level equality
   await db.collection("notes").where({ body: "TODO" }).all();
 
   // Dotted-path on a nested field
-  await db.collection("notes")
-    .where({ "meta.source": "import" })
-    .all();
+  await db.collection("notes").where({ "meta.source": "import" }).all();
 
   // Operator on a single field — set membership (callback form)
-  await db.collection("notes")
-    .where(q => q.in("tag", ["todo", "wip"]))
+  await db
+    .collection("notes")
+    .where((q) => q.in("tag", ["todo", "wip"]))
     .all();
 
   // Range — also callback form
-  await db.collection("notes")
-    .where(q => q.gte("created_at", "2026-01-01"))
+  await db
+    .collection("notes")
+    .where((q) => q.gte("created_at", "2026-01-01"))
     .all();
 
   // AND-merge across two .where() calls (mix shapes freely)
-  await db.collection("notes")
+  await db
+    .collection("notes")
     .where({ body: "TODO" })
-    .where(q => q.gte("priority", 5))
+    .where((q) => q.gte("priority", 5))
     .all();
   ```
 
-  The plain-equality value type is JSON-arrayless: string / number /
-  boolean / nested object. Use `q.in("tag", [...])` for set
-  membership when you'd otherwise want `{ tag: ["todo","wip"] }`.
+  The plain-equality value type is JSON-arrayless: string / number / boolean / nested object. Use `q.in("tag", [...])` for set membership when you'd otherwise want `{ tag: ["todo","wip"] }`.
 
-- **Indexes** — don't declare them. Every read folds the whole
-  collection (snapshot + log) and filters in memory; a declared index
-  neither speeds a read up nor changes its result. `defineConfig`
-  still accepts `indexes` and `Db.create` validates them, so an
-  existing config keeps compiling. For a hot filtered read, maintain a
-  side-projection (see the unbounded-read anti-pattern below).
+- **Indexes** — don't declare them. Every read folds the whole collection (snapshot + log) and filters in memory; a declared index neither speeds a read up nor changes its result. `defineConfig` still accepts `indexes` and `Db.create` validates them, so an existing config keeps compiling. For a hot filtered read, maintain a side-projection (see the unbounded-read anti-pattern below).
 
-- **Schemas (live feature)** — schemas are validated on the server
-  for every `insert` / `update` / `replace` when bound. Declare via
-  `defineConfig` using any StandardSchema v1 validator (Zod 3.24+,
-  Valibot 0.36+, ArkType 2.0+, or anything implementing the spec):
+- **Schemas (live feature)** — schemas are validated on the server for every `insert` / `update` / `replace` when bound. Declare via `defineConfig` using any StandardSchema v1 validator (Zod 3.24+, Valibot 0.36+, ArkType 2.0+, or anything implementing the spec):
 
   ```ts
   import { z } from "zod";
@@ -269,70 +169,40 @@ http://localhost:5173/<path>`) before declaring the task complete.
   });
   ```
 
-  On a validation failure the server throws
-  `BaerlyError{ code: "SchemaError", issues: [{ path, message }] }`;
-  HTTP clients see a 400 with the same envelope. Validation runs
-  on the post-image so `update` and `replace` see the full doc, not
-  just the patch.
+  On a validation failure the server throws `BaerlyError{ code: "SchemaError", issues: [{ path, message }] }`; HTTP clients see a 400 with the same envelope. Validation runs on the post-image so `update` and `replace` see the full doc, not just the patch.
 
-- **HTTP wire format (calling `/v1/*` directly)** — the JS SDK
-  (`db.collection(name).insert(...)`) is the canonical path; reach for `curl`
-  only when debugging the wire. Mutation bodies are wrapped:
+- **HTTP wire format (calling `/v1/*` directly)** — the JS SDK (`db.collection(name).insert(...)`) is the canonical path; reach for `curl` only when debugging the wire. Mutation bodies are wrapped:
 
-  | Route                       | Body                | Response                      |
-  | --------------------------- | ------------------- | ----------------------------- |
-  | `POST   /v1/c/:collection`       | `{"doc":{...}}`     | `201 {_id}`                   |
-  | `PATCH  /v1/c/:collection/:id`   | `{"patch":{...}}`   | `200 {modified}`              |
-  | `PUT    /v1/c/:collection/:id`   | `{"doc":{...}}`     | `200 {modified}`              |
-  | `DELETE /v1/c/:collection/:id`   | —                   | `204`                         |
+  | Route                          | Body              | Response         |
+  | ------------------------------ | ----------------- | ---------------- |
+  | `POST   /v1/c/:collection`     | `{"doc":{...}}`   | `201 {_id}`      |
+  | `PATCH  /v1/c/:collection/:id` | `{"patch":{...}}` | `200 {modified}` |
+  | `PUT    /v1/c/:collection/:id` | `{"doc":{...}}`   | `200 {modified}` |
+  | `DELETE /v1/c/:collection/:id` | —                 | `204`            |
 
-  Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`,
-  `GET /v1/since?collection=…&cursor=…`) take no body and return
-  `{ data, _meta }` or a route-specific envelope. A flat `POST` body
-  (without the `doc` wrapper) returns
-  `400 SchemaError "Request body must be { doc: object }"` — the
-  wording is locked by `assertJsonBodyField` in the kernel. Canonical
-  reference: the JSDoc on `createRouter` in
-  `baerly-storage`.
+  Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`, `GET /v1/since?collection=…&cursor=…`) take no body and return `{ data, _meta }` or a route-specific envelope. A flat `POST` body (without the `doc` wrapper) returns `400 SchemaError "Request body must be { doc: object }"` — the wording is locked by `assertJsonBodyField` in the kernel. Canonical reference: the JSDoc on `createRouter` in `baerly-storage`.
 
-- **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`:
-  every request resolves to `tenant: "react-demo"` and `Authorization`
-  is ignored. The adapter reads `config.auth` to pick its verifier;
-  a `verifier:` on `baerlyNode({ ... })` overrides it. The schema-
-  bound `notes` collection (`baerly.config.ts:NoteSchema`) runs
-  server-side regardless of the auth posture. There is no `baerly
-  doctor --target=node` backend today; verify bucket CAS with
-  `baerly doctor --bucket=<s3-uri>` and probe `/v1/healthz` after
-  deploy. See "Going to production" below for the two production-fit
-  recipes.
+- **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`: every request resolves to `tenant: "react-demo"` and `Authorization` is ignored. The adapter reads `config.auth` to pick its verifier; a `verifier:` on `baerlyNode({ ... })` overrides it. The schema- bound `notes` collection (`baerly.config.ts:NoteSchema`) runs server-side regardless of the auth posture. There is no `baerly doctor --target=node` backend today; verify bucket CAS with `baerly doctor --bucket=<s3-uri>` and probe `/v1/healthz` after deploy. See "Going to production" below for the two production-fit recipes.
 
 ### Going to production
 
-The scaffold ships `auth: "none"` so the day-1 happy path works with
-zero env vars. The `NoteSchema` in `baerly.config.ts` continues to
-validate writes server-side under every posture below — only the
-header-check seam changes.
+The scaffold ships `auth: "none"` so the day-1 happy path works with zero env vars. The `NoteSchema` in `baerly.config.ts` continues to validate writes server-side under every posture below — only the header-check seam changes.
 
 <!-- pattern-b:start -->
-**Pattern B — `auth: "shared-secret"`** (single-tenant
-server-to-server). No factory code changes; `baerly.config.ts` flips:
+
+**Pattern B — `auth: "shared-secret"`** (single-tenant server-to-server). No factory code changes; `baerly.config.ts` flips:
 
 ```ts
 // baerly.config.ts
 auth: "shared-secret",     // ← flip from "none"
 ```
 
-Dev: put `SHARED_SECRET=dev-shared-secret` in `.env`. Prod: set
-`SHARED_SECRET` in the process environment (your PaaS / secret
-manager). The Node process fails closed if `auth: "shared-secret"`
-is set without `SHARED_SECRET` reachable from `process.env`; verify
-the live bucket separately with `baerly doctor --bucket=<s3-uri>`.
+Dev: put `SHARED_SECRET=dev-shared-secret` in `.env`. Prod: set `SHARED_SECRET` in the process environment (your PaaS / secret manager). The Node process fails closed if `auth: "shared-secret"` is set without `SHARED_SECRET` reachable from `process.env`; verify the live bucket separately with `baerly doctor --bucket=<s3-uri>`.
 
 <!-- pattern-b:end -->
 <!-- pattern-c:start -->
-**Pattern C — JWKS-backed JWT** (multi-tenant; OIDC IdP). The factory
-`verifier:` overrides `config.auth`, so dev keeps `"none"` and prod
-gets `bearerJwt`:
+
+**Pattern C — JWKS-backed JWT** (multi-tenant; OIDC IdP). The factory `verifier:` overrides `config.auth`, so dev keeps `"none"` and prod gets `bearerJwt`:
 
 ```ts
 // baerly.config.ts — unchanged
@@ -366,113 +236,34 @@ await baerlyNode({
 }).listen(Number(process.env["PORT"] ?? 8080));
 ```
 
-Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and
-`config.auth: "none"` runs. Prod sets `JWKS_URL` + `JWT_ISSUER` +
-`JWT_AUDIENCE` and `bearerJwt` engages. Use `tenantClaim` when your
-IdP issues one tenant per token; use `tenantPrefix` for single-tenant
-apps or tenancy enforced outside baerly-storage.
+Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and `config.auth: "none"` runs. Prod sets `JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` and `bearerJwt` engages. Use `tenantClaim` when your IdP issues one tenant per token; use `tenantPrefix` for single-tenant apps or tenancy enforced outside baerly-storage.
 
 <!-- pattern-c:end -->
-- **Storage backend** — `src/server/index.ts` resolves storage by env:
-  `R2_ACCOUNT_ID` → Cloudflare R2, else `BUCKET` → AWS S3, else
-  zero-config `localFsStorage()` (persists to `./.baerly-data`, no
-  credentials, local dev only). **In a detected deployment
-  (`NODE_ENV=production` or a known PaaS) the server fails loud and
-  requires a bucket** — local-fs is single-process with no cross-process
-  CAS or crash durability, so it is never a production store (there is no
-  opt-in). AWS S3 and Cloudflare R2 are the production-supported stores;
-  self-hosting without a cloud bucket, run **MinIO** on the box (also the
-  local/dev conformance target) or graduate to SQLite + Litestream. Other S3-compatible endpoints need a
-  green `baerly doctor --bucket` plus owner validation; GCS S3-interop
-  is not supported for database use today. The bucket name comes from
-  the `BUCKET` env var; AWS credentials are read from
-  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optional
-  `AWS_REGION`).
 
-- **Switching from static creds to EKS** — in
-  `src/server/index.ts`, swap `credentials: { accessKeyId,
-  secretAccessKey }` for `credentials: fromEks()` and add `fromEks`
-  to your import:
-  `import { s3Storage, fromEks } from "@gusto/baerly-storage/node"`.
-  `fromEks()` auto-detects the cluster's mechanism — EKS Pod Identity
-  (`AWS_CONTAINER_CREDENTIALS_FULL_URI` +
-  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) or IRSA (`AWS_ROLE_ARN` +
-  `AWS_WEB_IDENTITY_TOKEN_FILE`), both EKS-injected; to pin one, use
-  `fromEksPodIdentity()` or `fromWebIdentity()`. For ECS / EC2 / other
-  AWS contexts, see `packages/adapter-node/AGENTS.md` — pass any
-  `() => Promise<Credentials>` or an `@aws-sdk/credential-providers`
-  factory through the seam.
+- **Storage backend** — `src/server/index.ts` resolves storage by env: `R2_ACCOUNT_ID` → Cloudflare R2, else `BUCKET` → AWS S3, else zero-config `localFsStorage()` (persists to `./.baerly-data`, no credentials, local dev only). **In a detected deployment (`NODE_ENV=production` or a known PaaS) the server fails loud and requires a bucket** — local-fs is single-process with no cross-process CAS or crash durability, so it is never a production store (there is no opt-in). AWS S3 and Cloudflare R2 are the production-supported stores; self-hosting without a cloud bucket, run **MinIO** on the box (also the local/dev conformance target) or graduate to SQLite + Litestream. Other S3-compatible endpoints need a green `baerly doctor --bucket` plus owner validation; GCS S3-interop is not supported for database use today. The bucket name comes from the `BUCKET` env var; AWS credentials are read from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and optional `AWS_REGION`).
 
-- **Deploy** — runs anywhere `node server.js` runs. The
-  `package.json`'s `start` script is
-  `node --experimental-strip-types src/server/index.ts`. Arrange the
-  host to run `pnpm install && pnpm build` (populates
-  `dist/client/` for the `webRoot` static-serve branch) before
-  `pnpm start`. A deployment **must** configure a durable bucket:
-  `BUCKET` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (S3) or
-  `R2_ACCOUNT_ID` + those creds (R2). With none set, the server fails
-  loud in a detected deployment (`NODE_ENV=production` or a known PaaS)
-  rather than running on local-fs, which is local-dev only. Self-hosting
-  without a cloud bucket, run MinIO on the box or use SQLite + Litestream.
-  The default scaffold's `auth: "none"` needs no
-  auth env vars; if you adopt Pattern B / C from "Going to production" above,
-  also set `SHARED_SECRET` (Pattern B) or `JWKS_URL` + `JWT_ISSUER` +
-  `JWT_AUDIENCE` (Pattern C).
+- **Switching from static creds to EKS** — in `src/server/index.ts`, swap `credentials: { accessKeyId, secretAccessKey }` for `credentials: fromEks()` and add `fromEks` to your import: `import { s3Storage, fromEks } from "@gusto/baerly-storage/node"`. `fromEks()` auto-detects the cluster's mechanism — EKS Pod Identity (`AWS_CONTAINER_CREDENTIALS_FULL_URI` + `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) or IRSA (`AWS_ROLE_ARN` + `AWS_WEB_IDENTITY_TOKEN_FILE`), both EKS-injected; to pin one, use `fromEksPodIdentity()` or `fromWebIdentity()`. For ECS / EC2 / other AWS contexts, see `packages/adapter-node/AGENTS.md` — pass any `() => Promise<Credentials>` or an `@aws-sdk/credential-providers` factory through the seam.
 
-  Shapes: **managed PaaS** (Railway, Render, DO App Platform, Fly
-  without Docker, Heroku) auto-detects Node and runs the root
-  scripts directly. **VM / bare-metal** uses your process manager
-  of choice (systemd, pm2). **Container** (Docker, k8s, ECS, Fly
-  Machines with a Dockerfile) — scaffold with `--with=docker` to
-  add a production Dockerfile alongside this shape, or write your
-  own.
+- **Deploy** — runs anywhere `node server.js` runs. The `package.json`'s `start` script is `node --experimental-strip-types src/server/index.ts`. Arrange the host to run `pnpm install && pnpm build` (populates `dist/client/` for the `webRoot` static-serve branch) before `pnpm start`. A deployment **must** configure a durable bucket: `BUCKET` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (S3) or `R2_ACCOUNT_ID` + those creds (R2). With none set, the server fails loud in a detected deployment (`NODE_ENV=production` or a known PaaS) rather than running on local-fs, which is local-dev only. Self-hosting without a cloud bucket, run MinIO on the box or use SQLite + Litestream. The default scaffold's `auth: "none"` needs no auth env vars; if you adopt Pattern B / C from "Going to production" above, also set `SHARED_SECRET` (Pattern B) or `JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE` (Pattern C).
+
+  Shapes: **managed PaaS** (Railway, Render, DO App Platform, Fly without Docker, Heroku) auto-detects Node and runs the root scripts directly. **VM / bare-metal** uses your process manager of choice (systemd, pm2). **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile) — scaffold with `--with=docker` to add a production Dockerfile alongside this shape, or write your own.
 
 ## Anti-patterns
 
-- Widening branded types from `baerly-storage` (`UUID`,
-  `ContentVersionId`). The types prevent confusion bugs.
-- Reaching into `node_modules/@gusto/baerly-storage/dist/` directly —
-  consume the published exports.
-- Mutating `VerifierResult.tenantPrefix` between the verifier
-  and `Db.create`. The dispatcher pins the tenant from the
-  verifier's return value.
-- Calling `db.collection(...).all()` (or any unbounded read) inside a
-  per-request handler. The call scans the entire collection on every
-  request — fine for a fixture-sized table, catastrophic at any real
-  size, and `pnpm verify` doesn't surface the cost. A predicate
-  (`db.collection("notes").where({ ... }).all()`) trims the response
-  but still folds the whole collection, so instead maintain a
-  side-projection (Postgres/SQLite/search index) populated
-  incrementally from the `/v1/since?collection=<name>&cursor=<opaque>`
-  log feed or from a write hook —
-  never re-scan per request.
+- Widening branded types from `baerly-storage` (`UUID`, `ContentVersionId`). The types prevent confusion bugs.
+- Reaching into `node_modules/@gusto/baerly-storage/dist/` directly — consume the published exports.
+- Mutating `VerifierResult.tenantPrefix` between the verifier and `Db.create`. The dispatcher pins the tenant from the verifier's return value.
+- Calling `db.collection(...).all()` (or any unbounded read) inside a per-request handler. The call scans the entire collection on every request — fine for a fixture-sized table, catastrophic at any real size, and `pnpm verify` doesn't surface the cost. A predicate (`db.collection("notes").where({ ... }).all()`) trims the response but still folds the whole collection, so instead maintain a side-projection (Postgres/SQLite/search index) populated incrementally from the `/v1/since?collection=<name>&cursor=<opaque>` log feed or from a write hook — never re-scan per request.
 
 ## Maintenance
 
 <!-- pattern-d:start -->
-Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no
-timer, no lock, no app-config knob — identical on every host. Every write runs a
-bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling
-whose default is safe on every tier. A size-ratio threshold means idle buckets pay
-nothing. Concurrent folds are safe without coordination: the commit is a
-compare-and-swap, so a fold that loses to a concurrent write is simply discarded and
-its leftover swept by GC. On Cloudflare the fold is deferred past the response via
-ctx.waitUntil; everywhere else it runs inline. **Reads are pure** — they never run
-maintenance, so the published idle-reader cost bound holds.
 
-A bucket maintains itself as long as it takes writes. A bucket served read-only does
-not auto-compact and pays a small, bounded replay — fine at small scale, a signal to
-graduate once a collection is large. See docs/spec/scale-ceilings.md for the per-tier
-envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator
-env vars (you almost never need them).
+Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no timer, no lock, no app-config knob — identical on every host. Every write runs a bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling whose default is safe on every tier. A size-ratio threshold means idle buckets pay nothing. Concurrent folds are safe without coordination: the commit is a compare-and-swap, so a fold that loses to a concurrent write is simply discarded and its leftover swept by GC. On Cloudflare the fold is deferred past the response via ctx.waitUntil; everywhere else it runs inline. **Reads are pure** — they never run maintenance, so the published idle-reader cost bound holds.
 
-Operator opt-in is not required for steady-state operation. To also run maintenance on
-a schedule (useful for a collection served mostly read-only), call
-`runScheduledMaintenance` once per collection. `tier` is the
-`BAERLY_MAINTENANCE_PROFILE` value: `"cf-free"` or `"cf-paid"` caps the pass to fit one
-Workers invocation on that plan, and `"node"` (the default) is unbounded. Run one
-collection per Cloudflare invocation: shard the schedule or persist a collection cursor
-instead of looping tenants or collections.
+A bucket maintains itself as long as it takes writes. A bucket served read-only does not auto-compact and pays a small, bounded replay — fine at small scale, a signal to graduate once a collection is large. See docs/spec/scale-ceilings.md for the per-tier envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator env vars (you almost never need them).
+
+Operator opt-in is not required for steady-state operation. To also run maintenance on a schedule (useful for a collection served mostly read-only), call `runScheduledMaintenance` once per collection. `tier` is the `BAERLY_MAINTENANCE_PROFILE` value: `"cf-free"` or `"cf-paid"` caps the pass to fit one Workers invocation on that plan, and `"node"` (the default) is unbounded. Run one collection per Cloudflare invocation: shard the schedule or persist a collection cursor instead of looping tenants or collections.
 
 ```ts
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
@@ -483,66 +274,35 @@ const res = await runScheduledMaintenance(target); // Node
 await runScheduledMaintenance(target, { tier: "cf-paid" }); // a Workers Paid cron
 ```
 
-One whole pass fits an invocation on Workers Free with the R2 binding and on Workers
-Paid. S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
+One whole pass fits an invocation on Workers Free with the R2 binding and on Workers Paid. S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
 
-Node and Cloudflare Paid scheduled passes fold any pending write, so repeated
-passes drain a low-write collection to zero. Cloudflare Free folds only when at
-least 20 entries are pending, one 20-entry slice per pass; a remaining tail of
-1–19 entries stays unfolded until more writes arrive.
+Node and Cloudflare Paid scheduled passes fold any pending write, so repeated passes drain a low-write collection to zero. Cloudflare Free folds only when at least 20 entries are pending, one 20-entry slice per pass; a remaining tail of 1–19 entries stays unfolded until more writes arrive.
 
 <!-- pattern-d:end -->
 
 ## When to graduate
 
-baerly-storage is designed for the small-to-medium operating point.
-The soft ceiling has three lines, none enforced by the protocol: writes
-per collection (a throughput estimate), collections per tenant (a soft
-fan-out guideline), and the R2 free-tier storage line (a cost signal).
-The figures live in one place:
-docs/spec/scale-ceilings.md § "The published envelope" in the baerly-storage repo.
+baerly-storage is designed for the small-to-medium operating point. The soft ceiling has three lines, none enforced by the protocol: writes per collection (a throughput estimate), collections per tenant (a soft fan-out guideline), and the R2 free-tier storage line (a cost signal). The figures live in one place: docs/spec/scale-ceilings.md § "The published envelope" in the baerly-storage repo.
 
-At the M-size operating point, the projected cost is ~$12/mo on Cloudflare, including Workers Paid, and ~$19/mo on Node, excluding Node hosting. Past
-those, per-class op pricing and fan-out scan cost start to dominate;
-you've outgrown the workload envelope — move to a database service (D1 / Postgres) suited to higher scale.
-Pick your graduation target:
+At the M-size operating point, the projected cost is ~$12/mo on Cloudflare, including Workers Paid, and ~$19/mo on Node, excluding Node hosting. Past those, per-class op pricing and fan-out scan cost start to dominate; you've outgrown the workload envelope — move to a database service (D1 / Postgres) suited to higher scale. Pick your graduation target:
+
 - **Cloudflare Workers + lock-in OK:** [D1](https://developers.cloudflare.com/d1/) — cheaper per-write at M-size.
 - **Off-Workers or portability matters:** managed Postgres.
 - **Single-instance Node:** SQLite via Litestream.
 
-Either way, the export below is mechanical because log entries are
-Debezium-style CDC change events — graduation is a baerly-storage
-win, not a churn event.
+Either way, the export below is mechanical because log entries are Debezium-style CDC change events — graduation is a baerly-storage win, not a churn event.
 
-**Estimate your current rate:** for Node/self-hosted buckets,
-`baerly admin usage --target=node --bucket=<bucket-uri> --app=<app>
---tenant=<tenant>` lists recent log entries per collection and computes
-writes/min. On Cloudflare, use canonical logs for trend history and
-`baerly cost --bucket=<bucket-uri> --collection=<collection>` for the
-current operation-cost projection until the usage scanner is wired to
-R2 bindings.
+**Estimate your current rate:** for Node/self-hosted buckets, `baerly admin usage --target=node --bucket=<bucket-uri> --app=<app> --tenant=<tenant>` lists recent log entries per collection and computes writes/min. On Cloudflare, use canonical logs for trend history and `baerly cost --bucket=<bucket-uri> --collection=<collection>` for the current operation-cost projection until the usage scanner is wired to R2 bindings.
 
-**Export when ready:** `baerly export --target=sqlite|postgres|d1
---bucket=<...> --app=<...> --tenant=<...> --collection=<...>` writes a
-canonical SQL dump (and a `<output>.plan.json` sidecar carrying the
-inferred `ExportPlan`) that you load into your graduation target.
-The export is point-in-time and honours the active schema. Flags:
-`--where=<json-predicate>`, `--where-comment`, `--output`,
-`--no-sidecar`, `--json`. Exit codes: 0 success, 1 InvalidConfig,
-2 Storage/Network, 3 Protocol invariant.
+**Export when ready:** `baerly export --target=sqlite|postgres|d1 --bucket=<...> --app=<...> --tenant=<...> --collection=<...>` writes a canonical SQL dump (and a `<output>.plan.json` sidecar carrying the inferred `ExportPlan`) that you load into your graduation target. The export is point-in-time and honours the active schema. Flags: `--where=<json-predicate>`, `--where-comment`, `--output`, `--no-sidecar`, `--json`. Exit codes: 0 success, 1 InvalidConfig, 2 Storage/Network, 3 Protocol invariant.
 
 ## Worked extensions
 
-Three recipes that come up routinely when you extend the
-scaffolded `notes` shape. Each one is target-agnostic — the same
-code works in `react-cloudflare` and `react-node`.
+Three recipes that come up routinely when you extend the scaffolded `notes` shape. Each one is target-agnostic — the same code works in `react-cloudflare` and `react-node`.
 
 ### Adding an enum field (e.g. `status`)
 
-A row often needs a constrained set of string values. Declare the
-enum inside the Zod schema and export the option tuple next to it
-in `baerly.config.ts`; the predicate API picks the field up
-automatically.
+A row often needs a constrained set of string values. Declare the enum inside the Zod schema and export the option tuple next to it in `baerly.config.ts`; the predicate API picks the field up automatically.
 
 ```typescript
 // baerly.config.ts
@@ -558,7 +318,7 @@ export const NoteSchema = z.object({
 export type Note = z.infer<typeof NoteSchema>;
 export const STATUSES = NoteSchema.shape.status.options;
 
-export default defineConfig({ /* ... */ });
+export default defineConfig({/* ... */});
 ```
 
 ```tsx
@@ -567,21 +327,18 @@ import { STATUSES } from "../../baerly.config.ts";
 
 <select name="status" defaultValue="open">
   {STATUSES.map((s) => (
-    <option key={s} value={s}>{s}</option>
+    <option key={s} value={s}>
+      {s}
+    </option>
   ))}
-</select>
+</select>;
 ```
 
-The schema enum is the single source of truth — adding a value
-there expands the `<select>` immediately. Adding more enum fields
-(`priority`, `severity`) follows the same shape.
+The schema enum is the single source of truth — adding a value there expands the `<select>` immediately. Adding more enum fields (`priority`, `severity`) follows the same shape.
 
 ### Filtering a reactive query by predicate
 
-`useQuery((c) => c.collection(...).where(...).all(), [deps])` accepts the
-same predicate shapes as the bare client. To narrow by an enum field,
-drive it off `useState` and lift the filter into the `deps` array so
-the cache key changes when the filter does:
+`useQuery((c) => c.collection(...).where(...).all(), [deps])` accepts the same predicate shapes as the bare client. To narrow by an enum field, drive it off `useState` and lift the filter into the `deps` array so the cache key changes when the filter does:
 
 ```tsx
 import { useState } from "react";
@@ -602,32 +359,19 @@ const result = useQuery(
 );
 ```
 
-`useQuery` is live by default: it re-runs on dependency changes and
-non-empty `/v1/since` batches for any collection the callback reads.
-Pass `{ live: false }` for mount/dependency reads without `/v1/since`.
-Every result state has a stable `refetch()`; successful data stays
-available while refreshing and on error. A non-retriable subscription
-error stops automatic polling, while explicit `refetch()` retries the
-read and restarts the terminal live subscription. Idle long-poll cycles
-do not re-run the query.
+`useQuery` is live by default: it re-runs on dependency changes and non-empty `/v1/since` batches for any collection the callback reads. Pass `{ live: false }` for mount/dependency reads without `/v1/since`. Every result state has a stable `refetch()`; successful data stays available while refreshing and on error. A non-retriable subscription error stops automatic polling, while explicit `refetch()` retries the read and restarts the terminal live subscription. Idle long-poll cycles do not re-run the query.
 
-For conditional / deferred reads, return the `useQuery.skip` sentinel
-from the callback — the hook short-circuits to
-`status: "skipped"` with no subscription:
+For conditional / deferred reads, return the `useQuery.skip` sentinel from the callback — the hook short-circuits to `status: "skipped"` with no subscription:
 
 ```tsx
 const filtered = useQuery(
-  (c) =>
-    filter === "all"
-      ? useQuery.skip
-      : c.collection("notes").where({ status: filter }).all(),
+  (c) => (filter === "all" ? useQuery.skip : c.collection("notes").where({ status: filter }).all()),
   [filter],
 );
 if (filtered.status === "skipped") return <FullList />;
 ```
 
-For dependent reads, compose two `useQuery` calls — the second one
-returns `useQuery.skip` until the first resolves to `"ok"`:
+For dependent reads, compose two `useQuery` calls — the second one returns `useQuery.skip` until the first resolves to `"ok"`:
 
 ```tsx
 // `comments` must be declared in baerly.config.ts — the bound hooks
@@ -642,8 +386,7 @@ const replies = useQuery(
 );
 ```
 
-Mutations are inline: `useMutation()` returns a `[mutate, { isPending,
-error }]` tuple. `mutate(cb)` runs `cb` against the real client:
+Mutations are inline: `useMutation()` returns a `[mutate, { isPending, error }]` tuple. `mutate(cb)` runs `cb` against the real client:
 
 ```tsx
 const [mutate, { isPending, error }] = useMutation();
@@ -652,32 +395,22 @@ const [mutate, { isPending, error }] = useMutation();
   onClick={() => mutate((c) => c.collection("notes").update(id, { body }))}
 >
   {isPending ? "Saving…" : "Save"}
-</button>
+</button>;
 ```
 
 ### Optional fields
 
-Some fields aren't always present (`tags` may be missing entirely
-on some rows). Zod's `.optional()` models this:
+Some fields aren't always present (`tags` may be missing entirely on some rows). Zod's `.optional()` models this:
 
 ```typescript
 export const NoteSchema = z.object({
   _id: z.string(),
   body: z.string().min(1),
-  tags: z.array(z.string()).optional(),     // tags?: string[]
+  tags: z.array(z.string()).optional(), // tags?: string[]
 });
 ```
 
-The Zod-inferred `Note` type reflects the shape (`tags?: string[]`)
-and call sites pick it up through `import type { Note }`.
-JSON-merge-patch (RFC 7386) semantics apply on `update()`:
-omitting `tags` from an update preserves the existing value;
-passing `tags: null` deletes the field; passing `tags: []` sets
-it to an empty array. Note that `null` is the deletion sentinel,
-not a storable value — `DocumentValue` doesn't include `null`, so
-subsequent `get()` / query results expose deleted optional fields as
-`undefined`, not `null`.
-That's why this recipe uses `.optional()` and not `.nullable()`.
+The Zod-inferred `Note` type reflects the shape (`tags?: string[]`) and call sites pick it up through `import type { Note }`. JSON-merge-patch (RFC 7386) semantics apply on `update()`: omitting `tags` from an update preserves the existing value; passing `tags: null` deletes the field; passing `tags: []` sets it to an empty array. Note that `null` is the deletion sentinel, not a storable value — `DocumentValue` doesn't include `null`, so subsequent `get()` / query results expose deleted optional fields as `undefined`, not `null`. That's why this recipe uses `.optional()` and not `.nullable()`.
 
 ## Pointers
 

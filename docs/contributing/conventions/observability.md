@@ -9,48 +9,17 @@ related: ["../../guide/observability.md", "tests.md"]
 
 # Observability conventions
 
-Rules for code that emits observability. The operator-facing
-counterpart is [`docs/guide/observability.md`](../../guide/observability.md).
+Rules for code that emits observability. The operator-facing counterpart is [`docs/guide/observability.md`](../../guide/observability.md).
 
 ## The one rule
 
-**Every HTTP request emits one canonical line.** The kernel emits it
-on the request boundary; you don't.
+**Every HTTP request emits one canonical line.** The kernel emits it on the request boundary; you don't.
 
-Maintenance ticks (compactor, GC, `runScheduledMaintenance`)
-emit NO canonical line — there's no human reading cron-tick logs on a
-15-user app, and errors throw to the platform (Cloudflare dashboard,
-Node process logs). Their per-emission metrics still flow into the
-canonical line when called from within an HTTP scope (e.g. an admin
-route that triggers `compact`); outside any HTTP scope each emit
-site falls through to `noopMetricsRecorder` — operators don't wire
-their own `MetricsRecorder`, the canonical line on stdout is the
-operator's view of kernel emissions.
+Maintenance ticks (compactor, GC, `runScheduledMaintenance`) emit NO canonical line — there's no human reading cron-tick logs on a 15-user app, and errors throw to the platform (Cloudflare dashboard, Node process logs). Their per-emission metrics still flow into the canonical line when called from within an HTTP scope (e.g. an admin route that triggers `compact`); outside any HTTP scope each emit site falls through to `noopMetricsRecorder` — operators don't wire their own `MetricsRecorder`, the canonical line on stdout is the operator's view of kernel emissions.
 
-**Known limitation (intentional).** On Cloudflare, write-tick
-maintenance is dispatched via `ctx.waitUntil(...)` _after_ the canonical
-line is flushed (in the request `finally`), so post-response maintenance
-metrics never appear on that request's line; failures surface only via
-`console.error` in `packages/server/src/maintenance.ts`, and a fold-wall
-deferral surfaces only as its `fold_deferred` log record. That record is
-routed through `MaintenanceDispatch.warn`, which each adapter binds to
-`logMaintenanceWarning` (category `CATEGORY.maintenance`); kernel modules
-reach it through `getCurrentContext()?.maintenance?.warn` and never
-import LogTape, which keeps the observability subgraph out of the kernel
-bundles. This is inherent
-to the `waitUntil` model — you can't append to an already-sent response's
-log line. Changing it would require a separate maintenance log
-context/flush; not currently planned.
+**Known limitation (intentional).** On Cloudflare, write-tick maintenance is dispatched via `ctx.waitUntil(...)` _after_ the canonical line is flushed (in the request `finally`), so post-response maintenance metrics never appear on that request's line; failures surface only via `console.error` in `packages/server/src/maintenance.ts`, and a fold-wall deferral surfaces only as its `fold_deferred` log record. That record is routed through `MaintenanceDispatch.warn`, which each adapter binds to `logMaintenanceWarning` (category `CATEGORY.maintenance`); kernel modules reach it through `getCurrentContext()?.maintenance?.warn` and never import LogTape, which keeps the observability subgraph out of the kernel bundles. This is inherent to the `waitUntil` model — you can't append to an already-sent response's log line. Changing it would require a separate maintenance log context/flush; not currently planned.
 
-Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed
-callback that calls `db.collection().insert()` from inside the Vite
-plugin — don't emit a canonical line on their own. The unit boundary
-lives on the wrapping HTTP request, not on the `Db` method.
-Field-setters like `getCurrentContext()?.fields.set(...)` are no-ops
-in that mode, and metrics that attach to the canonical line (e.g.
-`db.write.class_a_ops_per_logical_write`) won't surface — so don't
-use server-side `Db` calls as a verification or calibration proxy
-for HTTP-path behaviour; drive a real `/v1/*` request instead.
+Direct `Db` calls outside an HTTP request — e.g. a `baerlyDev()` seed callback that calls `db.collection().insert()` from inside the Vite plugin — don't emit a canonical line on their own. The unit boundary lives on the wrapping HTTP request, not on the `Db` method. Field-setters like `getCurrentContext()?.fields.set(...)` are no-ops in that mode, and metrics that attach to the canonical line (e.g. `db.write.class_a_ops_per_logical_write`) won't surface — so don't use server-side `Db` calls as a verification or calibration proxy for HTTP-path behaviour; drive a real `/v1/*` request instead.
 
 Don't log-and-rethrow:
 
@@ -72,8 +41,7 @@ import { CATEGORY, getLogger } from "../observability";
 getLogger(CATEGORY.storage).debug("step", { collection, attempt });
 ```
 
-DEBUG is below the `info` threshold in production; the formatting
-cost is paid only when `LOG_LEVEL=debug`.
+DEBUG is below the `info` threshold in production; the formatting cost is paid only when `LOG_LEVEL=debug`.
 
 ## Attaching a field to the in-flight canonical line
 
@@ -84,23 +52,15 @@ getCurrentContext()?.fields.set("collection", collection);
 getCurrentContext()?.fields.set("table_row_count", rows.length);
 ```
 
-Field values must be JSON-stringifiable: strings, numbers, booleans,
-plain objects, arrays. Don't put functions, `undefined`, or BigInts
-in. `null` is fine.
+Field values must be JSON-stringifiable: strings, numbers, booleans, plain objects, arrays. Don't put functions, `undefined`, or BigInts in. `null` is fine.
 
-`fields` keys override `recorder.summarize()` keys but lose to
-`opts.extra` at flush time (`extra` is the caller's final say).
+`fields` keys override `recorder.summarize()` keys but lose to `opts.extra` at flush time (`extra` is the caller's final say).
 
-The context is `undefined` when no `runWithContext` scope is active
-— optional-chain the access. Library code must work in both modes.
+The context is `undefined` when no `runWithContext` scope is active — optional-chain the access. Library code must work in both modes.
 
 ## Non-request entry points
 
-There is no `withObservability` wrapper for work outside an HTTP
-request — only HTTP requests get a canonical line, and they are
-wrapped by the adapter. Non-request entry points (admin commands,
-operator-run batches, maintenance ticks) call the kernel primitives
-directly:
+There is no `withObservability` wrapper for work outside an HTTP request — only HTTP requests get a canonical line, and they are wrapped by the adapter. Non-request entry points (admin commands, operator-run batches, maintenance ticks) call the kernel primitives directly:
 
 ```ts
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
@@ -108,18 +68,11 @@ import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
 await runScheduledMaintenance({ storage, app, tenant, collection: "tickets" });
 ```
 
-Errors propagate to the platform's process / Worker log. Metric
-emissions fall through to `noopMetricsRecorder` outside any
-`runWithContext` scope.
+Errors propagate to the platform's process / Worker log. Metric emissions fall through to `noopMetricsRecorder` outside any `runWithContext` scope.
 
-One exception: the Cloudflare adapter runs a user `scheduled` handler
-inside its own context, because a cron invocation has its own subrequest
-limit and so its own request ledger (`ObservabilityContext.ledger`). That
-context emits no canonical line; metrics recorded inside it are dropped
-with it.
+One exception: the Cloudflare adapter runs a user `scheduled` handler inside its own context, because a cron invocation has its own subrequest limit and so its own request ledger (`ObservabilityContext.ledger`). That context emits no canonical line; metrics recorded inside it are dropped with it.
 
-If you need per-emission visibility during local testing, construct
-an `ObservabilityContext` and wrap the work in `runWithContext`:
+If you need per-emission visibility during local testing, construct an `ObservabilityContext` and wrap the work in `runWithContext`:
 
 ```ts
 import { createObservabilityContext, runWithContext } from "../observability";
@@ -137,182 +90,66 @@ DEBUG is for stuff that's:
 
 - Per-storage-op (one event per `get` / `put` / `delete` / `list`).
 - Per-predicate-evaluation step.
-- Anything hot you want occasional visibility on without paying for
-  it in production.
+- Anything hot you want occasional visibility on without paying for it in production.
 
-Toggle on per-deployment via `LOG_LEVEL=debug`. Tests opt in by
-passing `{ level: "debug" }` to `configureObservability`.
+Toggle on per-deployment via `LOG_LEVEL=debug`. Tests opt in by passing `{ level: "debug" }` to `configureObservability`.
 
 ## Sampling philosophy
 
-Every unit-of-work emits one canonical line unconditionally; errors
-are not special-cased because there is nothing to override.
+Every unit-of-work emits one canonical line unconditionally; errors are not special-cased because there is nothing to override.
 
 ## Metric-name conventions
 
-`db.<subsystem>.<metric>` — three dot-separated segments, lowercase,
-snake_case within each segment when a metric name has multiple
-words. Match the existing names in
-[`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts).
-Labels are flat `Readonly<Record<string, string>>` — no numbers as
-label values, no nested objects — so any aggregation backend can
-consume them.
+`db.<subsystem>.<metric>` — three dot-separated segments, lowercase, snake_case within each segment when a metric name has multiple words. Match the existing names in [`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts). Labels are flat `Readonly<Record<string, string>>` — no numbers as label values, no nested objects — so any aggregation backend can consume them.
 
-The load-bearing kernel metrics today (canonical list in
-[`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts)):
+The load-bearing kernel metrics today (canonical list in [`packages/protocol/src/metrics.ts`](../../../packages/protocol/src/metrics.ts)):
 
-- `db.write.class_a_ops_per_logical_write` — writer histogram
-  (recommended operator alert when p99 exceeds ~5; not a shipped or
-  CI-gated check).
-- `db.write.ambiguous_commit_total` — writer counter, labelled by
-  `collection` and `cleanup` (`deleted` / `failed`). A committing create
-  won at a sequence already certified deleted, so the commit failed with
-  `AmbiguousCommit` rather than acknowledging a mutation whose visibility
-  cannot be determined.
-  `cleanup` reports whether the phantom log object was reclaimed. Any
-  sustained rate means writers are pausing across a fold plus a
-  retirement pass. A `failed` rate leaves sub-floor objects behind as
-  permanent leaks: they sit below `log_delete_floor`, which is where
-  computed-range retirement starts, so nothing revisits them.
-- `db.write.delete_floor_check_skipped_total` — writer counter, labelled
-  by `collection`. The post-create re-read of `current.json` inside
-  `Writer#assertCommitAboveDeleteFloor` failed with a non-abort error, so
-  the delete-floor check was skipped for that commit instead of
-  evaluated. A sustained rate means the check is not covering the writes
-  it exists to protect, even though no individual commit is rejected.
-- `db.write.post_commit_refused_total` — writer counter, labelled by
-  `collection` and `phase` (`delete-floor-check`, the only post-commit
-  step). The request ledger refused a storage call of a step that runs
-  after a known commit; the step was skipped and the commit stands. The
-  floor check runs inside the commit's ledger hold, so a count means an
-  unrefusable call outside every hold or a platform cap below the ledger's
-  limit cut into it. The production Worker makes no Cache API
-  calls.
-- `db.write.unresolved_create_total` — writer counter, labelled by
-  `collection`. A rejected committing create could not be resolved by
-  readback, so the commit failed with `AmbiguousCommit`. Any sustained rate
-  means storage is dropping create acknowledgements or occupant reads.
-- `db.write.maintenance_dispatch_failed_total` — writer counter, labelled
-  by `collection`. The host's maintenance dispatcher threw or rejected after
-  a durable commit, so that write's maintenance tick did not run. A
-  sustained rate means write-tick maintenance is off and backlog is growing.
-- `db.write.insert_replayed_total` — counter, labelled by `collection`.
-  An SDK-minted insert (`mintedId`) found its identical row already stored
-  and returned it as the original success, committing nothing. A replay
-  records no write metric, so this is its only signal; a rate tracks
-  clients retransmitting inserts after lost responses.
-- `db.read.decoded_entries_total` / `db.read.live_documents_total` /
-  `db.read.returned_rows_total` — counters, labelled by `collection`,
-  emitted together by every collection read: a read terminal, or a write
-  verb's pre-commit read. `runReadRows` in `packages/server/src/query.ts`
-  records them from counts the fold already holds, so they add no storage
-  call and no pass over the rows; outside an observability scope they
-  allocate nothing. Units:
-  - decoded entries: snapshot rows plus log entries the fold decoded,
-    before predicate and limit. Entries, not documents — an `_id`
-    updated twice since the last fold counts three times, and a deleted
-    row still counts its `I` and its `D`.
-  - live documents: distinct documents live once the fold completes,
-    before predicate, order and limit.
-  - returned rows: rows left after predicate, order and limit — the rows
-    a read returns, the rows `count()` counts, or the rows a write verb's
-    read matched.
+- `db.write.class_a_ops_per_logical_write` — writer histogram (recommended operator alert when p99 exceeds ~5; not a shipped or CI-gated check).
+- `db.write.ambiguous_commit_total` — writer counter, labelled by `collection` and `cleanup` (`deleted` / `failed`). A committing create won at a sequence already certified deleted, so the commit failed with `AmbiguousCommit` rather than acknowledging a mutation whose visibility cannot be determined. `cleanup` reports whether the phantom log object was reclaimed. Any sustained rate means writers are pausing across a fold plus a retirement pass. A `failed` rate leaves sub-floor objects behind as permanent leaks: they sit below `log_delete_floor`, which is where computed-range retirement starts, so nothing revisits them.
+- `db.write.delete_floor_check_skipped_total` — writer counter, labelled by `collection`. The post-create re-read of `current.json` inside `Writer#assertCommitAboveDeleteFloor` failed with a non-abort error, so the delete-floor check was skipped for that commit instead of evaluated. A sustained rate means the check is not covering the writes it exists to protect, even though no individual commit is rejected.
+- `db.write.post_commit_refused_total` — writer counter, labelled by `collection` and `phase` (`delete-floor-check`, the only post-commit step). The request ledger refused a storage call of a step that runs after a known commit; the step was skipped and the commit stands. The floor check runs inside the commit's ledger hold, so a count means an unrefusable call outside every hold or a platform cap below the ledger's limit cut into it. The production Worker makes no Cache API calls.
+- `db.write.unresolved_create_total` — writer counter, labelled by `collection`. A rejected committing create could not be resolved by readback, so the commit failed with `AmbiguousCommit`. Any sustained rate means storage is dropping create acknowledgements or occupant reads.
+- `db.write.maintenance_dispatch_failed_total` — writer counter, labelled by `collection`. The host's maintenance dispatcher threw or rejected after a durable commit, so that write's maintenance tick did not run. A sustained rate means write-tick maintenance is off and backlog is growing.
+- `db.write.insert_replayed_total` — counter, labelled by `collection`. An SDK-minted insert (`mintedId`) found its identical row already stored and returned it as the original success, committing nothing. A replay records no write metric, so this is its only signal; a rate tracks clients retransmitting inserts after lost responses.
+- `db.read.decoded_entries_total` / `db.read.live_documents_total` / `db.read.returned_rows_total` — counters, labelled by `collection`, emitted together by every collection read: a read terminal, or a write verb's pre-commit read. `runReadRows` in `packages/server/src/query.ts` records them from counts the fold already holds, so they add no storage call and no pass over the rows; outside an observability scope they allocate nothing. Units:
+  - decoded entries: snapshot rows plus log entries the fold decoded, before predicate and limit. Entries, not documents — an `_id` updated twice since the last fold counts three times, and a deleted row still counts its `I` and its `D`.
+  - live documents: distinct documents live once the fold completes, before predicate, order and limit.
+  - returned rows: rows left after predicate, order and limit — the rows a read returns, the rows `count()` counts, or the rows a write verb's read matched.
 
-  A never-provisioned collection reports zeros. No threshold, warning or
-  cap attaches to them.
-- `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match`
-  loss counter.
+  A never-provisioned collection reports zeros. No threshold, warning or cap attaches to them.
+
+- `db.r2.put.412_total` — CAS conflict / `If-Match` / `If-None-Match` loss counter.
 - `db.r2.put.429_total` — R2 prefix-partition rate-limit counter.
 - `db.manifest.lag_window_depth` — compactor gauge (alert at >100).
-- `db.compact.entries_folded` — compactor histogram (entries folded
-  per run).
-- `db.compaction.deferred_total` — write-tick runner counter, labelled by
-  `collection`, `dimension` (`bytes` / `rows`) and `gate` (`pre-fold` /
-  `rebuild`). The fold hit the snapshot ceiling and did not run, so
-  `log_seq_start` and log retention are frozen. Counted once per
-  deferral by the runner; `compact()` itself never emits it.
-- `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total`
-  — the same event under a per-dimension name (labels `collection`,
-  `gate`), because the canonical line keys counters by name and drops
-  labels.
-- `db.gc.entries_swept_per_second` — GC gauge (livelock indicator
-  when below writes/s).
+- `db.compact.entries_folded` — compactor histogram (entries folded per run).
+- `db.compaction.deferred_total` — write-tick runner counter, labelled by `collection`, `dimension` (`bytes` / `rows`) and `gate` (`pre-fold` / `rebuild`). The fold hit the snapshot ceiling and did not run, so `log_seq_start` and log retention are frozen. Counted once per deferral by the runner; `compact()` itself never emits it.
+- `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total` — the same event under a per-dimension name (labels `collection`, `gate`), because the canonical line keys counters by name and drops labels.
+- `db.gc.entries_swept_per_second` — GC gauge (livelock indicator when below writes/s).
 - `db.gc.swept_total` — GC counter, labelled by reason.
-- `db.gc.dropped_total` — GC counter, labelled by `cause`
-  (`stale-generation` / `still-live`). A candidate the sweep gate
-  resolved out of the ledger without deleting anything, because its
-  `generation` no longer matches the live manifest or because the key
-  reads live again. Deliberately separate from `db.gc.swept_total`: a
-  drop frees no bytes, and folding the two would make a pass that
-  reclaimed nothing look productive. Expect one `stale-generation`
-  spike per `baerly admin restore` and one on the first pass after
-  upgrading to a build that stamps generations (each pre-upgrade
-  `stale-log` or `orphan-snapshot` candidate is dropped for want of one).
-  An `orphan-snapshot` drop is self-healing: if the key is still orphaned
-  it is re-marked next pass, delaying reclamation by one grace period. A
-  dropped legacy `stale-log` candidate is not re-marked — no current
-  build marks that category — but nothing is lost, because the log object
-  it named is reclaimed by computed-range retirement instead. A
-  legacy `orphan-content` candidate is different: the eviction arm runs
-  before the generation fence, removes it from the ledger without a
-  DELETE or `db.gc.dropped_total` emission, never re-marks it, and leaves
-  the object on the bucket. A `stale-generation` rate that does NOT
-  subside means something is re-minting `generation` repeatedly; a
-  sustained `still-live` rate means the mark phase is misjudging
-  liveness, which is the failure the gate exists to contain rather than
-  to hide — check it against `db.gc.swept_total` before assuming GC is
-  healthy, since a collection can drop steadily while reclaiming
-  nothing.
+- `db.gc.dropped_total` — GC counter, labelled by `cause` (`stale-generation` / `still-live`). A candidate the sweep gate resolved out of the ledger without deleting anything, because its `generation` no longer matches the live manifest or because the key reads live again. Deliberately separate from `db.gc.swept_total`: a drop frees no bytes, and folding the two would make a pass that reclaimed nothing look productive. Expect one `stale-generation` spike per `baerly admin restore` and one on the first pass after upgrading to a build that stamps generations (each pre-upgrade `stale-log` or `orphan-snapshot` candidate is dropped for want of one). An `orphan-snapshot` drop is self-healing: if the key is still orphaned it is re-marked next pass, delaying reclamation by one grace period. A dropped legacy `stale-log` candidate is not re-marked — no current build marks that category — but nothing is lost, because the log object it named is reclaimed by computed-range retirement instead. A legacy `orphan-content` candidate is different: the eviction arm runs before the generation fence, removes it from the ledger without a DELETE or `db.gc.dropped_total` emission, never re-marks it, and leaves the object on the bucket. A `stale-generation` rate that does NOT subside means something is re-minting `generation` repeatedly; a sustained `still-live` rate means the mark phase is misjudging liveness, which is the failure the gate exists to contain rather than to hide — check it against `db.gc.swept_total` before assuming GC is healthy, since a collection can drop steadily while reclaiming nothing.
 - `db.orphan.candidate_count` — GC gauge (`gc/pending.json` depth).
-- `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` /
-  `db.storage.<op>.duration_ms` — storage decorator counters +
-  histogram (one trio per `get` / `put` / `delete` / `list`).
-- `db.storage.class_a_ops_total` / `db.storage.class_b_ops_total` —
-  storage decorator's S3-pricing rollup.
+- `db.storage.<op>.calls_total` / `db.storage.<op>.errors_total` / `db.storage.<op>.duration_ms` — storage decorator counters + histogram (one trio per `get` / `put` / `delete` / `list`).
+- `db.storage.class_a_ops_total` / `db.storage.class_b_ops_total` — storage decorator's S3-pricing rollup.
 
-Don't invent new namespaces casually. New subsystem? Pick from the
-existing set (`write`, `read`, `r2`, `manifest`, `gc`, `orphan`,
-`compact`, `storage`) or discuss with maintainers before adding `db.newthing.*`
-— metric names are a contract.
+Don't invent new namespaces casually. New subsystem? Pick from the existing set (`write`, `read`, `r2`, `manifest`, `gc`, `orphan`, `compact`, `storage`) or discuss with maintainers before adding `db.newthing.*` — metric names are a contract.
 
 ### Rejected naming alternatives
 
-- **Camel-case namespacing** (e.g. `dbWrite.classAOpsPerLogicalWrite`).
-  Does not survive every aggregation backend (statsd, Prometheus,
-  OpenTelemetry, Workers Analytics Engine); the dot is the
-  widely-supported namespace separator. Deeper trees
-  (`db.write.commit.412.total`) reduce aggregation ergonomics with
-  no offsetting benefit, so we cap at three segments.
-- **Backend-specific naming.** The recorder abstraction exists
-  precisely so the kernel does not have to know its sink. A future
-  preset could ship a Prometheus or OpenTelemetry adapter without
-  changing emit sites.
+- **Camel-case namespacing** (e.g. `dbWrite.classAOpsPerLogicalWrite`). Does not survive every aggregation backend (statsd, Prometheus, OpenTelemetry, Workers Analytics Engine); the dot is the widely-supported namespace separator. Deeper trees (`db.write.commit.412.total`) reduce aggregation ergonomics with no offsetting benefit, so we cap at three segments.
+- **Backend-specific naming.** The recorder abstraction exists precisely so the kernel does not have to know its sink. A future preset could ship a Prometheus or OpenTelemetry adapter without changing emit sites.
 
 ### Prohibited patterns
 
-- **Numeric label values.** Prometheus and OpenTelemetry both
-  treat numeric labels as anti-patterns — they explode cardinality
-  and produce unaggregatable series.
-- **Nested objects as label values.** The type signature literally
-  forbids this (`Record<string, string>`), but reviewers should
-  reject any caller that string-encodes a JSON object into a label.
-- **New top-level prefixes other than `db.`**. Kernel metrics live
-  under one root; adapters or operators emitting their own metrics
-  use their own roots.
-- **`InMemoryMetricsRecorder` in production code.** It exists as a
-  test helper only; memory grows unbounded.
-- **Renaming a live metric without coordinating with the test
-  suite.** Test assertions match exact metric names, so a rename is
-  a multi-file change. The friction is deliberate; a name is a
-  contract.
-- **Mixed-case label values.** Labels are case-sensitive at the
-  aggregator — reviewers reject `tenant=ACME` vs `tenant=acme`
-  cardinality splits.
+- **Numeric label values.** Prometheus and OpenTelemetry both treat numeric labels as anti-patterns — they explode cardinality and produce unaggregatable series.
+- **Nested objects as label values.** The type signature literally forbids this (`Record<string, string>`), but reviewers should reject any caller that string-encodes a JSON object into a label.
+- **New top-level prefixes other than `db.`**. Kernel metrics live under one root; adapters or operators emitting their own metrics use their own roots.
+- **`InMemoryMetricsRecorder` in production code.** It exists as a test helper only; memory grows unbounded.
+- **Renaming a live metric without coordinating with the test suite.** Test assertions match exact metric names, so a rename is a multi-file change. The friction is deliberate; a name is a contract.
+- **Mixed-case label values.** Labels are case-sensitive at the aggregator — reviewers reject `tenant=ACME` vs `tenant=acme` cardinality splits.
 
 ## Test patterns
 
-Use the `collectingSink` pattern from
-[`packages/server/src/observability/canonical.test.ts`](../../../packages/server/src/observability/canonical.test.ts):
+Use the `collectingSink` pattern from [`packages/server/src/observability/canonical.test.ts`](../../../packages/server/src/observability/canonical.test.ts):
 
 ```ts
 import { reset, type LogRecord, type Sink } from "@logtape/logtape";
@@ -335,30 +172,13 @@ afterEach(async () => {
 });
 ```
 
-Always `await reset()` in `afterEach`. LogTape's `configure` is
-global; a leaked sink in test A poisons test B with stale records.
+Always `await reset()` in `afterEach`. LogTape's `configure` is global; a leaked sink in test A poisons test B with stale records.
 
 ## Anti-patterns
 
-- ❌ Don't log inside hot loops at `info` or higher. The kernel's
-  hot paths emit at `debug` exactly because logging on every
-  iteration breaks Workers' 50ms CPU budget.
-- ❌ Don't put high-cardinality fields (refs, etags, user_ids) in
-  metric labels. They're fine in canonical-line fields (one row per
-  request); they create cardinality explosions in metric exporters.
-- ❌ Don't add a separate logger import. Use `getLogger(CATEGORY.<unit>)`
-  from `../observability`. The `CATEGORY` constants ensure the
-  hierarchical routing under `["baerly", ...]` hits the configured
-  sink — bare-string categories miss it.
-- ❌ Don't call `configureObservability` from kernel code. Adapters
-  call it once at boot; kernel code uses `getLogger(...)` and the
-  current config takes effect.
-- ❌ Don't read `process.env` directly for level / sample rate.
-  Pass through the typed `ObservabilityConfig` option so the
-  envvar fallback lives in one place (the logger config).
-- ❌ Don't make `configureObservability` unconditionally
-  `reset`-configure. baerly is a library; an embedding app may own
-  LogTape. `configureObservability` checks `getConfig()` and skips
-  (with one meta-logger notice) when a non-baerly config is already
-  installed, and the adapters honor `observability: false` to opt out
-  entirely. Preserve both when touching the boot path.
+- ❌ Don't log inside hot loops at `info` or higher. The kernel's hot paths emit at `debug` exactly because logging on every iteration breaks Workers' 50ms CPU budget.
+- ❌ Don't put high-cardinality fields (refs, etags, user_ids) in metric labels. They're fine in canonical-line fields (one row per request); they create cardinality explosions in metric exporters.
+- ❌ Don't add a separate logger import. Use `getLogger(CATEGORY.<unit>)` from `../observability`. The `CATEGORY` constants ensure the hierarchical routing under `["baerly", ...]` hits the configured sink — bare-string categories miss it.
+- ❌ Don't call `configureObservability` from kernel code. Adapters call it once at boot; kernel code uses `getLogger(...)` and the current config takes effect.
+- ❌ Don't read `process.env` directly for level / sample rate. Pass through the typed `ObservabilityConfig` option so the envvar fallback lives in one place (the logger config).
+- ❌ Don't make `configureObservability` unconditionally `reset`-configure. baerly is a library; an embedding app may own LogTape. `configureObservability` checks `getConfig()` and skips (with one meta-logger notice) when a non-baerly config is already installed, and the adapters honor `observability: false` to opt out entirely. Preserve both when touching the boot path.

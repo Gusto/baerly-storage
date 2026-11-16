@@ -10,43 +10,24 @@ related: [sync-protocol.md]
 
 # Checking Causal Consistency with a Known Global Timeline
 
-A basic message service sounds simple: send each recipient the messages in
-the order they were written. The hard part starts when the product keeps
-that same API while changing the path each message takes.
+A basic message service sounds simple: send each recipient the messages in the order they were written. The hard part starts when the product keeps that same API while changing the path each message takes.
 
-In this doc, a chat message stands in for an ordered write event in one
-baerly-storage collection log.
+In this doc, a chat message stands in for an ordered write event in one baerly-storage collection log.
 
 - Multiplayer means merging queues from more than one participant.
 - Optimistic updates give local writes a faster path than remote writes.
-- Mobile-first clients need transparent resumption after unreliable
-  connectivity.
+- Mobile-first clients need transparent resumption after unreliable connectivity.
 - Local-first clients may buffer messages for days before reconnecting.
 
-A reply should not arrive before the message it replies to. That expectation
-is the shape of causal consistency.
+A reply should not arrive before the message it replies to. That expectation is the shape of causal consistency.
 
-Checking that expectation in a fully general distributed history is hard:
-deciding causal consistency is
-[NP-Complete](https://arxiv.org/abs/1611.00580#:~:text=Causal%20consistency%20is%20one%20of,according%20to%20their%20causal%20precedence.).
-For randomized testing, we can use a cheaper check. The test harness records
-one concrete execution order, then asks whether the causal constraints are
-true in that known order. That avoids model-checker search.
+Checking that expectation in a fully general distributed history is hard: deciding causal consistency is [NP-Complete](https://arxiv.org/abs/1611.00580#:~:text=Causal%20consistency%20is%20one%20of,according%20to%20their%20causal%20precedence.). For randomized testing, we can use a cheaper check. The test harness records one concrete execution order, then asks whether the causal constraints are true in that known order. That avoids model-checker search.
 
-The original MPS3 checker is implemented in 86 lines of TypeScript
-([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25))
-and deliberately evaluates the generated boolean expression with `eval`.
-baerly-storage keeps the same expression model in
-`tests/fixtures/consistency.ts`; the backend-agnostic randomized cascade uses
-an equivalent structural evaluator in `tests/fixtures/randomized-cascade.ts`
-because Workerd disallows code generation from strings.
+The original MPS3 checker is implemented in 86 lines of TypeScript ([source](https://github.com/endpointservices/mps3/blob/12969b06c6564ac9df6c450f3d15a7ca3a5a9a25/src/__tests__/consistency.ts#L25)) and deliberately evaluates the generated boolean expression with `eval`. baerly-storage keeps the same expression model in `tests/fixtures/consistency.ts`; the backend-agnostic randomized cascade uses an equivalent structural evaluator in `tests/fixtures/randomized-cascade.ts` because Workerd disallows code generation from strings.
 
 ### Relevant Reading
 
-"Time, Clocks, and the Ordering of Events in a Distributed System" by
-Leslie Lamport is the foundational paper for the "happens-before" relation,
-a way to talk about ordering when there is no single clock shared by every
-participant.
+"Time, Clocks, and the Ordering of Events in a Distributed System" by Leslie Lamport is the foundational paper for the "happens-before" relation, a way to talk about ordering when there is no single clock shared by every participant.
 
 [Causal Consistency - Jepsen blog](https://jepsen.io/consistency/models/causal#:~:text=Causal%20consistency%20captures%20the%20notion,order%20of%20causally%20independent%20operations.)
 
@@ -78,102 +59,61 @@ Carol: Yes! I'll bring dessert
 Bob: Would you like to come over for dinner?
 ```
 
-Carol's answer only makes sense after Bob's question. The rest of this page
-turns that ordering intuition into a small executable check.
+Carol's answer only makes sense after Bob's question. The rest of this page turns that ordering intuition into a small executable check.
 
 ## Causal Consistency
 
-Causal consistency preserves the order of events when one event depends on
-another. If event `Y` could only have happened after event `X`, we write that
-dependency as \(X < Y\), read as "`X` happened before `Y`."
+Causal consistency preserves the order of events when one event depends on another. If event `Y` could only have happened after event `X`, we write that dependency as \(X < Y\), read as "`X` happened before `Y`."
 
-In the example, Carol first receives Bob's question. Then she writes a reply.
-The reply exists **because** she saw the question, so the question event must
-be ordered before the reply event:
+In the example, Carol first receives Bob's question. Then she writes a reply. The reply exists **because** she saw the question, so the question event must be ordered before the reply event:
 
 ```text
 BobQuestion < CarolReply
 ```
 
-`BobQuestion` is the event that sent "Would you like to come over for
-dinner?" `CarolReply` is the event that sent "Yes! I'll bring dessert."
+`BobQuestion` is the event that sent "Would you like to come over for dinner?" `CarolReply` is the event that sent "Yes! I'll bring dessert."
 
-Alice receives two messages from two different people. In general, she cannot
-infer the true order of unrelated messages. Here she can, because one message
-is plainly the reply to the other. If Alice sees the reply first, her own
-timeline contains enough evidence to prove a causal violation.
+Alice receives two messages from two different people. In general, she cannot infer the true order of unrelated messages. Here she can, because one message is plainly the reply to the other. If Alice sees the reply first, her own timeline contains enough evidence to prove a causal violation.
 
-The checker encodes these inferred dependencies as constraints and verifies
-that they can all hold together. In these tests, the payload carries only
-enough identity (`sender`, `send_time`) for the harness to reconstruct those
-facts; that is test data, not a public API requirement.
+The checker encodes these inferred dependencies as constraints and verifies that they can all hold together. In these tests, the payload carries only enough identity (`sender`, `send_time`) for the harness to reconstruct those facts; that is test data, not a public API requirement.
 
 ### Causal Consistency Over Multiple Timelines
 
-Each participant experiences events in an order. That order is the
-participant's local history. A strictly serialized system would force every
-participant to see the same history. A causally consistent system allows more
-flexibility: participants can go offline, buffer work, and catch up later.
-The rule it keeps is narrower. If one event "happened before" another, that
-ordering must survive replay.
+Each participant experiences events in an order. That order is the participant's local history. A strictly serialized system would force every participant to see the same history. A causally consistent system allows more flexibility: participants can go offline, buffer work, and catch up later. The rule it keeps is narrower. If one event "happened before" another, that ordering must survive replay.
 
 #### Principle 1: Consistency Within a Client's Timeline
 
-There is not one required global history. There is one observed history per
-client. Client A observes `A01 < A02 < A03...`; client B observes
-`B01 < B02 < B03...`. A causally consistent interpretation is any way of
-combining those timelines that preserves the known causal order:
+There is not one required global history. There is one observed history per client. Client A observes `A01 < A02 < A03...`; client B observes `B01 < B02 < B03...`. A causally consistent interpretation is any way of combining those timelines that preserves the known causal order:
 
 ```text
 A01 < B01 < B02 < A02 < A03 < B03
 ```
 
-That interleaving is one valid interpretation because it preserves A's local
-order and B's local order. Another interleaving may also be valid if it
-preserves the same constraints.
+That interleaving is one valid interpretation because it preserves A's local order and B's local order. Another interleaving may also be valid if it preserves the same constraints.
 
 #### Principle 2: Send Time Happens Before Receive Time
 
-If client B, at time `B5`, observes client A broadcasting "I am at A3," then
-B can deduce \(A3 < B5\). A message cannot be received before the sending
-event it reports.
+If client B, at time `B5`, observes client A broadcasting "I am at A3," then B can deduce \(A3 < B5\). A message cannot be received before the sending event it reports.
 
 #### Principle 3: Observed message order
 
-Within the centralised chat example, the checker assumes a single topic
-order. Here, a topic corresponds to one collection log; the assumption does
-not apply across baerly-storage collections. The simplified topic rule is:
-if a client observes topic message `M` before topic message `N`, the checker
-records that the send event for `M` happened before the send event for `N`:
+Within the centralised chat example, the checker assumes a single topic order. Here, a topic corresponds to one collection log; the assumption does not apply across baerly-storage collections. The simplified topic rule is: if a client observes topic message `M` before topic message `N`, the checker records that the send event for `M` happened before the send event for `N`:
 
 ```text
 send(M) < send(N)
 ```
 
-This still allows local buffering and offline clients. The local
-baerly-storage cascade uses the offline-first variant of the model: for each
-receiver, the previously seen remote message is recorded before the next
-observed source event. That preserves observed per-receiver order without
-requiring one global order across all senders.
+This still allows local buffering and offline clients. The local baerly-storage cascade uses the offline-first variant of the model: for each receiver, the previously seen remote message is recorded before the next observed source event. That preserves observed per-receiver order without requiring one global order across all senders.
 
 ### Grounding
 
-The useful trick is that `happened-before` behaves like `<` on a number line:
-if `X < Y` and `Y < Z`, then `X < Z`. So a causal interpretation can be
-checked by assigning a number to each event and asking whether every `<`
-clause is true. This assignment is the grounding.
+The useful trick is that `happened-before` behaves like `<` on a number line: if `X < Y` and `Y < Z`, then `X < Z`. So a causal interpretation can be checked by assigning a number to each event and asking whether every `<` clause is true. This assignment is the grounding.
 
-In the general setting, finding such an assignment requires symbolic search.
-The system contract does not require a global history, but the randomized test
-run has an instrumentation log that gives one concrete execution order.
-Concretely, it can set `B1 = 1`, `C1 = 2`, `C2 = 3`, `A1 = 4`, and then
-evaluate the collected inequalities directly. If any inequality is false
-under that known order, the observed execution is not causally consistent.
+In the general setting, finding such an assignment requires symbolic search. The system contract does not require a global history, but the randomized test run has an instrumentation log that gives one concrete execution order. Concretely, it can set `B1 = 1`, `C1 = 2`, `C2 = 3`, `A1 = 4`, and then evaluate the collected inequalities directly. If any inequality is false under that known order, the observed execution is not causally consistent.
 
 ## Live Annotation
 
-The live checker appends each new implication as a `<` clause joined with
-`&&`, then evaluates the grounded expression.
+The live checker appends each new implication as a `<` clause joined with `&&`, then evaluates the grounded expression.
 
 Legend:
 
@@ -181,9 +121,7 @@ Legend:
 - `P2` means send before receive.
 - `P3` means observed topic order.
 - `A0`, `B0`, and `C0` are the synthetic timeline starts.
-- The leading number is the harness's global event number; `B1` means Bob's
-  first local event; quoted `"B1"` is the message id being published or
-  observed.
+- The leading number is the harness's global event number; `B1` means Bob's first local event; quoted `"B1"` is the message id being published or observed.
 
 ```text
 // Bob: Would you like to come over for dinner?
@@ -261,181 +199,62 @@ The contradiction is now explicit. These three clauses cannot all be true:
 
 ## Session guarantees
 
-The `P1`/`P2`/`P3` clauses above check causal ordering of *observed*
-events. A document DB is also judged on three **session guarantees** that
-the randomized cascade now asserts directly, plus one write-side
-guarantee for concurrent inserts. Each names the backend class
-it holds on and the assertion in `tests/fixtures/randomized-cascade.ts`
-that witnesses it.
+The `P1`/`P2`/`P3` clauses above check causal ordering of _observed_ events. A document DB is also judged on three **session guarantees** that the randomized cascade now asserts directly, plus one write-side guarantee for concurrent inserts. Each names the backend class it holds on and the assertion in `tests/fixtures/randomized-cascade.ts` that witnesses it.
 
-- **SG-1 — No-lost-writes (all backends).** Every `Writer.commit()` that
-  returns success has its `log/<seq>` slot durably present in the
-  collection log. `entry.seq` is that slot (the winning
-  `If-None-Match: "*"` create). This holds even under fault injection: an
-  acked commit is durable regardless of what the network does afterward.
-  *Witness:* the drain-time containment check of the acked-slot set
-  against the listed `log/<seq>` keys.
+- **SG-1 — No-lost-writes (all backends).** Every `Writer.commit()` that returns success has its `log/<seq>` slot durably present in the collection log. `entry.seq` is that slot (the winning `If-None-Match: "*"` create). This holds even under fault injection: an acked commit is durable regardless of what the network does afterward. _Witness:_ the drain-time containment check of the acked-slot set against the listed `log/<seq>` keys.
 
-- **SG-2 — Read-your-writes (strongly-consistent backends).** After a
-  writer's own `commit()` succeeds at slot `S`, that writer's next read
-  resolves a slot `>= S`. Under last-write-wins a later slot may mask the
-  value, but a writer never reads state older than its own committed
-  write. *Witness:* the self-read assertion immediately after a successful
-  commit, gated on `strongConsistency`.
+- **SG-2 — Read-your-writes (strongly-consistent backends).** After a writer's own `commit()` succeeds at slot `S`, that writer's next read resolves a slot `>= S`. Under last-write-wins a later slot may mask the value, but a writer never reads state older than its own committed write. _Witness:_ the self-read assertion immediately after a successful commit, gated on `strongConsistency`.
 
-- **SG-3 — Monotonic-reads (strongly-consistent backends).** Within one
-  client, successive reads resolve non-decreasing `log/<seq>` slots — the
-  log is append-only and entries are immutable, so the freshest matching
-  slot only grows. *Witness:* the per-client last-observed-slot check in
-  the poll loop, gated on `strongConsistency`.
+- **SG-3 — Monotonic-reads (strongly-consistent backends).** Within one client, successive reads resolve non-decreasing `log/<seq>` slots — the log is append-only and entries are immutable, so the freshest matching slot only grows. _Witness:_ the per-client last-observed-slot check in the poll loop, gated on `strongConsistency`.
 
-- **SG-4 — First insert wins (all backends).** Of concurrent inserts of
-  one `_id`, at most one commits: the log holds one `I` per incarnation,
-  and a fulfilled insert's body is that `I`; no `I` for the doc follows a
-  live `I` / `U` without a `D` between. An SDK-minted insert (`mintedId`)
-  whose body equals that `I` may also fulfil, as a replay of it that
-  commits nothing. Without fault injection and without `mintedId`, exactly
-  one fulfils and every other insert fails with `AlreadyExists`; under it a
-  rejection may also be a retriable code or `AmbiguousCommit`, a
-  definitively rejected body never reaches the log, and an ambiguous one is
-  either the first `I` or absent. *Witness:* `runSameIdInsertRaceCascade`,
-  which races N `Db`s on one `_id` in rounds separated by a `D` and checks
-  the outcomes against the log. The schedules that reach each part of the
-  writer's insert guard are pinned deterministically in
-  `packages/server/src/insert-first-wins.test.ts`.
+- **SG-4 — First insert wins (all backends).** Of concurrent inserts of one `_id`, at most one commits: the log holds one `I` per incarnation, and a fulfilled insert's body is that `I`; no `I` for the doc follows a live `I` / `U` without a `D` between. An SDK-minted insert (`mintedId`) whose body equals that `I` may also fulfil, as a replay of it that commits nothing. Without fault injection and without `mintedId`, exactly one fulfils and every other insert fails with `AlreadyExists`; under it a rejection may also be a retriable code or `AmbiguousCommit`, a definitively rejected body never reaches the log, and an ambiguous one is either the first `I` or absent. _Witness:_ `runSameIdInsertRaceCascade`, which races N `Db`s on one `_id` in rounds separated by a `D` and checks the outcomes against the log. The schedules that reach each part of the writer's insert guard are pinned deterministically in `packages/server/src/insert-first-wins.test.ts`.
 
-SG-2 and SG-3 are gated to strongly-consistent backends (memory,
-local-fs, in-process miniflare-R2) and are **not** asserted on the
-node-minio variant, whose Toxiproxy fault injection deliberately induces
-stale reads (see the `KNOWN FLAKE` note in the cascade driver). SG-1 is
-backend-agnostic and runs everywhere.
+SG-2 and SG-3 are gated to strongly-consistent backends (memory, local-fs, in-process miniflare-R2) and are **not** asserted on the node-minio variant, whose Toxiproxy fault injection deliberately induces stale reads (see the `KNOWN FLAKE` note in the cascade driver). SG-1 is backend-agnostic and runs everywhere.
 
-Seeded replay: the cascade logs an integer `seed` at start and dumps the
-observed schedule on any causal-consistency violation, so a failing
-interleaving can be inspected and the injected entropy replayed by
-passing the seed back. (Timer-driven interleaving remains wall-clock
-dependent, so replay is not fully deterministic.)
+Seeded replay: the cascade logs an integer `seed` at start and dumps the observed schedule on any causal-consistency violation, so a failing interleaving can be inspected and the injected entropy replayed by passing the seed back. (Timer-driven interleaving remains wall-clock dependent, so replay is not fully deterministic.)
 
 ## Complete membership at the read cursor
 
-`packages/server/src/index-read-completeness.test.ts` pins a commit that
-lands while a read's tail probe is in flight: the rows and returned tail
-must describe the same complete snapshot-plus-log state. Tail and
-folded-snapshot fixtures seed a wrong legacy index-marker corpus (missing,
-stale and ghost markers, as a pre-0.7 writer could leave) and check point
-reads, predicate/order/limit, and update/replace/delete selection without
-any LIST.
+`packages/server/src/index-read-completeness.test.ts` pins a commit that lands while a read's tail probe is in flight: the rows and returned tail must describe the same complete snapshot-plus-log state. Tail and folded-snapshot fixtures seed a wrong legacy index-marker corpus (missing, stale and ghost markers, as a pre-0.7 writer could leave) and check point reads, predicate/order/limit, and update/replace/delete selection without any LIST.
 
-`tests/integration/randomized.test.ts` additionally generates insert,
-replace, delete, and compaction histories against a row-map model over a
-generated legacy marker corpus, and checks complete reads and ordered,
-limited mutation selection. This exercises both the folded base and
-live log suffix. `tests/unit/declared-indexes-inert.test.ts` asserts that
-declaring indexes changes no storage call of any verb, tick or read.
+`tests/integration/randomized.test.ts` additionally generates insert, replace, delete, and compaction histories against a row-map model over a generated legacy marker corpus, and checks complete reads and ordered, limited mutation selection. This exercises both the folded base and live log suffix. `tests/unit/declared-indexes-inert.test.ts` asserts that declaring indexes changes no storage call of any verb, tick or read.
 
 ## Deterministic R2 create-outcome coverage
 
-`packages/adapter-cloudflare/src/r2-binding-storage.request-accounting.test.ts`
-drives the real R2 adapter, retry helper, and Writer with an injected binding:
+`packages/adapter-cloudflare/src/r2-binding-storage.request-accounting.test.ts` drives the real R2 adapter, retry helper, and Writer with an injected binding:
 
-- an applied create reporting `10058` is adopted by readback after a later
-  denial, invalid configuration, subrequest refusal, or precondition failure;
+- an applied create reporting `10058` is adopted by readback after a later denial, invalid configuration, subrequest refusal, or precondition failure;
 - an empty readback after exhausted R2 throttles remains `AmbiguousCommit`;
-- a create refused by an invocation-wide subrequest limit stays retriable
-  even when that same limit refuses its readback;
+- a create refused by an invocation-wide subrequest limit stays retriable even when that same limit refuses its readback;
 - a foreign occupant reached through throttles advances to the next slot.
 
-These schedules exercise admitted unknown outcomes; they are not captured
-production R2 traces. `packages/protocol/src/storage/retry.test.ts` separately
-checks that a later refusal cannot erase earlier throttle uncertainty.
-`packages/server/src/writer-create-fate.test.ts` checks that a provably
-unapplied throttled create preserves its original retriable error when
-the readback is unavailable.
+These schedules exercise admitted unknown outcomes; they are not captured production R2 traces. `packages/protocol/src/storage/retry.test.ts` separately checks that a later refusal cannot erase earlier throttle uncertainty. `packages/server/src/writer-create-fate.test.ts` checks that a provably unapplied throttled create preserves its original retriable error when the readback is unavailable.
 
 ## Deterministic delete-floor coverage
 
-The optional `current.json.log_delete_floor` safety envelope is covered by
-deterministic protocol, reader-seam, restore, and commit-path tests:
+The optional `current.json.log_delete_floor` safety envelope is covered by deterministic protocol, reader-seam, restore, and commit-path tests:
 
 - optional-field shape and the absent-to-`0` default;
-- transition monotonicity for both `log_seq_start` and
-  `log_delete_floor`;
+- transition monotonicity for both `log_seq_start` and `log_delete_floor`;
 - the transition bound `log_delete_floor <= log_seq_start`;
 - distinct fold-floor versus certified-delete-floor diagnostics;
 - clamping malformed stored values above `log_seq_start`;
-- `baerly admin restore --force` resetting the field when it reseeds a
-  new generation below the old certified floor;
-- the floor CAS that `retireLogRange`
-  (`packages/server/src/log-retention.ts`) publishes *before* it deletes
-  anything, under two concurrent-`current.json`-writer schedules — a
-  `restore --force`-shaped reseed that lowers `log_seq_start` in the gap
-  between the pass's advisory gate read and the CAS's own read, which
-  aborts the pass with `WriteConflict` and zero DELETEs; and a rival that
-  legally advances `log_delete_floor` in that same gap, after which the
-  pass deletes the range its own CAS validated rather than the wider
-  advisory gate;
-- the deletion/publication crash schedule: a crash mid-DELETE-loop
-  leaves the undeleted remainder physically present but already
-  certified deleted by the advanced floor — the deliberate fail-safe
-  direction, a leak rather than corruption; and
-- the commit-path rejection that keys on the same clamped floor
-  (`Writer#assertCommitAboveDeleteFloor`,
-  `packages/server/src/writer.ts`, exercised by
-  `packages/server/src/log-retirement-aba.test.ts`): a create that resolved
-  below `min(log_delete_floor, log_seq_start)` fails with a non-retriable
-  `AmbiguousCommit` because the log object it wrote sits beneath every reader's
-  floor, which does not prove the logical mutation is invisible, under the two
-  schedules that reach it — a create PUT delayed across a fold plus a drained
-  retirement pass, and a lost-ack retry of the same `seq` across the same —
-  with the phantom log object DELETEd best-effort and each rejection counted on
-  `db.write.ambiguous_commit_total`, whose `cleanup` label reports that DELETE
-  and whose failure arm never masks the throw; the check itself sits after both
-  the fresh-win and the own-session-adoption break in the commit loop, so
-  neither path can acknowledge such a commit; the over-rejection guards on the
-  other side of it, namely a commit at the live tail of a collection that now
-  carries a positive floor, the merely-folded band (`log_seq_start` advanced,
-  `log_delete_floor` still absent and so decoding to `0`) which is accepted
-  rather than rejected, and an out-of-bound stored floor which is clamped to
-  `min(log_delete_floor, log_seq_start)` rather than trusted; the one
-  over-rejection that is deliberately accepted, a create folded *and* retired
-  before the post-create read, whose mutation is visible through the snapshot
-  and whose commit fails anyway; and the two-history result that argues for
-  explicit failure over discard-and-re-probe — every object in the bucket at
-  the readback decision point is byte-identical whether the writer's own create
-  or a foreign writer's landed and was folded, and no surviving object names
-  the writer's session.
+- `baerly admin restore --force` resetting the field when it reseeds a new generation below the old certified floor;
+- the floor CAS that `retireLogRange` (`packages/server/src/log-retention.ts`) publishes _before_ it deletes anything, under two concurrent-`current.json`-writer schedules — a `restore --force`-shaped reseed that lowers `log_seq_start` in the gap between the pass's advisory gate read and the CAS's own read, which aborts the pass with `WriteConflict` and zero DELETEs; and a rival that legally advances `log_delete_floor` in that same gap, after which the pass deletes the range its own CAS validated rather than the wider advisory gate;
+- the deletion/publication crash schedule: a crash mid-DELETE-loop leaves the undeleted remainder physically present but already certified deleted by the advanced floor — the deliberate fail-safe direction, a leak rather than corruption; and
+- the commit-path rejection that keys on the same clamped floor (`Writer#assertCommitAboveDeleteFloor`, `packages/server/src/writer.ts`, exercised by `packages/server/src/log-retirement-aba.test.ts`): a create that resolved below `min(log_delete_floor, log_seq_start)` fails with a non-retriable `AmbiguousCommit` because the log object it wrote sits beneath every reader's floor, which does not prove the logical mutation is invisible, under the two schedules that reach it — a create PUT delayed across a fold plus a drained retirement pass, and a lost-ack retry of the same `seq` across the same — with the phantom log object DELETEd best-effort and each rejection counted on `db.write.ambiguous_commit_total`, whose `cleanup` label reports that DELETE and whose failure arm never masks the throw; the check itself sits after both the fresh-win and the own-session-adoption break in the commit loop, so neither path can acknowledge such a commit; the over-rejection guards on the other side of it, namely a commit at the live tail of a collection that now carries a positive floor, the merely-folded band (`log_seq_start` advanced, `log_delete_floor` still absent and so decoding to `0`) which is accepted rather than rejected, and an out-of-bound stored floor which is clamped to `min(log_delete_floor, log_seq_start)` rather than trusted; the one over-rejection that is deliberately accepted, a create folded _and_ retired before the post-create read, whose mutation is visible through the snapshot and whose commit fails anyway; and the two-history result that argues for explicit failure over discard-and-re-probe — every object in the bucket at the readback decision point is byte-identical whether the writer's own create or a foreign writer's landed and was folded, and no surviving object names the writer's session.
 
-`retireLogRange` is the first pass to write `log_delete_floor`. Every
-maintenance trigger runs it through the shared `retireLogs` helper in
-`maintenance.ts`: `runScheduledMaintenance` after its GC phase, and
-`runBoundedMaintenance` on the hard-GC early-return path and as its final
-step. The concurrency and floor-CAS schedules are covered deterministically
-in `packages/server/src/log-retention.test.ts`; the crash schedule is
-covered by `tests/integration/maintenance-crash-fuzz.test.ts` arm 7 under
-fast-check. The randomized cascade itself does not schedule a retirement
-pass.
+`retireLogRange` is the first pass to write `log_delete_floor`. Every maintenance trigger runs it through the shared `retireLogs` helper in `maintenance.ts`: `runScheduledMaintenance` after its GC phase, and `runBoundedMaintenance` on the hard-GC early-return path and as its final step. The concurrency and floor-CAS schedules are covered deterministically in `packages/server/src/log-retention.test.ts`; the crash schedule is covered by `tests/integration/maintenance-crash-fuzz.test.ts` arm 7 under fast-check. The randomized cascade itself does not schedule a retirement pass.
 
 ## Conclusion
 
-This framework drives randomized testing of baerly-storage's `Db` / `Writer`
-commit path and storage adapters.
+This framework drives randomized testing of baerly-storage's `Db` / `Writer` commit path and storage adapters.
 
-For one collection, baerly-storage chooses a single winning append order;
-across collections, it does not. More precisely, collection reads and writes
-are **linearizable** at the winning `log/<seq>` `If-None-Match: "*"` create
-(see `docs/spec/sync-protocol.md`). Each public write is atomic per document.
-**Cross-collection there is no ordering guarantee and multi-collection writes
-are not atomic**: each write commits to exactly one collection log
-(`docs/adr/001-tenant-cas-isolation.md`).
+For one collection, baerly-storage chooses a single winning append order; across collections, it does not. More precisely, collection reads and writes are **linearizable** at the winning `log/<seq>` `If-None-Match: "*"` create (see `docs/spec/sync-protocol.md`). Each public write is atomic per document. **Cross-collection there is no ordering guarantee and multi-collection writes are not atomic**: each write commits to exactly one collection log (`docs/adr/001-tenant-cas-isolation.md`).
 
-That makes this causal-consistency checker a cheap _lower-bound_ test. It can
-witness violations of the weaker causal model; it is not trying to prove every
-linearizability property. Layering even causal semantics over vanilla S3 is
-hard enough to make that check valuable.
+That makes this causal-consistency checker a cheap _lower-bound_ test. It can witness violations of the weaker causal model; it is not trying to prove every linearizability property. Layering even causal semantics over vanilla S3 is hard enough to make that check valuable.
 
-The original MPS3 checker immediately found a bug in one possible SDK
-configuration: the no-versioning setting. The practical value is that the
-check needs no extra dependencies and stays small enough to audit.
+The original MPS3 checker immediately found a bug in one possible SDK configuration: the no-versioning setting. The practical value is that the check needs no extra dependencies and stays small enough to audit.
 
 ### Links
 

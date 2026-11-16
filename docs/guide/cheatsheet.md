@@ -9,10 +9,7 @@ related: ["add-to-existing-cf-worker.md", "auth.md"]
 
 # Cheat sheet
 
-The fastest tour of the public surface. For the full reference (recipes,
-adapter factories, observability fields) read
-[`packages/server/API.md`](../../packages/server/API.md), published as
-`node_modules/@gusto/baerly-storage/dist/API.md`.
+The fastest tour of the public surface. For the full reference (recipes, adapter factories, observability fields) read [`packages/server/API.md`](../../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`.
 
 ## Define the backend
 
@@ -31,9 +28,7 @@ export default defineConfig({
 
 ## Verbs
 
-`db.collection(name)` carries the common-case verbs directly.
-`.where(...)` / `.order(...)` / `.limit(...)` return a `Query<T>` for
-bulk-by-predicate work. Terminals fire I/O on the spot.
+`db.collection(name)` carries the common-case verbs directly. `.where(...)` / `.order(...)` / `.limit(...)` return a `Query<T>` for bulk-by-predicate work. Terminals fire I/O on the spot.
 
 | Verb                 | On                 | Returns                                         |
 | -------------------- | ------------------ | ----------------------------------------------- |
@@ -55,9 +50,7 @@ await db.collection("tickets").where({ status: "open" }).all();
 await db.collection("tickets").where({ status: "closed" }).delete(); // bulk
 ```
 
-By-`_id` work goes through `.get/.update/.replace/.delete(id)`, **not**
-`.where({ _id })` — `_id` is excluded from the predicate path and won't
-typecheck.
+By-`_id` work goes through `.get/.update/.replace/.delete(id)`, **not** `.where({ _id })` — `_id` is excluded from the predicate path and won't typecheck.
 
 ## Modifiers (`.where(...)`)
 
@@ -70,62 +63,47 @@ Two shapes, both legal; chained `.where(...).where(...)` AND-merges.
 .where(q => q.in("status", ["open", "pending"]))
 ```
 
-The `PredicateBuilder` vocabulary is exactly: `eq` `gt` `gte` `lt` `lte`
-`in`. Anything else (`or`, `not`, `ne`, `regex`, `exists`) does not exist
-and won't typecheck. Pair with `.order({ field: "asc" | "desc" })` and
-`.limit(n)`.
+The `PredicateBuilder` vocabulary is exactly: `eq` `gt` `gte` `lt` `lte` `in`. Anything else (`or`, `not`, `ne`, `regex`, `exists`) does not exist and won't typecheck. Pair with `.order({ field: "asc" | "desc" })` and `.limit(n)`.
 
 ## Errors
 
-One class, `BaerlyError`. Discriminate by `.code` (survives realm
-boundaries), never `instanceof` chains.
+One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), never `instanceof` chains.
 
-| `code`                   | HTTP | When                                                                   |
-| ------------------------ | ---- | ---------------------------------------------------------------------- |
-| `InvalidConfig`          | 400  | Bad config/input (bucket, malformed predicate, document > 1 MiB)       |
-| `SchemaError`            | 400  | JSON shape invalid or bound schema rejected the doc                    |
-| `WriteConflict`          | 409  | Lost a write race; re-read, then retry (`retriable`)                   |
-| `AlreadyExists`          | 409  | `insert` `_id` collision (duplicate `_id`); never retry                |
-| `AmbiguousCommit`        | 409  | A committing create may be durable, but its outcome could not be resolved |
-| `Unauthorized`           | 401  | Verifier returned no identity                                          |
-| `AccessDenied`           | 403  | S3 403 or bucket policy denied                                         |
-| `NotFound`               | 404  | Row by id not found                                                    |
-| `PayloadTooLarge`        | 413  | Body > 1 MiB                                                           |
-| `UnsatisfiablePredicate` | 400  | Well-formed predicate that contradicts itself                          |
-| `CursorExpired`          | 410  | `/v1/since` cursor can no longer resume; restart with `cursor=`        |
-| `NetworkError`           | 502  | Transport (S3 5xx, retries exhausted)                                  |
-| `InvalidResponse`        | 502  | Server returned unparseable body                                       |
-| `Internal`               | 500  | Invariant violation — file a bug                                       |
+| `code` | HTTP | When |
+| --- | --- | --- |
+| `InvalidConfig` | 400 | Bad config/input (bucket, malformed predicate, document > 1 MiB) |
+| `SchemaError` | 400 | JSON shape invalid or bound schema rejected the doc |
+| `WriteConflict` | 409 | Lost a write race; re-read, then retry (`retriable`) |
+| `AlreadyExists` | 409 | `insert` `_id` collision (duplicate `_id`); never retry |
+| `AmbiguousCommit` | 409 | A committing create may be durable, but its outcome could not be resolved |
+| `Unauthorized` | 401 | Verifier returned no identity |
+| `AccessDenied` | 403 | S3 403 or bucket policy denied |
+| `NotFound` | 404 | Row by id not found |
+| `PayloadTooLarge` | 413 | Body > 1 MiB |
+| `UnsatisfiablePredicate` | 400 | Well-formed predicate that contradicts itself |
+| `CursorExpired` | 410 | `/v1/since` cursor can no longer resume; restart with `cursor=` |
+| `NetworkError` | 502 | Transport (S3 5xx, retries exhausted) |
+| `InvalidResponse` | 502 | Server returned unparseable body |
+| `Internal` | 500 | Invariant violation — file a bug |
 
 ## HTTP wire (reach for `curl` only when debugging)
 
-| Route                                                | Body            | Response                                |
-| ---------------------------------------------------- | --------------- | --------------------------------------- |
-| `POST   /v1/c/:collection`                           | `{"doc":{…}}`   | `201 {_id}`                             |
-| `PATCH  /v1/c/:collection/:id`                       | `{"patch":{…}}` | `200 {modified}`                        |
-| `PUT    /v1/c/:collection/:id`                       | `{"doc":{…}}`   | `200 {modified}`                        |
-| `DELETE /v1/c/:collection/:id`                       | —               | `204`                                   |
-| `GET    /v1/c/:collection`                           | —               | `{ data, _meta }`                       |
-| `GET    /v1/count?collection=<name>&where=<json>`    | —               | `{ data: { count }, _meta }`            |
-| `GET    /v1/since?collection=<name>&cursor=<opaque>` | —               | `{ events, next_cursor }`               |
-| `GET    /v1/healthz`                                 | —               | `200 {"ok":true}` (anonymous, pre-auth) |
+| Route | Body | Response |
+| --- | --- | --- |
+| `POST   /v1/c/:collection` | `{"doc":{…}}` | `201 {_id}` |
+| `PATCH  /v1/c/:collection/:id` | `{"patch":{…}}` | `200 {modified}` |
+| `PUT    /v1/c/:collection/:id` | `{"doc":{…}}` | `200 {modified}` |
+| `DELETE /v1/c/:collection/:id` | — | `204` |
+| `GET    /v1/c/:collection` | — | `{ data, _meta }` |
+| `GET    /v1/count?collection=<name>&where=<json>` | — | `{ data: { count }, _meta }` |
+| `GET    /v1/since?collection=<name>&cursor=<opaque>` | — | `{ events, next_cursor }` |
+| `GET    /v1/healthz` | — | `200 {"ok":true}` (anonymous, pre-auth) |
 
-`POST` also takes an optional `"mintedId"`: an SDK that minted `doc._id` (a
-UUIDv7) sends it there too. An identical retransmission returns `201 {_id}`
-when the current live row matches; a different current body yields
-`AlreadyExists`. Deletion permits reinsertion. Calling `insert(doc)` again
-is a new operation and mints a new auto-ID.
+`POST` also takes an optional `"mintedId"`: an SDK that minted `doc._id` (a UUIDv7) sends it there too. An identical retransmission returns `201 {_id}` when the current live row matches; a different current body yields `AlreadyExists`. Deletion permits reinsertion. Calling `insert(doc)` again is a new operation and mints a new auto-ID.
 
-A body is plain JSON, so raw-HTTP callers cannot express `NaN`,
-`±Infinity`, `undefined` members, or `Date` / `Map` / class instances:
-`JSON.stringify` has already turned them into `null`, dropped them, or
-reshaped them before the request is sent. `Db` and the JS SDK refuse
-those values with `InvalidConfig` before serializing; a raw caller must
-check them itself.
+A body is plain JSON, so raw-HTTP callers cannot express `NaN`, `±Infinity`, `undefined` members, or `Date` / `Map` / class instances: `JSON.stringify` has already turned them into `null`, dropped them, or reshaped them before the request is sent. `Db` and the JS SDK refuse those values with `InvalidConfig` before serializing; a raw caller must check them itself.
 
-Read modifiers are JSON-encoded query params on `GET /v1/c/:collection`,
-all optional and composable — always
-`encodeURIComponent(JSON.stringify(spec))`:
+Read modifiers are JSON-encoded query params on `GET /v1/c/:collection`, all optional and composable — always `encodeURIComponent(JSON.stringify(spec))`:
 
 | Param     | Encodes                                                 |
 | --------- | ------------------------------------------------------- |
@@ -133,21 +111,13 @@ all optional and composable — always
 | `?order=` | `{ [field]: "asc" \| "desc" }`                          |
 | `?limit=` | bare integer (no JSON wrapper)                          |
 
-The JS SDK (`createBaerlyClient`) and the React hooks build these for
-you; reach for raw URLs only when scripting.
+The JS SDK (`createBaerlyClient`) and the React hooks build these for you; reach for raw URLs only when scripting.
 
-`/v1/since`'s `cursor` is opaque — echo `next_cursor` back verbatim and
-never parse it. Start with `cursor=` (empty) to read from the
-collection's log floor. A `410 CursorExpired` means the cursor is
-permanently dead (its changes are no longer retained, or its collection
-was truncated by `restore --force`); restart with an empty cursor rather
-than retrying, which would loop forever. The React hooks do this for you.
+`/v1/since`'s `cursor` is opaque — echo `next_cursor` back verbatim and never parse it. Start with `cursor=` (empty) to read from the collection's log floor. A `410 CursorExpired` means the cursor is permanently dead (its changes are no longer retained, or its collection was truncated by `restore --force`); restart with an empty cursor rather than retrying, which would loop forever. The React hooks do this for you.
 
 ## Where to look next
 
-- Full API reference —
-  [`packages/server/API.md`](../../packages/server/API.md), published
-  as `node_modules/@gusto/baerly-storage/dist/API.md`
+- Full API reference — [`packages/server/API.md`](../../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`
 - [`add-to-existing-cf-worker.md`](add-to-existing-cf-worker.md) — bolt baerly-storage onto an existing Worker
 - [`auth.md`](auth.md) — `config.auth` postures
 - [`../../examples/`](../../examples) — runnable scaffolds

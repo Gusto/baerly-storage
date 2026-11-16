@@ -9,66 +9,28 @@ related: ["../adr/001-tenant-cas-isolation.md", "client-auth.md", "operations.md
 
 # Authentication
 
-> **Scope.** This is the canonical reference for **server-side verifier
-> configuration and production verification** — the operator's view. For
-> the **browser → server** posture (dev defaults, the dev→prod flip, and
-> the SPA-secret invariant), see [client-auth.md](client-auth.md).
+> **Scope.** This is the canonical reference for **server-side verifier configuration and production verification** — the operator's view. For the **browser → server** posture (dev defaults, the dev→prod flip, and the SPA-secret invariant), see [client-auth.md](client-auth.md).
 
-For data routes (`/v1/c/*`, `/v1/count`, and `/v1/since`), auth runs
-before storage I/O. It answers two questions: is this request accepted,
-and which tenant prefix may the request use? A tenant prefix is the
-storage namespace for the request. Once the verifier returns it, the
-adapter constructs `Db.create({ tenant: tenantPrefix, ... })`, so every
-later read and write lands under that prefix.
+For data routes (`/v1/c/*`, `/v1/count`, and `/v1/since`), auth runs before storage I/O. It answers two questions: is this request accepted, and which tenant prefix may the request use? A tenant prefix is the storage namespace for the request. Once the verifier returns it, the adapter constructs `Db.create({ tenant: tenantPrefix, ... })`, so every later read and write lands under that prefix.
 
-A `Verifier` is the async function that makes that decision:
-`(req: Request) => Promise<VerifierResult | null>`. The dispatcher
-invokes it exactly once per request, before any `Storage` I/O. There is
-no middleware chain and no later auth decision inside the dispatcher.
+A `Verifier` is the async function that makes that decision: `(req: Request) => Promise<VerifierResult | null>`. The dispatcher invokes it exactly once per request, before any `Storage` I/O. There is no middleware chain and no later auth decision inside the dispatcher.
 
-It returns `{ tenantPrefix, identity }` for accepted requests, `null`
-for unauthenticated requests (HTTP 401 +
-`BaerlyError{code:"Unauthorized"}`), or throws `BaerlyError` for broken
-auth configuration or dependencies (500 operator fault). That
-null-vs-throw split keeps credential-fishing traffic from being
-reported as operator faults. The kernel treats `identity` as opaque; it
-uses `tenantPrefix` for isolation and does not turn identity claims into
-row-level permissions. The `tenantPrefix` derives from auth, never from
-the URL — a URL-encoded tenant would be a forgery surface (see
-[ADR-001](../adr/001-tenant-cas-isolation.md)).
+It returns `{ tenantPrefix, identity }` for accepted requests, `null` for unauthenticated requests (HTTP 401 + `BaerlyError{code:"Unauthorized"}`), or throws `BaerlyError` for broken auth configuration or dependencies (500 operator fault). That null-vs-throw split keeps credential-fishing traffic from being reported as operator faults. The kernel treats `identity` as opaque; it uses `tenantPrefix` for isolation and does not turn identity claims into row-level permissions. The `tenantPrefix` derives from auth, never from the URL — a URL-encoded tenant would be a forgery surface (see [ADR-001](../adr/001-tenant-cas-isolation.md)).
 
-The function shape is deliberate: class hierarchies tree-shake worse;
-middleware assumes per-request state the stateless server does not keep;
-a closed enum would force every new scheme through the kernel's release
-cycle. It is async so JWKS / SigV4 / RPC presets need no workaround.
-The kernel leaves multi-verifier composition to deployments; user-space
-`firstOf` / `allOf` sugar can compose later without kernel policy.
+The function shape is deliberate: class hierarchies tree-shake worse; middleware assumes per-request state the stateless server does not keep; a closed enum would force every new scheme through the kernel's release cycle. It is async so JWKS / SigV4 / RPC presets need no workaround. The kernel leaves multi-verifier composition to deployments; user-space `firstOf` / `allOf` sugar can compose later without kernel policy.
 
 Auth config resolves in this order:
 
-1. **`verifier:` on `baerlyWorker` / `baerlyNode`.** Use this for
-   production. It can read runtime env and pick `cloudflareAccess`,
-   `bearerJwt`, `sharedSecret`, or your own function.
-2. **`config.auth` in `baerly.config.ts`.** Use this for the
-   generated app's default or fallback config. `"none"` pins every
-   request to `config.tenant`; `"shared-secret"` reads `SHARED_SECRET`
-   from runtime env and synthesizes `sharedSecret({ secret,
-   tenantPrefix: config.tenant })`.
+1. **`verifier:` on `baerlyWorker` / `baerlyNode`.** Use this for production. It can read runtime env and pick `cloudflareAccess`, `bearerJwt`, `sharedSecret`, or your own function.
+2. **`config.auth` in `baerly.config.ts`.** Use this for the generated app's default or fallback config. `"none"` pins every request to `config.tenant`; `"shared-secret"` reads `SHARED_SECRET` from runtime env and synthesizes `sharedSecret({ secret, tenantPrefix: config.tenant })`.
 
-`auth: "none"` is for local dev and trusted internal callsites. Do
-not deploy a public data route with it.
+`auth: "none"` is for local dev and trusted internal callsites. Do not deploy a public data route with it.
 
-In production, fail closed: read required auth env before constructing
-the verifier, so missing config throws instead of serving
-`auth: "none"`. If one artifact runs in dev and prod, gate verifier
-setup on an explicit env var (e.g. `BAERLY_AUTH_REQUIRED=1`). Do not
-rely on `NODE_ENV` or a hostname check. [client-auth.md](client-auth.md)
-shows that full pattern for both targets.
+In production, fail closed: read required auth env before constructing the verifier, so missing config throws instead of serving `auth: "none"`. If one artifact runs in dev and prod, gate verifier setup on an explicit env var (e.g. `BAERLY_AUTH_REQUIRED=1`). Do not rely on `NODE_ENV` or a hostname check. [client-auth.md](client-auth.md) shows that full pattern for both targets.
 
 ## Cloudflare Production
 
-Preferred: use Cloudflare Access in front of the Worker; the verifier
-checks the injected JWT assertion before storage I/O.
+Preferred: use Cloudflare Access in front of the Worker; the verifier checks the injected JWT assertion before storage I/O.
 
 ```ts
 // src/server/index.ts
@@ -90,14 +52,8 @@ const requiredEnv = (value: string | undefined, name: string): string => {
 };
 
 export default baerlyWorker<Env>((env) => {
-  const teamDomain = requiredEnv(
-    env.CF_ACCESS_TEAM_DOMAIN,
-    "CF_ACCESS_TEAM_DOMAIN",
-  );
-  const audienceTag = requiredEnv(
-    env.CF_ACCESS_AUDIENCE_TAG,
-    "CF_ACCESS_AUDIENCE_TAG",
-  );
+  const teamDomain = requiredEnv(env.CF_ACCESS_TEAM_DOMAIN, "CF_ACCESS_TEAM_DOMAIN");
+  const audienceTag = requiredEnv(env.CF_ACCESS_AUDIENCE_TAG, "CF_ACCESS_AUDIENCE_TAG");
   return {
     config,
     verifier: cloudflareAccess({
@@ -113,21 +69,15 @@ export default baerlyWorker<Env>((env) => {
 
 Checklist:
 
-- Protect the data routes with Cloudflare Access. To keep
-  `GET /v1/healthz` public, scope the Access policy to `/v1/c/*`,
-  `/v1/count`, and `/v1/since` only — if Access fronts the whole
-  hostname it challenges healthz before the Worker sees it (the Worker
-  still treats healthz as anonymous).
-- Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in
-  `wrangler.jsonc:vars` or runtime env.
-- Use `tenantPrefix: config.tenant` for single-tenant apps. Vanilla
-  CF Access tokens carry user identity, not a baerly-storage tenant claim.
+- Protect the data routes with Cloudflare Access. To keep `GET /v1/healthz` public, scope the Access policy to `/v1/c/*`, `/v1/count`, and `/v1/since` only — if Access fronts the whole hostname it challenges healthz before the Worker sees it (the Worker still treats healthz as anonymous).
+- Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUDIENCE_TAG` in `wrangler.jsonc:vars` or runtime env.
+- Use `tenantPrefix: config.tenant` for single-tenant apps. Vanilla CF Access tokens carry user identity, not a baerly-storage tenant claim.
 - Run `baerly doctor --target=cloudflare` before deploy.
 
 Where values come from:
 
 | Value | Source |
-|---|---|
+| --- | --- |
 | `CF_ACCESS_TEAM_DOMAIN` | The Access team subdomain in `https://<team>.cloudflareaccess.com`; store only `<team>`. |
 | `CF_ACCESS_AUDIENCE_TAG` | Cloudflare Zero Trust -> Access -> Applications -> your app -> Audience tag. |
 | Access token | Browser: `CF_Authorization` cookie. Worker verifier input: `Cf-Access-Jwt-Assertion`, injected by Access after auth. Service-token check: `CF-Access-Client-Id` + `CF-Access-Client-Secret`. |
@@ -158,8 +108,7 @@ curl -fsS \
   https://<worker-host>/v1/c/tickets
 ```
 
-Shared secret is acceptable for service-to-service calls or a private
-preview behind another gate:
+Shared secret is acceptable for service-to-service calls or a private preview behind another gate:
 
 ```ts
 // baerly.config.ts
@@ -181,14 +130,11 @@ wrangler secret put SHARED_SECRET
 baerly doctor --target=cloudflare
 ```
 
-Never put `SHARED_SECRET` in a SPA bundle or a `VITE_*` variable. For
-browser production auth, use Cloudflare Access or an OIDC/JWKS
-verifier.
+Never put `SHARED_SECRET` in a SPA bundle or a `VITE_*` variable. For browser production auth, use Cloudflare Access or an OIDC/JWKS verifier.
 
 ## Node Production
 
-Preferred: use bearer JWTs from your OIDC provider; the Node server
-verifies them before storage I/O.
+Preferred: use bearer JWTs from your OIDC provider; the Node server verifies them before storage I/O.
 
 ```ts
 // src/server/index.ts
@@ -225,14 +171,12 @@ const handle = baerlyNode({
 await handle.listen(Number(process.env["PORT"] ?? 8080));
 ```
 
-Use `tenantClaim` when your IdP issues one tenant per token; use
-`tenantPrefix` when the app is single-tenant or tenancy is enforced
-outside baerly-storage. They are mutually exclusive.
+Use `tenantClaim` when your IdP issues one tenant per token; use `tenantPrefix` when the app is single-tenant or tenancy is enforced outside baerly-storage. They are mutually exclusive.
 
 Required runtime env for the AWS S3 snippet:
 
 | Env var | Purpose |
-|---|---|
+| --- | --- |
 | `BUCKET` | AWS S3 bucket name. Use `r2Storage` for Cloudflare R2, or `gcsStorage` for Google Cloud Storage (native XML API, HMAC interop keys). MinIO is a local/dev conformance target; GCS via S3-interop is unsupported — use the native `gcsStorage` adapter. |
 | `AWS_REGION` | Bucket region; default in the snippet is `us-east-1`. |
 | `AWS_ACCESS_KEY_ID` | S3-compatible access key. |
@@ -241,8 +185,7 @@ Required runtime env for the AWS S3 snippet:
 | `JWT_ISSUER` | Expected `iss` claim. |
 | `JWT_AUDIENCE` | Expected `aud` claim. |
 
-There is no `baerly doctor --target=node` backend today. For Node,
-verify the bucket CAS (compare-and-swap) prerequisite directly:
+There is no `baerly doctor --target=node` backend today. For Node, verify the bucket CAS (compare-and-swap) prerequisite directly:
 
 ```sh
 baerly doctor --bucket=s3://<bucket>
@@ -258,53 +201,30 @@ curl -fsS -H "Authorization: Bearer $JWT" \
 
 ## Verifier Presets
 
-The full preset reference lives in
-[`packages/server/API.md`](../../packages/server/API.md), published as
-`node_modules/@gusto/baerly-storage/dist/API.md`, under "Verifier
-presets". The short version:
+The full preset reference lives in [`packages/server/API.md`](../../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`, under "Verifier presets". The short version:
 
-| Preset | Header/source | Tenant source |
-|---|---|---|
-| `sharedSecret` | `Authorization: Bearer <secret>` | Required `tenantPrefix` |
-| `bearerJwt` | `Authorization: Bearer <jwt>` over JWKS | `tenantClaim` or `tenantPrefix` |
-| `cloudflareAccess` | `Cf-Access-Jwt-Assertion` | `tenantClaim` or `tenantPrefix` |
+| Preset             | Header/source                           | Tenant source                   |
+| ------------------ | --------------------------------------- | ------------------------------- |
+| `sharedSecret`     | `Authorization: Bearer <secret>`        | Required `tenantPrefix`         |
+| `bearerJwt`        | `Authorization: Bearer <jwt>` over JWKS | `tenantClaim` or `tenantPrefix` |
+| `cloudflareAccess` | `Cf-Access-Jwt-Assertion`               | `tenantClaim` or `tenantPrefix` |
 
-When supplied, fixed `tenantPrefix` must be non-empty and contain no
-`/`; claim-derived tenant values must also be non-empty and `/`-free
-or the verifier rejects the request. Do not mutate the verifier result
-after it returns; the tenant prefix is the storage isolation boundary.
+When supplied, fixed `tenantPrefix` must be non-empty and contain no `/`; claim-derived tenant values must also be non-empty and `/`-free or the verifier rejects the request. Do not mutate the verifier result after it returns; the tenant prefix is the storage isolation boundary.
 
 ## Authorization Boundary
 
-Do not treat authentication as row-level authorization. baerly-storage
-authentication chooses a tenant. Once a caller is authenticated and
-pinned to a tenant, it can read and write any collection under that
-tenant through `/v1/*`.
+Do not treat authentication as row-level authorization. baerly-storage authentication chooses a tenant. Once a caller is authenticated and pinned to a tenant, it can read and write any collection under that tenant through `/v1/*`.
 
-For finer policy, intercept protected collection routes before they
-reach `baerlyWorker` / `baerlyNode`:
+For finer policy, intercept protected collection routes before they reach `baerlyWorker` / `baerlyNode`:
 
 - run your own auth and ACL check;
 - stamp trusted fields server-side;
 - call `Db` directly for allowed writes;
-- block direct client writes to protected collections before falling
-  through to the default `/v1/*` handler.
+- block direct client writes to protected collections before falling through to the default `/v1/*` handler.
 
-Reads are symmetric — and easy to overlook. `GET /v1/c/:collection`
-returns the **entire collection** unless you constrain it: there is no
-default row cap, and an authenticated non-owner sees every row under the
-tenant. Two consequences for your interceptor:
+Reads are symmetric — and easy to overlook. `GET /v1/c/:collection` returns the **entire collection** unless you constrain it: there is no default row cap, and an authenticated non-owner sees every row under the tenant. Two consequences for your interceptor:
 
-- **Scope the rows.** Inject a predicate keyed to the verified identity
-  (`where owner_id = <verified sub>`) before delegating. All reads fold
-  the authoritative snapshot and log, including when indexes are
-  declared. A bare `?limit` clamp only bounds what is returned: the
-  engine still folds the whole collection into memory before applying
-  the limit, so a limit alone caps exposure but not read cost.
-- **Do not reject `?limit` to "force" a cap.** It backfires — a request
-  with no `?limit` takes the *uncapped* path and returns everything.
-  Clamp instead: `limit = min(requested ?? MAX, MAX)`.
+- **Scope the rows.** Inject a predicate keyed to the verified identity (`where owner_id = <verified sub>`) before delegating. All reads fold the authoritative snapshot and log, including when indexes are declared. A bare `?limit` clamp only bounds what is returned: the engine still folds the whole collection into memory before applying the limit, so a limit alone caps exposure but not read cost.
+- **Do not reject `?limit` to "force" a cap.** It backfires — a request with no `?limit` takes the _uncapped_ path and returns everything. Clamp instead: `limit = min(requested ?? MAX, MAX)`.
 
-The trusted-fields recipe in
-[`packages/server/API.md`](../../packages/server/API.md) shows the
-write half of this pattern.
+The trusted-fields recipe in [`packages/server/API.md`](../../packages/server/API.md) shows the write half of this pattern.
