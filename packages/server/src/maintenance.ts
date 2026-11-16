@@ -49,6 +49,7 @@ import type {
   MaintenanceResult,
   MaintenanceTarget,
 } from "./maintenance-options.ts";
+import { collectionFromCurrentJsonKey } from "./collection-key.ts";
 import { assertNameSegment } from "./path-segment.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { retireLogRange } from "./log-retention.ts";
@@ -98,8 +99,7 @@ const retireLogs = async (
   currentJsonKey: string,
   opts?: { logRetention?: LogRetentionOptions; signal?: AbortSignal },
 ): Promise<number> => {
-  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+  const { name: collection } = collectionFromCurrentJsonKey(currentJsonKey);
   try {
     const retired = await retireLogRange(storage, currentJsonKey, {
       ...opts?.logRetention,
@@ -714,8 +714,8 @@ export const runBoundedMaintenance = async (
   const E = ceilings.maxFoldRows;
 
   // Derive the collection label the same way compact()/runGc() do.
-  const collectionPrefix = currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
-  const collection = collectionPrefix.slice(collectionPrefix.lastIndexOf("/") + 1);
+  const { prefix: collectionPrefix, name: collection } =
+    collectionFromCurrentJsonKey(currentJsonKey);
 
   const gcOpts = {
     maxMarksPerRun: gcMaxMarks,
