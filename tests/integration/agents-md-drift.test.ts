@@ -1,9 +1,11 @@
 // Maintenance contract for this file:
 //
 // The four examples/*/AGENTS.md files duplicate "Going to production"
-// Patterns A/B/C in paired blocks, plus a host-agnostic Pattern D
-// ("## Maintenance") that is identical across ALL FOUR files (it has
-// no per-template variation). Each block is delimited by HTML
+// Patterns A/B/C in paired blocks, plus host-agnostic blocks that are
+// identical across ALL FOUR files (no per-template variation): the STOP
+// preamble, the library-reference pointer list, and Pattern D
+// ("## Maintenance"). The shared guidance itself lives in the installed
+// API.md / RECIPES.md; these blocks only point at it. Each block is delimited by HTML
 // comment sentinels:
 //
 //   <!-- pattern-a:start -->
@@ -28,9 +30,6 @@
 //   - To add a new legitimate variation: add a new normalise* helper
 //     and chain it into normalise().
 //
-// A future refactor could lift the synced blocks into
-// examples/_shared/pattern-{a,b,c}.md partials with a codegen
-// assembly step — see "Out of scope" in the cleanup plan.
 import { describe, test, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -112,6 +111,16 @@ describe("AGENTS.md Pattern drift fence", () => {
     const cfReact = extractSentinel(read("react-cloudflare"), "stop");
     const nodeMin = extractSentinel(read("minimal-node"), "stop");
     const nodeReact = extractSentinel(read("react-node"), "stop");
+    expect(cfReact).toBe(cfMin);
+    expect(nodeMin).toBe(cfMin);
+    expect(nodeReact).toBe(cfMin);
+  });
+
+  test("library-reference pointer list is byte-identical across all four files", () => {
+    const cfMin = extractSentinel(read("minimal-cloudflare"), "library");
+    const cfReact = extractSentinel(read("react-cloudflare"), "library");
+    const nodeMin = extractSentinel(read("minimal-node"), "library");
+    const nodeReact = extractSentinel(read("react-node"), "library");
     expect(cfReact).toBe(cfMin);
     expect(nodeMin).toBe(cfMin);
     expect(nodeReact).toBe(cfMin);

@@ -14,14 +14,15 @@ tags: [agent-entry, baerly-storage]
 Your training data is dense with Postgres + Prisma/Drizzle, Mongo, and Firebase patterns. **None of them apply here.** This is a baerly-storage app — a small, LLM-legible document database with a narrow API on top of S3-compatible storage. Before writing or modifying storage code, read:
 
 - **`node_modules/@gusto/baerly-storage/dist/API.md`** — hand-authored public-API quickref. Read first. Lists every method, every error code, every example. If a pattern you want to use isn't here, it doesn't exist in baerly-storage.
+- **`node_modules/@gusto/baerly-storage/dist/RECIPES.md`** — common mistakes keyed by the exact error string, plus recipes (storage credentials on Node, wrapping the client `fetch`, a gated adapter, scheduled maintenance).
 - **`node_modules/@gusto/baerly-storage/dist/*.d.ts`** — authoritative type signatures. `Db`, `Collection<T>`, `Query<T>`, and `Predicate<T>` are the whole API surface.
 
 Common anti-patterns that compile but are wrong:
 
 - `db.collection(name).insertOne(...)` / `.find({...})` (Mongo) — use `db.collection(name).insert(row)` and `.where({ ... }).all()`.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes `null`. Use `.optional()`; `null` in an update patch is the RFC 7386 deletion sentinel, not a storable value.
-- Raw SQL strings, `WHERE` clauses, hand-built query AST — the only query surface is `db.collection(...).where({ field: value }).all()` or `.where(q => q.gte("count", 1))`. See **Predicates** below.
-- `.useIndex("name")` / `.hint(...)` — no such methods. Declared indexes do not change how a read runs. See **Indexes** below.
+- Raw SQL strings, `WHERE` clauses, hand-built query AST — the only query surface is `db.collection(...).where({ field: value }).all()` or `.where(q => q.gte("count", 1))`. See the Predicates section of API.md.
+- `.useIndex("name")` / `.hint(...)` — no such methods. Declared indexes do not change how a read runs. See the `defineConfig` section of API.md.
 
 <!-- stop:end -->
 
@@ -76,111 +77,20 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
 
 ## When editing X, read Y
 
-- **Typed collections** — two ways to get a typed row, in DX order. The generic on `client.collection<N>(name)` is the collection **name** (constrained to `CollectionNames<typeof config>`), not the row type — so don't pass a row type to it.
-  1. **Bind the config.** This template's `src/web/client.ts` already passes `config` to `createBaerlyClient({ baseUrl, config })`, so `client.collection("notes")` returns `ClientCollection<Row>` with `Row` derived from the `NoteSchema` declared in `baerly.config.ts`. No generic needed. When you need to name that row type elsewhere, use `RowOf<typeof config, "notes">` (re-exported from `@gusto/baerly-storage`) — not a generic on `.collection()`.
-  2. **Cast the handle (undeclared collection).** This template's `client` is bound to `config`, so its names narrow to the declared collections. To reach a collection that isn't in `config`, build an unbound client (`createBaerlyClient({ baseUrl })` with no `config`) — its names widen to `string` and its row defaults to `DocumentData`. Cast at the construction site for a narrower shape that still satisfies the kernel's `DocumentData` constraint (`{ [k: string]: DocumentValue }`):
-     ```ts
-     import { createBaerlyClient, type ClientCollection } from "@gusto/baerly-storage/client";
-     import type { DocumentData } from "@gusto/baerly-storage";
-     interface Bookmark extends DocumentData {
-       _id: string;
-       url: string;
-     }
-     const raw = createBaerlyClient({ baseUrl: "" });
-     const bookmarks = raw.collection("bookmarks") as ClientCollection<Bookmark>;
-     await bookmarks.all();
-     ```
-     A plain `interface Bookmark { _id: string; url: string }` (no index signature) will fail with TS2344 — the constraint is intentional so the row stays JSON-compatible.
+<!-- library:start -->
 
-- **Writing tests** — the kernel exports `MemoryStorage`, an in-memory `Storage` impl that's the canonical backend for unit tests. Don't roll your own — `Db.create({ storage, app, tenant, config })` is the same boilerplate prod uses; passing `new MemoryStorage()` swaps S3 for an in-process map.
+- **Library reference** — the shared API guidance is installed with the package, in `node_modules/@gusto/baerly-storage/dist/`. Read the matching section before editing storage code:
+  - **Typed rows** (binding `config`, `RowOf`, casting an undeclared collection): `API.md#documentdata--row-shape-constraint`. A hand-written row type failing `DocumentData`: `RECIPES.md#type-bookmark-does-not-satisfy-the-constraint-documentdata-ts2344`.
+  - **Writing tests**: `API.md`, section `Db.create`. `new MemoryStorage()` is a fresh bucket per test; share one instance across `Db.create` calls for multi-writer tests. `src/notes.test.ts` is the working example.
+  - **Predicates** (object literal vs callback DSL, operators, by-`_id` verbs): `API.md#predicates`.
+  - **Indexes**: don't declare them; a read always folds the whole collection. `API.md`, section `defineConfig`.
+  - **Schemas** (StandardSchema validators, `SchemaError`): `API.md`, section `defineConfig`.
+  - **HTTP wire format** (calling `/v1/*` directly): `API.md#http-wire-format`.
+  - **Errors by message** (`RECIPES.md`, one entry per error string) and the shared anti-patterns: `RECIPES.md#anti-patterns-compile-clean-but-wrong`.
 
-  ```ts
-  // src/notes.test.ts
-  import { test, expect } from "vitest";
-  import { Db, MemoryStorage } from "@gusto/baerly-storage";
-  import config from "../baerly.config.ts";
+<!-- library:end -->
 
-  test("notes round-trip", async () => {
-    const db = Db.create({
-      storage: new MemoryStorage(),
-      app: "test",
-      tenant: "t",
-      config,
-    });
-    const { _id } = await db.collection("notes").insert({ body: "hello" });
-    const row = await db.collection("notes").get(_id);
-    expect(row?.body).toBe("hello");
-  });
-  ```
-
-  Each `new MemoryStorage()` is a fresh bucket — no shared state across tests. For multi-writer scenarios (causal-consistency tests, etc.), construct one `MemoryStorage` and pass the same instance into multiple `Db.create` calls so they share the underlying bucket.
-
-- **Predicates** — `db.collection("notes").where({...}).all()`. Two shapes:
-
-  - **Object literal** — equality only (top-level, dotted-path, or nested literal sub-predicate). Multi-field is implicit AND.
-  - **Callback DSL** — `q => q.eq(...).gt(...).gte(...).lt(...).lte(...).in(...)` for the operator vocabulary. The methods on `PredicateBuilder<T>` ARE the supported surface — `q.or` / `q.regex` / `q.ne` / `q.exists` are TS compile errors. Chained `.where(...).where(...)` AND-merges across shapes.
-
-  ```ts
-  // Top-level equality
-  await db.collection("notes").where({ body: "TODO" }).all();
-
-  // Dotted-path on a nested field
-  await db.collection("notes").where({ "meta.source": "import" }).all();
-
-  // Operator on a single field — set membership (callback form)
-  await db
-    .collection("notes")
-    .where((q) => q.in("tag", ["todo", "wip"]))
-    .all();
-
-  // Range — also callback form
-  await db
-    .collection("notes")
-    .where((q) => q.gte("created_at", "2026-01-01"))
-    .all();
-
-  // AND-merge across two .where() calls (mix shapes freely)
-  await db
-    .collection("notes")
-    .where({ body: "TODO" })
-    .where((q) => q.gte("priority", 5))
-    .all();
-  ```
-
-  The plain-equality value type is JSON-arrayless: string / number / boolean / nested object. Use `q.in("tag", [...])` for set membership when you'd otherwise want `{ tag: ["todo","wip"] }`.
-
-- **Indexes** — don't declare them. Every read folds the whole collection (snapshot + log) and filters in memory; a declared index neither speeds a read up nor changes its result. `defineConfig` still accepts `indexes` and `Db.create` validates them, so an existing config keeps compiling. For a hot filtered read, maintain a side-projection (see the unbounded-read anti-pattern below).
-
-- **Schemas (live feature)** — schemas are validated on the server for every `insert` / `update` / `replace` when bound. Declare via `defineConfig` using any StandardSchema v1 validator (Zod 3.24+, Valibot 0.36+, ArkType 2.0+, or anything implementing the spec):
-
-  ```ts
-  import { z } from "zod";
-  import { defineConfig } from "@gusto/baerly-storage/config";
-
-  const Note = z.object({
-    _id: z.string(),
-    body: z.string().min(1),
-  });
-
-  export default defineConfig({
-    collections: {
-      notes: { schema: Note },
-    },
-  });
-  ```
-
-  On a validation failure the server throws `BaerlyError{ code: "SchemaError", issues: [{ path, message }] }`; HTTP clients see a 400 with the same envelope. Validation runs on the post-image so `update` and `replace` see the full doc, not just the patch.
-
-- **HTTP wire format (calling `/v1/*` directly)** — the JS SDK (`db.collection(name).insert(...)`) is the canonical path; reach for `curl` only when debugging the wire. Mutation bodies are wrapped:
-
-  | Route                          | Body              | Response         |
-  | ------------------------------ | ----------------- | ---------------- |
-  | `POST   /v1/c/:collection`     | `{"doc":{...}}`   | `201 {_id}`      |
-  | `PATCH  /v1/c/:collection/:id` | `{"patch":{...}}` | `200 {modified}` |
-  | `PUT    /v1/c/:collection/:id` | `{"doc":{...}}`   | `200 {modified}` |
-  | `DELETE /v1/c/:collection/:id` | —                 | `204`            |
-
-  Reads (`GET /v1/c/:collection[/:id]`, `GET /v1/count?collection=…`, `GET /v1/since?collection=…&cursor=…`) take no body and return `{ data, _meta }` or a route-specific envelope. A flat `POST` body (without the `doc` wrapper) returns `400 SchemaError "Request body must be { doc: object }"` — the wording is locked by `assertJsonBodyField` in the kernel. Canonical reference: the JSDoc on `createRouter` in `baerly-storage`.
+- **This template** — `src/web/client.ts` binds `config` into `createBaerlyReact` and `src/notes.test.ts` passes it to `Db.create`, so rows are already typed: no generic. For a hot filtered read, maintain a side-projection (see Anti-patterns).
 
 - **Auth** — your scaffold ships `auth: "none"` in `baerly.config.ts`: every request resolves to `tenant: "react-demo"` and `Authorization` is ignored. The adapter reads `config.auth` to pick its verifier; a `verifier:` on `baerlyNode({ ... })` overrides it. The schema- bound `notes` collection (`baerly.config.ts:NoteSchema`) runs server-side regardless of the auth posture. There is no `baerly doctor --target=node` backend today; verify bucket CAS with `baerly doctor --bucket=<s3-uri>` and probe `/v1/healthz` after deploy. See "Going to production" below for the two production-fit recipes.
 
@@ -250,9 +160,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and `config.auth: "no
 
 ## Anti-patterns
 
-- Widening branded types from `baerly-storage` (`UUID`, `ContentVersionId`). The types prevent confusion bugs.
-- Reaching into `node_modules/@gusto/baerly-storage/dist/` directly — consume the published exports.
-- Mutating `VerifierResult.tenantPrefix` between the verifier and `Db.create`. The dispatcher pins the tenant from the verifier's return value.
+- The shared anti-patterns (branded types, the verifier's tenant, secrets in the SPA bundle) are in `RECIPES.md#anti-patterns-compile-clean-but-wrong`.
 - Calling `db.collection(...).all()` (or any unbounded read) inside a per-request handler. The call scans the entire collection on every request — fine for a fixture-sized table, catastrophic at any real size, and `pnpm verify` doesn't surface the cost. A predicate (`db.collection("notes").where({ ... }).all()`) trims the response but still folds the whole collection, so instead maintain a side-projection (Postgres/SQLite/search index) populated incrementally from the `/v1/since?collection=<name>&cursor=<opaque>` log feed or from a write hook — never re-scan per request.
 
 ## Maintenance
