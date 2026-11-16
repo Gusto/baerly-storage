@@ -165,7 +165,7 @@ const db = Db.create({ storage, app, tenant: claims.org.normalize("NFC") });
 - A Cloudflare Worker no longer caches point-read response bodies. Every read reaches storage, so a read after a completed `PUT`, `PATCH` or direct SDK write sees that write. Code that waited out, or busted, the old cache can drop the workaround. Repeated reads of one row now cost a storage read each (section 4).
 - A `Verifier` that throws now yields its mapped status instead of an unhandled rejection.
 - Canonical log lines report capacity refusals as `outcome: "refused"` (warn level). Alerts keyed on `outcome: "conflict"` or `"error"` for those writes shift to `"refused"`. `Baerly-Capacity-Warning` and the `capacity_warning` log field are additive early signals.
-- Request budgets (Cloudflare): a call past the request's storage budget is refused with `CapacityExceeded` before it is sent; a read that cannot fit is refused whole, never truncated. `GET /v1/since` ends a long-poll early instead of failing (about 22 s on Free + S3).
+- Request budgets (Cloudflare): a call past the request's storage budget is refused with `CapacityExceeded` before it is sent; a read that cannot fit is refused whole, never truncated. `GET /v1/since` ends a long-poll early when its request budget runs out instead of failing (about 22 s under the default `cf-free` profile with S3 storage).
 - `GET /v1/since` answers a cursor that can no longer resume (its changes are no longer retained, or `baerly admin restore --force` truncated the generation it came from) with `CursorExpired` (410). 0.6.0 answered `SchemaError` (400), which still means a malformed cursor. Re-read your rows, then restart with `cursor: ""`; the changes in between are not replayed. The React subscription poll does this itself and now parks on a `SchemaError` until `refetch()`.
 
 ```ts
@@ -215,7 +215,7 @@ await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER)
 // after
 await runScheduledMaintenance(target, { tier: "cf-free" }); // or "cf-paid"
 
-// before (Workers Free, S3 over HTTP)
+// before (storage over fetch under "cf-free")
 if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
   await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
 } else {
@@ -237,9 +237,9 @@ await runScheduledMaintenance(target, { tier });
 
 - The result is `{ folded, deferred?: { reason }, gcDeleted, pending }`. `deferred.reason` is `"contention"` (a concurrent write or pass won) or `"budget"` (the pass saved its progress locating the tail; the next pass continues). It replaces `CompactResult.skippedReason`, including `"probe-budget-checkpointed"`.
 - `minEntriesToCompact` is no longer an option. Node (the default tier) and `"cf-paid"` passes fold from 1 pending entry (0.6.0's bare call skipped tails under 100, and `CLOUDFLARE_PAID_TIER` under 50), so a hot Paid cron rewrites the snapshot more often. Under `"cf-free"` a pass folds one 20-entry slice only when at least 20 entries are pending. Delete a raised-threshold workaround (such as `minEntriesToCompact: 10` against a long tail) along with the option.
-- Workers Free with the R2 binding fits one whole pass per invocation; the even/odd-minute alternation is needed only for storage over `fetch`. Run one collection per Cloudflare invocation. Invalid names and unknown `tier` / `phase` values throw `InvalidConfig` before any storage call.
+- One whole pass fits an invocation on Workers Free with the R2 binding and under `"cf-paid"`. The even/odd-minute `phase` alternation is needed only for storage over `fetch` under `"cf-free"`. Run one collection per Cloudflare invocation. Invalid names and unknown `tier` / `phase` values throw `InvalidConfig` before any storage call.
 
-**Host tiers.** Per-host ceilings, the pending-tail limits on Workers Free with S3 over HTTP, and which host is a guaranteed tier changed. Read the current figures in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers) rather than any you noted from 0.6.0.
+**Host tiers.** The supported hosts are Workers Free with the R2 binding, Workers Paid (S3 or R2) and serverful Node. Workers Free with S3 over HTTP is no longer supported; S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A Worker cannot tell Free from Paid, so a Paid Worker on S3 that has not set `cf-paid` runs under the default `cf-free` profile and keeps its 45-call `fetch` budget per request: past it a request gets `CapacityExceeded`, not a platform error. Runtime behavior is unchanged and nothing new is refused. Per-host ceilings changed too; read the current figures in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers) rather than any you noted from 0.6.0.
 
 **Fold-ceiling signals.** A collection past the fold ceiling now logs a `fold_deferred` warning (category `["baerly", "maintenance"]`) on its first deferral and then at most once per 1,000 writes. `db.compaction.deferred_total` gains a `gate` label, and `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total` are new. A scheduled pass below its fold floor with a live tail counts `db.compaction.below_min_total`. `baerly inspect` reports `fold_gate` per host profile; `inspect --json` is a storage-format diagnostic, not a stable contract, so do not build automation on its fields.
 
