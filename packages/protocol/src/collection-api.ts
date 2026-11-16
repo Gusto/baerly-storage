@@ -28,7 +28,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * const any = await db.collection("tickets").first();
    * ```
    */
-  first(): Promise<T | undefined>;
+  first(): Promise<(T & { _id: string }) | undefined>;
 
   /**
    * Every document in the whole collection. Equivalent to
@@ -40,7 +40,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * const all = await db.collection("tickets").all();
    * ```
    */
-  all(): Promise<T[]>;
+  all(): Promise<(T & { _id: string })[]>;
 
   /**
    * Count every row in the collection (equivalent to `.where({}).count()`).
@@ -72,7 +72,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * }
    * ```
    */
-  get(id: string): Promise<T | undefined>;
+  get(id: string): Promise<(T & { _id: string }) | undefined>;
 
   /**
    * Filter rows. Two shapes:
@@ -163,7 +163,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * });
    * ```
    */
-  insert(doc: Partial<T> & DocumentData): Promise<{ _id: string }>;
+  insert(doc: Partial<T> & DocumentData & { _id?: string }): Promise<{ _id: string }>;
 
   /**
    * JSON-merge-patch (RFC 7386) applied to one row by primary key.
@@ -500,7 +500,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    *   .first();
    * ```
    */
-  first(): Promise<T | undefined>;
+  first(): Promise<(T & { _id: string }) | undefined>;
 
   /**
    * Every matching document, respecting `order` and `limit`. No
@@ -516,7 +516,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    *   .all();
    * ```
    */
-  all(): Promise<T[]>;
+  all(): Promise<(T & { _id: string })[]>;
 
   /**
    * Count matching rows. Cheaper than `(await all()).length`.

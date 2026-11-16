@@ -100,7 +100,8 @@ const db = Db.create({
 });
 
 // `db.collection("tickets")` against the bound config resolves to the
-// narrowing overload — `RowOf<typeof config, "tickets"> & DocumentData`.
+// narrowing overload — `RowOf<typeof config, "tickets"> & DocumentData`;
+// read terminals add the stored string `_id`.
 // We check `first()`'s return shape so the assertion stays scoped to
 // public surface (and bypasses Collection's internal generic plumbing).
 // Uses a non-`_id` predicate because `Path<T>` excludes the root `_id`
@@ -111,7 +112,8 @@ const boundRow = await boundCollection.where({ status: "open" }).first();
 export type _BoundDbInfersRow = Expect<
   Equal<
     typeof boundRow,
-    ({ _id: string; title: string; status: "open" | "closed" } & DocumentData) | undefined
+    | ({ _id: string; title: string; status: "open" | "closed" } & DocumentData & { _id: string })
+    | undefined
   >
 >;
 
@@ -124,7 +126,7 @@ const dbLegacy = Db.create({ storage: memStorage, app: "a", tenant: "t" });
 const legacyCollection = dbLegacy.collection("any");
 const legacyRow = await legacyCollection.where({}).first();
 export type _UnboundDbRowDefaultsToDocumentData = Expect<
-  Equal<typeof legacyRow, (Record<string, unknown> & DocumentData) | undefined>
+  Equal<typeof legacyRow, (Record<string, unknown> & DocumentData & { _id: string }) | undefined>
 >;
 
 export const _typoOnBoundConfigIsCompileError = () => {

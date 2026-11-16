@@ -173,13 +173,13 @@
     {
       "name": "first",
       "params": "",
-      "returns": "Promise<T | undefined>",
+      "returns": "Promise<(T & { _id: string }) | undefined>",
       "throws": ["CapacityExceeded"]
     },
     {
       "name": "all",
       "params": "",
-      "returns": "Promise<T[]>",
+      "returns": "Promise<(T & { _id: string })[]>",
       "throws": ["CapacityExceeded"]
     },
     {
@@ -191,7 +191,7 @@
     {
       "name": "get",
       "params": "id: string",
-      "returns": "Promise<T | undefined>",
+      "returns": "Promise<(T & { _id: string }) | undefined>",
       "throws": ["CapacityExceeded"]
     },
     {
@@ -211,7 +211,7 @@
     },
     {
       "name": "insert",
-      "params": "doc: Partial<T> & DocumentData",
+      "params": "doc: Partial<T> & DocumentData & { _id?: string }",
       "returns": "Promise<{ _id: string }>",
       "throws": [
         "SchemaError",
@@ -273,13 +273,13 @@
     {
       "name": "first",
       "params": "",
-      "returns": "Promise<T | undefined>",
+      "returns": "Promise<(T & { _id: string }) | undefined>",
       "throws": ["CapacityExceeded"]
     },
     {
       "name": "all",
       "params": "",
-      "returns": "Promise<T[]>",
+      "returns": "Promise<(T & { _id: string })[]>",
       "throws": ["CapacityExceeded"]
     },
     {

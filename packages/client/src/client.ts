@@ -162,13 +162,13 @@ export interface TerminalOptions {
 export interface ClientCollection<T extends DocumentData = DocumentData> {
   readonly name: string;
   /** First document in the whole collection or `undefined`. */
-  first(opts?: TerminalOptions): Promise<T | undefined>;
+  first(opts?: TerminalOptions): Promise<(T & { _id: string }) | undefined>;
   /** Every document in the whole collection. Pair with `.where(...).limit(n)` on large collections. */
-  all(opts?: TerminalOptions): Promise<T[]>;
+  all(opts?: TerminalOptions): Promise<(T & { _id: string })[]>;
   /** Count every row in the collection (equivalent to `.where({}).count()`). */
   count(opts?: TerminalOptions): Promise<number>;
   /** Fetch one document by primary key. Returns `undefined` when the id is unknown. */
-  get(id: string, opts?: TerminalOptions): Promise<T | undefined>;
+  get(id: string, opts?: TerminalOptions): Promise<(T & { _id: string }) | undefined>;
   /**
    * Filter rows. Two shapes:
    *
@@ -202,7 +202,10 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
    * `MaintenancePending`. Calling `insert(doc)` again mints a new auto-ID
    * and is a new insert. The caller's `doc` is not modified.
    */
-  insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
+  insert(
+    doc: Partial<T> & DocumentData & { _id?: string },
+    opts?: TerminalOptions,
+  ): Promise<{ readonly _id: string }>;
   /** JSON-merge-patch applied to one row by primary key. */
   update(
     id: string,
@@ -228,9 +231,9 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
   order(spec: OrderSpec<T>): ClientQuery<T>;
   limit(n: number): ClientQuery<T>;
   /** First match or `undefined`. Issues `GET /v1/c/:collection?...&limit=1`. */
-  first(opts?: TerminalOptions): Promise<T | undefined>;
+  first(opts?: TerminalOptions): Promise<(T & { _id: string }) | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large collections. */
-  all(opts?: TerminalOptions): Promise<T[]>;
+  all(opts?: TerminalOptions): Promise<(T & { _id: string })[]>;
   /** Count matching rows. Issues `GET /v1/count?collection=&where=`; server returns a scalar. */
   count(opts?: TerminalOptions): Promise<number>;
 }
@@ -302,6 +305,9 @@ export const createBaerlyClient = <TConfig extends BaerlyConfig = UnboundConfig>
   return build(ctx);
 };
 
+/** A row as the server returns it: `T` plus the string `_id` it is stored under. */
+type Row<T extends DocumentData> = T & { _id: string };
+
 /** Query-state carried across the chainable modifiers. */
 interface QueryState {
   readonly wire: PredicateWire;
@@ -364,9 +370,9 @@ const makeClientCollection = <T extends DocumentData>(
     first: (opts) => collectionForQuery.first(opts),
     all: (opts) => collectionForQuery.all(opts),
     count: (opts) => collectionForQuery.count(opts),
-    async get(id, opts): Promise<T | undefined> {
+    async get(id, opts): Promise<Row<T> | undefined> {
       try {
-        return await request<T>(ctx, {
+        return await request<Row<T>>(ctx, {
           method: "GET",
           path: idPath(id),
           signal: opts?.signal,
@@ -500,19 +506,19 @@ const makeClientQuery = <T extends DocumentData>(
       }),
     limit: (n): ClientQuery<T> => makeClientQuery<T>(ctx, collectionName, { ...state, limit: n }),
 
-    async first(opts): Promise<T | undefined> {
+    async first(opts): Promise<Row<T> | undefined> {
       // Mirrors `Db.first()` which sets `limit: 1` on its underlying
       // list call; override the query-state limit for this terminal
       // only (chained `.limit(n).first()` semantics: `first` wins).
-      const data = await request<ReadonlyArray<T>>(ctx, {
+      const data = await request<ReadonlyArray<Row<T>>>(ctx, {
         method: "GET",
         path: listPath({ limit: 1 }),
         signal: opts?.signal,
       });
       return data[0];
     },
-    async all(opts): Promise<T[]> {
-      const data = await request<ReadonlyArray<T>>(ctx, {
+    async all(opts): Promise<Row<T>[]> {
+      const data = await request<ReadonlyArray<Row<T>>>(ctx, {
         method: "GET",
         path: listPath(),
         signal: opts?.signal,

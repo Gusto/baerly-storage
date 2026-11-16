@@ -127,17 +127,17 @@ _When NOT to use: from the browser — call collection verbs over HTTP via `crea
 ```ts
 interface Collection<T extends DocumentData = DocumentData> {
   readonly name: string;
-  // Reads — whole collection / by id.
-  first(): Promise<T | undefined>;
-  all(): Promise<T[]>;
+  // Reads — whole collection / by id. Every row carries a string `_id`.
+  first(): Promise<(T & { _id: string }) | undefined>;
+  all(): Promise<(T & { _id: string })[]>;
   count(): Promise<number>;
-  get(id: string): Promise<T | undefined>;
+  get(id: string): Promise<(T & { _id: string }) | undefined>;
   // Modifiers — return Query<T>.
   where(predicate: PredicateArg<T>): Query<T>; // PredicateArg = Predicate<T> | (q => PredicateBuilder<T>)
   order(spec: OrderSpec<T>): Query<T>;
   limit(n: number): Query<T>;
   // Writes — by primary key.
-  insert(doc: Partial<T> & DocumentData): Promise<{ _id: string }>;
+  insert(doc: Partial<T> & DocumentData & { _id?: string }): Promise<{ _id: string }>;
   update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
   replace(id: string, doc: T): Promise<void>;
   delete(id: string): Promise<{ deleted: number }>;
@@ -148,8 +148,8 @@ interface Collection<T extends DocumentData = DocumentData> {
 
 ```ts
 interface Query<T> extends /* Collection<T>'s modifiers */ {
-  first(): Promise<T | undefined>;
-  all(): Promise<T[]>;
+  first(): Promise<(T & { _id: string }) | undefined>;
+  all(): Promise<(T & { _id: string })[]>;
   count(): Promise<number>;
   update(patch: Partial<T>): Promise<{ modified: number }>;   // bulk
   delete(): Promise<{ deleted: number }>;                      // bulk
@@ -251,11 +251,11 @@ Two ways to get a typed row:
    import type config from "./baerly.config";
 
    type Ticket = RowOf<typeof config, "tickets">;
-   //   ^ same shape as `db.collection("tickets").all()` row.
+   //   ^ `db.collection("tickets").all()` rows are `Ticket & { _id: string }`.
    //   `CollectionNames<typeof config>` is the union of valid names.
    ```
 
-2. **Falls back to `DocumentData`** when no config is bound. Cast at the construction site for a narrower row shape:
+2. **Falls back to `DocumentData`** when no config is bound. Rows still carry a string `_id`, so `get` / `update` / `replace` / `delete` take `row._id` as-is (`for (const row of await notes.all()) await notes.delete(row._id)`). Cast at the construction site for a narrower row shape:
    ```ts
    import type { Collection, DocumentData } from "@gusto/baerly-storage";
    interface Bookmark extends DocumentData {
@@ -355,7 +355,7 @@ export default defineConfig({
 
 Schemas: any [StandardSchema v1](https://standardschema.dev) validator (Zod 3.24+, Valibot 0.36+, ArkType 2.0+). Validation runs on the post-image: `update` and `replace` see the full doc, not just the patch. Failures → `BaerlyError{code:"SchemaError", issues:[…]}`, mapped to HTTP 400. Validation is write-path only — reads, export, and replay never re-validate, so a schema change never retroactively rejects existing rows.
 
-**Author `_id` as required, not `.optional()`.** The validator runs on the post-image — by the time it fires, the server has already filled in a UUIDv7 `_id` for inserts that omit it, so every row the validator sees has `_id` present. Declaring `_id: z.string()` (required) matches that runtime invariant. `Collection<T>.insert` still accepts a doc without `_id` (the public signature is `insert(doc: Partial<T> & DocumentData)`), so authoring `_id` as required does not break the "omit and let the server mint it" path. The win is on the read side: `db.collection("tickets").all()` is typed `Ticket[]` with `_id: string` (required), so route handlers and response schemas don't need a parallel "\_id-required" row type.
+**Author `_id` as required, not `.optional()`.** The validator runs on the post-image — by the time it fires, the server has already filled in a UUIDv7 `_id` for inserts that omit it, so every row the validator sees has `_id` present. Declaring `_id: z.string()` (required) matches that runtime invariant. `Collection<T>.insert` still accepts a doc without `_id` (the public signature is `insert(doc: Partial<T> & DocumentData & { _id?: string })`), so authoring `_id` as required does not break the "omit and let the server mint it" path. Rows from reads carry `_id: string` either way; the win is on the named type: `RowOf<typeof config, "tickets">` then has `_id: string` (required), so route handlers and response schemas don't need a parallel "\_id-required" row type.
 
 An insert that omits `_id` gets a minted UUIDv7 (sorts by mint time); there is no exported id generator. In-process `insert` mints in the kernel. `createBaerlyClient` mints in the SDK and sends `mintedId`, so its resends replay. A raw-HTTP `POST` without `doc._id` is minted by the server; resending it adds a second row. To reference a new row's id, write the parent first and use the returned `_id`; design cross-collection writes parent-first with cleanup.
 
@@ -480,7 +480,7 @@ const [mutate, { isPending, error }] = useMutation();
 await mutate((c) => c.collection("notes").insert({ body }));
 ```
 
-> No type parameter (`createBaerlyReact()`) gives an unbound surface — collection names widen to `string`, rows to `DocumentData` — matching the in-process `Db.collection` fallback. There are no loose hooks to import directly: an unbound hook can't see the config, so binding at the factory is the only path.
+> No type parameter (`createBaerlyReact()`) gives an unbound surface — collection names widen to `string`, rows to `DocumentData` with a string `_id` — matching the in-process `Db.collection` fallback. There are no loose hooks to import directly: an unbound hook can't see the config, so binding at the factory is the only path.
 
 ## HTTP wire format
 

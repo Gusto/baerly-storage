@@ -116,7 +116,7 @@ describe("Db.collection read terminals", () => {
     await expect(q.count()).resolves.toBe(2);
     const head = await q.first();
     expect(head).toBeDefined();
-    expect((head as { status: string }).status).toBe("open");
+    expect(head?.["status"]).toBe("open");
   });
 
   test("case 5: .where().where() AND-merges via mergePredicateWires", async () => {

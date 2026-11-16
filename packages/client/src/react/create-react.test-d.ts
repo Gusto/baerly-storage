@@ -48,20 +48,29 @@ const { useQuery, useMutation, useBaerlyClient } = createBaerlyReact<typeof conf
 // saw `BaerlyClient<UnboundConfig>` and `.all()` was `DocumentData[]`.
 const boundList = () => useQuery((c) => c.collection("tickets").all(), []);
 export type _BoundListInfersTickets = Expect<
-  Equal<ReturnType<typeof boundList>, UseQueryResult<(TicketShape & DocumentData)[]>>
+  Equal<
+    ReturnType<typeof boundList>,
+    UseQueryResult<(TicketShape & DocumentData & { _id: string })[]>
+  >
 >;
 
 // (B) `.get(id)` flows the same row shape through the discriminated union.
 const boundGet = () => useQuery((c) => c.collection("tickets").get("id"), []);
 export type _BoundGetInfersTicket = Expect<
-  Equal<ReturnType<typeof boundGet>, UseQueryResult<(TicketShape & DocumentData) | undefined>>
+  Equal<
+    ReturnType<typeof boundGet>,
+    UseQueryResult<(TicketShape & DocumentData & { _id: string }) | undefined>
+  >
 >;
 
 // (C) Non-live mode preserves the same config-bound inference and
 // exposes the supported refetch function on every result state.
 const boundNonLive = () => useQuery((c) => c.collection("tickets").all(), [], { live: false });
 export type _BoundNonLiveInfersTickets = Expect<
-  Equal<ReturnType<typeof boundNonLive>, UseQueryResult<(TicketShape & DocumentData)[]>>
+  Equal<
+    ReturnType<typeof boundNonLive>,
+    UseQueryResult<(TicketShape & DocumentData & { _id: string })[]>
+  >
 >;
 export type _BoundQueryRefetch = Expect<
   Equal<ReturnType<typeof boundNonLive>["refetch"], () => void>
@@ -80,9 +89,13 @@ export const _boundMutate = () => {
 };
 
 // (F) No type parameter → unbound surface: names widen to `string`,
-// rows to `DocumentData`. Matches the in-process `Db.collection` fallback.
+// rows to `DocumentData & { _id: string }`. Matches the in-process
+// `Db.collection` fallback.
 const unbound = createBaerlyReact();
 const unboundList = () => unbound.useQuery((c) => c.collection("anything").all(), []);
 export type _UnboundDefaultsToDocumentData = Expect<
-  Equal<ReturnType<typeof unboundList>, UseQueryResult<(Record<string, unknown> & DocumentData)[]>>
+  Equal<
+    ReturnType<typeof unboundList>,
+    UseQueryResult<(Record<string, unknown> & DocumentData & { _id: string })[]>
+  >
 >;

@@ -106,13 +106,23 @@ const OPERATOR_META: Record<
 // Curated method tables. Names + return shapes match the live Collection<T> /
 // Query<T> / Storage interfaces; param strings are curated (owner-accepted fidelity).
 const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
-  { name: "first", params: "", returns: "Promise<T | undefined>", throws: ["CapacityExceeded"] },
-  { name: "all", params: "", returns: "Promise<T[]>", throws: ["CapacityExceeded"] },
+  {
+    name: "first",
+    params: "",
+    returns: "Promise<(T & { _id: string }) | undefined>",
+    throws: ["CapacityExceeded"],
+  },
+  {
+    name: "all",
+    params: "",
+    returns: "Promise<(T & { _id: string })[]>",
+    throws: ["CapacityExceeded"],
+  },
   { name: "count", params: "", returns: "Promise<number>", throws: ["CapacityExceeded"] },
   {
     name: "get",
     params: "id: string",
-    returns: "Promise<T | undefined>",
+    returns: "Promise<(T & { _id: string }) | undefined>",
     throws: ["CapacityExceeded"],
   },
   { name: "where", params: "predicate: PredicateArg<T>", returns: "Query<T>" },
@@ -120,7 +130,7 @@ const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
   { name: "limit", params: "n: number", returns: "Query<T>" },
   {
     name: "insert",
-    params: "doc: Partial<T> & DocumentData",
+    params: "doc: Partial<T> & DocumentData & { _id?: string }",
     returns: "Promise<{ _id: string }>",
     throws: [
       "SchemaError",
@@ -168,8 +178,18 @@ const QUERY_METHODS: ReadonlyArray<SpecMethod> = [
   { name: "where", params: "predicate: PredicateArg<T>", returns: "Query<T>" },
   { name: "order", params: "spec: OrderSpec<T>", returns: "Query<T>" },
   { name: "limit", params: "n: number", returns: "Query<T>" },
-  { name: "first", params: "", returns: "Promise<T | undefined>", throws: ["CapacityExceeded"] },
-  { name: "all", params: "", returns: "Promise<T[]>", throws: ["CapacityExceeded"] },
+  {
+    name: "first",
+    params: "",
+    returns: "Promise<(T & { _id: string }) | undefined>",
+    throws: ["CapacityExceeded"],
+  },
+  {
+    name: "all",
+    params: "",
+    returns: "Promise<(T & { _id: string })[]>",
+    throws: ["CapacityExceeded"],
+  },
   { name: "count", params: "", returns: "Promise<number>", throws: ["CapacityExceeded"] },
   {
     name: "update",
