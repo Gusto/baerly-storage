@@ -42,7 +42,7 @@ export const assertSnapshotDocId = (id: string): void => {
  * a code point in U+D800–U+DFFF, whereas every UTF-8 encoder emits U+FFFD
  * for it, so the result would disagree with byte order. The comparator does
  * not check its input, to keep a scan out of every comparison in the
- * planner, builder, and view; callers validate first.
+ * codecs and view; callers validate first.
  */
 export const compareDocIds = (left: string, right: string): number => {
   let leftOffset = 0;

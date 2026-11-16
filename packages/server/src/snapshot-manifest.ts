@@ -19,7 +19,7 @@ import { isOwnCollection } from "./collection-alias.ts";
 
 const SNAPSHOT_MANIFEST_SCHEMA_VERSION = 2;
 const MAX_MANIFEST_BYTES = 64 * 1024;
-/** A manifest carries at most 32 chunk descriptors (ADR-007). */
+/** A manifest carries at most 32 chunk descriptors. */
 export const MAX_MANIFEST_CHUNKS = 32;
 
 export interface SnapshotChunkDescriptor {

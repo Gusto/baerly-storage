@@ -46,15 +46,12 @@
  * All three feed the identical fold subject, so a comparison isolates the
  * storage-shape cost, not a difference in what gets computed.
  *
- * Read shape: every arm performs the COMPLETE materialising read — the
- * `query-read` shape in `../../measurement/workload-ceiling-arm-symmetry.ts`.
- * For the chunked arm that is every chunk, which is what a complete query
- * pays but NOT what a chunked fold pays: a fold reads only the bounded
- * prefetch set `prefetchChunkedFold` admits for its mutation batch. The
- * fixture and request carry no mutations, so this Worker cannot measure that
- * `fold-read` shape, and its chunked-candidate CPU must not be read as fold
- * cost. A fold-read arm needs a mutation trace threaded through the fixture
- * first.
+ * Read shape: every arm performs the COMPLETE materialising read. For the
+ * chunked arm that is every chunk, which is what a complete query pays but
+ * NOT what a fold over a bounded mutation batch would pay. The fixture and
+ * request carry no mutations, so this Worker measures no fold-read shape,
+ * and its chunked-candidate CPU must not be read as fold cost. A fold-read
+ * arm needs a mutation trace threaded through the fixture first.
  */
 import type { DocumentData, Storage } from "@baerly/protocol";
 import { r2BindingStorage } from "@baerly/adapter-cloudflare";

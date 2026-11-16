@@ -9,8 +9,10 @@ import { assertSnapshotDocId } from "./snapshot-doc-id.ts";
  * Every helper reports failures through the caller's `fail` function so each
  * codec keeps its own artifact-scoped message prefix (`snapshot chunk: …`,
  * `snapshot manifest: …`, `chunked snapshot reference: …`) and error code,
- * while the validation logic itself exists exactly once. Layout invariants
- * come from ADR-007 (docs/adr/007-chunked-snapshot-layout.md).
+ * while the validation logic itself exists exactly once. The layout is the
+ * chunked arm the workload-ceiling study provisions
+ * (`bench/measurement/workload-ceiling-provision.ts`); no production path
+ * reads or writes it.
  */
 
 /** Failure polarity of a codec check: caller ingress vs. stored data. */
@@ -33,23 +35,23 @@ export function makeCodecFail(prefix: string): CodecFail {
   };
 }
 
-/** Chunk bodies encode to at most 1 MiB of canonical bytes (ADR-007). */
+/** Chunk bodies encode to at most 1 MiB of canonical bytes. */
 export const MAX_CHUNK_BYTES = 1024 * 1024;
 
-/** A chunk is never empty and carries at most 4,096 rows (ADR-007). */
+/** A chunk is never empty and carries at most 4,096 rows. */
 export const MAX_CHUNK_ROWS = 4096;
 
-/** `incarnation` is 32 lowercase hex characters (ADR-007). */
+/** `incarnation` is 32 lowercase hex characters. */
 export const INCARNATION_PATTERN = /^[0-9a-f]{32}$/;
 
-/** Artifact digests are 64 lowercase hex characters (ADR-007). */
+/** Artifact digests are 64 lowercase hex characters. */
 export const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
-/** The only chunk key grammar under a collection prefix (ADR-007). */
+/** The only chunk key grammar under a collection prefix. */
 const CHUNK_KEY_PATTERN =
   /^(.+)\/_v2\/snapshot\/chunks\/([0-9a-f]{32})\/sha256\/([0-9a-f]{64})\.json$/;
 
-/** The only manifest key grammar under a collection prefix (ADR-007). */
+/** The only manifest key grammar under a collection prefix. */
 const MANIFEST_KEY_PATTERN =
   /^(.+)\/_v2\/snapshot\/manifests\/([0-9a-f]{32})\/sha256\/([0-9a-f]{64})\.json$/;
 
