@@ -152,6 +152,55 @@ Retrying is an explicit at-least-once choice and may repeat logical work: a same
 - Paging or cursor-iterating `.all()`: there is no offset, page or cursor API. Bound every read instead: scope it with `.where(...)` and cap it with `.limit(n)` (plus `.order(...)` for a stable top N). Each read still folds the whole collection, so a limit caps the rows returned, not the work done. Under `baerlyWorker`, a read that needs more work than one request allows is refused with `CapacityExceeded` (see above); other hosts do not bound reads.
 - Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and `.all()`) returns the **whole collection** — there is no default row cap, and auth pins a tenant, not a row owner. Scope non-owner reads in your own route: inject a `where owner_id = <verified id>` predicate and clamp `limit = min(requested ?? MAX, MAX)`. Rejecting `?limit` backfires — it forces the uncapped path. See `docs/guide/auth.md` § Authorization Boundary.
 
+## Recipe — authoring a gated adapter
+
+Use this shape to serve the `/v1/*` API from your own server, under your own path, behind your own policy: `createRouter` from `@gusto/baerly-storage/http` does the routing, and your code does everything in front of it. `createRouter` has no auth seam. It serves every request it receives as the tenant of the `Db` you hand it, so the order is fixed:
+
+1. Authenticate first, with a preset `Verifier` from `@gusto/baerly-storage/auth` or your own.
+2. Take the tenant from the verified identity (`tenantPrefix`), never from the URL, a header or the body.
+3. Apply your own gate (roles, collection allow-lists) before any `Db` work.
+4. Build a fresh `Db` per request with `Db.create({ storage, app, tenant, config })`.
+5. Strip your mount prefix: the router matches `/v1/...` paths.
+
+```ts
+// src/server/db-route.ts — serves /db/v1/* behind a JWT and a role check.
+import { BaerlyError, Db } from "@gusto/baerly-storage";
+import { bearerJwt } from "@gusto/baerly-storage/auth";
+import { createRouter, mapError } from "@gusto/baerly-storage/http";
+import { resolveStorageFromEnv } from "@gusto/baerly-storage/node";
+import config from "../../baerly.config.ts";
+
+const PREFIX = "/db";
+const { storage } = resolveStorageFromEnv();
+const verifier = bearerJwt({
+  jwks: "https://login.example.com/.well-known/jwks.json",
+  issuer: "https://login.example.com/",
+  audience: "https://api.example.com/",
+});
+
+export async function handleDb(req: Request): Promise<Response> {
+  try {
+    const verified = await verifier(req); // (1) authenticate first
+    if (verified === null) throw new BaerlyError("Unauthorized", "Missing or invalid token");
+    const roles = (verified.identity as { roles?: unknown }).roles; // unverified shape
+    if (req.method !== "GET" && !(Array.isArray(roles) && roles.includes("editor"))) {
+      throw new BaerlyError("AccessDenied", "Writes need the editor role"); // (3) → 403
+    }
+    const db = Db.create({ storage, app: config.app, tenant: verified.tenantPrefix, config }); // (2, 4)
+    const url = new URL(req.url);
+    url.pathname = url.pathname.slice(PREFIX.length); // (5) /db/v1/c/notes → /v1/c/notes
+    return await createRouter({ db }).fetch(new Request(url, req));
+  } catch (err) {
+    const { status, envelope } = mapError(err); // verifier and Db.create throws
+    return Response.json(envelope, { status });
+  }
+}
+```
+
+Dispatch only `/db/*` requests to `handleDb`. The router maps its own errors to the wire envelope (with `Retry-After` on `MaintenancePending`); the `catch` covers what runs before it. `mapError` sends `AccessDenied` with a generic message. On Workers, build the storage inside `fetch` with `r2BindingStorage(env.BUCKET)` instead of `resolveStorageFromEnv()`. Authentication picks a tenant, not a row owner; scope reads in the gate too (see [Anti-patterns](#anti-patterns-compile-clean-but-wrong), "Relying on baerly to cap or scope a read").
+
+**What the stock adapters add.** `baerlyWorker` and `baerlyNode` do more than run the verifier: they serve `/v1/healthz` and `/v1/spec`, emit the canonical log line, and select the host's maintenance profile. A bare `createRouter` still runs write-tick maintenance on writes, but under the default profile, the smallest one, on every host: its fold ceilings are the Workers Free ones, so a collection refuses growth with `CapacityExceeded` sooner than under `baerlyNode`. It does not read the operator's maintenance settings, and on Workers it folds before the response rather than in `ctx.waitUntil`, and neither budgets storage calls against the invocation's subrequest limit nor bounds reads. When you need that behavior, keep the stock adapter and gate in front of it: pass your policy as its `verifier`, or check the request and strip your prefix before delegating, to `baerlyNode(...).fetch(req)` on Node (see API.md, "Recipe — custom routes in front of `baerlyNode`") or `baerlyWorker(...).fetch(req, env, ctx)` on Workers (see API.md, "Recipe — server-stamped trusted fields").
+
 ## Recipe — wrapping the client `fetch`
 
 `createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns: logging, tracing, auth refresh. The `Fetcher` type, exported from `@gusto/baerly-storage/client`, is `(req: Request) => Promise<Response>`.

@@ -324,6 +324,8 @@ app.post("/notes", async (c) => {
 
 `mapError` accepts any thrown value. Caller-facing codes (`SchemaError`, `NotFound`, `PayloadTooLarge`, `CapacityExceeded`, `AlreadyExists`, predicate `InvalidConfig`) keep their message. Diagnostics (`Internal`, `NetworkError`, `InvalidResponse`, storage `AccessDenied` / `InvalidConfig`, `WriteConflict`) keep code/status/`retriable` with a generic wire message; the full error goes to observability. Other throws become `500 Internal`, message redacted. The status/envelope shape is locked.
 
+To serve the whole `/v1/*` API from your own server behind your own auth, gate and mount path, see RECIPES.md, "Recipe — authoring a gated adapter".
+
 ## `defineConfig({ app, tenant, target, collections })`
 
 Scaffold-aware: lives at `@gusto/baerly-storage/config`. Holds both deploy metadata (`app`, `tenant`, `target`, `domain`, `cloudflareAccess`, `requiredSecrets`, `observability`) AND the runtime schema map.
@@ -703,7 +705,7 @@ export default {
 
 The client reads via the normal `GET /v1/c/messages` route and tails via `GET /v1/since?collection=messages&cursor=…` — both still served by `inner`. Only writes go through `/api/messages`. Reads stay uncapped and tenant-wide — scope and clamp them in your route too (see RECIPES.md).
 
-**Known limitations of this recipe.** The custom-route `Db.create` is a second instance — it doesn't share `baerlyWorker`'s `observableStorage(...)` wrapping (so custom-route writes don't land in the canonical-line storage counters). Worker point reads always reach storage and see direct SDK writes. For small chat-shaped apps the observability gap is being tracked as a follow-up. If you also need PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for each verb.
+**Known limitations of this recipe.** The custom-route `Db.create` runs outside `baerlyWorker`'s request handling: its writes don't land in the canonical-line storage counters, run write-tick maintenance before the response instead of in `ctx.waitUntil`, and aren't budgeted against the subrequest limit (RECIPES.md, gated adapter). Worker reads always reach storage, so they see these writes. If you also need PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for each verb.
 
 ## Recipe — custom routes in front of `baerlyNode`
 

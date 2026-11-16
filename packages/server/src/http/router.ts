@@ -100,7 +100,9 @@ export interface CreateRouterOptions {
  * const app = createRouter({ db });
  * const res = await app.fetch(new Request("http://localhost/v1/c/tickets"));
  * ```
-
+ *
+ * For a gated, per-request router see `dist/RECIPES.md` →
+ * "Recipe — authoring a gated adapter".
  */
 export function createRouter(options: CreateRouterOptions): Hono {
   const { db, sinceTimeoutMs, sincePollIntervalMs } = options;
