@@ -2,7 +2,7 @@
 title: Cost model
 audience: product
 summary: Per-line-item rates, write-amp meter, compression posture.
-last-reviewed: 2026-08-11
+last-reviewed: 2026-11-16
 tags: [cost, pricing, operations]
 related: [pricing-log.md, thesis.md, workload-fit.md, graduation.md]
 ---
@@ -78,25 +78,61 @@ Class A is the main meter:
 the current write trajectory:
 
 - Class A ops/mo;
-- free-tier-aware dollars;
+- a free-tier-aware object-storage cost band
+  (`trajectory.projectedUsdBand`, see [CLI cost bands](#cli-cost-bands));
 - distance to the advisory line (~100 writes/min; ~$34/mo R2 or
   ~$65/mo S3 object-storage ops); and
 - distance to the 50M Class A/mo hard graduation trigger.
 
+The command samples **one selected collection**. It reads `current.json`,
+locates the live log tail from `max(log_seq_start, tail_hint)` with a
+bounded probe, and reads at most 120 trailing log entries; it never
+LISTs the retained log, so its cost does not grow with history. It does
+not observe other collections, other account usage or stored bytes, and
+projects with zero for each; a `$0` band is conditional on those
+assumptions, not an account-wide billing verdict. The output names them
+under `scope` and `assumptions`.
+
 The projection uses rounded effective write-amp defaults grounded in the
 measured host profiles, not the one-op commit floor, so it includes
-write-path maintenance. Write amp belongs to the host maintenance
-profile, not the storage provider: the Cloudflare free profile measures
-≈2×, and the Node profile measures ≈2.5×. `baerly cost` maps write-amp
-onto provider defaults (`r2` ⇒ ≈2×, `aws-s3` / self-hosted ⇒ ≈3×), so
-the Node/`aws-s3` default is a deliberately conservative rounding above
-the measured ≈2.5× rather than the measured value itself. That matches
-Worker+R2 and Node+S3 defaults, but is only a projection assumption for
-cross-provider deployments such as Node against R2.
+write-path maintenance. Provider pricing and host write amp are separate
+inputs: write amp belongs to the host maintenance profile, not the
+storage provider. The Cloudflare free profile measures ≈2×, and the Node
+profile measures ≈2.5×. `baerly cost` projects `cf-free` at 2× and
+`node` at 3×, a deliberately conservative rounding above the measured
+≈2.5× rather than the measured value itself. It infers `cf-free` for R2
+and `node` for AWS S3, GCS and self-hosted storage; pass
+`--profile=cf-free|node` for a cross-provider deployment such as Node
+against R2 (`--provider=r2 --profile=node`). The output records the
+profile and whether it was inferred or explicit.
 
 For longer windows (7-day, 30-day), pipe the canonical log line to
 CloudWatch / Workers Analytics / Datadog; see
 [`docs/guide/observability.md`](../guide/observability.md).
+
+### CLI cost bands
+
+`baerly cost` computes the continuous dollar figure from the
+[formulas](#formulas-june-2026-rates) below, then reports only the band
+it falls in, because a single-collection sample times rounded write amp
+cannot support an invoice-grade number. Bands include their lower
+bound:
+
+| `projectedUsdBand` | Projected object-storage $/mo                      |
+| ------------------ | -------------------------------------------------- |
+| `"$0"`             | wholly inside a modeled free tier (ops and bytes)  |
+| `"<$25"`           | below $25 and not `"$0"`, however small            |
+| `"$25-$50"`        | $25 to under $50                                   |
+| `"$50-$100"`       | $50 to under $100                                  |
+| `"$100-$250"`      | $100 to under $250                                 |
+| `"$250-$500"`      | $250 to under $500                                 |
+| `"$500+"`          | $500 and up                                        |
+| `null`             | the provider has no dollar model (self-hosted)     |
+
+A sub-cent overage is `"<$25"`, never `"$0"`, and a provider with no
+free tier (AWS S3) never reports `"$0"`, even at zero writes. The exact
+figures in the [cost-vs-scale table](#cost-vs-scale-table) are the
+worked examples behind these bands.
 
 ## Cost ceiling
 
@@ -213,11 +249,13 @@ the graduation signal.
 
 ### Formulas (June-2026 rates)
 
-These are the formulas the `baerly cost` CLI projection is built on.
+These are the formulas the `baerly cost` CLI projection is built on;
+the CLI reports the [band](#cli-cost-bands) the result falls in.
 `W` is monthly logical writes (write operations, not documents), and
 `A` is the projection's effective Class A write-amplification input.
-Today the CLI uses rounded provider defaults: `A ≈ 2` for R2 and
-`A ≈ 3` for AWS S3 / self-hosted. Those inputs include maintenance,
+The CLI uses rounded profile values: `A ≈ 2` for `cf-free` (the R2
+default) and `A ≈ 3` for `node` (the AWS S3 / GCS / self-hosted
+default). Those inputs include maintenance,
 but they are not both current measured host-profile values. The measured
 cf-free range is 1.741-1.843 and the measured Node range is
 2.404-2.529 (~2.5×); Node's CLI `A ≈ 3` is a deliberately conservative
@@ -234,7 +272,8 @@ R2 object-storage $/mo = max(0, W×A − 1,000,000) × $4.50 / 1,000,000
                        + Class B reads (typically minor at M-size)
 ```
 
-This is the **object-storage ops** projection `baerly cost` reports. R2
+This is the **object-storage ops** projection behind `baerly cost`'s
+band. The CLI supplies zero stored bytes and zero other account usage. R2
 ops are billed above 1M Class A/mo; storage is billed above 10 GB/mo.
 The $5/mo **Workers Paid** plan is a separate Cloudflare _platform_
 floor, not an R2 charge. It is absent on self-hosted Node,
@@ -298,6 +337,14 @@ Three cost differences from the R2 baseline matter:
   soft-delete (or shorten the retention window) if GC churn dominates the
   bill.
 
+For native `gcs://` buckets, `baerly cost` detects GCS and prices
+against Standard storage, flat namespace and regional location pricing,
+with the Always Free allowance of 5,000 Class A ops and 5 GB-month that
+applies only in `us-west1`, `us-central1` and `us-east1`. Its output
+lists hierarchical namespace, dual- and multi-region pricing, egress and
+soft-delete retention as unmodeled; it does not read the bucket's
+billing configuration.
+
 **Write-rate ceiling.** GCS caps a single object name at roughly **one
 write per second**, and per-prefix throughput ramps up from a cold start
 rather than beginning at peak QPS. The commit path contends distinct
@@ -348,8 +395,9 @@ Representative write rates and their projected monthly costs.
 Figures are **object-storage ops only** (storage and Class B reads are
 minor until L-size read fan-out and are excluded from these rows), and
 exclude the $5/mo Workers Paid platform floor — add it for the all-in
-cost on Cloudflare Workers Paid. These figures reproduce `baerly cost`'s
-rounded provider defaults: R2 `A ≈ 2`, Node/S3/GCS `A ≈ 3`. The Node
+cost on Cloudflare Workers Paid. These figures reproduce the arithmetic
+behind `baerly cost`'s [bands](#cli-cost-bands) at its rounded profile
+values: R2 on `cf-free` `A ≈ 2`, Node/S3/GCS on `node` `A ≈ 3`. The Node
 columns are therefore a conservative CLI projection above the measured
 2.404-2.529 (~2.5×) host profile; their 390-writes/min row is the CLI
 projection's 50M crossing, while the measured Node crossing is
@@ -436,13 +484,13 @@ input. The measured Node profile is ~2.5× on either provider. GCS's
 5,000-op free tier is 0.1% of this volume and doesn't move the rounded
 number.
 
-`baerly cost` surfaces the **object-storage ops** figure (~$7/mo on R2
-here) as `projectedUsdPerMonth` in the inspect footer. It uses the
-provider rates and default effective write-amp constants from
-`packages/cli/src/cost/provider.ts`, and deliberately excludes the $5
-Workers Paid platform floor. Add ~$5/mo for the all-in Workers Paid
-cost. For cross-provider deployments, use the host profile's measured
-write amp when doing manual projections.
+`baerly cost` reports the **object-storage ops** figure (~$7/mo on R2
+here) as `projectedUsdBand: "<$25"`. It uses the provider rates and
+profile write-amp constants from `packages/cli/src/cost/provider.ts`,
+and deliberately excludes the $5 Workers Paid platform floor. Add ~$5/mo
+for the all-in Workers Paid cost. For cross-provider deployments, pass
+`--profile`, or use the host profile's measured write amp when doing
+manual projections.
 
 $12/mo on R2 buys low operator burden and bytes-in-your-bucket. The
 number is here for comparison, not as an anchor against any one
@@ -590,7 +638,9 @@ signal.
   through the CLI's rounded write-amp defaults and the per-op rates
   above, that is 8.64M Class A/mo on R2 (~$34/mo object-storage ops) and
   12.96M on S3 (~$65/mo). `baerly cost` prints an advisory note at this
-  crossing; nothing enforces it.
+  crossing, quoting the band for the selected provider and profile
+  (`$25-$50` for R2 on `cf-free`, `$50-$100` for S3 or GCS on `node`);
+  nothing enforces it.
 - **Class A ops/mo, hard line.** The same meter read against R2's
   free-tier-derived op envelope: > 50M Class A/mo, sustained over 7 days,
   account/bucket-wide, or ~$221/mo in R2 object-storage ops. At measured

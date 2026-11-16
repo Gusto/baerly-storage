@@ -174,8 +174,9 @@ baerly admin fsck \
   --collection="$COLLECTION"
 ```
 
-They cover `current.json`, snapshot and log state, Class A/month
-projection from the trailing log, the snapshot hash, and log holes.
+They cover `current.json`, snapshot and log state, the Class A/month
+projection and [cost band](../about/cost-model.md#cli-cost-bands) from
+the trailing log, the snapshot hash, and log holes.
 
 For Node/self-hosted buckets, also run the all-collection writes/min
 scan:

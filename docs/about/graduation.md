@@ -90,6 +90,12 @@ whatever the verdict.
 `baerly admin usage` reports writes/min against the M-size ceiling: the
 [per-collection write line](../spec/scale-ceilings.md#the-published-envelope).
 
+`baerly cost` projects one selected collection and reports a cost band,
+not a bill. Read its band together with the provider, maintenance
+profile and scope assumptions it prints; a `$0` band assumes no other
+account usage and no stored bytes. The bands and assumptions are in
+[cost-model.md § CLI cost bands](cost-model.md#cli-cost-bands).
+
 For compaction, compare the **snapshot**, not the tail:
 
 - `snapshot_bytes` against `C`;
