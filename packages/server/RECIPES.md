@@ -24,6 +24,31 @@ The runtime is more permissive:
 
 **Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove a field from a row, `replace` it without that field. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.
 
+### `Type 'Bookmark' does not satisfy the constraint 'DocumentData'` (TS2344)
+
+**Cause:** a row type you wrote by hand for a collection the bound `config` does not declare is a plain `interface Bookmark { _id: string; url: string }`. It has no index signature, so it fails `T extends DocumentData`. The constraint is deliberate: it keeps a row JSON-compatible.
+
+**Fix:** `extends DocumentData`, then cast the handle at the construction site. On the HTTP client, build an unbound client (no `config`, so collection names widen to `string` and rows are typed `DocumentData & { _id: string }`) and cast to `ClientCollection<T>`; on an unbound `Db` (no `config`; a config-bound `Db` rejects undeclared names at compile time), cast `db.collection(name)` to `Collection<T>`. The cast is for the typed fields: every read already types `_id` as a string, so `row._id` passes to `get` / `update` / `replace` / `delete` with or without it, and `T` need not declare `_id`.
+
+```ts
+import {
+  createBaerlyClient,
+  type ClientCollection,
+  type DocumentData,
+} from "@gusto/baerly-storage/client";
+
+interface Bookmark extends DocumentData {
+  _id: string;
+  url: string;
+}
+
+const raw = createBaerlyClient({ baseUrl: "" });
+const bookmarks = raw.collection("bookmarks") as ClientCollection<Bookmark>;
+await bookmarks.all();
+```
+
+For a collection declared in `config`, don't cast: pass `config` and name the row with `RowOf<typeof config, "notes">` (API.md, `DocumentData`).
+
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
 **Cause:** another write won a race this call needed to win, and the losing commit did not land. `retriable` is `true`. A bulk `.where(...).update()` / `.delete()` may have applied earlier rows; re-issuing the call is safe. **Fix:** re-read, re-apply, and retry with bounded backoff. The in-process writer makes one commit attempt and does not retry it (storage adapters retry individual requests); a remote client that sees `retriable: true` should apply its own bounded backoff.
