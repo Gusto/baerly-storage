@@ -15,13 +15,13 @@ import {
   LOG_PREFIX,
   opArb,
   PROP_TIMEOUT_MS,
-  reconstructView,
   seedCurrentJson,
 } from "./_internal/randomized-model.ts";
 import { compact } from "./compactor.ts";
 import { retireLogRange } from "./log-retention.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { Writer } from "./writer.ts";
+import { replayLiveDocs } from "../../../tests/fixtures/replay-live-docs.ts";
 
 const ROUNDS = 3;
 // Small enough that a 1-20-op round's worth of commits plausibly clears it —
@@ -67,7 +67,7 @@ describe("retireLogRange — never deletes a live object", () => {
         }
         const preLiveFloor = logSeqStartOf(preRetire.json);
         const preDeleteFloor = certifiedDeleteFloor(preRetire.json);
-        const viewBefore = await reconstructView(storage);
+        const viewBefore = Object.fromEntries(await replayLiveDocs(storage, LOG_PREFIX));
 
         const result = await retireLogRange(storage, CURRENT_JSON_KEY, {
           window: WINDOW,
@@ -75,7 +75,7 @@ describe("retireLogRange — never deletes a live object", () => {
         });
 
         // (1) Reader view is unchanged, and matches the model.
-        const viewAfter = await reconstructView(storage);
+        const viewAfter = Object.fromEntries(await replayLiveDocs(storage, LOG_PREFIX));
         expect(viewAfter).toEqual(viewBefore);
         expect(viewBefore).toEqual(Object.fromEntries(model));
 
