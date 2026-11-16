@@ -12,7 +12,6 @@
 
 import {
   type CurrentJson,
-  type MetricsRecorder,
   type Storage,
   BaerlyError,
   isWriteConflict,
@@ -33,7 +32,6 @@ import {
   MAINTENANCE_TAIL_HINT_REFRESH_WRITES,
   MAINTENANCE_TARGET_RATIO,
   MAINTENANCE_WARN_INTERVAL_WRITES,
-  noopMetricsRecorder,
   readCurrentJson,
   SCHEDULED_MIN_ENTRIES_TO_COMPACT,
   STORAGE_RETRY_MAX_ATTEMPTS,
@@ -53,9 +51,7 @@ import { collectionFromCurrentJsonKey } from "./collection-key.ts";
 import { assertNameSegment } from "./path-segment.ts";
 import { probeTailFrom } from "./log-tail.ts";
 import { retireLogRange } from "./log-retention.ts";
-import { getCurrentContext } from "./observability/context.ts";
-
-const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
+import { ctxMetrics, getCurrentContext } from "./observability/context.ts";
 
 export { type CompactOptions, type CompactResult, compact } from "./compactor.ts";
 export { type RunGcOptions, type RunGcResult, runGc } from "./gc.ts";

@@ -28,8 +28,6 @@
  */
 
 import {
-  type MetricsRecorder,
-  noopMetricsRecorder,
   type Storage,
   type StorageGetOptions,
   type StorageGetResult,
@@ -37,14 +35,12 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { getCurrentContext } from "./context.ts";
+import { ctxMetrics } from "./context.ts";
 import { CATEGORY, getLogger } from "./logger.ts";
 
 type Op = "get" | "put" | "delete" | "list";
 
 const CLASS_A_OPS: ReadonlySet<Op> = new Set<Op>(["put", "delete", "list"]);
-
-const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 const recordCall = (op: Op): void => {
   const recorder = ctxMetrics();

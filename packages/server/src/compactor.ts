@@ -37,14 +37,12 @@
 import {
   type CurrentJson,
   type DocumentData,
-  type MetricsRecorder,
   assertCurrentJsonTransition,
   COMPACT_FOLD_WRITE_REQUESTS,
   encodeJsonBytes,
   type LogEntry,
   logSeqStartOf,
   isWriteConflict,
-  noopMetricsRecorder,
   readCurrentJson,
   SNAPSHOT_SCHEMA_VERSION,
   snapshotHash,
@@ -54,7 +52,7 @@ import {
 import { requireIntegerOption } from "./option-guards.ts";
 import { walkLogRangeWithBytes } from "./log-walk.ts";
 import { probeTailChunk, probeTailFrom, type TailProbeChunk } from "./log-tail.ts";
-import { getCurrentContext } from "./observability/context.ts";
+import { ctxMetrics, getCurrentContext } from "./observability/context.ts";
 import { collectionFromCurrentJsonKey } from "./collection-key.ts";
 import {
   encodeSnapshotBody,
@@ -64,8 +62,6 @@ import {
 } from "./snapshot.ts";
 import { isOwnCollection } from "./collection-alias.ts";
 import { projectSnapshot } from "./snapshot-projection.ts";
-
-const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
  * Base options for {@link compact}, unpublished like `compact` itself. All optional; the
