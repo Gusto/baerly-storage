@@ -38,7 +38,7 @@ const SPEC_SECTION_BY_DOC_TYPE = new Map([
 // Spec docs that are retained for history/rationale and must never be
 // filed as a live contract — neither via `doc_type:` nor by being listed
 // under the README's "Current contracts" section.
-const NOT_CURRENT_CONTRACT = new Set(["writer-fence-adversarial-model.md", "prior-art.md"]);
+const NOT_CURRENT_CONTRACT = new Set(["prior-art.md"]);
 
 const findings = [];
 

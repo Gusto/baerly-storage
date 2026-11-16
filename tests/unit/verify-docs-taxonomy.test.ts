@@ -41,14 +41,12 @@ function seedValidTree(): void {
       `## Verification\n\n- [causal-consistency-checking.md](causal-consistency-checking.md)\n\n` +
       `## Adapter edge cases\n\n- [s3-xml-escaping-cases.md](s3-xml-escaping-cases.md)\n\n` +
       `## Historical, rationale & evidence\n\n` +
-      `- [writer-fence-adversarial-model.md](writer-fence-adversarial-model.md)\n` +
       `- [prior-art.md](prior-art.md)\n`,
   );
   writeSpec("sync-protocol.md", `---\ndoc_type: current-contract\n---\n`);
   writeSpec("json-merge-patch.md", `---\ndoc_type: semantic-reference\n---\n`);
   writeSpec("causal-consistency-checking.md", `---\ndoc_type: verification\n---\n`);
   writeSpec("s3-xml-escaping-cases.md", `---\ndoc_type: adapter-edge-case\n---\n`);
-  writeSpec("writer-fence-adversarial-model.md", `---\ndoc_type: historical\n---\n`);
   writeSpec("prior-art.md", `---\ndoc_type: rationale\n---\n`);
   writeAdr("README.md", `---\ndoc_type: index\n---\n# adr\n\n- [001 — X](./001-x.md)\n`);
   writeAdr("001-x.md", `---\ndoc_type: adr\n---\n`);

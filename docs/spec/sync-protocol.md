@@ -10,7 +10,6 @@ related:
     causal-consistency-checking.md,
     log-entry-shape.md,
     json-merge-patch.md,
-    writer-fence-adversarial-model.md,
     prior-art.md,
     "../adr/002-ephemeral-coordination.md",
     "../adr/004-single-write-commit.md",
@@ -954,9 +953,8 @@ These are the load-bearing rules.
     `casUpdateCurrentJson` routes its mutator through the validator, and
     every writer that bypasses that helper calls the validator directly
     before publishing: the compactor's fold CAS and probe checkpoint
-    (`packages/server/src/compactor.ts`), the `claimWriter` fence bump,
-    and the `admin restore` tail stamp (invariant 6 names the
-    `current.json` writers). The compactor still issues its own
+    (`packages/server/src/compactor.ts`), and the `admin restore` tail
+    stamp (invariant 6 names the `current.json` writers). The compactor still issues its own
     `If-Match` PUT because its CAS must be tied to the etag of the read
     it folded from — centralizing transition admission does not
     centralize publication. `baerly admin restore --force` is the
@@ -1051,7 +1049,7 @@ These are the load-bearing rules.
     The nonce is re-minted by the writers that *replace* a collection
     (both `baerly admin restore` seeds, writer auto-provision,
     `ensureTable`) and carried through untouched by the writers that
-    *advance* one (the compactor's fold CAS, `claimWriter`, every
+    *advance* one (the compactor's fold CAS, every
     `casUpdateCurrentJson` mutator). It is deliberately not
     `writer_fence.epoch`: the fresh-target restore branch seeds
     `epoch: 0`, so a truncate-to-empty would be indistinguishable from a
