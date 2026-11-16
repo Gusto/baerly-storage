@@ -3,7 +3,8 @@
 //
 // Every git-tracked file must be OWNED by exactly one mechanism:
 //   - oxfmt formats it          (code/markup: see OXFMT_EXT)
-//   - it is validated markdown  (verify:docs + remark + verify-mermaid)
+//   - it is markdown            (formatted by oxfmt, validated by verify:docs
+//                                + remark + verify-mermaid)
 //   - it is intentionally unformatted data/config/binary (the allowlists)
 //
 // `format:check` already proves the oxfmt-owned set is *formatted*; this guard
@@ -16,6 +17,7 @@
 // attachments dir is excluded there as regenerated evidence) and .remarkignore.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
 
@@ -37,8 +39,9 @@ const OXFMT_EXT = new Set([
   "css",
 ]);
 
-// Prose: never reformatted, validated instead (links/anchors via remark,
-// mermaid via verify-mermaid, docs/ frontmatter via verify-docs).
+// Prose: formatted by oxfmt (`format:check`, guarded below) and validated
+// (links/anchors via remark, mermaid via verify-mermaid, docs/ frontmatter
+// via verify-docs).
 const MARKDOWN_EXT = new Set(["md", "mdx"]);
 
 // Data / config / binary: no formatter owns these by design.
@@ -105,6 +108,17 @@ export function classify(file) {
   return null;
 }
 
+/**
+ * `.oxfmtrc.json` must not exclude Markdown: `format:check` is what keeps
+ * tracked prose formatted, so an `ignorePatterns` entry that matches a `.md`
+ * file would silently drop that ownership.
+ * @returns {string[]} ignore patterns that exclude markdown.
+ */
+export function markdownIgnorePatterns() {
+  const config = JSON.parse(readFileSync(resolvePath(ROOT, ".oxfmtrc.json"), "utf8"));
+  return (config.ignorePatterns ?? []).filter((p) => /\.mdx?$|\.\{?md/.test(p));
+}
+
 export function trackedFiles() {
   const out = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" });
   return out.split("\0").filter(Boolean);
@@ -112,6 +126,13 @@ export function trackedFiles() {
 
 function main() {
   const files = trackedFiles();
+  const ignored = markdownIgnorePatterns();
+  if (ignored.length > 0) {
+    for (const p of ignored) {
+      console.error(`.oxfmtrc.json: ignorePatterns entry "${p}" excludes Markdown from oxfmt`);
+    }
+    return 1;
+  }
   const unowned = files.filter((f) => classify(f) === null);
   if (unowned.length === 0) {
     console.log(`lint-format-coverage: all ${files.length} tracked files are owned`);

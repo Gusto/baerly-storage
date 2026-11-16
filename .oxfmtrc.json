@@ -1,9 +1,5 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": [
-    "**/*.md",
-    "**/*.mdx",
-    "docs/spec/attachments/**",
-    "tests/fixtures/fold-stage0/pre-change/**"
-  ]
+  "proseWrap": "never",
+  "ignorePatterns": ["docs/spec/attachments/**", "tests/fixtures/fold-stage0/pre-change/**"]
 }

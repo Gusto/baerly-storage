@@ -5,13 +5,12 @@ pre-commit:
     - rebase
   commands:
     format:
-      # oxfmt owns code/markup only. Markdown is validated (verify:docs), never
-      # reformatted — so no `md`/`mdx` here and no examples/ exclude. This is a
-      # fast local mirror of the config-driven `oxfmt .` gate; .oxfmtrc.json
-      # `ignorePatterns` is the single source of truth for what's skipped (it
-      # excludes markdown + regenerated evidence even if such a file is staged
-      # and passed explicitly, so this hook cannot corrupt prose).
-      glob: "*.{ts,tsx,mts,cts,mjs,cjs,js,json,jsonc,html,css}"
+      # oxfmt owns code, markup and Markdown; Markdown is also validated
+      # (verify:docs). This is a fast local mirror of the config-driven
+      # `oxfmt .` gate; .oxfmtrc.json `ignorePatterns` is the single source of
+      # truth for what's skipped (regenerated evidence and hash-bound fixtures
+      # are excluded even if staged and passed explicitly).
+      glob: "*.{ts,tsx,mts,cts,mjs,cjs,js,json,jsonc,html,css,md,mdx}"
       run: pnpm exec oxfmt --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
     lint:
