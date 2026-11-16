@@ -5,12 +5,7 @@ import { flushCanonicalLine, serializeError } from "./canonical.ts";
 import { createObservabilityContext } from "./context.ts";
 import { configureObservability } from "./logger.ts";
 import { RequestScopedMetricsRecorder } from "./recorder.ts";
-
-const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
-  const records: LogRecord[] = [];
-  const sink: Sink = (record) => records.push(record);
-  return { records, sink };
-};
+import { collectingSink } from "../../../../tests/fixtures/collecting-sink.ts";
 
 describe("flushCanonicalLine", () => {
   let records: LogRecord[];

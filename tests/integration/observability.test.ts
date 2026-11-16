@@ -62,6 +62,7 @@ import {
   logMaintenanceWarning,
 } from "@baerly/server/_internal/observability";
 import { provisionCollection } from "../fixtures/log-state.ts";
+import { collectingSink } from "../fixtures/collecting-sink.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -124,12 +125,6 @@ const countingProxy = (inner: Storage): CountingProxy => {
 
 const bootstrap = async (storage: Storage): Promise<void> => {
   await provisionCollection(storage, CURRENT_JSON_KEY, "phase9-observability");
-};
-
-const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
-  const records: LogRecord[] = [];
-  const sink: Sink = (record) => records.push(record);
-  return { records, sink };
 };
 
 describe("observability integration — canonical line vs physical reality", () => {

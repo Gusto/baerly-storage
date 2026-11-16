@@ -16,7 +16,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { getCurrentContext } from "@baerly/server/observability";
-import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { getConfig, reset } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
@@ -24,6 +24,7 @@ import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-con
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 import { denyVerifier, trivialVerifier } from "../../../tests/fixtures/test-verifier.ts";
 import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
+import { collectingSink, findCanonical } from "../../../tests/fixtures/collecting-sink.ts";
 
 /**
  * Minimal-shape `BaerlyAppConfig` for tests that aren't exercising
@@ -131,17 +132,6 @@ describe("baerlyWorker observability", () => {
   afterEach(async () => {
     await reset();
   });
-
-  const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
-    const records: LogRecord[] = [];
-    const sink: Sink = (record) => records.push(record);
-    return { records, sink };
-  };
-
-  const findCanonical = (records: readonly LogRecord[], unit: string): LogRecord | undefined =>
-    records.find(
-      (r) => r.message.join("") === "canonical" && r.category.join(".") === `baerly.${unit}`,
-    );
 
   test("emits a canonical line for a write request with class_a_ops and outcome=committed", async () => {
     const bucket = getBinding();
