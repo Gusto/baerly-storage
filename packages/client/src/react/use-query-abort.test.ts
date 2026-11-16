@@ -35,6 +35,14 @@ const flush = async (): Promise<void> => {
   });
 };
 
+// Lets the mounted query issue its first GET without advancing fake timers.
+// `flush` fires every 0 ms timer, and a retry whose full-jitter backoff draws
+// under 1 ms is one, so it could run the failing GET twice before the test
+// supersedes it.
+const settleInitialFetch = async (): Promise<void> => {
+  await act(async () => {});
+};
+
 describe("useQuery abort", () => {
   test("a superseded query whose GET keeps failing stops requesting at the abort", async () => {
     const mock = new MockFetch();
@@ -52,7 +60,7 @@ describe("useQuery abort", () => {
         ({ which }: { which: string }) => useQuery((c) => c.collection(which).all(), [which]),
         { wrapper: wrap(client), initialProps: { which: "notes" } },
       );
-      await flush();
+      await settleInitialFetch();
       expect(calls).toHaveLength(1);
 
       rerender({ which: "other" });
@@ -184,7 +192,7 @@ describe("useQuery abort", () => {
         ({ which }: { which: string }) => useQuery((c) => c.collection(which).all(), [which]),
         { wrapper: wrap(client), initialProps: { which: "notes" } },
       );
-      await flush();
+      await settleInitialFetch();
       expect(calls).toBe(1);
       rerender({ which: "other" });
       await flush();
