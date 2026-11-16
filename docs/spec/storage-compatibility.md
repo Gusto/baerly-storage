@@ -408,13 +408,13 @@ conditional-write semantics); that is the manual e2e recipe in
 `manual-e2e/README.md`. Run `baerly doctor --bucket=<uri>` against your
 endpoint before relying on it.
 
-**Host plan.** Every `S3HttpStorage` call is a `fetch`, so on Workers
-Free it counts against the plan's 50 subrequests per request; R2 binding
-calls do not. Workers Free + S3 over HTTP is therefore best effort with a
-low ceiling, not first-class: see
-[scale-ceilings.md § Workers Free + S3 over HTTP](scale-ceilings.md#workers-free--s3-over-http)
-for its envelope. Workers Paid raises the budget to 10,000 per request
-and is the first guaranteed tier for this path.
+**Host plan.** This path needs Workers Paid, with
+`BAERLY_MAINTENANCE_PROFILE=cf-paid`. Every `S3HttpStorage` call is a
+`fetch`, and Workers Free allows 50 per request (R2 binding calls do not
+count), so Workers Free + S3 over HTTP is not supported. Paid raises the
+budget to 10,000 per request and is the first guaranteed tier for this
+path; see
+[scale-ceilings.md § Host support tiers](scale-ceilings.md#host-support-tiers).
 
 **Deploy tooling still assumes R2.** `baerly deploy` and
 `baerly doctor --target=cloudflare` walk `wrangler.jsonc`'s `r2_buckets[]`

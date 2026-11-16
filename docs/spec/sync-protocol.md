@@ -758,12 +758,12 @@ commit (a winning `log/<seq>` create), the writer may dispatch
   Stale-log classification continues to use the initial monotone
   `log_seq_start`; a stale read can delay collection but cannot make a live log
   stale.
-- A Cloudflare scheduled invocation processes one collection. With the R2
-  binding, Free or Paid, one whole `runScheduledMaintenance()` pass at the
-  host's `tier` fits the request ledger; on Free with storage over `fetch` it
-  does not, so that host alternates `phase: "compact"` and `phase: "gc"`, one
-  phase per invocation. Fan-out must be sharded or driven by a persisted
-  collection cursor.
+- A Cloudflare scheduled invocation processes one collection. On every
+  supported Workers host (Free with the R2 binding, or Paid) one whole
+  `runScheduledMaintenance()` pass at the host's `tier` fits the request
+  ledger. `phase: "compact"` / `"gc"` splits a pass across invocations for
+  a ledger it does not fit (`cf-free` with storage over `fetch`). Fan-out
+  must be sharded or driven by a persisted collection cursor.
 - Cloudflare can defer the tick past the response with
   `ctx.waitUntil`; Node runs inline unless the host wraps it
   differently.
@@ -783,7 +783,7 @@ defaults, deliberately:
 | In-band write tick (`runBoundedMaintenance`) | 50 (`WRITE_TICK_MIN_ENTRIES_TO_COMPACT`) | A write is not a scheduling decision — folding on every write would thrash snapshot rewrites. |
 | Scheduled (`runScheduledMaintenance`, `tier` `"node"` or unset) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The scheduler firing **is** the decision that it is time to work; the only live tail worth leaving unfolded is none. |
 | Scheduled, `tier: "cf-paid"` (`CLOUDFLARE_PAID_TIER`) | 1 (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`) | The tier exists for per-pass caps (`maxEntriesPerRun: 200`, GC bounds), not an in-band count floor. |
-| Scheduled, `tier: "cf-free"` (`CLOUDFLARE_FREE_TIER`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. A whole pass fits only with the R2 binding; with storage over `fetch`, alternate `phase: "compact"` / `"gc"`. |
+| Scheduled, `tier: "cf-free"` (`CLOUDFLARE_FREE_TIER`) | 20 (`maxFoldEntriesPerPass`) | Explicit so `minEntriesToCompact <= P` (25) and each pass stays bounded. A whole pass fits the R2 binding's ledger. |
 | Internal direct `compact()` call | 100 (`DEFAULT_MIN_TO_COMPACT`) | The in-band shape; in-repo callers pass a threshold sized to their trigger. |
 
 The scheduled floor drains the tail to zero so reads stay O(snapshot),

@@ -222,15 +222,17 @@ documents per collection on each host) and their derivation live in
 None of them is enforced by the protocol, and per-tenant stored bytes
 are a cost signal rather than a ceiling.
 
-On Workers, each request has a storage-call budget: 900 calls through the R2
-binding and 45 through `fetch` on Free, 9,000 on Paid (`cfRequestLedger`). A
-request that would exceed it is refused with `CapacityExceeded`, except a
-`GET /v1/since` long-poll: it stops polling when its calls run out and returns
-what it has, so on Free with S3 over HTTP an idle long-poll returns after about
-22 seconds instead of 25 and a busy one returns part of the backlog, which the
-client's next poll continues. Neither is an error. The Free with S3 over HTTP
-envelope is in
-[scale-ceilings.md](../spec/scale-ceilings.md#workers-free--s3-over-http).
+On Workers, each request has a storage-call budget set by
+`BAERLY_MAINTENANCE_PROFILE` (`cfRequestLedger`): under `cf-free`, the
+default, 900 calls, of which at most 45 through `fetch` (S3 storage); under
+`cf-paid`, 9,000. A Paid Worker on S3 keeps the 45-call cap until it sets
+`cf-paid`. A request that would exceed it is refused with
+`CapacityExceeded`, except a `GET /v1/since` long-poll: it stops polling when
+its calls run out and returns what it has, so a busy one returns part of the
+backlog, which the client's next poll continues, and under the 45-call cap an
+idle one returns after about 22 seconds instead of 25. Neither is an error. S3 on
+Workers needs Paid; which host is supported is in
+[scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers).
 
 What to do when a line is crossed is in
 [graduation.md](../about/graduation.md); cost math lives in

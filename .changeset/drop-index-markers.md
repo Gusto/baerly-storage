@@ -6,7 +6,7 @@
 
 - Nothing is written under `<collection>/index/` any more, and an update or delete no longer reads back the row's previous log entries to find stale markers.
 - A row may now hold an array in a declared index field (that write used to throw `SchemaError`), or a value long enough that its marker key passed the 1024-byte key limit (that write used to throw `InvalidConfig`).
-- On Workers Free with storage over `fetch` (S3 over HTTP), the most expensive write request, maintenance included, drops from 45 to 31 calls (44 to 30 storage calls, plus one Cache API call). The "3 indexes per write" bound and the refusal of an update that changes 9 or more indexed fields are gone; a write is refused only once 32 or more writes are pending, whatever indexes are declared.
+- Under the `cf-free` profile with storage over `fetch` (S3 over HTTP), the most expensive write request, maintenance included, drops from 45 to 30 storage calls; the Worker makes no Cache API calls. The "3 indexes per write" bound and the refusal of an update that changes 9 or more indexed fields are gone; a write is refused only once 32 or more writes are pending, whatever indexes are declared.
 - The `db.write.index_ops_per_logical_write` histogram and the `db.write.index_cleanup_errors_total` counter are no longer emitted. `db.write.post_commit_refused_total` keeps only `phase: "delete-floor-check"`.
 
 **Legacy markers.** Objects that earlier releases wrote under `<collection>/index/` are inert: nothing reads, writes, or reclaims them, and keeping them is harmless. To reclaim the bytes once a rollback is no longer possible, delete the prefix (see "Legacy index markers" in `docs/guide/backups.md`):

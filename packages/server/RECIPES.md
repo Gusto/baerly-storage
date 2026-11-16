@@ -235,8 +235,7 @@ snapshot and log; declared `indexes` do not change how a read runs.
 and `current.json` keys are internal.
 **Fix:** `runScheduledMaintenance({ storage, app, tenant, collection }, { tier })`,
 `tier` being the `BAERLY_MAINTENANCE_PROFILE` value (`"cf-free"`, `"cf-paid"`,
-or the unbounded default `"node"`). On Workers Free with storage over `fetch`,
-pass `phase: "compact"` and `phase: "gc"` on alternate invocations. A schedule
+or the unbounded default `"node"`). A schedule
 is optional: every write already runs bounded maintenance.
 
 ### `BaerlyError code="InvalidConfig"` — `baerly: no auth configured`

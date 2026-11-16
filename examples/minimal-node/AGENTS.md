@@ -436,13 +436,8 @@ const res = await runScheduledMaintenance(target); // Node
 await runScheduledMaintenance(target, { tier: "cf-paid" }); // a Workers Paid cron
 ```
 
-With the R2 binding, Free or Paid, one whole pass fits an invocation. On Free with
-storage over `fetch` (S3 over HTTP) it does not; alternate the two phases instead:
-
-```ts
-const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
-await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
-```
+One whole pass fits an invocation on Workers Free with the R2 binding and on Workers
+Paid. S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
 
 Node and Cloudflare Paid scheduled passes fold any pending write, so repeated
 passes drain a low-write collection to zero. Cloudflare Free folds only when at

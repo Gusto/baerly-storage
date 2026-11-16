@@ -49,9 +49,13 @@ On a host where the tick shares the request's budget (a Workers
 `ctx.waitUntil` tick does), a write costs its route cell plus whichever tick
 it dispatches.
 
-The `free-fetch:*` cells are whole requests on Workers Free with storage
-reached through `fetch`, where every call is one of the 50 external
-subrequests. Each runs one write kind (`insert`, cold `update`s, a `mixed`
+The `free-fetch:*` cells are whole requests under the `cf-free` profile
+with storage reached through `fetch`, where every call is charged to the
+45-call `external` pool. Workers Free + S3 is not a supported host, but a
+Worker cannot tell Free from Paid, so `cf-free` caps fetch storage at 45
+to refuse with a typed `CapacityExceeded` rather than let the platform
+throw at call 51; the cells pin that the early fold keeps requests inside
+the cap. Each runs one write kind (`insert`, cold `update`s, a `mixed`
 rotation) from a 100-doc snapshot, on a collection declaring 3 indexes,
 through a full cycle of fold and GC phases, with the tick options the
 Cloudflare adapter builds for that host. GC runs with the production grace
