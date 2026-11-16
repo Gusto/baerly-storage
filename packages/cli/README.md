@@ -16,7 +16,7 @@ registered command definitions.
 | `baerly doctor`              | Cloudflare deploy invariant checks, or `--bucket <uri>` CAS probe for any backend.              |
 | `baerly inspect`             | Read-only summary of one collection's snapshot / log state.                                     |
 | `baerly export`              | SQL export for one collection (`--target=sqlite` / `--target=postgres` / `--target=d1`).        |
-| `baerly cost`                | Class A / Class B operation accounting for one collection.                                      |
+| `baerly cost`                | Class A projection and cost band for one collection ([bands](../../docs/about/cost-model.md#cli-cost-bands)). |
 | `baerly admin dump`          | Canonical NDJSON dump of one collection's materialized view.                                    |
 | `baerly admin restore`       | Import `admin dump` NDJSON into a fresh or `--force`-truncated collection.                      |
 | `baerly admin fsck`          | Read-only consistency walk; exits 4 on findings.                                                |
