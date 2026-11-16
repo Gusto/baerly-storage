@@ -68,6 +68,7 @@ const ALLOWED_BASENAMES = new Set([
   "_gitignore", // scaffold-template rename sentinel
   ".gitignore",
   ".gitattributes",
+  ".git-blame-ignore-revs", // commit SHAs for git blame; no formatter
   ".gitkeep",
   ".dockerignore",
   ".remarkignore",
