@@ -3,7 +3,7 @@
 // GET /?cell=<name>. Pure data, no runtime globals, so Node and workerd
 // both import it.
 
-export type CellKind = "noop" | "subject" | "fold" | "tree" | "probe";
+export type CellKind = "noop" | "fold" | "tree" | "probe";
 export type ProbeKind = "r2-head" | "fetch" | "cache-match";
 
 export interface FixtureSpec {
@@ -34,7 +34,6 @@ export interface Cell {
   readonly ladder?: number;
   /** Position on the rows ladder. */
   readonly rowsLadder?: number;
-  readonly mutations?: number;
   readonly tree?: TreeParams;
   readonly probe?: ProbeKind;
   /** Requests the driver sends for this cell; defaults to the driver's N. */
@@ -57,12 +56,6 @@ export const FIXTURES: Readonly<Record<string, FixtureSpec>> = {
   b256: { rows: 125, payload: 2000, kib: 256 },
   C: { rows: 245, payload: 2000, kib: 512 },
   E: { rows: 2028, payload: 200, kib: 512 },
-};
-
-/** The original factor subject's fixtures (rows of 2 KiB docs). */
-export const SUBJECT_FIXTURES: Readonly<Record<string, FixtureSpec>> = {
-  "subject-0.5MiB": { rows: 256, payload: 2000 },
-  "subject-1MiB": { rows: 512, payload: 2000 },
 };
 
 /** Tree fold-step grid: leaves per step x leaf size x path depth. */
@@ -168,9 +161,6 @@ const probeCells = (): Cell[] =>
 
 export const CELLS: readonly Cell[] = [
   { name: "noop", kind: "noop" },
-  { name: "subject-0.5MiB-m20", kind: "subject", fixture: "subject-0.5MiB", mutations: 20 },
-  { name: "subject-0.5MiB-m5", kind: "subject", fixture: "subject-0.5MiB", mutations: 5 },
-  { name: "subject-1MiB-m20", kind: "subject", fixture: "subject-1MiB", mutations: 20 },
   ...foldCells(),
   ...treeCells(),
   ...probeCells(),

@@ -164,7 +164,6 @@ export interface Analysis {
   readonly rows: CellRow[];
   readonly noop: { readonly deployed: number; readonly node: number };
   readonly factor: { readonly overall: Factor; readonly perKind: Record<string, Factor> };
-  readonly subjectFactors: Array<{ cell: string; measured: number; published: number }>;
   readonly gate: Array<{ g: "C" | "E"; ms: number; how: string; pass: boolean }>;
   readonly largestPassing: { c: number | undefined; e: number | undefined };
   readonly tree: {
@@ -263,7 +262,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
     };
   });
 
-  const FACTOR_KINDS: CellKind[] = ["subject", "fold", "tree"];
+  const FACTOR_KINDS: CellKind[] = ["fold", "tree"];
   const usable = rows.filter(
     (r) =>
       r.fits &&
@@ -279,16 +278,6 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
   const perKind = Object.fromEntries(
     FACTOR_KINDS.map((k) => [k, factorFor((r) => r.cell.kind === k)]),
   );
-
-  const subjectFactors = [
-    ["subject-0.5MiB-m20", 6.89],
-    ["subject-1MiB-m20", 8.55],
-  ].flatMap(([name, published]) => {
-    const r = rows.find((x) => x.cell.name === name);
-    return r === undefined
-      ? []
-      : [{ cell: name as string, measured: r.fP50, published: published as number }];
-  });
 
   // A cell's diagnostic deployed p99: measured when it fits, else Node p99 x the kind's
   // p50-basis factor (the overall one when fewer than 2 of the kind's cells
@@ -386,7 +375,6 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
     rows,
     noop: { deployed: noopDep, node: noopNode },
     factor: { overall, perKind },
-    subjectFactors,
     gate,
     largestPassing: { c: largest("ladder"), e: largest("rowsLadder") },
     tree: { rows: treeRows, maxLeaves },
@@ -435,9 +423,6 @@ export const formatReport = (a: Analysis): string => {
     `  overall: p50-basis ${f2(a.factor.overall.p50)}x, p99-basis ${f2(a.factor.overall.p99)}x (${a.factor.overall.n} cells)`,
     ...Object.entries(a.factor.perKind).map(
       ([k, f]) => `  ${k}: p50-basis ${f2(f.p50)}x, p99-basis ${f2(f.p99)}x (${f.n} cells)`,
-    ),
-    ...a.subjectFactors.map(
-      (s) => `  ${s.cell}: measured ${f2(s.measured)}x (p50) vs published ${s.published}x`,
     ),
     "",
     `Gate (compactor-11 Task 1): pass iff both C and E fit (>= ${MIN_OK_SAMPLES} ok samples, < 1% kills) and measured deployed p99 <= ${PASS_MS} ms; Free limit ${FREE_LIMIT_MS} ms. Estimates are diagnostic only.${a.exploratory ? " Estimated rows use the exploratory factor." : ""}`,

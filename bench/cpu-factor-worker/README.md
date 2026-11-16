@@ -2,7 +2,7 @@
 
 An owner-deployed Cloudflare Worker that measures, on a real Workers account, per-invocation CPU (`cpuTime`) and outcomes for three groups of cells. Nothing here runs in `pnpm verify` or `pnpm test` beyond the analyzer unit test.
 
-- **Fold cells:** the current tree's fold invocation (a write that reaches the fold, then one `compact()` pass at the Cloudflare Free options) over synthetic fixtures, plus the original factor subject (`subject-*`). They give the deployed/Node factor.
+- **Fold cells:** the current tree's fold invocation (a write that reaches the fold, then one `compact()` pass at the Cloudflare Free options) over synthetic fixtures. They give the deployed/Node factor.
 - **Tree fold-step cells (`tree-k<k>-b<B>-d<d>`):** a synthetic step on a content-addressed tree: re-encode `k` leaves (JSON) of about `B` KiB, SHA-256 each with `crypto.subtle.digest`, then re-encode and hash `d` path nodes. Grid: k in {1,2,4,8}, B in {4,16,64} KiB, d in {1,2,3}. The `d` nodes are one shared path (best case); leaves on distinct paths touch up to `k*d` nodes. The report says how many leaves fit under Free's ~10 ms, measured directly with no factor involved.
 - **S1 probe cells (`probe-r2-head`, `probe-fetch`, `probe-cache-match`):** 60 sequential calls per request, recording the call index at which each first fails and the exact error. `probe-r2-head` is `env.BUCKET.head` on a missing key; `probe-fetch` is the control (`HEAD https://example.com/`, no data sent); `probe-cache-match` is `caches.default.match`. This answers whether R2 binding calls on Free count against the 50-subrequest cap.
 
@@ -21,8 +21,6 @@ pnpm bench:cpu-factor:node-baseline    # out/node-baseline.json; optional args: 
 ```
 
 Run the baseline on a quiet machine. It records the load average before and after; the analyzer labels a loaded or unrecorded baseline **EXPLORATORY**, and a factor is a diagnostic comparison only. It never establishes a safe C/E by extrapolation. `dist/` and `out/` are gitignored.
-
-The earlier scratch version carried a `policy-switch.patch` and two prepared source trees for chunked layouts. They are gone: the Worker builds the tree it sits in, and there is a single fold layout.
 
 ## Owner: deploy, run, collect, delete
 
@@ -60,7 +58,7 @@ Run this deployment in the same window as any other S1 evidence, so both see the
 
 ## Reading the output
 
-- All CPU numbers (fold, subject and tree cells) are warm-isolate: JIT-hot, with the first request per isolate dropped. Uniform `x` padding is a best case for JSON. Do not read p50 as a cold fold cost.
+- All CPU numbers (fold and tree cells) are warm-isolate: JIT-hot, with the first request per isolate dropped. Uniform `x` padding is a best case for JSON. Do not read p50 as a cold fold cost.
 - Deployed `cpuTime` is authoritative; the in-isolate timer is a cross-check, since workerd clocks advance only across I/O.
 - `Cold` invocations (first request in an isolate) and `&warmup=1` requests are dropped.
 - A cell with 1% or more kills, or fewer than 50 ok samples, does not fit and is excluded from factors. Only fitting cells with measured deployed p99 at or below 8 ms can pass the C/E gate or establish a passing size; Node-derived estimates are diagnostic only.

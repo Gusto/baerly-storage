@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
-import { CELLS, FIXTURES, SUBJECT_FIXTURES } from "./src/cells.ts";
+import { CELLS, FIXTURES } from "./src/cells.ts";
 import { buildFixture, type Fixture } from "./src/common.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,7 @@ mkdirSync(dist, { recursive: true });
 
 const fixtures: Record<string, Fixture> = {};
 const summary: string[] = [];
-for (const [name, spec] of Object.entries({ ...FIXTURES, ...SUBJECT_FIXTURES })) {
+for (const [name, spec] of Object.entries(FIXTURES)) {
   const fx = await buildFixture(spec);
   fixtures[name] = fx;
   summary.push(`${name}: rows=${fx.rows} bytes=${fx.bytes}`);

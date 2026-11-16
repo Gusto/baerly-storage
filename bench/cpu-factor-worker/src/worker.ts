@@ -6,7 +6,7 @@
  * synthetic and injected at build time (`cpu-factor:fixtures`).
  */
 import { CELL_BY_NAME, CELLS, type Cell } from "./cells.ts";
-import { type Fixture, runInvocation, runSubject } from "./common.ts";
+import { type Fixture, runInvocation } from "./common.ts";
 import { type ProbeEnv, runProbe } from "./probes.ts";
 import { runTreeStep } from "./tree-step.ts";
 // Resolved by build.ts (esbuild plugin) to the generated out/fixtures.json.
@@ -18,10 +18,6 @@ const run = async (cell: Cell, env: ProbeEnv | undefined): Promise<Record<string
   switch (cell.kind) {
     case "noop": {
       return { cold: false, folded: 0, written: false };
-    }
-    case "subject": {
-      const fx = (fixtures as Record<string, Fixture>)[cell.fixture!]!;
-      return await runSubject(fx, cell.mutations!);
     }
     case "tree": {
       return { ...(await runTreeStep(cell.tree!)) };

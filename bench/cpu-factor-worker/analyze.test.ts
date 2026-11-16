@@ -41,7 +41,7 @@ describe("analyze", () => {
     expect(a.factor.overall.p50).toBeCloseTo(FACTOR, 9);
     // Node p99 is 1.5x its p50 in this baseline.
     expect(a.factor.overall.p99).toBeCloseTo(FACTOR / 1.5, 9);
-    for (const kind of ["subject", "fold", "tree"]) {
+    for (const kind of ["fold", "tree"]) {
       expect(a.factor.perKind[kind]!.p50).toBeCloseTo(FACTOR, 9);
     }
     expect(formatReport(a)).not.toContain("EXPLORATORY");

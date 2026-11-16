@@ -20,7 +20,6 @@ import {
   MemoryStorage,
 } from "@baerly/protocol";
 import { compact, type InternalCompactOptions } from "../../../packages/server/src/compactor.ts";
-import { foldChunkedSnapshotReference } from "../../../packages/server/src/chunked-snapshot-reference.ts";
 import { Db } from "../../../packages/server/src/db.ts";
 import { CLOUDFLARE_FREE_TIER } from "../../../packages/server/src/maintenance.ts";
 // The same source module `db.ts` imports, so the seeding context reaches the
@@ -29,7 +28,6 @@ import {
   createObservabilityContext,
   runWithContext,
 } from "../../../packages/server/src/observability/context.ts";
-import { loadSnapshotAsMap } from "../../../packages/server/src/snapshot.ts";
 import type { FixtureSpec } from "./cells.ts";
 
 export const KEY = "app/g/tenant/t/manifests/notes/current.json";
@@ -41,8 +39,6 @@ export interface Fixture {
   readonly logSeqStart: number;
   readonly rows: number;
   readonly bytes: number;
-  /** The snapshot the head pointed at before the tail was added. */
-  readonly snapshotKey: string | null;
 }
 
 const pad = (i: number) => `d${String(i).padStart(6, "0")}`;
@@ -69,13 +65,13 @@ const readHead = async (storage: MemoryStorage) =>
 
 /**
  * The seeding request's maintenance context: Workers Free's profile with the
- * Node byte ceiling `C`. The subject fixtures (0.5 MiB and 1 MiB) are larger
- * than Free's 512 KiB `C`, so under Free's own ceiling the capacity refusal
- * would reject the inserts that build them. The Worker measures reads and folds
- * on those bytes; the build step is a harness, not the system under test. The
- * rows ceiling `E` stays Free's, so a fixture that outgrows it still fails here.
+ * Node byte ceiling `C`. The `C` fixture sits at Free's 512 KiB `C`, so the
+ * Node ceiling keeps the capacity refusal from rejecting an insert that builds
+ * a fixture at or past Free's own. The Worker measures reads and folds on those
+ * bytes; the build step is a harness, not the system under test. The rows
+ * ceiling `E` stays Free's, so a fixture that outgrows it still fails here.
  *
- * The same `C` also lets the seeding inserts' write ticks fold the subject
+ * The same `C` also lets the seeding inserts' write ticks fold the larger
  * snapshots inline, which Free's ceiling would defer to `drain()`. The built
  * fixture is the same either way: `drain()` folds to quiescence before the
  * tail is added.
@@ -132,7 +128,6 @@ const seedFixture = async (spec: FixtureSpec): Promise<Fixture> => {
     objects,
     timedId,
     logSeqStart: head.log_seq_start,
-    snapshotKey: head.snapshot,
     rows: head.snapshot_rows,
     bytes: head.snapshot_bytes,
   };
@@ -194,23 +189,4 @@ export const runInvocation = async (fx: Fixture, params: InvocationParams) => {
     skipped = r.skippedReason;
   }
   return { cold, folded, written, skipped };
-};
-
-/**
- * The original factor subject, reconstructed: `loadSnapshotAsMap` ->
- * `foldChunkedSnapshotReference` over 2 KiB docs with `mutations` uniform
- * updates. Published factors: 6.89x (0.5 MiB) and 8.55x (1 MiB).
- */
-export const runSubject = async (fx: Fixture, mutations: number) => {
-  const { storage, cold } = await loadFixture(fx);
-  const map = await loadSnapshotAsMap(storage, fx.snapshotKey!, "notes");
-  const rows = [...map].map(([_id, body]) => ({ _id, body }));
-  let seed = 777;
-  const muts = Array.from({ length: mutations }, (_, i) => {
-    seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
-    const row = rows[seed % rows.length]!;
-    return { op: "U" as const, doc_id: row._id, after: { ...row.body, n: 1000 + i } };
-  });
-  const out = foldChunkedSnapshotReference(rows, muts);
-  return { cold, folded: muts.length, written: out.length === rows.length, skipped: undefined };
 };
