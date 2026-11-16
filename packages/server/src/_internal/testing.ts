@@ -10,45 +10,6 @@
  * published `@baerly/server` package does not surface it.
  */
 
-import { BaerlyError } from "@baerly/protocol";
-import type { CodecCode } from "../snapshot-codec.ts";
-
-/**
- * Assert that a codec operation rejects with `expectedCode`.
- *
- * Re-throws the original `BaerlyError` on failure so it can still be
- * asserted on by the caller (e.g. `expect(...).rejects.toMatchObject(...)`).
- * Always async and always awaits `operation()`, so it works uniformly for
- * codecs like `decodeSnapshotChunk` that only throw after their first
- * `await` — a sync wrapper would see those as "succeeded" (a pending
- * promise, not yet rejected) rather than catching the eventual rejection.
- */
-export async function assertFailClosed(
-  operation: () => unknown,
-  expectedCode: CodecCode,
-): Promise<never> {
-  let result: unknown;
-  try {
-    result = await operation();
-  } catch (error) {
-    if (!(error instanceof BaerlyError)) {
-      throw new Error(
-        `assertFailClosed: expected BaerlyError with code ${expectedCode} but got ${String(error)}`,
-        { cause: error },
-      );
-    }
-    if (error.code !== expectedCode) {
-      throw new Error(`assertFailClosed: expected code ${expectedCode} but got ${error.code}`, {
-        cause: error,
-      });
-    }
-    throw error;
-  }
-  throw new Error(
-    `assertFailClosed: expected ${expectedCode} but operation succeeded with ${JSON.stringify(result)}`,
-  );
-}
-
 export {
   type InternalCompactOptions,
   type InternalCompactResult,
@@ -70,28 +31,3 @@ export {
   tryAdoptOwnSessionLogEntry,
 } from "../log-conflict-adoption.ts";
 export { InMemoryMetricsRecorder } from "./in-memory-metrics.ts";
-export {
-  decodeSnapshotChunk,
-  encodeSnapshotChunk,
-  snapshotChunkKey,
-  type SnapshotChunk,
-} from "../snapshot-chunk.ts";
-export {
-  decodeSnapshotManifest,
-  encodeSnapshotManifest,
-  snapshotManifestKey,
-  type SnapshotChunkDescriptor,
-  type SnapshotManifest,
-} from "../snapshot-manifest.ts";
-export {
-  foldChunkedSnapshotReference,
-  type ReferenceFold,
-  type ReferenceMutation,
-  type ReferenceRow,
-} from "../chunked-snapshot-reference.ts";
-export {
-  openSnapshotView,
-  type OpenSnapshotViewInput,
-  type SnapshotRow,
-  type SnapshotView,
-} from "../snapshot-view.ts";

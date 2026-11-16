@@ -6,7 +6,6 @@ import {
   invalidDocIdArb,
   validDocIdArb,
 } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
-import { foldChunkedSnapshotReference } from "./chunked-snapshot-reference.ts";
 import { assertPostImageIdentity } from "./post-image-identity.ts";
 import type { CodecCode, CodecFail } from "./snapshot-codec.ts";
 
@@ -141,15 +140,11 @@ describe("assertPostImageIdentity", () => {
   );
 
   fcTest.prop({ input: caseArb })(
-    "agrees with the reference fold's own post-image identity check",
+    "accepts exactly when _id is the string doc_id",
     ({ input: { docId, body, id } }) => {
       const after = (id === undefined ? { ...body } : { ...body, _id: id }) as DocumentData;
       const primitive = outcome(() => assertPostImageIdentity(docId, after, "InvalidResponse"));
-      const reference = outcome(() =>
-        foldChunkedSnapshotReference([], [{ op: "I", doc_id: docId, after }]),
-      );
-      expect(primitive).toBe(reference);
-      expect(primitive === undefined).toBe(id === docId);
+      expect(primitive).toBe(id === docId ? undefined : "InvalidResponse");
     },
   );
 });

@@ -5,20 +5,20 @@ const SNAPSHOT_DOC_ID_RESOLUTION =
   "Pass an _id with no unpaired UTF-16 surrogate (id.isWellFormed() is true).";
 
 /**
- * Guard a document ID admitted to the scalar-ordered snapshot layout.
+ * Guard a document ID admitted to a scalar-ordered snapshot format.
  *
  * The existing path-segment rules protect key and filesystem safety. Snapshot
  * IDs additionally must be Unicode scalar-value strings (well-formed UTF-16),
  * so their UTF-8 encoding and `utf8-scalar-v1` ordering are unambiguous.
  *
- * The accepted set is the durable document-ID domain of the chunked snapshot
- * format, and `MAX_SEGMENT_BYTES` (`path-segment.ts`) is one of its inputs:
+ * The accepted set is the document-ID domain for snapshot formats, and
+ * `MAX_SEGMENT_BYTES` (`path-segment.ts`) is one of its inputs:
  * the format contract fixes the byte ceiling at 256, so changing that
  * constant is a format change, not a policy tweak.
  *
  * @throws BaerlyError code="InvalidConfig" — the id breaks the key-segment
- *   rule or holds an unpaired surrogate. Codec and fold callers rewrap
- *   this for stored data.
+ *   rule or holds an unpaired surrogate. Callers validating stored data
+ *   rewrap this.
  */
 export const assertSnapshotDocId = (id: string): void => {
   assertPathSegment(id, "_id");
@@ -41,8 +41,8 @@ export const assertSnapshotDocId = (id: string): void => {
  * with an unpaired surrogate this compares the lone code unit as if it were
  * a code point in U+D800–U+DFFF, whereas every UTF-8 encoder emits U+FFFD
  * for it, so the result would disagree with byte order. The comparator does
- * not check its input, to keep a scan out of every comparison in the
- * codecs and view; callers validate first.
+ * not check its input, to keep a scan out of every comparison; callers
+ * validate first.
  */
 export const compareDocIds = (left: string, right: string): number => {
   let leftOffset = 0;
