@@ -4,7 +4,8 @@ requires a `title` field of type `string`. Use `defineConfig` from
 `config`.
 
 Then export a `main(db)` function that inserts one valid row
-(any object with a `title` string) into the `tasks` collection and returns it.
+`{ title: "x" }` into the `tasks` collection and returns the stored row
+as read back from the collection.
 
 The harness will also verify that inserting an invalid row (missing `title`)
 rejects with an error.
