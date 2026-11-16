@@ -49,6 +49,8 @@ await bookmarks.all();
 
 For a collection declared in `config`, don't cast: pass `config` and name the row with `RowOf<typeof config, "notes">` (API.md, `DocumentData`).
 
+The generic on `client.collection<N>(name)` is the collection name (constrained to `CollectionNames<typeof config>`), never the row type: don't pass a row type to it.
+
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
 **Cause:** another write won a race this call needed to win, and the losing commit did not land. `retriable` is `true`. A bulk `.where(...).update()` / `.delete()` may have applied earlier rows; re-issuing the call is safe. **Fix:** re-read, re-apply, and retry with bounded backoff. The in-process writer makes one commit attempt and does not retry it (storage adapters retry individual requests); a remote client that sees `retriable: true` should apply its own bounded backoff.
