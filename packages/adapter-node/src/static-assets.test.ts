@@ -18,15 +18,10 @@ import type { AddressInfo } from "node:net";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryStorage, type Verifier } from "@baerly/protocol";
+import { MemoryStorage } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createApp, type CreateAppOptions } from "./app.ts";
-
-const denyVerifier: Verifier = async () => null;
-const trivialVerifier: Verifier = async () => ({
-  tenantPrefix: "acme",
-  identity: { kind: "test" },
-});
+import { trivialVerifier, denyVerifier } from "../../../tests/fixtures/test-verifier.ts";
 
 let server: Server | undefined;
 

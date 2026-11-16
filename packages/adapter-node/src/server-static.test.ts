@@ -24,12 +24,7 @@ import { join } from "node:path";
 import { MemoryStorage, type Storage, type Verifier } from "@baerly/protocol";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createApp } from "./app.ts";
-
-const denyVerifier: Verifier = async () => null;
-const trivialVerifier: Verifier = async () => ({
-  tenantPrefix: "acme",
-  identity: { kind: "test" },
-});
+import { trivialVerifier, denyVerifier } from "../../../tests/fixtures/test-verifier.ts";
 
 interface ErrEnvelope {
   readonly error?: { readonly code: string; readonly message: string };
