@@ -1,50 +1,65 @@
-/**
- * Drift guard: every subpath in publishConfig.exports must appear as a literal
- * string in both eval/resolve-package.mjs (SUBPATH_TO_DIST) and eval/check.ts
- * (subpathToEntry). A newly-added subpath that isn't wired into those maps would
- * silently make the eval's typecheck / runtime disagree with the published package.
- *
- * No dist/ required; no key; runs in the default vitest project.
- */
-import { describe, test, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { describe, test, expect, vi } from "vitest";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { checkSolution, minimalEnv } from "./check.ts";
+
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 
-const pkgJson = JSON.parse(readFileSync(`${repoRoot}/package.json`, "utf8")) as {
-  publishConfig?: { exports?: Record<string, unknown> };
-};
-const exportKeys = Object.keys(pkgJson.publishConfig?.exports ?? {});
-
-const resolveSrc = readFileSync(`${repoRoot}/eval/resolve-package.mjs`, "utf8");
-const checkSrc = readFileSync(`${repoRoot}/eval/check.ts`, "utf8");
-
-const PKG = "@gusto/baerly-storage";
-
-describe("eval subpath-map drift guard", () => {
-  test("publishConfig.exports has more than 5 non-root subpaths (parse sanity)", () => {
-    const nonRoot = exportKeys.filter((k) => k !== ".");
-    expect(nonRoot.length).toBeGreaterThan(5);
+describe("eval published runtime resolution", () => {
+  test("the real runner resolves every published subpath to dist", async () => {
+    const verdict = await checkSolution({
+      repoRoot,
+      taskDir: join(repoRoot, "eval/__fixtures__/task-runtime-surface"),
+      solutionPath: join(repoRoot, "eval/__fixtures__/good-solution.ts"),
+    });
+    expect(verdict).toEqual({
+      pass: true,
+      reason: "every published subpath resolves to its built runtime",
+    });
   });
 
-  test('root "." subpath: bare package name mapped in resolve-package.mjs', () => {
-    expect(resolveSrc).toContain(`"${PKG}"`);
-  });
-
-  test('root "." subpath: bare package name mapped in check.ts', () => {
-    expect(checkSrc).toContain(`"${PKG}"`);
-  });
-
-  for (const subpath of exportKeys.filter((k) => k !== ".")) {
-    test(`non-root subpath ${subpath} appears in resolve-package.mjs`, () => {
-      expect(resolveSrc, `resolve-package.mjs missing subpath ${subpath}`).toContain(
-        `"${subpath}"`,
+  test("a missing bundle fails instead of falling back to workspace source", () => {
+    const root = mkdtempSync(join(tmpdir(), "eval-missing-dist-"));
+    try {
+      mkdirSync(join(root, "eval"));
+      copyFileSync(
+        join(repoRoot, "eval/resolve-package.mjs"),
+        join(root, "eval/resolve-package.mjs"),
       );
-    });
-
-    test(`non-root subpath ${subpath} appears in check.ts`, () => {
-      expect(checkSrc, `check.ts missing subpath ${subpath}`).toContain(`"${subpath}"`);
-    });
-  }
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "@gusto/baerly-storage",
+          type: "module",
+          exports: { ".": "./source.js" },
+          publishConfig: {
+            exports: { ".": { import: "./dist/index.js", types: "./dist/index.d.ts" } },
+          },
+        }),
+      );
+      writeFileSync(join(root, "source.js"), 'export const sentinel = "workspace";');
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          join(root, "eval/resolve-package.mjs"),
+          "--input-type=module",
+          "-e",
+          'await import("@gusto/baerly-storage");',
+        ],
+        { cwd: root, encoding: "utf8", env: minimalEnv(), timeout: 10_000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/ERR_MODULE_NOT_FOUND|ENOENT/);
+      expect(result.stderr).toContain("dist/index.js");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
