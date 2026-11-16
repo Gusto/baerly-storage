@@ -509,6 +509,11 @@ export const estimateTailBytes = (current: CurrentJson, observedTail: number): n
   Math.max(0, observedTail - current.log_seq_start) *
   (current.mean_entry_bytes ?? MAINTENANCE_COLD_START_ENTRY_BYTES);
 
+/** Derived live-tail bytes over the snapshot's bytes (floored at {@link MAINTENANCE_MIN_LIVE_BYTES}). */
+const tailRatio = (current: CurrentJson, observedTail: number): number =>
+  estimateTailBytes(current, observedTail) /
+  Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES);
+
 /**
  * The cheap DISPATCH gate the writer calls after a commit — zero
  * storage ops; it reads the post-commit {@link CurrentJson} already in
@@ -528,9 +533,7 @@ export const shouldFireMaintenance = (
   observedTail: number,
 ): boolean =>
   crossesGcBoundary(prevSeq, observedTail, gcInterval) ||
-  estimateTailBytes(current, observedTail) /
-    Math.max(current.snapshot_bytes, MAINTENANCE_MIN_LIVE_BYTES) >=
-    MAINTENANCE_TARGET_RATIO;
+  tailRatio(current, observedTail) >= MAINTENANCE_TARGET_RATIO;
 
 /** Per-tier caps for {@link runBoundedMaintenance}, threaded by the adapter. */
 export interface BoundedMaintenanceOptions {
@@ -795,9 +798,7 @@ export const runBoundedMaintenance = async (
       nextSeq = probed.tail;
     }
     // Ratio TRIGGER numerator = DERIVED estimate (formerly exact stored field).
-    const tailBytesEst = estimateTailBytes(current, nextSeq);
-
-    const ratio = tailBytesEst / Math.max(snapshotBytes, MAINTENANCE_MIN_LIVE_BYTES);
+    const ratio = tailRatio(current, nextSeq);
     const foldAtTailEntries = (options as InternalBoundedMaintenanceOptions | undefined)
       ?.foldAtTailEntries;
     const gate1 =
