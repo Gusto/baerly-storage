@@ -13,7 +13,6 @@ The benchmark harnesses and shared measurement tools live under `bench/`:
 
 | Harness | What it measures | When to run |
 |---|---|---|
-| `bench/r2-contention.ts` | Synthetic `current.json` CAS coordination/historical harness; measures 412/429 rates and validates the idle-reader bound on the wire, but does not exercise the current Writer | When changing coordination primitives or the historical CAS retry model. For current Writer changes, run `packages/server/src/writer.test.ts` and `tests/integration/write-amp.test.ts` instead |
 | `bench/load-harness/` | Object-storage ops + bytes per logical `Db` operation across seven workload presets; validates the workload cost model. `--variant=node-gcs` (gated on `GCS=1` + `credentials/gcs.json`) is the source of the measured GCS write-amp behind the GCS row in [docs/about/cost-model.md](../docs/about/cost-model.md#cost-vs-scale-table) | When changing storage layout, manifest cache TTLs, or compaction profile — run before/after a perf-shaped PR |
 | `bench/fold-cost.ts` | CPU + peak-heap cost of ONE compaction fold (the unsliceable snapshot rebuild) vs. snapshot bytes and snapshot row count; Phase 2 evidence for raising the snapshot ceilings `C` / `E` on a more capable host. No infra (MemoryStorage). MEASURES ONLY — changes no constant. | When validating / revisiting the snapshot-rebuild cost model in [docs/spec/scale-ceilings.md](../docs/spec/scale-ceilings.md) |
 | [`bench/measurement/fold-cpu-run.ts`](measurement/fold-cpu-README.md) | Complete point reads, scans and folds over MemoryStorage, with source/environment provenance, actual operation counts and optional invocation-scoped CPU profiles. | Use `pnpm bench:fold-cpu` for a local main-layout baseline and hotspot screening |
@@ -26,31 +25,12 @@ The benchmark harnesses and shared measurement tools live under `bench/`:
 | `bench/collection-fanout.ts` | Storage op cost of `discoverCollections` (LIST count) + full `admin usage` scan (LIST + GET count) vs. N collections under one tenant prefix, measured via a counting Storage proxy on MemoryStorage. No infra. MEASURES ONLY — re-derives the collections/tenant fan-out limit. A checked-in baseline lives at `docs/spec/attachments/collection-fanout-baseline.json`. | When revisiting the collections/tenant fan-out limit in docs/spec/scale-ceilings.md or docs/about/workload-fit.md |
 | `bench/measurement/` | Not a harness — the shared measurement **library** the harnesses above build on. `statistics.ts` holds the algorithm-tagged summaries (quantiles, MAD, three bootstraps, two binomial upper bounds, OLS via Householder QR), each carrying its algorithm tag and every parameter that determined the number. `storage-journal.ts` and `storage-factory.ts` hold the recording and isolation seam: a timer-free `Storage` decorator producing an ordered operation journal plus a namespace journal that marks uncertain keys, and a per-attempt backend lease whose cleanup authority is one in-memory instance, one `mkdtemp` root, or an explicit key list. `fold-ceiling-probe.ts` is the pure half of the fold-ceiling probe. `canonical-json.ts` is the byte-stable serializer and SHA-256 framing those results are hashed under — RFC 8785 over a narrowed I-JSON domain, with a portable vector corpus at `canonical-json-vectors.json` for cross-language ports. All pure; no infra — the directory's one script is `fold-ceiling-probe-run.ts` (`pnpm bench:fold-ceiling`). | When a bench emits a `p95`, a confidence interval, or a regression coefficient; or when it needs a recorded, disposable backend rather than a shared one |
 
-Both require `pnpm dev:storage` (Minio `:9102` + Toxiproxy `:9104`)
-for the Minio-backed variants. Neither is a per-PR CI gate. The
+The load harness requires `pnpm dev:storage` (Minio `:9102`) for the
+Minio-backed variants. No bench is a per-PR CI gate. The
 in-process counting proxy in
 `tests/integration/maintenance-e2e.test.ts` and the randomized
 cascade in `tests/integration/randomized.test.ts` are the
 correctness gates that run on every PR.
-
-## bench/r2-contention.ts
-
-Three scenarios (S1 / S2-idle / S3-toxic), each driven separately:
-
-```sh
-pnpm bench:r2 --scenario=S2-idle --pollers=10 --duration-s=20
-```
-
-The canonical idle-reader gate is **S2-idle**: M pollers read
-`current.json` every 2 seconds with no writers. The bound is
-**< 1 Class A op / poller / hour** — a healthy idle reader stays on
-the `get` path and never issues a `list`, `put`, or `delete`. A
-violation prints a clear stderr message and exits 1.
-
-Writes one JSON file per run to `bench/results/`; prints a one-line
-summary to stdout. See `bench/r2-contention.ts` (head comment) for
-full scenario semantics. The cost-model bound mirrors the in-process
-gate in `tests/integration/maintenance-e2e.test.ts`.
 
 ## bench/load-harness/
 

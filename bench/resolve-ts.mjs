@@ -9,7 +9,7 @@
 // This hook only fires for relative or absolute file specifiers that
 // lack a known extension; for everything else (`node:fs`, `aws4fetch`,
 // `@baerly/protocol`) it delegates to the default resolver. Wired in
-// via `node --import bench/register-hooks.mjs bench/r2-contention.ts`.
+// via `node --import bench/register-hooks.mjs bench/fold-cost.ts`.
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
