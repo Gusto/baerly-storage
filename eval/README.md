@@ -45,7 +45,7 @@ spawner.
 
 ## Tasks
 
-Six tasks, each in `eval/tasks/<name>/`:
+Twelve tasks, each in `eval/tasks/<name>/`:
 
 | Task | What it exercises |
 | --- | --- |
@@ -55,6 +55,12 @@ Six tasks, each in `eval/tasks/<name>/`:
 | `delete-by-status` | Read all rows, filter by `status`, delete the non-`open` ones by id |
 | `schema-validate` | `defineConfig` + a Zod schema; an invalid insert rejects |
 | `get-by-id` | Discover the seeded row via `.all()`, then fetch it by id with `.get(id)` |
+| `update-vs-replace` | By-id `update` as a merge patch: set one field, delete another (`null`), keep the rest |
+| `error-code-branch` | Read `code` and `retriable` off the `BaerlyError` from a duplicate-`_id` insert |
+| `retry-helper` | Write a retry wrapper that retries exactly the retriable codes and honours `retryAfter` |
+| `ambiguous-commit` | Reconcile an `AmbiguousCommit` by reading the row back by `_id` before re-inserting |
+| `top-n-ordered` | `order` + `limit` to get the top rows |
+| `no-ne-operator` | Count rows "not equal" to a value, where no `ne` operator exists |
 
 Each task directory contains:
 
@@ -67,13 +73,15 @@ Each task directory contains:
 
 ### Coverage (and what this eval does NOT prove)
 
-These six tasks are a deliberately small, growable sample — not full
-vocabulary coverage. Today they touch `insert` / `get` / `all` / `delete`,
-the `where` modifier (object + callback forms), and the `gte` operator. The
-verbs `first` / `count` / `update` / `replace`, the `order` / `limit`
-modifiers, the `gt` / `lt` / `lte` / `in` operators, and the `BaerlyError`
-`.code` error model are **not yet exercised** — adding a task per element is
-follow-up work, not a precondition for the harness to be useful.
+These tasks are a deliberately small, growable sample — not full
+vocabulary coverage. They touch `insert` / `get` / `first` / `all` /
+`count` / `update` / `delete`, the `where`, `order` and `limit` modifiers,
+the `eq` / `gte` / `in` operators, and the `BaerlyError` `code` /
+`retriable` / `retryAfter` model. `replace`, the `gt` / `lt` / `lte`
+operators and pagination over `/v1/since` are not exercised. The
+`retry-helper` and `ambiguous-commit` tasks check the agent's exported
+function against fake operations, because a `MemoryStorage` `Db` cannot
+raise `MaintenancePending` or `AmbiguousCommit`.
 
 This eval measures whether an agent reaches a **working** answer zero-shot.
 It does **not** prove the closed-vocabulary _type_ guarantees (e.g. that
