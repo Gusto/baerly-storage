@@ -31,7 +31,7 @@ import {
   WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
 import { configureObservability, getCurrentContext } from "@baerly/server/observability";
-import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { getConfig, reset, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   logStateCurrentJson,
@@ -40,6 +40,7 @@ import {
 } from "../../../tests/fixtures/log-state.ts";
 import { createApp, type CreateAppOptions } from "./app.ts";
 import { createFetchHandler, nodeMaintenanceDispatch, resolveDefaultSink } from "./server.ts";
+import { collectingSink, findCanonical } from "../../../tests/fixtures/collecting-sink.ts";
 
 describe("createFetchHandler observability opt-out", () => {
   afterEach(async () => {
@@ -223,17 +224,6 @@ describe("createApp observability", () => {
     }
     await reset();
   });
-
-  const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
-    const records: LogRecord[] = [];
-    const sink: Sink = (record) => records.push(record);
-    return { records, sink };
-  };
-
-  const findCanonical = (records: readonly LogRecord[], unit: string): LogRecord | undefined =>
-    records.find(
-      (r) => r.message.join("") === "canonical" && r.category.join(".") === `baerly.${unit}`,
-    );
 
   const startServer = async (opts: CreateAppOptions): Promise<{ url: string }> => {
     const app = createApp(opts);
@@ -449,8 +439,7 @@ describe("createFetchHandler", () => {
   });
 
   test("maps invalid maintenance env through the public app and recovers after correction", async () => {
-    const records: LogRecord[] = [];
-    const sink: Sink = (record) => records.push(record);
+    const { records, sink } = collectingSink();
     await configureObservability({ level: "debug", sink });
 
     const storage = new MemoryStorage();
@@ -519,8 +508,7 @@ describe("createFetchHandler", () => {
     // wire shape AND the same observability record when the verifier
     // returns null. See `packages/adapter-cloudflare/src/worker.test.ts`
     // for the CF twin of this assertion.
-    const records: LogRecord[] = [];
-    const sink: Sink = (r) => records.push(r);
+    const { records, sink } = collectingSink();
     // `createFetchHandler` fires `configureObservability` un-awaited
     // (factory-time, the production path doesn't need a barrier).
     // Await it explicitly here so the sink is wired before the first
@@ -571,8 +559,7 @@ describe("createFetchHandler", () => {
       code: "Internal",
     },
   ])("$name and emits exactly one canonical line", async ({ thrown, status, code }) => {
-    const records: LogRecord[] = [];
-    const sink: Sink = (r) => records.push(r);
+    const { records, sink } = collectingSink();
     await configureObservability({ level: "debug", sink });
     const handler = createFetchHandler({
       app: "t",
@@ -634,8 +621,7 @@ describe("createFetchHandler", () => {
     // Node runs maintenance inline, so the tick finishes before the response
     // resolves. The structured record is what an operator alerts on; pin that
     // the adapter binds the kernel's `warn` sink to LogTape.
-    const records: LogRecord[] = [];
-    const sink: Sink = (r) => records.push(r);
+    const { records, sink } = collectingSink();
     await configureObservability({ level: "info", sink });
     const storage = new MemoryStorage();
     const key = "app/t/tenant/acme/manifests/c/current.json";

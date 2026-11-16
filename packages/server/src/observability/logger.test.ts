@@ -1,17 +1,7 @@
-import { configure, getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { configure, getConfig, reset } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { CATEGORY, configureObservability, getLogger } from "./logger.ts";
-
-/**
- * In-memory sink for tests. LogTape doesn't ship a built-in
- * `getMemorySink`; building one on top of the `Sink` type
- * (`(record) => void`) is the recommended pattern in the docs.
- */
-const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
-  const records: LogRecord[] = [];
-  const sink: Sink = (record) => records.push(record);
-  return { records, sink };
-};
+import { collectingSink } from "../../../../tests/fixtures/collecting-sink.ts";
 
 describe("configureObservability + getLogger", () => {
   let prevLogLevel: string | undefined;

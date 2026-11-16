@@ -19,12 +19,7 @@ import {
   withHttpObservability,
 } from "../observability/index.ts";
 import { createRouter, mapError } from "./router.ts";
-
-const collectingSink = (): { records: LogRecord[]; sink: Sink } => {
-  const records: LogRecord[] = [];
-  const sink: Sink = (record) => records.push(record);
-  return { records, sink };
-};
+import { collectingSink } from "../../../../tests/fixtures/collecting-sink.ts";
 
 const buildApp = (): ReturnType<typeof createRouter> => {
   const db = Db.create({

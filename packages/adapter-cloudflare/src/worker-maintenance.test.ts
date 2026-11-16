@@ -53,7 +53,7 @@ import {
   getCurrentContext,
 } from "@baerly/server/_internal/observability";
 import { Writer } from "@baerly/server/_internal/testing";
-import { reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { reset, type LogRecord } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
@@ -71,6 +71,7 @@ import {
 } from "./worker.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
+import { collectingSink } from "../../../tests/fixtures/collecting-sink.ts";
 
 const testConfig: BaerlyAppConfig = {
   app: "test-app",
@@ -631,8 +632,7 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
       },
     });
 
-    const records: LogRecord[] = [];
-    const sink: Sink = (r) => records.push(r);
+    const { records, sink } = collectingSink();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
     const handler = baerlyWorker<BaerlyEnv>(() => ({
