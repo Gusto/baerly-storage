@@ -9,7 +9,6 @@ import {
   LOG_PREFIX,
   opArb,
   PROP_TIMEOUT_MS,
-  reconstructView,
   seedCurrentJson,
 } from "./_internal/randomized-model.ts";
 import { compact } from "./compactor.ts";
@@ -18,6 +17,7 @@ import { runMaintenancePass } from "./maintenance.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { loadSnapshotAsMap } from "./snapshot.ts";
 import { Writer } from "./writer.ts";
+import { replayLiveDocs } from "../../../tests/fixtures/replay-live-docs.ts";
 
 const ORPHAN_CONTENT_KEY = `${LOG_PREFIX}/content/${"f".repeat(32)}.json`;
 
@@ -81,7 +81,7 @@ describe("runMaintenancePass — never deletes a live object", () => {
       const logSeqStart = logSeqStartOf(read.json);
       const nextSeq = read.json.tail_hint;
       const liveSnapshotKey = read.json.snapshot;
-      const viewBefore = await reconstructView(storage);
+      const viewBefore = Object.fromEntries(await replayLiveDocs(storage, LOG_PREFIX));
 
       // The pass: compact + GC + retirement, grace bypassed so GC marks
       // become due immediately and the retention window erased so
@@ -89,7 +89,7 @@ describe("runMaintenancePass — never deletes a live object", () => {
       await runMaintenancePass({ storage, currentJsonKey: CURRENT_JSON_KEY }, maintenanceOpts);
 
       // (1) Reader view is byte-for-byte identical.
-      const viewAfter = await reconstructView(storage);
+      const viewAfter = Object.fromEntries(await replayLiveDocs(storage, LOG_PREFIX));
       expect(viewAfter).toEqual(viewBefore);
       expect(viewBefore).toEqual(Object.fromEntries(model));
 

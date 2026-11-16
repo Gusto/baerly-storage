@@ -11,10 +11,8 @@
  * kinds or the id alphabet must not have to be mirrored across every suite,
  * or one of them silently keeps exploring the narrower space.
  *
- * `reconstructView` walks the durable `[log_seq_start, tail_hint)` range only.
- * `compactor-randomized.test.ts` keeps its own variant that additionally
- * forward-probes past `tail_hint`, because that suite's idempotence assertion
- * depends on seeing entries a fold has not yet stamped a hint for.
+ * The reader view they compare against comes from `replayLiveDocs` in
+ * `tests/fixtures/replay-live-docs.ts`.
  *
  * Test-only: no bundler entry reaches this module and it is deliberately not
  * re-exported through `_internal/testing.ts`.
@@ -25,12 +23,8 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   type DocumentData,
-  logSeqStartOf,
-  readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { foldLogEntriesOnto, walkLogRange } from "../log-walk.ts";
-import { loadSnapshotAsMap } from "../snapshot.ts";
 import type { Writer } from "../writer.ts";
 
 /** Generous ceiling: a property run is many rounds of real commits. */
@@ -84,29 +78,6 @@ export const seedCurrentJson = async (storage: Storage): Promise<void> => {
     snapshot_bytes: 0,
     snapshot_rows: 0,
   });
-};
-
-/**
- * Reconstruct the reader's materialized view the way `runRead` does: snapshot
- * base + the folded durable log range.
- */
-export const reconstructView = async (storage: Storage): Promise<Record<string, DocumentData>> => {
-  const read = await readCurrentJson(storage, CURRENT_JSON_KEY);
-  if (read === null) {
-    throw new Error("current.json missing");
-  }
-  const base =
-    read.json.snapshot === null
-      ? new Map<string, DocumentData>()
-      : await loadSnapshotAsMap(storage, read.json.snapshot, COLLECTION);
-  const tail = await walkLogRange(
-    storage,
-    LOG_PREFIX,
-    logSeqStartOf(read.json),
-    read.json.tail_hint,
-  );
-  foldLogEntriesOnto(base, tail, { collection: COLLECTION });
-  return Object.fromEntries(base);
 };
 
 /**
