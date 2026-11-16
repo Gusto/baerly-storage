@@ -815,7 +815,7 @@ describe("Writer — writer fence", () => {
             owner: "intruder",
           };
           // Sneak the bump under our own existing etag — simulates
-          // a peer's claimWriter() that landed between our step-1
+          // a simulated out-of-band fence bump that landed between our step-1
           // read and our step-6 post-read. The bumped body is also
           // returned to the caller so the verify-read sees the new
           // epoch on the very GET that triggered the bump.

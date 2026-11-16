@@ -34,7 +34,6 @@ import {
   type StoragePutOptions,
 } from "@baerly/protocol";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
-import { claimWriter } from "../../packages/protocol/src/coordination/current-json.ts";
 import { compact, type InternalCompactOptions } from "../../packages/server/src/compactor.ts";
 import { retireLogRange } from "../../packages/server/src/log-retention.ts";
 import {
@@ -224,13 +223,6 @@ describe("every current.json write is conditional", () => {
     const result = await retireLogRange(storage, KEY, { window: 10 });
     expect(result.deleted).toBeGreaterThan(0);
     expect(conditions()).toEqual(["if-match"]);
-  });
-
-  test("claimWriter's claim and stamp are both If-Match", async () => {
-    await createCurrentJson(storage, KEY, logStateCurrentJson());
-    resetRecorder();
-    await claimWriter(storage, KEY, "worker-a");
-    expect(conditions()).toEqual(["if-match", "if-match"]);
   });
 
   test("restore into a fresh target: the seed is If-None-Match, the post-load stamp If-Match", async () => {

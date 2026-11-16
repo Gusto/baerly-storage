@@ -81,7 +81,7 @@ interface BaseEnvelope {
 /**
  * Bootstrap the `current.json` for one (app, tenant, table) triple.
  * `Writer.commit()` throws `InvalidResponse` when the file is
- * missing — production code provisions it via `claimWriter` /
+ * missing — production code provisions it via
  * `createCurrentJson` at deploy time. Same shape as the cascade
  * fixtures in `tests/fixtures/collection-api-cascade.ts`. The miniflare
  * R2 binding is shared across tests in this suite, so an already-

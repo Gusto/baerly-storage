@@ -51,7 +51,7 @@ interface BaseEnvelope {
 /**
  * Bootstrap the `current.json` for one (app, tenant, table) triple.
  * `Writer.commit()` throws `InvalidResponse` when the file is
- * missing — production code provisions it via `claimWriter` /
+ * missing — production code provisions it via
  * `createCurrentJson` at deploy time; the cascade test fixtures do
  * the same. Mirrors `tests/fixtures/collection-api-cascade.ts`.
  */

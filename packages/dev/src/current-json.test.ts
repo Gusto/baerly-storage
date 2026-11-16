@@ -8,7 +8,6 @@ import {
   createCurrentJson,
   readCurrentJson,
 } from "@baerly/protocol";
-import { claimWriter } from "../../protocol/src/coordination/current-json.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { LocalFsStorage } from "./local-fs.ts";
 
@@ -43,15 +42,10 @@ describe("current.json on LocalFsStorage", () => {
     snapshot_rows: 0,
   };
 
-  test("create + read + claim round-trip", async () => {
+  test("create + read round-trip", async () => {
     await createCurrentJson(storage, "tenant/coll/current.json", seed);
     const r = await readCurrentJson(storage, "tenant/coll/current.json");
     expect(r!.json).toEqual(seed);
-    const claimed = await claimWriter(storage, "tenant/coll/current.json", "worker-a");
-    expect(claimed.json.writer_fence.epoch).toBe(1);
-    expect(claimed.json.writer_fence.owner).toBe("worker-a");
-    // LocalFsStorage surfaces serverDate, so claim_at is stamped.
-    expect(claimed.json.writer_fence.claimed_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   test("create-only guard rejects an existing key with WriteConflict", async () => {
