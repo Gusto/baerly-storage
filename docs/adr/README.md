@@ -98,6 +98,7 @@ into the ADR.
 
 ## Template
 
+<!-- prettier-ignore -->
 ```markdown
 # NNNN — Title
 

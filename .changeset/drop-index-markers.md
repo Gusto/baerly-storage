@@ -19,6 +19,7 @@ aws s3 rm --recursive --dryrun "s3://bucket/app/acme/tenant/t1/manifests/tickets
 
 **Migration — agents: if you wrote the LEFT, use the RIGHT:**
 
+<!-- prettier-ignore -->
 ```ts
 // before
 collections: { tickets: { indexes: [{ name: "by_status", on: "status" }] } }
