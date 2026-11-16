@@ -99,6 +99,8 @@ Pass-rate per task = (passing runs) / (total runs). A run passes when:
 2. The checker (`eval/tasks/<name>/check.ts`) passes when run against
    the solution with a fresh `MemoryStorage` `Db`.
 
+The suite saturates opus (100% on all twelve tasks), so it only discriminates on haiku today; harder tasks are needed before it can detect a regression on a strong model.
+
 A pass-rate of **≥ 80% is the target signal**, not a hard gate. Lower
 pass-rates indicate the surface or the task prompt needs improvement.
 

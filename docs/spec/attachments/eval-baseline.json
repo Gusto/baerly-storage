@@ -1,15 +1,44 @@
 {
-  "model": "claude-opus-4-8",
+  "note": "Opus pass rates come from one 5-run pass over all 12 tasks, except ambiguous-commit and retry-helper, which were re-run on their own (5 runs each) after a runner defect failed every solution without a `main` export; the other ten opus tasks are unaffected. Haiku is a single full 5-run pass. Same surface hash and CLI version throughout.",
   "surface_kind": "api-md+dts",
+  "surface_hash": "b433b18af041f1bc13c93d2d5dfdbb81e063629a3586f87a7e961915436c0e84",
   "runs": 5,
-  "aggregate_pass_rate": null,
-  "tasks": [
-    { "name": "insert-get", "pass_rate": null },
-    { "name": "where-eq", "pass_rate": null },
-    { "name": "range-dsl", "pass_rate": null },
-    { "name": "delete-by-status", "pass_rate": null },
-    { "name": "schema-validate", "pass_rate": null },
-    { "name": "get-by-id", "pass_rate": null }
-  ],
-  "note": "Seeded placeholder. Refresh with `pnpm eval` (ANTHROPIC_API_KEY required, costs tokens). pass_rate=null means not yet measured."
+  "models": {
+    "opus": {
+      "cli_version": "2.1.325 (Claude Code)",
+      "aggregate_pass_rate": 1.0,
+      "tasks": {
+        "ambiguous-commit": 1,
+        "delete-by-status": 1,
+        "error-code-branch": 1,
+        "get-by-id": 1,
+        "insert-get": 1,
+        "no-ne-operator": 1,
+        "range-dsl": 1,
+        "retry-helper": 1,
+        "schema-validate": 1,
+        "top-n-ordered": 1,
+        "update-vs-replace": 1,
+        "where-eq": 1
+      }
+    },
+    "haiku": {
+      "cli_version": "2.1.325 (Claude Code)",
+      "aggregate_pass_rate": 0.95,
+      "tasks": {
+        "ambiguous-commit": 0.8,
+        "delete-by-status": 0.8,
+        "error-code-branch": 1,
+        "get-by-id": 1,
+        "insert-get": 1,
+        "no-ne-operator": 1,
+        "range-dsl": 1,
+        "retry-helper": 1,
+        "schema-validate": 1,
+        "top-n-ordered": 1,
+        "update-vs-replace": 0.8,
+        "where-eq": 1
+      }
+    }
+  }
 }
