@@ -23,7 +23,7 @@ resume whose generation no longer matches is rejected with
 `BaerlyError{code:"SchemaError"}` (HTTP 400). The nonce is re-minted by
 the writers that _replace_ a collection (both `restore` seeds, writer
 auto-provision, `ensureTable`) and carried through by the writers that
-_advance_ one (the compactor's fold CAS, `claimWriter`, every
+_advance_ one (the compactor's fold CAS, every
 `casUpdateCurrentJson` mutator).
 
 `generation` is an optional field on `schema_version: 3` — no schema

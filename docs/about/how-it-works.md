@@ -124,9 +124,7 @@ log entries are immutable and create-if-absent.
 
 The formal write and read algorithms, the dormant `writer_fence`, and the
 causal-consistency guarantees live in
-[`spec/sync-protocol.md`](../spec/sync-protocol.md), with the
-adversarial fencing model in
-[`spec/writer-fence-adversarial-model.md`](../spec/writer-fence-adversarial-model.md).
+[`spec/sync-protocol.md`](../spec/sync-protocol.md).
 
 ## The same playbook as Apache Iceberg
 

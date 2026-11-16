@@ -58,11 +58,6 @@ Binding descriptions of how the live protocol behaves today.
 
 ## Historical, rationale & evidence
 
-- [writer-fence-adversarial-model.md](writer-fence-adversarial-model.md)
-  — adversarial model for the **dormant** fence-claim primitive
-  (retained for admin/testing and as the patent-C1 provenance record;
-  not on the commit path under
-  [ADR-004](../adr/004-single-write-commit.md)).
 - [prior-art.md](prior-art.md) — comparison against object-storage
   databases and adjacent coordination systems.
 - [attachments/](attachments/) — regenerated benchmark baselines and
