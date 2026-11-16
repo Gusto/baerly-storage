@@ -23,6 +23,7 @@ import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 import { denyVerifier, trivialVerifier } from "../../../tests/fixtures/test-verifier.ts";
+import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
 
 /**
  * Minimal-shape `BaerlyAppConfig` for tests that aren't exercising
@@ -36,14 +37,6 @@ const testConfig: BaerlyAppConfig = {
   target: "cloudflare",
   auth: "none",
   collections: {},
-};
-
-const getBinding = (): R2Bucket => {
-  const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
-  if (bucket === undefined) {
-    throw new Error("worker.test: globalThis.__BAERLY_R2_BINDING__ missing — wired by vitest pool");
-  }
-  return bucket;
 };
 
 const scheduledOnlyVerifier: Verifier = async () => ({

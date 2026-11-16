@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
+import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
 
 const config: BaerlyAppConfig = {
   app: "strong",
@@ -21,7 +22,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 const setup = async () => {
-  const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__!;
+  const bucket = getBinding();
   const storage = r2BindingStorage(bucket);
   const tenant = crypto.randomUUID();
   const db = Db.create({ storage, app: config.app, tenant, config });

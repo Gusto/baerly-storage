@@ -66,8 +66,8 @@
   // root `exports` map resolves to `packages/adapter-cloudflare/src/index.ts`.
   // Excluding the adapter without it would pull the adapter straight back in.
   // Nothing imports `r2-binding.ts` or `http-conformance-worker.ts` at all
-  // (vitest loads those by config path), and `mock-execution-context.ts` is
-  // imported only from within this group.
+  // (vitest loads those by config path), and `mock-execution-context.ts` and
+  // `r2-bucket.ts` are imported only from within this group.
   //
   // Using a Workers global in a file outside this list fails with
   // `Cannot find name 'R2Bucket'`; the fix is to move the file in here.
@@ -89,6 +89,7 @@
 
     "packages/adapter-cloudflare/src",
     "tests/fixtures/mock-execution-context.ts",
+    "tests/fixtures/r2-bucket.ts",
     "tests/integration/public-surface.test.ts",
     "tests/integration/s3-worker-e2e.test.ts",
     "tests/setup/http-conformance-worker.ts",

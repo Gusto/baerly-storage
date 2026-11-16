@@ -27,16 +27,7 @@ import {
   runSameIdInsertRaceCascade,
 } from "../../../tests/fixtures/randomized-cascade.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
-
-const getBinding = (): R2Bucket => {
-  const bucket = (globalThis as { __BAERLY_R2_BINDING__?: R2Bucket }).__BAERLY_R2_BINDING__;
-  if (bucket === undefined) {
-    throw new Error(
-      "randomized cascade: globalThis.__BAERLY_R2_BINDING__ missing — expected wiring from tests/setup/r2-binding.ts under the cloudflare-pool vitest project",
-    );
-  }
-  return bucket;
-};
+import { getBinding } from "../../../tests/fixtures/r2-bucket.ts";
 
 describe("randomized (Db + Writer)", () => {
   describe("cloudflare-r2", () => {
