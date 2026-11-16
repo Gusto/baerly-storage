@@ -16,68 +16,30 @@ related:
 
 ## What this guide is
 
-This is the **operator runbook** for observability: what to watch,
-what to do first, how to wire sinks, which logging choices balloon
-cost, and which signals are still missing. The canonical log-line
-shape and field reference live in
-[`packages/server/API.md`](../../packages/server/API.md), published as
-`node_modules/@gusto/baerly-storage/dist/API.md`, under
-"Observability" because consumer LLMs read API.md from
-`node_modules/` and need the contract one `cat` away. Use API.md when
-you need the exact field list; use this page when a deployment is live.
+This is the **operator runbook** for observability: what to watch, what to do first, how to wire sinks, which logging choices balloon cost, and which signals are still missing. The canonical log-line shape and field reference live in [`packages/server/API.md`](../../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`, under "Observability" because consumer LLMs read API.md from `node_modules/` and need the contract one `cat` away. Use API.md when you need the exact field list; use this page when a deployment is live.
 
-The threshold idea: baerly logs the request, not every internal step.
-At the end of each HTTP request, the kernel emits **one canonical log
-line**. More precisely, the line is `info` by default, rises to `warn`
-on any 4xx — a client error is the caller's fault, not a server fault,
-so a `409` (a duplicate-`_id` insert raises `AlreadyExists`) stays
-`warn` — and rises to `error` only on a 5xx or an otherwise-unclassified
-thrown error. It carries a `request_id`, an `outcome` (`read` / `committed` / `conflict` /
-`refused` / `error`), and the per-request `db.*` counters.
+The threshold idea: baerly logs the request, not every internal step. At the end of each HTTP request, the kernel emits **one canonical log line**. More precisely, the line is `info` by default, rises to `warn` on any 4xx — a client error is the caller's fault, not a server fault, so a `409` (a duplicate-`_id` insert raises `AlreadyExists`) stays `warn` — and rises to `error` only on a 5xx or an otherwise-unclassified thrown error. It carries a `request_id`, an `outcome` (`read` / `committed` / `conflict` / `refused` / `error`), and the per-request `db.*` counters.
 
-Maintenance is the exception because it can run outside that request
-boundary. The in-band write-tick runner (`runBoundedMaintenance`) never
-throws: it swallows expected `WriteConflict` CAS losses silently, and on an
-unexpected error it increments `db.maintenance.unexpected_error_total`
-and logs the stack via `console.error`. A tick that runs out of the
-request's storage-call budget is expected, not an error: it skips a phase
-that does not fit (`db.maintenance.request_budget_skipped_total`) or ends
-on the call the budget refused
-(`db.maintenance.request_budget_refused_total`), and a later write's tick
-resumes. A separate, rate-limited
-`fold_deferred` warning fires when compaction defers — a record on the
-`baerly.maintenance` category, or a plain `console.warn` line where no
-adapter sink is bound. The opt-in
-`runScheduledMaintenance` cron runner simply awaits `compact()` and
-`runGc()` and propagates any error to the caller's cron handler.
+Maintenance is the exception because it can run outside that request boundary. The in-band write-tick runner (`runBoundedMaintenance`) never throws: it swallows expected `WriteConflict` CAS losses silently, and on an unexpected error it increments `db.maintenance.unexpected_error_total` and logs the stack via `console.error`. A tick that runs out of the request's storage-call budget is expected, not an error: it skips a phase that does not fit (`db.maintenance.request_budget_skipped_total`) or ends on the call the budget refused (`db.maintenance.request_budget_refused_total`), and a later write's tick resumes. A separate, rate-limited `fold_deferred` warning fires when compaction defers — a record on the `baerly.maintenance` category, or a plain `console.warn` line where no adapter sink is bound. The opt-in `runScheduledMaintenance` cron runner simply awaits `compact()` and `runGc()` and propagates any error to the caller's cron handler.
 
-Watch the surface your host actually emits. Node's inline write-tick can
-attach maintenance counters to the request line. Cloudflare write-tick
-maintenance runs in `ctx.waitUntil` after the request line has flushed,
-so first response uses `wrangler tail` for the rate-limited
-`fold_deferred` records and `console.error` stacks. The Cloudflare adapter is
-JSON-only; the Node adapter switches to a single-line human-readable
-shape under TTY. Set `LOG_LEVEL` or `observability.level` to tune
-verbosity.
+Watch the surface your host actually emits. Node's inline write-tick can attach maintenance counters to the request line. Cloudflare write-tick maintenance runs in `ctx.waitUntil` after the request line has flushed, so first response uses `wrangler tail` for the rate-limited `fold_deferred` records and `console.error` stacks. The Cloudflare adapter is JSON-only; the Node adapter switches to a single-line human-readable shape under TTY. Set `LOG_LEVEL` or `observability.level` to tune verbosity.
 
 ## What to watch
 
-| Signal                                        | Indicates                                                    | First response                                                                                                                                                                                                                                                                                                            |
-| --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `status >= 500` or `outcome:"error"`          | User-visible API failure                                     | Inspect `error.code`, storage status, and the request path.                                                                                                                                                                                                                                                               |
-| `outcome:"conflict"` rate rising              | HTTP 409; in practice a duplicate-`_id` insert (`AlreadyExists`). `WriteConflict` and `AmbiguousCommit` also map to 409 but are rare | App-level id collision (clients reusing `_id`s or double-submitting POSTs), not storage contention — prefer letting the server mint `_id` (omit it on insert). Write contention is absorbed by the forward-probe and surfaces on `db.r2.put.412_total`, not here.                                                         |
-| `outcome:"refused"` rate rising               | Capacity refusals: `CapacityExceeded` (409) or `MaintenancePending` (503), logged at `warn` | The collection is at its host's fold ceiling. Read `error.code` and the `fold_deferred` record, then follow [graduation.md](../about/graduation.md). |
-| `db.r2.put.412_total` sustained               | Conditional-write (412) losses on log creates                | Check writes/min for the hot collection; retry at app edge if bursty, graduate if sustained. This is the storage-level conditional-write contention meter.                                                                                                                                                                |
+| Signal | Indicates | First response |
+| --- | --- | --- |
+| `status >= 500` or `outcome:"error"` | User-visible API failure | Inspect `error.code`, storage status, and the request path. |
+| `outcome:"conflict"` rate rising | HTTP 409; in practice a duplicate-`_id` insert (`AlreadyExists`). `WriteConflict` and `AmbiguousCommit` also map to 409 but are rare | App-level id collision (clients reusing `_id`s or double-submitting POSTs), not storage contention — prefer letting the server mint `_id` (omit it on insert). Write contention is absorbed by the forward-probe and surfaces on `db.r2.put.412_total`, not here. |
+| `outcome:"refused"` rate rising | Capacity refusals: `CapacityExceeded` (409) or `MaintenancePending` (503), logged at `warn` | The collection is at its host's fold ceiling. Read `error.code` and the `fold_deferred` record, then follow [graduation.md](../about/graduation.md). |
+| `db.r2.put.412_total` sustained | Conditional-write (412) losses on log creates | Check writes/min for the hot collection; retry at app edge if bursty, graduate if sustained. This is the storage-level conditional-write contention meter. |
 | `db.compaction.deferred_bytes_total` / `deferred_rows_total`, or a `fold_deferred` log record | Snapshot exceeded the byte or row fold ceiling; compaction and log retention have stopped | The counter name carries the dimension (the canonical line drops labels). On Cloudflare the fold runs after the canonical line is written, so the `fold_deferred` record (category `baerly.maintenance`, rate-limited) is the signal there; it names the arm, `C`, `E`, and `log_seq_start`. Run `baerly inspect` for `fold_gate`. Bytes: switch to `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Workers Paid, or raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. Rows: no env var applies; switch profile on Cloudflare, split or graduate on Node. Then read [graduation.md](../about/graduation.md). |
 | `capacity_warning` field on a write's canonical line (HTTP: `Baerly-Capacity-Warning` response header; `createBaerlyClient` passes it to `onWarning`) | The write was admitted but left the collection at 90% or more of what this host can hold, so growth will be refused soon | Computed per request from the collection's current state; nothing is persisted, so it stops as soon as rows are deleted or shrunk, or the collection moves to a larger host. The text names the state and the app-side remedy (delete rows, shrink documents, `baerly admin dump`); the host-side route is in the `fold_deferred` row above and [graduation.md](../about/graduation.md). |
 | `db.compaction.below_min_total` sustained on a scheduled loop | `compact()` skipped: a non-empty live tail sat under `minEntriesToCompact` (and no fold budget checkpoint). Idle (`available === 0`) does not increment this counter. | Sustained rate means every read replays those unfolded entries at one GET apiece. Raise the cron cadence. A scheduled pass with `tier: "cf-free"` folds only once a 20-entry slice is pending; the other tiers fold any tail. |
-| `db.compaction.cas_lost_total` sustained      | Duplicate fold compute under contention                      | Watch object count and GC drain; sustained growth is a graduation signal.                                                                                                                                                                                                                                                 |
-| Class A ops above projection                  | Cost regression or hot write path                            | Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` and compare to [cost-model.md](../about/cost-model.md).                                                                                                                                                                                                 |
-| Object count grows while write rate is steady | GC is not draining or contention is above envelope           | Run `baerly admin fsck`; inspect maintenance warnings.                                                                                                                                                                                                                                                                    |
+| `db.compaction.cas_lost_total` sustained | Duplicate fold compute under contention | Watch object count and GC drain; sustained growth is a graduation signal. |
+| Class A ops above projection | Cost regression or hot write path | Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` and compare to [cost-model.md](../about/cost-model.md). |
+| Object count grows while write rate is steady | GC is not draining or contention is above envelope | Run `baerly admin fsck`; inspect maintenance warnings. |
 
-For Cloudflare, `wrangler tail` is enough for first response. For
-trend and alerting, send the canonical line to Workers Analytics
-Engine, CloudWatch, Datadog, or an OTel collector.
+For Cloudflare, `wrangler tail` is enough for first response. For trend and alerting, send the canonical line to Workers Analytics Engine, CloudWatch, Datadog, or an OTel collector.
 
 ## First response
 
@@ -93,8 +55,7 @@ Node:
 LOG_LEVEL=info node server.js
 ```
 
-A canonical JSON line looks like this shape (fields vary by adapter and
-outcome):
+A canonical JSON line looks like this shape (fields vary by adapter and outcome):
 
 ```json
 {
@@ -116,21 +77,11 @@ outcome):
 }
 ```
 
-`summarize()` only emits keys for counters actually observed. A pure
-read line carries the `db.storage.*` op counters and the `db.read.*`
-read-work counters (see [Read work](#read-work)), but not the
-`db.compaction.*` counters. Those counters appear only when write-tick
-maintenance runs before the canonical line flushes.
+`summarize()` only emits keys for counters actually observed. A pure read line carries the `db.storage.*` op counters and the `db.read.*` read-work counters (see [Read work](#read-work)), but not the `db.compaction.*` counters. Those counters appear only when write-tick maintenance runs before the canonical line flushes.
 
-The filters below are for JSON canonical lines. On Cloudflare,
-post-response `ctx.waitUntil` maintenance has already missed that line;
-use `wrangler tail` to search for the `fold_deferred` record or the
-maintenance `console.error` when the question is compaction or GC.
+The filters below are for JSON canonical lines. On Cloudflare, post-response `ctx.waitUntil` maintenance has already missed that line; use `wrangler tail` to search for the `fold_deferred` record or the maintenance `console.error` when the question is compaction or GC.
 
-Copyable local filters for JSON logs. `wrangler tail --format=json`
-emits one event per invocation, with each log line as a JSON string
-under `logs[].message[]`, so each filter first unwraps and parses those
-strings:
+Copyable local filters for JSON logs. `wrangler tail --format=json` emits one event per invocation, with each log line as a JSON string under `logs[].message[]`, so each filter first unwraps and parses those strings:
 
 ```sh
 # User-visible failures.
@@ -148,34 +99,20 @@ wrangler tail --format=json | jq -c '.logs[]?.message[]? | fromjson? | select(."
 wrangler tail --format=json | jq -c '.logs[]?.message[]? | fromjson? | select(."db.storage.class_a_ops_total" > 0)'
 ```
 
-Node stdout is already one JSON object per line, so pipe your log file
-or process stream into `jq -c 'select(...)'` with the same predicate and
-no `.logs[]` unwrap.
+Node stdout is already one JSON object per line, so pipe your log file or process stream into `jq -c 'select(...)'` with the same predicate and no `.logs[]` unwrap.
 
 ## Sinks
 
-The kernel ships one in-box sink shorthand; pretty rendering lives
-in the Node adapter:
+The kernel ships one in-box sink shorthand; pretty rendering lives in the Node adapter:
 
-- `"console-json"` — one JSON object per line via `console.log`.
-  Default for production. Cloudflare and CloudWatch ingest this
-  natively.
-- A custom `Sink` function — pass through verbatim. The Node adapter
-  auto-selects an internal pretty renderer when
-  `process.stdout.isTTY === true` (developer terminals), and uses
-  `"console-json"` otherwise. `prettyConsoleSink()` is not currently a
-  public sink API; pass your own `Sink` function if you need manual
-  wiring in another Node host.
+- `"console-json"` — one JSON object per line via `console.log`. Default for production. Cloudflare and CloudWatch ingest this natively.
+- A custom `Sink` function — pass through verbatim. The Node adapter auto-selects an internal pretty renderer when `process.stdout.isTTY === true` (developer terminals), and uses `"console-json"` otherwise. `prettyConsoleSink()` is not currently a public sink API; pass your own `Sink` function if you need manual wiring in another Node host.
 
 ### Wiring a custom sink
 
-**For a one-shot day-1 cost peek, you don't need a sink at all. Run
-`baerly cost --bucket=<bucket-uri> --collection=<collection>` to project
-Class A ops/mo and a free-tier-aware dollar trajectory. Wire a custom
-sink (below) only when you need 7-day / 30-day trends or alerting.**
+**For a one-shot day-1 cost peek, you don't need a sink at all. Run `baerly cost --bucket=<bucket-uri> --collection=<collection>` to project Class A ops/mo and a free-tier-aware dollar trajectory. Wire a custom sink (below) only when you need 7-day / 30-day trends or alerting.**
 
-Pass a `Sink` (a function `(LogRecord) => void`) to the adapter's
-`observability.sink` field:
+Pass a `Sink` (a function `(LogRecord) => void`) to the adapter's `observability.sink` field:
 
 ```ts
 import type { Sink } from "@gusto/baerly-storage/observability";
@@ -216,9 +153,7 @@ baerlyNode({ config, storage, verifier, observability: { sink: otelSink } });
 
 ### Cloudflare Workers Analytics Engine
 
-CF's [Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/)
-is a free-tier-friendly time-series sink keyed by indices + blobs.
-Wire it via a custom sink that pulls the binding off `env`:
+CF's [Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/) is a free-tier-friendly time-series sink keyed by indices + blobs. Wire it via a custom sink that pulls the binding off `env`:
 
 ```ts
 import type { Sink } from "@gusto/baerly-storage/observability";
@@ -269,21 +204,13 @@ Declare the binding in `wrangler.jsonc`:
 }
 ```
 
-Query the dataset via CF's GraphQL Analytics API. The `indexes`
-field is the high-cardinality column; you get one row per canonical
-line.
+Query the dataset via CF's GraphQL Analytics API. The `indexes` field is the high-cardinality column; you get one row per canonical line.
 
 ### Datadog
 
-If your host runs the Datadog Agent and stdout is piped to it, **no
-code change**. Set `DD_LOGS_INJECTION=true` in the Agent's env to
-get `dd.trace_id` / `dd.span_id` correlation if you also enable APM,
-otherwise the JSON-per-line ingestion works as-is.
+If your host runs the Datadog Agent and stdout is piped to it, **no code change**. Set `DD_LOGS_INJECTION=true` in the Agent's env to get `dd.trace_id` / `dd.span_id` correlation if you also enable APM, otherwise the JSON-per-line ingestion works as-is.
 
-For a fully-self-managed pipe (no Agent), POST records to Datadog
-Logs HTTP intake from a custom sink. Batch and backpressure this in
-real deployments; the inline snippet is intentionally a minimal sketch
-and must never throw:
+For a fully-self-managed pipe (no Agent), POST records to Datadog Logs HTTP intake from a custom sink. Batch and backpressure this in real deployments; the inline snippet is intentionally a minimal sketch and must never throw:
 
 ```ts
 const datadogSink: Sink = (record) => {
@@ -306,21 +233,10 @@ const datadogSink: Sink = (record) => {
 
 ## Embedding baerly in an app that already uses LogTape
 
-baerly is a library, and [LogTape's guidance](https://logtape.org/manual/library)
-is that only the *application* configures LogTape — a library must not
-reset another app's logging config. The adapters auto-configure at boot
-for the common zero-config case (a scaffolded standalone server), but
-they will **never clobber a config you installed first**:
+baerly is a library, and [LogTape's guidance](https://logtape.org/manual/library) is that only the _application_ configures LogTape — a library must not reset another app's logging config. The adapters auto-configure at boot for the common zero-config case (a scaffolded standalone server), but they will **never clobber a config you installed first**:
 
-- If your app calls `configure()` (or `configureSync()`) before
-  `baerlyNode` / `baerlyWorker` boots, baerly detects the existing
-  config, leaves it untouched, and emits one `["logtape", "meta"]`
-  notice. baerly's `["baerly", …]` categories then route through
-  whatever sinks your config wired for them (its root/catch-all sink,
-  or nowhere). To capture baerly's logs, add a logger for the
-  `["baerly"]` category in your own `configure()` call.
-- To stop baerly from touching LogTape at all — even when it boots
-  first — pass **`observability: false`**:
+- If your app calls `configure()` (or `configureSync()`) before `baerlyNode` / `baerlyWorker` boots, baerly detects the existing config, leaves it untouched, and emits one `["logtape", "meta"]` notice. baerly's `["baerly", …]` categories then route through whatever sinks your config wired for them (its root/catch-all sink, or nowhere). To capture baerly's logs, add a logger for the `["baerly"]` category in your own `configure()` call.
+- To stop baerly from touching LogTape at all — even when it boots first — pass **`observability: false`**:
 
   ```ts
   baerlyNode({ config, storage, verifier, observability: false });
@@ -328,39 +244,22 @@ they will **never clobber a config you installed first**:
   baerlyWorker((env) => ({ config, observability: false }));
   ```
 
-  Your app then owns the process-wide (isolate-wide on Workers) LogTape
-  configuration end to end.
+  Your app then owns the process-wide (isolate-wide on Workers) LogTape configuration end to end.
 
 ## Cost-ballooning anti-patterns
 
-- ❌ **Don't log request bodies.** baerly-storage stores arbitrary
-  JSON; a body field could be megabytes. The canonical line is a few
-  hundred bytes by design.
-- ❌ **Don't log-and-rethrow.** The canonical-line emitter already
-  redacts and serializes the thrown error on the failure path. A
-  manual `console.error(err); throw err;` double-emits.
-- ⚠️ **Watch high-cardinality fields in metric labels.** Things
-  like `ref`, `etag`, `user_id`, `request_id` are fine as
-  canonical-line fields (one row per request), but blow up
-  Prometheus / Datadog metric labels (one series per distinct
-  value). Use them in fields; bucket them in labels.
-- ❌ **Don't put canonical lines inside hot loops.** One canonical
-  line is one unit of work. A loop emitting 1000 of them per
-  request defeats the sampling story.
+- ❌ **Don't log request bodies.** baerly-storage stores arbitrary JSON; a body field could be megabytes. The canonical line is a few hundred bytes by design.
+- ❌ **Don't log-and-rethrow.** The canonical-line emitter already redacts and serializes the thrown error on the failure path. A manual `console.error(err); throw err;` double-emits.
+- ⚠️ **Watch high-cardinality fields in metric labels.** Things like `ref`, `etag`, `user_id`, `request_id` are fine as canonical-line fields (one row per request), but blow up Prometheus / Datadog metric labels (one series per distinct value). Use them in fields; bucket them in labels.
+- ❌ **Don't put canonical lines inside hot loops.** One canonical line is one unit of work. A loop emitting 1000 of them per request defeats the sampling story.
 
 ## Cloudflare reads
 
-Every point read reaches storage, so repeated reads include their storage
-calls in the canonical line. The Worker emits no `cache_status` field and
-makes no Cache API calls. Post-response write-tick maintenance still runs
-through `ctx.waitUntil`; its work may finish after the request's canonical
-line has flushed.
+Every point read reaches storage, so repeated reads include their storage calls in the canonical line. The Worker emits no `cache_status` field and makes no Cache API calls. Post-response write-tick maintenance still runs through `ctx.waitUntil`; its work may finish after the request's canonical line has flushed.
 
 ## Read work
 
-Every collection read adds three counters to the canonical line. They
-measure what the read materialized, on every host, from counts the fold
-already holds:
+Every collection read adds three counters to the canonical line. They measure what the read materialized, on every host, from counts the fold already holds:
 
 | Counter | Unit |
 | --- | --- |
@@ -368,27 +267,13 @@ already holds:
 | `db.read.live_documents_total` | Distinct documents live after the fold, before predicate, order and limit. |
 | `db.read.returned_rows_total` | Rows left after predicate, order and limit: the rows returned, the rows `count()` counts, or the rows a write verb's read matched. |
 
-A write verb's pre-commit read counts too, so an insert's line reports the
-fold its `_id` check ran. Several reads in one request sum. A
-never-provisioned collection reports zeros.
+A write verb's pre-commit read counts too, so an insert's line reports the fold its `_id` check ran. Several reads in one request sum. A never-provisioned collection reports zeros.
 
-A point read or a `limit(1)` read still folds the whole collection, so a
-large `decoded_entries` beside one returned row is that read's real cost.
-Decoded entries well above live documents mean the log tail holds many
-updates and deletes since the last fold. These counters carry no
-threshold or cap; compare them with `db.storage.*` and `duration_ms` when
-a read is slower than expected.
+A point read or a `limit(1)` read still folds the whole collection, so a large `decoded_entries` beside one returned row is that read's real cost. Decoded entries well above live documents mean the log tail holds many updates and deletes since the last fold. These counters carry no threshold or cap; compare them with `db.storage.*` and `duration_ms` when a read is slower than expected.
 
 ## Cross-references
 
-- [`docs/contributing/conventions/observability.md`](../contributing/conventions/observability.md)
-  — contributor-facing rules for adding new emit sites.
-- [`docs/about/cost-model.md`](../about/cost-model.md) — how class-A counts map to
-  S3 / R2 spend.
-- Public API: JSDoc on `baerlyNode` (Node) and `baerlyWorker`
-  (Cloudflare). Both expose `observability?: ObservabilityConfig | false`
-  (`false` opts out of auto-configuration — see "Embedding baerly"
-  above).
-- LogTape itself: <https://logtape.org/>. The kernel uses LogTape's
-  `Sink` / `Logger` types directly; anything in the LogTape ecosystem
-  works as a drop-in.
+- [`docs/contributing/conventions/observability.md`](../contributing/conventions/observability.md) — contributor-facing rules for adding new emit sites.
+- [`docs/about/cost-model.md`](../about/cost-model.md) — how class-A counts map to S3 / R2 spend.
+- Public API: JSDoc on `baerlyNode` (Node) and `baerlyWorker` (Cloudflare). Both expose `observability?: ObservabilityConfig | false` (`false` opts out of auto-configuration — see "Embedding baerly" above).
+- LogTape itself: <https://logtape.org/>. The kernel uses LogTape's `Sink` / `Logger` types directly; anything in the LogTape ecosystem works as a drop-in.

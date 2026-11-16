@@ -306,12 +306,7 @@ This is useful for optimistic local views. It is not baerly-storage's recovery r
 
 ## JSON merge difference: `diff`
 
-> **Not part of the baerly-storage kernel.** `diff` is not a
-> baerly-storage API. For this helper surface, `@baerly/protocol`
-> exports `merge`, not `diff`. This section uses the prior-art `mps3`
-> implementation to name the _state-relative_ inverse of `merge`
-> (`merge(a, diff(b, a)) == b`). Clients already send merge-patch
-> documents; the writer never computes a diff.
+> **Not part of the baerly-storage kernel.** `diff` is not a baerly-storage API. For this helper surface, `@baerly/protocol` exports `merge`, not `diff`. This section uses the prior-art `mps3` implementation to name the _state-relative_ inverse of `merge` (`merge(a, diff(b, a)) == b`). Clients already send merge-patch documents; the writer never computes a diff.
 
 If `merge` is the forward step `s_1 = merge(s_0, p)`, then `diff` asks for a patch that moves one known state to another known state. Given target state `b` and base state `a`, `diff(b, a)` produces a patch that moves `a` to `b`:
 

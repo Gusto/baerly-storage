@@ -22,14 +22,6 @@ Canonical content lives at [`docs/contributing/conventions/bundle-budgets.md`](.
 
 Three things to know before you edit:
 
-1. **`min-gz` is the axis a consumer pays.** `raw`/`gz` are diagnostics. All
-   three are delta-gated, so growth rate — not an absolute number — is what
-   bounds size. The lone exception is `app-config.js`, which carries absolute
-   `raw`/`gz` ceilings asserting it has no runtime closure at all.
-2. **Never trim JSDoc, comments, or error text to fit a budget.** Comments ship
-   un-stripped in `raw`/`gz` but vanish under a consumer's minifier, so golfing
-   them buys bytes nobody pays while costing documentation quality.
-3. **Intended growth is cleared with `pnpm bundle-sizes --write`** plus a reason
-   in the commit message. Do not write a changelog entry into any file. A
-   ceiling violation is not clearable this way — `--write` refuses, because
-   that failure means the entry gained a closure, not bytes.
+1. **`min-gz` is the axis a consumer pays.** `raw`/`gz` are diagnostics. All three are delta-gated, so growth rate — not an absolute number — is what bounds size. The lone exception is `app-config.js`, which carries absolute `raw`/`gz` ceilings asserting it has no runtime closure at all.
+2. **Never trim JSDoc, comments, or error text to fit a budget.** Comments ship un-stripped in `raw`/`gz` but vanish under a consumer's minifier, so golfing them buys bytes nobody pays while costing documentation quality.
+3. **Intended growth is cleared with `pnpm bundle-sizes --write`** plus a reason in the commit message. Do not write a changelog entry into any file. A ceiling violation is not clearable this way — `--write` refuses, because that failure means the entry gained a closure, not bytes.

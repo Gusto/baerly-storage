@@ -4,43 +4,27 @@ audience: operator
 summary: Operator runbook for a collection at or past a limit — map the symptom, pick the graduation path, and set the env var or move hosts.
 last-reviewed: 2026-11-16
 tags: [operations, cost, capacity, graduation]
-related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md", "../adr/002-ephemeral-coordination.md"]
+related:
+  [
+    cost-model.md,
+    workload-fit.md,
+    thesis.md,
+    "../spec/scale-ceilings.md",
+    "../adr/002-ephemeral-coordination.md",
+  ]
 ---
 
 # Graduation thresholds
 
-Graduation is what you do when a collection or workload crosses one of
-the documented bounds of the workload envelope — a scale event, not a
-maturity one. [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
-defines that envelope and owns its figures; this page is the runbook for acting on it.
+Graduation is what you do when a collection or workload crosses one of the documented bounds of the workload envelope — a scale event, not a maturity one. [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope) defines that envelope and owns its figures; this page is the runbook for acting on it.
 
-The threshold concept is **the fold**: the moment maintenance turns many
-small committed writes into one refreshed snapshot. That makes reads
-cheap again, but the snapshot rebuild still has to fit in one host turn.
-The tail is the newer log entries not yet in that snapshot.
-baerly-storage slices the tail, but it still rebuilds the whole snapshot
-in one pass. Graduation starts when that rebuild no longer fits the
-host's CPU, subrequest, or memory budget.
+The threshold concept is **the fold**: the moment maintenance turns many small committed writes into one refreshed snapshot. That makes reads cheap again, but the snapshot rebuild still has to fit in one host turn. The tail is the newer log entries not yet in that snapshot. baerly-storage slices the tail, but it still rebuilds the whole snapshot in one pass. Graduation starts when that rebuild no longer fits the host's CPU, subrequest, or memory budget.
 
-Watch `snapshot_bytes` and `snapshot_rows`. `baerly inspect` reports
-them, and they also live on `current.json`; its `fold_gate` field
-compares them against each host profile's ceilings for you. When
-write-tick maintenance defers because either ceiling trips, it bumps
-`db.compaction.deferred_total` plus `db.compaction.deferred_bytes_total`
-or `db.compaction.deferred_rows_total`, and emits a rate-limited
-`fold_deferred` warning naming the dimension, both ceilings, and the
-remedy.
+Watch `snapshot_bytes` and `snapshot_rows`. `baerly inspect` reports them, and they also live on `current.json`; its `fold_gate` field compares them against each host profile's ceilings for you. When write-tick maintenance defers because either ceiling trips, it bumps `db.compaction.deferred_total` plus `db.compaction.deferred_bytes_total` or `db.compaction.deferred_rows_total`, and emits a rate-limited `fold_deferred` warning naming the dimension, both ceilings, and the remedy.
 
-Two of the triggers below are cost lines rather than capacity ones: an
-advisory surfaced by `baerly cost`, and a hard trigger on monthly
-Class A ops.
-[cost-model.md § Cost-side graduation signals](cost-model.md#cost-side-graduation-signals)
-owns their thresholds and the dollar figures behind them.
+Two of the triggers below are cost lines rather than capacity ones: an advisory surfaced by `baerly cost`, and a hard trigger on monthly Class A ops. [cost-model.md § Cost-side graduation signals](cost-model.md#cost-side-graduation-signals) owns their thresholds and the dollar figures behind them.
 
-Those two are **account-wide aggregate** write rates, because Class A is
-billed per account. They are distinct from the per-collection
-write-contention ceiling in
-[the workload envelope](../spec/scale-ceilings.md#the-published-envelope).
+Those two are **account-wide aggregate** write rates, because Class A is billed per account. They are distinct from the per-collection write-contention ceiling in [the workload envelope](../spec/scale-ceilings.md#the-published-envelope).
 
 ## Decision table
 
@@ -71,316 +55,120 @@ baerly admin usage \
 
 ### How to read the output
 
-`baerly inspect` reports the current snapshot key, `live_log_tail`,
-`materialised_rows`, `snapshot_bytes`, and `snapshot_rows`, plus one
-`fold_gate` verdict per host profile (`cf-free`, `cf-paid`, `node`):
-`open`, `closed:bytes`, or `closed:rows`, with that profile's `C` and
-`E` and a `retention_stalled` flag (gate closed and the live tail at the
-write-tick fold floor). The CLI cannot know which host serves the
-collection, so read the line for yours, or pass `--profile=<name>`. It
-honours `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from its own environment, so
-run it with the value your host uses, and reports `maintenance` as
-`enabled`, `disabled`, or `invalid-config` from
-`BAERLY_MAINTENANCE_DISABLE`. A maintenance env value the adapters would
-reject is, for the CLI only, a stderr warning rather than a failure, and
-the CLI reports a rejected `MAX_FOLD_BYTES` against the profile default;
-the adapters refuse API requests with `InvalidConfig` until the value is
-fixed. Exit code is 0
-whatever the verdict.
-`baerly admin usage` reports writes/min against the M-size ceiling: the
-[per-collection write line](../spec/scale-ceilings.md#the-published-envelope).
+`baerly inspect` reports the current snapshot key, `live_log_tail`, `materialised_rows`, `snapshot_bytes`, and `snapshot_rows`, plus one `fold_gate` verdict per host profile (`cf-free`, `cf-paid`, `node`): `open`, `closed:bytes`, or `closed:rows`, with that profile's `C` and `E` and a `retention_stalled` flag (gate closed and the live tail at the write-tick fold floor). The CLI cannot know which host serves the collection, so read the line for yours, or pass `--profile=<name>`. It honours `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` from its own environment, so run it with the value your host uses, and reports `maintenance` as `enabled`, `disabled`, or `invalid-config` from `BAERLY_MAINTENANCE_DISABLE`. A maintenance env value the adapters would reject is, for the CLI only, a stderr warning rather than a failure, and the CLI reports a rejected `MAX_FOLD_BYTES` against the profile default; the adapters refuse API requests with `InvalidConfig` until the value is fixed. Exit code is 0 whatever the verdict. `baerly admin usage` reports writes/min against the M-size ceiling: the [per-collection write line](../spec/scale-ceilings.md#the-published-envelope).
 
-`baerly cost` projects one selected collection and reports a cost band,
-not a bill. Read its band together with the provider, maintenance
-profile and scope assumptions it prints; a `$0` band assumes no other
-account usage and no stored bytes. The bands and assumptions are in
-[cost-model.md § CLI cost bands](cost-model.md#cli-cost-bands).
+`baerly cost` projects one selected collection and reports a cost band, not a bill. Read its band together with the provider, maintenance profile and scope assumptions it prints; a `$0` band assumes no other account usage and no stored bytes. The bands and assumptions are in [cost-model.md § CLI cost bands](cost-model.md#cli-cost-bands).
 
 For compaction, compare the **snapshot**, not the tail:
 
 - `snapshot_bytes` against `C`;
-- `snapshot_rows` against `E` (the fold counts real rows, so updates and
-  deletes keep folding at `E`; only a row-adding entry stops it); and
-- the `fold_deferred` warning and `db.compaction.deferred_*` counters
-  for the portable operator signal.
+- `snapshot_rows` against `E` (the fold counts real rows, so updates and deletes keep folding at `E`; only a row-adding entry stops it); and
+- the `fold_deferred` warning and `db.compaction.deferred_*` counters for the portable operator signal.
 
-`C` and `E` are not one shared pair of numbers: each host profile ships
-its own, sized to that host's measured wall. Look up the values for the
-host you are on in
-[the per-tier table](../spec/scale-ceilings.md#per-tier-bounds) before
-comparing.
+`C` and `E` are not one shared pair of numbers: each host profile ships its own, sized to that host's measured wall. Look up the values for the host you are on in [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds) before comparing.
 
-The canonical line drops metric labels, so the dimension rides on the
-metric name (`deferred_bytes_total` / `deferred_rows_total`); the
-warning always names it. `fold_gate` reads only the stored snapshot, so
-a collection whose stored snapshot is just under `C` but whose next
-rebuild lands over it still reads `open`; the `fold_deferred` warning
-with `gate: "rebuild"` is that case's signal. A large tail alone is not
-a graduation signal because it drains in slices.
-Compare the snapshot against
-[the auto-maintained ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling)
-and [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds).
+The canonical line drops metric labels, so the dimension rides on the metric name (`deferred_bytes_total` / `deferred_rows_total`); the warning always names it. `fold_gate` reads only the stored snapshot, so a collection whose stored snapshot is just under `C` but whose next rebuild lands over it still reads `open`; the `fold_deferred` warning with `gate: "rebuild"` is that case's signal. A large tail alone is not a graduation signal because it drains in slices. Compare the snapshot against [the auto-maintained ceiling](../spec/scale-ceilings.md#the-auto-maintained-snapshot-ceiling) and [the per-tier table](../spec/scale-ceilings.md#per-tier-bounds).
 
 ## Graduation triggers
 
-A persistently deferring fold means different things on different hosts.
-Disambiguate before you act.
+A persistently deferring fold means different things on different hosts. Disambiguate before you act.
 
 ### The symptom: writes are refused, not data loss
 
-A collection approaching its host's ceiling starts refusing growth. An
-insert, or an update that makes a row larger, fails with
-`BaerlyError{code:"CapacityExceeded"}` (HTTP 409, not retriable) once
-the projected snapshot would reach `E` rows or pass `C` bytes. Nothing is
-committed. Reads, deletes, and same-size or shrinking updates keep
-working, and once the write-tick fold drains them, growth is accepted
-again. If the stored snapshot is already past the ceiling (for example
-after a larger host folded it), a pending insert cannot fold onto an
-`E`-row snapshot, or a fold pass's worth of pending changes in a row each
-leave the snapshot past `C`, no fold can make progress on this host, so every write
-is refused until you move it to a larger host or export
-it. The refusal is recomputed on every request; nothing is stored, so it
-clears on its own when the state or the host changes.
+A collection approaching its host's ceiling starts refusing growth. An insert, or an update that makes a row larger, fails with `BaerlyError{code:"CapacityExceeded"}` (HTTP 409, not retriable) once the projected snapshot would reach `E` rows or pass `C` bytes. Nothing is committed. Reads, deletes, and same-size or shrinking updates keep working, and once the write-tick fold drains them, growth is accepted again. If the stored snapshot is already past the ceiling (for example after a larger host folded it), a pending insert cannot fold onto an `E`-row snapshot, or a fold pass's worth of pending changes in a row each leave the snapshot past `C`, no fold can make progress on this host, so every write is refused until you move it to a larger host or export it. The refusal is recomputed on every request; nothing is stored, so it clears on its own when the state or the host changes.
 
-Near the ceiling, writes drive the fold themselves. While growth would be
-refused, an accepted write runs its write tick's fold without waiting for
-the usual ratio trigger and entry floor, once a full fold pass is pending
-or as soon as folding the pending tail frees room, still within the
-per-pass budget. A growth write refused only because pending changes have
-not folded yet, where folding them makes room and every pending pass
-lands within `C`, runs one bounded fold and
-fails with `BaerlyError{code:"MaintenancePending"}` (HTTP 503,
-`Retry-After`, retriable) instead; each retry folds one more pass. On a
-single host the check never admits the growth that leads there, so this
-follows a host or ceiling change: a collection written under a larger `E`
-or `C` whose pending deletes have not folded on this one. Neither path
-needs a setting or a scheduler.
+Near the ceiling, writes drive the fold themselves. While growth would be refused, an accepted write runs its write tick's fold without waiting for the usual ratio trigger and entry floor, once a full fold pass is pending or as soon as folding the pending tail frees room, still within the per-pass budget. A growth write refused only because pending changes have not folded yet, where folding them makes room and every pending pass lands within `C`, runs one bounded fold and fails with `BaerlyError{code:"MaintenancePending"}` (HTTP 503, `Retry-After`, retriable) instead; each retry folds one more pass. On a single host the check never admits the growth that leads there, so this follows a host or ceiling change: a collection written under a larger `E` or `C` whose pending deletes have not folded on this one. Neither path needs a setting or a scheduler.
 
-A collection can still end up past the ceiling through writes that skip
-the check: `baerly admin restore`, a release that predates it, or
-concurrent writers racing past the same projection. Its fold then defers.
-No data is lost, but compaction has stopped: `log_seq_start` freezes,
-log retention freezes with it (it only deletes below `log_seq_start`
-minus a window), and the live tail and the bucket grow. The remedies
-below apply. The symptoms are:
+A collection can still end up past the ceiling through writes that skip the check: `baerly admin restore`, a release that predates it, or concurrent writers racing past the same projection. Its fold then defers. No data is lost, but compaction has stopped: `log_seq_start` freezes, log retention freezes with it (it only deletes below `log_seq_start` minus a window), and the live tail and the bucket grow. The remedies below apply. The symptoms are:
 
-- **Reads get gradually slower.** Each read replays an ever-growing log
-  tail on top of the stale snapshot: N extra GETs, with N climbing by
-  one for every write since the last successful fold.
-- **The bucket grows.** Unfolded log entries accumulate as objects and
-  bytes because the fold that would collapse them never completes.
-- **A warning appears.** `wrangler tail`, Vercel logs, or Node logs show
-  a structured `fold_deferred` record (category `baerly.maintenance`)
-  and a human `console.warn`. Both name the collection, which arm
-  tripped, the active `C` and `E`, the frozen `log_seq_start`, and the
-  remedy for that arm. They fire on a collection's first deferral and
-  then at most once per `MAINTENANCE_WARN_INTERVAL_WRITES = 1000`
-  writes, rate-limited by `current.json.last_warned_seq`. Every defer
-  also bumps `db.compaction.deferred_total` (labels `dimension`, `gate`)
-  and `db.compaction.deferred_bytes_total` or
-  `db.compaction.deferred_rows_total`. On Cloudflare the fold runs in
-  `ctx.waitUntil` after the request's canonical line is written, so the
-  log record is the signal you will see there.
-- **It can close at either of two gates.** The usual one is the
-  pre-fold check on the stored snapshot (`gate: "pre-fold"`). The other
-  is compact()'s own check on the rebuilt snapshot (`gate: "rebuild"`):
-  the stored snapshot is still under `C` but the fold would push it
-  over. That is how bytes typically first cross `C`, and because the
-  stored figure never catches up, every ratio-tripping write repeats
-  the rebuild and defers again.
+- **Reads get gradually slower.** Each read replays an ever-growing log tail on top of the stale snapshot: N extra GETs, with N climbing by one for every write since the last successful fold.
+- **The bucket grows.** Unfolded log entries accumulate as objects and bytes because the fold that would collapse them never completes.
+- **A warning appears.** `wrangler tail`, Vercel logs, or Node logs show a structured `fold_deferred` record (category `baerly.maintenance`) and a human `console.warn`. Both name the collection, which arm tripped, the active `C` and `E`, the frozen `log_seq_start`, and the remedy for that arm. They fire on a collection's first deferral and then at most once per `MAINTENANCE_WARN_INTERVAL_WRITES = 1000` writes, rate-limited by `current.json.last_warned_seq`. Every defer also bumps `db.compaction.deferred_total` (labels `dimension`, `gate`) and `db.compaction.deferred_bytes_total` or `db.compaction.deferred_rows_total`. On Cloudflare the fold runs in `ctx.waitUntil` after the request's canonical line is written, so the log record is the signal you will see there.
+- **It can close at either of two gates.** The usual one is the pre-fold check on the stored snapshot (`gate: "pre-fold"`). The other is compact()'s own check on the rebuilt snapshot (`gate: "rebuild"`): the stored snapshot is still under `C` but the fold would push it over. That is how bytes typically first cross `C`, and because the stored figure never catches up, every ratio-tripping write repeats the rebuild and defers again.
 
 ### The drain-rate safety invariant
 
-Folds continually push log entries below the floor, while replaced or
-CAS-losing snapshot publishes leave orphan snapshots. Two independent
-passes reclaim them at two independent rates, so there are two
-invariants, not one.
+Folds continually push log entries below the floor, while replaced or CAS-losing snapshot publishes leave orphan snapshots. Two independent passes reclaim them at two independent rates, so there are two invariants, not one.
 
-**Orphan snapshots, paced by the GC sweep budget.** The
-orphan-snapshot population stays bounded only while sweep throughput
-keeps up with production:
+**Orphan snapshots, paced by the GC sweep budget.** The orphan-snapshot population stays bounded only while sweep throughput keeps up with production:
 
-> **`WRITE_TICK_GC_MAX_SWEEPS / WRITE_TICK_GC_INTERVAL` (= 10/4) ≥
-> orphan-snapshot production rate `p`.**
+> **`WRITE_TICK_GC_MAX_SWEEPS / WRITE_TICK_GC_INTERVAL` (= 10/4) ≥ orphan-snapshot production rate `p`.**
 
-Since each fold that republishes `current.snapshot` orphans exactly one
-predecessor, `p` is bounded by the fold rate.
+Since each fold that republishes `current.snapshot` orphans exactly one predecessor, `p` is bounded by the fold rate.
 
-**Sub-floor log objects, paced by the retention budget.** These are not
-GC-managed. `retireLogRange` deletes a computed sequence range, so the
-bound is arithmetic rather than discovery-limited:
+**Sub-floor log objects, paced by the retention budget.** These are not GC-managed. `retireLogRange` deletes a computed sequence range, so the bound is arithmetic rather than discovery-limited:
 
-> **`LOG_RETENTION_MAX_DELETES_PER_TICK` per retiring tick ≥ the rate at
-> which folds push entries below `log_seq_start`.**
+> **`LOG_RETENTION_MAX_DELETES_PER_TICK` per retiring tick ≥ the rate at which folds push entries below `log_seq_start`.**
 
-Retirement runs on every maintenance pass rather than on the
-`gcInterval` boundary, and its floor trails `log_seq_start` by
-`LOG_RETENTION_SEQ_WINDOW`, so a steady-state collection retires at the
-fold rate and the window is the standing residual.
+Retirement runs on every maintenance pass rather than on the `gcInterval` boundary, and its floor trails `log_seq_start` by `LOG_RETENTION_SEQ_WINDOW`, so a steady-state collection retires at the fold rate and the window is the standing residual.
 
-Neither invariant bounds live log growth behind a deferred fold, or
-inert objects under the legacy `content/` prefix: retirement trails
-`log_seq_start`, which a deferred fold freezes.
+Neither invariant bounds live log growth behind a deferred fold, or inert objects under the legacy `content/` prefix: retirement trails `log_seq_start`, which a deferred fold freezes.
 
-One thing upstream of the GC sweep can bind before sweep throughput
-does, and raising the sweep rate does not fix it:
+One thing upstream of the GC sweep can bind before sweep throughput does, and raising the sweep rate does not fix it:
 
-- **Ledger depth.** `GC_MAX_PENDING_CANDIDATES` bounds how many
-  `orphan-snapshot` candidates are in flight at once, and each cohort
-  waits out `GC_GRACE_PERIOD_MILLIS` before it can be swept. Legacy
-  entries on a v0.6.0 ledger count against the same cap: an
-  `orphan-content` entry is evicted on sight rather than waiting out the
-  grace period, and a `stale-log` entry — a category no current build
-  marks — is still swept under the grace if it clears the canonicality,
-  generation, and liveness arms. See the eviction and authority arms in
-  `gc.ts`. On a large accumulated backlog that ceiling — not the sweep
-  budget — is what paces reclamation.
+- **Ledger depth.** `GC_MAX_PENDING_CANDIDATES` bounds how many `orphan-snapshot` candidates are in flight at once, and each cohort waits out `GC_GRACE_PERIOD_MILLIS` before it can be swept. Legacy entries on a v0.6.0 ledger count against the same cap: an `orphan-content` entry is evicted on sight rather than waiting out the grace period, and a `stale-log` entry — a category no current build marks — is still swept under the grace if it clears the canonicality, generation, and liveness arms. See the eviction and authority arms in `gc.ts`. On a large accumulated backlog that ceiling — not the sweep budget — is what paces reclamation.
 
-Mark coverage is not on this list. GC's one remaining mark phase scans
-`snapshot/L9/` from the lexicographic start on every pass, so no key
-can hide behind a cursor. Its LIST window is `maxMarks` plus the
-snapshot keys already pending in `gc/pending.json` plus the live
-`current.snapshot`, capped at one LIST page
-(`GC_MARK_LIST_PAGE_KEYS`) and never below `maxMarks`. A cohort waiting
-out its grace therefore does not occupy the mark budget: each pass marks
-up to `maxMarks` orphans that are not yet pending, so marking keeps pace
-with folds until the ledger itself is full. At steady state the
-replaced-snapshot population is about fold rate × grace.
+Mark coverage is not on this list. GC's one remaining mark phase scans `snapshot/L9/` from the lexicographic start on every pass, so no key can hide behind a cursor. Its LIST window is `maxMarks` plus the snapshot keys already pending in `gc/pending.json` plus the live `current.snapshot`, capped at one LIST page (`GC_MARK_LIST_PAGE_KEYS`) and never below `maxMarks`. A cohort waiting out its grace therefore does not occupy the mark budget: each pass marks up to `maxMarks` orphans that are not yet pending, so marking keeps pace with folds until the ledger itself is full. At steady state the replaced-snapshot population is about fold rate × grace.
 
-Under above-envelope churn, artifacts can become eligible faster than
-either pass reclaims them. Growth in those prefixes is the signal; the
-protocol does not silently lose data.
+Under above-envelope churn, artifacts can become eligible faster than either pass reclaims them. Growth in those prefixes is the signal; the protocol does not silently lose data.
 
-If bucket inventory instead shows growth under `content/`, do not treat it
-as GC lag. Check for v0.6.0 nodes still writing during a mixed rollout, or
-for a restore/raw copy that preserved a legacy content prefix. Quiesce the
-legacy writers first, then follow the manual disposal guidance in
-[Backups](../guide/backups.md#legacy-content-cleanup). Current GC never marks or deletes
-those objects, so a restored legacy prefix can remain large without
-violating the drain-rate invariants above.
+If bucket inventory instead shows growth under `content/`, do not treat it as GC lag. Check for v0.6.0 nodes still writing during a mixed rollout, or for a restore/raw copy that preserved a legacy content prefix. Quiesce the legacy writers first, then follow the manual disposal guidance in [Backups](../guide/backups.md#legacy-content-cleanup). Current GC never marks or deletes those objects, so a restored legacy prefix can remain large without violating the drain-rate invariants above.
 
 ### Which graduation?
 
 Map the signal before acting:
 
-- **Cloudflare free byte defer:** upgrade tier and set
-  `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to the cf-paid
-  value. Only override `C` beyond that if you have sized it to memory.
-- **Node byte defer:** raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above
-  the node default, sized by `C ≈ heap / 10`.
-- **Row defer:** `E` has no env override, but it is per host profile —
-  move to a larger profile (cf-free → cf-paid → node;
-  [values](../spec/scale-ceilings.md#the-published-envelope)) to raise it. At node's `E`, split or graduate.
-- **Hot collection or tenant-scale signal:** graduate the workload to
-  D1/Postgres.
+- **Cloudflare free byte defer:** upgrade tier and set `BAERLY_MAINTENANCE_PROFILE=cf-paid`, which moves `C` to the cf-paid value. Only override `C` beyond that if you have sized it to memory.
+- **Node byte defer:** raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above the node default, sized by `C ≈ heap / 10`.
+- **Row defer:** `E` has no env override, but it is per host profile — move to a larger profile (cf-free → cf-paid → node; [values](../spec/scale-ceilings.md#the-published-envelope)) to raise it. At node's `E`, split or graduate.
+- **Hot collection or tenant-scale signal:** graduate the workload to D1/Postgres.
 
 A deferred fold alone does not mean "move to Postgres."
 
-> **Cron does not help Cloudflare free.** Maintenance ticks on the write
-> path. The opt-in `runScheduledMaintenance` SDK is useful for explicit
-> maintenance windows, but a scheduled Worker has the same ~10 ms CPU
-> limit as a request handler. A fresh budget per tick is not a larger
-> budget. The levers are Workers Paid, a Node host, or a smaller cap.
+> **Cron does not help Cloudflare free.** Maintenance ticks on the write path. The opt-in `runScheduledMaintenance` SDK is useful for explicit maintenance windows, but a scheduled Worker has the same ~10 ms CPU limit as a request handler. A fresh budget per tick is not a larger budget. The levers are Workers Paid, a Node host, or a smaller cap.
 
 ### 1. Off Cloudflare free → Cloudflare paid
 
-**Threshold:** the auto-maintained snapshot ceiling at the
-[cf-free values](../spec/scale-ceilings.md#the-published-envelope), bytes or rows, whichever trips first —
-`snapshot_bytes > C`, or `snapshot_rows` at `E` with a row-adding entry
-next in the log.
+**Threshold:** the auto-maintained snapshot ceiling at the [cf-free values](../spec/scale-ceilings.md#the-published-envelope), bytes or rows, whichever trips first — `snapshot_bytes > C`, or `snapshot_rows` at `E` with a row-adding entry next in the log.
 
-**What you'll observe:** inserts and growing updates fail with
-`CapacityExceeded`; if the fold has already deferred, a `console.warn`
-naming bytes vs. rows.
+**What you'll observe:** inserts and growing updates fail with `CapacityExceeded`; if the fold has already deferred, a `console.warn` naming bytes vs. rows.
 
-**What to do:** upgrade to Cloudflare Workers Paid (about $5/mo; 30 s
-CPU vs. free's ~10 ms), then set `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
-That alone moves `C` and `E` to the cf-paid values and compaction resumes;
-there is no env override to set for the common case. On paid, CPU stops
-being the binding cost and Worker memory (~128 MB) becomes the limit —
-which is why the paid byte ceiling is single-digit MiB rather than
-"tens of MB" ([why that number](../spec/scale-ceilings.md#per-tier-bounds)). If you
-override `C` past the profile value, size it to memory, not CPU; see
-[Operations plane](#operations-plane-env-vars).
+**What to do:** upgrade to Cloudflare Workers Paid (about $5/mo; 30 s CPU vs. free's ~10 ms), then set `BAERLY_MAINTENANCE_PROFILE=cf-paid`. That alone moves `C` and `E` to the cf-paid values and compaction resumes; there is no env override to set for the common case. On paid, CPU stops being the binding cost and Worker memory (~128 MB) becomes the limit — which is why the paid byte ceiling is single-digit MiB rather than "tens of MB" ([why that number](../spec/scale-ceilings.md#per-tier-bounds)). If you override `C` past the profile value, size it to memory, not CPU; see [Operations plane](#operations-plane-env-vars).
 
 ### 2. On serverful Node: raise the env var
 
-When the warning names bytes, this is not a tier graduation. A Node host
-has no per-request CPU wall, so the byte ceiling is host RAM, and the
-node profile already ships the largest [`C`](../spec/scale-ceilings.md#the-published-envelope) — the top of the
-measured grid, not a measured wall, so a host with headroom can go
-further. Rows are a separate ceiling that RAM does not move: node's `E`,
-which a collection of small documents reaches before it reaches `C`. Raise
-`BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, scaling by `C ≈ heap / 10`
-([where that rule comes from](../spec/scale-ceilings.md#what-is-shipped-vs-estimated));
-the fold completes on the next write, with one inline
-write-latency spike. If the warning names
-rows, the env var will not help: `E` has no override, and node already
-runs the largest shipped value.
+When the warning names bytes, this is not a tier graduation. A Node host has no per-request CPU wall, so the byte ceiling is host RAM, and the node profile already ships the largest [`C`](../spec/scale-ceilings.md#the-published-envelope) — the top of the measured grid, not a measured wall, so a host with headroom can go further. Rows are a separate ceiling that RAM does not move: node's `E`, which a collection of small documents reaches before it reaches `C`. Raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`, scaling by `C ≈ heap / 10` ([where that rule comes from](../spec/scale-ceilings.md#what-is-shipped-vs-estimated)); the fold completes on the next write, with one inline write-latency spike. If the warning names rows, the env var will not help: `E` has no override, and node already runs the largest shipped value.
 
 ### 3. Paid serverless → serverful Node
 
-**Threshold:** a snapshot approaches the
-[cf-paid ceiling](../spec/scale-ceilings.md#the-published-envelope), in bytes or rows.
+**Threshold:** a snapshot approaches the [cf-paid ceiling](../spec/scale-ceilings.md#the-published-envelope), in bytes or rows.
 
-**What you'll observe:** on paid Cloudflare, folds start running into
-the ~128 MB Worker memory limit. The fold cannot hold the old snapshot,
-new snapshot, and log tail resident at once. CPU is still fine.
+**What you'll observe:** on paid Cloudflare, folds start running into the ~128 MB Worker memory limit. The fold cannot hold the old snapshot, new snapshot, and log tail resident at once. CPU is still fine.
 
-**What to do:** move the collection to a long-lived Node host, which
-selects the node profile and its larger `C`/`E` automatically,
-then raise the env cap as above if the host has the heap for it. The
-current snapshot format is single-level: one L9 snapshot replaces the
-prior. Plan around the Node host, not around a future snapshot format:
-any replacement lands as a pre-1.0 format cut rather than a compatible
-extension, so it arrives as a migration, not an upgrade.
+**What to do:** move the collection to a long-lived Node host, which selects the node profile and its larger `C`/`E` automatically, then raise the env cap as above if the host has the heap for it. The current snapshot format is single-level: one L9 snapshot replaces the prior. Plan around the Node host, not around a future snapshot format: any replacement lands as a pre-1.0 format cut rather than a compatible extension, so it arrives as a migration, not an upgrade.
 
 ### Tail churn is not a graduation signal
 
-A small, heavily updated collection, such as 50 docs receiving constant
-updates, can build a large tail that collapses to a handful of `_id`s.
-Under the prior unsliceable-fold model, that large tail could trip the
-ceiling. It no longer does.
+A small, heavily updated collection, such as 50 docs receiving constant updates, can build a large tail that collapses to a handful of `_id`s. Under the prior unsliceable-fold model, that large tail could trip the ceiling. It no longer does.
 
-The tail is sliced by `maxFoldEntriesPerPass`, so a large tail drains
-over many write ticks. Each CF-free pass folds a small slice
-(`WRITE_TICK_FOLD_ENTRIES_PER_PASS`) into the small snapshot, and the snapshot stays small. Tail length alone does
-not defer; only the snapshot axis (`C` bytes / `E` rows) defers.
+The tail is sliced by `maxFoldEntriesPerPass`, so a large tail drains over many write ticks. Each CF-free pass folds a small slice (`WRITE_TICK_FOLD_ENTRIES_PER_PASS`) into the small snapshot, and the snapshot stays small. Tail length alone does not defer; only the snapshot axis (`C` bytes / `E` rows) defers.
 
 ### 4. Off baerly-storage → Postgres: the workload envelope
 
-Triggers 1-3 ask whether one collection's fold fits one host. This asks
-whether write throughput or total scale still belongs on baerly-storage.
+Triggers 1-3 ask whether one collection's fold fits one host. This asks whether write throughput or total scale still belongs on baerly-storage.
 
-**Threshold:** any envelope axis crossed — writes per collection,
-collections per tenant, or the stored-bytes cost line.
-[scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
-owns the figures and what each axis means; none of them is enforced by
-the protocol.
+**Threshold:** any envelope axis crossed — writes per collection, collections per tenant, or the stored-bytes cost line. [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope) owns the figures and what each axis means; none of them is enforced by the protocol.
 
-**What you'll observe:** `baerly admin usage` grades each collection
-against the write line. The other two axes have no runtime signal — a
-tenant is a key prefix, so bucket inventory is what tells you.
+**What you'll observe:** `baerly admin usage` grades each collection against the write line. The other two axes have no runtime signal — a tenant is a key prefix, so bucket inventory is what tells you.
 
-**What to do:** graduate the workload to D1/Postgres, regardless of
-deployment tier. For Postgres, use `baerly export --target=postgres`.
-For why the envelope is drawn where it is, see
-[workload-ceiling](thesis.md#workload-ceiling); for the adjacent cost
-lines, see
-[cost-model.md](cost-model.md#cost-side-graduation-signals).
+**What to do:** graduate the workload to D1/Postgres, regardless of deployment tier. For Postgres, use `baerly export --target=postgres`. For why the envelope is drawn where it is, see [workload-ceiling](thesis.md#workload-ceiling); for the adjacent cost lines, see [cost-model.md](cost-model.md#cost-side-graduation-signals).
 
 ## Operations plane (env vars)
 
 Maintenance has two configuration planes:
 
-- **Application authoring:** `defineConfig`, `baerlyNode`, and the
-  `.d.ts` surface expose no maintenance config. App authors do not tune
-  folds.
-- **Operations / control plane:** env vars set out-of-band by an
-  operator or platform. This plane is empty by default; use it only
-  after deciding which graduation path applies. Do not put these vars in
-  `defineConfig`, `baerlyNode`, or any `.d.ts`; they are not part of the
-  application contract.
+- **Application authoring:** `defineConfig`, `baerlyNode`, and the `.d.ts` surface expose no maintenance config. App authors do not tune folds.
+- **Operations / control plane:** env vars set out-of-band by an operator or platform. This plane is empty by default; use it only after deciding which graduation path applies. Do not put these vars in `defineConfig`, `baerlyNode`, or any `.d.ts`; they are not part of the application contract.
 
 | Env var | Effect | When to set it |
 | --- | --- | --- |
@@ -388,46 +176,17 @@ Maintenance has two configuration planes:
 | `BAERLY_MAINTENANCE_PROFILE` | Cloudflare-only. Accepts `cf-free` (default; also unset or `""`) or `cf-paid`, case-sensitive; any other value, including surrounding whitespace, throws `InvalidConfig` on API requests (healthz, spec, and dev routes stay up). `cf-paid` raises fold-entry and GC cadence/mark/sweep caps to Node values, using the paid 10,000-subrequest budget, **and** selects the paid `C` / `E` ceilings. This is the only way to raise `E` on Cloudflare. | On Cloudflare Paid, after upgrading the plan tier, to recover per-pass throughput and the paid ceilings. Do not set on Node; Node selects its own profile, and its ceilings, automatically. |
 | `BAERLY_MAINTENANCE_DISABLE` | Kill switch; disables in-band fold/GC phases while preserving bounded `tail_hint` refresh. Accepts a closed, case-insensitive vocabulary only: `""` / `"0"` / `"false"` (not disabled, the default) or `"1"` / `"true"` (disabled). Any other value throws on every request that reads it instead of being silently accepted — on Node and Cloudflare alike, `/v1/healthz` and `/v1/spec` are unaffected since they're served before this var is read. | Diagnostics, or to stop fold attempts on a deferring collection while you plan graduation. |
 
-There is no env var for `E`. It is a kernel constant, not
-adapter-threaded — but there are three of them, one per profile
-([values](../spec/scale-ceilings.md#the-published-envelope)), so the profile in effect is what sets it. Selecting a
-larger profile is the supported way to raise `E`.
+There is no env var for `E`. It is a kernel constant, not adapter-threaded — but there are three of them, one per profile ([values](../spec/scale-ceilings.md#the-published-envelope)), so the profile in effect is what sets it. Selecting a larger profile is the supported way to raise `E`.
 
-**Cloudflare caveat: size the cap to the isolate.** Raising
-`BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above what a CF isolate can rebuild
-can create a killed-rebuild loop: the gate passes, the rebuild runs in
-`ctx.waitUntil`, the isolate dies, no in-band backoff fires, and the next
-write tries again. The demonstrated cause is **memory** — an isolate over
-~128 MB is terminated. A CPU-driven kill has not been observed: a
-deployed Worker with a configured 10 ms limit ran 4 MiB folds at
-41.7–67.8 ms of measured CPU and reported success every time
-([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)).
-Cloudflare terminates a Worker that overruns *consistently*, so treat a
-CPU-driven loop as possible but unmeasured, and a memory-driven one as
-real.
+**Cloudflare caveat: size the cap to the isolate.** Raising `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` above what a CF isolate can rebuild can create a killed-rebuild loop: the gate passes, the rebuild runs in `ctx.waitUntil`, the isolate dies, no in-band backoff fires, and the next write tries again. The demonstrated cause is **memory** — an isolate over ~128 MB is terminated. A CPU-driven kill has not been observed: a deployed Worker with a configured 10 ms limit ran 4 MiB folds at 41.7–67.8 ms of measured CPU and reported success every time ([why](../spec/scale-ceilings.md#is-the-free-cpu-limit-a-wall)). Cloudflare terminates a Worker that overruns _consistently_, so treat a CPU-driven loop as possible but unmeasured, and a memory-driven one as real.
 
-On the free profile, the CF adapter `console.warn`s once at handler init
-when `BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES`
-(1 MiB) — the point past which one fold stops fitting the free tier's CPU
-budget. Free CPU is best effort; Paid is the first
-tier with a guaranteed CPU budget. It stays silent on `cf-paid`, whose own ceiling is already
-well past that bound and whose binding cost is memory rather than CPU. Either way
-there is no runtime metric: watch the snapshot key and object count from
-`baerly inspect`; a snapshot key that never advances while
-`live_log_tail` grows is a rebuild that keeps not landing.
+On the free profile, the CF adapter `console.warn`s once at handler init when `BAERLY_MAINTENANCE_MAX_FOLD_BYTES > CF_FREE_MAX_SAFE_FOLD_BYTES` (1 MiB) — the point past which one fold stops fitting the free tier's CPU budget. Free CPU is best effort; Paid is the first tier with a guaranteed CPU budget. It stays silent on `cf-paid`, whose own ceiling is already well past that bound and whose binding cost is memory rather than CPU. Either way there is no runtime metric: watch the snapshot key and object count from `baerly inspect`; a snapshot key that never advances while `live_log_tail` grows is a rebuild that keeps not landing.
 
 Safe remedies, in order:
 
-- **Cloudflare Paid:** raises CPU limits; `BAERLY_MAINTENANCE_PROFILE=cf-paid`
-  then applies ceilings already sized to the ~128 MB memory wall rather
-  than the 30 s CPU budget. Any further override is sized to memory too.
-- **Serverful Node:** no per-request CPU/subrequest cap; bounded by host
-  RAM, and the node profile is selected automatically. Raise the env cap
-  above the node `C` only with heap to spare.
-- **A multi-object snapshot format:** splitting the single-level
-  snapshot across many objects would avoid holding the whole snapshot
-  resident. Not shipped; it would land as a pre-1.0 format cut rather
-  than an in-place upgrade.
+- **Cloudflare Paid:** raises CPU limits; `BAERLY_MAINTENANCE_PROFILE=cf-paid` then applies ceilings already sized to the ~128 MB memory wall rather than the 30 s CPU budget. Any further override is sized to memory too.
+- **Serverful Node:** no per-request CPU/subrequest cap; bounded by host RAM, and the node profile is selected automatically. Raise the env cap above the node `C` only with heap to spare.
+- **A multi-object snapshot format:** splitting the single-level snapshot across many objects would avoid holding the whole snapshot resident. Not shipped; it would land as a pre-1.0 format cut rather than an in-place upgrade.
 
 ## How to raise a limit
 
@@ -439,23 +198,13 @@ Safe remedies, in order:
 | Per-collection commit scope (one ordered log per collection; no cross-collection atomicity) | Cannot be increased; protocol invariant | The write hotspot is the next numbered `log/<seq>` create for one collection. Cross-collection atomicity is not offered. |
 | Snapshot and legacy-content hash addressing | Cannot be increased; protocol invariant | Snapshot filenames embed full SHA-256, and current readers recompute the body hash before accepting a snapshot. Legacy content filenames use 128-bit truncated SHA-256 and collisions were never runtime-verified; the objects are now inert and nothing reads or reclaims them, so the truncation carries no remaining safety obligation. |
 
-`E` is in this map, but with a different lever: it is a kernel constant
-per profile rather than an env-var knob, so the profile is what raises
-it.
+`E` is in this map, but with a different lever: it is a kernel constant per profile rather than an env-var knob, so the profile is what raises it.
 
 ## See also
 
-- [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope) — the
-  figures this page triggers on.
-- [workload-fit.md](workload-fit.md) — whether the app fitted in the
-  first place.
-- [cost-model.md](cost-model.md) — Class A ops, write-amp, stored bytes,
-  and the cost meters behind the two cost triggers.
-- [scale-ceilings.md](../spec/scale-ceilings.md) — also why `C`, `E`,
-  and the per-tier walls are the numbers they are.
-- [thesis.md](thesis.md#workload-ceiling) — why the envelope is named
-  and why graduation is the success path.
-- [adr/002-ephemeral-coordination.md](../adr/002-ephemeral-coordination.md)
-  — why graduation is mechanical: there is no stateful coordinator to
-  migrate away from, so the bucket plus the log shape are the handoff to
-  Postgres.
+- [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope) — the figures this page triggers on.
+- [workload-fit.md](workload-fit.md) — whether the app fitted in the first place.
+- [cost-model.md](cost-model.md) — Class A ops, write-amp, stored bytes, and the cost meters behind the two cost triggers.
+- [scale-ceilings.md](../spec/scale-ceilings.md) — also why `C`, `E`, and the per-tier walls are the numbers they are.
+- [thesis.md](thesis.md#workload-ceiling) — why the envelope is named and why graduation is the success path.
+- [adr/002-ephemeral-coordination.md](../adr/002-ephemeral-coordination.md) — why graduation is mechanical: there is no stateful coordinator to migrate away from, so the bucket plus the log shape are the handoff to Postgres.

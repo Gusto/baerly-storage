@@ -13,5 +13,4 @@ related: ["../../docs/contributing/conventions/tests.md"]
 
 # Test rules
 
-Canonical content lives at [`docs/contributing/conventions/tests.md`](../../docs/contributing/conventions/tests.md).
-Read that file before adding or moving tests.
+Canonical content lives at [`docs/contributing/conventions/tests.md`](../../docs/contributing/conventions/tests.md). Read that file before adding or moving tests.

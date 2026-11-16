@@ -8,7 +8,10 @@ The writer now reads the log entries committed between the insert's check read a
 
 ```ts
 // before: both could resolve, and the stored row was whichever committed last
-await Promise.all([tickets.insert({ _id: "t-1", by: "a" }), tickets.insert({ _id: "t-1", by: "b" })]);
+await Promise.all([
+  tickets.insert({ _id: "t-1", by: "a" }),
+  tickets.insert({ _id: "t-1", by: "b" }),
+]);
 // after: one resolves, the other rejects with AlreadyExists
 const [a, b] = await Promise.allSettled([
   tickets.insert({ _id: "t-1", by: "a" }),

@@ -31,6 +31,7 @@ Run the baseline on a quiet machine. It records the load average before and afte
    - **Account Settings: Read**: `whoami` (step 1).
 
    No zone permissions (no routes, workers.dev only). Revoke the token after step 9.
+
 1. `./wrangler.sh whoami` and confirm the account is an **owner-approved test account on the Workers Free plan**. This bench uses synthetic data only; no company data goes to the account. The S1 probes are valid only on Free.
 2. Create the empty synthetic bucket: `./wrangler.sh r2 bucket create baerly-cpu-factor-synthetic`.
 3. From the repo root, `pnpm bench:cpu-factor:build` (wrangler deploys `dist/worker.js`, which nothing else builds). Then from `bench/cpu-factor-worker/`: `./wrangler.sh deploy`. The Worker gets a public `*.workers.dev` URL that serves only synthetic data. A run sends about 12,000 requests, within Free's 100,000 per day. Delete the Worker promptly.

@@ -1,192 +1,74 @@
 # baerly-storage — common mistakes & recipes
 
-> Companion to `dist/API.md`. API.md is the surface; this file is the
-> "why did my call fail" lookup, keyed by the exact error string you
-> see. If a fix here disagrees with the `.d.ts` types, the types win.
+> Companion to `dist/API.md`. API.md is the surface; this file is the "why did my call fail" lookup, keyed by the exact error string you see. If a fix here disagrees with the `.d.ts` types, the types win.
 
 ## Common mistakes (keyed by the error you see)
 
 ### `Request body must be { doc: object }` (HTTP 400, `code="SchemaError"`)
 
-**Cause:** POSTed a flat document body to `/v1/c/<collection>`.
-**Fix:** Wrap it: `{ "doc": { ...yourFields } }`. The insert verb reads
-`body.doc`, not the body itself. Same pattern for PATCH (`patch:`) and
-PUT (`doc:`).
-The wire `resolution` says: `Send a JSON body shaped { "doc": { ... } } for POST/PUT, or { "patch": { ... } } for PATCH.`
+**Cause:** POSTed a flat document body to `/v1/c/<collection>`. **Fix:** Wrap it: `{ "doc": { ...yourFields } }`. The insert verb reads `body.doc`, not the body itself. Same pattern for PATCH (`patch:`) and PUT (`doc:`). The wire `resolution` says: `Send a JSON body shaped { "doc": { ... } } for POST/PUT, or { "patch": { ... } } for PATCH.`
 
 ### `BaerlyError code="SchemaError"` on insert/update/replace
 
-**Cause:** the document failed schema validation, OR the body is not
-valid JSON / contains an array where `DocumentValue` is required, OR a
-`null` field value (use `.optional()`; `null` in an *update patch* is the
-RFC 7386 deletion sentinel, not a storable value).
-**Fix:** read `error.issues` (each `{ path, message }`) for the offending
-field path. Declare `_id: z.string()` (required) in your schema — the
-validator runs on the post-image, so optional `_id` is wrong.
+**Cause:** the document failed schema validation, OR the body is not valid JSON / contains an array where `DocumentValue` is required, OR a `null` field value (use `.optional()`; `null` in an _update patch_ is the RFC 7386 deletion sentinel, not a storable value). **Fix:** read `error.issues` (each `{ path, message }`) for the offending field path. Declare `_id: z.string()` (required) in your schema — the validator runs on the post-image, so optional `_id` is wrong.
 
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
-**Cause:** another write won a race this call needed to win, and the losing
-commit did not land. `retriable` is `true`. A bulk `.where(...).update()` /
-`.delete()` may have applied earlier rows; re-issuing the call is safe.
-**Fix:** re-read, re-apply, and retry with bounded backoff. The in-process
-writer makes one commit attempt and does not retry it (storage adapters retry
-individual requests); a remote client that sees `retriable: true` should apply
-its own bounded backoff.
+**Cause:** another write won a race this call needed to win, and the losing commit did not land. `retriable` is `true`. A bulk `.where(...).update()` / `.delete()` may have applied earlier rows; re-issuing the call is safe. **Fix:** re-read, re-apply, and retry with bounded backoff. The in-process writer makes one commit attempt and does not retry it (storage adapters retry individual requests); a remote client that sees `retriable: true` should apply its own bounded backoff.
 
 ### `BaerlyError code="AlreadyExists"` (HTTP 409)
 
-**Cause:** a caller-supplied `_id` on `insert` is held by a live row (or
-`baerly admin restore` targeted an existing collection without `--force`).
-The first insert of an `_id` wins: of concurrent inserts of one `_id`,
-at most one commits and the others throw `AlreadyExists`, committing nothing
-(an identical `mintedId` resend replays instead; see the next section).
-`retriable` is `false`: never retry.
-**Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one,
-or change the stored row with `update` / `replace`. After a same-`_id` retry
-following `AmbiguousCommit`, the stored row may be your first attempt: re-read
-it instead (see below). The same holds for an insert that omitted `_id`: the
-client resends it under its minted `_id`, so this error can mean your first
-attempt landed and the row changed since. Re-read it; do not insert again
-without an `_id`, which mints a second row.
+**Cause:** a caller-supplied `_id` on `insert` is held by a live row (or `baerly admin restore` targeted an existing collection without `--force`). The first insert of an `_id` wins: of concurrent inserts of one `_id`, at most one commits and the others throw `AlreadyExists`, committing nothing (an identical `mintedId` resend replays instead; see the next section). `retriable` is `false`: never retry. **Fix:** choose a different `_id`, omit `_id` so baerly-storage can mint one, or change the stored row with `update` / `replace`. After a same-`_id` retry following `AmbiguousCommit`, the stored row may be your first attempt: re-read it instead (see below). The same holds for an insert that omitted `_id`: the client resends it under its minted `_id`, so this error can mean your first attempt landed and the row changed since. Re-read it; do not insert again without an `_id`, which mints a second row.
 
 ### `BaerlyError code="CapacityExceeded"` (HTTP 409)
 
-**Cause:** the collection has reached the fold ceiling of the host serving the
-request (`E` rows or `C` snapshot bytes for its maintenance profile), so the
-write was refused and not committed. `retriable` is `false`. The refusal is
-recomputed on every request; nothing is stored. A batch
-`.where(...).update()` / `.delete()` is checked before its first row commits,
-and again at a row's commit if a concurrent write landed since; refused
-part-way, it keeps the rows it already committed.
-**Fix:** depends on the message.
+**Cause:** the collection has reached the fold ceiling of the host serving the request (`E` rows or `C` snapshot bytes for its maintenance profile), so the write was refused and not committed. `retriable` is `false`. The refusal is recomputed on every request; nothing is stored. A batch `.where(...).update()` / `.delete()` is checked before its first row commits, and again at a row's commit if a concurrent write landed since; refused part-way, it keeps the rows it already committed. **Fix:** depends on the message.
 
-- **Growth refused** (an insert, or an update that makes a row larger): deletes
-  and same-size or shrinking updates still commit. Delete or shrink rows; once
-  write-tick maintenance folds them, growth is accepted again.
-- **Every write refused** ("no fold can make progress here"): the stored
-  snapshot is already past this host's ceiling, typically after a larger host
-  folded it, a pending insert cannot fold onto an `E`-row snapshot, or a
-  fold pass's worth of pending changes in a row each leave the snapshot past
-  the byte ceiling. The
-  collection has outgrown this host: export it with `baerly admin dump`, or
-  have the operator move it to a larger host. Reads within the read bounds
-  keep working either way.
-- **Request limit** ("does not fit in one request on this host"): the request
-  ran out of storage calls, and the refused write sent nothing. A multi-row
-  `update()` / `delete()` keeps the rows before the refused one; re-run it as
-  a new request (it re-reads and re-matches), or narrow it with `where` /
-  `limit` so each request does less.
-- **Read refused** ("this read of collection ... was refused and returned no
-  rows"): the read needs more work than one request does on this host. It
-  returned no rows, never a truncated answer, and wrote nothing.
-  `err.resolution` names the remedy for the bound it hit: narrow the predicate
-  or add a limit, delete or shrink rows, or retry once maintenance has absorbed
-  pending writes.
+- **Growth refused** (an insert, or an update that makes a row larger): deletes and same-size or shrinking updates still commit. Delete or shrink rows; once write-tick maintenance folds them, growth is accepted again.
+- **Every write refused** ("no fold can make progress here"): the stored snapshot is already past this host's ceiling, typically after a larger host folded it, a pending insert cannot fold onto an `E`-row snapshot, or a fold pass's worth of pending changes in a row each leave the snapshot past the byte ceiling. The collection has outgrown this host: export it with `baerly admin dump`, or have the operator move it to a larger host. Reads within the read bounds keep working either way.
+- **Request limit** ("does not fit in one request on this host"): the request ran out of storage calls, and the refused write sent nothing. A multi-row `update()` / `delete()` keeps the rows before the refused one; re-run it as a new request (it re-reads and re-matches), or narrow it with `where` / `limit` so each request does less.
+- **Read refused** ("this read of collection ... was refused and returned no rows"): the read needs more work than one request does on this host. It returned no rows, never a truncated answer, and wrote nothing. `err.resolution` names the remedy for the bound it hit: narrow the predicate or add a limit, delete or shrink rows, or retry once maintenance has absorbed pending writes.
 
 **Warned before it happens:** a write that leaves the collection at 90% or more of the limit succeeds with a `Baerly-Capacity-Warning` response header. `createBaerlyClient({ onWarning })` hands it to your callback as `{ code: "CapacityWarning", message, method, path }`; delete or shrink rows then, before writes start being refused. The write's result is unchanged and a throwing callback cannot fail it. Cross-origin, your CORS layer must list `Baerly-Capacity-Warning` in `Access-Control-Expose-Headers`.
 
 ### `BaerlyError code="MaintenancePending"` (HTTP 503, `Retry-After`)
 
-**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (typically after the collection moved from a host with a larger ceiling, with deletes still pending). The write ran one bounded fold and was refused without committing (a batch refused part-way keeps the rows it already committed). `retriable` is `true`. The refusal is recomputed on every request; nothing is stored.
-**Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working. `createBaerlyClient` already does this on every verb: it resends the identical request (an auto-ID insert keeps its minted `_id`) up to 3 attempts in total, waiting each hint of at most 10 s, so the error reaches your code only once those run out. The React subscription poll waits at least `retryAfter` before re-polling. Resending is safe because the refusal committed nothing and each HTTP write is one row. In-process, a multi-row `update` refused part-way keeps the rows before it; re-running it is safe, since a merge patch re-applied to a row it already changed leaves that row as it is.
+**Cause:** the write would grow the collection past its host's fold ceiling until pending changes fold, and folding them makes room (typically after the collection moved from a host with a larger ceiling, with deletes still pending). The write ran one bounded fold and was refused without committing (a batch refused part-way keeps the rows it already committed). `retriable` is `true`. The refusal is recomputed on every request; nothing is stored. **Fix:** wait `err.retryAfter` seconds (the `Retry-After` header over HTTP), then repeat the call. Reads keep working. `createBaerlyClient` already does this on every verb: it resends the identical request (an auto-ID insert keeps its minted `_id`) up to 3 attempts in total, waiting each hint of at most 10 s, so the error reaches your code only once those run out. The React subscription poll waits at least `retryAfter` before re-polling. Resending is safe because the refusal committed nothing and each HTTP write is one row. In-process, a multi-row `update` refused part-way keeps the rows before it; re-running it is safe, since a merge patch re-applied to a row it already changed leaves that row as it is.
 
 ### `BaerlyError code="CursorExpired"` (HTTP 410)
 
-**Cause:** a `/v1/since` cursor can no longer resume: the changes after it are no longer retained, or `baerly admin restore --force` truncated the generation it was minted in. `retriable` is `false`; the same cursor never succeeds again. A malformed cursor is `SchemaError` (400) instead.
-**Fix:** re-read the rows you show, then resume with `cursor=` (empty); the changes between the dead cursor and the restart are not replayed. Back off before the restart so a cursor that expires on every lap cannot become a hot loop. The React hooks do this for you.
+**Cause:** a `/v1/since` cursor can no longer resume: the changes after it are no longer retained, or `baerly admin restore --force` truncated the generation it was minted in. `retriable` is `false`; the same cursor never succeeds again. A malformed cursor is `SchemaError` (400) instead. **Fix:** re-read the rows you show, then resume with `cursor=` (empty); the changes between the dead cursor and the restart are not replayed. Back off before the restart so a cursor that expires on every lap cannot become a hot loop. The React hooks do this for you.
 
 ### `_id must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
-**Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC,
-such as `"cafe\u0301"` (NFD) instead of `"caf\u00e9"`. Each `_id` has
-one spelling, because R2 stores canonically-equivalent keys as one object.
-**Fix:** pass `id.normalize("NFC")`. A row an earlier release stored under
-a non-NFC `_id` still reads and deletes; to keep it writable, insert a copy
-under a fresh NFC id that is not canonically equivalent to the original
-(for example, omit `_id` for a UUID), then delete the original.
+**Cause:** `insert`, `replace`, or `update` got an `_id` that is not NFC, such as `"cafe\u0301"` (NFD) instead of `"caf\u00e9"`. Each `_id` has one spelling, because R2 stores canonically-equivalent keys as one object. **Fix:** pass `id.normalize("NFC")`. A row an earlier release stored under a non-NFC `_id` still reads and deletes; to keep it writable, insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit `_id` for a UUID), then delete the original.
 
 ### `app`/`tenant`/`collection must be in Unicode Normalization Form C` (HTTP 400, `code="InvalidConfig"`)
 
-**Cause:** `Db.create`, `db.collection`, or an HTTP route got an app,
-tenant, or collection name that is not NFC, such as `"cafe\u0301"` (NFD)
-instead of `"caf\u00e9"`. R2 stores canonically-equivalent keys as one
-object, so the two spellings would address one key prefix there and two
-elsewhere.
-**Fix:** pass `name.normalize("NFC")` for a new name. Data an earlier
-release stored under a non-NFC name is accessible through `baerly inspect`,
-`baerly export`, `baerly admin dump`, and `baerly admin fsck`.
-To keep it writable, dump it and restore it under an NFC name that is
-not canonically equivalent to the original, then point the app at the new
-name:
+**Cause:** `Db.create`, `db.collection`, or an HTTP route got an app, tenant, or collection name that is not NFC, such as `"cafe\u0301"` (NFD) instead of `"caf\u00e9"`. R2 stores canonically-equivalent keys as one object, so the two spellings would address one key prefix there and two elsewhere. **Fix:** pass `name.normalize("NFC")` for a new name. Data an earlier release stored under a non-NFC name is accessible through `baerly inspect`, `baerly export`, `baerly admin dump`, and `baerly admin fsck`. To keep it writable, dump it and restore it under an NFC name that is not canonically equivalent to the original, then point the app at the new name:
 
 ```sh
 baerly admin dump --bucket=$B --app=app --tenant=t --collection=$'cafe\u0301' > rows.ndjson
 baerly admin restore --bucket=$B --app=app --tenant=t --collection=$'caf\u00e9-v2' < rows.ndjson
 ```
 
-The normalized original name is not a safe target: on R2 it addresses the
-legacy objects. Run `baerly admin fsck` first: it flags non-NFC names.
-`baerly admin dump` also flags non-NFC `_id`s and canonically-equivalent
-twin `_id`s, which restore refuses or which have only one NFC spelling;
-give each a fresh NFC `_id` in the NDJSON before restoring.
+The normalized original name is not a safe target: on R2 it addresses the legacy objects. Run `baerly admin fsck` first: it flags non-NFC names. `baerly admin dump` also flags non-NFC `_id`s and canonically-equivalent twin `_id`s, which restore refuses or which have only one NFC spelling; give each a fresh NFC `_id` in the NDJSON before restoring.
 
-The alias guard checks stored collection names, not app or tenant identity.
-Normalized legacy app or tenant aliases can still read and modify the same
-data on R2; migrate those namespaces to fresh names instead of relying on
-refusal.
+The alias guard checks stored collection names, not app or tenant identity. Normalized legacy app or tenant aliases can still read and modify the same data on R2; migrate those namespaces to fresh names instead of relying on refusal.
 
 ### `collection ... addresses data stored under the canonically-equivalent name ...` (HTTP 400, `code="InvalidConfig"`)
 
-**Cause:** on R2, this NFC collection name addresses objects an earlier
-release wrote under a non-NFC spelling of the same name. Reads, writes,
-folds, and exports refuse rather than skip those rows.
-**Fix:** keep the app on a different NFC name. Dump the data under the
-stored spelling (`baerly admin dump --collection=<stored name>`) and
-restore it under an NFC name that is not canonically equivalent to either
-spelling, as in the entry above.
+**Cause:** on R2, this NFC collection name addresses objects an earlier release wrote under a non-NFC spelling of the same name. Reads, writes, folds, and exports refuse rather than skip those rows. **Fix:** keep the app on a different NFC name. Dump the data under the stored spelling (`baerly admin dump --collection=<stored name>`) and restore it under an NFC name that is not canonically equivalent to either spelling, as in the entry above.
 
-If the log contains both spellings, stop writes and maintenance and keep
-a copy of the source bucket. Use `baerly admin dump
---recover-legacy-names --collection=<exact stored name>` with the same
-bucket, app, and tenant flags to recover each spelling separately into
-different fresh collections. Recovery keeps rows, updates, and deletes
-separate even when `_id`s overlap. It requires a snapshot naming the
-selected spelling or no snapshot; an opposite-spelling snapshot is
-refused. Rows discarded by older compaction cannot be reconstructed, so
-historical completeness is not guaranteed.
+If the log contains both spellings, stop writes and maintenance and keep a copy of the source bucket. Use `baerly admin dump --recover-legacy-names --collection=<exact stored name>` with the same bucket, app, and tenant flags to recover each spelling separately into different fresh collections. Recovery keeps rows, updates, and deletes separate even when `_id`s overlap. It requires a snapshot naming the selected spelling or no snapshot; an opposite-spelling snapshot is refused. Rows discarded by older compaction cannot be reconstructed, so historical completeness is not guaranteed.
 
 ### Resending an auto-ID insert over HTTP (`mintedId`)
 
-**Cause:** an HTTP client minted the insert's `_id` and resent the insert after
-losing the first response. Without a signal the resend is a caller-supplied
-duplicate and gets `409 AlreadyExists`, though the row is the client's own.
-**Fix:** send the minted id in both places,
-`{ "doc": { "_id": m, ... }, "mintedId": m }`. A resend that finds a live row
-for `m` holding the same document (key order ignored) returns the original
-`201 { "_id": m }` and commits nothing; a different current body gets
-`409 AlreadyExists`. Deletion permits reinsertion; updating back to the
-original body permits replay. Calling `insert(doc)` again is a new operation
-and mints a new auto-ID, rather than retransmitting the constructed request.
-`mintedId` must be a canonical UUIDv7 equal to `doc._id`, else
-`400 SchemaError`, so a human-chosen id like `"migration-x"` cannot opt in.
-Leave `mintedId` out whenever you chose the `_id`: an insert without it keeps
-strict `AlreadyExists` on any live row, even an identical one, which is what
-makes `insert({ _id: "migration-x", done: true })` a run-once guard with a
-single winner. A server that predates the field reads only `doc` and answers
-the resend `409`, never with a second row. In-process `Collection.insert` takes
-no such flag. A minted replay is an equality oracle: anyone who can insert into
-the collection learns whether the row stored under an `_id` equals the body
-they sent (`201`) or not (`409`).
+**Cause:** an HTTP client minted the insert's `_id` and resent the insert after losing the first response. Without a signal the resend is a caller-supplied duplicate and gets `409 AlreadyExists`, though the row is the client's own. **Fix:** send the minted id in both places, `{ "doc": { "_id": m, ... }, "mintedId": m }`. A resend that finds a live row for `m` holding the same document (key order ignored) returns the original `201 { "_id": m }` and commits nothing; a different current body gets `409 AlreadyExists`. Deletion permits reinsertion; updating back to the original body permits replay. Calling `insert(doc)` again is a new operation and mints a new auto-ID, rather than retransmitting the constructed request. `mintedId` must be a canonical UUIDv7 equal to `doc._id`, else `400 SchemaError`, so a human-chosen id like `"migration-x"` cannot opt in. Leave `mintedId` out whenever you chose the `_id`: an insert without it keeps strict `AlreadyExists` on any live row, even an identical one, which is what makes `insert({ _id: "migration-x", done: true })` a run-once guard with a single winner. A server that predates the field reads only `doc` and answers the resend `409`, never with a second row. In-process `Collection.insert` takes no such flag. A minted replay is an equality oracle: anyone who can insert into the collection learns whether the row stored under an `_id` equals the body they sent (`201`) or not (`409`).
 
 ### AmbiguousCommit recovery
 
-`AmbiguousCommit` (HTTP 409) means a committing create may be durable, but its
-outcome could not be resolved. It is not retriable by default. `err._id` names
-the affected row, including the id an auto-ID insert minted. Re-read that row
-and compare it with the intended state. A matching row can help reconcile the
-outcome; absence does not prove failure, because a send may still complete or
-a later write may have superseded it.
+`AmbiguousCommit` (HTTP 409) means a committing create may be durable, but its outcome could not be resolved. It is not retriable by default. `err._id` names the affected row, including the id an auto-ID insert minted. Re-read that row and compare it with the intended state. A matching row can help reconcile the outcome; absence does not prove failure, because a send may still complete or a later write may have superseded it.
 
 ```ts
 const tickets = db.collection("tickets");
@@ -209,105 +91,54 @@ try {
 }
 ```
 
-Retrying is an explicit at-least-once choice and may repeat logical work: a
-same-`_id` insert retry targets one row and commits only while no live row
-holds that `_id`, but a retried `update` or `replace` can still overwrite a
-concurrent change to it. For bulk mutations, rows before the ambiguous row are already
-applied and `err._id` names the ambiguous one, but no partial-progress count is
-returned; inspect the affected rows before deciding whether to resume.
+Retrying is an explicit at-least-once choice and may repeat logical work: a same-`_id` insert retry targets one row and commits only while no live row holds that `_id`, but a retried `update` or `replace` can still overwrite a concurrent change to it. For bulk mutations, rows before the ambiguous row are already applied and `err._id` names the ambiguous one, but no partial-progress count is returned; inspect the affected rows before deciding whether to resume.
 
 ### `db.collection(name).insertOne(...)` / `.find(...)` is not a function
 
-**Cause:** Mongo muscle memory. No such method.
-**Fix:** `db.collection(name).insert(row)` and
-`.where({ field: value }).all()` / `.where(q => q.gte("count", 1)).all()`.
+**Cause:** Mongo muscle memory. No such method. **Fix:** `db.collection(name).insert(row)` and `.where({ field: value }).all()` / `.where(q => q.gte("count", 1)).all()`.
 
 ### `.useIndex(...)` / `.hint(...)` is not a function
 
-**Cause:** SQL/ORM muscle memory. No such method.
-**Fix:** use `.where(...)` directly. Reads always fold the authoritative
-snapshot and log; declared `indexes` do not change how a read runs.
+**Cause:** SQL/ORM muscle memory. No such method. **Fix:** use `.where(...)` directly. Reads always fold the authoritative snapshot and log; declared `indexes` do not change how a read runs.
 
 ### `compact` / `runGc` / `CLOUDFLARE_FREE_TIER` is not exported from `/maintenance`
 
-**Cause:** `@gusto/baerly-storage/maintenance` exports one function,
-`runScheduledMaintenance`, addressed by collection. Its phases, host tiers
-and `current.json` keys are internal.
-**Fix:** `runScheduledMaintenance({ storage, app, tenant, collection }, { tier })`,
-`tier` being the `BAERLY_MAINTENANCE_PROFILE` value (`"cf-free"`, `"cf-paid"`,
-or the unbounded default `"node"`). A schedule
-is optional: every write already runs bounded maintenance.
+**Cause:** `@gusto/baerly-storage/maintenance` exports one function, `runScheduledMaintenance`, addressed by collection. Its phases, host tiers and `current.json` keys are internal. **Fix:** `runScheduledMaintenance({ storage, app, tenant, collection }, { tier })`, `tier` being the `BAERLY_MAINTENANCE_PROFILE` value (`"cf-free"`, `"cf-paid"`, or the unbounded default `"node"`). A schedule is optional: every write already runs bounded maintenance.
 
 ### `BaerlyError code="InvalidConfig"` — `baerly: no auth configured`
 
 **Full message:** `baerly: no auth configured. Set \`auth\` in baerly.config.ts ("none", "shared-secret") or pass \`verifier\` on the adapter factory.`
 
-**Cause:** the adapter resolved no `Verifier`.
-**Fix:** set `auth` in `baerly.config.ts` (`"none"` or `"shared-secret"`)
-or pass `verifier:` on the adapter factory.
+**Cause:** the adapter resolved no `Verifier`. **Fix:** set `auth` in `baerly.config.ts` (`"none"` or `"shared-secret"`) or pass `verifier:` on the adapter factory.
 
 ### `BaerlyError code="InvalidConfig"` — `SHARED_SECRET env is empty/unset`
 
 **Full message:** `baerly: auth="shared-secret" but SHARED_SECRET env is empty/unset. Cloudflare: \`wrangler secret put SHARED_SECRET\`, or add to .dev.vars for local dev. Node: set in process env.`
 
-**Cause:** `auth: "shared-secret"` was set but the `SHARED_SECRET`
-environment variable is missing or empty at startup.
-**Fix:** set the `SHARED_SECRET` env (`wrangler secret put SHARED_SECRET`
-on Cloudflare, `.dev.vars` for local dev, process env on Node).
+**Cause:** `auth: "shared-secret"` was set but the `SHARED_SECRET` environment variable is missing or empty at startup. **Fix:** set the `SHARED_SECRET` env (`wrangler secret put SHARED_SECRET` on Cloudflare, `.dev.vars` for local dev, process env on Node).
 
 ### `BaerlyError code="InvalidConfig"` — `Refusing to start: no durable storage configured` / `Refusing to use in-memory storage`
 
-**Cause:** a deployed process (`NODE_ENV=production` or a known PaaS marker)
-reached storage selection with no real bucket configured — or constructed
-`MemoryStorage` there. In-memory "succeeds" into RAM and vanishes on every
-restart; local-fs is single-process with no cross-process CAS. Both are
-refused in a deployment so the failure is loud at boot, not silent data loss
-in production.
-**Fix:** don't hand-roll storage selection — call `resolveStorageFromEnv()`
-from `@gusto/baerly-storage/node` (`R2_ACCOUNT_ID` → R2, `BUCKET` → S3, else
-local-fs in dev) and configure a bucket: `BUCKET` + `AWS_ACCESS_KEY_ID` +
-`AWS_SECRET_ACCESS_KEY` (add `R2_ACCOUNT_ID` for R2). To catch an
-unreachable or CAS-broken bucket at boot rather than on the first write,
-`await assertStorageReachable(storage)`. Intentionally ephemeral (a throwaway
-demo)? Opt in explicitly: `new MemoryStorage({ ephemeral: true })` or
-`BAERLY_ALLOW_EPHEMERAL_STORAGE=true`.
+**Cause:** a deployed process (`NODE_ENV=production` or a known PaaS marker) reached storage selection with no real bucket configured — or constructed `MemoryStorage` there. In-memory "succeeds" into RAM and vanishes on every restart; local-fs is single-process with no cross-process CAS. Both are refused in a deployment so the failure is loud at boot, not silent data loss in production. **Fix:** don't hand-roll storage selection — call `resolveStorageFromEnv()` from `@gusto/baerly-storage/node` (`R2_ACCOUNT_ID` → R2, `BUCKET` → S3, else local-fs in dev) and configure a bucket: `BUCKET` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (add `R2_ACCOUNT_ID` for R2). To catch an unreachable or CAS-broken bucket at boot rather than on the first write, `await assertStorageReachable(storage)`. Intentionally ephemeral (a throwaway demo)? Opt in explicitly: `new MemoryStorage({ ephemeral: true })` or `BAERLY_ALLOW_EPHEMERAL_STORAGE=true`.
 
 ### `BaerlyError code="UseQueryAwaitedRecorder"`
 
-**Cause:** awaited a terminal (`.get`/`.first`/`.all`/`.count`) inside a
-`useQuery` callback. The recorder is synchronous; awaiting it yields a
-sentinel and the next property access throws.
-**Fix:** don't `await` in `useQuery` — for compound reads use
-`Promise.all` (parallel) or compose two `useQuery` calls with
-`useQuery.skip` (dependent). For writes use `useMutation()`.
+**Cause:** awaited a terminal (`.get`/`.first`/`.all`/`.count`) inside a `useQuery` callback. The recorder is synchronous; awaiting it yields a sentinel and the next property access throws. **Fix:** don't `await` in `useQuery` — for compound reads use `Promise.all` (parallel) or compose two `useQuery` calls with `useQuery.skip` (dependent). For writes use `useMutation()`.
 
 ### `BaerlyError code="UnexpectedWriteInQuery"`
 
-**Cause:** called a write verb (`insert`/`update`/`replace`/`delete`)
-inside a `useQuery` callback.
-**Fix:** reads go in `useQuery`, writes go in `useMutation()`.
+**Cause:** called a write verb (`insert`/`update`/`replace`/`delete`) inside a `useQuery` callback. **Fix:** reads go in `useQuery`, writes go in `useMutation()`.
 
 ## Anti-patterns (compile-clean but wrong)
 
-- Don't reach into `node_modules/@gusto/baerly-storage/dist/` at runtime —
-  consume the published exports.
+- Don't reach into `node_modules/@gusto/baerly-storage/dist/` at runtime — consume the published exports.
 - Don't widen branded types (`UUID`, `ContentVersionId`) with `as string`.
-- Don't put `SHARED_SECRET` in the SPA bundle — it is server-to-server
-  only.
-- Don't mutate `VerifierResult.tenantPrefix` between the verifier and
-  `Db.create` — the dispatcher pins the tenant from the verifier's return.
+- Don't put `SHARED_SECRET` in the SPA bundle — it is server-to-server only.
+- Don't mutate `VerifierResult.tenantPrefix` between the verifier and `Db.create` — the dispatcher pins the tenant from the verifier's return.
 - `z.string().nullable()` in a schema — `DocumentValue` excludes `null`.
-- Raw SQL / `WHERE` clauses / hand-built query AST — the only query
-  surface is the `.where(...)` method chain.
-- `.all()` on a hot path — page or cursor-iterate; `.all()` is for
-  bounded result sets.
-- Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and
-  `.all()`) returns the **whole collection** — there is no default row
-  cap, and auth pins a tenant, not a row owner. Scope non-owner reads in
-  your own route: inject a `where owner_id = <verified id>` predicate
-  and clamp `limit = min(requested ?? MAX, MAX)`.
-  Rejecting `?limit` backfires — it forces the uncapped path. See
-  `docs/guide/auth.md` § Authorization Boundary.
+- Raw SQL / `WHERE` clauses / hand-built query AST — the only query surface is the `.where(...)` method chain.
+- `.all()` on a hot path — page or cursor-iterate; `.all()` is for bounded result sets.
+- Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and `.all()`) returns the **whole collection** — there is no default row cap, and auth pins a tenant, not a row owner. Scope non-owner reads in your own route: inject a `where owner_id = <verified id>` predicate and clamp `limit = min(requested ?? MAX, MAX)`. Rejecting `?limit` backfires — it forces the uncapped path. See `docs/guide/auth.md` § Authorization Boundary.
 
 ## Where to look next
 

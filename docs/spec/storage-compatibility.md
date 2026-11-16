@@ -10,12 +10,7 @@ related: [s3-xml-escaping-cases.md, "../adr/006-native-gcs-adapter.md"]
 
 # Storage compatibility
 
-Which object-storage backends baerly-storage supports (see
-[Support tiers](#support-tiers) below) — AWS S3 and Cloudflare R2 over
-the S3 API, plus GCS over its [native XML API](#native-gcs-xml-api) — and
-the minimal storage API surface the protocol depends on. Most of that
-surface is the common S3 dialect; the conditional-write header is the one
-axis where the native GCS path differs.
+Which object-storage backends baerly-storage supports (see [Support tiers](#support-tiers) below) — AWS S3 and Cloudflare R2 over the S3 API, plus GCS over its [native XML API](#native-gcs-xml-api) — and the minimal storage API surface the protocol depends on. Most of that surface is the common S3 dialect; the conditional-write header is the one axis where the native GCS path differs.
 
 ## S3 API surface used
 
@@ -47,324 +42,100 @@ You cannot update objects in-place — every object is immutable once written. M
 
 ## Key namespace
 
-baerly-storage addresses objects by string key over `PUT` / `GET` /
-`DELETE <endpoint>/<bucket>/<key>`. A **valid key** is:
+baerly-storage addresses objects by string key over `PUT` / `GET` / `DELETE <endpoint>/<bucket>/<key>`. A **valid key** is:
 
 - **non-empty**;
 - at most **1024 bytes** of UTF-8 (`MAX_KEY_BYTES` — the S3/R2 hard limit); and
 - `/`-delimited, with **no path segment equal to `.` or `..`**.
 
-Keys are **byte-exact**: distinct UTF-8 byte sequences are distinct
-objects, including keys that differ only by case (`A` / `a`) or by
-Unicode normalization (NFC `é` / NFD `e` + U+0301). A backend MUST NOT
-fold either. This is load-bearing, not cosmetic: collection, app, and
-tenant names are interpolated raw into key prefixes, so a folding store
-silently merges collections. S3 and Minio are byte-exact natively.
-`LocalFsStorage` escapes each key segment into a fold-invariant alphabet
-on disk so it stays byte-exact on case- and normalization-folding
-filesystems such as default macOS APFS. (Conformance: _"keys differing
-only by case are distinct objects"_ runs on every backend; _"keys
-differing only by Unicode normalization are distinct objects"_ runs on
-every backend except R2, below.)
+Keys are **byte-exact**: distinct UTF-8 byte sequences are distinct objects, including keys that differ only by case (`A` / `a`) or by Unicode normalization (NFC `é` / NFD `e` + U+0301). A backend MUST NOT fold either. This is load-bearing, not cosmetic: collection, app, and tenant names are interpolated raw into key prefixes, so a folding store silently merges collections. S3 and Minio are byte-exact natively. `LocalFsStorage` escapes each key segment into a fold-invariant alphabet on disk so it stays byte-exact on case- and normalization-folding filesystems such as default macOS APFS. (Conformance: _"keys differing only by case are distinct objects"_ runs on every backend; _"keys differing only by Unicode normalization are distinct objects"_ runs on every backend except R2, below.)
 
-**R2 folds canonical equivalence.** Over the S3 API, R2 stores keys that
-are canonically equivalent (NFC `é` and NFD `e` + U+0301, `Å` U+00C5 and
-U+212B ANGSTROM SIGN) as one object: a second put overwrites the first,
-and `list` returns the most recently written spelling. It keeps case and
-compatibility variants (`A` / `a`, `ﬁ` / `fi`, `Ａ` / `A`) distinct. The
-kernel copes by requiring every written `_id` and every app, tenant, and
-collection name to be NFC (`assertNfcSegment` in
-`packages/server/src/path-segment.ts`), so two of them are canonically
-equivalent only if they are the same string. The same writes also
-require well-formed UTF-16 (`assertWellFormedSegment`): a string with an
-unpaired surrogate has no UTF-8 encoding, so no S3, GCS, or local-fs key
-and no percent-encoded URL can carry it. R2's conformance rows (S3 API
-and binding) declare normalization distinctness unsupported
-(`normalizationDistinctKeys: false`) rather than skip it: the case asserts
-that each spelling reads back its own body or the last-written one.
+**R2 folds canonical equivalence.** Over the S3 API, R2 stores keys that are canonically equivalent (NFC `é` and NFD `e` + U+0301, `Å` U+00C5 and U+212B ANGSTROM SIGN) as one object: a second put overwrites the first, and `list` returns the most recently written spelling. It keeps case and compatibility variants (`A` / `a`, `ﬁ` / `fi`, `Ａ` / `A`) distinct. The kernel copes by requiring every written `_id` and every app, tenant, and collection name to be NFC (`assertNfcSegment` in `packages/server/src/path-segment.ts`), so two of them are canonically equivalent only if they are the same string. The same writes also require well-formed UTF-16 (`assertWellFormedSegment`): a string with an unpaired surrogate has no UTF-8 encoding, so no S3, GCS, or local-fs key and no percent-encoded URL can carry it. R2's conformance rows (S3 API and binding) declare normalization distinctness unsupported (`normalizationDistinctKeys: false`) rather than skip it: the case asserts that each spelling reads back its own body or the last-written one.
 
-Data an earlier release stored under a non-NFC name or `_id` predates the
-rule. The SDK and HTTP router refuse non-NFC names. The read-only CLI
-verbs (`inspect`, `export`, `admin dump`, `admin fsck`) still accept them,
-and the writing verb (`admin restore`) refuses them. A
-migration dumps the collection and restores it under an NFC name that is
-not canonically equivalent to the legacy one; on R2 the normalized
-original name addresses the legacy objects. `admin fsck` flags non-NFC
-names, names with an unpaired surrogate, and snapshot `_id`s with an
-unpaired surrogate. `admin dump` flags non-NFC `_id`s, `_id`s and names
-with an unpaired surrogate, and canonically-equivalent twin `_id`s
-across the whole live row set, before the migration. A stored `_id` with an unpaired surrogate stays readable and
-deletable but is not a write target.
+Data an earlier release stored under a non-NFC name or `_id` predates the rule. The SDK and HTTP router refuse non-NFC names. The read-only CLI verbs (`inspect`, `export`, `admin dump`, `admin fsck`) still accept them, and the writing verb (`admin restore`) refuses them. A migration dumps the collection and restores it under an NFC name that is not canonically equivalent to the legacy one; on R2 the normalized original name addresses the legacy objects. `admin fsck` flags non-NFC names, names with an unpaired surrogate, and snapshot `_id`s with an unpaired surrogate. `admin dump` flags non-NFC `_id`s, `_id`s and names with an unpaired surrogate, and canonically-equivalent twin `_id`s across the whole live row set, before the migration. A stored `_id` with an unpaired surrogate stays readable and deletable but is not a write target.
 
-To migrate such a row in place, read it, remove `_id` from the copy,
-insert it so the SDK generates a fresh UUID, then delete the original.
-Migrate a legacy app, tenant, or collection name to a fresh name: R2
-bindings convert an unpaired surrogate in a key to U+FFFD, so repairing
-the name with `toWellFormed()` can address the original objects on R2.
+To migrate such a row in place, read it, remove `_id` from the copy, insert it so the SDK generates a fresh UUID, then delete the original. Migrate a legacy app, tenant, or collection name to a fresh name: R2 bindings convert an unpaired surrogate in a key to U+FFFD, so repairing the name with `toWellFormed()` can address the original objects on R2.
 
-The collection alias guard checks names in log and snapshot bodies;
-these records do not identify the app or tenant. Normalized aliases of
-legacy app or tenant names can still access and modify the same data.
-Migrate those namespaces to fresh names rather than relying on refusal.
+The collection alias guard checks names in log and snapshot bodies; these records do not identify the app or tenant. Normalized aliases of legacy app or tenant names can still access and modify the same data. Migrate those namespaces to fresh names rather than relying on refusal.
 
-For mixed legacy collection spellings in one R2 log, `admin dump
---recover-legacy-names` selects one exact stored spelling without merging
-the other spelling's rows, updates, or deletes. Recover each spelling
-separately into a different fresh NFC collection. Recovery requires a
-matching snapshot or no snapshot and retains snapshot hash and dense-log
-validation; it refuses a snapshot for the other spelling instead of
-assuming an empty base. Stop writes and maintenance and preserve a source
-copy first: rows discarded by earlier compaction cannot be reconstructed,
-and recovery does not guarantee historical completeness.
+For mixed legacy collection spellings in one R2 log, `admin dump --recover-legacy-names` selects one exact stored spelling without merging the other spelling's rows, updates, or deletes. Recover each spelling separately into a different fresh NFC collection. Recovery requires a matching snapshot or no snapshot and retains snapshot hash and dense-log validation; it refuses a snapshot for the other spelling instead of assuming an empty base. Stop writes and maintenance and preserve a source copy first: rows discarded by earlier compaction cannot be reconstructed, and recovery does not guarantee historical completeness.
 
-The dot-segment rule is a **portability invariant, not a vendor quirk.**
-RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant
-URL parser, so a key whose segment is `.` or `..` is rewritten _before the
-request is signed or sent_: `<endpoint>/<bucket>/.` normalizes to
-`<endpoint>/<bucket>/` (a bucket-root operation) and
-`<endpoint>/<bucket>/..` escapes the bucket entirely. This happens
-identically in TypeScript (`new URL` / `fetch`), Go (`net/url`), Rust
-(`url`), Python (`urllib`), and any other language a `Storage` port
-targets — over the wire it surfaces as a confusing bucket-root
-`403 AccessDenied`, never a clear error. So the contract is to reject such
-keys **at the boundary**, uniformly, rather than emit an unaddressable
-request.
+The dot-segment rule is a **portability invariant, not a vendor quirk.** RFC 3986 §5.2.4 ("remove dot segments") is mandatory for every conformant URL parser, so a key whose segment is `.` or `..` is rewritten _before the request is signed or sent_: `<endpoint>/<bucket>/.` normalizes to `<endpoint>/<bucket>/` (a bucket-root operation) and `<endpoint>/<bucket>/..` escapes the bucket entirely. This happens identically in TypeScript (`new URL` / `fetch`), Go (`net/url`), Rust (`url`), Python (`urllib`), and any other language a `Storage` port targets — over the wire it surfaces as a confusing bucket-root `403 AccessDenied`, never a clear error. So the contract is to reject such keys **at the boundary**, uniformly, rather than emit an unaddressable request.
 
 Enforcement is split by layer:
 
-- The **dot-segment / empty-key** rule (the unaddressable cases above) is
-  enforced at the **raw `Storage` boundary**: every adapter validates the
-  key on `get` / `put` / `delete` and rejects a violation with
-  `BaerlyError{code:"InvalidConfig"}` (`assertValidStorageKey` in
-  `@baerly/protocol`). This is the `Storage`-level counterpart to the
-  higher-level `assertPathSegment` guard, which already screens
-  caller-controlled key _segments_ (`_id`, `collection`, `app`, `tenant`).
-  The cross-adapter "key namespace" block in
-  `defineStorageConformanceSuite` asserts each backend rejects `.` and `..`
-  identically — **a language port MUST reproduce that rejection to
-  conform.**
-- The **1024-byte ceiling** is enforced on the **write path**, where
-  multi-segment keys are assembled (`assertKeyWithinLimit` at the writer's
-  PUT sites), rather than at the `Storage` boundary — per-segment caps
-  don't bound the assembled sum, and this keeps the boundary guard free of
-  a UTF-8 length pass on every call.
+- The **dot-segment / empty-key** rule (the unaddressable cases above) is enforced at the **raw `Storage` boundary**: every adapter validates the key on `get` / `put` / `delete` and rejects a violation with `BaerlyError{code:"InvalidConfig"}` (`assertValidStorageKey` in `@baerly/protocol`). This is the `Storage`-level counterpart to the higher-level `assertPathSegment` guard, which already screens caller-controlled key _segments_ (`_id`, `collection`, `app`, `tenant`). The cross-adapter "key namespace" block in `defineStorageConformanceSuite` asserts each backend rejects `.` and `..` identically — **a language port MUST reproduce that rejection to conform.**
+- The **1024-byte ceiling** is enforced on the **write path**, where multi-segment keys are assembled (`assertKeyWithinLimit` at the writer's PUT sites), rather than at the `Storage` boundary — per-segment caps don't bound the assembled sum, and this keeps the boundary guard free of a UTF-8 length pass on every call.
 
-The kernel itself never _emits_ a `.` / `..` or over-length key; both
-guards exist so a misuse fails fast and identically everywhere instead of
-surfacing as an opaque provider 400/403.
+The kernel itself never _emits_ a `.` / `..` or over-length key; both guards exist so a misuse fails fast and identically everywhere instead of surfacing as an opaque provider 400/403.
 
-> **A `list` _prefix_ is not a key.** The prefix passed to `Storage.list`
-> rides the `?prefix=` query component, where `.` / `..` are harmless on
-> AWS S3 and R2. (MinIO's gateway is stricter — it validates the prefix as
-> a POSIX path too — which is why the MinIO conformance run pins a
-> `.`-free prefix arbitrary.) Only _keys_, which become path segments, are
-> constrained by the dot-segment rule.
+> **A `list` _prefix_ is not a key.** The prefix passed to `Storage.list` rides the `?prefix=` query component, where `.` / `..` are harmless on AWS S3 and R2. (MinIO's gateway is stricter — it validates the prefix as a POSIX path too — which is why the MinIO conformance run pins a `.`-free prefix arbitrary.) Only _keys_, which become path segments, are constrained by the dot-segment rule.
 
 ## Status → `BaerlyErrorCode` mapping
 
-A `Storage` port translates object-store HTTP status codes into the
-kernel's `BaerlyError` codes. The authoritative sources are the
-`errorCodes[]` table in `packages/server/spec/baerly.spec.json` (which
-carries each code's canonical `httpStatus` and `retriable` hint) and the
-S3-status → code mapping in `packages/adapter-node/src/s3-http.ts`. A
-language port MUST reproduce the mapping below to conform.
+A `Storage` port translates object-store HTTP status codes into the kernel's `BaerlyError` codes. The authoritative sources are the `errorCodes[]` table in `packages/server/spec/baerly.spec.json` (which carries each code's canonical `httpStatus` and `retriable` hint) and the S3-status → code mapping in `packages/adapter-node/src/s3-http.ts`. A language port MUST reproduce the mapping below to conform.
 
 Two subtleties are load-bearing:
 
-- **`404` on a plain `GET` is _not_ an error.** A missing key resolves to
-  `null` (`Storage.get` returns `Promise<StorageGetResult | null>`), never
-  a thrown `BaerlyError`. The kernel's forward-probe tail discovery ("first
-  `404` = tail") depends on this: a missing `log/<seq>` must surface as
-  `null`, not an exception. (`s3-http.ts` `get`: `case 404: return null`.)
-- **`409` vs `412` on a conditional create diverge by intent.** A `409
-  ConditionalRequestConflict` on an `If-None-Match: "*"` create means the
-  write was _contended_ and may not have landed, so it maps to a
-  **retryable** `NetworkError` — the adapter's retry of the create either
-  wins or sees `412`, and a create still failing after its last attempt is
-  resolved by the writer's occupant readback. A direct `WriteConflict` there
-  would adopt-read a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch ===
-  "*"` branch.)
-- **An `If-Match` PUT is sent once.** The adapter does not resend a
-  compare-and-swap on any failure (`5xx`, `429`, `409`, a dropped
-  connection): when an attempt lands but its reply is lost, a resend
-  meets the request's own write as a `412` and would report a false
-  `WriteConflict`. The failure goes to the caller, which skips and
-  re-reads on its next pass. Every other request keeps the shared retry
-  policy. (`retryStorageCall`'s `compareAndSwap`, set by every adapter
-  from `ifMatch`.)
+- **`404` on a plain `GET` is _not_ an error.** A missing key resolves to `null` (`Storage.get` returns `Promise<StorageGetResult | null>`), never a thrown `BaerlyError`. The kernel's forward-probe tail discovery ("first `404` = tail") depends on this: a missing `log/<seq>` must surface as `null`, not an exception. (`s3-http.ts` `get`: `case 404: return null`.)
+- **`409` vs `412` on a conditional create diverge by intent.** A `409 ConditionalRequestConflict` on an `If-None-Match: "*"` create means the write was _contended_ and may not have landed, so it maps to a **retryable** `NetworkError` — the adapter's retry of the create either wins or sees `412`, and a create still failing after its last attempt is resolved by the writer's occupant readback. A direct `WriteConflict` there would adopt-read a possibly-absent entry. (`s3-http.ts` `put`: the `409 && ifNoneMatch === "*"` branch.)
+- **An `If-Match` PUT is sent once.** The adapter does not resend a compare-and-swap on any failure (`5xx`, `429`, `409`, a dropped connection): when an attempt lands but its reply is lost, a resend meets the request's own write as a `412` and would report a false `WriteConflict`. The failure goes to the caller, which skips and re-reads on its next pass. Every other request keeps the shared retry policy. (`retryStorageCall`'s `compareAndSwap`, set by every adapter from `ifMatch`.)
 
-| Condition (over the wire / at the boundary)                    | `BaerlyError.code` | Nominal `httpStatus` | Retriable | Source                                                              |
-| -------------------------------------------------------------- | ------------------ | -------------------- | --------- | ------------------------------------------------------------------- |
-| `GET` / `HEAD` `404` (missing key)                             | _(none — `null`)_  | —                    | —         | `s3-http.ts` `get` `case 404: return null`                          |
-| `PUT` with `If-Match` sees `412`                               | `WriteConflict`    | 409                  | Yes       | `s3-http.ts` `put` `res.status === 412`; spec.json `WriteConflict`  |
-| `PUT` with `If-Match` sees `404` (MinIO's stale-CAS shape)     | `WriteConflict`    | 409                  | Yes       | `s3-http.ts` `put` `404 && ifMatch !== undefined`                   |
-| `PUT` `If-None-Match: "*"` sees `409` (contended create)       | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `put` `409 && ifNoneMatch === "*"`                     |
-| Any verb sees `403`                                            | `AccessDenied`     | 403                  | No        | `s3-http.ts` `403` branches; spec.json `AccessDenied`               |
-| Any verb sees `429` or `5xx` (retries exhausted; an `If-Match` PUT is not retried) | `NetworkError`     | 502                  | Yes       | `s3-http.ts` `429 \|\| status >= 500` branches; spec.json           |
-| Unparseable / unexpected success body or missing `ETag`        | `InvalidResponse`  | 502                  | No        | `s3-http.ts` `InvalidResponse` branches; spec.json                  |
-| Empty key or a `.` / `..` path segment (rejected pre-request)  | `InvalidConfig`    | 400                  | No        | `assertValidStorageKey`; spec.json `InvalidConfig`; see [Key namespace](#key-namespace) |
+| Condition (over the wire / at the boundary) | `BaerlyError.code` | Nominal `httpStatus` | Retriable | Source |
+| --- | --- | --- | --- | --- |
+| `GET` / `HEAD` `404` (missing key) | _(none — `null`)_ | — | — | `s3-http.ts` `get` `case 404: return null` |
+| `PUT` with `If-Match` sees `412` | `WriteConflict` | 409 | Yes | `s3-http.ts` `put` `res.status === 412`; spec.json `WriteConflict` |
+| `PUT` with `If-Match` sees `404` (MinIO's stale-CAS shape) | `WriteConflict` | 409 | Yes | `s3-http.ts` `put` `404 && ifMatch !== undefined` |
+| `PUT` `If-None-Match: "*"` sees `409` (contended create) | `NetworkError` | 502 | Yes | `s3-http.ts` `put` `409 && ifNoneMatch === "*"` |
+| Any verb sees `403` | `AccessDenied` | 403 | No | `s3-http.ts` `403` branches; spec.json `AccessDenied` |
+| Any verb sees `429` or `5xx` (retries exhausted; an `If-Match` PUT is not retried) | `NetworkError` | 502 | Yes | `s3-http.ts` `429 \|\| status >= 500` branches; spec.json |
+| Unparseable / unexpected success body or missing `ETag` | `InvalidResponse` | 502 | No | `s3-http.ts` `InvalidResponse` branches; spec.json |
+| Empty key or a `.` / `..` path segment (rejected pre-request) | `InvalidConfig` | 400 | No | `assertValidStorageKey`; spec.json `InvalidConfig`; see [Key namespace](#key-namespace) |
 
-The `WriteConflict` code has a nominal `httpStatus` of `409` and is marked
-`retriable: true` in `baerly.spec.json` (a precondition was rejected — the
-writer re-reads and retries). A `Storage` port throws `WriteConflict` for
-every rejected precondition (stale `If-Match`, `If-Match` against a missing
-key, or an `If-None-Match: "*"` collision); `AlreadyExists` (duplicate
-`_id`) is raised by the kernel before commit, never by a `Storage` port.
-`NetworkError` is `retriable: true` (`httpStatus` `502`); `AccessDenied`,
-`InvalidResponse`, `NotFound`, and `InvalidConfig` are all
-`retriable: false`. A `DELETE` against a missing key throws nothing at all
-— see clause 1 below.
+The `WriteConflict` code has a nominal `httpStatus` of `409` and is marked `retriable: true` in `baerly.spec.json` (a precondition was rejected — the writer re-reads and retries). A `Storage` port throws `WriteConflict` for every rejected precondition (stale `If-Match`, `If-Match` against a missing key, or an `If-None-Match: "*"` collision); `AlreadyExists` (duplicate `_id`) is raised by the kernel before commit, never by a `Storage` port. `NetworkError` is `retriable: true` (`httpStatus` `502`); `AccessDenied`, `InvalidResponse`, `NotFound`, and `InvalidConfig` are all `retriable: false`. A `DELETE` against a missing key throws nothing at all — see clause 1 below.
 
 ## Storage behavioral contract
 
-These are the behaviors a `Storage` port MUST honour, as asserted by
-`defineStorageConformanceSuite` in
-`packages/protocol/src/storage/conformance.ts`. They are numbered so a
-porter can cite a specific clause.
+These are the behaviors a `Storage` port MUST honour, as asserted by `defineStorageConformanceSuite` in `packages/protocol/src/storage/conformance.ts`. They are numbered so a porter can cite a specific clause.
 
-1. **`delete` MUST be idempotent.** Deleting a key that does not exist MUST
-   resolve successfully (return `undefined`), NOT throw. (`s3-http.ts`
-   treats `200` / `204` / `404` on `DELETE` as success; conformance:
-   _"delete is idempotent on a missing key"_.)
-2. **`get` of a missing key MUST return `null`.** It MUST NOT throw a
-   `NotFound` / `BaerlyError`. (Conformance: _"get of missing key returns
-   null"_.)
-3. **`list("")` MUST enumerate the entire namespace.** An empty prefix is a
-   whole-bucket scan; every stored key MUST be yielded. (Used by the
-   suite's own `deleteAllOnce` teardown and the _"returns the current etag
-   for each entry"_ case, both listing `""`.)
-4. **`startAfter` MUST be strict-exclusive, and MUST be a position rather
-   than a lookup.** When `list(prefix, { startAfter })` is given, the
-   `startAfter` key itself MUST NOT be returned — only keys strictly greater
-   than it. The comparison is on the key VALUE: `startAfter` MUST resolve
-   correctly for a key that was never written, or that has since been
-   deleted. GC's rotation cursors depend on this directly — a cursor names
-   the last key a pass examined, and the same pass frequently deletes it
-   before the next one resumes. (Conformance: _"startAfter is exclusive"_,
-   _"startAfter resolves against a key that does not exist"_, _"startAfter
-   still resolves after the cursor key is deleted"_, and the _"startAfter:k
-   yields strict suffix of lex-sorted keys"_ property.)
-5. **`list` results MUST be sorted by UTF-8 byte order, NOT UTF-16.** For
-   BMP characters the two agree, but they diverge for supplementary-plane
-   characters (surrogate pairs): a UTF-16 code-unit sort orders an emoji
-   _before_ a high-BMP private-use character, while UTF-8 byte order — what
-   S3 / R2 use on the wire — orders it _after_. A port that sorts with its
-   native string comparator will pass the ASCII property tests yet be
-   silently wrong here. The fixed witness vector is the conformance case
-   _"keys sort by UTF-8 byte order, not UTF-16 (supplementary-plane
-   divergence)"_.
-6. **`maxKeys` MUST cap the yielded count** to the first `maxKeys` keys in
-   sort order. It is a hard total across the port's internal pagination, not
-   a per-page limit. Combined with `startAfter`, the cap MUST apply AFTER
-   the cursor filter: `list(p, { startAfter: k, maxKeys: n })` yields the
-   first `n` keys strictly greater than `k`, never a window of `n` keys from
-   the start of the prefix that is then filtered down. GC's wrap test —
-   _yielded fewer than `maxKeys` ⇒ reached end of keyspace_ — is unsound
-   without both halves: a port that yields one short page and stops
-   reports a false end-of-keyspace on every pass. A port MUST also
-   clamp `maxKeys` to its wire maximum (1000 on S3/R2) rather than
-   forwarding it verbatim — the kernel's unbounded path passes
-   `Number.MAX_SAFE_INTEGER`, which is `InvalidArgument` on real S3.
-   (Conformance: _"maxKeys caps the result"_ and _"startAfter and
-   maxKeys compose: the cap applies AFTER the cursor"_. **The
-   cross-adapter suite cannot reach the page boundary** — its fixtures
-   are a handful of keys and no in-tree backend pages below 1000 — so
-   the cross-page total and the clamp are pinned per-adapter instead,
-   in the `list` blocks of `s3-http.test.ts` and
-   `r2-binding-storage.test.ts`. A port MUST pin them itself.)
-7. **Body round-trip MUST be byte-exact at the size boundaries.** A `0`-byte
-   body and a 1 MiB (`1048576`-byte) body MUST `put` then `get` back
-   byte-for-byte. (Conformance: _"round-trip exactly 0 bytes"_ …
-   _"round-trip exactly 1048576 bytes"_, capped by `maxBodyBytes`.)
+1. **`delete` MUST be idempotent.** Deleting a key that does not exist MUST resolve successfully (return `undefined`), NOT throw. (`s3-http.ts` treats `200` / `204` / `404` on `DELETE` as success; conformance: _"delete is idempotent on a missing key"_.)
+2. **`get` of a missing key MUST return `null`.** It MUST NOT throw a `NotFound` / `BaerlyError`. (Conformance: _"get of missing key returns null"_.)
+3. **`list("")` MUST enumerate the entire namespace.** An empty prefix is a whole-bucket scan; every stored key MUST be yielded. (Used by the suite's own `deleteAllOnce` teardown and the _"returns the current etag for each entry"_ case, both listing `""`.)
+4. **`startAfter` MUST be strict-exclusive, and MUST be a position rather than a lookup.** When `list(prefix, { startAfter })` is given, the `startAfter` key itself MUST NOT be returned — only keys strictly greater than it. The comparison is on the key VALUE: `startAfter` MUST resolve correctly for a key that was never written, or that has since been deleted. GC's rotation cursors depend on this directly — a cursor names the last key a pass examined, and the same pass frequently deletes it before the next one resumes. (Conformance: _"startAfter is exclusive"_, _"startAfter resolves against a key that does not exist"_, _"startAfter still resolves after the cursor key is deleted"_, and the _"startAfter:k yields strict suffix of lex-sorted keys"_ property.)
+5. **`list` results MUST be sorted by UTF-8 byte order, NOT UTF-16.** For BMP characters the two agree, but they diverge for supplementary-plane characters (surrogate pairs): a UTF-16 code-unit sort orders an emoji _before_ a high-BMP private-use character, while UTF-8 byte order — what S3 / R2 use on the wire — orders it _after_. A port that sorts with its native string comparator will pass the ASCII property tests yet be silently wrong here. The fixed witness vector is the conformance case _"keys sort by UTF-8 byte order, not UTF-16 (supplementary-plane divergence)"_.
+6. **`maxKeys` MUST cap the yielded count** to the first `maxKeys` keys in sort order. It is a hard total across the port's internal pagination, not a per-page limit. Combined with `startAfter`, the cap MUST apply AFTER the cursor filter: `list(p, { startAfter: k, maxKeys: n })` yields the first `n` keys strictly greater than `k`, never a window of `n` keys from the start of the prefix that is then filtered down. GC's wrap test — _yielded fewer than `maxKeys` ⇒ reached end of keyspace_ — is unsound without both halves: a port that yields one short page and stops reports a false end-of-keyspace on every pass. A port MUST also clamp `maxKeys` to its wire maximum (1000 on S3/R2) rather than forwarding it verbatim — the kernel's unbounded path passes `Number.MAX_SAFE_INTEGER`, which is `InvalidArgument` on real S3. (Conformance: _"maxKeys caps the result"_ and _"startAfter and maxKeys compose: the cap applies AFTER the cursor"_. **The cross-adapter suite cannot reach the page boundary** — its fixtures are a handful of keys and no in-tree backend pages below 1000 — so the cross-page total and the clamp are pinned per-adapter instead, in the `list` blocks of `s3-http.test.ts` and `r2-binding-storage.test.ts`. A port MUST pin them itself.)
+7. **Body round-trip MUST be byte-exact at the size boundaries.** A `0`-byte body and a 1 MiB (`1048576`-byte) body MUST `put` then `get` back byte-for-byte. (Conformance: _"round-trip exactly 0 bytes"_ … _"round-trip exactly 1048576 bytes"_, capped by `maxBodyBytes`.)
 
 ### Out of scope for a `Storage` port
 
-Range-GET (partial-object reads via `Range:`) and delimiter-based listing
-(`?delimiter=` with `CommonPrefixes`) are intentionally OUT OF SCOPE — the
-kernel never issues them, so "unsupported" here means "deliberately not
-required," not "forgotten."
+Range-GET (partial-object reads via `Range:`) and delimiter-based listing (`?delimiter=` with `CommonPrefixes`) are intentionally OUT OF SCOPE — the kernel never issues them, so "unsupported" here means "deliberately not required," not "forgotten."
 
 ### ETag opacity
 
-The `ETag` string is **opaque**. A port MUST compare it byte-for-byte —
-**including any surrounding quotes** — and round-trip it unchanged; it MUST
-NOT strip quotes, lowercase, or otherwise normalize the value. The
-`ifMatch` CAS contract (see [conditional writes](#s3-is-an-immutable-key-value-store-with-a-single-index))
-depends on this: the writer passes back the exact `etag` string returned by
-a prior `put`, and the store must match it verbatim. The conformance suite
-pins this by asserting `get(...).etag === put(...).etag` exactly, and by
-passing quoted literals such as `"deadbeef"` (with the quotes) straight
-through the `ifMatch` path.
+The `ETag` string is **opaque**. A port MUST compare it byte-for-byte — **including any surrounding quotes** — and round-trip it unchanged; it MUST NOT strip quotes, lowercase, or otherwise normalize the value. The `ifMatch` CAS contract (see [conditional writes](#s3-is-an-immutable-key-value-store-with-a-single-index)) depends on this: the writer passes back the exact `etag` string returned by a prior `put`, and the store must match it verbatim. The conformance suite pins this by asserting `get(...).etag === put(...).etag` exactly, and by passing quoted literals such as `"deadbeef"` (with the quotes) straight through the `ifMatch` path.
 
 ## Support tiers
 
-baerly-storage's commit path creates-if-absent the numbered `log/<seq>`
-object with `If-None-Match: "*"` (that create IS the commit — there is no
-`current.json` CAS on the commit path); the compactor advances
-`current.json` with `If-Match`. A store is _supported_ only if it
-honours those conditional writes. Run `baerly doctor --bucket=<uri>` to
-live-probe a bucket's conditional-write support before relying on it;
-exit 2 means the verbs aren't honoured — do not deploy. Cloudflare
-`baerly deploy` can run this same probe when passed
-`--probe-bucket=<uri>` and aborts before deploying if that opt-in
-preflight fails. Self-hosted Node deployments run the doctor command
-manually because there is no generic deploy wrapper.
+baerly-storage's commit path creates-if-absent the numbered `log/<seq>` object with `If-None-Match: "*"` (that create IS the commit — there is no `current.json` CAS on the commit path); the compactor advances `current.json` with `If-Match`. A store is _supported_ only if it honours those conditional writes. Run `baerly doctor --bucket=<uri>` to live-probe a bucket's conditional-write support before relying on it; exit 2 means the verbs aren't honoured — do not deploy. Cloudflare `baerly deploy` can run this same probe when passed `--probe-bucket=<uri>` and aborts before deploying if that opt-in preflight fails. Self-hosted Node deployments run the doctor command manually because there is no generic deploy wrapper.
 
-`baerly doctor --bucket` also checks that LIST (`encoding-type=url`)
-returns keys holding `%`, spaces, `+`, and XML-special characters
-byte-for-byte, and names the mismatch (left encoded, decoded twice, or
-decoded wrongly) when it does not. The deploy preflight runs only the
-conditional-write probe.
+`baerly doctor --bucket` also checks that LIST (`encoding-type=url`) returns keys holding `%`, spaces, `+`, and XML-special characters byte-for-byte, and names the mismatch (left encoded, decoded twice, or decoded wrongly) when it does not. The deploy preflight runs only the conditional-write probe.
 
-> **Load-bearing prerequisite — concurrent create-if-absent is
-> exactly-one-winner.** Sequential rejection ("`If-None-Match: "*"`
-> fails when the key already exists") is necessary but **not
-> sufficient**. Because the winning `log/<seq>` create _is_ the commit,
-> the backend must guarantee that under N _concurrent_ create-if-absent
-> requests for a fresh key, **exactly one** succeeds and the rest get
-> `412`. A store that admits two winners produces **split-brain
-> commit** — two distinct committed entries at one `seq`. The `baerly
-doctor --bucket` probe races K concurrent creates of a fresh key and
-> asserts exactly one wins (an `ifNoneMatch-concurrent` sub-check); the
-> conformance paths assert the same property where they run: native R2
-> in PR CI, MinIO in the local dev stack, and cloud S3-compatible
-> endpoints in credential-gated runs.
+> **Load-bearing prerequisite — concurrent create-if-absent is exactly-one-winner.** Sequential rejection ("`If-None-Match: "*"` fails when the key already exists") is necessary but **not sufficient**. Because the winning `log/<seq>` create _is_ the commit, the backend must guarantee that under N _concurrent_ create-if-absent requests for a fresh key, **exactly one** succeeds and the rest get `412`. A store that admits two winners produces **split-brain commit** — two distinct committed entries at one `seq`. The `baerly doctor --bucket` probe races K concurrent creates of a fresh key and asserts exactly one wins (an `ifNoneMatch-concurrent` sub-check); the conformance paths assert the same property where they run: native R2 in PR CI, MinIO in the local dev stack, and cloud S3-compatible endpoints in credential-gated runs.
 
-> **Deployment-topology rule — no negative caching in front of the
-> log/CAS path.** The log and CAS requests must reach the object-store
-> API **directly**, never through a negative-caching CDN or proxy. A
-> cached `404` on a `log/<seq>` that was just created would corrupt the
-> reader's forward-probe ("first 404 = tail"), hiding a committed
-> entry. Object-store APIs are themselves strongly consistent
-> (post-2020); this constrains what you put _in front of_ them, not the
-> store.
+> **Deployment-topology rule — no negative caching in front of the log/CAS path.** The log and CAS requests must reach the object-store API **directly**, never through a negative-caching CDN or proxy. A cached `404` on a `log/<seq>` that was just created would corrupt the reader's forward-probe ("first 404 = tail"), hiding a committed entry. Object-store APIs are themselves strongly consistent (post-2020); this constrains what you put _in front of_ them, not the store.
 
-| Tier              | Stores                        | What it means                                                                                                                                                                                                                                                                                                                |
-| ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tier 1**        | Cloudflare R2, AWS S3, GCS (native XML API) | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI. GCS is supported through the **native** `gcsStorage` adapter (`x-goog-if-generation-match`, not S3-interop — see [Native GCS](#native-gcs-xml-api)), Node-only and credential-gated the same way (conformance + the `node-gcs` cascade); its one caveat is GCS's ~1-write/s-per-object rate limit on the `log/<seq>` tail (see the [per-provider matrix](#per-provider-conditional-write-matrix)).                                                                                            |
-| **Tier 1.5**      | MinIO                         | Dev / local conformance harness (`pnpm dev:storage`, `pnpm test:minio`, `pnpm test:adapter-node`). Conditional writes — including bare-`*` create-if-absent — are verified against the pinned local MinIO; not a production target we promise.                                                                               |
-| **Unsupported**   | GCS via S3-interop, Azure Blob  | GCS's **S3-interop** endpoint scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so that path **cannot** linearize the commit log. Use the native `gcsStorage` adapter (Tier 1) instead; do not point `S3HttpStorage` at GCS. Azure Blob is not an S3 API and has no adapter. |
-| **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.**                                                                                                                                                                                      |
+| Tier | Stores | What it means |
+| --- | --- | --- |
+| **Tier 1** | Cloudflare R2, AWS S3, GCS (native XML API) | Supported. R2's native `r2BindingStorage` adapter is PR-CI gated by `pnpm test:adapter-cloudflare`; R2 and AWS through `S3HttpStorage` are covered by credential-gated `pnpm test:conformance` runs, not by fresh-checkout PR CI. GCS is supported through the **native** `gcsStorage` adapter (`x-goog-if-generation-match`, not S3-interop — see [Native GCS](#native-gcs-xml-api)), Node-only and credential-gated the same way (conformance + the `node-gcs` cascade); its one caveat is GCS's ~1-write/s-per-object rate limit on the `log/<seq>` tail (see the [per-provider matrix](#per-provider-conditional-write-matrix)). |
+| **Tier 1.5** | MinIO | Dev / local conformance harness (`pnpm dev:storage`, `pnpm test:minio`, `pnpm test:adapter-node`). Conditional writes — including bare-`*` create-if-absent — are verified against the pinned local MinIO; not a production target we promise. |
+| **Unsupported** | GCS via S3-interop, Azure Blob | GCS's **S3-interop** endpoint scopes S3 `If-Match` / `If-None-Match` to **reads** — the conditional headers are silently ignored on writes — so that path **cannot** linearize the commit log. Use the native `gcsStorage` adapter (Tier 1) instead; do not point `S3HttpStorage` at GCS. Azure Blob is not an S3 API and has no adapter. |
+| **Anything else** | other S3-compatible endpoints | Run `baerly doctor --bucket`. **Green ⇒ the conditional verbs are honoured — should work, you own production validation. Red ⇒ won't.** |
 
-> **R2 listing is strongly consistent; reads use the log.** R2 guarantees
-> strongly consistent object listing through both the S3 API and Worker
-> bindings. Cloudflare's caching caveat applies to cached custom-domain
-> access, not direct bucket operations (see
-> [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)).
-> Commits use conditional `log/<seq>` creates; reads and mutation selection
-> fold the snapshot and log using GET probes. None depends on a LIST.
-> The credential-gated
-> R2 S3 harness polls LIST assertions (`eventuallyConsistentList`); that
-> tolerance does not describe R2's consistency guarantee.
+> **R2 listing is strongly consistent; reads use the log.** R2 guarantees strongly consistent object listing through both the S3 API and Worker bindings. Cloudflare's caching caveat applies to cached custom-domain access, not direct bucket operations (see [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)). Commits use conditional `log/<seq>` creates; reads and mutation selection fold the snapshot and log using GET probes. None depends on a LIST. The credential-gated R2 S3 harness polls LIST assertions (`eventuallyConsistentList`); that tolerance does not describe R2's consistency guarantee.
 
 ### S3 (over HTTP) from a Cloudflare Worker
 
-A Worker normally uses a native R2 binding (`r2BindingStorage`, wired by
-default in `baerlyWorker`). When the approved bucket is AWS S3 or a
-cross-account R2 — i.e. there is no in-account binding — inject
-`S3HttpStorage` instead. Import it from the Worker-safe
-`@gusto/baerly-storage/s3` subpath (its closure has no `node:` builtins;
-`@gusto/baerly-storage/node` does and will not bundle):
+A Worker normally uses a native R2 binding (`r2BindingStorage`, wired by default in `baerlyWorker`). When the approved bucket is AWS S3 or a cross-account R2 — i.e. there is no in-account binding — inject `S3HttpStorage` instead. Import it from the Worker-safe `@gusto/baerly-storage/s3` subpath (its closure has no `node:` builtins; `@gusto/baerly-storage/node` does and will not bundle):
 
 ```ts
 import { baerlyWorker } from "@gusto/baerly-storage/cloudflare";
@@ -385,68 +156,24 @@ export default baerlyWorker((env) => ({
 }));
 ```
 
-The commit protocol requires exactly-one-winner create-if-absent
-(`If-None-Match: "*"`) and `If-Match` CAS. Native R2 bindings guarantee
-this; over the S3 HTTP API you inherit the *endpoint's* conditional-write
-and consistency behavior, so this path is only as strong as the backend
-you point it at. Cost trade-off: the `/s3` closure carries `aws4fetch` +
-`@rgrove/parse-xml`; a same-account binding avoids both.
+The commit protocol requires exactly-one-winner create-if-absent (`If-None-Match: "*"`) and `If-Match` CAS. Native R2 bindings guarantee this; over the S3 HTTP API you inherit the _endpoint's_ conditional-write and consistency behavior, so this path is only as strong as the backend you point it at. Cost trade-off: the `/s3` closure carries `aws4fetch` + `@rgrove/parse-xml`; a same-account binding avoids both.
 
-**Support tier.** This path is opt-in and sits at the same tier as
-AWS-via-`S3HttpStorage`: credential-gated, with production validation you
-own. Its wire behavior is verified under Node (against MinIO and, in
-credential-gated runs, real S3 / R2). Under workerd, CI covers it on two
-levels: `tests/integration/s3-worker-safe.test.ts` proves the
-`@gusto/baerly-storage/s3` closure *bundles* `node:`-free (it loads in a
-Worker), and `tests/integration/s3-worker-wire.test.ts` proves it *runs*
-in a real Workerd isolate — `S3HttpStorage` + `sigV4Signer` drive a
-put / get / CAS / list round-trip through an in-memory S3-shaped `fetch`
-stub, exercising aws4fetch's WebCrypto signing, `@rgrove/parse-xml`, and the
-`Request`/`Response` plumbing in-isolate. What CI does **not** do is drive
-a *real* S3 endpoint from workerd (TLS + the endpoint's own
-conditional-write semantics); that is the manual e2e recipe in
-`manual-e2e/README.md`. Run `baerly doctor --bucket=<uri>` against your
-endpoint before relying on it.
+**Support tier.** This path is opt-in and sits at the same tier as AWS-via-`S3HttpStorage`: credential-gated, with production validation you own. Its wire behavior is verified under Node (against MinIO and, in credential-gated runs, real S3 / R2). Under workerd, CI covers it on two levels: `tests/integration/s3-worker-safe.test.ts` proves the `@gusto/baerly-storage/s3` closure _bundles_ `node:`-free (it loads in a Worker), and `tests/integration/s3-worker-wire.test.ts` proves it _runs_ in a real Workerd isolate — `S3HttpStorage` + `sigV4Signer` drive a put / get / CAS / list round-trip through an in-memory S3-shaped `fetch` stub, exercising aws4fetch's WebCrypto signing, `@rgrove/parse-xml`, and the `Request`/`Response` plumbing in-isolate. What CI does **not** do is drive a _real_ S3 endpoint from workerd (TLS + the endpoint's own conditional-write semantics); that is the manual e2e recipe in `manual-e2e/README.md`. Run `baerly doctor --bucket=<uri>` against your endpoint before relying on it.
 
-**Host plan.** This path needs Workers Paid, with
-`BAERLY_MAINTENANCE_PROFILE=cf-paid`. Every `S3HttpStorage` call is a
-`fetch`, and Workers Free allows 50 per request (R2 binding calls do not
-count), so Workers Free + S3 over HTTP is not supported. Paid raises the
-budget to 10,000 per request and is the first guaranteed tier for this
-path; see
-[scale-ceilings.md § Host support tiers](scale-ceilings.md#host-support-tiers).
+**Host plan.** This path needs Workers Paid, with `BAERLY_MAINTENANCE_PROFILE=cf-paid`. Every `S3HttpStorage` call is a `fetch`, and Workers Free allows 50 per request (R2 binding calls do not count), so Workers Free + S3 over HTTP is not supported. Paid raises the budget to 10,000 per request and is the first guaranteed tier for this path; see [scale-ceilings.md § Host support tiers](scale-ceilings.md#host-support-tiers).
 
-**Deploy tooling still assumes R2.** `baerly deploy` and
-`baerly doctor --target=cloudflare` walk `wrangler.jsonc`'s `r2_buckets[]`
-and will flag a missing binding — they do not yet understand an S3-only
-Worker. Keep (or intentionally omit) the R2 binding with that in mind, and
-validate the S3 endpoint with `baerly doctor --bucket=<uri>` rather than
-the target-scoped `doctor`.
+**Deploy tooling still assumes R2.** `baerly deploy` and `baerly doctor --target=cloudflare` walk `wrangler.jsonc`'s `r2_buckets[]` and will flag a missing binding — they do not yet understand an S3-only Worker. Keep (or intentionally omit) the R2 binding with that in mind, and validate the S3 endpoint with `baerly doctor --bucket=<uri>` rather than the target-scoped `doctor`.
 
-**Credentials posture.** A same-account R2 binding needs no secret. This
-path instead requires long-lived static cloud credentials
-(`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) stored as Worker secrets;
-scope them to the one bucket and treat them like any other deployed
-secret. `sigV4Signer` covers static credentials only — for rotating /
-temporary credentials, pass your own `(req) => Promise<Request>` signer to
-`S3HttpStorage`.
+**Credentials posture.** A same-account R2 binding needs no secret. This path instead requires long-lived static cloud credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) stored as Worker secrets; scope them to the one bucket and treat them like any other deployed secret. `sigV4Signer` covers static credentials only — for rotating / temporary credentials, pass your own `(req) => Promise<Request>` signer to `S3HttpStorage`.
 
 ## Native GCS (XML API)
 
-GCS is a Tier-1 backend through the **native** `gcsStorage` adapter, not
-the S3-interop endpoint. GCS scopes the S3 `If-Match` / `If-None-Match`
-headers to _reads_, so an S3-interop client cannot linearize the commit
-log. The native adapter instead drives GCS's own generation
-preconditions against the XML API at `https://storage.googleapis.com`:
+GCS is a Tier-1 backend through the **native** `gcsStorage` adapter, not the S3-interop endpoint. GCS scopes the S3 `If-Match` / `If-None-Match` headers to _reads_, so an S3-interop client cannot linearize the commit log. The native adapter instead drives GCS's own generation preconditions against the XML API at `https://storage.googleapis.com`:
 
 - create-if-absent (the commit) → `x-goog-if-generation-match: 0`
 - CAS (compactor / `restore`) → `x-goog-if-generation-match: <generation>`
 
-Both return **412** on a lost write, which the adapter maps to
-`BaerlyError{code:"WriteConflict"}` — there is no S3-style `409`-contended
-branch. The object `generation` (from the `x-goog-generation` response
-header) is carried verbatim as the opaque `Storage` etag; nothing parses,
-orders, or compares it.
+Both return **412** on a lost write, which the adapter maps to `BaerlyError{code:"WriteConflict"}` — there is no S3-style `409`-contended branch. The object `generation` (from the `x-goog-generation` response header) is carried verbatim as the opaque `Storage` etag; nothing parses, orders, or compares it.
 
 ```ts
 import { baerlyNode, gcsStorage } from "@gusto/baerly-storage/node";
@@ -462,71 +189,32 @@ baerlyNode({
 }).listen(PORT);
 ```
 
-**Credentials — HMAC interop keys.** v1 authenticates with a GCS **HMAC
-key** (GOOG4-HMAC-SHA256 signing, dependency-free — AWS SigV4 cannot be
-reused because GCS rejects a request that carries both `x-amz-*` and
-`x-goog-*` headers). Mint one in the Cloud Console under _Cloud Storage →
-Settings → Interoperability → Create a key_ (for a service account); put
-the access key in `credentials.accessKeyId` and the secret in
-`credentials.secretAccessKey`. This is a setup step, not a deploy-time
-surprise. Service-account (GOOG4-RSA) and OAuth/ADC are a future line,
-gated on a dependency-free RSA story.
+**Credentials — HMAC interop keys.** v1 authenticates with a GCS **HMAC key** (GOOG4-HMAC-SHA256 signing, dependency-free — AWS SigV4 cannot be reused because GCS rejects a request that carries both `x-amz-*` and `x-goog-*` headers). Mint one in the Cloud Console under _Cloud Storage → Settings → Interoperability → Create a key_ (for a service account); put the access key in `credentials.accessKeyId` and the secret in `credentials.secretAccessKey`. This is a setup step, not a deploy-time surprise. Service-account (GOOG4-RSA) and OAuth/ADC are a future line, gated on a dependency-free RSA story.
 
-**Scope (v1).** Node host, HMAC-key credentials, bring-your-own-bucket.
-There is no GCP deploy target and no Worker `/gcs` subpath — GCS from a
-Worker is deferred.
+**Scope (v1).** Node host, HMAC-key credentials, bring-your-own-bucket. There is no GCP deploy target and no Worker `/gcs` subpath — GCS from a Worker is deferred.
 
-**Cost posture.** Unlike R2 (zero egress), GCS bills egress, and new
-buckets default to **soft-delete** (deleted objects retained ~7 days,
-billed) — baerly's GC `DELETE`s then become billed retained objects.
-`baerly doctor --bucket` actively probes Object Versioning (warns when
-enabled); soft-delete isn't readable over the HMAC/XML API, so the doctor
-emits a static advisory to check it instead. See
-[cost-model.md](../about/cost-model.md#google-cloud-storage-gcs).
+**Cost posture.** Unlike R2 (zero egress), GCS bills egress, and new buckets default to **soft-delete** (deleted objects retained ~7 days, billed) — baerly's GC `DELETE`s then become billed retained objects. `baerly doctor --bucket` actively probes Object Versioning (warns when enabled); soft-delete isn't readable over the HMAC/XML API, so the doctor emits a static advisory to check it instead. See [cost-model.md](../about/cost-model.md#google-cloud-storage-gcs).
 
 ## Per-provider conditional-write matrix
 
-Dated because provider behaviour drifts — re-verify before relying on a
-non-Tier-1 row.
+Dated because provider behaviour drifts — re-verify before relying on a non-Tier-1 row.
 
-| Provider         | `If-None-Match: "*"` (create-if-absent)                                                    | `If-Match: <etag>` (CAS)         | How established                                       | Verified |
-| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------- | ----------------------------------------------------- | -------- |
-| AWS S3           | Yes                                                                                        | Yes                              | Credential-gated `pnpm test:conformance`; S3 docs     | 2026-06  |
-| Cloudflare R2    | Yes                                                                                        | Yes                              | PR-CI native R2 adapter; credential-gated S3-HTTP run | 2026-06  |
-| MinIO            | Yes (baerly-storage emits a bare `*`)                                                      | Yes                              | Local dev-stack conformance (`MINIO=1`)               | 2026-06  |
-| GCS (native XML API) | Yes — adapter maps to `x-goog-if-generation-match: 0`; 412 on collision | Yes — maps to `x-goog-if-generation-match: <generation>`; 412 on stale | Credential-gated `pnpm test:conformance` + `node-gcs` cascade; live-probed | 2026-07  |
-| GCS (S3-interop) | No — S3 conditional headers are read-scoped; use the native adapter | No — read-scoped on S3 interop | Provider XML-API docs; unsupported (see [Native GCS](#native-gcs-xml-api)) | 2026-07  |
-| Azure Blob       | n/a (not an S3 API)                                                                        | n/a                              | No adapter                                            | 2026-06  |
+| Provider | `If-None-Match: "*"` (create-if-absent) | `If-Match: <etag>` (CAS) | How established | Verified |
+| --- | --- | --- | --- | --- |
+| AWS S3 | Yes | Yes | Credential-gated `pnpm test:conformance`; S3 docs | 2026-06 |
+| Cloudflare R2 | Yes | Yes | PR-CI native R2 adapter; credential-gated S3-HTTP run | 2026-06 |
+| MinIO | Yes (baerly-storage emits a bare `*`) | Yes | Local dev-stack conformance (`MINIO=1`) | 2026-06 |
+| GCS (native XML API) | Yes — adapter maps to `x-goog-if-generation-match: 0`; 412 on collision | Yes — maps to `x-goog-if-generation-match: <generation>`; 412 on stale | Credential-gated `pnpm test:conformance` + `node-gcs` cascade; live-probed | 2026-07 |
+| GCS (S3-interop) | No — S3 conditional headers are read-scoped; use the native adapter | No — read-scoped on S3 interop | Provider XML-API docs; unsupported (see [Native GCS](#native-gcs-xml-api)) | 2026-07 |
+| Azure Blob | n/a (not an S3 API) | n/a | No adapter | 2026-06 |
 
-> **GCS path note.** The **native** `gcsStorage` adapter is the sanctioned
-> GCS path: it emits `x-goog-if-generation-match` (create-if-absent + CAS),
-> returns `412` on precondition failure, and carries the opaque
-> `generation` as the version token. Credential-gated conformance and the
-> `node-gcs` cascade confirm exactly-one-winner under concurrent create.
-> The **S3-interop** path stays Unsupported — its conditional headers are
-> read-scoped, so concurrent create-if-absent admits multiple winners
-> (split-brain commit), and no live probe can promote it.
+> **GCS path note.** The **native** `gcsStorage` adapter is the sanctioned GCS path: it emits `x-goog-if-generation-match` (create-if-absent + CAS), returns `412` on precondition failure, and carries the opaque `generation` as the version token. Credential-gated conformance and the `node-gcs` cascade confirm exactly-one-winner under concurrent create. The **S3-interop** path stays Unsupported — its conditional headers are read-scoped, so concurrent create-if-absent admits multiple winners (split-brain commit), and no live probe can promote it.
 
-> Conditional writes are also subject to **per-object / per-prefix
-> write-rate limits**. Under single-write commit the high-frequency
-> contention is the `log/<seq>` create — distinct keys but one `log/`
-> prefix (see the hot-prefix cliff in
-> [cost-model.md](../about/cost-model.md)); `current.json` is now only
-> compactor-written. GCS documents a limit of roughly one write per
-> second to a single object name; on the native adapter this is the live
-> Tier-1 caveat. The cascade contends distinct `log/<seq>` keys (distinct
-> objects), so the per-object cap does not bite the commit path, but a
-> workload hotspotting one object draws retryable `429`s. Treat any
-> per-object/per-prefix write-rate figure as provider-specific and
-> re-verify against the provider's quota docs.
+> Conditional writes are also subject to **per-object / per-prefix write-rate limits**. Under single-write commit the high-frequency contention is the `log/<seq>` create — distinct keys but one `log/` prefix (see the hot-prefix cliff in [cost-model.md](../about/cost-model.md)); `current.json` is now only compactor-written. GCS documents a limit of roughly one write per second to a single object name; on the native adapter this is the live Tier-1 caveat. The cascade contends distinct `log/<seq>` keys (distinct objects), so the per-object cap does not bite the commit path, but a workload hotspotting one object draws retryable `429`s. Treat any per-object/per-prefix write-rate figure as provider-specific and re-verify against the provider's quota docs.
 
 Provider references:
 
-- GCS XML-API conditional requests (`x-goog-if-generation-match`):
-  <https://cloud.google.com/storage/docs/xml-api/reference-headers>
-- GCS per-object request-rate limits:
-  <https://cloud.google.com/storage/docs/request-rate>
-- AWS S3 conditional writes (`If-None-Match` / `If-Match`):
-  <https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html>
-- Cloudflare R2 conditional operations:
-  <https://developers.cloudflare.com/r2/api/s3/extensions/>
+- GCS XML-API conditional requests (`x-goog-if-generation-match`): <https://cloud.google.com/storage/docs/xml-api/reference-headers>
+- GCS per-object request-rate limits: <https://cloud.google.com/storage/docs/request-rate>
+- AWS S3 conditional writes (`If-None-Match` / `If-Match`): <https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html>
+- Cloudflare R2 conditional operations: <https://developers.cloudflare.com/r2/api/s3/extensions/>

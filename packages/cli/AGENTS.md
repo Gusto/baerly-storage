@@ -1,119 +1,58 @@
 # @baerly/cli — agent quickref
 
-`baerly` does things to a project that already has baerly-storage.
-`create-baerly-storage` is the one that puts baerly-storage into a project
-in the first place (see `packages/create-baerly-storage/AGENTS.md`).
+`baerly` does things to a project that already has baerly-storage. `create-baerly-storage` is the one that puts baerly-storage into a project in the first place (see `packages/create-baerly-storage/AGENTS.md`).
 
-`@baerly/cli` is workspace-internal. It bundles to a single-file bin at
-`dist/baerly.js` via rolldown with a `#!/usr/bin/env node` banner; the
-published `baerly-storage` tarball ships that bin. Every subcommand is
-lazy-loaded behind dynamic `import()` so `node baerly --help` pays only
-the entry shim (~28 KiB) plus citty parser before dispatching.
+`@baerly/cli` is workspace-internal. It bundles to a single-file bin at `dist/baerly.js` via rolldown with a `#!/usr/bin/env node` banner; the published `baerly-storage` tarball ships that bin. Every subcommand is lazy-loaded behind dynamic `import()` so `node baerly --help` pays only the entry shim (~28 KiB) plus citty parser before dispatching.
 
 ## Verbs
 
-The static-import closure (`src/baerly.ts:25-59`) reaches _only_
-`citty` + `bin-runner.ts`. Every verb below is reached via a
-`() => import("./x.ts").then(m => m.x)` factory — the dispatched
-module's transitive imports are evaluated lazily.
+The static-import closure (`src/baerly.ts:25-59`) reaches _only_ `citty` + `bin-runner.ts`. Every verb below is reached via a `() => import("./x.ts").then(m => m.x)` factory — the dispatched module's transitive imports are evaluated lazily.
 
-| Verb                         | Module                                       | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baerly deploy`              | `src/deploy.ts` → `src/deploy/cloudflare.ts` | Reads `baerly.config.ts:target` and dispatches. Today only `target: "cloudflare"` is accepted; patches `wrangler.jsonc`, then shells out to `wrangler deploy --x-provision --x-auto-create`. `target: "node"` is rejected (self-host via your PaaS/container build).                                                                                                                                                                                                |
-| `baerly doctor`              | `src/doctor.ts`                              | Two modes. `--bucket <uri>` live-probes a real bucket's CAS support (verifies `If-Match` / `If-None-Match` are honoured — the protocol's load-bearing backend prerequisite) and LIST key encoding (`src/doctor/list-encoding.ts`: listed keys holding `%`, spaces, `+`, `&<>"'` must match the written keys byte-for-byte), writing + deleting throwaway sentinels, independent of `--target`. Otherwise walks deploy invariants for `baerly.config.ts:target` (wrangler config, R2 bindings, required secrets, CF Access audience tag, optional cron triggers, domain coherence). `--fix` auto-creates missing R2 buckets. |
-| `baerly inspect`             | `src/inspect.ts`                             | Read-only summary of one collection's snapshot / log state. `--json` is a storage-format diagnostic whose fields follow the format, not a stable contract.                                                                                                                                                                                                                                                                                                 |
-| `baerly export`              | `src/export.ts`                              | Snapshot dump of one collection to SQL (`--target=sqlite`, `--target=postgres`, `--target=d1`).                                                                                                                                                                                                                                                                                                                                                                     |
-| `baerly cost`                | `src/cost.ts`                                | Selected-collection Class A projection and cost band. Samples the trailing retained log: `current.json`, then `findLogTail` from `max(log_seq_start, tail_hint)`, then GETs by seq above the certified delete floor (no log LIST). Provider pricing (`src/cost/provider.ts`) and `cf-free`/`node` profile are separate inputs; `src/cost/project.ts` bands the dollar figure. Bands and assumptions: `docs/about/cost-model.md#cli-cost-bands`.                                                                                                                                                                                                                                                                                                                                                                                            |
-| `baerly admin dump`          | `src/admin/dump.ts`                          | Canonical NDJSON of one collection's current row set.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `baerly admin restore`       | `src/admin/restore.ts`                       | Re-imports `admin dump` NDJSON into a fresh bucket.                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `baerly admin fsck`          | `src/admin/fsck.ts`                          | Walks `current.json` → snapshot hash → log range read-only; exits 4 on any finding.                                                                                                                                                                                                                                                                                                                                                                |
-| `baerly admin usage`         | `src/admin/usage.ts`                         | Node-target all-collection writes/min graduation health check. Cloudflare usage scanning returns an info finding until the R2-binding follow-up lands.                                                                                                                                                                                                                                                                                                              |
+| Verb | Module | Role |
+| --- | --- | --- |
+| `baerly deploy` | `src/deploy.ts` → `src/deploy/cloudflare.ts` | Reads `baerly.config.ts:target` and dispatches. Today only `target: "cloudflare"` is accepted; patches `wrangler.jsonc`, then shells out to `wrangler deploy --x-provision --x-auto-create`. `target: "node"` is rejected (self-host via your PaaS/container build). |
+| `baerly doctor` | `src/doctor.ts` | Two modes. `--bucket <uri>` live-probes a real bucket's CAS support (verifies `If-Match` / `If-None-Match` are honoured — the protocol's load-bearing backend prerequisite) and LIST key encoding (`src/doctor/list-encoding.ts`: listed keys holding `%`, spaces, `+`, `&<>"'` must match the written keys byte-for-byte), writing + deleting throwaway sentinels, independent of `--target`. Otherwise walks deploy invariants for `baerly.config.ts:target` (wrangler config, R2 bindings, required secrets, CF Access audience tag, optional cron triggers, domain coherence). `--fix` auto-creates missing R2 buckets. |
+| `baerly inspect` | `src/inspect.ts` | Read-only summary of one collection's snapshot / log state. `--json` is a storage-format diagnostic whose fields follow the format, not a stable contract. |
+| `baerly export` | `src/export.ts` | Snapshot dump of one collection to SQL (`--target=sqlite`, `--target=postgres`, `--target=d1`). |
+| `baerly cost` | `src/cost.ts` | Selected-collection Class A projection and cost band. Samples the trailing retained log: `current.json`, then `findLogTail` from `max(log_seq_start, tail_hint)`, then GETs by seq above the certified delete floor (no log LIST). Provider pricing (`src/cost/provider.ts`) and `cf-free`/`node` profile are separate inputs; `src/cost/project.ts` bands the dollar figure. Bands and assumptions: `docs/about/cost-model.md#cli-cost-bands`. |
+| `baerly admin dump` | `src/admin/dump.ts` | Canonical NDJSON of one collection's current row set. |
+| `baerly admin restore` | `src/admin/restore.ts` | Re-imports `admin dump` NDJSON into a fresh bucket. |
+| `baerly admin fsck` | `src/admin/fsck.ts` | Walks `current.json` → snapshot hash → log range read-only; exits 4 on any finding. |
+| `baerly admin usage` | `src/admin/usage.ts` | Node-target all-collection writes/min graduation health check. Cloudflare usage scanning returns an info finding until the R2-binding follow-up lands. |
 
-Exit-code contract (per `src/deploy.ts:10-16` and friends): 0 success,
-1 user error, 2 storage/external error, 3 protocol invariant.
+Exit-code contract (per `src/deploy.ts:10-16` and friends): 0 success, 1 user error, 2 storage/external error, 3 protocol invariant.
 
-Name rule: read-only verbs (`inspect`, `export`, `cost`, `admin dump`,
-`admin fsck`, `admin usage`) validate `--app` / `--tenant` /
-`--collection` with the bare key-segment rule, so a legacy non-NFC name
-stays readable and exportable. The writing verb (`admin restore`) also requires NFC via
-`assertWritableNames` (`src/subcommand.ts`), matching the SDK. `admin fsck`
-and `admin dump` report non-NFC names and names with an unpaired UTF-16
-surrogate. `admin fsck` also reports snapshot `_id`s with an unpaired
-surrogate (it does not decode the log), and `admin dump` reports non-NFC,
-ill-formed, and canonically-equivalent `_id`s across every live row, as the
-migration preflight (`src/legacy-names.ts`).
+Name rule: read-only verbs (`inspect`, `export`, `cost`, `admin dump`, `admin fsck`, `admin usage`) validate `--app` / `--tenant` / `--collection` with the bare key-segment rule, so a legacy non-NFC name stays readable and exportable. The writing verb (`admin restore`) also requires NFC via `assertWritableNames` (`src/subcommand.ts`), matching the SDK. `admin fsck` and `admin dump` report non-NFC names and names with an unpaired UTF-16 surrogate. `admin fsck` also reports snapshot `_id`s with an unpaired surrogate (it does not decode the log), and `admin dump` reports non-NFC, ill-formed, and canonically-equivalent `_id`s across every live row, as the migration preflight (`src/legacy-names.ts`).
 
-`admin dump --recover-legacy-names` opts into exact collection-name
-matching for a mixed legacy log. Only the CLI export loader accepts this
-mode; live reads, writes, and maintenance retain the alias guard. Snapshot
-identity, hash, and dense-log checks remain strict. A mismatched snapshot
-is refused because recovery cannot reconstruct rows earlier compaction
-discarded. Recovery reports that historical completeness is not guaranteed.
+`admin dump --recover-legacy-names` opts into exact collection-name matching for a mixed legacy log. Only the CLI export loader accepts this mode; live reads, writes, and maintenance retain the alias guard. Snapshot identity, hash, and dense-log checks remain strict. A mismatched snapshot is refused because recovery cannot reconstruct rows earlier compaction discarded. Recovery reports that historical completeness is not guaranteed.
 
-Two citty (`^0.2.2`) quirks this package works around — the camelCase
-alias it auto-injects for kebab-case flags, and `runCommand` not
-intercepting `--help`/`--version` the way `runMain` does — are
-documented next to their fixes in `src/subcommand.ts` and
-`src/bin-runner.ts` respectively; read those before touching flag
-parsing or the bin entry.
+Two citty (`^0.2.2`) quirks this package works around — the camelCase alias it auto-injects for kebab-case flags, and `runCommand` not intercepting `--help`/`--version` the way `runMain` does — are documented next to their fixes in `src/subcommand.ts` and `src/bin-runner.ts` respectively; read those before touching flag parsing or the bin entry.
 
 ## Shared with create-baerly-storage
 
-`@baerly/cli` surfaces exactly one subpath export:
-`@baerly/cli/wrangler-patch`. It exposes `patchWranglerJsonc`,
-`readWranglerName`, and `readWranglerMain` — all pure functions over
-`wrangler.jsonc` source text (via `jsonc-parser` so comments survive).
+`@baerly/cli` surfaces exactly one subpath export: `@baerly/cli/wrangler-patch`. It exposes `patchWranglerJsonc`, `readWranglerName`, and `readWranglerMain` — all pure functions over `wrangler.jsonc` source text (via `jsonc-parser` so comments survive).
 
 Two consumers, one source of truth:
 
-- `packages/cli/src/deploy/cloudflare.ts` — patches `wrangler.jsonc`
-  before `wrangler deploy` to ensure R2 binding + `vars` are present.
-- `packages/create-baerly-storage/src/bolt-on.ts` — patches the same file when
-  `pnpm create @gusto/baerly-storage .` runs inside an existing Worker project.
+- `packages/cli/src/deploy/cloudflare.ts` — patches `wrangler.jsonc` before `wrangler deploy` to ensure R2 binding + `vars` are present.
+- `packages/create-baerly-storage/src/bolt-on.ts` — patches the same file when `pnpm create @gusto/baerly-storage .` runs inside an existing Worker project.
 
-`renderWorkerEntrySnippet` (the worker-entry snippet template) used to
-live here too, behind `@baerly/cli/init-snippet`. It only ever had one
-consumer (`create-baerly-storage`'s bolt-on), so it now lives at
-`packages/create-baerly-storage/src/init-snippet.ts`. The deployed `baerly`
-CLI never renders user-facing code snippets.
+`renderWorkerEntrySnippet` (the worker-entry snippet template) used to live here too, behind `@baerly/cli/init-snippet`. It only ever had one consumer (`create-baerly-storage`'s bolt-on), so it now lives at `packages/create-baerly-storage/src/init-snippet.ts`. The deployed `baerly` CLI never renders user-facing code snippets.
 
 ## Bundle policy
 
-`dist/baerly.js` is **intentionally unbudgeted** — it is absent from
-`bundle-sizes.json`. Reason: static-import
-closure is ~28 KiB regardless of how much each verb pulls, citty-style
-lazy dispatch is the load-bearing discipline, and the bin runs on dev
-machines / CI where cold-start size is not a useful signal.
+`dist/baerly.js` is **intentionally unbudgeted** — it is absent from `bundle-sizes.json`. Reason: static-import closure is ~28 KiB regardless of how much each verb pulls, citty-style lazy dispatch is the load-bearing discipline, and the bin runs on dev machines / CI where cold-start size is not a useful signal.
 
-What _is_ budgeted there is a behavioural guard:
-`BUNDLED_OPTIONAL_PEERS` walks `dist/baerly.js` to ensure
-`@rgrove/parse-xml` and `aws4fetch` are bundled, not live-imported (the
-agent-struggle #14 regression class).
+What _is_ budgeted there is a behavioural guard: `BUNDLED_OPTIONAL_PEERS` walks `dist/baerly.js` to ensure `@rgrove/parse-xml` and `aws4fetch` are bundled, not live-imported (the agent-struggle #14 regression class).
 
 Anti-patterns to flag in review:
 
-- A top-level `import { x } from "./some/verb.ts"` in `src/baerly.ts`
-  or `bin-runner.ts`. Breaks the lazy-dispatch discipline; the
-  closure inflates by the verb's transitive cost.
-- Adding a runtime dep just to support one verb. Most verbs already
-  reach into `@baerly/protocol` / `@baerly/server` / `@baerly/dev`;
-  prefer dragging there over inflating the bin's external surface.
+- A top-level `import { x } from "./some/verb.ts"` in `src/baerly.ts` or `bin-runner.ts`. Breaks the lazy-dispatch discipline; the closure inflates by the verb's transitive cost.
+- Adding a runtime dep just to support one verb. Most verbs already reach into `@baerly/protocol` / `@baerly/server` / `@baerly/dev`; prefer dragging there over inflating the bin's external surface.
 
 ## When iterating
 
-- `pnpm verify:agent` after a verb edit — typecheck + lint catch most
-  regressions; the verb's own `*.test.ts` is the next gate.
-- After touching `src/baerly.ts` or any new static import, run
-  `pnpm test:agent tests/integration/bundle-size.test.ts` — that is
-  where the `BUNDLED_OPTIONAL_PEERS` guard lives. `pnpm bundle-sizes`
-  will NOT catch a regression here: `dist/baerly.js` is absent from
-  `bundle-sizes.json`, so the delta gate never measures it.
-- `pnpm bundle-sizes` self-builds and gates every snapshot entry,
-  printing only violations (or `ok (N entries)`). Add `--report` for
-  `BUNDLE_SIZE <entry> raw=…(+Δ,+Δ%) gz=…` on every entry. Don't pipe
-  through `tail`/`head`; output is already compact.
-- The worktree-bootstrap dance matters here:
-  `pnpm worktree:bootstrap` rebuilds `dist/baerly.js`, which is what
-  every example's `node_modules/.bin/baerly` symlinks to. Without it,
-  `pnpm baerly <verb>` from an example dir resolves to a missing
-  file.
+- `pnpm verify:agent` after a verb edit — typecheck + lint catch most regressions; the verb's own `*.test.ts` is the next gate.
+- After touching `src/baerly.ts` or any new static import, run `pnpm test:agent tests/integration/bundle-size.test.ts` — that is where the `BUNDLED_OPTIONAL_PEERS` guard lives. `pnpm bundle-sizes` will NOT catch a regression here: `dist/baerly.js` is absent from `bundle-sizes.json`, so the delta gate never measures it.
+- `pnpm bundle-sizes` self-builds and gates every snapshot entry, printing only violations (or `ok (N entries)`). Add `--report` for `BUNDLE_SIZE <entry> raw=…(+Δ,+Δ%) gz=…` on every entry. Don't pipe through `tail`/`head`; output is already compact.
+- The worktree-bootstrap dance matters here: `pnpm worktree:bootstrap` rebuilds `dist/baerly.js`, which is what every example's `node_modules/.bin/baerly` symlinks to. Without it, `pnpm baerly <verb>` from an example dir resolves to a missing file.

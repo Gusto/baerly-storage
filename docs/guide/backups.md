@@ -9,27 +9,14 @@ related: ["../about/cost-model.md", "operations.md"]
 
 # Backups (`dump` + `restore`)
 
-`baerly admin dump` is the backup stream: it writes canonical NDJSON
-for one collection to stdout. NDJSON means one JSON object per line; the
-dump sorts rows and object keys so repeated dumps can compare
-byte-for-byte. Text mode is intentionally silent on success except for
-that NDJSON body, so shell redirection is safe. `baerly admin restore`
-is the matching import path: it reads the same format from stdin into a
-fresh collection.
+`baerly admin dump` is the backup stream: it writes canonical NDJSON for one collection to stdout. NDJSON means one JSON object per line; the dump sorts rows and object keys so repeated dumps can compare byte-for-byte. Text mode is intentionally silent on success except for that NDJSON body, so shell redirection is safe. `baerly admin restore` is the matching import path: it reads the same format from stdin into a fresh collection.
 
-Backups are scoped to one `(app, tenant, collection)` stream. In bucket
-terms, that collection lives under
-`app/<app>/tenant/<tenant>/manifests/<collection>/`; if the bucket URI
-contains a path prefix, this path sits under that prefix. Verify
-recovery in a separate bucket or prefix before production cutover.
+Backups are scoped to one `(app, tenant, collection)` stream. In bucket terms, that collection lives under `app/<app>/tenant/<tenant>/manifests/<collection>/`; if the bucket URI contains a path prefix, this path sits under that prefix. Verify recovery in a separate bucket or prefix before production cutover.
 
 The safe default is:
 
-- keep a checked-in inventory of production `(app, tenant,
-collection)` triples to back up;
-- use least-privilege storage credentials that can read the production
-  prefix and write the backup destination, not broad account-admin
-  credentials;
+- keep a checked-in inventory of production `(app, tenant, collection)` triples to back up;
+- use least-privilege storage credentials that can read the production prefix and write the backup destination, not broad account-admin credentials;
 - credentials live in a `0600` env file owned by the job user, not crontab;
 - dumps are written to a temp file, then atomically moved into place;
 - files are mode `0600`;
@@ -39,10 +26,7 @@ collection)` triples to back up;
 
 ## Daily Backup Script
 
-Create one cron entry per production collection, or have an inventory
-loop call the wrapper with explicit `(app, tenant, collection)`
-arguments. Do not rely on "all collections" being discoverable from one
-app directory unless you have verified that inventory separately.
+Create one cron entry per production collection, or have an inventory loop call the wrapper with explicit `(app, tenant, collection)` arguments. Do not rely on "all collections" being discoverable from one app directory unless you have verified that inventory separately.
 
 Environment file, owned by the user running the job and mode `0600`:
 
@@ -105,32 +89,17 @@ Cron should call the wrapper, not inline credentials:
 0 3 * * * /opt/baerly/bin/backup.sh acme t1 tickets >> /var/log/baerly-backup.log 2>&1
 ```
 
-For off-host retention, copy `"$FINAL"` and `"$FINAL.sha256"` to a
-backup bucket after the checksum step, then let that bucket's lifecycle
-policy expire old dumps. Prefer that to keeping the only backup on the
-same disk as the app.
+For off-host retention, copy `"$FINAL"` and `"$FINAL.sha256"` to a backup bucket after the checksum step, then let that bucket's lifecycle policy expire old dumps. Prefer that to keeping the only backup on the same disk as the app.
 
-The temp-file/rename sequence prevents a failed dump command from
-replacing the last good dump. With `set -euo pipefail`, a failed dump
-may leave only the temporary file removed by the trap; it never gets
-moved into place.
+The temp-file/rename sequence prevents a failed dump command from replacing the last good dump. With `set -euo pipefail`, a failed dump may leave only the temporary file removed by the trap; it never gets moved into place.
 
-`admin dump` exits `0` on success, `1` on `InvalidConfig` (bad bucket
-URI, missing args, or collection not found), `2` on storage / network
-failure, and `3` on a protocol invariant. The distinct codes let a
-wrapper branch on the failure class.
+`admin dump` exits `0` on success, `1` on `InvalidConfig` (bad bucket URI, missing args, or collection not found), `2` on storage / network failure, and `3` on a protocol invariant. The distinct codes let a wrapper branch on the failure class.
 
-Keep backup stdout as data only. Do **not** use `--json` when
-redirecting `admin dump` stdout to an `.ndjson` file: JSON mode writes a
-success envelope to stdout after the dump body, corrupting the backup.
-Use text mode for backup files.
+Keep backup stdout as data only. Do **not** use `--json` when redirecting `admin dump` stdout to an `.ndjson` file: JSON mode writes a success envelope to stdout after the dump body, corrupting the backup. Use text mode for backup files.
 
 ## Restore
 
-First probe the recovery bucket. This writes and deletes throwaway
-sentinels to verify the S3 conditional-write contract: stale `If-Match`
-updates fail, `If-None-Match: "*"` refuses existing keys, and concurrent
-create-if-absent writes have one winner.
+First probe the recovery bucket. This writes and deletes throwaway sentinels to verify the S3 conditional-write contract: stale `If-Match` updates fail, `If-None-Match: "*"` refuses existing keys, and concurrent create-if-absent writes have one winner.
 
 ```sh
 baerly doctor --bucket=s3://baerly-recovery
@@ -147,129 +116,42 @@ baerly admin restore \
   < /var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
 ```
 
-If the target collection's `current.json` already exists, restore
-refuses with `AlreadyExists`. With `--force`, restore does not delete old
-objects first. It moves the collection's starting log position past the
-old numbered log files and imports rows at new sequence numbers.
-Maintenance can later reclaim the surviving `log/` objects via
-computed-range retirement, once the new generation's fold floor advances
-past them, and orphan snapshots via GC. Legacy `content/` side objects
-remain untouched and require the optional, writers-quiesced disposal
-described in [Legacy content cleanup](#legacy-content-cleanup) below.
-The `writer_fence` field is only bumped to keep metadata monotone; it does
-not perform truncation or protect against live writers.
+If the target collection's `current.json` already exists, restore refuses with `AlreadyExists`. With `--force`, restore does not delete old objects first. It moves the collection's starting log position past the old numbered log files and imports rows at new sequence numbers. Maintenance can later reclaim the surviving `log/` objects via computed-range retirement, once the new generation's fold floor advances past them, and orphan snapshots via GC. Legacy `content/` side objects remain untouched and require the optional, writers-quiesced disposal described in [Legacy content cleanup](#legacy-content-cleanup) below. The `writer_fence` field is only bumped to keep metadata monotone; it does not perform truncation or protect against live writers.
 
-Before a force restore or any copy-in-place workflow, stop writers, stop
-new `runScheduledMaintenance` calls, and wait for every in-flight
-compaction and GC pass to finish. Clearing `gc/pending.json` cannot fence
-a GC pass that already loaded old candidates; such a pass can otherwise
-delete log keys recreated by the restore.
+Before a force restore or any copy-in-place workflow, stop writers, stop new `runScheduledMaintenance` calls, and wait for every in-flight compaction and GC pass to finish. Clearing `gc/pending.json` cannot fence a GC pass that already loaded old candidates; such a pass can otherwise delete log keys recreated by the restore.
 
-Restore validates each line before committing it, in stream order. It
-refuses (`InvalidConfig`, exit 1, naming the line number and the escaped
-`_id`) a duplicate `_id` and an `_id` outside the write domain (the
-key-segment rule or not NFC). Restore never rewrites an `_id`: fix the dump
-line, or rewrite it to a fresh NFC `_id` that is not canonically
-equivalent to the original. A dump from an older release whose `_id`s are
-not NFC cannot be restored as-is; keep the raw dump, rewrite those ids,
-and restore the rewritten copy.
+Restore validates each line before committing it, in stream order. It refuses (`InvalidConfig`, exit 1, naming the line number and the escaped `_id`) a duplicate `_id` and an `_id` outside the write domain (the key-segment rule or not NFC). Restore never rewrites an `_id`: fix the dump line, or rewrite it to a fresh NFC `_id` that is not canonically equivalent to the original. A dump from an older release whose `_id`s are not NFC cannot be restored as-is; keep the raw dump, rewrite those ids, and restore the rewritten copy.
 
-Restore is row-committing, not file-atomic: validation is per row. Rows
-before the failing line are committed; the failing line and later lines
-are not, and the error message reports how many rows were committed. The
-same holds for malformed NDJSON (exit 2) or a mid-stream storage failure.
-Recover by restoring again into a fresh target, or with `--force`. There is
-no whole-stream pre-validation pass, because stdin is a stream.
+Restore is row-committing, not file-atomic: validation is per row. Rows before the failing line are committed; the failing line and later lines are not, and the error message reports how many rows were committed. The same holds for malformed NDJSON (exit 2) or a mid-stream storage failure. Recover by restoring again into a fresh target, or with `--force`. There is no whole-stream pre-validation pass, because stdin is a stream.
 
-On R2's Class A billing meter, before any in-band maintenance from a
-long import, restore's base billable shapes are: fresh non-empty `N + 2`
-for N rows (initial `current.json` seed, one committing `log/<seq>`
-create per row, final metadata/tail write); force non-empty `N + 2 + P`;
-fresh empty `1`; and force empty `1 + P`. `P` is the number of provider
-LIST pages consumed by the one `Storage.list()` iterator in
-`tailFromListedLogKeys`; one iterator invocation can issue multiple
-billable LIST requests. Maintenance adds the same measured profile
-overhead as the main cost model.
+On R2's Class A billing meter, before any in-band maintenance from a long import, restore's base billable shapes are: fresh non-empty `N + 2` for N rows (initial `current.json` seed, one committing `log/<seq>` create per row, final metadata/tail write); force non-empty `N + 2 + P`; fresh empty `1`; and force empty `1 + P`. `P` is the number of provider LIST pages consumed by the one `Storage.list()` iterator in `tailFromListedLogKeys`; one iterator invocation can issue multiple billable LIST requests. Maintenance adds the same measured profile overhead as the main cost model.
 
-For production recovery, treat restore as a cutover to a proven copy,
-not as an overwrite of the live prefix. Do not restore over the live
-prefix while writers are still active.
+For production recovery, treat restore as a cutover to a proven copy, not as an overwrite of the live prefix. Do not restore over the live prefix while writers are still active.
 
-Long-poll readers no longer need draining. A `--force` reseed re-mints
-the collection's `generation` nonce, and every `/v1/since` cursor
-carries the generation it was minted under, so a stale pre-restore
-cursor is rejected with `CursorExpired` (HTTP 410) telling the client to
-re-bootstrap. The React client (`useQuery` subscriptions) acts on that
-automatically: it drops the cursor and resumes from the collection's log
-floor. A custom `/v1/since` consumer must handle the 410 the same way —
-restart with an empty cursor rather than retrying the rejected one.
+Long-poll readers no longer need draining. A `--force` reseed re-mints the collection's `generation` nonce, and every `/v1/since` cursor carries the generation it was minted under, so a stale pre-restore cursor is rejected with `CursorExpired` (HTTP 410) telling the client to re-bootstrap. The React client (`useQuery` subscriptions) acts on that automatically: it drops the cursor and resumes from the collection's log floor. A custom `/v1/since` consumer must handle the 410 the same way — restart with an empty cursor rather than retrying the rejected one.
 
-This closes a real hazard rather than merely documenting it. A `--force`
-reseed can lower the live log floor (`log_seq_start`), and the older
-protocol detected a dead cursor only by testing its seq against that
-floor — so a lowered floor let a stale cursor pass, silently resume into
-the new generation, and miss every restored row beneath it. See
-invariant 13 in [the sync protocol spec](../spec/sync-protocol.md).
+This closes a real hazard rather than merely documenting it. A `--force` reseed can lower the live log floor (`log_seq_start`), and the older protocol detected a dead cursor only by testing its seq against that floor — so a lowered floor let a stale cursor pass, silently resume into the new generation, and miss every restored row beneath it. See invariant 13 in [the sync protocol spec](../spec/sync-protocol.md).
 
 The safe cutover shape is:
 
-1. Pause writers or put the app in read-only mode, stop new
-   `runScheduledMaintenance` calls, and wait for in-flight compaction and
-   GC passes to finish.
+1. Pause writers or put the app in read-only mode, stop new `runScheduledMaintenance` calls, and wait for in-flight compaction and GC passes to finish.
 2. Restore into a separate recovery bucket or tenant prefix.
 3. Run `baerly admin fsck` on the recovered collection.
-4. Point the app at the recovered bucket/prefix. This direct route
-   cutover is preferred, and it is the only route that rewrites no keys.
-5. If infrastructure requires a raw object copy instead, copy into a
-   separate bucket or storage namespace at the **identical
-   bucket-relative collection path**. `current.snapshot` and every
-   `gc/pending.json` candidate store complete bucket-relative keys, so a
-   copy that lands the same objects under a different collection path
-   leaves the snapshot pointer aimed at a key that does not exist and
-   gives the destination's GC candidates that address the *source*
-   prefix. If the destination collection path differs at all, do not
-   relocate objects — run `baerly admin restore` directly into that
-   final, fresh prefix. When the path does match:
-   - Copy into a fresh, empty destination collection prefix only; never
-     overlay recovery objects onto a prefix that contains an older
-     collection generation. Old higher-numbered `log/` objects are not
-     fenced by `current.json`: readers forward-probe past the restored
-     `tail_hint` and can replay a consecutive old suffix.
-   - Copy only after writers and maintenance have drained, inside the
-     maintenance window.
-   - Do not copy `gc/pending.json`. Its candidates name source-prefix
-     keys under the source generation; the destination bootstraps a
-     fresh ledger on its first GC pass.
-   - Copy `current.json` **last** — after the snapshot it names (when
-     non-null) and every live log object exist at the destination. If
-     `current.json` lands first, readers can reference missing objects.
-     Skip `index/`: it holds only legacy markers that nothing reads (see
-     [Legacy index markers](#legacy-index-markers)).
-   - No kernel reader depends on content side objects, and GC does not
-     touch them. Copy `content/` only when preserving a legacy or
-     mixed-version bucket for legacy writers or tooling. Otherwise skip
-     it. See [Legacy content cleanup](#legacy-content-cleanup) to reclaim
-     the source bytes safely.
-6. Run `baerly admin fsck` against the final destination — the exact
-   route the app will read — before enabling reads. Step 3 checked the
-   recovery prefix, not the copy.
-7. Resume writers only after a successful authenticated read against
-   the recovered route.
+4. Point the app at the recovered bucket/prefix. This direct route cutover is preferred, and it is the only route that rewrites no keys.
+5. If infrastructure requires a raw object copy instead, copy into a separate bucket or storage namespace at the **identical bucket-relative collection path**. `current.snapshot` and every `gc/pending.json` candidate store complete bucket-relative keys, so a copy that lands the same objects under a different collection path leaves the snapshot pointer aimed at a key that does not exist and gives the destination's GC candidates that address the _source_ prefix. If the destination collection path differs at all, do not relocate objects — run `baerly admin restore` directly into that final, fresh prefix. When the path does match:
+   - Copy into a fresh, empty destination collection prefix only; never overlay recovery objects onto a prefix that contains an older collection generation. Old higher-numbered `log/` objects are not fenced by `current.json`: readers forward-probe past the restored `tail_hint` and can replay a consecutive old suffix.
+   - Copy only after writers and maintenance have drained, inside the maintenance window.
+   - Do not copy `gc/pending.json`. Its candidates name source-prefix keys under the source generation; the destination bootstraps a fresh ledger on its first GC pass.
+   - Copy `current.json` **last** — after the snapshot it names (when non-null) and every live log object exist at the destination. If `current.json` lands first, readers can reference missing objects. Skip `index/`: it holds only legacy markers that nothing reads (see [Legacy index markers](#legacy-index-markers)).
+   - No kernel reader depends on content side objects, and GC does not touch them. Copy `content/` only when preserving a legacy or mixed-version bucket for legacy writers or tooling. Otherwise skip it. See [Legacy content cleanup](#legacy-content-cleanup) to reclaim the source bytes safely.
+6. Run `baerly admin fsck` against the final destination — the exact route the app will read — before enabling reads. Step 3 checked the recovery prefix, not the copy.
+7. Resume writers only after a successful authenticated read against the recovered route.
 
 ### Legacy content cleanup
 
-No cleanup of legacy `content/` side objects is required for correctness
-or migration. They are inert; delete them only to reclaim storage, after
-all legacy writers are quiesced.
+No cleanup of legacy `content/` side objects is required for correctness or migration. They are inert; delete them only to reclaim storage, after all legacy writers are quiesced.
 
-Build the deletion target from the exact configured bucket URI, including
-its optional key prefix, then append
-`app/<app>/tenant/<tenant>/manifests/<collection>/content/`. For example,
-`s3://bucket/prod` targets
-`s3://bucket/prod/app/acme/tenant/t1/manifests/tickets/content/`; dropping
-`prod/` would address a different namespace. Before any recursive delete,
-review a provider inventory/listing or dry run and confirm that the full
-prefix contains only the intended collection's legacy content objects.
+Build the deletion target from the exact configured bucket URI, including its optional key prefix, then append `app/<app>/tenant/<tenant>/manifests/<collection>/content/`. For example, `s3://bucket/prod` targets `s3://bucket/prod/app/acme/tenant/t1/manifests/tickets/content/`; dropping `prod/` would address a different namespace. Before any recursive delete, review a provider inventory/listing or dry run and confirm that the full prefix contains only the intended collection's legacy content objects.
 
 For AWS S3 only:
 
@@ -281,25 +163,13 @@ aws s3 rm --recursive --dryrun "$CONTENT_PREFIX"
 aws s3 rm --recursive "$CONTENT_PREFIX"
 ```
 
-For R2, MinIO, and native GCS, use the configured endpoint or provider
-tooling against the identical full prefix; the AWS command is not portable
-to those providers.
+For R2, MinIO, and native GCS, use the configured endpoint or provider tooling against the identical full prefix; the AWS command is not portable to those providers.
 
 ### Legacy index markers
 
-Writers before 0.7 PUT a zero-byte marker under
-`app/<app>/tenant/<tenant>/manifests/<collection>/index/` for each declared
-index a write touched. 0.7 writes none and no 0.7 read, write, `fsck` or
-maintenance pass opens one, so existing markers are inert and cost only
-storage. GC never reclaims them. The one 0.7 command that still lists them
-is `baerly admin usage`, which lists all of `manifests/` to discover
-collection names, so a large legacy prefix costs it extra LIST pages.
+Writers before 0.7 PUT a zero-byte marker under `app/<app>/tenant/<tenant>/manifests/<collection>/index/` for each declared index a write touched. 0.7 writes none and no 0.7 read, write, `fsck` or maintenance pass opens one, so existing markers are inert and cost only storage. GC never reclaims them. The one 0.7 command that still lists them is `baerly admin usage`, which lists all of `manifests/` to discover collection names, so a large legacy prefix costs it extra LIST pages.
 
-No cleanup is required for correctness. To reclaim the bytes, delete the
-prefix once no 0.6 instance will read the collection again (see below).
-Build the target exactly as for
-[Legacy content cleanup](#legacy-content-cleanup), ending in `/index/`
-instead of `/content/`, and review the dry run first:
+No cleanup is required for correctness. To reclaim the bytes, delete the prefix once no 0.6 instance will read the collection again (see below). Build the target exactly as for [Legacy content cleanup](#legacy-content-cleanup), ending in `/index/` instead of `/content/`, and review the dry run first:
 
 ```sh
 # Copy the exact configured URI, including any bucket key prefix.
@@ -309,46 +179,20 @@ aws s3 rm --recursive --dryrun "$INDEX_PREFIX"
 aws s3 rm --recursive "$INDEX_PREFIX"
 ```
 
-**Rolling back to 0.6, or a mixed 0.6 / 0.7 fleet.** 0.6 reads of an
-indexed `where` took membership from these markers, and 0.7 writes create
-none. So a 0.6 instance reading a collection that a 0.7 instance has
-written to, during a rolling deploy or after a rollback, misses every row
-0.7 inserted or changed from every query it routes through an index.
-There is no version gate: 0.6 indexed reads could already miss live rows.
-0.6 writers in a mixed fleet keep creating markers, which 0.7 ignores.
+**Rolling back to 0.6, or a mixed 0.6 / 0.7 fleet.** 0.6 reads of an indexed `where` took membership from these markers, and 0.7 writes create none. So a 0.6 instance reading a collection that a 0.7 instance has written to, during a rolling deploy or after a rollback, misses every row 0.7 inserted or changed from every query it routes through an index. There is no version gate: 0.6 indexed reads could already miss live rows. 0.6 writers in a mixed fleet keep creating markers, which 0.7 ignores.
 
-0.6's `baerly admin rebuild-index` cannot repair every collection 0.7 has
-written. 0.7 accepts values that 0.6 refused in a declared index field:
-an array, or a value too long for a marker key (S3 and R2 cap a key at
-1024 bytes). A 0.6 rebuild that meets one aborts (`SchemaError` for an
-array), leaving that index incomplete.
+0.6's `baerly admin rebuild-index` cannot repair every collection 0.7 has written. 0.7 accepts values that 0.6 refused in a declared index field: an array, or a value too long for a marker key (S3 and R2 cap a key at 1024 bytes). A 0.6 rebuild that meets one aborts (`SchemaError` for an array), leaving that index incomplete.
 
-First stop every app writer and any scheduled maintenance
-(`runScheduledMaintenance`); the in-band write tick stops with the
-writers. Then roll back one of two ways:
+First stop every app writer and any scheduled maintenance (`runScheduledMaintenance`); the in-band write tick stops with the writers. Then roll back one of two ways:
 
-1. **Drop the indexes.** Remove `indexes` from each affected collection in
-   the 0.6 configuration. 0.6 then answers those queries with a full scan
-   of the snapshot and log, which needs no markers.
-2. **Keep the indexes.** While still on 0.7, rewrite every row that holds
-   such a value in a field an index you keep declares (`baerly admin dump`
-   lists every row). Then roll back and run 0.6's
-   `baerly admin rebuild-index` once per kept index of each affected
-   collection; it rebuilds the markers from the snapshot and log. For a
-   composite index (`on: ["status", "owner"]`) pass `--config=<path>` to
-   the 0.6 config: `--on` takes one field, so `--on=status,owner` names a
-   single field called `status,owner`.
+1. **Drop the indexes.** Remove `indexes` from each affected collection in the 0.6 configuration. 0.6 then answers those queries with a full scan of the snapshot and log, which needs no markers.
+2. **Keep the indexes.** While still on 0.7, rewrite every row that holds such a value in a field an index you keep declares (`baerly admin dump` lists every row). Then roll back and run 0.6's `baerly admin rebuild-index` once per kept index of each affected collection; it rebuilds the markers from the snapshot and log. For a composite index (`on: ["status", "owner"]`) pass `--config=<path>` to the 0.6 config: `--on` takes one field, so `--on=status,owner` names a single field called `status,owner`.
 
-Either way, finish the index repair and check that indexed queries return
-the rows `baerly admin dump` shows before reopening traffic to 0.6.
-Do not delete the `index/` prefix while a rollback that keeps indexes is
-still possible, or that rollback must rebuild every index.
+Either way, finish the index repair and check that indexed queries return the rows `baerly admin dump` shows before reopening traffic to 0.6. Do not delete the `index/` prefix while a rollback that keeps indexes is still possible, or that rollback must rebuild every index.
 
 ## Restore Drill
 
-At least once per retention window, run a restore drill: verify the
-checksum, restore the dump, and run `fsck` against the recovered
-collection.
+At least once per retention window, run a restore drill: verify the checksum, restore the dump, and run `fsck` against the recovered collection.
 
 ```sh
 DUMP=/var/backups/baerly/acme-t1-tickets-2026-06-12T030000Z.ndjson
@@ -383,5 +227,4 @@ baerly admin dump \
 cmp "$DUMP" /tmp/tickets-restored.ndjson
 ```
 
-This comparison proves the materialized rows, which is everything a read
-depends on.
+This comparison proves the materialized rows, which is everything a read depends on.

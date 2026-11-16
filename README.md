@@ -9,29 +9,16 @@ before: client → app handler → database server  (a server)
 after:  client → app handler → S3/R2 bucket     (just storage)
 ```
 
-The trick is to cram the entire database execution layer inside an HTTP
-request. There is no server, daemon, or coordinator: each read or
-write runs as library code inside your request handler, the bucket
-holds the data, and the protocol supplies the commit rules.
+The trick is to cram the entire database execution layer inside an HTTP request. There is no server, daemon, or coordinator: each read or write runs as library code inside your request handler, the bucket holds the data, and the protocol supplies the commit rules.
 
-The load-bearing operation is narrow — one conditional create of the next
-log object commits a write. When the request ends, baerly-storage is gone. Poof!
+The load-bearing operation is narrow — one conditional create of the next log object commits a write. When the request ends, baerly-storage is gone. Poof!
 
-- **An API small enough to hold in your context.** No DDL, no raw SQL —
-  8 verbs and a ~12k-token surface you can hand to an LLM or a
-  non-engineer and walk away.
-- **Idle rounds to zero.** No database process to keep warm, and no
-  per-app database floor across a fleet of small internal tools.
-- **No data hostage.** `baerly export --target=postgres` gives you a
-  per-collection SQL snapshot. Crossing the envelope is the graduation
-  signal; the data exit is mechanical.
-- **No new vendor.** Your S3/R2 bucket cleared security review years
-  ago; every hosted alternative means a fresh vendor review and an IT
-  ticket for a new managed-DB SKU.
-- **Nothing to go down.** No resident service in your critical path, one
-  fewer failure domain. Servers that don't exist can't go down.
-- **Built like git.** Content-addressed snapshots, immutable numbered log
-  entries, and one conditional log create as the commit, per collection.
+- **An API small enough to hold in your context.** No DDL, no raw SQL — 8 verbs and a ~12k-token surface you can hand to an LLM or a non-engineer and walk away.
+- **Idle rounds to zero.** No database process to keep warm, and no per-app database floor across a fleet of small internal tools.
+- **No data hostage.** `baerly export --target=postgres` gives you a per-collection SQL snapshot. Crossing the envelope is the graduation signal; the data exit is mechanical.
+- **No new vendor.** Your S3/R2 bucket cleared security review years ago; every hosted alternative means a fresh vendor review and an IT ticket for a new managed-DB SKU.
+- **Nothing to go down.** No resident service in your critical path, one fewer failure domain. Servers that don't exist can't go down.
+- **Built like git.** Content-addressed snapshots, immutable numbered log entries, and one conditional log create as the commit, per collection.
 
 <!-- Hero demo: render `docs/assets/demo.gif` from `docs/assets/demo.tape`
      (`vhs docs/assets/demo.tape`) against a real bucket, then uncomment:
@@ -44,18 +31,13 @@ log object commits a write. When the request ends, baerly-storage is gone. Poof!
 pnpm create @gusto/baerly-storage@latest
 ```
 
-The wizard asks for a project name, target, and starter, then prints the
-dev command. First run needs no bucket credentials: local dev uses local
-storage and serves the UI plus `/v1/*` from one origin.
+The wizard asks for a project name, target, and starter, then prints the dev command. First run needs no bucket credentials: local dev uses local storage and serves the UI plus `/v1/*` from one origin.
 
-For a runnable multi-tab demo see
-[`examples/react-node/`](./examples/react-node); for the full set of
-production-shaped scaffolds see [`examples/`](./examples).
+For a runnable multi-tab demo see [`examples/react-node/`](./examples/react-node); for the full set of production-shaped scaffolds see [`examples/`](./examples).
 
 ## In code
 
-The public surface is a small document API. The scaffolds wire `db` on
-the server and `useQuery` in React; the calls look like this:
+The public surface is a small document API. The scaffolds wire `db` on the server and `useQuery` in React; the calls look like this:
 
 ```ts
 // server — writes land in your object-storage bucket
@@ -67,8 +49,7 @@ const open = useQuery((c) => c.collection("tickets").where({ status: "open" }).a
 // open.data is present for "ok" / "refreshing"
 ```
 
-Application auth and tenant choice stay explicit in the handler. What
-disappears is the database service and its surrounding machinery:
+Application auth and tenant choice stay explicit in the handler. What disappears is the database service and its surrounding machinery:
 
 ```diff
 - docker-compose.yml
@@ -90,8 +71,7 @@ disappears is the database service and its surrounding machinery:
 + });
 ```
 
-Ordinary schema shape changes are TypeScript or config edits — no DDL, no
-SQL strings, no generated migration ceremony.
+Ordinary schema shape changes are TypeScript or config edits — no DDL, no SQL strings, no generated migration ceremony.
 
 ## Cheat sheet
 
@@ -109,60 +89,32 @@ db.collection("tickets").update(id, { status: "closed" }); // merge-patch
 db.collection("tickets").where({ status: "closed" }).delete();
 ```
 
-| Surface       | Vocabulary                                                                            |
-| ------------- | ------------------------------------------------------------------------------------- |
-| **Verbs**     | `first` `all` `count` `get` · `insert` `update` `replace` `delete`                    |
-| **Modifiers** | `where` `order` `limit`                                                                |
-| **Operators** | `eq` `gt` `gte` `lt` `lte` `in`                                                        |
-| **Errors**    | one `BaerlyError`, discriminate by `.code` (`WriteConflict`, `NotFound`, `SchemaError`, …) |
+| Surface | Vocabulary |
+| --- | --- |
+| **Verbs** | `first` `all` `count` `get` · `insert` `update` `replace` `delete` |
+| **Modifiers** | `where` `order` `limit` |
+| **Operators** | `eq` `gt` `gte` `lt` `lte` `in` |
+| **Errors** | one `BaerlyError`, discriminate by `.code` (`WriteConflict`, `NotFound`, `SchemaError`, …) |
 
-Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md),
-or `cat node_modules/@gusto/baerly-storage/dist/API.md` in an installed
-app.
+Full reference: [`docs/guide/cheatsheet.md`](./docs/guide/cheatsheet.md), or `cat node_modules/@gusto/baerly-storage/dist/API.md` in an installed app.
 
 ## How it works
 
-**The hard part of a database-in-a-bucket is the commit.** A bucket can
-store objects; it cannot run a transaction coordinator. So one writer must
-win each race, and every reader must be able to tell what won. [S3's strong consistency][s3-strong] makes object
-storage usable as shared state; conditional writes supply the
-one-writer-wins operation.
+**The hard part of a database-in-a-bucket is the commit.** A bucket can store objects; it cannot run a transaction coordinator. So one writer must win each race, and every reader must be able to tell what won. [S3's strong consistency][s3-strong] makes object storage usable as shared state; conditional writes supply the one-writer-wins operation.
 
-Concretely, a write drops new immutable objects in the bucket and then
-creates the next numbered log entry for that collection with
-create-if-absent (`If-None-Match: "*"`). Two writers racing the same slot
-cannot both win; the loser reads the winner and retries at the next slot.
-That create _is_ the commit. There is no resident coordinator: each
-request reads bucket state, tries that create, and leaves no required
-process behind. A read follows `current.json` to the snapshot and folds
-the committed log tail into rows.
+Concretely, a write drops new immutable objects in the bucket and then creates the next numbered log entry for that collection with create-if-absent (`If-None-Match: "*"`). Two writers racing the same slot cannot both win; the loser reads the winner and retries at the next slot. That create _is_ the commit. There is no resident coordinator: each request reads bucket state, tries that create, and leaves no required process behind. A read follows `current.json` to the snapshot and folds the committed log tail into rows.
 
-baerly-storage shares the immutable-artifact foundation of table formats
-like Apache Iceberg and Delta Lake, but commits with a narrower step: no
-metadata-pointer swap and no separate coordinator — just that one log
-create. See [prior art and lineage](docs/spec/prior-art.md) for how it
-relates to Iceberg, Delta Lake, Litestream, and Turbopuffer.
+baerly-storage shares the immutable-artifact foundation of table formats like Apache Iceberg and Delta Lake, but commits with a narrower step: no metadata-pointer swap and no separate coordinator — just that one log create. See [prior art and lineage](docs/spec/prior-art.md) for how it relates to Iceberg, Delta Lake, Litestream, and Turbopuffer.
 
-Each collection has its own ordered log, so **writes are per-collection
-linearizable** — the `If-None-Match` log create linearizes every commit.
-Cross-collection writes are unordered and non-atomic; that boundary is
-part of the contract (see [When (not) to use it](#when-not-to-use-it)).
+Each collection has its own ordered log, so **writes are per-collection linearizable** — the `If-None-Match` log create linearizes every commit. Cross-collection writes are unordered and non-atomic; that boundary is part of the contract (see [When (not) to use it](#when-not-to-use-it)).
 
-The durable contract is the bucket layout plus the conditional-write
-rules. Another language could speak it by writing the same layout and
-honoring the same rules. See
-[`storage-compatibility.md`](./docs/spec/storage-compatibility.md).
+The durable contract is the bucket layout plus the conditional-write rules. Another language could speak it by writing the same layout and honoring the same rules. See [`storage-compatibility.md`](./docs/spec/storage-compatibility.md).
 
 [s3-strong]: https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/
 
 ### Security model
 
-Bucket credentials never leave the server. Browsers talk only to your
-trusted handler, which authenticates the caller, chooses the tenant
-prefix, and applies the protocol against the bucket. Production recipes
-support Cloudflare Access and JWKS bearer verification; shared-secret
-auth is for service-to-service calls and dev. See
-[`client-auth.md`](./docs/guide/client-auth.md).
+Bucket credentials never leave the server. Browsers talk only to your trusted handler, which authenticates the caller, chooses the tenant prefix, and applies the protocol against the bucket. Production recipes support Cloudflare Access and JWKS bearer verification; shared-secret auth is for service-to-service calls and dev. See [`client-auth.md`](./docs/guide/client-auth.md).
 
 ## When (not) to use it
 
@@ -170,60 +122,31 @@ Before you count rows or price reads, ask one question:
 
 > Can the app's most important work be done from one collection?
 
-If yes, baerly-storage may fit; then check query shape, atomicity, size,
-and cost. A todo list, a single board's kanban, an event's RSVPs, one
-channel's chat — each maps to one collection. The shape is narrow on
-purpose: production-shaped for small workloads with a specific access
-pattern, not a general-purpose database. If the core screen is a view
-_across_ many collections, users, or tenants ("my pull requests," "all
-code search," a cross-org dashboard), baerly-storage
-should not be the only query engine for it.
+If yes, baerly-storage may fit; then check query shape, atomicity, size, and cost. A todo list, a single board's kanban, an event's RSVPs, one channel's chat — each maps to one collection. The shape is narrow on purpose: production-shaped for small workloads with a specific access pattern, not a general-purpose database. If the core screen is a view _across_ many collections, users, or tenants ("my pull requests," "all code search," a cross-org dashboard), baerly-storage should not be the only query engine for it.
 
 It is **deliberately not** a few things:
 
-- **No SQL, no joins.** Equality + dotted-path predicates, operators
-  added one at a time. The small surface is part of the contract.
-- **Not a D1 / Postgres replacement.** Those are graduation targets, not
-  competitors — baerly-storage keeps the experiment cheap until you know
-  whether it's worth graduating.
-- **Browser-direct multi-writer is out.** Trusted server-side app code is
-  the design center.
-- **Realtime is long-poll first.** Polling is always correct; a WebSocket
-  tier would be a future opt-in.
+- **No SQL, no joins.** Equality + dotted-path predicates, operators added one at a time. The small surface is part of the contract.
+- **Not a D1 / Postgres replacement.** Those are graduation targets, not competitors — baerly-storage keeps the experiment cheap until you know whether it's worth graduating.
+- **Browser-direct multi-writer is out.** Trusted server-side app code is the design center.
+- **Realtime is long-poll first.** Polling is always correct; a WebSocket tier would be a future opt-in.
 
-None of these are apologies — baerly-storage names its envelope so
-graduation is a feature, not a surprise: `baerly export
---target=postgres` makes the exit mechanical.
-The shape test lives in
-[workload-fit.md](./docs/about/workload-fit.md); the numeric envelope in
-[graduation.md](./docs/about/graduation.md).
+None of these are apologies — baerly-storage names its envelope so graduation is a feature, not a surprise: `baerly export --target=postgres` makes the exit mechanical. The shape test lives in [workload-fit.md](./docs/about/workload-fit.md); the numeric envelope in [graduation.md](./docs/about/graduation.md).
 
 ## Go deeper
 
-- ✨ **Why baerly-storage** —
-  [`docs/about/why-baerly.md`](./docs/about/why-baerly.md)
-- 🧭 **How it works** —
-  [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (bucket +
-  conditional log create)
+- ✨ **Why baerly-storage** — [`docs/about/why-baerly.md`](./docs/about/why-baerly.md)
+- 🧭 **How it works** — [`docs/about/how-it-works.md`](./docs/about/how-it-works.md) (bucket + conditional log create)
 - 🧱 **Product thesis** — [`docs/about/thesis.md`](./docs/about/thesis.md)
-- 🏗️ **Architecture** —
-  [`docs/architecture.md`](./docs/architecture.md)
-- 🔧 **Embed by hand** —
-  [`packages/server/API.md`](./packages/server/API.md) (embed-by-hand +
-  custom-routes recipes; ships as `dist/API.md` in the package)
-- 📊 **Alternatives** —
-  [`docs/about/alternatives.md`](./docs/about/alternatives.md) (how
-  baerly-storage compares to Firebase, Supabase, Convex, and Cloudflare
-  D1)
+- 🏗️ **Architecture** — [`docs/architecture.md`](./docs/architecture.md)
+- 🔧 **Embed by hand** — [`packages/server/API.md`](./packages/server/API.md) (embed-by-hand + custom-routes recipes; ships as `dist/API.md` in the package)
+- 📊 **Alternatives** — [`docs/about/alternatives.md`](./docs/about/alternatives.md) (how baerly-storage compares to Firebase, Supabase, Convex, and Cloudflare D1)
 
 ## Where things live
 
-- [`CLAUDE.md`](./CLAUDE.md) — agent + contributor entry point (the
-  fastest map for humans too). `AGENTS.md` is a symlink.
-- [`docs/README.md`](./docs/README.md) — topic map: architecture,
-  conventions, ADRs, protocol specs, operating procedures.
-- [`examples/`](./examples) — runnable scaffolds + the `react-node/`
-  multi-tab demo.
+- [`CLAUDE.md`](./CLAUDE.md) — agent + contributor entry point (the fastest map for humans too). `AGENTS.md` is a symlink.
+- [`docs/README.md`](./docs/README.md) — topic map: architecture, conventions, ADRs, protocol specs, operating procedures.
+- [`examples/`](./examples) — runnable scaffolds + the `react-node/` multi-tab demo.
 
 ## License
 

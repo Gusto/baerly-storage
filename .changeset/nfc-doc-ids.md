@@ -2,31 +2,11 @@
 "@gusto/baerly-storage": minor
 ---
 
-**Breaking:** a document `_id` must now be in Unicode Normalization Form C
-(`id === id.normalize("NFC")`). `insert` with a caller-supplied `_id`,
-`replace`, their HTTP routes (`POST`, `PUT`), and `baerly admin restore`
-refuse any other `_id` with `InvalidConfig` (HTTP 400) before writing
-that row. Restore commits row by row, so rows before a rejected line are
-already written. SDK-minted UUIDv7 ids are ASCII and always
-pass. Ids that differ only by case (`A` / `a`) or by compatibility form
-(`ﬁ` / `fi`) are still distinct.
+**Breaking:** a document `_id` must now be in Unicode Normalization Form C (`id === id.normalize("NFC")`). `insert` with a caller-supplied `_id`, `replace`, their HTTP routes (`POST`, `PUT`), and `baerly admin restore` refuse any other `_id` with `InvalidConfig` (HTTP 400) before writing that row. Restore commits row by row, so rows before a rejected line are already written. SDK-minted UUIDv7 ids are ASCII and always pass. Ids that differ only by case (`A` / `a`) or by compatibility form (`ﬁ` / `fi`) are still distinct.
 
-R2 stores canonically-equivalent keys as one object (NFC `é` and NFD
-`e` + U+0301 list back as one key), so NFC gives each `_id` one spelling
-and one byte form for any object a future storage format keys by `_id`.
+R2 stores canonically-equivalent keys as one object (NFC `é` and NFD `e` + U+0301 list back as one key), so NFC gives each `_id` one spelling and one byte form for any object a future storage format keys by `_id`.
 
-Rows already stored under a non-NFC `_id` keep working for reads: `get`
-and `where` return them, and `delete` removes them. `update` and `replace`
-refuse them, because they would commit a new row version under the
-non-NFC id. To keep such a row writable, read it by `_id` and insert a
-copy under a fresh NFC id that is not canonically equivalent to the
-original (for example, omit `_id` for a UUID), then delete the original.
-If a collection already holds two
-rows whose ids are canonically equivalent, read both rows by `_id`, copy
-each under a fresh NFC id that is not canonically equivalent to either
-original, then delete the originals. An NDJSON export that contains a
-non-NFC `_id` must have that id normalized before `baerly admin restore`
-accepts it; ensure the resulting ids are unique.
+Rows already stored under a non-NFC `_id` keep working for reads: `get` and `where` return them, and `delete` removes them. `update` and `replace` refuse them, because they would commit a new row version under the non-NFC id. To keep such a row writable, read it by `_id` and insert a copy under a fresh NFC id that is not canonically equivalent to the original (for example, omit `_id` for a UUID), then delete the original. If a collection already holds two rows whose ids are canonically equivalent, read both rows by `_id`, copy each under a fresh NFC id that is not canonically equivalent to either original, then delete the originals. An NDJSON export that contains a non-NFC `_id` must have that id normalized before `baerly admin restore` accepts it; ensure the resulting ids are unique.
 
 **Migration — agents: if you wrote the LEFT, use the RIGHT:**
 

@@ -9,111 +9,43 @@ related: ["spec/sync-protocol.md", "contributing/extending.md", "contributing/fe
 
 # Architecture
 
-A top-down map of baerly-storage for someone who has never opened the
-codebase.
+A top-down map of baerly-storage for someone who has never opened the codebase.
 
 ## Core idea
 
-A bucket gives every request the same primitive: bytes stored at a key.
-`PUT` writes an object, `If-None-Match: "*"` makes that write
-create-if-absent, and a `404` means the key is absent.
+A bucket gives every request the same primitive: bytes stored at a key. `PUT` writes an object, `If-None-Match: "*"` makes that write create-if-absent, and a `404` means the key is absent.
 
-The key idea to keep in mind is single-write commit: a mutation commits
-by creating one numbered log object, `log/<seq>.json`. There is no
-database server deciding the winner. Every writer races for the first
-empty log slot; on a supported backend, exactly one create can win. That
-winning create is the commit.
+The key idea to keep in mind is single-write commit: a mutation commits by creating one numbered log object, `log/<seq>.json`. There is no database server deciding the winner. Every writer races for the first empty log slot; on a supported backend, exactly one create can win. That winning create is the commit.
 
-Everything before the log create prepares data a future reader will need.
-Everything after it is cleanup or maintenance. `current.json` does not
-commit writes.
+Everything before the log create prepares data a future reader will need. Everything after it is cleanup or maintenance. `current.json` does not commit writes.
 
-For an insert or update, the writer serializes the post-image into
-`LogEntry.after` and creates that entry at `log/<seq>.json` with
-`If-None-Match: "*"`, the commit's only write. There is no `current.json`
-write on the commit path. `current.json` is
-compactor-owned state: it names the snapshot, stores `log_seq_start`
-(the first log seq not covered by that snapshot), and carries a
-non-authoritative `tail_hint`.
+For an insert or update, the writer serializes the post-image into `LogEntry.after` and creates that entry at `log/<seq>.json` with `If-None-Match: "*"`, the commit's only write. There is no `current.json` write on the commit path. `current.json` is compactor-owned state: it names the snapshot, stores `log_seq_start` (the first log seq not covered by that snapshot), and carries a non-authoritative `tail_hint`.
 
-The live tail is the first missing sequence after the committed log
-entries. `tail_hint` is only a monotone lower bound on that tail; it may
-lag and only tells readers where to start probing.
+The live tail is the first missing sequence after the committed log entries. `tail_hint` is only a monotone lower bound on that tail; it may lag and only tells readers where to start probing.
 
-Reads use `current.json` as a starting point, not as the tail authority.
-They load the snapshot it names, fold the trusted range
-`[log_seq_start, tail_hint)`, then forward-probe the log from
-`max(log_seq_start, tail_hint)` to the first 404. To fold a range is to
-replay its log entries into the in-memory row map. The trusted range must
-be dense, so a missing entry inside it is corruption. For example, with
-`log_seq_start = 2` and `tail_hint = 5`, the trusted range is `2`, `3`,
-`4`; the reader still probes `5`, `6`, ... until it sees a missing key.
-Folding those `LogEntry` rows produces the live row set, and query
-predicates run against that row set.
+Reads use `current.json` as a starting point, not as the tail authority. They load the snapshot it names, fold the trusted range `[log_seq_start, tail_hint)`, then forward-probe the log from `max(log_seq_start, tail_hint)` to the first 404. To fold a range is to replay its log entries into the in-memory row map. The trusted range must be dense, so a missing entry inside it is corruption. For example, with `log_seq_start = 2` and `tail_hint = 5`, the trusted range is `2`, `3`, `4`; the reader still probes `5`, `6`, ... until it sees a missing key. Folding those `LogEntry` rows produces the live row set, and query predicates run against that row set.
 
-Change notifications use the HTTP
-`/v1/since?collection=<name>&cursor=<opaque>` long-poll route. The
-protocol is specified in
-[spec/sync-protocol.md](spec/sync-protocol.md) and proven causally
-covered by the randomized checker in
-[spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
+Change notifications use the HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route. The protocol is specified in [spec/sync-protocol.md](spec/sync-protocol.md) and proven causally covered by the randomized checker in [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
 
-The useful git comparison is narrow: content-addressed snapshots,
-immutable numbered log entries, and one conditional log create as the
-commit, per collection. The consistency side of this shape depends on
-S3's December 2020 strong read/write/list consistency; the commit point
-also depends on create-if-absent conditional writes (see
-[spec/storage-compatibility.md](spec/storage-compatibility.md)).
+The useful git comparison is narrow: content-addressed snapshots, immutable numbered log entries, and one conditional log create as the commit, per collection. The consistency side of this shape depends on S3's December 2020 strong read/write/list consistency; the commit point also depends on create-if-absent conditional writes (see [spec/storage-compatibility.md](spec/storage-compatibility.md)).
 
-Bundle-size budgets set the scope: the full Cloudflare Workers bundle
-(`cloudflare.js`) is capped at 122 KiB gzipped; the Node HTTP closure
-(`http.js`) at 101 KiB; the browser client (`client.js`) at 6 KiB. The
-whole public API surface fits in a single ~12k-token `dist/API.md`, so
-an LLM can use it from `.d.ts` alone (see the
-[API surface lock](contributing/conventions/change-discipline.md#api-surface-lock)).
+Bundle-size budgets set the scope: the full Cloudflare Workers bundle (`cloudflare.js`) is capped at 122 KiB gzipped; the Node HTTP closure (`http.js`) at 101 KiB; the browser client (`client.js`) at 6 KiB. The whole public API surface fits in a single ~12k-token `dist/API.md`, so an LLM can use it from `.d.ts` alone (see the [API surface lock](contributing/conventions/change-discipline.md#api-surface-lock)).
 
 ## Runtime model
 
-**There is no separate database server.** The bucket is durable shared
-state. The Worker or Node handler is stateless per-request app code with
-bucket credentials, and correctness must survive losing the process.
+**There is no separate database server.** The bucket is durable shared state. The Worker or Node handler is stateless per-request app code with bucket credentials, and correctness must survive losing the process.
 
-A request constructs a `Db` with
-`Db.create({ storage, app, tenant, config? })`. `app` and `tenant` become
-bucket-prefix namespace segments such as
-`app/tickets/tenant/acme/...`. The `Db` reads a fresh `current.json`,
-does the work — query evaluation, conflict resolution, or the committing
-`log/<seq>` create — and returns. Reads do not rely on a warm cache:
-each request fetches `current.json` and discovers the live tail from
-storage.
+A request constructs a `Db` with `Db.create({ storage, app, tenant, config? })`. `app` and `tenant` become bucket-prefix namespace segments such as `app/tickets/tenant/acme/...`. The `Db` reads a fresh `current.json`, does the work — query evaluation, conflict resolution, or the committing `log/<seq>` create — and returns. Reads do not rely on a warm cache: each request fetches `current.json` and discovers the live tail from storage.
 
-Cloudflare can finish a write-triggered maintenance tick after the
-response with `ctx.waitUntil`; Node runs it inline unless the host wraps
-dispatch differently. No background thread runs between requests, and no
-in-memory state from one request is load-bearing for the next.
+Cloudflare can finish a write-triggered maintenance tick after the response with `ctx.waitUntil`; Node runs it inline unless the host wraps dispatch differently. No background thread runs between requests, and no in-memory state from one request is load-bearing for the next.
 
-Maintenance is **triggered in-band on the write path**, not by a
-scheduler. After a successful commit, the writer may dispatch one
-bounded `runBoundedMaintenance` pass if the ratio or GC-boundary gate is
-due; otherwise leftover work waits for later writes. See
-[the maintenance subsection](#after-the-write--the-in-band-maintenance-tick)
-below. The default profile caps the storage calls in each pass, so
-larger backlogs drain across many write-ticks instead of a long-lived
-process. The opt-in
-[`runScheduledMaintenance`](../packages/server/src/maintenance.ts)
-SDK can still be driven from a cron trigger; it is not the default or
-required. The rationale is in
-[ADR-002](adr/002-ephemeral-coordination.md).
+Maintenance is **triggered in-band on the write path**, not by a scheduler. After a successful commit, the writer may dispatch one bounded `runBoundedMaintenance` pass if the ratio or GC-boundary gate is due; otherwise leftover work waits for later writes. See [the maintenance subsection](#after-the-write--the-in-band-maintenance-tick) below. The default profile caps the storage calls in each pass, so larger backlogs drain across many write-ticks instead of a long-lived process. The opt-in [`runScheduledMaintenance`](../packages/server/src/maintenance.ts) SDK can still be driven from a cron trigger; it is not the default or required. The rationale is in [ADR-002](adr/002-ephemeral-coordination.md).
 
 ## Module dependency graph
 
-The first diagram shows request flow. The second zooms into the
-read/write engine — the part you touch when changing `writer.ts` or the
-query path.
+The first diagram shows request flow. The second zooms into the read/write engine — the part you touch when changing `writer.ts` or the query path.
 
-Solid arrows are a direct dependency or call path. Dashed arrows are a
-looser relationship: **uses** a pure contract, **implements** an
-interface, or triggers work **post-commit**.
+Solid arrows are a direct dependency or call path. Dashed arrows are a looser relationship: **uses** a pure contract, **implements** an interface, or triggers work **post-commit**.
 
 ### Layers at a glance
 
@@ -137,19 +69,11 @@ flowchart TD
     engine -. post-commit .-> maintenance
 ```
 
-A write flows host → API → engine → storage; a read folds storage back
-up through the engine. `Protocol` is the pure contract layer: data
-shapes and the `Storage` interface. `Maintenance` is post-commit work:
-Cloudflare can dispatch it off-response; Node/default dispatch can run
-it inline (see
-[After the write](#after-the-write--the-in-band-maintenance-tick)).
+A write flows host → API → engine → storage; a read folds storage back up through the engine. `Protocol` is the pure contract layer: data shapes and the `Storage` interface. `Maintenance` is post-commit work: Cloudflare can dispatch it off-response; Node/default dispatch can run it inline (see [After the write](#after-the-write--the-in-band-maintenance-tick)).
 
 ### The engine, exploded
 
-Here the host adapters, HTTP surface, maintenance loop, and protocol
-modules collapse to single boxes. What remains is the application API and
-the read/write engine behind `db.collection(...).insert()` and
-`.where(...).all()`.
+Here the host adapters, HTTP surface, maintenance loop, and protocol modules collapse to single boxes. What remains is the application API and the read/write engine behind `db.collection(...).insert()` and `.where(...).all()`.
 
 ```mermaid
 flowchart TD
@@ -184,38 +108,17 @@ flowchart TD
 
 ## Package layers
 
-The `@baerly/*` packages obey a separate import invariant that keeps the
-kernel portable:
+The `@baerly/*` packages obey a separate import invariant that keeps the kernel portable:
 
-- **`@baerly/protocol` is pure: no I/O, no `node:` builtins.** It is the
-  universal leaf and imports nothing, so the kernel can run unchanged on
-  Workerd, in Node, and in the browser where applicable.
-- **`@baerly/server` imports nothing below `@baerly/protocol`** — in
-  particular it never reaches sideways into a storage adapter. Workerd
-  compatibility is defined as "everything reachable from
-  `@baerly/server`'s entry points runs under Workerd"; that holds because
-  `server` depends only on `protocol`.
-- **Workerd-incompatible `node:` builtins are blocked in `protocol`,
-  `server`, and `adapter-cloudflare`.** `server` and `adapter-cloudflare`
-  allowlist `node:async_hooks` only (Workerd supports it under
-  `nodejs_compat`); `protocol` allows none. The remaining packages are
-  Node-only by design and may import any builtin.
-- **That gate reads each package's own source, so it cannot see a
-  transitive drag.** Importing a barrel that re-exports Node-only code
-  pulls the whole closure into a Workerd bundle without any `node:`
-  specifier appearing in the importing package — which is how
-  `LocalFsStorage` once reached `dist/cloudflare.js` by way of the
-  `@baerly/dev` barrel, for one HTML string. Import the leaf module
-  (`@baerly/dev/dev-landing`), not the barrel. Enforced on the artifact by
-  the `dist/cloudflare.js` Workerd-builtin closure assertion in
-  `tests/integration/bundle-size.test.ts`.
+- **`@baerly/protocol` is pure: no I/O, no `node:` builtins.** It is the universal leaf and imports nothing, so the kernel can run unchanged on Workerd, in Node, and in the browser where applicable.
+- **`@baerly/server` imports nothing below `@baerly/protocol`** — in particular it never reaches sideways into a storage adapter. Workerd compatibility is defined as "everything reachable from `@baerly/server`'s entry points runs under Workerd"; that holds because `server` depends only on `protocol`.
+- **Workerd-incompatible `node:` builtins are blocked in `protocol`, `server`, and `adapter-cloudflare`.** `server` and `adapter-cloudflare` allowlist `node:async_hooks` only (Workerd supports it under `nodejs_compat`); `protocol` allows none. The remaining packages are Node-only by design and may import any builtin.
+- **That gate reads each package's own source, so it cannot see a transitive drag.** Importing a barrel that re-exports Node-only code pulls the whole closure into a Workerd bundle without any `node:` specifier appearing in the importing package — which is how `LocalFsStorage` once reached `dist/cloudflare.js` by way of the `@baerly/dev` barrel, for one HTML string. Import the leaf module (`@baerly/dev/dev-landing`), not the barrel. Enforced on the artifact by the `dist/cloudflare.js` Workerd-builtin closure assertion in `tests/integration/bundle-size.test.ts`.
 
-The production import graph (`*.test.ts` / `*.test-d.ts` excluded) is a
-hand-maintained allow list — each row names the packages that owner may
-import; anything not listed is forbidden, and self-imports are allowed:
+The production import graph (`*.test.ts` / `*.test-d.ts` excluded) is a hand-maintained allow list — each row names the packages that owner may import; anything not listed is forbidden, and self-imports are allowed:
 
 | Owner package | May import |
-|---|---|
+| --- | --- |
 | `protocol` | (nothing — protocol must remain pure) |
 | `server` | `protocol` |
 | `dev` | `protocol`, `server`, `adapter-node` |
@@ -255,35 +158,13 @@ flowchart TD
     linkStyle 10,11 stroke:#d33,stroke-width:2px
 ```
 
-The diagram shows the portability core — the layering down to the pure
-`protocol` leaf and the cordoned `dev ↔ adapter-node` cycle. The two
-top-of-stack consumers, `cli` and `create-baerly-storage`, are omitted:
-they import broadly almost by definition and add edges without changing
-the shape. The table above remains the complete, enforced edge set.
+The diagram shows the portability core — the layering down to the pure `protocol` leaf and the cordoned `dev ↔ adapter-node` cycle. The two top-of-stack consumers, `cli` and `create-baerly-storage`, are omitted: they import broadly almost by definition and add edges without changing the shape. The table above remains the complete, enforced edge set.
 
-The two red edges are an accepted Node-only `dev ↔ adapter-node` cycle:
-`@baerly/dev`'s Vite plugin imports `baerlyNode` as the in-process dev
-listener, and `@baerly/adapter-node`'s `dev-landing` middleware imports
-`renderDevLanding` as a runtime value. The cycle sits above the
-`server`/`protocol` line, cannot pull anything into the kernel, and will
-never reach Workerd; breaking it is a separate refactor.
+The two red edges are an accepted Node-only `dev ↔ adapter-node` cycle: `@baerly/dev`'s Vite plugin imports `baerlyNode` as the in-process dev listener, and `@baerly/adapter-node`'s `dev-landing` middleware imports `renderDevLanding` as a runtime value. The cycle sits above the `server`/`protocol` line, cannot pull anything into the kernel, and will never reach Workerd; breaking it is a separate refactor.
 
-The allow list is enforced at edit time by
-[`scripts/lint-package-layers.mjs`](../scripts/lint-package-layers.mjs),
-which runs in `pnpm verify` / `pnpm verify:agent`. It walks
-`packages/*/src/**`, matches bare, subpath, dynamic, and relative
-cross-package specifiers, forbids the disallowed `node:` builtins, and
-exits non-zero with a remediation hint. **This table is the source of
-truth; the script's `RULES` table is its executable mirror — a new
-`@baerly/*` package must add its row to both in the same PR.**
+The allow list is enforced at edit time by [`scripts/lint-package-layers.mjs`](../scripts/lint-package-layers.mjs), which runs in `pnpm verify` / `pnpm verify:agent`. It walks `packages/*/src/**`, matches bare, subpath, dynamic, and relative cross-package specifiers, forbids the disallowed `node:` builtins, and exits non-zero with a remediation hint. **This table is the source of truth; the script's `RULES` table is its executable mirror — a new `@baerly/*` package must add its row to both in the same PR.**
 
-The list is hand-maintained so each new edge gets deliberate review. A
-graph-based dependency tool (`dependency-cruiser`, Nx,
-`eslint-plugin-boundaries`) would resolve dynamic and relative edges
-natively and is in-policy, but config-as-data is heavier than the
-~120-line script for an 8-node graph with a unit-test harness. Revisit
-at N>12 packages, or when dynamic and relative imports outgrow the
-script.
+The list is hand-maintained so each new edge gets deliberate review. A graph-based dependency tool (`dependency-cruiser`, Nx, `eslint-plugin-boundaries`) would resolve dynamic and relative edges natively and is in-policy, but config-as-data is heavier than the ~120-line script for an 8-node graph with a unit-test harness. Revisit at N>12 packages, or when dynamic and relative imports outgrow the script.
 
 ## CLI surfaces
 
@@ -294,64 +175,23 @@ Two CLIs ship from this repo:
 | `@gusto/create-baerly-storage` | `packages/create-baerly-storage/` | Puts baerly-storage into a project by scaffolding from `examples/` or bolting onto an existing Cloudflare Worker (`pnpm create @gusto/baerly-storage@latest .`). It is the only npm-published CLI besides `baerly-storage` itself. |
 | `baerly` | `packages/cli/` | Operates on a project that already has baerly-storage: `deploy`, `doctor`, `inspect`, `export`, `cost`, and the `admin` subgroup. Workspace-internal; bundled to `dist/baerly.js` inside the `baerly-storage` tarball. |
 
-They share one helper module — `@baerly/cli/wrangler-patch` — because
-both `baerly deploy --target=cloudflare` and
-`@gusto/create-baerly-storage`'s bolt-on flow merge into the same
-`wrangler.jsonc`. Everything else stays in its package. See
-`packages/cli/AGENTS.md` and
-`packages/create-baerly-storage/AGENTS.md` for the per-package quickrefs.
+They share one helper module — `@baerly/cli/wrangler-patch` — because both `baerly deploy --target=cloudflare` and `@gusto/create-baerly-storage`'s bolt-on flow merge into the same `wrangler.jsonc`. Everything else stays in its package. See `packages/cli/AGENTS.md` and `packages/create-baerly-storage/AGENTS.md` for the per-package quickrefs.
 
 ## Lifecycle of `db.collection("X").insert(doc)`
 
-The writer serializes `LogEntry.after` and creates `log/<seq>`; that
-create is the commit's only write. A row becomes visible only when a
-committed log entry is replayed. Declared indexes are validated at
-`Db.create` and change no storage call.
+The writer serializes `LogEntry.after` and creates `log/<seq>`; that create is the commit's only write. A row becomes visible only when a committed log entry is replayed. Declared indexes are validated at `Db.create` and change no storage call.
 
-1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`,
-   `runInsert` in `packages/server/src/query.ts`): normalises the
-   document, generates a UUIDv7 `_id` if absent, and folds the collection
-   through the tail `T0` its read probe found. A live row with that `_id`
-   throws `AlreadyExists` here (an HTTP insert carrying `mintedId` whose
-   body equals the row returns `{ _id }` instead, committing nothing).
-   Otherwise it checks capacity (`admitWrites`, `capacity.ts`), constructs a
-   `CommitInput{ op: "I", collection, docId, body, insertGuard:
-   { absentBelowSeq: T0 }, admission: { fromSeq: T0, check } }` and calls
-   `Writer.commit(...)`.
+1. **`Collection.insert(doc)`** (`packages/server/src/collection.ts`, `runInsert` in `packages/server/src/query.ts`): normalises the document, generates a UUIDv7 `_id` if absent, and folds the collection through the tail `T0` its read probe found. A live row with that `_id` throws `AlreadyExists` here (an HTTP insert carrying `mintedId` whose body equals the row returns `{ _id }` instead, committing nothing). Otherwise it checks capacity (`admitWrites`, `capacity.ts`), constructs a `CommitInput{ op: "I", collection, docId, body, insertGuard: { absentBelowSeq: T0 }, admission: { fromSeq: T0, check } }` and calls `Writer.commit(...)`.
 
 2. **`Writer.commit(req)`** (`packages/server/src/writer.ts`):
    - reads `current.json` fresh for its snapshot pointer and `tail_hint`;
-   - forward-probes from `max(log_seq_start, tail_hint)` to find the
-     first empty log slot and mint `seq`. A guarded insert probes from
-     `max(T0, log_seq_start)` instead, first GETting any window slots in
-     `[T0, log_seq_start)` a fold moved below the floor, and throws
-     `AlreadyExists` if the last entry for its doc in `[T0, seq)` is a live
-     `I` / `U` — the first `I` for a `doc_id` wins
-     ([Insert: the first `I` wins](spec/sync-protocol.md#insert-the-first-i-wins)),
-     or, with `replayIdentical` and an equal `after`, returns that entry
-     without writing. It then hands that window to `admission.check`, which
-     re-runs the capacity decision when the window is non-empty
-     ([Capacity: the commit-time re-check](spec/sync-protocol.md#capacity-the-commit-time-re-check));
+   - forward-probes from `max(log_seq_start, tail_hint)` to find the first empty log slot and mint `seq`. A guarded insert probes from `max(T0, log_seq_start)` instead, first GETting any window slots in `[T0, log_seq_start)` a fold moved below the floor, and throws `AlreadyExists` if the last entry for its doc in `[T0, seq)` is a live `I` / `U` — the first `I` for a `doc_id` wins ([Insert: the first `I` wins](spec/sync-protocol.md#insert-the-first-i-wins)), or, with `replayIdentical` and an equal `after`, returns that entry without writing. It then hands that window to `admission.check`, which re-runs the capacity decision when the window is non-empty ([Capacity: the commit-time re-check](spec/sync-protocol.md#capacity-the-commit-time-re-check));
    - serializes the `I` / `U` post-image into `LogEntry.after`;
-   - creates the log entry under
-     `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json`
-     with `If-None-Match: "*"` — **that create is the commit** (no
-     `current.json` write on the commit path, and no other write).
+   - creates the log entry under `app/<app>/tenant/<tenant>/manifests/<collection>/log/<seq>.json` with `If-None-Match: "*"` — **that create is the commit** (no `current.json` write on the commit path, and no other write).
 
-   A `412` on the log create means the key already exists. The writer
-   reads the existing `LogEntry` and adopts it only when it has the same
-   `session`, same `seq`, and full-entry equality with the attempted
-   entry. Any failed adoption check treats the occupant as a conflicting
-   committed entry, so the writer re-probes until it finds the next empty
-   slot; a guarded insert re-runs its window check over the occupant and
-   the re-probed entries first. A malformed log entry surfaces as corrupt storage state, not as
-   an ordinary conflict. That re-probe is bounded by
-   `LOG_FORWARD_PROBE_CAP`; exhausting it surfaces
-   `BaerlyError{code:"Internal"}`. There is no post-commit fence verify;
-   `writer_fence` is dormant.
+   A `412` on the log create means the key already exists. The writer reads the existing `LogEntry` and adopts it only when it has the same `session`, same `seq`, and full-entry equality with the attempted entry. Any failed adoption check treats the occupant as a conflicting committed entry, so the writer re-probes until it finds the next empty slot; a guarded insert re-runs its window check over the occupant and the re-probed entries first. A malformed log entry surfaces as corrupt storage state, not as an ordinary conflict. That re-probe is bounded by `LOG_FORWARD_PROBE_CAP`; exhausting it surfaces `BaerlyError{code:"Internal"}`. There is no post-commit fence verify; `writer_fence` is dormant.
 
-   The ordering, and the read-back branch that distinguishes a lost
-   acknowledgement from a foreign write:
+   The ordering, and the read-back branch that distinguishes a lost acknowledgement from a foreign write:
 
    ```mermaid
    sequenceDiagram
@@ -372,196 +212,60 @@ committed log entry is replayed. Declared indexes are validated at
        end
    ```
 
-3. **Read path: `Collection.where(p).all()`**
-   (`packages/server/src/query.ts`): reads `current.json`, loads the
-   snapshot it names, folds the trusted range `[log_seq_start,
-   tail_hint)` from object storage and then forward-probes
-   `[max(log_seq_start, tail_hint), true tail)` to the first 404, folds
-   the `LogEntry` stream into the live row set
-   (`I` / `U` apply the doc body; `D` removes the doc), evaluates the
-   predicate AST from `where()` / `order()` / `limit()`, and returns the
-   filtered rows.
+3. **Read path: `Collection.where(p).all()`** (`packages/server/src/query.ts`): reads `current.json`, loads the snapshot it names, folds the trusted range `[log_seq_start, tail_hint)` from object storage and then forward-probes `[max(log_seq_start, tail_hint), true tail)` to the first 404, folds the `LogEntry` stream into the live row set (`I` / `U` apply the doc body; `D` removes the doc), evaluates the predicate AST from `where()` / `order()` / `limit()`, and returns the filtered rows.
 
 #### Authoritative membership and read cursors
 
-Every read folds the complete snapshot and log suffix before applying
-its predicate, order, and limit. The returned tail describes exactly
-that folded state, including for empty results and mutation selection.
-A declared index changes neither membership nor cost: no read LISTs
-anything, and an empty result does the same fold to prove absence as a
-nonempty one. Limits bound returned rows, not fold I/O or memory.
+Every read folds the complete snapshot and log suffix before applying its predicate, order, and limit. The returned tail describes exactly that folded state, including for empty results and mutation selection. A declared index changes neither membership nor cost: no read LISTs anything, and an empty result does the same fold to prove absence as a nonempty one. Limits bound returned rows, not fold I/O or memory.
 
-The HTTP `/v1/since?collection=<name>&cursor=<opaque>` route in
-`packages/server/src/http/since.ts` walks the log from a caller-supplied
-cursor, then returns new entries immediately or holds the request until
-entries arrive (or the long-poll deadline elapses). The protocol-level
-theory lives in
-[spec/sync-protocol.md](spec/sync-protocol.md).
+The HTTP `/v1/since?collection=<name>&cursor=<opaque>` route in `packages/server/src/http/since.ts` walks the log from a caller-supplied cursor, then returns new entries immediately or holds the request until entries arrive (or the long-poll deadline elapses). The protocol-level theory lives in [spec/sync-protocol.md](spec/sync-protocol.md).
 
 ### After the write — the in-band maintenance tick
 
-Compaction keeps reads from replaying old log entries; GC removes
-orphaned objects. The writer's post-commit dispatch point
-(`packages/server/src/writer.ts`) is the single default in-band trigger
-site for this work.
+Compaction keeps reads from replaying old log entries; GC removes orphaned objects. The writer's post-commit dispatch point (`packages/server/src/writer.ts`) is the single default in-band trigger site for this work.
 
-After the commit lands, the writer reads a per-request
-`MaintenanceDispatch` off the observability context
-(`getCurrentContext()?.maintenance`, set by the adapter) and calls
-`runBoundedMaintenance` (`packages/server/src/maintenance.ts`) when the
-write-tick gate is due. **Reads are pure — they never tick.** A bare
-`Db.create(...)` dispatches inline with the bounded default profile
-once enough writes accrue; no `setInterval`, cron, or operator scheduler is required.
+After the commit lands, the writer reads a per-request `MaintenanceDispatch` off the observability context (`getCurrentContext()?.maintenance`, set by the adapter) and calls `runBoundedMaintenance` (`packages/server/src/maintenance.ts`) when the write-tick gate is due. **Reads are pure — they never tick.** A bare `Db.create(...)` dispatches inline with the bounded default profile once enough writes accrue; no `setInterval`, cron, or operator scheduler is required.
 
 The bounded pass splits that work across three primitives:
 
-- `runGc()` (`packages/server/src/gc.ts`) deletes orphan snapshots no
-  longer reachable from `current.json` after the grace and sweep-time
-  revalidation checks. It uses the two-phase mark/sweep ledger at
-  `gc/pending.json`, is bounded by the maintenance profile's
-  `gcMaxMarks` / `gcMaxSweeps`, and is due on `gcInterval` write-count
-  boundary crossings. In
-  `"single"` phase mode, a fold can take the tick when both are due; the
-  hard-GC guard prevents indefinite starvation.
-- `compact()` (`packages/server/src/compactor.ts`) folds a **sliced**
-  tail into a new snapshot and advances `log_seq_start` so future reads
-  replay less log. The slice size is `maxFoldEntriesPerPass`, passed to
-  `compact()` as `maxEntriesPerRun`. The unsliceable snapshot rebuild is
-  gated by a **static two-way ceiling** (`snapshot_bytes <= C` AND
-  `snapshot_rows <= E`); `compact()` counts real rows as it applies the
-  slice and stops before the first entry that would add a row past `E`,
-  so update and delete tails keep folding at the ceiling. Within that
-  row-exact prefix it sizes the rebuilt snapshot entry by entry and folds
-  the longest prefix that stays within `C`, so a byte-heavy entry starts
-  the next pass instead of pinning the entries before it. The byte ceiling is
-  overridable by `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the row ceiling is
-  a kernel constant.
-- `retireLogRange()` (`packages/server/src/log-retention.ts`) reclaims
-  log objects the fold left behind. It runs as Step 5 of every pass, and
-  on the hard-GC early-return path, via the shared `retireLogs` helper in
-  `maintenance.ts`. No LIST and no mark/sweep ledger: log keys are
-  computable from `seq`, so the pass deletes a budgeted slice of the
-  half-open range `[log_delete_floor, log_seq_start - window)`, CASing
-  `log_delete_floor` to the end of that range *before* it deletes. The
-  per-tick budget is `LOG_RETENTION_MAX_DELETES_PER_TICK`.
+- `runGc()` (`packages/server/src/gc.ts`) deletes orphan snapshots no longer reachable from `current.json` after the grace and sweep-time revalidation checks. It uses the two-phase mark/sweep ledger at `gc/pending.json`, is bounded by the maintenance profile's `gcMaxMarks` / `gcMaxSweeps`, and is due on `gcInterval` write-count boundary crossings. In `"single"` phase mode, a fold can take the tick when both are due; the hard-GC guard prevents indefinite starvation.
+- `compact()` (`packages/server/src/compactor.ts`) folds a **sliced** tail into a new snapshot and advances `log_seq_start` so future reads replay less log. The slice size is `maxFoldEntriesPerPass`, passed to `compact()` as `maxEntriesPerRun`. The unsliceable snapshot rebuild is gated by a **static two-way ceiling** (`snapshot_bytes <= C` AND `snapshot_rows <= E`); `compact()` counts real rows as it applies the slice and stops before the first entry that would add a row past `E`, so update and delete tails keep folding at the ceiling. Within that row-exact prefix it sizes the rebuilt snapshot entry by entry and folds the longest prefix that stays within `C`, so a byte-heavy entry starts the next pass instead of pinning the entries before it. The byte ceiling is overridable by `BAERLY_MAINTENANCE_MAX_FOLD_BYTES`; the row ceiling is a kernel constant.
+- `retireLogRange()` (`packages/server/src/log-retention.ts`) reclaims log objects the fold left behind. It runs as Step 5 of every pass, and on the hard-GC early-return path, via the shared `retireLogs` helper in `maintenance.ts`. No LIST and no mark/sweep ledger: log keys are computable from `seq`, so the pass deletes a budgeted slice of the half-open range `[log_delete_floor, log_seq_start - window)`, CASing `log_delete_floor` to the end of that range _before_ it deletes. The per-tick budget is `LOG_RETENTION_MAX_DELETES_PER_TICK`.
 
-Snapshot pointer advancement: a fold writes a new snapshot, then
-advances `current.json` with a **full-fence CAS** — a conditional update
-that succeeds only if the previously read state still matches. A lost
-fold is abandoned (**no lease**; no lock object is taken); its orphan
-snapshot is reclaimed by `runGc` past the grace window. **Dispatch is by
-capability:** Cloudflare relocates the maintenance pass past the
-response via `ctx.waitUntil`; everywhere else it runs inline
-(`dispatchInlineAwaited`). See
-[scale-ceilings.md](spec/scale-ceilings.md#per-tier-bounds) for the per-tier envelope
-and ceiling math, and "Storage layout in the bucket" below for
-the on-disk shape these passes produce.
+Snapshot pointer advancement: a fold writes a new snapshot, then advances `current.json` with a **full-fence CAS** — a conditional update that succeeds only if the previously read state still matches. A lost fold is abandoned (**no lease**; no lock object is taken); its orphan snapshot is reclaimed by `runGc` past the grace window. **Dispatch is by capability:** Cloudflare relocates the maintenance pass past the response via `ctx.waitUntil`; everywhere else it runs inline (`dispatchInlineAwaited`). See [scale-ceilings.md](spec/scale-ceilings.md#per-tier-bounds) for the per-tier envelope and ceiling math, and "Storage layout in the bucket" below for the on-disk shape these passes produce.
 
 ## Storage seam
 
-The kernel's portability comes from a small boundary: it knows object
-operations, not providers. It reads and writes through the four
-`Storage` methods only (`get`/`put`/`delete`/`list`). `Storage` is
-injected at `Db.create({ storage, app, tenant })` time; the kernel
-never picks an impl itself.
+The kernel's portability comes from a small boundary: it knows object operations, not providers. It reads and writes through the four `Storage` methods only (`get`/`put`/`delete`/`list`). `Storage` is injected at `Db.create({ storage, app, tenant })` time; the kernel never picks an impl itself.
 
-- `S3HttpStorage` (`packages/adapter-node/src/s3-http.ts`) for any
-  S3-compatible HTTP endpoint from a Node host. Authentication plugs in
-  via an injected `sign(req)` callback — `S3HttpStorage` imports no
-  signer itself; the `s3Storage` / `r2Storage` / `minioStorage`
-  factories exported from `@gusto/baerly-storage/node` wire `aws4fetch`'s
-  SigV4 in for you. Production callers should use AWS S3 or Cloudflare R2;
-  MinIO is the local conformance target.
-- `GcsHttpStorage` (`packages/adapter-node/src/gcs-http.ts`) for Google
-  Cloud Storage from a Node host, over GCS's **native** XML API — the
-  `gcsStorage` factory wires a GOOG4-HMAC-SHA256 signer and drives
-  generation preconditions (`x-goog-if-generation-match`), carrying the
-  object `generation` as the opaque etag. GCS's S3-interop endpoint
-  scopes the conditional headers to reads and cannot linearize the log,
-  so the native path is the only supported one (see
-  [storage-compatibility.md](spec/storage-compatibility.md#native-gcs-xml-api)).
-- `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for
-  the `memory:` endpoint, partitioned per bucket via a
-  process-singleton map so multiple `Db` instances share state by
-  bucket name.
-- `LocalFsStorage` (`packages/dev/src/local-fs.ts`, ships in the
-  Node-only `@baerly/dev` package — not part of the runtime bundle
-  since the kernel can't depend on `node:fs`) backs the `baerlyDev()`
-  Vite plugin (which the `examples/minimal-node/` and
-  `examples/react-node/` scaffolds use as `pnpm dev`) against a fixture
-  directory. Content-addressed `"<sha-256-hex>"` ETags so identical
-  bodies match across runs; atomic writes via `write-temp + rename`.
-  Callers construct it directly and inject it where a `Storage` is
-  required.
-- `r2BindingStorage` (`packages/adapter-cloudflare/src/r2-binding-storage.ts`)
-  for Cloudflare Workers. Wraps an R2 bucket binding, no HTTP hop.
+- `S3HttpStorage` (`packages/adapter-node/src/s3-http.ts`) for any S3-compatible HTTP endpoint from a Node host. Authentication plugs in via an injected `sign(req)` callback — `S3HttpStorage` imports no signer itself; the `s3Storage` / `r2Storage` / `minioStorage` factories exported from `@gusto/baerly-storage/node` wire `aws4fetch`'s SigV4 in for you. Production callers should use AWS S3 or Cloudflare R2; MinIO is the local conformance target.
+- `GcsHttpStorage` (`packages/adapter-node/src/gcs-http.ts`) for Google Cloud Storage from a Node host, over GCS's **native** XML API — the `gcsStorage` factory wires a GOOG4-HMAC-SHA256 signer and drives generation preconditions (`x-goog-if-generation-match`), carrying the object `generation` as the opaque etag. GCS's S3-interop endpoint scopes the conditional headers to reads and cannot linearize the log, so the native path is the only supported one (see [storage-compatibility.md](spec/storage-compatibility.md#native-gcs-xml-api)).
+- `MemoryStorage` (`packages/protocol/src/storage/memory.ts`) for the `memory:` endpoint, partitioned per bucket via a process-singleton map so multiple `Db` instances share state by bucket name.
+- `LocalFsStorage` (`packages/dev/src/local-fs.ts`, ships in the Node-only `@baerly/dev` package — not part of the runtime bundle since the kernel can't depend on `node:fs`) backs the `baerlyDev()` Vite plugin (which the `examples/minimal-node/` and `examples/react-node/` scaffolds use as `pnpm dev`) against a fixture directory. Content-addressed `"<sha-256-hex>"` ETags so identical bodies match across runs; atomic writes via `write-temp + rename`. Callers construct it directly and inject it where a `Storage` is required.
+- `r2BindingStorage` (`packages/adapter-cloudflare/src/r2-binding-storage.ts`) for Cloudflare Workers. Wraps an R2 bucket binding, no HTTP hop.
 
-Cloudflare Workers and Node are supported today; AWS Lambda requires an
-adapter package. Platform-specific code belongs in adapters.
+Cloudflare Workers and Node are supported today; AWS Lambda requires an adapter package. Platform-specific code belongs in adapters.
 
 ## Where invariants live
 
-- **Causal consistency:** `packages/server/src/writer.ts` and
-  `packages/server/src/query.ts` — the writer mints `LogEntry.seq`
-  as the first empty log slot found by the forward-probe from
-  `max(log_seq_start, tail_hint)`, and the winning `log/<seq>`
-  `If-None-Match: "*"` create is the commit; the reader folds
-  `[log_seq_start, tail_hint)` from a single read of `current.json` and
-  forward-probes from `max(log_seq_start, tail_hint)`.
-  A reader's observed sequence is a prefix of the collection log.
-  Randomized checker:
-  [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
-- **Split-brain fencing:** `writer_fence.epoch` inside `current.json`
-  is **dormant** under single-write commit — the post-commit fence
-  verify was removed (the winning `log/<seq>` create is itself the
-  proof of commit), and no prod path reads or writes the field. Its
-  drop is deferred (see [ADR-004](adr/004-single-write-commit.md)).
-- **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` —
-  RFC 7386 with the array-replacement convention; see
-  [spec/json-merge-patch.md](spec/json-merge-patch.md).
-- **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire
-  `LogEntry` interface and its versionless/additive-only 0.3.0
-  public-baseline / 0.x stability rules. See
-  [spec/log-entry-shape.md](spec/log-entry-shape.md).
+- **Causal consistency:** `packages/server/src/writer.ts` and `packages/server/src/query.ts` — the writer mints `LogEntry.seq` as the first empty log slot found by the forward-probe from `max(log_seq_start, tail_hint)`, and the winning `log/<seq>` `If-None-Match: "*"` create is the commit; the reader folds `[log_seq_start, tail_hint)` from a single read of `current.json` and forward-probes from `max(log_seq_start, tail_hint)`. A reader's observed sequence is a prefix of the collection log. Randomized checker: [spec/causal-consistency-checking.md](spec/causal-consistency-checking.md).
+- **Split-brain fencing:** `writer_fence.epoch` inside `current.json` is **dormant** under single-write commit — the post-commit fence verify was removed (the winning `log/<seq>` create is itself the proof of commit), and no prod path reads or writes the field. Its drop is deferred (see [ADR-004](adr/004-single-write-commit.md)).
+- **JSON Merge Patch semantics:** `packages/protocol/src/json.ts` — RFC 7386 with the array-replacement convention; see [spec/json-merge-patch.md](spec/json-merge-patch.md).
+- **Log entry shape:** `packages/protocol/src/log.ts` — the on-the-wire `LogEntry` interface and its versionless/additive-only 0.3.0 public-baseline / 0.x stability rules. See [spec/log-entry-shape.md](spec/log-entry-shape.md).
 
 ## Key types (where the contracts live)
 
-- `Db` (`packages/server/src/db.ts`): public read/write surface.
-  `Db.create({ storage, app, tenant })` returns a tenant-scoped
-  handle; `db.collection<T>(name)` returns a `Collection<T>`.
-- `Collection<T>` / `Query<T>` (`@baerly/protocol`,
-  consumed by `packages/server/src/collection.ts` and
-  `packages/server/src/query.ts`): the locked SQL-shape API.
-  Mutations (`insert` / `update` / `replace` / `delete`) plus the
-  predicate AST (`where` / `order` / `limit` /
-  `first` / `all` / `count`).
-- `CommitInput` / `CommitResult`
-  (`packages/server/src/writer.ts`): the
-  `Writer.commit` request/response shapes.
-- `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log
-  entry. Field set is fixed at major versions; consumers ack on
-  `lsn`. Full contract in [spec/log-entry-shape.md](spec/log-entry-shape.md).
-- `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type
-  pattern. `UUID` and `ContentVersionId` are both `string`s but not
-  assignable to each other.
-- `BaerlyError` / `BaerlyErrorCode` (`packages/protocol/src/errors.ts`):
-  discriminated-union error type. Branch on `error.code`.
-- `loadSnapshotAsMap(storage, key, expectedCollection, signal?)`
-  (`packages/server/src/snapshot.ts`): `@public` shared utility —
-  fetches a snapshot from object storage, verifies the SHA-256
-  baked into the filename, and returns a `Map<_id, body>`. Internal
-  callers: the compactor's fold-base load, the reader
-  (`Query.runRead`), and the CLI's export and fsck. See
-  [extending.md §5](contributing/extending.md#5-shared-utilities-on-the-public-surface).
+- `Db` (`packages/server/src/db.ts`): public read/write surface. `Db.create({ storage, app, tenant })` returns a tenant-scoped handle; `db.collection<T>(name)` returns a `Collection<T>`.
+- `Collection<T>` / `Query<T>` (`@baerly/protocol`, consumed by `packages/server/src/collection.ts` and `packages/server/src/query.ts`): the locked SQL-shape API. Mutations (`insert` / `update` / `replace` / `delete`) plus the predicate AST (`where` / `order` / `limit` / `first` / `all` / `count`).
+- `CommitInput` / `CommitResult` (`packages/server/src/writer.ts`): the `Writer.commit` request/response shapes.
+- `LogEntry` (`packages/protocol/src/log.ts`): the per-mutation log entry. Field set is fixed at major versions; consumers ack on `lsn`. Full contract in [spec/log-entry-shape.md](spec/log-entry-shape.md).
+- `Branded<T, B>` (`packages/protocol/src/types.ts`): nominal-type pattern. `UUID` and `ContentVersionId` are both `string`s but not assignable to each other.
+- `BaerlyError` / `BaerlyErrorCode` (`packages/protocol/src/errors.ts`): discriminated-union error type. Branch on `error.code`.
+- `loadSnapshotAsMap(storage, key, expectedCollection, signal?)` (`packages/server/src/snapshot.ts`): `@public` shared utility — fetches a snapshot from object storage, verifies the SHA-256 baked into the filename, and returns a `Map<_id, body>`. Internal callers: the compactor's fold-base load, the reader (`Query.runRead`), and the CLI's export and fsck. See [extending.md §5](contributing/extending.md#5-shared-utilities-on-the-public-surface).
 
 ## Storage layout in the bucket
 
-Every object for one collection lives under one prefix: `log/` holds
-commits; `snapshot/` supports reads, and `gc/` supports maintenance;
-`content/` and `index/` hold inert legacy objects that nothing reads,
-writes or reclaims. For a `Db` constructed with `app="tickets"` and `tenant="acme"`,
-that prefix is the tree root below — shown once here, then omitted
-from the table that follows:
+Every object for one collection lives under one prefix: `log/` holds commits; `snapshot/` supports reads, and `gc/` supports maintenance; `content/` and `index/` hold inert legacy objects that nothing reads, writes or reclaims. For a `Db` constructed with `app="tickets"` and `tenant="acme"`, that prefix is the tree root below — shown once here, then omitted from the table that follows:
 
 ```text
 app/tickets/tenant/acme/manifests/<collection>/
@@ -578,22 +282,13 @@ app/tickets/tenant/acme/manifests/<collection>/
     └── pending.json               ← GC candidate ledger
 ```
 
-| Object                               | Key encodes                          | Holds / role                                                                                                                                                                     |
-| ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `current.json`                       | — (one per collection)               | Snapshot pointer, `log_seq_start`, the non-authoritative `tail_hint`, and the dormant `writer_fence`. **Not** the commit-path linearization point.                               |
-| `log/<seq>.json`                     | `seq` — monotonic integer            | One `LogEntry`. The `If-None-Match: "*"` create on this key **is the commit**. Readers scan the trusted range `[log_seq_start, tail_hint)`, then forward-probe to the true tail. |
-| `content/<content-version>.json`     | `ContentVersionId` — SHA-256, 32 hex | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](spec/sync-protocol.md#legacy-content-side-objects). |
-| `index/<name>/…`                     | index name + encoded key             | Legacy zero-byte index marker from a pre-0.7 writer. Inert. See [Legacy index markers](spec/sync-protocol.md#legacy-index-markers).                                            |
-| `snapshot/L9/<min>-<max>-<sha>.json` | `seq` range + content hash           | Content-hashed materialized snapshot.                                                                                                                                            |
-| `gc/pending.json`                    | — (one per collection)               | Two-phase GC candidate ledger.                                                                                                                                                   |
+| Object | Key encodes | Holds / role |
+| --- | --- | --- |
+| `current.json` | — (one per collection) | Snapshot pointer, `log_seq_start`, the non-authoritative `tail_hint`, and the dormant `writer_fence`. **Not** the commit-path linearization point. |
+| `log/<seq>.json` | `seq` — monotonic integer | One `LogEntry`. The `If-None-Match: "*"` create on this key **is the commit**. Readers scan the trusted range `[log_seq_start, tail_hint)`, then forward-probe to the true tail. |
+| `content/<content-version>.json` | `ContentVersionId` — SHA-256, 32 hex | Side object emitted by a legacy writer. Inert: no reader opens one and GC does not touch the prefix. See [Legacy content side objects](spec/sync-protocol.md#legacy-content-side-objects). |
+| `index/<name>/…` | index name + encoded key | Legacy zero-byte index marker from a pre-0.7 writer. Inert. See [Legacy index markers](spec/sync-protocol.md#legacy-index-markers). |
+| `snapshot/L9/<min>-<max>-<sha>.json` | `seq` range + content hash | Content-hashed materialized snapshot. |
+| `gc/pending.json` | — (one per collection) | Two-phase GC candidate ledger. |
 
-Compaction (`packages/server/src/compactor.ts`) folds adjacent log
-entries into checkpoints and advances `log_seq_start`. Log retention
-(`packages/server/src/log-retention.ts`) then reclaims the log objects
-below that floor over a computed sequence range. GC
-(`packages/server/src/gc.ts`) deletes orphan snapshots no longer
-reachable from `current.json`. All three are driven
-in-band on the write path by `runBoundedMaintenance`
-(`packages/server/src/maintenance.ts`); `runScheduledMaintenance` is the
-opt-in alternative trigger. See
-[After the write — the in-band maintenance tick](#after-the-write--the-in-band-maintenance-tick).
+Compaction (`packages/server/src/compactor.ts`) folds adjacent log entries into checkpoints and advances `log_seq_start`. Log retention (`packages/server/src/log-retention.ts`) then reclaims the log objects below that floor over a computed sequence range. GC (`packages/server/src/gc.ts`) deletes orphan snapshots no longer reachable from `current.json`. All three are driven in-band on the write path by `runBoundedMaintenance` (`packages/server/src/maintenance.ts`); `runScheduledMaintenance` is the opt-in alternative trigger. See [After the write — the in-band maintenance tick](#after-the-write--the-in-band-maintenance-tick).

@@ -9,10 +9,10 @@ related: [docs.md, "../development.md"]
 
 # Test conventions
 
-Conventions for tests across `src/` (colocated unit tests) and `tests/`
-(everything else).
+Conventions for tests across `src/` (colocated unit tests) and `tests/` (everything else).
 
 ## Test runner
+
 - vitest. Import from `"vitest"`:
   ```ts
   import { test, expect, describe, beforeAll, afterEach } from "vitest";
@@ -21,11 +21,10 @@ Conventions for tests across `src/` (colocated unit tests) and `tests/`
 
 ## File layout
 
-vitest discovers via `include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`.
-Filenames are kebab-case throughout (e.g. `s3-http.test.ts`).
+vitest discovers via `include: ["src/**/*.test.ts", "tests/**/*.test.ts"]`. Filenames are kebab-case throughout (e.g. `s3-http.test.ts`).
 
 | Where | What goes there |
-|---|---|
+| --- | --- |
 | `src/<module>.test.ts` (next to source) | Unit tests with a 1:1 source mapping. The test for `packages/protocol/src/json.ts` is `packages/protocol/src/json.test.ts`. |
 | `tests/unit/<topic>.test.ts` | Cross-cutting unit tests with no single source counterpart (e.g. `consistency`, `datatypes`). |
 | `tests/<topic>.test.ts` | Cross-cutting suites that don't fit unit/integration cleanly (e.g. `regressions`). |
@@ -36,11 +35,7 @@ One topic per file. Don't pile unrelated suites together.
 
 ## Property-based tests
 
-Use `fast-check` via `@fast-check/vitest`. Alias its property-test wrapper as
-`fcTest`; pull ordinary `test` plus `expect`/`describe` from `vitest`. This
-keeps deterministic cases from inheriting `fc.configureGlobal().numRuns` when
-a file mixes both kinds of test. Prefer the object-form
-`fcTest.prop({ a, b })` so failure messages name the shrunk values.
+Use `fast-check` via `@fast-check/vitest`. Alias its property-test wrapper as `fcTest`; pull ordinary `test` plus `expect`/`describe` from `vitest`. This keeps deterministic cases from inheriting `fc.configureGlobal().numRuns` when a file mixes both kinds of test. Prefer the object-form `fcTest.prop({ a, b })` so failure messages name the shrunk values.
 
 - Pure modules: drive arbitraries through `fcTest.prop`. Example:
   ```ts
@@ -51,21 +46,13 @@ a file mixes both kinds of test. Prefer the object-form
     expect(Math.abs(n)).toBeGreaterThanOrEqual(0);
   });
   ```
-- Stateful classes: model the invariants with `fc.commands` and run the
-  sequence via `fc.modelRun` (sync) or `fc.asyncModelRun` (async).
-- Failing-seed replay: failure output prints a `seed` and `path`. Paste
-  them into `fc.assert(prop, { seed, path })` to reproduce, or just
-  rerun the test by name — `@fast-check/vitest` re-seeds automatically
-  on a single-test rerun.
-- Protocol-level ordering tests (interleaved writes, replay, partial
-  failures) still live in `tests/integration/randomized.test.ts`.
-- Per-property iteration count comes from `FC_NUM_RUNS` (default 100).
-  `pnpm test:randomize` cranks it to 10000 for a single pass of the default
-  project's property-fuzzing slice. The command excludes the dedicated
-  maintenance crash fuzzer and the expensive non-property
-  profile-equivalence / end-to-end suites.
+- Stateful classes: model the invariants with `fc.commands` and run the sequence via `fc.modelRun` (sync) or `fc.asyncModelRun` (async).
+- Failing-seed replay: failure output prints a `seed` and `path`. Paste them into `fc.assert(prop, { seed, path })` to reproduce, or just rerun the test by name — `@fast-check/vitest` re-seeds automatically on a single-test rerun.
+- Protocol-level ordering tests (interleaved writes, replay, partial failures) still live in `tests/integration/randomized.test.ts`.
+- Per-property iteration count comes from `FC_NUM_RUNS` (default 100). `pnpm test:randomize` cranks it to 10000 for a single pass of the default project's property-fuzzing slice. The command excludes the dedicated maintenance crash fuzzer and the expensive non-property profile-equivalence / end-to-end suites.
 
 ## Asserting on errors
+
 - Check the `code`, not the message:
   ```ts
   await expect(action()).rejects.toMatchObject({ code: "NetworkError" });
@@ -81,60 +68,27 @@ a file mixes both kinds of test. Prefer the object-form
 
 ## Runtime-boundary refactors
 
-A commit claiming "public signatures unchanged" or "byte-identical" is
-making a runtime claim, not a type claim — typecheck and lint can't
-verify it. When a refactor crosses a runtime boundary between two
-ecosystems (Web Streams ↔ Node Streams, sync ↔ async, fire-and-forget ↔
-awaited), demand a test that exercises the failure mode the old code
-tolerated — usually disconnect, abort, partial-read, or a rejected
-promise the old idiom silently swallowed. If the new idiom is stricter
-(often why it was chosen), that strictness is the behavior change, and
-only a runtime test surfaces it.
+A commit claiming "public signatures unchanged" or "byte-identical" is making a runtime claim, not a type claim — typecheck and lint can't verify it. When a refactor crosses a runtime boundary between two ecosystems (Web Streams ↔ Node Streams, sync ↔ async, fire-and-forget ↔ awaited), demand a test that exercises the failure mode the old code tolerated — usually disconnect, abort, partial-read, or a rejected promise the old idiom silently swallowed. If the new idiom is stricter (often why it was chosen), that strictness is the behavior change, and only a runtime test surfaces it.
 
 ## Network-dependent tests
-- Tests that hit the network live in `tests/integration/` and expect
-  Minio at `http://127.0.0.1:9102`. Bring it up with `pnpm dev:storage`
-  before running them.
-- `tests/integration/conformance.test.ts` needs cloud credentials in
-  `credentials/` (gitignored). It's excluded from the default test
-  glob; opt in with `pnpm test:conformance`.
+
+- Tests that hit the network live in `tests/integration/` and expect Minio at `http://127.0.0.1:9102`. Bring it up with `pnpm dev:storage` before running them.
+- `tests/integration/conformance.test.ts` needs cloud credentials in `credentials/` (gitignored). It's excluded from the default test glob; opt in with `pnpm test:conformance`.
 
 ## Gated suites report through `gate()`
 
-A suite that skips when its environment is missing must decide that through
-`gate()` from `tests/setup/gates.ts`, never a bare `process.env` check:
+A suite that skips when its environment is missing must decide that through `gate()` from `tests/setup/gates.ts`, never a bare `process.env` check:
 
 ```ts
 const minioEnabled = gate("minio"); // readiness = the gate's opt-in env
 describe.runIf(gate("conformance-aws", creds !== null))("aws", () => {});
 ```
 
-Add a new gate (id, skip reason, opt-in env) to `GATES` in
-`tests/setup/gate-manifest.ts`. At the end of a default-project run, the
-global setup fails the run if a gate it expected skipped: a gate is expected
-when its opt-in env is set (`CONFORMANCE=1` with `credentials/aws.json`
-missing is red), or when it is named in `BAERLY_REQUIRED_GATES`, which CI
-sets per step and which also fails a required gate no collected file
-reported. A bare `pnpm test` expects nothing. Adapter-capability skips in
-shared cascades (`supportsCAS`, …) are not gates.
+Add a new gate (id, skip reason, opt-in env) to `GATES` in `tests/setup/gate-manifest.ts`. At the end of a default-project run, the global setup fails the run if a gate it expected skipped: a gate is expected when its opt-in env is set (`CONFORMANCE=1` with `credentials/aws.json` missing is red), or when it is named in `BAERLY_REQUIRED_GATES`, which CI sets per step and which also fails a required gate no collected file reported. A bare `pnpm test` expects nothing. Adapter-capability skips in shared cascades (`supportsCAS`, …) are not gates.
 
 ## Cross-adapter parity gate
 
-The four storage adapters — `MemoryStorage`, `LocalFsStorage`, `S3HttpStorage`
-(AWS/Minio), and `r2BindingStorage` — pass **one** shared contract:
-`defineStorageConformanceSuite` (`packages/protocol/src/storage/conformance.ts`) plus the
-`runCollectionApiCascade` / `runCausalConsistencyCascade` drivers. `green locally ⇒ green
-in cloud` rests on memory/local-fs reproducing the minio/r2 **error codes** (the
-`error-code parity` table), **CAS semantics** (exactly-one-winner under concurrent
-create), **byte-exact keys** (keys, collection names, and `_id`s differing only by case are
-distinct everywhere; keys differing only by Unicode normalization are distinct on
-every backend except R2, which declares it unsupported via
-`normalizationDistinctKeys: false` — the case `LocalFsStorage` on a folding
-filesystem would otherwise merge; a non-NFC `_id` or name is refused on write, and
-data stored under one earlier stays readable), and
-**validation order** (`$`-key rejection is
-synchronous + I/O-free; schema validation rejects an invalid write before any mutating
-I/O reaches the bucket).
+The four storage adapters — `MemoryStorage`, `LocalFsStorage`, `S3HttpStorage` (AWS/Minio), and `r2BindingStorage` — pass **one** shared contract: `defineStorageConformanceSuite` (`packages/protocol/src/storage/conformance.ts`) plus the `runCollectionApiCascade` / `runCausalConsistencyCascade` drivers. `green locally ⇒ green in cloud` rests on memory/local-fs reproducing the minio/r2 **error codes** (the `error-code parity` table), **CAS semantics** (exactly-one-winner under concurrent create), **byte-exact keys** (keys, collection names, and `_id`s differing only by case are distinct everywhere; keys differing only by Unicode normalization are distinct on every backend except R2, which declares it unsupported via `normalizationDistinctKeys: false` — the case `LocalFsStorage` on a folding filesystem would otherwise merge; a non-NFC `_id` or name is refused on write, and data stored under one earlier stays readable), and **validation order** (`$`-key rejection is synchronous + I/O-free; schema validation rejects an invalid write before any mutating I/O reaches the bucket).
 
 Run it:
 
@@ -144,64 +98,25 @@ Run it:
 
 **Legitimate divergences the gate does NOT over-assert:**
 
-- A contended create-loser may surface `WriteConflict` (412) **or** a retryable `NetworkError`
-  (409 ConditionalRequestConflict, real AWS S3) — the parity table accepts a code *set*.
-- CAS **fairness is not a parity property** ([ADR-002](../../adr/002-ephemeral-coordination.md)
-  "No fairness"); only exactly-one-winner + code-on-loss are asserted, never
-  ordering/FIFO.
-- `LocalFsStorage` `ifMatch` is **serialized in-process only** — it holds a per-key
-  lock across the whole read-compare-write, so single-process CAS (which is what the
-  suite exercises) has parity with the real backends, including exactly-one-winner
-  under concurrency. The gate does not claim cross-process parity for local-fs.
-- **Linux CI never folds keys.** ext4 is byte-exact, so the byte-exact-keys rows pass
-  there for any local-fs implementation. `local-fs.folding-fs.test.ts` shims
-  `node:fs/promises` with a case + NFD fold to reproduce default macOS APFS on Linux;
-  the `CASE_INSENSITIVE_FS`-gated cases in `local-fs.test.ts` run on a real folding
-  volume and only on macOS. `local-fs.byte-exact-fs.test.ts` is the reverse shim: it
-  stores each path component as hex, so a folding macOS host behaves like ext4.
-- **HTTP-wire CAS parity is a known hole** (`tests/fixtures/http-conformance-cascade.ts`
-  defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does
-  not cover the HTTP `If-Match` round-trip.
+- A contended create-loser may surface `WriteConflict` (412) **or** a retryable `NetworkError` (409 ConditionalRequestConflict, real AWS S3) — the parity table accepts a code _set_.
+- CAS **fairness is not a parity property** ([ADR-002](../../adr/002-ephemeral-coordination.md) "No fairness"); only exactly-one-winner + code-on-loss are asserted, never ordering/FIFO.
+- `LocalFsStorage` `ifMatch` is **serialized in-process only** — it holds a per-key lock across the whole read-compare-write, so single-process CAS (which is what the suite exercises) has parity with the real backends, including exactly-one-winner under concurrency. The gate does not claim cross-process parity for local-fs.
+- **Linux CI never folds keys.** ext4 is byte-exact, so the byte-exact-keys rows pass there for any local-fs implementation. `local-fs.folding-fs.test.ts` shims `node:fs/promises` with a case + NFD fold to reproduce default macOS APFS on Linux; the `CASE_INSENSITIVE_FS`-gated cases in `local-fs.test.ts` run on a real folding volume and only on macOS. `local-fs.byte-exact-fs.test.ts` is the reverse shim: it stores each path component as hex, so a folding macOS host behaves like ext4.
+- **HTTP-wire CAS parity is a known hole** (`tests/fixtures/http-conformance-cascade.ts` defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does not cover the HTTP `If-Match` round-trip.
 
 ## Testing a stored format or crash-resume path
 
-A change to what lands in the bucket, or to how a step resumes after a
-crash, needs these checks, each backed by a helper on main:
+A change to what lands in the bucket, or to how a step resumes after a crash, needs these checks, each backed by a helper on main:
 
-- **Inject faults per op.**
-  [`tests/fixtures/aborting-storage.ts`](../../../tests/fixtures/aborting-storage.ts)
-  aborts the K-th op or tears a `put` (a truncated body at a valid key),
-  optionally narrowed to a key prefix and op kinds.
-- **Assert a two-branch contract.** After the fault, either the step
-  completed or the reader sees the pre-fault row set
-  ([`tests/integration/maintenance-crash-fuzz.test.ts`](../../../tests/integration/maintenance-crash-fuzz.test.ts)).
-- **Judge the physical image.**
-  [`tests/fixtures/physical-oracle.ts`](../../../tests/fixtures/physical-oracle.ts)
-  compares the key set and per-object SHA-256, permits only enumerated
-  residue, and checks a surfaced error's `code` against the step's
-  allow-list. Teach it a new layout before a test produces one.
-- **Prove the oracle goes red.**
-  [`tests/unit/physical-oracle.test.ts`](../../../tests/unit/physical-oracle.test.ts)
-  feeds it deliberately broken steps and requires a violation for each.
-- **Fuzz the decoder.** Mutate frozen bytes, as
-  [`tests/unit/log-decoder-fuzz.test.ts`](../../../tests/unit/log-decoder-fuzz.test.ts)
-  does over the `fold-stage0` corpus. Bad bytes surface only as a listed
-  `BaerlyError` code, never a `TypeError`, `SyntaxError` or `RangeError`.
-- **GC deletes only keys it fully parses.** An unknown or non-canonical
-  layout is left in place
-  ([`packages/server/src/gc.test.ts`](../../../packages/server/src/gc.test.ts)).
+- **Inject faults per op.** [`tests/fixtures/aborting-storage.ts`](../../../tests/fixtures/aborting-storage.ts) aborts the K-th op or tears a `put` (a truncated body at a valid key), optionally narrowed to a key prefix and op kinds.
+- **Assert a two-branch contract.** After the fault, either the step completed or the reader sees the pre-fault row set ([`tests/integration/maintenance-crash-fuzz.test.ts`](../../../tests/integration/maintenance-crash-fuzz.test.ts)).
+- **Judge the physical image.** [`tests/fixtures/physical-oracle.ts`](../../../tests/fixtures/physical-oracle.ts) compares the key set and per-object SHA-256, permits only enumerated residue, and checks a surfaced error's `code` against the step's allow-list. Teach it a new layout before a test produces one.
+- **Prove the oracle goes red.** [`tests/unit/physical-oracle.test.ts`](../../../tests/unit/physical-oracle.test.ts) feeds it deliberately broken steps and requires a violation for each.
+- **Fuzz the decoder.** Mutate frozen bytes, as [`tests/unit/log-decoder-fuzz.test.ts`](../../../tests/unit/log-decoder-fuzz.test.ts) does over the `fold-stage0` corpus. Bad bytes surface only as a listed `BaerlyError` code, never a `TypeError`, `SyntaxError` or `RangeError`.
+- **GC deletes only keys it fully parses.** An unknown or non-canonical layout is left in place ([`packages/server/src/gc.test.ts`](../../../packages/server/src/gc.test.ts)).
 
 ## Performance
-- `pnpm test` should stay under ~30s on a developer laptop. Prefer
-  `await Promise.resolve()` ticks or short intervals (≤50ms) over
-  `setTimeout` in tests.
-- Don't add `.only` to commits — vitest will silently skip everything
-  else.
-- Real-subprocess / real-filesystem **integration** tests (e.g. the
-  scaffold + git tests in
-  `packages/create-baerly-storage/src/index.test.ts`) should raise their
-  timeout to **30s** via
-  `vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })` at the top
-  of the file. The 5s default (`vitest.config.ts`) is calibrated for
-  in-memory / unit tests and gets starved under the parallel fork-pool
-  suite — a timeout there is load, not a real hang.
+
+- `pnpm test` should stay under ~30s on a developer laptop. Prefer `await Promise.resolve()` ticks or short intervals (≤50ms) over `setTimeout` in tests.
+- Don't add `.only` to commits — vitest will silently skip everything else.
+- Real-subprocess / real-filesystem **integration** tests (e.g. the scaffold + git tests in `packages/create-baerly-storage/src/index.test.ts`) should raise their timeout to **30s** via `vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })` at the top of the file. The 5s default (`vitest.config.ts`) is calibrated for in-memory / unit tests and gets starved under the parallel fork-pool suite — a timeout there is load, not a real hang.

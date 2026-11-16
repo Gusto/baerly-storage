@@ -9,10 +9,7 @@ related: [auth.md, backups.md, observability.md, "../about/graduation.md", "../a
 
 # Operations runbook
 
-Production checklist for one baerly-storage app. Operational safety
-depends on one bucket URI, one `(app, tenant, collection)` scope, and
-auth returning the intended tenant prefix. Fill these once and keep the
-same values through every command:
+Production checklist for one baerly-storage app. Operational safety depends on one bucket URI, one `(app, tenant, collection)` scope, and auth returning the intended tenant prefix. Fill these once and keep the same values through every command:
 
 ```sh
 APP=acme
@@ -26,8 +23,7 @@ BASE_URL=https://api.example.com
 
 ### Bucket and deploy checks
 
-For Cloudflare, run both checks. For Node/self-hosted, run only the
-bucket check.
+For Cloudflare, run both checks. For Node/self-hosted, run only the bucket check.
 
 ```sh
 # Cloudflare only: wrangler config, R2 binding, secrets, Access shape.
@@ -39,36 +35,17 @@ baerly doctor --bucket="$BUCKET_URI"
 ```
 
 - The target check validates platform deploy shape.
-- The bucket check validates the object-store commit rule: when several
-  writers try to create the same fresh log object, exactly one must win;
-  stale `If-Match` updates and create-if-absent writes over existing keys
-  must fail. It also checks that LIST returns keys holding `%`, spaces,
-  `+`, and `&<>"'` byte-for-byte as written; a backend or gateway that
-  ignores `encoding-type=url` fails this check.
+- The bucket check validates the object-store commit rule: when several writers try to create the same fresh log object, exactly one must win; stale `If-Match` updates and create-if-absent writes over existing keys must fail. It also checks that LIST returns keys holding `%`, spaces, `+`, and `&<>"'` byte-for-byte as written; a backend or gateway that ignores `encoding-type=url` fails this check.
 
-`baerly doctor --bucket` writes and deletes throwaway sentinels to prove
-the bucket honors `If-None-Match: "*"` and `If-Match` and lists keys
-exactly; a sentinel it cannot delete is reported as a warning naming the
-key. It does not
-migrate or validate an existing baerly-storage prefix.
+`baerly doctor --bucket` writes and deletes throwaway sentinels to prove the bucket honors `If-None-Match: "*"` and `If-Match` and lists keys exactly; a sentinel it cannot delete is reported as a warning naming the key. It does not migrate or validate an existing baerly-storage prefix.
 
-For new buckets, skip this note: buckets written by the old
-pre-single-write `current.json` schema (`schema_version` 1 or 2) must be
-dumped under the old build and restored/reseeded under the current schema
-(`schema_version: 3`), not reused in place.
+For new buckets, skip this note: buckets written by the old pre-single-write `current.json` schema (`schema_version` 1 or 2) must be dumped under the old build and restored/reseeded under the current schema (`schema_version: 3`), not reused in place.
 
-There is no `baerly doctor --target=node` backend today; the bucket
-probe is the Node safety check.
+There is no `baerly doctor --target=node` backend today; the bucket probe is the Node safety check.
 
 ### Readiness check
 
-`GET /v1/healthz` is an anonymous *liveness* probe — it answers "is the
-process up?" without touching storage. `assertStorageReachable` from
-`@gusto/baerly-storage/node` is the application-level *readiness* check:
-it proves the configured bucket is reachable and honors the conditional
-writes (CAS) the protocol depends on. It throws `BaerlyError` —
-`NetworkError` if the bucket is unreachable, `InvalidConfig` if CAS is
-broken — so the process fails closed before serving traffic.
+`GET /v1/healthz` is an anonymous _liveness_ probe — it answers "is the process up?" without touching storage. `assertStorageReachable` from `@gusto/baerly-storage/node` is the application-level _readiness_ check: it proves the configured bucket is reachable and honors the conditional writes (CAS) the protocol depends on. It throws `BaerlyError` — `NetworkError` if the bucket is unreachable, `InvalidConfig` if CAS is broken — so the process fails closed before serving traffic.
 
 ```ts
 import { resolveStorageFromEnv, assertStorageReachable } from "@gusto/baerly-storage/node";
@@ -77,24 +54,13 @@ await assertStorageReachable(storage); // throws before we serve traffic
 console.log(`[baerly] storage=${label} (reachable)`);
 ```
 
-It is opt-in by design: it performs a handful of live round-trips
-(writing and deleting throwaway sentinels), so do not run it on every
-request or wire it into a hot path. Run it once at startup, or behind a
-`/readyz` handler your platform polls. On serverless or edge runtimes
-with frequent cold starts (e.g. Cloudflare isolates) you would not want
-it on every cold start.
+It is opt-in by design: it performs a handful of live round-trips (writing and deleting throwaway sentinels), so do not run it on every request or wire it into a hot path. Run it once at startup, or behind a `/readyz` handler your platform polls. On serverless or edge runtimes with frequent cold starts (e.g. Cloudflare isolates) you would not want it on every cold start.
 
-It catches an unreachable, access-denied, or non-existent bucket and a
-CAS-broken store, but not a wrong-but-writable bucket — a typo that
-points at another bucket you own boots clean.
+It catches an unreachable, access-denied, or non-existent bucket and a CAS-broken store, but not a wrong-but-writable bucket — a typo that points at another bucket you own boots clean.
 
 ### Auth
 
-Verify the route boundary. `GET /v1/healthz` is anonymous inside the
-baerly-storage adapter; if Cloudflare Access protects the whole
-hostname, Access may challenge it before the Worker sees it. The
-unauthenticated collection request below is the production data-route
-check.
+Verify the route boundary. `GET /v1/healthz` is anonymous inside the baerly-storage adapter; if Cloudflare Access protects the whole hostname, Access may challenge it before the Worker sees it. The unauthenticated collection request below is the production data-route check.
 
 ```sh
 curl -fsS "$BASE_URL/v1/healthz"
@@ -114,30 +80,21 @@ curl -fsS \
   "$BASE_URL/v1/c/$COLLECTION"
 ```
 
-Set exactly one auth path's variables before running the authenticated
-curl: either `$TOKEN`, or the Cloudflare Access service-token pair.
+Set exactly one auth path's variables before running the authenticated curl: either `$TOKEN`, or the Cloudflare Access service-token pair.
 
-Use `auth: "none"` only for local development or trusted internal
-code paths. Production data routes (`/v1/c/*`, `/v1/count`, and
-`/v1/since`) need a verifier that accepts the request and returns the
-tenant prefix, the storage namespace for that request:
+Use `auth: "none"` only for local development or trusted internal code paths. Production data routes (`/v1/c/*`, `/v1/count`, and `/v1/since`) need a verifier that accepts the request and returns the tenant prefix, the storage namespace for that request:
 
-| Target             | Production default                                                           |
-| ------------------ | ---------------------------------------------------------------------------- |
-| Cloudflare         | `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix })`                |
-| Node               | `bearerJwt({ jwks, issuer, audience, tenantClaim })` or fixed `tenantPrefix` |
-| Service-to-service | `sharedSecret({ secret, tenantPrefix })`                                     |
+| Target | Production default |
+| --- | --- |
+| Cloudflare | `cloudflareAccess({ teamDomain, audienceTag, tenantPrefix })` |
+| Node | `bearerJwt({ jwks, issuer, audience, tenantClaim })` or fixed `tenantPrefix` |
+| Service-to-service | `sharedSecret({ secret, tenantPrefix })` |
 
-Never ship `SHARED_SECRET` to a browser bundle. Full recipes are in
-[auth.md](auth.md) and [client-auth.md](client-auth.md).
+Never ship `SHARED_SECRET` to a browser bundle. Full recipes are in [auth.md](auth.md) and [client-auth.md](client-auth.md).
 
 ## Backups
 
-Dump every production collection off-host. Dumps are collection-scoped
-NDJSON; keep an inventory of every `(app, tenant, collection)` triple
-you operate. Use the hardened wrapper in [backups.md](backups.md):
-`0600` env file owned by the job user, temp file plus atomic rename,
-`0600` files, SHA-256 sidecar, off-host retention, and restore drill.
+Dump every production collection off-host. Dumps are collection-scoped NDJSON; keep an inventory of every `(app, tenant, collection)` triple you operate. Use the hardened wrapper in [backups.md](backups.md): `0600` env file owned by the job user, temp file plus atomic rename, `0600` files, SHA-256 sidecar, off-host retention, and restore drill.
 
 Use the direct command only for one-off manual dumps:
 
@@ -174,12 +131,9 @@ baerly admin fsck \
   --collection="$COLLECTION"
 ```
 
-They cover `current.json`, snapshot and log state, the Class A/month
-projection and [cost band](../about/cost-model.md#cli-cost-bands) from
-the trailing log, the snapshot hash, and log holes.
+They cover `current.json`, snapshot and log state, the Class A/month projection and [cost band](../about/cost-model.md#cli-cost-bands) from the trailing log, the snapshot hash, and log holes.
 
-For Node/self-hosted buckets, also run the all-collection writes/min
-scan:
+For Node/self-hosted buckets, also run the all-collection writes/min scan:
 
 ```sh
 baerly admin usage \
@@ -189,65 +143,40 @@ baerly admin usage \
   --tenant="$TENANT"
 ```
 
-For Cloudflare, `admin usage` is not wired for this scan yet: the Node
-CLI cannot reach a Workers R2 binding directly. Use canonical logs for
-trend history and `baerly cost` with R2 S3-compatible credentials for
-current operation-cost projection.
+For Cloudflare, `admin usage` is not wired for this scan yet: the Node CLI cannot reach a Workers R2 binding directly. Use canonical logs for trend history and `baerly cost` with R2 S3-compatible credentials for current operation-cost projection.
 
 ## Incidents
 
-On alerts, collect the canonical JSON log line first; it carries
-`request_id`, `outcome`, status, and the `db.*` counters. For
-Cloudflare maintenance alerts, also collect the `wrangler tail`
-`console.warn` / `console.error` line. Alert and respond on:
+On alerts, collect the canonical JSON log line first; it carries `request_id`, `outcome`, status, and the `db.*` counters. For Cloudflare maintenance alerts, also collect the `wrangler tail` `console.warn` / `console.error` line. Alert and respond on:
 
-| Signal                                       | Why it matters                               | First action                                                                                                                                                                                                                                                                 |
-| -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 5xx rate or `outcome:"error"`                | User-visible API failure                     | Filter logs by `error.code`; check bucket auth, S3 status, and recent deploys. Run the healthz and authenticated collection curls above.                                                                                                                                     |
-| `db.r2.put.412_total` sustained              | Conditional-write contention                 | Check writes/min for `$COLLECTION`; add app-edge retry for bursts, split hot collections if possible, graduate if sustained.                                                                                                                                                 |
+| Signal | Why it matters | First action |
+| --- | --- | --- |
+| 5xx rate or `outcome:"error"` | User-visible API failure | Filter logs by `error.code`; check bucket auth, S3 status, and recent deploys. Run the healthz and authenticated collection curls above. |
+| `db.r2.put.412_total` sustained | Conditional-write contention | Check writes/min for `$COLLECTION`; add app-edge retry for bursts, split hot collections if possible, graduate if sustained. |
 | `db.compaction.deferred_total` or `fold_deferred` warning | Snapshot over fold ceiling; compaction and log retention stopped | The warning names whether bytes or rows tripped, with `C` and `E`. Run `baerly inspect` for `fold_gate`, `live_log_tail`, and `materialised_rows`. Bytes: `BAERLY_MAINTENANCE_PROFILE=cf-paid` on Workers Paid, or raise `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` only on paid CF / Node with enough memory. Rows: no env var applies; switch profile on Cloudflare, otherwise split or graduate. |
-| Class A ops spike                            | Cost regression or hot write path            | Run `baerly cost`; inspect write amp, retries, and compaction CAS losses.                                                                                                                                                                                                      |
-| Object count growing while writes are steady | GC not draining or contention above envelope | Run `baerly admin fsck`; inspect `db.compaction.cas_lost_total`, deferred warnings, and write contention.                                                                                                                                                                    |
+| Class A ops spike | Cost regression or hot write path | Run `baerly cost`; inspect write amp, retries, and compaction CAS losses. |
+| Object count growing while writes are steady | GC not draining or contention above envelope | Run `baerly admin fsck`; inspect `db.compaction.cas_lost_total`, deferred warnings, and write contention. |
 
-Sink wiring and field reference are in
-[observability.md](observability.md) and
-[`packages/server/API.md`](../../packages/server/API.md), published as
-`node_modules/@gusto/baerly-storage/dist/API.md`, under "Observability".
+Sink wiring and field reference are in [observability.md](observability.md) and [`packages/server/API.md`](../../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`, under "Observability".
 
 ## Capacity
 
-The capacity lines (writes per collection, collections per tenant,
-documents per collection on each host) and their derivation live in
-[scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope).
-None of them is enforced by the protocol, and per-tenant stored bytes
-are a cost signal rather than a ceiling.
+The capacity lines (writes per collection, collections per tenant, documents per collection on each host) and their derivation live in [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope). None of them is enforced by the protocol, and per-tenant stored bytes are a cost signal rather than a ceiling.
 
-On Workers, each request has a storage-call budget set by
-`BAERLY_MAINTENANCE_PROFILE` (`cfRequestLedger`): under `cf-free`, the
-default, 900 calls, of which at most 45 through `fetch` (S3 storage); under
-`cf-paid`, 9,000. A Paid Worker on S3 keeps the 45-call cap until it sets
-`cf-paid`. A request that would exceed it is refused with
-`CapacityExceeded`, except a `GET /v1/since` long-poll: it stops polling when
-its calls run out and returns what it has, so a busy one returns part of the
-backlog, which the client's next poll continues, and under the 45-call cap an
-idle one returns after about 22 seconds instead of 25. Neither is an error. S3 on
-Workers needs Paid; which host is supported is in
-[scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers).
+On Workers, each request has a storage-call budget set by `BAERLY_MAINTENANCE_PROFILE` (`cfRequestLedger`): under `cf-free`, the default, 900 calls, of which at most 45 through `fetch` (S3 storage); under `cf-paid`, 9,000. A Paid Worker on S3 keeps the 45-call cap until it sets `cf-paid`. A request that would exceed it is refused with `CapacityExceeded`, except a `GET /v1/since` long-poll: it stops polling when its calls run out and returns what it has, so a busy one returns part of the backlog, which the client's next poll continues, and under the 45-call cap an idle one returns after about 22 seconds instead of 25. Neither is an error. S3 on Workers needs Paid; which host is supported is in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers).
 
-What to do when a line is crossed is in
-[graduation.md](../about/graduation.md); cost math lives in
-[cost-model.md](../about/cost-model.md).
+What to do when a line is crossed is in [graduation.md](../about/graduation.md); cost math lives in [cost-model.md](../about/cost-model.md).
 
 ## Route quick reference
 
-| Route                                             | Meaning                                                    |
-| ------------------------------------------------- | ---------------------------------------------------------- |
-| `GET /v1/healthz`                                 | Anonymous liveness check.                                  |
-| `GET /v1/c/:collection`                           | List rows; accepts JSON-encoded `where`, `order`, `limit`. |
-| `GET /v1/c/:collection/:id`                       | Read one row.                                              |
-| `POST /v1/c/:collection`                          | Insert one row.                                            |
-| `PATCH /v1/c/:collection/:id`                     | Merge-patch one row.                                       |
-| `PUT /v1/c/:collection/:id`                       | Replace one row.                                           |
-| `DELETE /v1/c/:collection/:id`                    | Delete one row.                                            |
-| `GET /v1/count?collection=<name>&where=<json>`    | Count matching rows.                                       |
-| `GET /v1/since?collection=<name>&cursor=<opaque>` | Long-poll change feed.                                     |
+| Route | Meaning |
+| --- | --- |
+| `GET /v1/healthz` | Anonymous liveness check. |
+| `GET /v1/c/:collection` | List rows; accepts JSON-encoded `where`, `order`, `limit`. |
+| `GET /v1/c/:collection/:id` | Read one row. |
+| `POST /v1/c/:collection` | Insert one row. |
+| `PATCH /v1/c/:collection/:id` | Merge-patch one row. |
+| `PUT /v1/c/:collection/:id` | Replace one row. |
+| `DELETE /v1/c/:collection/:id` | Delete one row. |
+| `GET /v1/count?collection=<name>&where=<json>` | Count matching rows. |
+| `GET /v1/since?collection=<name>&cursor=<opaque>` | Long-poll change feed. |

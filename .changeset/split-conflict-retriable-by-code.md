@@ -13,9 +13,9 @@ The `Conflict` error code is removed and split in two, and `retriable` is now de
 
 ```ts
 // before
-err.code === "Conflict" && err.retriable;   // CAS race
-err.code === "Conflict" && !err.retriable;  // duplicate _id
-throw new BaerlyError("Conflict", msg);     // custom Storage
+err.code === "Conflict" && err.retriable; // CAS race
+err.code === "Conflict" && !err.retriable; // duplicate _id
+throw new BaerlyError("Conflict", msg); // custom Storage
 new BaerlyError(code, msg, cause, issues, status, resolution, retriable);
 errorEnvelope(code, msg, issues, resolution, retriable);
 

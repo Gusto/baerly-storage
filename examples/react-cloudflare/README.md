@@ -1,17 +1,8 @@
 # react-cloudflare
 
-A baerly-storage app scaffolded with `@gusto/create-baerly-storage` for
-the **Cloudflare Workers** target, with a React + Vite SPA.
-Single-bucket R2-backed deployment via
-`@gusto/baerly-storage/cloudflare`. Ships `auth: "none"` so the day-1
-happy path works with zero env vars, plus a one-collection `notes`
-schema you extend; flip to Cloudflare Access or a shared secret before
-deploy — see "Production auth" below.
+A baerly-storage app scaffolded with `@gusto/create-baerly-storage` for the **Cloudflare Workers** target, with a React + Vite SPA. Single-bucket R2-backed deployment via `@gusto/baerly-storage/cloudflare`. Ships `auth: "none"` so the day-1 happy path works with zero env vars, plus a one-collection `notes` schema you extend; flip to Cloudflare Access or a shared secret before deploy — see "Production auth" below.
 
-**The R2 bucket is the durable state.** The Worker is trusted app code
-with an R2 binding; it applies the baerly-storage protocol, but it is
-not a database server. No daemon, lock table, scheduler, or idle
-database bill; maintenance is automatic and write-triggered.
+**The R2 bucket is the durable state.** The Worker is trusted app code with an R2 binding; it applies the baerly-storage protocol, but it is not a database server. No daemon, lock table, scheduler, or idle database bill; maintenance is automatic and write-triggered.
 
 ## What you got
 
@@ -45,18 +36,11 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev` runs Vite. `@cloudflare/vite-plugin` runs the Worker
-inside `workerd` next to the SPA dev server, so the SPA and `/v1/*`
-share an origin (`http://localhost:5173`). First run downloads the
-`workerd` binary.
+`pnpm dev` runs Vite. `@cloudflare/vite-plugin` runs the Worker inside `workerd` next to the SPA dev server, so the SPA and `/v1/*` share an origin (`http://localhost:5173`). First run downloads the `workerd` binary.
 
-Open <http://localhost:5173>. Type a note, hit "Add note." Open a
-second tab — inserts, edits, and deletes in one tab appear in the
-other over the `/v1/since?collection=notes&cursor=...` long-poll.
+Open <http://localhost:5173>. Type a note, hit "Add note." Open a second tab — inserts, edits, and deletes in one tab appear in the other over the `/v1/since?collection=notes&cursor=...` long-poll.
 
-`pnpm build` runs `tsc -b && vite build`; the SPA lands in
-`dist/client/` for the `assets:` binding in `wrangler.jsonc` to
-serve on deploy.
+`pnpm build` runs `tsc -b && vite build`; the SPA lands in `dist/client/` for the `assets:` binding in `wrangler.jsonc` to serve on deploy.
 
 ## Deploy
 
@@ -65,15 +49,11 @@ baerly deploy                         # reads baerly.config.ts:target, runs wran
 baerly doctor --target=cloudflare     # verify bindings, secrets, optional triggers
 ```
 
-`baerly doctor --target=cloudflare` warns on `auth: "none"` for
-deploy targets — see "Production auth" below to flip the posture
-before shipping.
+`baerly doctor --target=cloudflare` warns on `auth: "none"` for deploy targets — see "Production auth" below to flip the posture before shipping.
 
 ## Extend the schema
 
-Edit `baerly.config.ts`. The `Note` row type is inferred from
-`NoteSchema` in the same file — adding a field to the schema
-propagates to the UI through `import type { Note }`.
+Edit `baerly.config.ts`. The `Note` row type is inferred from `NoteSchema` in the same file — adding a field to the schema propagates to the UI through `import type { Note }`.
 
 ```typescript
 export const NoteSchema = z.object({
@@ -86,35 +66,14 @@ export const NoteSchema = z.object({
 
 ## Production auth
 
-The scaffold ships `auth: "none"` so the day-1 happy path works
-with zero env vars; every request resolves to `config.tenant` and
-the `NoteSchema` still validates writes server-side. Before deploy,
-follow `AGENTS.md` → "Going to production":
+The scaffold ships `auth: "none"` so the day-1 happy path works with zero env vars; every request resolves to `config.tenant` and the `NoteSchema` still validates writes server-side. Before deploy, follow `AGENTS.md` → "Going to production":
 
-- **Pattern A — CF Access (recommended).** Same artifact in dev and
-  prod; the factory `verifier:` override engages when
-  `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` are present in
-  `wrangler.jsonc:vars`. The `cloudflareAccess()` preset
-  (re-exported from `@gusto/baerly-storage/auth`) reads the JWT off
-  `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS,
-  and pins `tenantPrefix` to `config.tenant` unless you pass an
-  explicit tenant claim.
-- **Pattern B — `auth: "shared-secret"`.** Single-tenant
-  server-to-server callers. Flip `auth` in `baerly.config.ts`, set
-  `SHARED_SECRET` via `wrangler secret put`, and re-enable
-  `baerlyDevAuth` in `vite.config.ts` for browser bearer injection
-  (the SPA never owns the secret — Vite injects it server-side).
+- **Pattern A — CF Access (recommended).** Same artifact in dev and prod; the factory `verifier:` override engages when `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUDIENCE_TAG` are present in `wrangler.jsonc:vars`. The `cloudflareAccess()` preset (re-exported from `@gusto/baerly-storage/auth`) reads the JWT off `Cf-Access-Jwt-Assertion`, validates it against your team's JWKS, and pins `tenantPrefix` to `config.tenant` unless you pass an explicit tenant claim.
+- **Pattern B — `auth: "shared-secret"`.** Single-tenant server-to-server callers. Flip `auth` in `baerly.config.ts`, set `SHARED_SECRET` via `wrangler secret put`, and re-enable `baerlyDevAuth` in `vite.config.ts` for browser bearer injection (the SPA never owns the secret — Vite injects it server-side).
 
 ## When to graduate
 
-baerly-storage is sized for the small-to-medium operating point. Past
-the per-collection write line (throughput estimate), the R2 free-tier
-storage cost line, or the soft collections-per-tenant guideline (linear
-cost, nothing enforces it) — figures in
-docs/spec/scale-ceilings.md § "The published envelope" in the baerly-storage repo —
-graduate to D1 or Postgres via `baerly export --target=postgres`.
-Your data was already in your bucket; the export is a mechanical
-translator, not a vendor migration.
+baerly-storage is sized for the small-to-medium operating point. Past the per-collection write line (throughput estimate), the R2 free-tier storage cost line, or the soft collections-per-tenant guideline (linear cost, nothing enforces it) — figures in docs/spec/scale-ceilings.md § "The published envelope" in the baerly-storage repo — graduate to D1 or Postgres via `baerly export --target=postgres`. Your data was already in your bucket; the export is a mechanical translator, not a vendor migration.
 
 ## Pointers
 
