@@ -2,7 +2,7 @@
 title: Growth refusal and retry contract
 audience: adr
 doc_type: adr
-summary: ADR 008 — capacity refusals are per-request, growth-only and self-clearing; retriability is a pure function of the error code; `CapacityExceeded` is 409 and `MaintenancePending` is 503 + `Retry-After`; each failure kind retries at exactly one layer; the SDK mints `_id` before the first attempt.
+summary: ADR 008 — write-capacity refusals are stateless and preserve foldability; retriability is a pure function of the error code; `CapacityExceeded` is 409 and `MaintenancePending` is 503 + `Retry-After`; each failure kind retries at exactly one layer; the SDK mints `_id` before the first attempt.
 last-reviewed: 2026-11-16
 tags: [decision, adr, errors, retry, capacity, maintenance]
 related:
@@ -22,12 +22,21 @@ Accepted (2026-11-16). Implemented.
 
 ## Decision
 
-When a write would grow a collection past what the serving host can fold, the
-kernel refuses that write and nothing else. Growth is an insert or an update
-whose row gets larger. Deletes and same-size or shrinking updates still commit,
-and reads stay served. The refusal is `CapacityExceeded` (HTTP 409, not
-retriable), or `MaintenancePending` (HTTP 503 with `Retry-After`, retriable)
-when folding the pending tail would free the room. A `MaintenancePending`
+Near the serving host's fold ceiling, the kernel refuses growth: an insert or
+an update whose row gets larger. Deletes and same-size or shrinking updates
+remain admitted unless they would make the pending tail permanently
+unfoldable. A write of any kind is refused if it would complete a full fold
+pass of consecutive entries whose projected snapshots all exceed the byte
+ceiling. A delete or shrink that brings the projection back within the ceiling
+can still commit. If the stored snapshot already exceeds the host's fold
+ceiling, or the pending tail contains a barrier no fold pass can cross, every
+write is refused until the collection moves to a larger host or is exported.
+These write refusals do not disable reads; reads retain their own request
+bounds.
+
+The refusal is `CapacityExceeded` (HTTP 409, not retriable), or
+`MaintenancePending` (HTTP 503 with `Retry-After`, retriable) when folding the
+pending tail would free the room for growth. A `MaintenancePending`
 refusal dispatches that fold itself. The decision is recomputed on every
 request from the head and tail the request already read, and it is never
 stored. `BaerlyError.retriable` is membership of the code in `RETRIABLE_CODES`,
@@ -46,16 +55,20 @@ in [graduation.md](../about/graduation.md#the-symptom-writes-are-refused-not-dat
 
 ## Because
 
-- **Refusals are growth-only and clear by themselves.** Nothing about a refusal
-  is persisted, so the next request after maintenance catches up (or after a
-  delete) is admitted, and there is no state for an operator to clear. This
+- **Refusals are stateless and preserve foldability.** Nothing about a refusal
+  is persisted, so a request is admitted once maintenance or a repairing write
+  makes room for it, and there is no state for an operator to clear. This
   matches DynamoDB's item-collection limit, ZFS slop space and Postgres
   anti-wraparound: refuse what makes things worse, early, and keep the repair
   path open. One state is not self-clearing: a collection already past what
   this host can fold at all (for example, one grown on a larger host) refuses
   every write until it moves to a larger host or is exported.
-- **A refusal never blocks the repair.** Shrinking writes stay admitted, a
-  refused growth write that a fold would unblock dispatches that fold, and
+- **Repair stays possible while the tail is still repairable.** A delete or
+  shrink that ends an over-ceiling run stays admitted; a non-growing write
+  that would make the run uncrossable is refused with `CapacityExceeded`.
+  The distinction is covered by the
+  [fold-pass refusal tests](../../packages/server/src/capacity.test.ts).
+  A refused growth write that a fold would unblock dispatches that fold, and
   near the refusal point the write tick skips its usual trigger, still inside
   the per-pass budget. SlateDB requires the compaction trigger to sit below
   the write stall for the same reason: otherwise the two deadlock.
