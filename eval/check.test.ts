@@ -23,7 +23,7 @@ describe("checkSolution (needs built dist/)", () => {
       repoRoot,
     });
     expect(v.pass).toBe(false);
-    expect(v.reason).toMatch(/typecheck|findOneById|not exist|does not/i);
+    expect(v.reason).toMatch(/^typecheck failed:[\s\S]*findOneById/);
   });
 });
 
