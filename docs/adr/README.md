@@ -3,7 +3,7 @@ title: Architecture Decision Records
 audience: meta
 doc_type: index
 summary: Index of ADRs. Each ADR captures one load-bearing protocol or architecture decision whose rationale and rejected alternatives don't fit naturally in any single code or doc file.
-last-reviewed: 2026-08-14
+last-reviewed: 2026-11-16
 tags: [index, decisions]
 related: ["../about/thesis.md", "../contributing/conventions/change-discipline.md"]
 ---
@@ -40,10 +40,6 @@ rejected designs.
   — _wire contract in [spec/log-entry-shape.md](../spec/log-entry-shape.md)._
 - [006 — Native GCS adapter over the XML API](./006-native-gcs-adapter.md)
   — _live contract in [spec/storage-compatibility.md](../spec/storage-compatibility.md#native-gcs-xml-api)._
-- [007 — Incarnation-scoped chunked snapshot layout](./007-chunked-snapshot-layout.md)
-  — _candidate layout; not active, and adoption is not decided. If adopted,
-  the live contract moves into
-  [spec/sync-protocol.md](../spec/sync-protocol.md)._
 - [008 — Growth refusal and retry contract](./008-growth-refusal-and-retry-contract.md)
   — _commit-time check and retry layering in
   [spec/sync-protocol.md](../spec/sync-protocol.md#capacity-the-commit-time-re-check);

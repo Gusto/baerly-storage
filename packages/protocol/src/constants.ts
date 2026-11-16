@@ -28,12 +28,10 @@ export const DOCUMENT_ERROR_PATH_KEY_CHARS = 64;
  * and shrinkable.
  *
  * 1 MiB matches `MAX_BODY_BYTES` (a document at the cap still fits one
- * request body, with the envelope's few bytes of headroom lost) and
- * ADR-007's 1 MiB per-document hard maximum, so a later snapshot format
- * sizes its chunk to fit the row rather than shrinking this cap.
- * Firestore's document limit is the same 1 MiB.
- *
- * @see docs/adr/007-chunked-snapshot-layout.md
+ * request body, with the envelope's few bytes of headroom lost).
+ * Firestore's document limit is the same 1 MiB. Any snapshot format must
+ * hold one row at this size: a later format sizes its storage unit to
+ * fit the row rather than shrinking this cap.
  */
 export const MAX_DOCUMENT_BYTES = 1_048_576;
 

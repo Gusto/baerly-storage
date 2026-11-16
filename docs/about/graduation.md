@@ -2,7 +2,7 @@
 title: Graduation thresholds
 audience: operator
 summary: Operator runbook for a collection at or past a limit — map the symptom, pick the graduation path, and set the env var or move hosts.
-last-reviewed: 2026-11-13
+last-reviewed: 2026-11-16
 tags: [operations, cost, capacity, graduation]
 related: [cost-model.md, workload-fit.md, thesis.md, "../spec/scale-ceilings.md", "../adr/002-ephemeral-coordination.md"]
 ---
@@ -325,9 +325,9 @@ new snapshot, and log tail resident at once. CPU is still fine.
 selects the node profile and its larger `C`/`E` automatically,
 then raise the env cap as above if the host has the heap for it. The
 current snapshot format is single-level: one L9 snapshot replaces the
-prior. A chunked replacement is in development, but plan around the Node
-host rather than around it — it lands as a pre-1.0 format cut rather than
-a compatible extension, so it arrives as a migration, not an upgrade.
+prior. Plan around the Node host, not around a future snapshot format:
+any replacement lands as a pre-1.0 format cut rather than a compatible
+extension, so it arrives as a migration, not an upgrade.
 
 ### Tail churn is not a graduation signal
 
@@ -418,11 +418,10 @@ Safe remedies, in order:
 - **Serverful Node:** no per-request CPU/subrequest cap; bounded by host
   RAM, and the node profile is selected automatically. Raise the env cap
   above the node `C` only with heap to spare.
-- **Chunked snapshots:** a chunked replacement for the single-level
-  snapshot would avoid holding the whole snapshot resident. Not shipped;
-  it lands as a pre-1.0 format cut rather than an in-place upgrade, and
-  its fold-side benefit depends on document IDs being append-ordered, as
-  the auto-generated ones are.
+- **A multi-object snapshot format:** splitting the single-level
+  snapshot across many objects would avoid holding the whole snapshot
+  resident. Not shipped; it would land as a pre-1.0 format cut rather
+  than an in-place upgrade.
 
 ## How to raise a limit
 
