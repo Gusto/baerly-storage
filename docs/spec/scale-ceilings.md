@@ -96,70 +96,34 @@ not you are paying.
 
 | Host | Support |
 | --- | --- |
-| Workers Paid, S3 or R2 | First guaranteed tier |
+| Workers Paid, S3 or R2 | First guaranteed tier, with `BAERLY_MAINTENANCE_PROFILE=cf-paid` |
 | Workers Free + R2 binding | Supported floor; CPU is best effort |
-| Workers Free + S3 over HTTP | Best effort, with a low ceiling (below) |
 | Serverful Node | First-class; bounded by host memory and CPU |
 
-Both Free hosts share the same data ceiling (the Cloudflare free column
-above). The R2 binding buys request headroom — a longer pending tail,
-room for retries — not a bigger collection. Free CPU is best effort: a
-CPU kill hasn't been observed, but the ~10 ms budget is not a guarantee
+S3-compatible storage on Workers needs Paid. Workers Free with S3 over
+HTTP is not supported: every storage call there is a `fetch`, and Free
+allows 50 per request, while R2 binding calls count toward Cloudflare's
+separate limit for its own services. The R2 binding buys request
+headroom (a longer pending tail, room for retries), not a bigger
+collection. Free CPU is best effort: a CPU kill hasn't been observed, but
+the ~10 ms budget is not a guarantee
 ([why](#is-the-free-cpu-limit-a-wall)).
 
-### Workers Free + S3 over HTTP
+A Worker cannot tell Free from Paid, so the default `cf-free` profile
+assumes the free plan for storage reached through `fetch` too: the request
+ledger caps it at 45 calls per request, so a request that would pass
+Free's 50 gets a typed `CapacityExceeded` instead of the platform throwing
+at call 51. To keep a write and the maintenance it dispatches inside that
+cap, the write tick folds once 7 writes are pending
+(`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES`) and a GC slice deletes at most 3
+replaced snapshots (`CF_FREE_FETCH_GC_MAX_SWEEPS`). This applies to a Paid
+Worker on S3 that has not set `cf-paid`; set it to leave the 45-call cap.
 
-Every storage call is a `fetch`, and the free plan allows 50 per
-request, so this host gets a lower request envelope than the R2 binding.
-It is not first-class: no zero-config guarantee and no tuning work. The
-Worker detects this host from the storage it is given, folds once 7
-writes are pending (`CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES`), and deletes at
-most 3 replaced snapshots per GC slice (`CF_FREE_FETCH_GC_MAX_SWEEPS`), so
-a write and the maintenance it triggers fit in one request. The envelope
-is collections up to ~500 documents (512 KiB) with about 900 writes per
-day sustained per collection (bursts are fine), below the ~30/min the R2
-binding and the other hosts take. The request limits, measured with no
-retries and 45 calls of the 50 budgeted, are:
-
-| Bound | Free + S3 limit |
-| --- | --- |
-| Pending tail length | 8 entries |
-
-A write costs 7 + tail calls and its worst request, write plus
-maintenance, 30 storage calls; any read at
-the longest 8-entry tail costs 11, an `$in` of any size included.
-Point reads always reach storage; repeated reads pay the same cost. The
-removed response cache's allowance stays headroom, with no increase to
-platform limits, fold/GC thresholds or the supported read envelope.
-Declared indexes change none of these. One consequence of the budget is
-accepted on this host:
-
-- **Past a pending tail of 15 entries, a write cannot fold.** A write at
-  tail `t` costs 7 + `t` calls and a fold of its `t + 1` entries 6 more
-  than that, so a write at a 15-entry tail plus its fold is 44 calls and
-  at 16 the write tick skips the fold. A tail that long, for example after
-  a burst of concurrent writes, then does not shorten on a write tick, and
-  from 32 pending entries a write is refused with `CapacityExceeded`
-  before it writes anything: its reads plus the 9 calls a commit keeps to
-  resolve its create pass 45. The R2 binding has the request headroom to
-  fold it.
-
-The write rate comes from GC. Each fold rewrites the snapshot, one per ~7
-writes, and GC reclaims about 1,000 replaced snapshots per collection per
-7-day grace period. At ~900 writes per day, about 129 folds a day leave
-~900 replaced snapshots in the bucket, at most ~450 MiB for 512 KiB
+Folding every ~7 writes also limits the write rate under that profile.
+GC reclaims about 1,000 replaced snapshots per collection per 7-day grace
+period, so at ~900 writes per day per collection about 129 folds a day
+leave ~900 replaced snapshots in the bucket, at most ~450 MiB for 512 KiB
 snapshots; above that rate, replaced snapshots accumulate.
-
-A read that must replay a longer pending tail, such as one racing a write
-burst, can need more than the 45 calls a request may make, and so can a
-request whose storage calls are retried; such a read is refused whole with
-`CapacityExceeded`, never answered with missing rows. The `/v1/since`
-change feed is the exception: it stops polling when its calls run out, so
-an idle long-poll returns after about 22 seconds instead of 25 and a busy
-one returns part of the backlog, which the next poll continues. Past the
-envelope, expect more `CapacityExceeded` and `MaintenancePending`; data
-is never lost. For more request headroom use the R2 binding; for
-guaranteed CPU, use Paid.
 
 ### How solid these are
 
@@ -498,10 +462,8 @@ Node.
   `fetch` path.** S3 over HTTP and the Cache API count against it; R2
   binding calls do not (Cloudflare documents a separate 1,000-call limit
   for its own services). So the 50 does not set `C`, `E`, or the snapshot
-  format: the supported floor is Free + R2 binding, and Free + S3 over
-  HTTP is a best-effort host with a lower request envelope
-  ([Workers Free + S3 over HTTP](#workers-free--s3-over-http)).
-  Per pass, the `maxFoldEntriesPerPass ≈ 20` tail slice keeps a fold at
+  format: the supported floor is Free + R2 binding, and S3 on Workers
+  needs Paid ([Host support tiers](#host-support-tiers)). Per pass, the `maxFoldEntriesPerPass ≈ 20` tail slice keeps a fold at
   about `slice + 3` storage calls; GC's mark cap bounds LIST
   classification and ledger growth, and its sweep cap bounds DELETEs.
   Exact accounting is in the `CLOUDFLARE_FREE_TIER` JSDoc and
@@ -544,7 +506,7 @@ Two consequences:
 
 | Tier | Hardware walls | Binds on | What can actually fold |
 | --- | --- | --- | --- |
-| **Cloudflare free** | ~10 ms CPU/request (economic, best effort); 50 `fetch` subrequests/request (hard; R2 binding calls exempt) | CPU cost | profile `C = 512 KiB` ⇒ ~512 KiB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past 1 MiB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
+| **Cloudflare free** (R2 binding) | ~10 ms CPU/request (economic, best effort); 50 `fetch` subrequests/request (hard; R2 binding calls exempt, which is why Free needs the binding) | CPU cost | profile `C = 512 KiB` ⇒ ~512 KiB snapshot (`S_max = C`), `E = 2048` rows; tail drains ≈ 20 entries/tick; raising `C` past 1 MiB (`CF_FREE_MAX_SAFE_FOLD_BYTES`) takes the fold past the ~10 ms CPU budget and `console.warn`s |
 | **Cloudflare paid** | 30 s CPU default (up to 5 min); ~128 MB Worker memory; 10,000 subrequests/request default, raisable to 10M, changed 2026-02-11; free wall stays 50 | memory | `C = 8 MiB` (`CF_PAID_MAINTENANCE_MAX_FOLD_BYTES`), `E = 32,768` rows (`CF_PAID_MAINTENANCE_MAX_FOLD_ROWS`), selected by `BAERLY_MAINTENANCE_PROFILE=cf-paid` — no `C` override needed to get there. CPU is not the wall; memory is: 8 MiB peaks at ~19.5 MB, which fits the 4x margin under ~128 MB; the next grid cell (16 MiB ⇒ 37.3 MB) does not. That margin is why the ceiling is not "tens of MB" |
 | **Serverful Node** | no per-request cap; process RAM; a fold blocks the event loop | host memory | `C = 32 MiB` (`NODE_MAINTENANCE_MAX_FOLD_BYTES`), `E = 65,536` rows (`NODE_MAINTENANCE_MAX_FOLD_ROWS`), selected automatically by the Node adapter. 32 MiB is the top of the measured grid, **not** the measured wall — the probe reports `grid-exhausted` for this profile at every margin and every heap from 704 MB up. Past the grid, scale by `C ≈ heap / 10`. Per-pass caps are `NODE_MAINTENANCE_*` (moderate, latency-budgeted) |
 
