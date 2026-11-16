@@ -62,38 +62,17 @@ function run(cmd: string, args: string[], cwd: string, timeoutMs: number): Promi
   });
 }
 
-/** Temp tsconfig mapping the public package to the BUILT dist/*.d.ts (the fed surface).
- * MUST stay faithful to publishConfig.exports and eval/resolve-package.mjs:
- * several subpaths resolve to differently-named dist files (e.g. /config → app-config.d.ts),
- * so a lossy glob would falsely fail typecheck for canonical agent imports.
- */
+/** Typecheck against the same published exports the runtime resolver loads. */
 function writeTsconfig(dir: string, repoRoot: string, solutionPaths: readonly string[]): string {
-  const dist = join(repoRoot, "dist");
-  // publishConfig.exports subpath → dist .d.ts (keep in sync with resolve-package.mjs)
-  const subpathToEntry: Record<string, string> = {
-    ".": "index",
-    "./auth": "auth",
-    "./http": "http",
-    "./cloudflare": "cloudflare",
-    "./node": "node",
-    "./s3": "s3",
-    "./gcs": "gcs",
-    "./maintenance": "maintenance",
-    "./observability": "observability",
-    "./config": "app-config",
-    "./client": "client",
-    "./client/react": "client-react",
-    "./dev": "dev",
-    "./dev/vite": "dev-vite",
+  const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+    name: string;
+    publishConfig: { exports: Record<string, { types: string }> };
   };
-  const pkg = "@gusto/baerly-storage";
   const paths: Record<string, string[]> = {};
-  for (const [sub, entry] of Object.entries(subpathToEntry)) {
-    const key = sub === "." ? pkg : `${pkg}/${sub.slice(2)}`;
-    paths[key] = [join(dist, `${entry}.d.ts`)];
+  for (const [subpath, target] of Object.entries(pkg.publishConfig.exports)) {
+    const specifier = subpath === "." ? pkg.name : `${pkg.name}/${subpath.slice(2)}`;
+    paths[specifier] = [join(repoRoot, target.types)];
   }
-  // Fallback glob for any unlisted subpath (explicit entries above take precedence in TS resolution)
-  paths[`${pkg}/*`] = [join(dist, "*.d.ts")];
   const cfg = {
     compilerOptions: {
       module: "esnext",

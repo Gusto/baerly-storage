@@ -1,4 +1,6 @@
 {
+  "status": "invalidated",
+  "invalidated_reason": "Measured against workspace source, not the published runtime, with incomplete retry-helper checks. These historical rates are not valid for the corrected harness; a fresh live eval is required.",
   "note": "Opus pass rates come from one 5-run pass over all 12 tasks, except ambiguous-commit and retry-helper, which were re-run on their own (5 runs each) after a runner defect failed every solution without a `main` export; the other ten opus tasks are unaffected. Haiku is a single full 5-run pass. Same surface hash and CLI version throughout.",
   "surface_kind": "api-md+dts",
   "surface_hash": "b433b18af041f1bc13c93d2d5dfdbb81e063629a3586f87a7e961915436c0e84",
