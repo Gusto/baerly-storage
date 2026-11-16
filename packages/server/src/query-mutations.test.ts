@@ -642,9 +642,9 @@ describe("Query.delete", () => {
  * on the collection's `log/<seq>` create — the new linearization point.
  * `failNextNLogCreates` plants a FOREIGN-session occupant at the
  * contended seq then 412s, forcing the writer's forward-probe to climb
- * to the next empty slot. `bumpFenceOnNextLogCreate` simulates a
- * concurrent `claimWriter` that lands between this writer's read and its
- * create; under single-write commit the log create IS the commit, so the
+ * to the next empty slot. `bumpFenceOnNextLogCreate` simulates an
+ * out-of-band writer-fence bump that lands between this writer's read
+ * and its create; under single-write commit the log create IS the commit, so the
  * write still lands and is visible (no committed-but-WriteConflict). Kept
  * local to this file — not exported.
  */
@@ -716,8 +716,8 @@ describe("Per-row contention semantics (internal forward-probe inside Writer)", 
     const t = db.collection(COLL) as Collection<TicketDoc>;
     // Seed cleanly.
     await t.insert({ _id: "winner", title: "v0", status: "open" });
-    // A concurrent claimWriter bumps the writer fence between the update's
-    // read of current.json and its committing log/<seq> create. Under
+    // A simulated out-of-band bump of the writer fence lands between the
+    // update's read of current.json and its committing log/<seq> create. Under
     // single-write commit the log create IS the commit — it has already
     // landed and is visible by the time any later check could run, so the
     // (now-removed) post-commit fence-verify must NOT manufacture a

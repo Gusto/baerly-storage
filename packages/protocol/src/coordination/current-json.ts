@@ -16,16 +16,6 @@
  *   - {@link createCurrentJson} — create-only (CAS via `If-None-Match:"*"`)
  *   - {@link casUpdateCurrentJson} — read-modify-write (CAS via `If-Match`)
  *   - {@link assertCurrentJsonTransition} — shared before/after admission
- *   - {@link claimWriter}       — bump epoch + stamp server-clock claim time
- *
- * Why the two-round-trip claim protocol: `claimed_at` MUST come from
- * `StoragePutResult.serverDate` (the single shared clock across
- * instances), not the local clock. `serverDate` is only known *after*
- * the CAS PUT lands, so {@link claimWriter} writes the record with
- * `claimed_at: ""` first, then overwrites itself with the correct
- * `serverDate.toISOString()` in a second CAS. The epoch bump is
- * already durable from the first put either way; a peer landing
- * between the two writes loses cleanly with `WriteConflict`.
  *
  * Why CAS errors are wrapped: every in-tree {@link Storage} impl
  * surfaces a lost CAS as `BaerlyError{code:"WriteConflict"}`. Downstream
@@ -174,7 +164,7 @@ export interface CurrentJson {
    * *replaces* this collection rather than advancing it — the two
    * `baerly admin restore` seeds and the writer/dev auto-provision
    * paths. Steady-state writers (the compactor's fold CAS,
-   * {@link claimWriter}, every {@link casUpdateCurrentJson} mutator)
+   * every {@link casUpdateCurrentJson} mutator)
    * carry it through untouched, so it changes only on truncate or
    * re-provision. Mint with {@link mintGeneration}.
    *
@@ -204,8 +194,8 @@ export interface CurrentJson {
  * Fence-token sub-shape embedded in {@link CurrentJson}. The
  * monotonically-bumped `epoch` is the only safety-critical field —
  * `owner` is informational and may be missing in older records;
- * `claimed_at` is the server response date at claim time, NOT the
- * local clock; `lease_until` is reserved for manual rotation and is not
+ * `claimed_at` is an informational claim-time string that
+ * writers seed as `""` and carry through unchanged; `lease_until` is reserved for manual rotation and is not
  * consumed by the current kernel. Log entries are not stamped with this
  * epoch; the fence is dormant authority metadata, not a reader replay
  * filter.
@@ -218,11 +208,9 @@ export interface CurrentJson {
  */
 export interface WriterFence {
   /**
-   * Monotonic unsigned integer. Bumped only by an explicit
-   * {@link claimWriter} call — do NOT bump on every cold start, do
-   * NOT bump on every commit. Under single-write commit this is retained
-   * as an explicit admin/testing primitive only; no production commit
-   * path claims or verifies the fence.
+   * Monotonic unsigned integer. No production path bumps or
+   * verifies it; it is seeded at provisioning/restore and carried
+   * through every transition.
    */
   epoch: number;
 
@@ -235,14 +223,10 @@ export interface WriterFence {
   owner: string;
 
   /**
-   * ISO-8601 timestamp from the `StoragePutResult.serverDate` on
-   * the successful CAS PUT. **Never use `new Date()` or
-   * `Date.now()` to populate this field** — under multi-instance
-   * deployment the local clock may disagree with peers; the
-   * server's clock is the only one all instances share. Format
-   * via `serverDate.toISOString()`. The empty string `""` means
-   * "claim time unknown" — readers MUST treat it as such rather
-   * than parsing it.
+   * Informational claim time as an ISO-8601 string. No production
+   * path stamps it: writers seed `""` and carry it through. The empty
+   * string means "claim time unknown" — readers MUST treat it as such
+   * rather than parsing it, and MUST NOT derive safety from it.
    */
   claimed_at: string;
 
@@ -462,113 +446,6 @@ export async function casUpdateCurrentJson(
     throw translateCasError(error, key);
   }
   return { json: next, etag: result.etag };
-}
-
-/**
- * Claim ownership of the dormant write fence by bumping `epoch` and
- * stamping `claimed_at` from `StoragePutResult.serverDate`. Under
- * single-write commit there is no production commit-path call site;
- * this is retained for explicit admin/testing workflows and future
- * rotation designs.
- *
- * `owner` is informational — see {@link WriterFence.owner}. Safety
- * derives from the monotonic `epoch`, not from `owner`.
- *
- * Implementation note (two round-trips): because
- * `StoragePutResult.serverDate` is only known *after* the CAS PUT
- * lands, this function writes the record with `claimed_at: ""`
- * first, then overwrites itself with the correct
- * `serverDate.toISOString()` in a second CAS. A peer landing between
- * the two writes loses cleanly with `WriteConflict` — the epoch bump is
- * already durable from the first put either way. If `serverDate` is
- * `undefined` on the first PUT (impl doesn't surface it), the second
- * write is skipped and `claimed_at` remains the empty string;
- * readers MUST treat the empty string as "unknown claim time"
- * rather than parsing it.
- *
- * @see {@link ../../../../docs/spec/writer-fence-adversarial-model.md} —
- *   the full failure envelope (absent / lying / non-monotonic Date,
- *   peer-between-PUTs, bounded clock skew), and the "Differentiation
- *   from mps3" subsection framing the §103 non-obviousness story.
- * @see {@link ../../../../docs/spec/prior-art.md} —
- *   IDS-shaped prior-art differentiation against mps3, SlateDB,
- *   Iceberg, Delta, and the broader S3-leader-election literature.
- *
- * @throws BaerlyError{code:"WriteConflict"} — another writer claimed the
- *         fence between this call's read and write. Caller decides
- *         whether to retry.
- * @throws BaerlyError{code:"InvalidResponse"} — `key` does not exist.
- */
-export async function claimWriter(
-  storage: Storage,
-  key: string,
-  owner: string,
-  opts?: { signal?: AbortSignal },
-): Promise<CurrentJsonRead> {
-  const existing = await readCurrentJson(storage, key, opts);
-  if (existing === null) {
-    throw new BaerlyError(
-      "InvalidResponse",
-      `current.json at ${key} does not exist; use createCurrentJson first`,
-    );
-  }
-  const provisional: CurrentJson = {
-    ...existing.json,
-    writer_fence: {
-      epoch: existing.json.writer_fence.epoch + 1,
-      owner,
-      // Will be overwritten with serverDate.toISOString() once the put
-      // returns, when the impl surfaces it. Stays `""` ("unknown") if
-      // the impl doesn't.
-      claimed_at: "",
-      // Stryker disable next-line ConditionalExpression: `→true` spreads `{lease_until: undefined}` which JSON.stringify omits, so the stored bytes are identical to the normal `→false` path (no key emitted). Genuine equivalent mutant.
-      ...(existing.json.writer_fence.lease_until !== undefined && {
-        lease_until: existing.json.writer_fence.lease_until,
-      }),
-    },
-  };
-  assertCurrentJsonTransition(existing.json, provisional, key);
-  const body = encodeJson(provisional);
-  const putOpts: StoragePutOptions = {
-    ifMatch: existing.etag,
-    contentType: CURRENT_JSON_CONTENT_TYPE,
-    ...(opts?.signal !== undefined && { signal: opts.signal }),
-  };
-  let result: StoragePutResult;
-  try {
-    result = await storage.put(key, body, putOpts);
-  } catch (error) {
-    throw translateCasError(error, key);
-  }
-  // No server clock surfaced — leave `claimed_at` empty. The epoch
-  // bump is durable; safety is unaffected.
-  if (result.serverDate === undefined) {
-    return { json: provisional, etag: result.etag };
-  }
-  // Stamp the server clock through a second CAS-on-our-own-etag. A
-  // peer landing between the two writes loses cleanly with WriteConflict
-  // (the fence is safe — next claim will bump past both).
-  const stamped: CurrentJson = {
-    ...provisional,
-    writer_fence: {
-      ...provisional.writer_fence,
-      claimed_at: result.serverDate.toISOString(),
-    },
-  };
-  assertCurrentJsonTransition(provisional, stamped, key);
-  const stampedBody = encodeJson(stamped);
-  const stampPutOpts: StoragePutOptions = {
-    ifMatch: result.etag,
-    contentType: CURRENT_JSON_CONTENT_TYPE,
-    ...(opts?.signal !== undefined && { signal: opts.signal }),
-  };
-  let stampResult: StoragePutResult;
-  try {
-    stampResult = await storage.put(key, stampedBody, stampPutOpts);
-  } catch (error) {
-    throw translateCasError(error, key);
-  }
-  return { json: stamped, etag: stampResult.etag };
 }
 
 /**
