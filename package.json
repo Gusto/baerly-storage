@@ -270,6 +270,8 @@
     "react-dom": "^19.3.1",
     "remark-cli": "^12.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-lint": "^10.0.1",
+    "remark-lint-fenced-code-flag": "^4.2.0",
     "remark-validate-links": "^13.1.0",
     "rolldown": "^1.2.15",
     "rolldown-plugin-dts": "^0.28.8",

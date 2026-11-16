@@ -133,6 +133,12 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      remark-lint:
+        specifier: ^10.0.1
+        version: 10.0.1
+      remark-lint-fenced-code-flag:
+        specifier: ^4.2.0
+        version: 4.2.0
       remark-validate-links:
         specifier: ^13.1.0
         version: 13.1.0
@@ -1939,6 +1945,9 @@ packages:
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
 
+  '@types/estree-jsx@1.0.5':
+    resolution: {integrity: sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==}
+
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
@@ -3299,6 +3308,9 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
+  mdast-comment-marker@3.0.0:
+    resolution: {integrity: sha512-bt08sLmTNg00/UtVDiqZKocxqvQqqyQZAg1uaRuO/4ysXV5motg7RolF5o5yy/sY1rG0v2XgZEqFWho1+2UquA==}
+
   mdast-util-find-and-replace@3.0.4:
     resolution: {integrity: sha512-z4B5c6jrnJ1ltOQemhWYPBSAo6y42Z8Gt2yEgfgNTMcLSU59B8bfj8Z8AnAlJrBGLnqkdAUZ7jdDEqQw3KuipQ==}
 
@@ -3322,6 +3334,9 @@ packages:
 
   mdast-util-gfm@3.1.0:
     resolution: {integrity: sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==}
+
+  mdast-util-mdx-expression@2.0.1:
+    resolution: {integrity: sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==}
 
   mdast-util-phrasing@4.1.0:
     resolution: {integrity: sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==}
@@ -3737,6 +3752,9 @@ packages:
     resolution: {integrity: sha512-5LK5BZ2XDHMvcUJaf0CQ5HL3aVgKbpklvByC7qLSxYkfE8COEEbJg5xCHWCTqzqi0Gs4Jn5Mv5v3R38W6edscA==}
     engines: {node: '>=0.6'}
 
+  quotation@2.0.3:
+    resolution: {integrity: sha512-yEc24TEgCFLXx7D4JHJJkK4JFVtatO8fziwUxY4nB/Jbea9o9CVS3gt22mA0W7rPYAGW2fWzYDSOtD94PwOyqA==}
+
   react-dom@19.3.1:
     resolution: {integrity: sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==}
     peerDependencies:
@@ -3767,6 +3785,15 @@ packages:
 
   remark-gfm@4.0.1:
     resolution: {integrity: sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==}
+
+  remark-lint-fenced-code-flag@4.2.0:
+    resolution: {integrity: sha512-QWGTrnYbcopOFZR98djDREmKApLonJ7hmXE7pEcOGee9JY/EUIVS7Lq54Hy9CtU3cVIvQQmiMTxCwUhfddDJFA==}
+
+  remark-lint@10.0.1:
+    resolution: {integrity: sha512-1+PYGFziOg4pH7DDf1uMd4AR3YuO2EMnds/SdIWMPGT7CAfDRSnAmpxPsJD0Ds3IKpn97h3d5KPGf1WFOg6hXQ==}
+
+  remark-message-control@8.0.0:
+    resolution: {integrity: sha512-brpzOO+jdyE/mLqvqqvbogmhGxKygjpCUCG/PwSCU43+JZQ+RM+sSzkCWBcYvgF3KIAVNIoPsvXjBkzO7EdsYQ==}
 
   remark-parse@11.0.0:
     resolution: {integrity: sha512-FCxlKLNGknS5ba/1lmpYijMUzX2esxW5xQqjWxw2eHFfS2MSdaHVINFmhjo+qN1WhZhNimq0dZATN9pH0IDrpA==}
@@ -3911,6 +3938,9 @@ packages:
   source-map@0.7.6:
     resolution: {integrity: sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ==}
     engines: {node: '>= 12'}
+
+  space-separated-tokens@2.0.2:
+    resolution: {integrity: sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==}
 
   spdx-correct@3.2.0:
     resolution: {integrity: sha512-kN9dJbvnySHULIluDHy32WHRUu3Og7B9sbY7tsFLctQkIqnMh3hErYgdMjTYuqmcXX+lK5T1lnUt3G7zNswmZA==}
@@ -4099,6 +4129,12 @@ packages:
   unified-engine@11.2.2:
     resolution: {integrity: sha512-15g/gWE7qQl9tQ3nAEbMd5h9HV1EACtFs6N9xaRBZICoCwnNGbal1kOs++ICf4aiTdItZxU2s/kYWhW7htlqJg==}
 
+  unified-lint-rule@3.0.1:
+    resolution: {integrity: sha512-HxIeQOmwL19DGsxHXbeyzKHBsoSCFO7UtRVUvT2v61ptw/G+GbysWcrpHdfs5jqbIFDA11MoKngIhQK0BeTVjA==}
+
+  unified-message-control@5.0.0:
+    resolution: {integrity: sha512-B2cSAkpuMVVmPP90KCfKdBhm1e9KYJ+zK3x5BCa0N65zpq1Ybkc9C77+M5qwR8FWO7RF3LM5QRRPZtgjW6DUCw==}
+
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
 
@@ -4143,6 +4179,9 @@ packages:
   verkit@0.5.0:
     resolution: {integrity: sha512-u4J1hr6Y+C/hit34GwL3eIcUf3wngT8TlYUjK7tk0jxydKLAq3sYvifjdTDA6U3KCKRcQCQDGf/srjxfZF3l7g==}
     engines: {node: '>=18.12.0'}
+
+  vfile-location@5.0.4:
+    resolution: {integrity: sha512-vEvxatYZCIpNvzGk2UD+u4I/sZkSKoOsdRCbkOIsN73QpJbriJ1qvvBAL1PeI0y55Leoqf7pORbaSPpG/smmOg==}
 
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
@@ -5720,6 +5759,10 @@ snapshots:
 
   '@types/deep-eql@4.0.2': {}
 
+  '@types/estree-jsx@1.0.5':
+    dependencies:
+      '@types/estree': 1.0.9
+
   '@types/estree@1.0.9': {}
 
   '@types/gensync@1.0.5': {}
@@ -6881,6 +6924,13 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
+  mdast-comment-marker@3.0.0:
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-util-mdx-expression: 2.0.1
+    transitivePeerDependencies:
+      - supports-color
+
   mdast-util-find-and-replace@3.0.4:
     dependencies:
       '@types/mdast': 4.0.4
@@ -6958,6 +7008,17 @@ snapshots:
       mdast-util-gfm-strikethrough: 2.0.1
       mdast-util-gfm-table: 2.0.0
       mdast-util-gfm-task-list-item: 2.0.0
+      mdast-util-to-markdown: 2.2.1
+    transitivePeerDependencies:
+      - supports-color
+
+  mdast-util-mdx-expression@2.0.1:
+    dependencies:
+      '@types/estree-jsx': 1.0.5
+      '@types/hast': 3.0.5
+      '@types/mdast': 4.0.4
+      devlop: 1.1.0
+      mdast-util-from-markdown: 2.1.0
       mdast-util-to-markdown: 2.2.1
     transitivePeerDependencies:
       - supports-color
@@ -7545,6 +7606,8 @@ snapshots:
       es-define-property: 1.0.1
       side-channel: 1.1.1
 
+  quotation@2.0.3: {}
+
   react-dom@19.3.1(react@19.3.1):
     dependencies:
       react: 19.3.1
@@ -7587,6 +7650,32 @@ snapshots:
       remark-parse: 11.0.0
       remark-stringify: 11.0.0
       unified: 11.0.5
+    transitivePeerDependencies:
+      - supports-color
+
+  remark-lint-fenced-code-flag@4.2.0:
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-util-phrasing: 4.1.0
+      quotation: 2.0.3
+      unified-lint-rule: 3.0.1
+      unist-util-position: 5.0.0
+      unist-util-visit-parents: 6.1.0
+
+  remark-lint@10.0.1:
+    dependencies:
+      '@types/mdast': 4.0.4
+      remark-message-control: 8.0.0
+      unified: 11.0.5
+    transitivePeerDependencies:
+      - supports-color
+
+  remark-message-control@8.0.0:
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-comment-marker: 3.0.0
+      unified-message-control: 5.0.0
+      vfile: 6.0.3
     transitivePeerDependencies:
       - supports-color
 
@@ -7789,6 +7878,8 @@ snapshots:
   source-map-js@1.2.2: {}
 
   source-map@0.7.6: {}
+
+  space-separated-tokens@2.0.2: {}
 
   spdx-correct@3.2.0:
     dependencies:
@@ -7999,6 +8090,24 @@ snapshots:
       - bluebird
       - supports-color
 
+  unified-lint-rule@3.0.1:
+    dependencies:
+      '@types/unist': 3.0.3
+      trough: 2.2.0
+      unified: 11.0.5
+      vfile: 6.0.3
+
+  unified-message-control@5.0.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      devlop: 1.1.0
+      space-separated-tokens: 2.0.2
+      unist-util-is: 6.0.1
+      unist-util-visit: 5.2.0
+      vfile: 6.0.3
+      vfile-location: 5.0.4
+      vfile-message: 4.0.3
+
   unified@11.0.5:
     dependencies:
       '@types/unist': 3.0.3
@@ -8054,6 +8163,11 @@ snapshots:
   validate-npm-package-name@5.0.1: {}
 
   verkit@0.5.0: {}
+
+  vfile-location@5.0.4:
+    dependencies:
+      '@types/unist': 3.0.3
+      vfile: 6.0.3
 
   vfile-message@4.0.3:
     dependencies:
