@@ -108,6 +108,17 @@ const row = await orders.get(untrustedId).catch((e) => {
 });
 ```
 
+**Rows are typed `T & { _id: string }`.** (Types only.) `first`, `all` and `get`, on a collection, a query and the HTTP client, return rows whose `_id` is a string, unconfigured collections included, so pass `row._id` straight to `get`/`update`/`replace`/`delete`. `insert` types `_id` as an optional string, so a non-string insert `_id` is a compile error. Casts to row shapes, and hand-written fakes of `Collection<T>` or `ClientCollection<T>`, need `_id: string` in the row type.
+
+```ts
+// before
+for (const row of await notes.all()) await notes.delete(String(row["_id"]));
+const rows = (await notes.all()) as Array<{ title: string }>;
+// after
+for (const row of await notes.all()) await notes.delete(row._id);
+const rows = (await notes.all()) as Array<{ _id: string; title: string }>;
+```
+
 **First insert wins.** Of concurrent inserts of one `_id`, one commits and the rest throw `AlreadyExists` (with `err._id`). Code that used a duplicate insert as an upsert must call `replace(id, doc)` or `update(id, patch)`.
 
 **Replay of client-minted ids (E2).** An insert without `_id` is minted by the HTTP client (UUIDv7, client clock) and sent with `mintedId`. If a resend arrives while the live row still equals the same document (key order ignored), the server answers the original `201 { _id }` instead of `AlreadyExists`. Edges: a different current body gives `AlreadyExists`; deleting the row permits re-insertion; updating back to the original body permits replay again. A caller-chosen `_id` never replays, so it still works as a run-once guard. Calling `insert(doc)` again is a new operation with a new id. Raw HTTP callers may send `mintedId` (a canonical UUIDv7 equal to `doc._id`; anything else is `400 SchemaError`); a server without this feature ignores it and answers `409`, never a duplicate row. The client resends a minted insert up to 3 times total after a thrown `fetch` or an envelope-less 5xx, 408 or 429; other verbs are sent once for those failures.
