@@ -2,14 +2,13 @@ import {
   type BaerlyConfig,
   BaerlyError,
   type CurrentJson,
-  CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
   type SchemaValidator,
   type Storage,
 } from "@baerly/protocol";
 import { describe, expect, test } from "vitest";
-import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
+import { logStateCurrentJson, provisionCollection } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 import {
   collectionReadContext,
@@ -299,15 +298,7 @@ describe("Db → per-request metrics emission", () => {
   const currentJsonKey = `app/${APP}/tenant/${TENANT}/manifests/${TABLE}/current.json`;
 
   const provision = async (storage: Storage): Promise<void> => {
-    await createCurrentJson(storage, currentJsonKey, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(storage, currentJsonKey);
   };
 
   test("single-mutation insert emits to the active context's recorder", async () => {

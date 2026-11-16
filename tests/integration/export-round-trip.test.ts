@@ -43,12 +43,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type DocumentValue,
-  type Storage,
-} from "@baerly/protocol";
+import { type DocumentValue, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Db } from "@baerly/server";
 import {
@@ -64,6 +59,7 @@ import {
 import { runDump } from "../../packages/cli/src/admin/dump.ts";
 import { runRestore } from "../../packages/cli/src/admin/restore.ts";
 import { gate } from "../setup/gates.ts";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 const APP = "rt";
 const TENANT = "t";
@@ -84,15 +80,7 @@ const sqliteAvailable = gate(
 
 /** Bootstrap a fresh `current.json` so the writer has somewhere to CAS. */
 const bootstrap = async (storage: Storage, owner: string): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner, claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, owner);
 };
 
 /** Open a write-stream sink and return a `{ stream, finish }` pair. */

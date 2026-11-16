@@ -33,8 +33,6 @@ import {
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_FREE_MAX_SAFE_FOLD_BYTES,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_CF_FREE,
   MAINTENANCE_PROFILE_CF_PAID,
@@ -71,6 +69,7 @@ import {
   cfRequestLedger,
   resolveCfMaintenanceProfile,
 } from "./worker.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const testConfig: BaerlyAppConfig = {
   app: "test-app",
@@ -91,15 +90,7 @@ const getBinding = (): R2Bucket => {
 const KEY = (tenant: string): string => `app/t/tenant/${tenant}/manifests/c/current.json`;
 
 const provision = async (storage: Storage, tenant: string): Promise<void> => {
-  await createCurrentJson(storage, KEY(tenant), {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "maint-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, KEY(tenant), "maint-test");
 };
 
 /**

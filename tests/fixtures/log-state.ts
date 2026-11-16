@@ -14,9 +14,11 @@
  * prefix (the `<…>/manifests/<collection>` segment) and a `seq`; this
  * builder owns the `/log/<seq>.json` join via the kernel helper.
  *
- * Two seed shapes:
+ * Three seed shapes:
  *   - {@link logStateCurrentJson} — a `CurrentJson` value with launch
  *     defaults, every field overridable. Pass it to `createCurrentJson`.
+ *   - {@link provisionCollection} — `createCurrentJson` of the launch
+ *     defaults: the empty, freshly-provisioned collection most tests start from.
  *   - {@link seedLogEntry} / {@link seedLogEntries} — PUT raw
  *     `log/<seq>.json` object(s) carrying valid `LogEntry` bodies.
  *
@@ -28,6 +30,8 @@
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
+  type CurrentJsonRead,
+  createCurrentJson,
   encodeJsonBytes,
   type LogEntry,
   logObjectKey,
@@ -67,6 +71,24 @@ export const logStateCurrentJson = (overrides: Partial<CurrentJson> = {}): Curre
   generation: LOG_STATE_GENERATION,
   ...overrides,
 });
+
+/**
+ * Provision an empty collection: `createCurrentJson` of the launch
+ * defaults from {@link logStateCurrentJson}, with the writer fence
+ * owned by `owner`. Use it when a test needs a fresh manifest and no
+ * particular field values; use `createCurrentJson(storage, key,
+ * logStateCurrentJson({ ... }))` when it does.
+ */
+export const provisionCollection = (
+  storage: Storage,
+  key: string,
+  owner = "test",
+): Promise<CurrentJsonRead> =>
+  createCurrentJson(
+    storage,
+    key,
+    logStateCurrentJson({ writer_fence: { epoch: 0, owner, claimed_at: "" } }),
+  );
 
 /**
  * Build a valid `LogEntry` for sequence `seq`, with launch defaults that

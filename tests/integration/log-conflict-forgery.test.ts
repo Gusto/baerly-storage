@@ -37,13 +37,10 @@
 import { fc } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  type CurrentJson,
   LOG_FORWARD_PROBE_CAP,
   type LogEntry,
   MemoryStorage,
   SESSION_ID_LENGTH,
-  createCurrentJson,
   encodeJsonBytes,
   uuid,
 } from "@baerly/protocol";
@@ -53,6 +50,7 @@ import {
   tryAdoptOwnSessionLogEntry,
 } from "@baerly/server/_internal/testing";
 import { wrapForgeryStorage } from "../fixtures/forgery-storage.ts";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 const HEX_CHARS = "0123456789abcdef";
 const SESSION_A = "abc123";
@@ -163,18 +161,8 @@ describe("C2 session-id-unguessability under ForgeryStorage adversary", () => {
     const LOG_0_KEY = `${TENANT_PREFIX}/log/0.json`;
     const COLLECTION = "c";
 
-    const seedCurrent = (): CurrentJson => ({
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "forgery-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
-
     const inner = new MemoryStorage();
-    await createCurrentJson(inner, CURRENT_JSON_KEY, seedCurrent());
+    await provisionCollection(inner, CURRENT_JSON_KEY, "forgery-test");
 
     // Plant a forged entry whose session ("FORGED") cannot match
     // a uuid-derived writer session (which is lowercase hex).

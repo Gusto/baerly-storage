@@ -29,6 +29,7 @@ import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runInspect } from "./inspect.ts";
 import { captureStream } from "./_internal/testing.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -37,15 +38,7 @@ const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
 const CURRENT_JSON_KEY = `${TABLE_PREFIX}/current.json`;
 
 const provision = async (storage: Storage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "inspect-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, "inspect-test");
 };
 
 describe("baerly inspect", () => {

@@ -10,19 +10,14 @@
  */
 
 import { fc, test as fcTest } from "@fast-check/vitest";
-import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  type Collection,
-  createCurrentJson,
-  type DocumentData,
-  MemoryStorage,
-} from "@baerly/protocol";
+import { type Collection, type DocumentData, MemoryStorage } from "@baerly/protocol";
 import { describe, expect } from "vitest";
 import {
   validDocIdArb,
   writableDocIdArb,
 } from "../../../tests/fixtures/scalar-doc-id-arbitraries.ts";
 import { Db } from "./db.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 const APP = "test";
 const TENANT = "t";
@@ -123,18 +118,9 @@ describe("Query.update — _id identity property", () => {
     "accepts a patch iff its _id is absent, undefined, or the row's own; the row never re-keys",
     async ({ rowId, patchId, nestedId, byPredicate }) => {
       const storage = new MemoryStorage();
-      await createCurrentJson(
+      await provisionCollection(
         storage,
         `app/${APP}/tenant/${TENANT}/manifests/${COLL}/current.json`,
-        {
-          schema_version: CURRENT_JSON_SCHEMA_VERSION,
-          snapshot: null,
-          tail_hint: 0,
-          log_seq_start: 0,
-          writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-          snapshot_bytes: 0,
-          snapshot_rows: 0,
-        },
       );
       const db = Db.create({ storage, app: APP, tenant: TENANT });
       const t = db.collection(COLL) as Collection<DocumentData>;

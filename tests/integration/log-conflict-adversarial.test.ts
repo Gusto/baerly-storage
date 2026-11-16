@@ -44,9 +44,6 @@ import { fc, test as propTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
   BaerlyError,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  type CurrentJson,
   type DocumentData,
   type LogEntry,
   MemoryStorage,
@@ -54,6 +51,7 @@ import {
   encodeJsonBytes,
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 const PROP_TIMEOUT_MS = 30_000;
 
@@ -61,16 +59,6 @@ const TENANT_PREFIX = "app/a/tenant/t/manifests/c";
 const CURRENT_JSON_KEY = `${TENANT_PREFIX}/current.json`;
 const LOG_KEY = (seq: number): string => `${TENANT_PREFIX}/log/${seq}.json`;
 const COLLECTION = "c";
-
-const seedCurrent = (): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  tail_hint: 0,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "adversarial-test", claimed_at: "" },
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
 
 /**
  * Pre-populate the bucket with a forged log entry at seq 0, then
@@ -88,7 +76,7 @@ const runAttack = async (
   | { kind: "other-throw"; error: unknown }
 > => {
   const storage = new MemoryStorage();
-  await createCurrentJson(storage, CURRENT_JSON_KEY, seedCurrent());
+  await provisionCollection(storage, CURRENT_JSON_KEY, "adversarial-test");
   // Adversary squats /log/0.json with their forged body BEFORE the
   // writer runs. Use the raw storage put (no If-None-Match here —
   // the adversary already owns the key).
@@ -226,7 +214,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
     // pre-existing corruption the READ path / `baerly admin fsck` surface
     // as InvalidResponse — repairing the bucket is not the writer's job.)
     const storage = new MemoryStorage();
-    await createCurrentJson(storage, CURRENT_JSON_KEY, seedCurrent());
+    await provisionCollection(storage, CURRENT_JSON_KEY, "adversarial-test");
     await storage.put(LOG_KEY(0), new TextEncoder().encode("not json {{{"), {
       contentType: "application/json",
     });
@@ -276,7 +264,7 @@ describe("adversarial replay against self-session log-conflict adoption", () => 
     // writer is ABOUT to write, not to any seq present in the log
     // namespace.
     const storage = new MemoryStorage();
-    await createCurrentJson(storage, CURRENT_JSON_KEY, seedCurrent());
+    await provisionCollection(storage, CURRENT_JSON_KEY, "adversarial-test");
     const futureForged: LogEntry = {
       lsn: "z_future_z",
       commit_ts: "2026-05-26T00:00:00.000Z",

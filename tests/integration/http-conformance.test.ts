@@ -52,6 +52,7 @@ import { runHttpConformanceCascade, type HttpFetch } from "../fixtures/http-conf
 import { CONFORMANCE_TENANT, testVerifier } from "../fixtures/test-verifier.ts";
 import { gate } from "../setup/gates.ts";
 import { MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY } from "../setup/ports.ts";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 const APP = "http-conf";
 
@@ -373,18 +374,10 @@ describe("HTTP boundary — schema validation error responses", () => {
     const TENANT = "schema-tenant";
     const TABLE = "tickets";
     const memStorage = new MemoryStorage();
-    await createCurrentJson(
+    await provisionCollection(
       memStorage,
       `app/${APP_NAME}/tenant/${TENANT}/manifests/${TABLE}/current.json`,
-      {
-        schema_version: CURRENT_JSON_SCHEMA_VERSION,
-        snapshot: null,
-        tail_hint: 0,
-        log_seq_start: 0,
-        writer_fence: { epoch: 0, owner: "http-schema-test", claimed_at: "" },
-        snapshot_bytes: 0,
-        snapshot_rows: 0,
-      },
+      "http-schema-test",
     );
 
     const db = Db.create({

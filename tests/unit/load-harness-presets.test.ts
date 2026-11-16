@@ -1,10 +1,5 @@
 import { describe, test, expect } from "vitest";
-import {
-  getOrCreateMemoryStorageForBucket,
-  createCurrentJson,
-  CURRENT_JSON_SCHEMA_VERSION,
-  type Storage,
-} from "@baerly/protocol";
+import { getOrCreateMemoryStorageForBucket, type Storage } from "@baerly/protocol";
 import { getPreset } from "../../bench/load-harness/presets.ts";
 import { makeRng } from "../../bench/load-harness/generators/rng.ts";
 import { buildDataset } from "../../bench/load-harness/generators/dataset.ts";
@@ -22,6 +17,7 @@ import "../../bench/load-harness/presets/hot-tenant-compaction-debt.ts";
 import "../../bench/load-harness/presets/many-tiny-apps.ts";
 import "../../bench/load-harness/presets/rag-document-store.ts";
 import "../../bench/load-harness/presets/chat-conversation-store.ts";
+import { provisionCollection } from "../fixtures/log-state.ts";
 
 const PRESET_NAMES = [
   "recent-first-crud",
@@ -123,15 +119,7 @@ describe("preset seed + ingest phase (memory backend)", () => {
 
       for (const tenant of dataset.tenants) {
         const key = `app/${app}/tenant/${tenant.tenantId}/manifests/${collection}/current.json`;
-        await createCurrentJson(counting as unknown as Storage, key, {
-          schema_version: CURRENT_JSON_SCHEMA_VERSION,
-          snapshot: null,
-          tail_hint: 0,
-          log_seq_start: 0,
-          writer_fence: { epoch: 0, owner: "bench-smoke", claimed_at: "" },
-          snapshot_bytes: 0,
-          snapshot_rows: 0,
-        });
+        await provisionCollection(counting as unknown as Storage, key, "bench-smoke");
       }
       counting.reset();
 

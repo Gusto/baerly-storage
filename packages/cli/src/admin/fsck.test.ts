@@ -16,17 +16,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import {
-  casUpdateCurrentJson,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
-  readCurrentJson,
-  type Storage,
-} from "@baerly/protocol";
+import { casUpdateCurrentJson, readCurrentJson, type Storage } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
 import { runFsck } from "./fsck.ts";
 import { captureStream } from "../_internal/testing.ts";
+import { provisionCollection } from "../../../../tests/fixtures/log-state.ts";
 
 const APP = "app";
 const TENANT = "tenant";
@@ -35,15 +30,7 @@ const CURRENT_JSON_KEY = `app/${APP}/tenant/${TENANT}/manifests/${COLL}/current.
 const TABLE_PREFIX = `app/${APP}/tenant/${TENANT}/manifests/${COLL}`;
 
 const provision = async (storage: Storage): Promise<void> => {
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "fsck-cli-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, "fsck-cli-test");
 };
 
 const seedRows = async (storage: Storage, count: number): Promise<void> => {

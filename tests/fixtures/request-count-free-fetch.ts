@@ -28,7 +28,6 @@
 
 import {
   casUpdateCurrentJson,
-  createCurrentJson,
   createGcPending,
   GC_MAX_PENDING_CANDIDATES,
   GC_PENDING_SCHEMA_VERSION,
@@ -36,7 +35,6 @@ import {
   CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES,
   CF_FREE_FETCH_GC_MAX_SWEEPS,
-  CURRENT_JSON_SCHEMA_VERSION,
   type DocumentData,
   type IndexDefinition,
   MAINTENANCE_PROFILE_CF_FREE,
@@ -55,6 +53,7 @@ import {
 } from "../../packages/server/src/observability/context.ts";
 import { chargedStorage } from "./ledgered-storage.ts";
 import { type CallCounts, totalCalls } from "./request-counting-storage.ts";
+import { provisionCollection } from "./log-state.ts";
 
 const APP = "rc";
 const TENANT = "t";
@@ -136,15 +135,7 @@ const makeDb = (storage: Storage, indexes: number): Db =>
 
 const seed = async (indexes: number): Promise<MemoryStorage> => {
   const storage = new MemoryStorage();
-  await createCurrentJson(storage, CURRENT_JSON_KEY, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "request-count-free-fetch", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, CURRENT_JSON_KEY, "request-count-free-fetch");
   const coll = makeDb(storage, indexes).collection(COLL);
   await runWithContext(
     createObservabilityContext({ maintenance: { dispatch: () => {} } }),

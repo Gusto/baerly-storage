@@ -15,7 +15,6 @@ import { getRequestListener } from "@hono/node-server";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MAINTENANCE_MIN_LIVE_BYTES,
   MAINTENANCE_PROFILE_NODE,
@@ -34,7 +33,11 @@ import {
 import { configureObservability, getCurrentContext } from "@baerly/server/observability";
 import { getConfig, reset, type LogRecord, type Sink } from "@logtape/logtape";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { logStateCurrentJson, seedLogEntries } from "../../../tests/fixtures/log-state.ts";
+import {
+  logStateCurrentJson,
+  seedLogEntries,
+  provisionCollection,
+} from "../../../tests/fixtures/log-state.ts";
 import { createApp, type CreateAppOptions } from "./app.ts";
 import { createFetchHandler, nodeMaintenanceDispatch, resolveDefaultSink } from "./server.ts";
 
@@ -245,15 +248,11 @@ describe("createApp observability", () => {
     tenant: string,
     table: string,
   ): Promise<void> => {
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "obs-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/${table}/current.json`,
+      "obs-test",
+    );
   };
 
   test("emits a canonical line for a write request with class_a_ops and outcome=committed", async () => {
@@ -428,15 +427,11 @@ describe("createFetchHandler", () => {
     tenant: string,
     table: string,
   ): Promise<void> => {
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "fetch-handler-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/${table}/current.json`,
+      "fetch-handler-test",
+    );
   };
 
   const okVerifier: Verifier = async () => ({ tenantPrefix: "acme", identity: {} });
@@ -750,15 +745,11 @@ describe("createApp client-disconnect resilience", () => {
     tenant: string,
     table: string,
   ): Promise<void> => {
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/${table}/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "since-abort-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/${table}/current.json`,
+      "since-abort-test",
+    );
   };
 
   const sleep = (ms: number): Promise<void> =>

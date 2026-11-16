@@ -28,7 +28,6 @@ import {
   CF_FREE_INTERNAL_REQUEST_LIMIT,
   CF_PAID_COMPACT_TAIL_PROBE_GETS,
   CF_PAID_REQUEST_LIMIT,
-  CURRENT_JSON_SCHEMA_VERSION,
   GC_PENDING_SCHEMA_VERSION,
   GC_STARVATION_GUARD,
   LOG_FORWARD_PROBE_CAP,
@@ -53,6 +52,7 @@ import {
   LOG_STATE_GENERATION,
   logStateCurrentJson,
   seedLogEntries,
+  provisionCollection,
 } from "../../../tests/fixtures/log-state.ts";
 import { seedLegacyContentForBody } from "../../../tests/fixtures/legacy-content.ts";
 import { ledgeredStorage } from "../../../tests/fixtures/ledgered-storage.ts";
@@ -121,15 +121,7 @@ const seed = async (
   collection: string,
   entries: number,
 ): Promise<void> => {
-  await createCurrentJson(storage, key, {
-    schema_version: CURRENT_JSON_SCHEMA_VERSION,
-    snapshot: null,
-    tail_hint: 0,
-    log_seq_start: 0,
-    writer_fence: { epoch: 0, owner: "budget-test", claimed_at: "" },
-    snapshot_bytes: 0,
-    snapshot_rows: 0,
-  });
+  await provisionCollection(storage, key, "budget-test");
   const writer = new Writer({ storage, currentJsonKey: key });
   for (let i = 0; i < entries; i++) {
     await writer.commit({

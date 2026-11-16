@@ -8,8 +8,6 @@
  */
 
 import {
-  CURRENT_JSON_SCHEMA_VERSION,
-  type CurrentJson,
   createCurrentJson,
   type DocumentData,
   MemoryStorage,
@@ -30,6 +28,7 @@ import { runAllWithMeta, serializeManifestPointer, singleIdFromPredicate } from 
 
 const wireOf = (clauses: PredicateWire["clauses"]): PredicateWire => ({ clauses });
 import { Writer } from "./writer.ts";
+import { provisionCollection, logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 
 const APP = "test";
 const TENANT = "t";
@@ -39,20 +38,10 @@ const currentJsonKey = (coll: string): string =>
 const logKey = (coll: string, seq: number): string =>
   `app/${APP}/tenant/${TENANT}/manifests/${coll}/log/${seq}.json`;
 
-const seedCurrent = (tail_hint = 0): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  tail_hint,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
-
 const makeDb = (storage: MemoryStorage): Db => Db.create({ storage, app: APP, tenant: TENANT });
 
 const provision = async (storage: MemoryStorage, coll = COLL): Promise<void> => {
-  await createCurrentJson(storage, currentJsonKey(coll), seedCurrent());
+  await provisionCollection(storage, currentJsonKey(coll));
 };
 
 const commit = (storage: MemoryStorage, coll = COLL): Writer =>
@@ -234,16 +223,8 @@ describe("Db.collection read terminals", () => {
   test("case 10: tenant isolation — two Dbs over one MemoryStorage don't see each other", async () => {
     const dbA = Db.create({ storage, app: APP, tenant: "alice" });
     const dbB = Db.create({ storage, app: APP, tenant: "bob" });
-    await createCurrentJson(
-      storage,
-      `app/${APP}/tenant/alice/manifests/${COLL}/current.json`,
-      seedCurrent(),
-    );
-    await createCurrentJson(
-      storage,
-      `app/${APP}/tenant/bob/manifests/${COLL}/current.json`,
-      seedCurrent(),
-    );
+    await provisionCollection(storage, `app/${APP}/tenant/alice/manifests/${COLL}/current.json`);
+    await provisionCollection(storage, `app/${APP}/tenant/bob/manifests/${COLL}/current.json`);
     const wA = new Writer({
       storage,
       currentJsonKey: `app/${APP}/tenant/alice/manifests/${COLL}/current.json`,
@@ -291,7 +272,7 @@ describe("Db.collection read terminals", () => {
     // Bootstrap current.json claiming one log entry exists, then plant
     // a non-JSON body at log/0.json. The reader walks [0, 1) and
     // chokes on the parse.
-    await createCurrentJson(storage, currentJsonKey(COLL), seedCurrent(1));
+    await createCurrentJson(storage, currentJsonKey(COLL), logStateCurrentJson({ tail_hint: 1 }));
     await storage.put(logKey(COLL, 0), new TextEncoder().encode("not-json{"));
 
     try {
@@ -344,15 +325,11 @@ describe("Db.collection read terminals", () => {
     // and log/1.json are absent (simulating a post-truncation bucket).
     // The reader MUST NOT GET them — only log/2.json — and surface that
     // single row.
-    await createCurrentJson(storage, currentJsonKey(COLL), {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 3,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      log_seq_start: 2,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await createCurrentJson(
+      storage,
+      currentJsonKey(COLL),
+      logStateCurrentJson({ tail_hint: 3, log_seq_start: 2 }),
+    );
     // Plant only the live log entry.
     const entry = {
       lsn: "fake-lsn",
@@ -481,15 +458,7 @@ describe("Db.collection read terminals", () => {
     // [log_seq_start=0, 3); the forward-probe must discover the true
     // tail=8 and fold [3, 8). All 8 docs must surface and the manifest
     // pointer must reflect the discovered tail, not the stored hint.
-    await createCurrentJson(storage, currentJsonKey(COLL), {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 3,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      log_seq_start: 0,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await createCurrentJson(storage, currentJsonKey(COLL), logStateCurrentJson({ tail_hint: 3 }));
     for (let seq = 0; seq < 8; seq++) {
       const entry = {
         lsn: `fake-lsn-${seq}`,
@@ -526,15 +495,7 @@ describe("Db.collection read terminals", () => {
     expect(res.manifestPointer).toMatch(/^m1:[0-9a-z]+$/);
     expect(res.manifestPointer).not.toContain("current.json");
     expect(res.manifestPointer).not.toContain("manifests");
-    const staleHead = {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 3,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      log_seq_start: 0,
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    } satisfies CurrentJson;
+    const staleHead = logStateCurrentJson({ tail_hint: 3 });
     const staleHintPointer = serializeManifestPointer(staleHead, 3);
     const discoveredTailPointer = serializeManifestPointer(staleHead, 8);
     expect(res.manifestPointer).toBe(discoveredTailPointer);
@@ -544,15 +505,12 @@ describe("Db.collection read terminals", () => {
 
 describe("serializeManifestPointer", () => {
   test("emits a stable opaque digest of manifest state and discovered tail", () => {
-    const head = {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
+    const head = logStateCurrentJson({
       snapshot: "manifests/notes/snapshot/L0/0000-sha256.json",
       tail_hint: 3,
-      writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-      log_seq_start: 0,
       snapshot_bytes: 123,
       snapshot_rows: 2,
-    } satisfies CurrentJson;
+    });
 
     const discoveredTailPointer = serializeManifestPointer(head, 8);
     expect(discoveredTailPointer).toBe("m1:0btxreq7patbd");
@@ -1413,7 +1371,7 @@ describe("Query.first / Collection.get — PK-lookup fast-path", () => {
     target: { _id: string; n: number };
   }> => {
     const s = new MemoryStorage();
-    await createCurrentJson(s, currentJsonKey(COLL), seedCurrent());
+    await provisionCollection(s, currentJsonKey(COLL));
     const w = new Writer({ storage: s, currentJsonKey: currentJsonKey(COLL) });
     let target: { _id: string; n: number } | undefined;
     for (let i = 0; i < n; i++) {

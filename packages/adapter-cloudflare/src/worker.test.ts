@@ -12,8 +12,6 @@
 import {
   type BaerlyAppConfig,
   BaerlyError,
-  CURRENT_JSON_SCHEMA_VERSION,
-  createCurrentJson,
   SHARED_SECRET_MISSING_MESSAGE,
   type Verifier,
 } from "@baerly/protocol";
@@ -23,6 +21,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
+import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
 
 /**
  * Minimal-shape `BaerlyAppConfig` for tests that aren't exercising
@@ -157,15 +156,11 @@ describe("baerlyWorker observability", () => {
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
     // Provision current.json for the target table.
     const storage = r2BindingStorage(bucket);
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "obs-write-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/c/current.json`,
+      "obs-write-test",
+    );
 
     const handler = baerlyWorker(() => ({
       config: testConfig,
@@ -204,15 +199,11 @@ describe("baerlyWorker observability", () => {
     const tenant = `obs-miss-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
     const storage = r2BindingStorage(bucket);
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "obs-miss-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/c/current.json`,
+      "obs-miss-test",
+    );
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => mockExecutionContext();
@@ -261,15 +252,11 @@ describe("baerlyWorker observability", () => {
     const tenant = `obs-hit-${Date.now().toString(36)}`;
     const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
     const storage = r2BindingStorage(bucket);
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "obs-hit-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/c/current.json`,
+      "obs-hit-test",
+    );
 
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };
     const makeExec = (): ExecutionContext => mockExecutionContext();
@@ -574,15 +561,11 @@ describe("baerlyWorker factory caching", () => {
 describe("baerlyWorker config.auth synthesis", () => {
   const provisionTable = async (bucket: R2Bucket, tenant: string): Promise<void> => {
     const storage = r2BindingStorage(bucket);
-    await createCurrentJson(storage, `app/t/tenant/${tenant}/manifests/c/current.json`, {
-      schema_version: CURRENT_JSON_SCHEMA_VERSION,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "auth-synth-test", claimed_at: "" },
-      snapshot_bytes: 0,
-      snapshot_rows: 0,
-    });
+    await provisionCollection(
+      storage,
+      `app/t/tenant/${tenant}/manifests/c/current.json`,
+      "auth-synth-test",
+    );
   };
 
   test('auth: "none" without `verifier:` resolves every request to config.tenant', async () => {

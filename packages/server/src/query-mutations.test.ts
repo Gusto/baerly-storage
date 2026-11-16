@@ -25,9 +25,7 @@
 
 import {
   type Collection,
-  CURRENT_JSON_SCHEMA_VERSION,
   type CurrentJson,
-  createCurrentJson,
   type DocumentData,
   type LogEntry,
   MemoryStorage,
@@ -38,7 +36,7 @@ import {
   uuidv7,
 } from "@baerly/protocol";
 import { beforeEach, describe, expect, test } from "vitest";
-import { seedLogEntry } from "../../../tests/fixtures/log-state.ts";
+import { seedLogEntry, provisionCollection } from "../../../tests/fixtures/log-state.ts";
 import { compact } from "./compactor.ts";
 import { Db } from "./db.ts";
 import { collectionReadContext } from "./db-read-seams.ts";
@@ -53,18 +51,8 @@ const currentJsonKey = (coll: string = COLL): string =>
 const logKey = (seq: number, coll: string = COLL): string =>
   `app/${APP}/tenant/${TENANT}/manifests/${coll}/log/${seq}.json`;
 
-const seedCurrent = (tail_hint = 0): CurrentJson => ({
-  schema_version: CURRENT_JSON_SCHEMA_VERSION,
-  snapshot: null,
-  tail_hint,
-  log_seq_start: 0,
-  writer_fence: { epoch: 0, owner: "test", claimed_at: "" },
-  snapshot_bytes: 0,
-  snapshot_rows: 0,
-});
-
 const provision = async (storage: MemoryStorage, coll: string = COLL): Promise<void> => {
-  await createCurrentJson(storage, currentJsonKey(coll), seedCurrent());
+  await provisionCollection(storage, currentJsonKey(coll));
 };
 
 const readLogEntry = async (storage: MemoryStorage, seq: number): Promise<LogEntry> => {
