@@ -41,6 +41,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  type MetricsRecorder,
+  noopMetricsRecorder,
   type RequestHold,
   type RequestLedger,
   setRequestHoldResolver,
@@ -202,3 +204,7 @@ export const runWithContext = <T>(
 
 /** Returns the currently-active context, or `undefined` outside one. */
 export const getCurrentContext = (): InternalObservabilityContext | undefined => als.getStore();
+
+/** The active context's recorder, or the no-op recorder outside one. */
+export const ctxMetrics = (): MetricsRecorder =>
+  getCurrentContext()?.recorder ?? noopMetricsRecorder;

@@ -99,7 +99,6 @@
 import {
   type GcCandidate,
   type GcPending,
-  type MetricsRecorder,
   type Storage,
   GC_GRACE_PERIOD_MILLIS,
   GC_MARK_LIST_PAGE_KEYS,
@@ -113,14 +112,11 @@ import {
   logObjectKey,
   logSeqStartOf,
   mergeGcPending,
-  noopMetricsRecorder,
   readCurrentJson,
   readGcPending,
 } from "@baerly/protocol";
-import { getCurrentContext } from "./observability/context.ts";
+import { ctxMetrics } from "./observability/context.ts";
 import { collectionFromCurrentJsonKey } from "./collection-key.ts";
-
-const ctxMetrics = (): MetricsRecorder => getCurrentContext()?.recorder ?? noopMetricsRecorder;
 
 /**
  * Base options for {@link runGc}, unpublished like `runGc` itself. All optional; the engine works
