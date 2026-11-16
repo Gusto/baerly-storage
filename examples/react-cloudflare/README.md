@@ -15,7 +15,7 @@ database bill; maintenance is automatic and write-triggered.
 
 ## What you got
 
-```
+```text
 react-cloudflare/
 ├── package.json              # one package, all deps
 ├── tsconfig.json             # project-references stub

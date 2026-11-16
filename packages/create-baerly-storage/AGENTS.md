@@ -14,7 +14,7 @@ Bundled to a single-file bin by rolldown.
 
 Source of truth → build → publish artifact → user's machine:
 
-```
+```text
 examples/<template>/                       (source — runnable as an example)
    │
    │  rolldown `closeBundle` hook copies subset (excludes match

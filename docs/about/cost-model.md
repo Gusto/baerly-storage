@@ -265,7 +265,7 @@ commit floor.
 
 **Cloudflare R2 pricing** (default Worker+R2 CLI projection uses `A ≈ 2`):
 
-```
+```text
 Class A ops/mo         = W × A
 R2 object-storage $/mo = max(0, W×A − 1,000,000) × $4.50 / 1,000,000
                        + max(0, storedGB − 10) × $0.015
@@ -285,7 +285,7 @@ object-storage cost is $0.
 **AWS S3 pricing** (default self-hosted Node+S3 CLI projection uses
 conservative `A ≈ 3`, no free tier):
 
-```
+```text
 Class A ops/mo = W × A
 S3 $/mo = W×A × $5.00 / 1,000,000
         + storedGB × $0.023
@@ -444,13 +444,13 @@ constant), which
 [scale-ceilings.md § The published envelope](../spec/scale-ceilings.md#the-published-envelope)
 owns. Full arithmetic:
 
-```
+```text
 Writes/mo = 30 writes/min × 60 min/hr × 24 hr/day × 30 days = 1,296,000
 ```
 
 **Worker+R2 default (`A≈2`):**
 
-```
+```text
 Class A/mo = 1,296,000 × 2 = 2,592,000
 Free tier:   1,000,000 Class A/mo (included)
 Overage:     1,592,000 Class A ops
@@ -461,7 +461,7 @@ All-in (object-storage ops + floor): ~$12/mo
 
 **Node+S3 conservative CLI projection (`A≈3`):**
 
-```
+```text
 Class A/mo = 1,296,000 × 3 = 3,888,000
 Object-storage ops:  3,888,000 / 1,000,000 × $5.00 = ~$19/mo
   (no platform floor — serverful Node / S3)
@@ -470,7 +470,7 @@ Object-storage ops:  3,888,000 / 1,000,000 × $5.00 = ~$19/mo
 **Node+GCS conservative CLI projection (`A≈3`; provider parity means
 no GCS-specific op increment — see above):**
 
-```
+```text
 Class A/mo = 1,296,000 × 3 = 3,888,000
 Free tier:   5,000 Class A/mo (GCS Always Free tier — negligible at this volume)
 Overage:     3,883,000 Class A ops

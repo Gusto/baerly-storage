@@ -14,7 +14,7 @@ database bill; maintenance is automatic and write-triggered.
 
 ## What you got
 
-```
+```text
 minimal-cloudflare/
 ├── package.json              # one package, all deps
 ├── tsconfig.json             # project-references stub

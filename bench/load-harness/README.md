@@ -6,7 +6,7 @@ as `--preset=` flags.
 
 ## What's here
 
-```
+```text
 bench/load-harness/
 ├── generators/
 │   ├── rng.ts          # mulberry32 PRNG + Rng wrapper (next/int/pick/weighted/zipfIndex/powerLaw)

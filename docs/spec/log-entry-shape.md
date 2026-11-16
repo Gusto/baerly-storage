@@ -90,7 +90,7 @@ types; this page is the prose wire contract.
 
 Every emitted entry lands at:
 
-```
+```text
 <bucket>/<collection-prefix>/log/<seq>.json
 ```
 
@@ -131,7 +131,7 @@ shapes.
 
 Those legacy side objects use this layout:
 
-```
+```text
 <bucket>/<collection-prefix>/content/<hash>.json
 ```
 

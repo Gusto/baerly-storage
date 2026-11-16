@@ -54,7 +54,7 @@ participant.
 
 ### Bob's Chat Window
 
-```
+```text
 Alice: Shall we invite Carol over?
 <<Carol joins>>
 Bob: Would you like to come over for dinner?
@@ -63,7 +63,7 @@ Carol: Yes! I'll bring dessert
 
 ### Carol's Chat Window
 
-```
+```text
 <<accepts invite>>
 Bob: Would you like to come over for dinner?
 Carol: Yes! I'll bring dessert
@@ -71,7 +71,7 @@ Carol: Yes! I'll bring dessert
 
 ### Example of Causal Consistency Violation from Alice's Chat Window
 
-```
+```text
 Alice: Shall we invite Carol over?
 <<Carol joins>>
 Carol: Yes! I'll bring dessert
@@ -91,7 +91,7 @@ In the example, Carol first receives Bob's question. Then she writes a reply.
 The reply exists **because** she saw the question, so the question event must
 be ordered before the reply event:
 
-```
+```text
 BobQuestion < CarolReply
 ```
 
@@ -124,7 +124,7 @@ client. Client A observes `A01 < A02 < A03...`; client B observes
 `B01 < B02 < B03...`. A causally consistent interpretation is any way of
 combining those timelines that preserves the known causal order:
 
-```
+```text
 A01 < B01 < B02 < A02 < A03 < B03
 ```
 
@@ -146,7 +146,7 @@ not apply across baerly-storage collections. The simplified topic rule is:
 if a client observes topic message `M` before topic message `N`, the checker
 records that the send event for `M` happened before the send event for `N`:
 
-```
+```text
 send(M) < send(N)
 ```
 
@@ -185,7 +185,7 @@ Legend:
   first local event; quoted `"B1"` is the message id being published or
   observed.
 
-```
+```text
 // Bob: Would you like to come over for dinner?
 1 B1 publish("B1") =>
 
@@ -194,7 +194,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1; // grounding
 > true
 ```
 
-```
+```text
 // Carol receives: Bob: Would you like to come over for dinner?
 2 C1: observe ("B1") =>
 
@@ -205,7 +205,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2;
 > true
 ```
 
-```
+```text
 // Carol: Yes, I'll bring dessert
 3 C2: publish ("C2") =>
 
@@ -218,7 +218,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3;
 > true
 ```
 
-```
+```text
 // Alice receives: Yes! I'll bring dessert
 4 A1: observe ("C2") =>
 
@@ -233,7 +233,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4;
 > true
 ```
 
-```
+```text
 // Alice receives: Would you like to come over for dinner?
 5 A2: observe ("B1") =>
 
@@ -253,7 +253,7 @@ const A0 = 0, B0 = 0, C0 = 0, B1 = 1, C1 = 2, C2 = 3, A1 = 4, A2 = 5;
 
 The contradiction is now explicit. These three clauses cannot all be true:
 
-```
+```text
 /*P3*/ B1 < C1 // When Carol heard Bob
 /*P1*/ C1 < C2 // Carol's sequential timeline
 /*P3*/ C2 < B1 // When Alice received Bob's message after Carol's

@@ -69,13 +69,13 @@ One file per run; the canonical shape is `type RunResult` in
 `bench/load-harness/assemble-result.ts`. Every field is non-optional except
 `run.backend_details`. File names follow the pattern:
 
-```
+```text
 bench/results/load/<preset>-<variant>-<cache-mode>-<timestamp>.json
 ```
 
 Matrix runs write to a timestamped subdirectory:
 
-```
+```text
 bench/results/load/matrix-<timestamp>/<preset>-<variant>-<cache-mode>-<ts>.json
 ```
 
@@ -126,7 +126,7 @@ Every preset is reproducible: same `--seed`, `--records`, and
 
 Each run executes five phases in this order:
 
-```
+```text
 seed → ingest → query-pre-compact → compact → query-post-compact
 ```
 
