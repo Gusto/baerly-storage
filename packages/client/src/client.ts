@@ -187,15 +187,20 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
    * Insert a new document. Returns its `_id`.
    *
    * A non-empty string `_id` is caller-chosen and sent as-is; a second
-   * insert of the same `_id` rejects with `AlreadyExists`. When `_id` is
-   * omitted (or `""`, or not a string), the client mints a UUIDv7 before
-   * the request is sent and flags it as minted, so the server answers a
-   * retransmission of that same request with the original `{ _id }` while
-   * the stored row still matches, instead of a duplicate row. The client
-   * resends an insert only after a `MaintenancePending` refusal, with the
-   * same body and so the same minted `_id`; calling `insert(doc)` again
-   * mints a new auto-ID and is a new insert.
-   * The caller's `doc` is not modified.
+   * insert of the same `_id` rejects with `AlreadyExists`. A present
+   * `_id` that is not a string (`null` included) throws `InvalidConfig`
+   * before any request is sent. When `_id` is omitted or `""`, the client
+   * mints a UUIDv7 before the request is sent and flags it as minted, so
+   * the server answers a retransmission of that same request with the
+   * original `{ _id }` while the stored row still matches, instead of a
+   * duplicate row.
+   *
+   * A minted insert is resent with the same body, and so the same minted
+   * `_id`, after a transport failure (a thrown `fetch`, or a 5xx, 408 or
+   * 429 response with no error envelope) and after a `MaintenancePending`
+   * refusal. An insert with a caller-chosen `_id` is resent only after
+   * `MaintenancePending`. Calling `insert(doc)` again mints a new auto-ID
+   * and is a new insert. The caller's `doc` is not modified.
    */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
   /** JSON-merge-patch applied to one row by primary key. */

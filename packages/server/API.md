@@ -355,7 +355,7 @@ Schemas: any [StandardSchema v1](https://standardschema.dev) validator (Zod 3.24
 
 **Author `_id` as required, not `.optional()`.** The validator runs on the post-image — by the time it fires, the server has already filled in a UUIDv7 `_id` for inserts that omit it, so every row the validator sees has `_id` present. Declaring `_id: z.string()` (required) matches that runtime invariant. `Collection<T>.insert` still accepts a doc without `_id` (the public signature is `insert(doc: Partial<T> & DocumentData)`), so authoring `_id` as required does not break the "omit and let the server mint it" path. The win is on the read side: `db.collection("tickets").all()` is typed `Ticket[]` with `_id: string` (required), so route handlers and response schemas don't need a parallel "\_id-required" row type.
 
-`_id` is server-minted (UUIDv7, sorts by mint time) — there is no exported id generator, and minting one client-side is unsupported. For a write that must reference its own id, write the parent first and read back the `_id` the server returns; design cross-collection writes parent-first with cleanup, not by pre-minting ids.
+An insert that omits `_id` gets a minted UUIDv7 (sorts by mint time); there is no exported id generator. In-process `insert` mints in the kernel. `createBaerlyClient` mints in the SDK and sends `mintedId`, so its resends replay. A raw-HTTP `POST` without `doc._id` is minted by the server; resending it adds a second row. To reference a new row's id, write the parent first and use the returned `_id`; design cross-collection writes parent-first with cleanup.
 
 Do not declare `indexes`: they are validated at `Db.create` but never speed up or change a read, which folds the whole snapshot and log, and change no storage call a write makes.
 
