@@ -24,12 +24,7 @@ import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
-
-const trivialVerifier: Verifier = async () => ({
-  tenantPrefix: "acme",
-  identity: { kind: "test" },
-});
-const denyVerifier: Verifier = async () => null;
+import { trivialVerifier, denyVerifier } from "../../../tests/fixtures/test-verifier.ts";
 
 /**
  * Baseline `BaerlyAppConfig` for the route tests. Cases that exercise

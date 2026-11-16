@@ -39,3 +39,15 @@ export const testVerifier = (): Verifier => async (req: Request) => {
   }
   return { tenantPrefix: CONFORMANCE_TENANT, identity: {} };
 };
+
+/**
+ * {@link Verifier} that lets every request through as tenant `acme`.
+ * For route tests that exercise the handler behind auth, not auth itself.
+ */
+export const trivialVerifier: Verifier = async () => ({
+  tenantPrefix: "acme",
+  identity: { kind: "test" },
+});
+
+/** {@link Verifier} that rejects every request (`null` → `401`). */
+export const denyVerifier: Verifier = async () => null;

@@ -34,12 +34,7 @@ import {
 import { describe, expect, test } from "vitest";
 import { createApp } from "./app.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
-
-const trivialVerifier: Verifier = async () => ({
-  tenantPrefix: "acme",
-  identity: { kind: "test" },
-});
-const denyVerifier: Verifier = async () => null;
+import { trivialVerifier, denyVerifier } from "../../../tests/fixtures/test-verifier.ts";
 
 interface BaseEnvelope {
   readonly error?: { readonly code: string; readonly message: string };

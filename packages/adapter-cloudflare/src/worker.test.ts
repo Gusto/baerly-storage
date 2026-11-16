@@ -22,6 +22,7 @@ import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { provisionCollection } from "../../../tests/fixtures/log-state.ts";
+import { denyVerifier, trivialVerifier } from "../../../tests/fixtures/test-verifier.ts";
 
 /**
  * Minimal-shape `BaerlyAppConfig` for tests that aren't exercising
@@ -309,7 +310,6 @@ describe("baerlyWorker observability", () => {
     // for the Node twin of this assertion.
     const bucket = getBinding();
     const { records, sink } = collectingSink();
-    const denyVerifier: Verifier = async () => null;
     const handler = baerlyWorker(() => ({
       config: testConfig,
       verifier: denyVerifier,
@@ -506,13 +506,6 @@ describe("baerlyWorker observability opt-out", () => {
 });
 
 describe("baerlyWorker factory caching", () => {
-  // Trivial verifier that lets every request through — same pattern as
-  // `trivialVerifier` in `worker-routes.test.ts`.
-  const trivialVerifier: Verifier = async () => ({
-    tenantPrefix: "acme",
-    identity: { kind: "cache-test" },
-  });
-
   test("baerlyWorker resolves the factory exactly once across N fetches", async () => {
     const bucket = getBinding();
     const env: BaerlyEnv = { BUCKET: bucket, APP: "t" };

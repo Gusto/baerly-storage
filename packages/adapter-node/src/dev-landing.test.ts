@@ -20,11 +20,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderDevLanding } from "@baerly/dev";
-import { MemoryStorage, type Verifier } from "@baerly/protocol";
+import { MemoryStorage } from "@baerly/protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { createApp, type CreateAppOptions } from "./app.ts";
-
-const denyVerifier: Verifier = async () => null;
+import { denyVerifier } from "../../../tests/fixtures/test-verifier.ts";
 
 let server: Server | undefined;
 
