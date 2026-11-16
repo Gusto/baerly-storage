@@ -30,6 +30,12 @@ import { BaerlyError } from "@baerly/protocol";
  * but the last ending in {@link CONTINUATION}. `~` is always escaped by
  * the encoding, so a trailing `~` can only mean "continued". Splits fall
  * only between tokens (a literal byte or a `%xx` triplet).
+ *
+ * **Alternatives that fail.** Refusing a folding filesystem at startup
+ * breaks zero-config dev on default macOS. A sidecar key map or hashed
+ * filenames breaks the atomic single-file `link(2)` create and readable
+ * names. Lowercase-only ids would bend the public `_id` grammar to suit
+ * one adapter.
  */
 
 /** Filename limit on APFS and ext4. */

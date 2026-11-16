@@ -408,7 +408,9 @@ same commit window as the capacity re-check:
 The result is that every committed `U` from an update is its patch merged
 onto the entry immediately before it for that `_id`, and no `U` follows a
 `D` of its row, and every committed `D` follows a live version of its row.
-No new error is thrown.
+No new error is thrown. First-committer-wins (refusing the write with
+`WriteConflict` when the row changed after the read) is rejected because it
+pushes the retry onto every caller.
 
 A batch's forced maintenance tick rides its last planned row's commit;
 when that row is skipped, the verb dispatches the forced tick itself

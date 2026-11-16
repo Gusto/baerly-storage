@@ -2,7 +2,7 @@
 title: Incarnation-scoped chunked snapshot layout
 audience: adr
 doc_type: adr
-summary: ADR 007 — the next snapshot layout is one strict manifest over immutable, incarnation-scoped, content-authenticated chunks, activated through one pre-1.0 atomic format cut.
+summary: ADR 007 — a candidate snapshot layout of one strict manifest over immutable, incarnation-scoped, content-authenticated chunks; not active, and adoption is not decided.
 last-reviewed: 2026-09-18
 tags: [decision, adr, snapshot, storage-layout, versioning]
 related:
@@ -19,8 +19,8 @@ related:
 
 ## Status
 
-Accepted (2026-08-14); activation is deferred to the atomic format cut. The
-live version matrix and production layout remain unchanged until that cut.
+Accepted as a candidate layout (2026-08-14); not active, and adoption is not
+decided.
 
 ## Context
 
@@ -42,10 +42,10 @@ runtime still needs one unambiguous layout and one supported upgrade boundary.
 
 ## Decision
 
-Adopt one strict, incarnation-scoped, content-authenticated chunked snapshot
-layout and activate it through one pre-1.0 minor format cut. The exact decision
-is fixed below so it remains durable before the field-level contract becomes a
-shipped protocol spec.
+The candidate is one strict, incarnation-scoped, content-authenticated chunked
+snapshot layout; if adopted, it activates through one pre-1.0 minor format cut.
+The exact layout is fixed below so it remains durable before the field-level
+contract becomes a shipped protocol spec.
 
 ### Wire, ordering, and canonical bytes
 
@@ -484,6 +484,11 @@ ADR does not admit a format selector, a second layout, or an ID-rewriting mode
 to rescue it. The read-side consequences above are unconditional; only the
 fold-work one is not.
 
+The per-pass fold budget does not move that result: the win or loss is set
+by ID locality and collection size. Raising the per-pass entry budget makes
+modeled encode work grow superlinearly under sequential evaluation, so a
+larger budget is not a lever for this layout.
+
 The cost is a breaking stored layout and three removed public construction
 exports. Activation requires coordinated snapshot/current schema changes, a
 real layout-axis update, strict consumer integration, an authority-bearing
@@ -505,8 +510,8 @@ treated as graduation cases rather than handled by a runtime knob.
 
 ## Live Owner
 
-Until activation, this ADR is the durable owner of the accepted layout
-decision; the shipped contract remains
+Until activation, this ADR is the durable owner of the candidate layout; the
+shipped contract remains
 [`docs/spec/sync-protocol.md`](../spec/sync-protocol.md) and the live version
 axes remain in
 [`docs/contributing/conventions/versioning.md`](../contributing/conventions/versioning.md).
