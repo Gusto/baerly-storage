@@ -1,122 +1,129 @@
 /**
- * Pure projection math for the `baerly inspect` cost-trajectory
- * footer. Zero I/O. Price tables live as top-level constants; every
- * change MUST be paired with a `docs/about/pricing-log.md` entry.
+ * Pure projection math for the `baerly cost` trajectory output. Zero
+ * I/O. Provider prices and measured host profiles are orthogonal inputs:
+ * price tables own billing and profiles own write amplification.
  *
  * Three rules:
- *   1. `classAPerMonth = writesPerMin × 60 × 24 × 30 × effectiveWriteAmp`
- *      where `effectiveWriteAmp` (≈2 on Cloudflare/R2, ≈3 on Node/S3) is the
- *      measured Class A ops/write INCLUDING in-band maintenance — see
- *      `docs/spec/attachments/amortized-write-cost-baseline.json`. The
- *      old "× 2" was the commit FLOOR only and undercounted maintenance.
- *   2. `projectedUsdPerMonth = 0` exactly when both `classAPerMonth
- *      ≤ pricing.freeClassAPerMonth` AND `storedBytes ≤
- *      pricing.freeStorageGb × 1GB`. Say `$0`, not `$0.00`. `null`
- *      for self-hosted/dev (no $ model).
- *   3. Returns `null` when `writesPerMin` is non-finite (no-data case
- *      from `estimateWritesPerMin`); inspect renders no footer.
+ *   1. `classAPerMonth = writesPerMin × 60 × 24 × 30 × effectiveWriteAmp`.
+ *      The profile's measured amplification includes in-band maintenance;
+ *      it is not the one-op commit floor.
+ *   2. Exact continuous provider cost is calculated internally and then
+ *      mapped to a stable band. `$0` is reserved for a projection wholly
+ *      inside a modeled free tier; unmodeled providers return `null`.
+ *   3. Non-finite writes/min returns `null`, preserving the estimator's
+ *      no-data behavior.
  */
 
-/** R2 / AWS S3 / self-hosted / dev price table. */
+export type ProviderTag = "r2" | "aws-s3" | "gcs" | "self-hosted" | "dev";
+export type CostProfileTag = "cf-free" | "node";
+export type ProjectedUsdBand =
+  | "$0"
+  | "<$25"
+  | "$25-$50"
+  | "$50-$100"
+  | "$100-$250"
+  | "$250-$500"
+  | "$500+";
+
+/** Provider price table, independent of the host that performs writes. */
 export interface ProviderPricing {
-  readonly provider: "r2" | "aws-s3" | "self-hosted" | "dev";
+  readonly provider: ProviderTag;
   /** Free-tier Class A ops per month; 0 if no free tier. */
   readonly freeClassAPerMonth: number;
-  /** $/1M Class A above free tier. NaN for "self-hosted" / "dev". */
+  /** $/1M Class A above free tier. NaN for self-hosted/dev. */
   readonly usdPerMillionClassA: number;
   /** Free-tier stored GB; 0 if no free tier. */
   readonly freeStorageGb: number;
-  /** $/GB-month above free tier. NaN for "self-hosted" / "dev". */
+  /** $/GB-month above free tier. NaN for self-hosted/dev. */
   readonly usdPerGbMonth: number;
+}
+
+/** Measured host execution profile, independent of provider pricing. */
+export interface CostProfile {
+  readonly profile: CostProfileTag;
   /**
-   * Effective Class A ops per logical write, INCLUDING in-band
-   * maintenance (folds + GC) — NOT just the one-op commit floor.
-   * Empirically measured: ~2 on Cloudflare (cf-free profile), ~3 on
-   * serverful Node. Source:
-   * docs/spec/attachments/amortized-write-cost-baseline.json (bench
-   * `pnpm bench:amortized-write-cost`). Provider is the host proxy:
-   * r2 ⇒ Cloudflare ⇒ 2; aws-s3 ⇒ Node ⇒ 3.
+   * Effective Class A ops per logical write, including in-band folds
+   * and GC. Source:
+   * docs/spec/attachments/amortized-write-cost-baseline.json.
    */
   readonly effectiveWriteAmp: number;
 }
 
 /**
- * Graduation triggers — sustained for 7 days, any one of these
- * means the workload has outgrown baerly-storage's positioning.
- *
- * Source: `docs/about/cost-model.md:159-163`.
+ * Hard Class A graduation envelope, sustained over seven days. Storage
+ * remains a cost signal rather than a hard trigger.
  */
 export const GRADUATION_CLASS_A_PER_MONTH = 50_000_000;
+
 /**
- * Advisory crossing — eyes-open signal, NOT a hard stop.
- *
- * Keyed to a sustained WRITE RATE (100 writes/min, account-wide), not an
- * absolute Class A count, so it fires at the same workload on every
- * provider regardless of write-amp. On R2 (×2) that is 8.64M Class A/mo
- * (~$34/mo object-storage ops); on Node/S3 (×3) it is 12.96M Class A/mo
- * (~$65/mo). The 50M hard line is about 580 writes/min at 2× and about
- * 390 writes/min at 3×. The previous absolute 13M-Class-A threshold was
- * R2-derived and, applied to S3, fired at ~75 writes/min (~$65/mo) while
- * the rendered note quoted the 100-writes/min figure (~$86) —
- * provider-inconsistent. Fires before
- * the 50M hard trigger to surface the ops-vs-cost tradeoff: object storage
- * buys zero ops / no on-call / no migration; a managed DB trades those
- * dollars for a schema, SQL, and an ops surface. Does NOT change the 50M
- * hard trigger.
+ * Provider-agnostic eyes-open advisory crossing. It is keyed to the
+ * sampled write rate, so provider/profile amplification changes the
+ * displayed band without moving the 100-writes/min threshold.
  */
 export const GRADUATION_ADVISORY_WRITES_PER_MIN = 100;
-// Storage graduation is a COST SIGNAL at the ~10 GB R2 free-tier line,
-// not a hard trigger — intentionally not represented as a graduation
-// constant. `storedBytes` feeds the dollar projection (storage overage)
-// but the projection surfaces no storage graduation %; the tooling
-// tracks only the 50M Class A/mo trigger. See cost-model.md. (The
-// historic `effective write-amp > 6` trigger is retired — see
-// pricing-log.md 2026-06-22 — and is not represented here either.)
 
-/** What the inspect footer renders from. */
+/** What the cost command renders from. */
 export interface Trajectory {
   readonly writesPerMin: number;
   readonly classAPerMonth: number;
-  /** Percent of provider's free-tier Class A budget. `null` when the provider has no free tier (aws-s3) or no $ model (self-hosted/dev). */
+  /**
+   * Percent of the provider's Class A allowance. `null` for providers
+   * with no modeled allowance or dollar model.
+   */
   readonly percentOfFreeTier: number | null;
-  /** Percent of the 50M/mo graduation trigger. Always a finite number. */
+  /** Percent of the 50M/month hard graduation envelope. */
   readonly percentOfGraduation: number;
-  /** Percent of the 100-writes/min advisory threshold (provider-agnostic). Always a finite number. */
+  /** Percent of the provider-agnostic 100 writes/min advisory. */
   readonly percentOfAdvisory: number;
-  /** Projected USD/month. `0` when fully inside the free tier. `null` when the provider has no $ model (self-hosted/dev). */
-  readonly projectedUsdPerMonth: number | null;
+  /**
+   * Coarse monthly USD band. `$0` means wholly inside a modeled free
+   * tier; `null` means the provider has no dollar model.
+   */
+  readonly projectedUsdBand: ProjectedUsdBand | null;
   readonly withinFreeTier: boolean;
-  readonly provider: ProviderPricing["provider"];
+  readonly provider: ProviderTag;
+  readonly profile: CostProfileTag;
 }
 
+const bandForPositiveUsd = (usd: number): ProjectedUsdBand => {
+  if (usd < 25) {
+    return "<$25";
+  }
+  if (usd < 50) {
+    return "$25-$50";
+  }
+  if (usd < 100) {
+    return "$50-$100";
+  }
+  if (usd < 250) {
+    return "$100-$250";
+  }
+  if (usd < 500) {
+    return "$250-$500";
+  }
+  return "$500+";
+};
+
 /**
- * Project a `writesPerMin` rate (typically from
- * `estimateWritesPerMin`) into a monthly cost trajectory.
- *
- * Returns `null` when `writesPerMin` is non-finite. The caller
- * (inspect) renders no footer in that case.
+ * Project a sampled write rate into monthly operations and a stable
+ * provider-cost band. Exact continuous USD arithmetic remains internal.
+ * Returns `null` when `writesPerMin` is non-finite.
  */
 export const project = (
   writesPerMin: number,
   storedBytes: number,
   pricing: ProviderPricing,
+  profile: CostProfile,
 ): Trajectory | null => {
   if (!Number.isFinite(writesPerMin)) {
     return null;
   }
 
-  // Group the exact month/write-amp multiplier before applying the sampled
-  // floating-point rate. Left-associative multiplication makes the real R2
-  // 1M boundary drift one ULP high and falsely appear billable.
-  const classAPerMonth = writesPerMin * (60 * 24 * 30 * pricing.effectiveWriteAmp);
-
+  // Group the exact month/profile multiplier before applying the sampled
+  // floating-point rate so known free-tier boundaries do not drift one ULP.
+  const classAPerMonth = writesPerMin * (60 * 24 * 30 * profile.effectiveWriteAmp);
   const percentOfGraduation = (classAPerMonth / GRADUATION_CLASS_A_PER_MONTH) * 100;
-  // Advisory is a write-RATE crossing (provider-agnostic), not an absolute
-  // Class A count — so it fires at the same 100 writes/min on R2 and S3
-  // alike, rather than at a lower S3 rate where the rendered cost note
-  // would be wrong. See GRADUATION_ADVISORY_WRITES_PER_MIN.
   const percentOfAdvisory = (writesPerMin / GRADUATION_ADVISORY_WRITES_PER_MIN) * 100;
-
   const percentOfFreeTier =
     pricing.freeClassAPerMonth > 0 ? (classAPerMonth / pricing.freeClassAPerMonth) * 100 : null;
 
@@ -126,17 +133,19 @@ export const project = (
     classAPerMonth <= pricing.freeClassAPerMonth &&
     storedGb <= pricing.freeStorageGb;
 
-  let projectedUsdPerMonth: number | null;
+  let projectedUsdBand: ProjectedUsdBand | null;
   if (Number.isNaN(pricing.usdPerMillionClassA)) {
-    projectedUsdPerMonth = null;
+    projectedUsdBand = null;
   } else if (withinFreeTier) {
-    projectedUsdPerMonth = 0;
+    projectedUsdBand = "$0";
   } else {
     const classAOverage = Math.max(0, classAPerMonth - pricing.freeClassAPerMonth);
     const storageOverage = Math.max(0, storedGb - pricing.freeStorageGb);
-    projectedUsdPerMonth =
+    const estimatedUsdPerMonth =
       (classAOverage / 1_000_000) * pricing.usdPerMillionClassA +
       storageOverage * pricing.usdPerGbMonth;
+    // `$0` is reserved for a projection wholly inside a modeled free tier.
+    projectedUsdBand = bandForPositiveUsd(estimatedUsdPerMonth);
   }
 
   return {
@@ -145,8 +154,9 @@ export const project = (
     percentOfFreeTier,
     percentOfGraduation,
     percentOfAdvisory,
-    projectedUsdPerMonth,
+    projectedUsdBand,
     withinFreeTier,
     provider: pricing.provider,
+    profile: profile.profile,
   };
 };
