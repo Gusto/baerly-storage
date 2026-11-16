@@ -700,8 +700,11 @@ describe("LocalFsStorage — impl-specific", () => {
         expect(err?.code).toBe("InvalidConfig");
         expect(err?.message).toContain("p/index/A.json");
         expect(err?.message).not.toContain("p/index/a.json");
+        expect(err?.message).toMatch(/dev data from an older release/);
+        expect(err?.message).toMatch(/Move the directory aside or delete it/);
         expect(err?.message).toMatch(/baerly admin dump/);
         expect(err?.message).toMatch(/baerly admin restore/);
+        expect(err?.message).toMatch(/collection rows only/);
       }
       // Refusal moves and stamps nothing.
       expect(existsSync(join(root, MARKER))).toBe(false);
