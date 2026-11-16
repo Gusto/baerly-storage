@@ -79,7 +79,7 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
 - **Library reference** — the shared API guidance is installed with the package, in `node_modules/@gusto/baerly-storage/dist/`. Read the matching section before editing storage code:
   - **Typed rows** (binding `config`, `RowOf`, casting an undeclared collection): `API.md#documentdata--row-shape-constraint`. A hand-written row type failing `DocumentData`: `RECIPES.md#type-bookmark-does-not-satisfy-the-constraint-documentdata-ts2344`.
   - **Writing tests**: `API.md`, section `Db.create`. `new MemoryStorage()` is a fresh bucket per test; share one instance across `Db.create` calls for multi-writer tests. `src/notes.test.ts` is the working example.
-  - **Predicates** (object literal vs callback DSL, operators, by-`_id` verbs): `API.md#predicates`.
+  - **Predicates** (object literal vs callback DSL, operators, by-`_id` verbs): `API.md#predicates`. Set membership is `q.in`, never an array in the object form: `RECIPES.md#baerlyerror-codeinvalidconfig--predicate-value-at--is-an-array`.
   - **Indexes**: don't declare them; a read always folds the whole collection. `API.md`, section `defineConfig`.
   - **Schemas** (StandardSchema validators, `SchemaError`): `API.md`, section `defineConfig`.
   - **HTTP wire format** (calling `/v1/*` directly): `API.md#http-wire-format`.

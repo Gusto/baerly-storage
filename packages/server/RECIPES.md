@@ -51,6 +51,14 @@ For a collection declared in `config`, don't cast: pass `config` and name the ro
 
 The generic on `client.collection<N>(name)` is the collection name (constrained to `CollectionNames<typeof config>`), never the row type: don't pass a row type to it.
 
+### `BaerlyError code="InvalidConfig"` — `Predicate value at ... is an array`
+
+**Full message:** `Predicate value at <path> is an array — match nested objects with a sub-predicate or use callback form (q.in(field, values)) for set membership.`
+
+**Cause:** an object-literal `.where({ field: [...] })` received an array. The object form is equality only, and its values are string, number, boolean or a nested object; scalar fields reject an array at compile time, and the runtime throws this error.
+
+**Fix:** for set membership use the callback form, `.where((q) => q.in("status", ["open", "pending"]))`. To match a nested object, pass a sub-predicate (`{ assignee: { team: "platform" } }`).
+
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
 **Cause:** another write won a race this call needed to win, and the losing commit did not land. `retriable` is `true`. A bulk `.where(...).update()` / `.delete()` may have applied earlier rows; re-issuing the call is safe. **Fix:** re-read, re-apply, and retry with bounded backoff. The in-process writer makes one commit attempt and does not retry it (storage adapters retry individual requests); a remote client that sees `retriable: true` should apply its own bounded backoff.
