@@ -16,6 +16,19 @@ export interface TierPolicy {
   axes: readonly Axis[];
 }
 
+/**
+ * How `--write` derives an accumulation bound from a measurement:
+ * `roundUp(measured × (100 + headroomPercent) / 100)` to the next multiple of
+ * `roundBytes`. Integer percent rather than a fraction so the arithmetic is
+ * exact — a float `1.1` would make a bound depend on rounding error.
+ */
+export interface RatchetPolicy {
+  /** Headroom above the measurement, in whole percent. */
+  headroomPercent: number;
+  /** Granularity of the bound; the derived value rounds UP to a multiple. */
+  roundBytes: number;
+}
+
 export interface SnapshotPolicy {
   /**
    * Absolute floor on the delta allowance. Binds only where `pct * baseline`
@@ -26,6 +39,7 @@ export interface SnapshotPolicy {
    */
   floorBytes: number;
   tiers: Record<string, TierPolicy>;
+  ratchet: RatchetPolicy;
 }
 
 export interface SnapshotEntry {
@@ -34,6 +48,18 @@ export interface SnapshotEntry {
   raw?: number;
   gz?: number;
   minGz?: number;
+  /**
+   * Accumulation bound per tier-gated axis. The delta gate re-arms at every
+   * baseline, so many individually-allowed increments can drift without
+   * limit; this bound does not move when they do.
+   *
+   * Machine-maintained in one direction only: `--write` seeds a missing bound
+   * and LOWERS an existing one when a shrink makes `ratchetFor(measured)`
+   * smaller, so wins lock in automatically. It never raises one — growth past
+   * it fails the gate and `--write` refuses, so loosening is a hand edit with
+   * a reason in the commit message.
+   */
+  ratchet?: Partial<Record<Axis, number>>;
   /**
    * Absolute limits. Unlike the delta gate these cannot be regenerated away:
    * `--write` refuses to cross one, so raising it is a deliberate hand edit.
@@ -73,6 +99,24 @@ export type Violation =
       measured: number;
       limit: number;
     }
+  | {
+      kind: "ratchet";
+      entry: string;
+      axis: Axis;
+      bound: number;
+      measured: number;
+      /** `ratchetFor(measured)`: the value a deliberate loosening would set. */
+      raiseTo: number;
+    }
+  | {
+      kind: "stale";
+      entry: string;
+      axis: Axis;
+      bound: number;
+      measured: number;
+      /** `ratchetFor(measured)`: the value `--write` will lower the bound to. */
+      lowerTo: number;
+    }
   | { kind: "ceiling"; entry: string; axis: Axis; ceiling: number; measured: number };
 
 /** Bytes of growth allowed before the delta gate trips. */
@@ -81,12 +125,23 @@ export function deltaLimit(baseline: number, pct: number, floorBytes: number): n
 }
 
 /**
- * A ceiling violation is structural: it cannot be regenerated away, because
- * the number it crossed is a deliberate commitment rather than a measurement.
- * Mirrors the `--write`-blocking structural checks in check-version-matrix.ts.
+ * The accumulation bound `--write` would derive from a measurement. Pure
+ * integer arithmetic, so the same build always seeds the same bytes.
+ */
+export function ratchetFor(measured: number, policy: RatchetPolicy): number {
+  const unit = 100 * policy.roundBytes;
+  return Math.ceil((measured * (100 + policy.headroomPercent)) / unit) * policy.roundBytes;
+}
+
+/**
+ * Violations `--write` refuses to regenerate away. A ceiling is a structural
+ * commitment; a ratchet is the accumulated-growth bound, which only a hand
+ * edit may raise. A `stale` bound is the opposite case — `--write` is
+ * exactly what clears it. Mirrors the `--write`-blocking structural checks in
+ * check-version-matrix.ts.
  */
 export function blocksWrite(v: Violation): boolean {
-  return v.kind === "ceiling";
+  return v.kind === "ceiling" || v.kind === "ratchet";
 }
 
 /**
@@ -124,6 +179,30 @@ export function compareSnapshot(
       const limit = deltaLimit(baseline, tier.pct, snapshot.policy.floorBytes);
       if (current - baseline > limit) {
         violations.push({ kind: "delta", entry, axis, baseline, measured: current, limit });
+      }
+    }
+    for (const axis of tier.axes) {
+      const bound = spec.ratchet?.[axis];
+      const current = now[axis];
+      if (bound === undefined || current === undefined) {
+        continue;
+      }
+      const derived = ratchetFor(current, snapshot.policy.ratchet);
+      if (current > bound) {
+        violations.push({
+          kind: "ratchet",
+          entry,
+          axis,
+          bound,
+          measured: current,
+          raiseTo: derived,
+        });
+      } else if (derived < bound) {
+        // A shrink the snapshot has not banked. Left unwritten, a later
+        // regrowth back to the old size would pass both the delta gate and
+        // this stale bound, so the win would be lost. Failing here is what
+        // makes the lowering automatic rather than optional.
+        violations.push({ kind: "stale", entry, axis, bound, measured: current, lowerTo: derived });
       }
     }
     for (const [axis, ceiling] of Object.entries(spec.hardCeiling ?? {})) {
@@ -205,6 +284,25 @@ export function ungatedAxes(snapshot: Snapshot): UngatedAxis[] {
 }
 
 /**
+ * Tier-gated axes with no committed accumulation bound.
+ *
+ * `compareSnapshot` skips a missing `ratchet` the same way it skips a missing
+ * baseline, so an unbounded axis is only delta-gated and can drift without
+ * limit. `--write` seeds every one of these; every other mode refuses them.
+ */
+export function unratchetedAxes(snapshot: Snapshot): UngatedAxis[] {
+  const out: UngatedAxis[] = [];
+  for (const [entry, spec] of Object.entries(snapshot.entries)) {
+    for (const axis of snapshot.policy.tiers[spec.tier]?.axes ?? []) {
+      if (spec.ratchet?.[axis] === undefined) {
+        out.push({ entry, axis });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * The committed snapshot. Exported so the CLI and the tests gate the same
  * bytes: two call sites resolving the path independently can silently drift
  * onto different files, and the one that reads the wrong file passes.
@@ -254,6 +352,24 @@ export function formatViolation(v: Violation, floorBytes: number): string {
       })`,
       `     Hard ceilings are product commitments, not measurements.`,
       `     Shrink the closure. \`--write\` will NOT clear this.`,
+    ].join("\n");
+  }
+  if (v.kind === "stale") {
+    return [
+      `FAIL ${v.entry} ${axis} ratchet ${v.bound} is stale: ${v.measured} now derives ${v.lowerTo}`,
+      `     This entry shrank. Run \`pnpm bundle-sizes --write\` to lower the ratchet and`,
+      `     commit the result, so regrowing back to the old size cannot pass.`,
+    ].join("\n");
+  }
+  if (v.kind === "ratchet") {
+    return [
+      `FAIL ${v.entry} ${axis} ${v.measured} exceeds RATCHET ${v.bound} (+${v.measured - v.bound})`,
+      `     The ratchet bounds accumulated growth; \`--write\` lowers it but will NOT raise it.`,
+      `     If intended: hand-edit bundle-sizes.json entries["${v.entry}"].ratchet.${v.axis}`,
+      `     to ${v.raiseTo} (the measurement plus standard headroom), then`,
+      `     \`pnpm bundle-sizes --write\`, and say why in the commit message.`,
+      `     Do NOT trim JSDoc, comments, or error text to fit — those ship`,
+      `     un-stripped in raw/gz but vanish under a consumer's minifier.`,
     ].join("\n");
   }
   const pct = (((v.measured - v.baseline) / v.baseline) * 100).toFixed(1);
@@ -311,13 +427,24 @@ export function formatReportLine(entry: string, measured: Measured, spec: Snapsh
  * a `Record<string, unknown>` accumulator would need a double assertion to
  * become a `SnapshotEntry` again and would let the omission through.
  */
+function orderAxes(bounds: Partial<Record<Axis, number>>): Partial<Record<Axis, number>> {
+  const { raw, gz, minGz, ...rest } = bounds;
+  return {
+    ...(raw !== undefined && { raw }),
+    ...(gz !== undefined && { gz }),
+    ...(minGz !== undefined && { minGz }),
+    ...rest,
+  };
+}
+
 function orderEntry(spec: SnapshotEntry): SnapshotEntry {
-  const { tier, raw, gz, minGz, hardCeiling, note, ...rest } = spec;
+  const { tier, raw, gz, minGz, ratchet, hardCeiling, note, ...rest } = spec;
   return {
     tier,
     ...(raw !== undefined && { raw }),
     ...(gz !== undefined && { gz }),
     ...(minGz !== undefined && { minGz }),
+    ...(ratchet !== undefined && { ratchet: orderAxes(ratchet) }),
     ...(hardCeiling !== undefined && { hardCeiling }),
     note,
     // Anything the schema grows later still survives a regeneration.
@@ -326,8 +453,10 @@ function orderEntry(spec: SnapshotEntry): SnapshotEntry {
 }
 
 /**
- * The snapshot as `--write` would commit it: measured axes refreshed,
- * hand-maintained `tier` / `hardCeiling` / `note` carried through untouched.
+ * The snapshot as `--write` would commit it: measured axes refreshed, each
+ * tier-gated axis's `ratchet` seeded if absent and otherwise lowered to
+ * `min(bound, ratchetFor(measured))` — never raised — and hand-maintained
+ * `tier` / `hardCeiling` / `note` carried through untouched.
  *
  * Pure, and split out from the write so the rebaseline contract is testable
  * without a filesystem or an `oxfmt` subprocess. Only axes the entry's tier
@@ -348,6 +477,19 @@ export function nextSnapshot(snapshot: Snapshot, measured: Record<string, Measur
       if (value !== undefined) {
         updated[axis] = value;
       }
+    }
+    const tierAxes = snapshot.policy.tiers[spec.tier]?.axes ?? [];
+    for (const axis of now ? tierAxes : []) {
+      const value = now?.[axis];
+      if (value === undefined) {
+        continue;
+      }
+      const derived = ratchetFor(value, snapshot.policy.ratchet);
+      const committed = spec.ratchet?.[axis];
+      updated.ratchet = {
+        ...updated.ratchet,
+        [axis]: committed === undefined ? derived : Math.min(committed, derived),
+      };
     }
     entries[entry] = orderEntry(updated);
   }
@@ -413,6 +555,19 @@ async function runCli(): Promise<void> {
   // an entry the delta gate silently skips, which is how a hand-added entry
   // gets committed green and grows unbounded until someone regenerates.
   if (!write) {
+    const unbounded = unratchetedAxes(snapshot);
+    if (unbounded.length > 0) {
+      console.error(
+        `FAIL no committed ratchet on a tier-gated axis: ${unbounded
+          .map((u) => `${u.entry} ${AXIS_LABEL[u.axis]}`)
+          .join(", ")}`,
+      );
+      console.error(
+        `     Nothing bounds accumulated growth on these. Run\n` +
+          `     \`pnpm bundle-sizes --write\` to seed them from the current build.`,
+      );
+      process.exit(1);
+    }
     const ungated = ungatedAxes(snapshot);
     if (ungated.length > 0) {
       console.error(
@@ -445,7 +600,7 @@ async function runCli(): Promise<void> {
     if (blocking.length > 0) {
       console.error(blocking.map((v) => formatViolation(v, floorBytes)).join("\n\n"));
       console.error(
-        `\nbundle-sizes: refusing to --write past ${blocking.length} hard-ceiling violation(s).`,
+        `\nbundle-sizes: refusing to --write past ${blocking.length} ratchet or hard-ceiling violation(s).`,
       );
       process.exit(1);
     }
