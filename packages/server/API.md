@@ -388,6 +388,8 @@ That extra options bag is the **only** API difference between `Collection<T>` an
 
 `onWarning(w)` gets server warnings on successful writes; see RECIPES.md, `CapacityExceeded`.
 
+To log, trace or refresh auth on every request, wrap `fetch`; the client already retries (RECIPES.md, "Recipe — wrapping the client `fetch`").
+
 ## Long-poll: `/v1/since`
 
 `GET /v1/since?collection=…&cursor=…` is the long-poll endpoint that streams mutations without WebSockets. The server holds the request open for ~25 s; if new log entries land in that window it flushes them immediately, otherwise it returns an empty batch with the cursor unchanged.
@@ -729,97 +731,6 @@ serve({
 The handle's `fetch` is the documented embedding seam (it's also what the Vite dev middleware and tests consume) — there's no separate `createApp` to reach for. If you don't need a _custom_ probe path, skip all of this and point your platform at the built-in `GET /v1/healthz` (see above).
 
 > **Monorepo note.** `@hono/node-server` (and its `hono` peer) ship as dependencies of the Node adapter, so the `serve` import resolves out of the box in a scaffolded app. In a monorepo that prunes unused peers (e.g. `yarn workspaces focus` in CI), add `@hono/node-server` to the app's own `dependencies` so the import survives the prune.
-
-## Recipe — wrapping the client `fetch`
-
-`createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns. The `Fetcher` type is one line:
-
-```ts
-import { type Fetcher } from "@gusto/baerly-storage/client";
-// type Fetcher = (req: Request) => Promise<Response>;
-```
-
-Wrappers compose as ordinary JavaScript functions: outermost sees the request first and the response last; innermost is closest to the network. Three recipes cover the common cases.
-
-### Hook callbacks (success / error)
-
-```ts
-import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
-
-const withHooks =
-  (
-    next: Fetcher,
-    onSuccess: (req: Request, res: Response) => void,
-    onError: (req: Request, err: unknown) => void,
-  ): Fetcher =>
-  async (req) => {
-    try {
-      const res = await next(req);
-      onSuccess(req, res);
-      return res;
-    } catch (err) {
-      onError(req, err);
-      throw err;
-    }
-  };
-
-const client = createBaerlyClient({
-  baseUrl: "https://api.example.com",
-  fetch: withHooks(
-    globalThis.fetch,
-    (req, res) => log.info({ url: req.url, status: res.status }),
-    (req, err) => log.error({ url: req.url, err }),
-  ),
-});
-```
-
-`onSuccess` fires for **any** HTTP response that completes — 4xx and 5xx included, because those are not thrown exceptions. Branch on `res.ok` if you want "2xx only."
-
-### Retry on transient failures (GET only)
-
-```ts
-const withRetry =
-  (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
-  async (req) => {
-    for (let i = 0; i < max - 1; i++) {
-      const res = await next(req.clone());
-      if (res.ok || res.status < 500 || req.method !== "GET") return res;
-      await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
-    }
-    return next(req);
-  };
-```
-
-Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have succeeded on the server even when the client sees a 5xx (commit fence then network drop). Writes are CAS-guarded so duplicates don't corrupt state — but they may surface as `PreconditionFailed`. The `req.clone()` is required because a `Request` body is a one-shot stream.
-
-### Refresh credentials on 401
-
-```ts
-const withAuthRefresh =
-  (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
-  async (req) => {
-    const res = await next(req.clone());
-    if (res.status !== 401) return res;
-    const token = await refresh();
-    const retried = new Request(req, {
-      headers: new Headers({
-        ...Object.fromEntries(req.headers),
-        Authorization: `Bearer ${token}`,
-      }),
-    });
-    return next(retried);
-  };
-```
-
-If the refreshed call also returns 401, the wrapper returns that response unchanged — no second retry, avoiding an infinite refresh loop on a stale/revoked token. Wire sign-out / re-auth-prompt into the caller, not into this wrapper.
-
-### Long-poll calls (`GET /v1/since`)
-
-The long-poll path routes through the same `Fetcher`. Retry, logging, and auth-refresh wrappers apply uniformly. If a wrapper needs to distinguish long-poll from one-shot reads, inspect `req.url` for `/v1/since`. Most wrappers don't need to.
-
-### Composition order
-
-The outer wrapper sees retries — `withRetry(withLogging(fetch))` logs each attempt; `withLogging(withRetry(fetch))` logs the final outcome once. Pick by what you want to observe.
 
 ## Anti-patterns
 

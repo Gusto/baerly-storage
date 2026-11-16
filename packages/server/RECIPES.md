@@ -140,6 +140,87 @@ Retrying is an explicit at-least-once choice and may repeat logical work: a same
 - `.all()` on a hot path — page or cursor-iterate; `.all()` is for bounded result sets.
 - Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and `.all()`) returns the **whole collection** — there is no default row cap, and auth pins a tenant, not a row owner. Scope non-owner reads in your own route: inject a `where owner_id = <verified id>` predicate and clamp `limit = min(requested ?? MAX, MAX)`. Rejecting `?limit` backfires — it forces the uncapped path. See `docs/guide/auth.md` § Authorization Boundary.
 
+## Recipe — wrapping the client `fetch`
+
+`createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns: logging, tracing, auth refresh. The `Fetcher` type, exported from `@gusto/baerly-storage/client`, is `(req: Request) => Promise<Response>`.
+
+Wrappers compose as ordinary JavaScript functions: outermost sees the request first and the response last; innermost is closest to the network.
+
+### Hook callbacks (success / error)
+
+```ts
+import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
+
+const withHooks =
+  (
+    next: Fetcher,
+    onSuccess: (req: Request, res: Response) => void,
+    onError: (req: Request, err: unknown) => void,
+  ): Fetcher =>
+  async (req) => {
+    try {
+      const res = await next(req);
+      onSuccess(req, res);
+      return res;
+    } catch (err) {
+      onError(req, err);
+      throw err;
+    }
+  };
+
+export const client = createBaerlyClient({
+  baseUrl: "https://api.example.com",
+  fetch: withHooks(
+    (req) => globalThis.fetch(req),
+    (req, res) => console.info({ url: req.url, status: res.status }),
+    (req, err) => console.error({ url: req.url, err }),
+  ),
+});
+```
+
+`onSuccess` fires for **any** HTTP response that completes — 4xx and 5xx included, because those are not thrown exceptions. Branch on `res.ok` if you want "2xx only."
+
+### Retries are built in
+
+Don't add a retry wrapper. The client calls `fetch` once per attempt, so a wrapper that retries multiplies the client's own attempts. The client already makes up to 3 attempts, with jittered backoff or the server's `Retry-After`:
+
+- `GET` requests and auto-ID inserts are resent after a transport failure: a thrown `fetch`, or a 5xx, 408 or 429 response with no error envelope (a proxy or CDN answering for the server). An auto-ID insert keeps its minted `_id`, so a resend replays the first commit instead of adding a row.
+- Every verb is resent after `MaintenancePending` (503), waiting its `retryAfter`.
+- An enveloped `NetworkError` (502) is not resent: the server's storage adapter already retried it.
+
+Other writes (an insert with your own `_id`, `update`, `replace`, `delete`) are sent once on a transport failure, because the first attempt may have committed. Decide at the call site whether to repeat one; an `AmbiguousCommit` needs a re-read first (see [AmbiguousCommit recovery](#ambiguouscommit-recovery)). Pass `opts.signal` to bound how long a call, retries included, may take.
+
+### Refresh credentials on 401
+
+```ts
+import type { Fetcher } from "@gusto/baerly-storage/client";
+
+export const withAuthRefresh =
+  (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
+  async (req) => {
+    const res = await next(req.clone());
+    if (res.status !== 401) return res;
+    const token = await refresh();
+    const retried = new Request(req, {
+      headers: new Headers({
+        ...Object.fromEntries(req.headers),
+        Authorization: `Bearer ${token}`,
+      }),
+    });
+    return next(retried);
+  };
+```
+
+If the refreshed call also returns 401, the wrapper returns that response unchanged — no second retry, avoiding an infinite refresh loop on a stale/revoked token. Wire sign-out / re-auth-prompt into the caller, not into this wrapper. The `req.clone()` is required because a `Request` body is a one-shot stream.
+
+### Long-poll calls (`GET /v1/since`)
+
+The long-poll path routes through the same `Fetcher`. Logging and auth-refresh wrappers apply uniformly. If a wrapper needs to distinguish long-poll from one-shot reads, inspect `req.url` for `/v1/since`. Most wrappers don't need to.
+
+### Composition order
+
+The outer wrapper sees what the inner one does: `withHooks(withAuthRefresh(fetch, refresh), …)` observes only the final response of a refreshed call, while `withAuthRefresh(withHooks(fetch, …), refresh)` observes both the 401 and the retried call. Pick by what you want to observe.
+
 ## Where to look next
 
 - Public API surface: `dist/API.md` (`cat node_modules/@gusto/baerly-storage/dist/API.md`).
