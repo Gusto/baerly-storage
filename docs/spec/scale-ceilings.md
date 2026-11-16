@@ -3,7 +3,7 @@ title: Scale ceilings
 audience: spec
 doc_type: verification
 summary: The single owner of every published scale figure — the workload envelope, the per-host snapshot ceilings C and E, the host support tiers — and where each number comes from.
-last-reviewed: 2026-11-13
+last-reviewed: 2026-11-16
 tags: [capacity, verification, fold, ceilings]
 related: ["../about/graduation.md", "../about/workload-fit.md", "../about/cost-model.md"]
 ---
@@ -566,9 +566,14 @@ line, not a protocol cap. `pnpm bench:collection-fanout`
 ([`bench/collection-fanout.ts`](../../bench/collection-fanout.ts)) measures
 the `admin usage` sweep cost through a counting `Storage` proxy and writes
 [`attachments/collection-fanout-baseline.json`](attachments/collection-fanout-baseline.json):
-the sweep costs ≈ N × (1 LIST + up to 120 GETs per collection), strictly
-linear in N. ~100 is where that sweep cost becomes noticeable, which is
-erosion rather than a cliff.
+the sweep is one tenant-discovery list iterator plus, per collection, one
+`current.json` GET, a bounded live-tail probe and up to 120 trailing log
+GETs, linear in N and independent of retained log history. Discovery
+lists every object under the tenant's `manifests/` prefix, so on a real
+provider its page count (1,000 keys per page) still grows with retained
+objects; the baseline records that as `estimatedPhysicalDiscoverPages`.
+~100 is where the sweep cost becomes noticeable, which is erosion rather
+than a cliff.
 
 Nothing enforces a cap, and the figure is not a code constant — it comes
 from the fan-out bench, not `packages/protocol/src/constants.ts`. The cost

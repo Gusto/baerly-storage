@@ -2,40 +2,37 @@
 /**
  * Collection fan-out cost on MemoryStorage. Seeds N collections under one
  * tenant prefix, then measures via a counting Storage proxy:
- * discoverCollections list cost, per-collection fixed object overhead, and
- * full `admin usage` scan op-count. MEASURES ONLY — no infra.
+ * discoverCollections enumeration cost, per-collection fixed object overhead,
+ * and full `admin usage` scan op-count. MEASURES ONLY — no infra.
  *
  * ## Seed depth
  * Each collection is seeded with LOG_DEPTH log entries (currently 5). This
- * must be ≥ 2 so that `estimateWritesPerMin` exits its early-return branch
- * and actually calls `readCommitTsBatched`, which is where the per-collection
- * GETs happen. With fewer than 2 entries the function returns immediately with
- * NaN and zero GETs, making usageScanGets=0 and the measured cost unrealistically
- * low. True worst-case per-collection scan cost is SAMPLE_SIZE GETs/collection
- * (imported from packages/cli/src/admin/usage.ts); LOG_DEPTH=5 exercises the
- * GET path while keeping the bench fast.
+ * must be ≥ 2 so that `estimateWritesPerMin` reads the sampled log bodies after
+ * its fixed `current.json` read and bounded live-tail probe. With fewer than 2
+ * entries the body-sample GETs are absent, making the measured cost
+ * unrealistically low. The sampler reads at most SAMPLE_SIZE log bodies per
+ * collection; LOG_DEPTH=5 exercises the path while keeping the bench fast.
  *
  * ## Real-storage enumeration
- * MemoryStorage returns all keys in a single list page (no 1000-key pagination
- * limit). The `realStorageDiscoverPages` field corrects for this: on real R2/S3,
- * discovery lists = ceil(totalControlObjects / 1000) where
+ * `discoverCollections` makes one logical list-iterator call. MemoryStorage
+ * returns all keys in a single page, while real providers paginate. The
+ * `estimatedPhysicalDiscoverPages` field corrects for that: on real R2/S3,
+ * discovery pages = ceil(totalControlObjects / 1000) where
  * totalControlObjects = objectsPerCollection × N. This field lets the docs avoid
  * grounding the per-tenant fan-out limit on a MemoryStorage-only number.
  *
  * ## Re-derived collections/tenant guideline
- * The `admin usage` full sweep is an operator-CLI sweep — even ONE active
- * collection's scan (1 LIST + up to SAMPLE_SIZE GETs) exceeds a single
- * CF-free 50-subrequest request. The "1 LIST" assumes the log fits one
- * 1000-key list page; a deep/uncompacted log paginates (ceil(logKeys/1000)
- * pages) on real R2/S3. Its cost is operator latency/$$, growing
- * LINEARLY with N. There is no sharp protocol cliff near ~100; the limit is
- * a SOFT, linear-cost guideline ("erosion, not a cliff"). The ~100 figure is
- * the documented soft fan-out budget: past it, operator sweeps get
+ * The `admin usage` full sweep is an operator-CLI sweep: one logical tenant
+ * discovery iterator, then one `current.json` read, a bounded live-tail probe,
+ * and up to SAMPLE_SIZE trailing log-body GETs per collection. Its sampling
+ * cost is independent of retained log history and grows linearly with N.
+ * There is no sharp protocol cliff near ~100; the limit is a soft linear-cost
+ * guideline ("erosion, not a cliff"). Past it, operator sweeps get
  * proportionally slower/costlier, but nothing in the protocol enforces it.
  *
- * Enumeration (`discoverCollections`) is cheap on real R2/S3 for thousands
- * of collections: ceil(objects×N/1000) LIST pages. With objectsPerCollection=6
- * and N=1000 that is only 6 LIST pages.
+ * Tenant discovery still depends on retained control-object count:
+ * ceil(objects×N/1000) physical LIST pages on real R2/S3. With
+ * objectsPerCollection=6 and N=1000 that is 6 estimated pages.
  *
  * FOLLOW-UP: add an `admin usage` warning when N > 100 that the scan will
  * take proportionally longer.
@@ -55,9 +52,9 @@ const Ns = [10, 100, 500, 1000];
 /**
  * Number of log entries to seed per collection. Must be >= 2 so that
  * `estimateWritesPerMin` exits the `sample.length < 2` early-return and
- * calls `readCommitTsBatched` (the GET path). True worst-case is
- * SAMPLE_SIZE GETs/collection; LOG_DEPTH=5 exercises the GET path while
- * keeping the bench runtime under a few seconds at N=1000.
+ * reads sampled log bodies. At most SAMPLE_SIZE log bodies are fetched per
+ * collection; LOG_DEPTH=5 exercises the path while keeping the bench runtime
+ * under a few seconds at N=1000.
  */
 const LOG_DEPTH = 5;
 
@@ -116,7 +113,7 @@ async function measure(n: number) {
   const counting = wrapCountingStorage(inner);
   counting.reset();
   const names = await discoverCollections(counting.storage, APP, TENANT);
-  const discoverLists = counting.lists;
+  const discoverListIterators = counting.lists;
   counting.reset();
   const findings: { severity: string }[] = [];
   await runUsageScan({ app: APP, tenant: TENANT }, counting.storage, findings as never);
@@ -125,27 +122,32 @@ async function measure(n: number) {
   const totalControlObjects = objectsPerCollection * n;
   // Real R2/S3 paginates at 1000 keys/page; MemoryStorage returns everything
   // in one page. This field shows what discovery would cost on real storage.
-  const realStorageDiscoverPages = Math.ceil(totalControlObjects / 1000);
+  const estimatedPhysicalDiscoverPages = Math.ceil(totalControlObjects / 1000);
+  const usageScanListIterators = counting.lists;
+  const usageScanGets = counting.gets;
   return {
     collections: n,
     discovered: names.length,
     objectsPerCollection,
-    discoverLists,
-    realStorageDiscoverPages,
-    usageScanLists: counting.lists,
-    usageScanGets: counting.gets,
-    usageScanOps: counting.lists + counting.gets,
+    discoverListIterators,
+    estimatedPhysicalDiscoverPages,
+    usageScanListIterators,
+    usageScanGets,
+    usageScanLogicalOps: usageScanListIterators + usageScanGets,
+    estimatedUsageScanPhysicalOps: estimatedPhysicalDiscoverPages + usageScanGets,
   };
 }
 
 async function main() {
   const rows = [];
-  console.log(`worst-case usage-scan cost = N × (1 LIST + ${SAMPLE_SIZE} GETs/collection)`);
+  console.log(
+    `usage scan = 1 tenant discovery iterator + N × (current + bounded tail probe + up to ${SAMPLE_SIZE} sample GETs)`,
+  );
   for (const n of Ns) {
     const r = await measure(n);
     rows.push(r);
     console.log(
-      `N=${r.collections} | objsPerColl=${r.objectsPerCollection} | discoverLists=${r.discoverLists} | realDiscoverPages=${r.realStorageDiscoverPages} | usageScanLists=${r.usageScanLists} | usageScanGets=${r.usageScanGets} | usageScanOps=${r.usageScanOps}`,
+      `N=${r.collections} | objsPerColl=${r.objectsPerCollection} | discoverIterators=${r.discoverListIterators} | estimatedDiscoverPages=${r.estimatedPhysicalDiscoverPages} | usageIterators=${r.usageScanListIterators} | usageGets=${r.usageScanGets} | logicalOps=${r.usageScanLogicalOps} | estimatedPhysicalOps=${r.estimatedUsageScanPhysicalOps}`,
     );
   }
   await writeFile(
