@@ -1,17 +1,11 @@
 /**
- * Bench-side `Storage` factory. Wraps the production `S3HttpStorage`
- * in a `CountingStorage` proxy so the harness can compute Class A /
- * Class B op counts and a per-writer-per-hour Class A rate — the
+ * Bench-side counting `Storage` proxy. `CountingStorage` wraps any
+ * `Storage` so the harness can compute Class A / Class B op counts,
+ * bytes, per-op latency tails and per-prefix attribution — the
  * wire-level analogue of the in-process counting proxy in
  * `tests/integration/maintenance-e2e.test.ts`.
- *
- * Endpoint choices: Minio host port (`:9102`) for the `direct` path,
- * or the Toxiproxy listener (`:9104`) when toxics are installed. Both
- * are baked into `docker-compose.yml` and brought up by
- * `pnpm dev:storage`.
  */
 
-import { AwsClient } from "aws4fetch";
 import {
   type Storage,
   type StorageGetOptions,
@@ -21,21 +15,8 @@ import {
   type StorageListEntry,
   BaerlyError,
 } from "@baerly/protocol";
-import { S3HttpStorage } from "@baerly/adapter-node";
 import { quantileNearestRank } from "./measurement/statistics.ts";
 import type { StorageSnapshot, OpLatencyTail } from "./types.ts";
-
-export interface BenchStorageOpts {
-  /**
-   * `direct` → http://127.0.0.1:9102 (Minio host port from
-   * docker-compose).
-   * `toxiproxy` → http://127.0.0.1:9104 (Toxiproxy listener,
-   * forwarded to minio:9000 by the toxiproxy-config-0 one-shot
-   * service in docker-compose.yml).
-   */
-  readonly via: "direct" | "toxiproxy";
-  readonly bucket: string;
-}
 
 /**
  * Cap on per-op latency samples retained. At 100k samples × 5 verbs ×
@@ -95,7 +76,7 @@ function tailOrUndefined(samples: number[]): OpLatencyTail | undefined {
 }
 
 /**
- * Counting wrapper over `S3HttpStorage`. Tracks Class A operations
+ * Counting wrapper over a `Storage`. Tracks Class A operations
  * (put / delete / list — the S3/R2 mutating-or-enumerating verbs)
  * and Class B (get / head). Used by the harness to compute
  * per-writer Class A op rate per hour and assert the cost-model
@@ -242,7 +223,7 @@ export class CountingStorage implements Storage {
    * Run-JSON shape, `object_store` + `latency_ms.by_op` +
    * `ops_by_prefix` portion. Ticket 54 (load-harness CLI) wraps this
    * inside the run envelope. Nearest-rank percentiles match
-   * `bench/metrics.ts`. Verbs with no samples are omitted from
+   * `quantileNearestRank` in `bench/measurement/statistics.ts`. Verbs with no samples are omitted from
    * `latency_ms.by_op`.
    */
   snapshot(): StorageSnapshot {
@@ -324,48 +305,5 @@ export class CountingStorage implements Storage {
     if (arr.length > MAX_LATENCY_SAMPLES_PER_OP) {
       arr.shift();
     }
-  }
-}
-
-function endpointFor(via: BenchStorageOpts["via"]): string {
-  return via === "direct" ? "http://127.0.0.1:9102" : "http://127.0.0.1:9104";
-}
-
-function makeSigner(): AwsClient {
-  // Credentials match `docker-compose.yml`'s Minio service defaults
-  // (BAERLY_MINIO_ROOT_USER / BAERLY_MINIO_ROOT_PASSWORD). Local only;
-  // never published.
-  return new AwsClient({
-    accessKeyId: "baerly",
-    secretAccessKey: "baerly-local-dev",
-    region: "us-east-1",
-    service: "s3",
-  });
-}
-
-export function buildBenchStorage(opts: BenchStorageOpts): CountingStorage {
-  const signer = makeSigner();
-  const inner = new S3HttpStorage({
-    endpoint: endpointFor(opts.via),
-    bucket: opts.bucket,
-    sign: (req: Request) => signer.sign(req),
-    retries: 0, // bench owns retry policy
-  });
-  return new CountingStorage(inner);
-}
-
-/**
- * Idempotent bucket create. Tolerates 200 / 204 (created) and 409
- * BucketAlreadyOwnedByYou so calling this on every bench invocation
- * is safe.
- */
-export async function ensureBucket(opts: BenchStorageOpts): Promise<void> {
-  const signer = makeSigner();
-  const url = `${endpointFor(opts.via)}/${opts.bucket}`;
-  const signed = await signer.sign(new Request(url, { method: "PUT" }));
-  const res = await fetch(signed);
-  if (res.status !== 200 && res.status !== 204 && res.status !== 409) {
-    const body = await res.text();
-    throw new Error(`bench: bucket create ${url} failed: ${res.status} ${body}`);
   }
 }

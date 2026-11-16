@@ -4,12 +4,9 @@
  * pre-baked tuning profiles (UNBOUNDED — the engine's default — or
  * CLOUDFLARE_FREE_TIER's 50-subrequest budget).
  *
- * Sequential per (tenant, table) — `runMaintenancePass` is safe
- * to run concurrently against disjoint `currentJsonKey`s but
- * contending against the same key is the contention scenario the
- * r2-contention bench measures separately. Keeping this phase
- * sequential avoids confounding the headline number with
- * self-contention.
+ * Sequential per (tenant, table). Concurrent passes against the same
+ * key would contend, so keeping this phase sequential avoids
+ * confounding the headline number with self-contention.
  *
  * Caller is responsible for invoking phases in a valid order; the
  * runner only captures per-phase metrics.
