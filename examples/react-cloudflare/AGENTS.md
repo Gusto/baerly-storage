@@ -338,24 +338,7 @@ export default defineConfig({
 
 <!-- pattern-d:start -->
 
-Maintenance is automatic and write-triggered. No cron, no sidecar, no scheduler, no timer, no lock, no app-config knob — identical on every host. Every write runs a bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling whose default is safe on every tier. A size-ratio threshold means idle buckets pay nothing. Concurrent folds are safe without coordination: the commit is a compare-and-swap, so a fold that loses to a concurrent write is simply discarded and its leftover swept by GC. On Cloudflare the fold is deferred past the response via ctx.waitUntil; everywhere else it runs inline. **Reads are pure** — they never run maintenance, so the published idle-reader cost bound holds.
-
-A bucket maintains itself as long as it takes writes. A bucket served read-only does not auto-compact and pays a small, bounded replay — fine at small scale, a signal to graduate once a collection is large. See docs/spec/scale-ceilings.md for the per-tier envelope and docs/about/graduation.md for the `BAERLY_MAINTENANCE_*` operator env vars (you almost never need them).
-
-Operator opt-in is not required for steady-state operation. To also run maintenance on a schedule (useful for a collection served mostly read-only), call `runScheduledMaintenance` once per collection. `tier` is the `BAERLY_MAINTENANCE_PROFILE` value: `"cf-free"` or `"cf-paid"` caps the pass to fit one Workers invocation on that plan, and `"node"` (the default) is unbounded. Run one collection per Cloudflare invocation: shard the schedule or persist a collection cursor instead of looping tenants or collections.
-
-```ts
-import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
-
-const target = { storage, app, tenant, collection: "notes" };
-const res = await runScheduledMaintenance(target); // Node
-// res: { folded, deferred?: { reason }, gcDeleted, pending }
-await runScheduledMaintenance(target, { tier: "cf-paid" }); // a Workers Paid cron
-```
-
-One whole pass fits an invocation on Workers Free with the R2 binding and on Workers Paid. S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
-
-Node and Cloudflare Paid scheduled passes fold any pending write, so repeated passes drain a low-write collection to zero. Cloudflare Free folds only when at least 20 entries are pending, one 20-entry slice per pass; a remaining tail of 1–19 entries stays unfolded until more writes arrive.
+Maintenance is automatic and write-triggered: nothing to install or schedule, identically on every host, and reads never run it. A scheduled `runScheduledMaintenance` pass is an optional extra for a collection served mostly read-only. The behavior, the call, its per-tier limits and the Workers Free / Paid differences are in `node_modules/@gusto/baerly-storage/dist/RECIPES.md#recipe--scheduled-maintenance`.
 
 <!-- pattern-d:end -->
 
