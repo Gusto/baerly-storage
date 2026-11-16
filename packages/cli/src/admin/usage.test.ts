@@ -20,9 +20,11 @@ import {
   createCurrentJson,
   type CurrentJson,
   MemoryStorage,
+  readCurrentJson,
   type LogEntry,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
+import { compactInternal as compact } from "@baerly/server/_internal/testing";
 import { logStateCurrentJson } from "../../../../tests/fixtures/log-state.ts";
 import { wrapCountingStorage } from "../../../../tests/fixtures/counting-storage.ts";
 import {
@@ -68,7 +70,7 @@ const seedLogEntries = async (
       doc_id: `doc_${seq}`,
       session: "abcdef",
       seq,
-      after: { value: seq },
+      after: { _id: `doc_${seq}`, value: seq },
     };
     await storage.put(`${prefix}/${seq}.json`, new TextEncoder().encode(JSON.stringify(entry)), {
       contentType: "application/json",
@@ -235,7 +237,7 @@ describe("estimateWritesPerMin", () => {
     expect(verdict.message).toContain("sampled 6 entries");
   });
 
-  test("post-compaction sampling never probes below log_seq_start", async () => {
+  test("sampling never reads below the certified delete floor", async () => {
     const inner = new MemoryStorage();
     await seedLogEntries(inner, "x", "y", "z", {
       count: 8,
@@ -245,6 +247,7 @@ describe("estimateWritesPerMin", () => {
     await seedCurrent(inner, "x", "y", "z", {
       snapshot: "manifests/z/snapshot/test.json",
       log_seq_start: 1_000,
+      log_delete_floor: 1_000,
       tail_hint: 1_005,
     });
     const counted = wrapCountingStorage(inner);
@@ -255,6 +258,29 @@ describe("estimateWritesPerMin", () => {
     expect(verdict.message).toContain("sampled 8 entries");
     expect(counted.lists).toBe(0);
     expect(counted.gets).toBeLessThanOrEqual(15);
+  });
+
+  test("a complete compaction preserves the rate from retained log entries", async () => {
+    const storage = new MemoryStorage();
+    await seedLogEntries(storage, "x", "y", "z", { count: 12, windowMinutes: 11 });
+    await seedCurrent(storage, "x", "y", "z", { tail_hint: 12 });
+    const before = await estimateWritesPerMin(storage, "x", "y", "z");
+    expect(before.writesPerMin).toBeCloseTo(1, 2);
+
+    const key = "app/x/tenant/y/manifests/z/current.json";
+    const folded = await compact({ storage, currentJsonKey: key }, { minEntriesToCompact: 1 });
+    expect(folded.entriesFolded).toBe(12);
+    const current = await readCurrentJson(storage, key);
+    expect(current!.json.log_seq_start).toBe(12);
+    expect(current!.json.tail_hint).toBe(12);
+    const counted = wrapCountingStorage(storage);
+
+    const after = await estimateWritesPerMin(counted.storage, "x", "y", "z");
+
+    expect(after.writesPerMin).toBeCloseTo(before.writesPerMin, 2);
+    expect(after.message).toContain("sampled 12 entries");
+    expect(counted.lists).toBe(0);
+    expect(counted.gets).toBe(14);
   });
 
   test("M_SIZE_WRITES_PER_MIN_PER_COLLECTION matches the documented thesis", () => {

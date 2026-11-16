@@ -35,8 +35,8 @@
  * Workerd-side R2 binding.
  *
  * Why GET each sampled entry: the timestamp is the `LogEntry.commit_ts`
- * body field. `current.json` supplies only the live-log floor and a
- * non-authoritative tail lower bound. The shared server tail finder
+ * body field. `current.json` supplies the live and certified delete
+ * floors and a non-authoritative tail lower bound. The shared server tail finder
  * locates the exact end with bounded probes, then the estimator reads
  * at most `SAMPLE_SIZE` bodies by numeric key. It never materializes or
  * sorts the historical log namespace.
@@ -50,6 +50,7 @@
 import { type ArgsDef } from "citty";
 import {
   BaerlyError,
+  certifiedDeleteFloor,
   decodeJsonBytes,
   type LogEntry,
   logObjectKey,
@@ -187,7 +188,7 @@ const readCommitTsBatched = async (
  *
  * Reads current.json, locates the true tail from
  * `max(log_seq_start, tail_hint)`, then reads at most the last
- * `sampleSize` live log entries (default `SAMPLE_SIZE`) for
+ * `sampleSize` retained log entries (default `SAMPLE_SIZE`) for
  * `<app>/<tenant>/<collection>`. It computes
  *   `(observedEntries - 1) / ((maxTs - minTs) / 60_000)`
  * minutes, compares against {@link M_SIZE_WRITES_PER_MIN_PER_COLLECTION},
@@ -229,11 +230,12 @@ export const estimateWritesPerMin = async (
   try {
     const current = await readCurrentJson(storage, currentJsonKey);
     const liveFloor = current === null ? 0 : logSeqStartOf(current.json);
+    const retainedFloor = current === null ? 0 : certifiedDeleteFloor(current.json);
     const probeFloor = current === null ? 0 : Math.max(liveFloor, current.json.tail_hint);
     const tail = await findLogTail(storage, collectionPrefix, probeFloor);
     const boundedSampleSize =
       Number.isFinite(sampleSize) && sampleSize > 0 ? Math.floor(sampleSize) : 0;
-    const sampleStart = Math.max(liveFloor, tail - boundedSampleSize);
+    const sampleStart = Math.max(retainedFloor, tail - boundedSampleSize);
     sample = Array.from({ length: tail - sampleStart }, (_, i) =>
       logObjectKey(collectionPrefix, sampleStart + i),
     );
