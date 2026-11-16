@@ -16,7 +16,7 @@ export {
   probeLogChunk,
   probeLogTail,
 } from "../db-read-seams.ts";
-export { probeTailFrom } from "../log-tail.ts";
+export { findLogTail, probeTailFrom } from "../log-tail.ts";
 export { walkLogRange } from "../log-walk.ts";
 export { validateOrThrow } from "../schema.ts";
 export {

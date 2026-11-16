@@ -10,11 +10,15 @@
  * approaching or exceeding it.
  *
  * The ~100 collections/tenant fan-out guideline is bench-grounded:
- * `admin usage` costs ≈ N × (1 LIST + up to 120 GETs per collection)
- * — strictly linear. See `docs/spec/attachments/collection-fanout-baseline.json`
- * (`pnpm bench:collection-fanout`). Neither the ~100 figure nor the
- * >10 GB/tenant storage line is a code constant here; both are cost
- * signals documented in `docs/about/cost-model.md`.
+ * `admin usage` pays one logical tenant-discovery `Storage.list`
+ * iterator, which a provider may satisfy with multiple physical LIST
+ * pages as the retained manifest namespace grows. Per collection it then
+ * pays one current.json GET, a history-bounded tail probe, and up to 120
+ * sampled log GETs. See
+ * `docs/spec/attachments/collection-fanout-baseline.json` (`pnpm
+ * bench:collection-fanout`). Neither the ~100 figure nor the >10 GB/tenant
+ * storage line is a code constant here; both are cost signals documented
+ * in `docs/about/cost-model.md`.
  *
  * Distinct from `baerly cost` (the per-table, $/month projection):
  * `cost` is a developer-facing trajectory for one table, `usage` is an
@@ -30,14 +34,12 @@
  * wired" finding because the Node CLI cannot consume a
  * Workerd-side R2 binding.
  *
- * Why GET each entry instead of relying on a list-time
- * `Last-Modified`: `StorageListEntry` carries no timestamp — it is
- * `key` + `etag` only — and the cross-backend story stays uniform if
- * we always read `commit_ts` from the `LogEntry` body. (This command
- * declined the field back when it existed, for the same reason; it
- * was removed once GC stopped anchoring on it.) Sample size is
- * bounded (`SAMPLE_SIZE` GETs per collection), so the cost is
- * acceptable for an opt-in operator command.
+ * Why GET each sampled entry: the timestamp is the `LogEntry.commit_ts`
+ * body field. `current.json` supplies only the live-log floor and a
+ * non-authoritative tail lower bound. The shared server tail finder
+ * locates the exact end with bounded probes, then the estimator reads
+ * at most `SAMPLE_SIZE` bodies by numeric key. It never materializes or
+ * sorts the historical log namespace.
  *
  * @see docs/about/thesis.md — M-size ceiling rationale.
  * @see docs/spec/log-entry-shape.md — `LogEntry.commit_ts` contract.
@@ -46,7 +48,16 @@
  */
 
 import { type ArgsDef } from "citty";
-import { BaerlyError, decodeJsonBytes, type LogEntry, type Storage } from "@baerly/protocol";
+import {
+  BaerlyError,
+  decodeJsonBytes,
+  type LogEntry,
+  logObjectKey,
+  logSeqStartOf,
+  readCurrentJson,
+  type Storage,
+} from "@baerly/protocol";
+import { findLogTail } from "@baerly/server/_internal/kernel";
 import { parseBucketUri } from "../bucket-uri.ts";
 import { loadAppConfig } from "../config.ts";
 import { LEGACY_NAME_MIGRATION, legacyIdReport } from "../legacy-names.ts";
@@ -114,47 +125,6 @@ export const collectionPrefixOf = (currentJsonKey: string): string =>
   currentJsonKey.slice(0, currentJsonKey.lastIndexOf("/"));
 
 /**
- * List every log key under `${collectionPrefix}/log/` for one collection.
- * Returns the keys in **chronological order** (oldest seq first).
- *
- * The on-bucket key shape is `<collectionPrefix>/log/<seq>.json` where
- * `<seq>` is a base-10 integer minted by `Writer`. Lex-ascending
- * key order disagrees with numeric seq order past seq=9 (`log/10.json`
- * sorts before `log/2.json`), so we parse the trailing integer out of
- * each key and sort numerically.
- *
- * Caller is expected to slice the trailing N entries — the writes/min
- * estimator only needs the most recent sample.
- */
-// Parse the `<seq>` integer from a `<logPrefix>/<seq>.json` key. Returns
-// `NaN` when the basename isn't a finite integer (the caller filters
-// those out before sorting). Hoisted out of {@link listLogKeysSortedBySeq}
-// so a function instance isn't allocated per list entry.
-const seqOfLogKey = (key: string): number => {
-  const slash = key.lastIndexOf("/");
-  const dot = key.lastIndexOf(".json");
-  if (slash === -1 || dot === -1 || dot <= slash) {
-    return Number.NaN;
-  }
-  const seqStr = key.slice(slash + 1, dot);
-  const n = Number.parseInt(seqStr, 10);
-  return Number.isFinite(n) ? n : Number.NaN;
-};
-
-const listLogKeysSortedBySeq = async (
-  storage: Storage,
-  logPrefix: string,
-): Promise<readonly string[]> => {
-  const keys: string[] = [];
-  for await (const entry of storage.list(logPrefix)) {
-    keys.push(entry.key);
-  }
-  return keys
-    .filter((k) => Number.isFinite(seqOfLogKey(k)))
-    .toSorted((a, b) => seqOfLogKey(a) - seqOfLogKey(b));
-};
-
-/**
  * Fetch a `LogEntry` body at `key`, returning its `commit_ts` parsed
  * to epoch-ms. Returns `null` when the object is missing (a peer may
  * have GC'd it between list and get); throws `BaerlyError` on a
@@ -215,8 +185,10 @@ const readCommitTsBatched = async (
 /**
  * Estimate writes/min for one collection.
  *
- * Reads the last `sampleSize` log entries (default `SAMPLE_SIZE`)
- * for `<app>/<tenant>/<collection>`, computes
+ * Reads current.json, locates the true tail from
+ * `max(log_seq_start, tail_hint)`, then reads at most the last
+ * `sampleSize` live log entries (default `SAMPLE_SIZE`) for
+ * `<app>/<tenant>/<collection>`. It computes
  *   `(observedEntries - 1) / ((maxTs - minTs) / 60_000)`
  * minutes, compares against {@link M_SIZE_WRITES_PER_MIN_PER_COLLECTION},
  * and returns a {@link UsageVerdict}.
@@ -230,7 +202,7 @@ const readCommitTsBatched = async (
  *     gracefully instead of dividing by zero.
  *
  * @throws BaerlyError code="NetworkError" — wrapped storage failure
- *   while listing. The caller (Node doctor backend) catches and
+ *   while locating or reading the sample. The caller (Node doctor backend) catches and
  *   converts to a warning-severity finding so one bad collection
  *   doesn't fail the whole scan.
  * @throws BaerlyError code="InvalidResponse" — a sampled log entry
@@ -239,7 +211,7 @@ const readCommitTsBatched = async (
  *   (e.g. `s3://my-bucket/some/prefix`), pass it here (ending in
  *   `/`). Defaults to `""`. Necessary for prefixed-bucket
  *   correctness; ignored by `runUsageScan` (Node doctor scans the
- *   root). Threaded through by `baerly inspect`.
+ *   root). Threaded through by `baerly cost`.
  */
 export const estimateWritesPerMin = async (
   storage: Storage,
@@ -250,23 +222,31 @@ export const estimateWritesPerMin = async (
 ): Promise<UsageVerdict> => {
   const sampleSize = opts.sampleSize ?? SAMPLE_SIZE;
   const keyPrefix = opts.keyPrefix ?? "";
-  const collectionPrefix = `${keyPrefix}${collectionPrefixOf(currentJsonKeyFor(app, tenant, collection))}`;
-  const logPrefix = `${collectionPrefix}/log/`;
+  const currentJsonKey = `${keyPrefix}${currentJsonKeyFor(app, tenant, collection)}`;
+  const collectionPrefix = collectionPrefixOf(currentJsonKey);
 
-  let allKeys: readonly string[];
+  let sample: readonly string[];
   try {
-    allKeys = await listLogKeysSortedBySeq(storage, logPrefix);
+    const current = await readCurrentJson(storage, currentJsonKey);
+    const liveFloor = current === null ? 0 : logSeqStartOf(current.json);
+    const probeFloor = current === null ? 0 : Math.max(liveFloor, current.json.tail_hint);
+    const tail = await findLogTail(storage, collectionPrefix, probeFloor);
+    const boundedSampleSize =
+      Number.isFinite(sampleSize) && sampleSize > 0 ? Math.floor(sampleSize) : 0;
+    const sampleStart = Math.max(liveFloor, tail - boundedSampleSize);
+    sample = Array.from({ length: tail - sampleStart }, (_, i) =>
+      logObjectKey(collectionPrefix, sampleStart + i),
+    );
   } catch (error) {
     if (error instanceof BaerlyError) {
       throw error;
     }
     throw new BaerlyError(
       "NetworkError",
-      `usage scan: list ${logPrefix} failed: ${(error as Error).message}`,
+      `usage scan: locate trailing sample under ${collectionPrefix}/log/ failed: ${(error as Error).message}`,
       { cause: error },
     );
   }
-  const sample = allKeys.slice(Math.max(0, allKeys.length - sampleSize));
   if (sample.length < 2) {
     return {
       collection,
