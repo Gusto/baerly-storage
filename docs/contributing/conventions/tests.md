@@ -163,6 +163,34 @@ Run it:
   defaults `supportsCAS` false — the router does not yet plumb `If-Match`). The gate does
   not cover the HTTP `If-Match` round-trip.
 
+## Testing a stored format or crash-resume path
+
+A change to what lands in the bucket, or to how a step resumes after a
+crash, needs these checks, each backed by a helper on main:
+
+- **Inject faults per op.**
+  [`tests/fixtures/aborting-storage.ts`](../../../tests/fixtures/aborting-storage.ts)
+  aborts the K-th op or tears a `put` (a truncated body at a valid key),
+  optionally narrowed to a key prefix and op kinds.
+- **Assert a two-branch contract.** After the fault, either the step
+  completed or the reader sees the pre-fault row set
+  ([`tests/integration/maintenance-crash-fuzz.test.ts`](../../../tests/integration/maintenance-crash-fuzz.test.ts)).
+- **Judge the physical image.**
+  [`tests/fixtures/physical-oracle.ts`](../../../tests/fixtures/physical-oracle.ts)
+  compares the key set and per-object SHA-256, permits only enumerated
+  residue, and checks a surfaced error's `code` against the step's
+  allow-list. Teach it a new layout before a test produces one.
+- **Prove the oracle goes red.**
+  [`tests/unit/physical-oracle.test.ts`](../../../tests/unit/physical-oracle.test.ts)
+  feeds it deliberately broken steps and requires a violation for each.
+- **Fuzz the decoder.** Mutate frozen bytes, as
+  [`tests/unit/log-decoder-fuzz.test.ts`](../../../tests/unit/log-decoder-fuzz.test.ts)
+  does over the `fold-stage0` corpus. Bad bytes surface only as a listed
+  `BaerlyError` code, never a `TypeError`, `SyntaxError` or `RangeError`.
+- **GC deletes only keys it fully parses.** An unknown or non-canonical
+  layout is left in place
+  ([`packages/server/src/gc.test.ts`](../../../packages/server/src/gc.test.ts)).
+
 ## Performance
 - `pnpm test` should stay under ~30s on a developer laptop. Prefer
   `await Promise.resolve()` ticks or short intervals (≤50ms) over

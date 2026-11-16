@@ -41,8 +41,8 @@ rejected designs.
 - [006 — Native GCS adapter over the XML API](./006-native-gcs-adapter.md)
   — _live contract in [spec/storage-compatibility.md](../spec/storage-compatibility.md#native-gcs-xml-api)._
 - [007 — Incarnation-scoped chunked snapshot layout](./007-chunked-snapshot-layout.md)
-  — _accepted layout decision; activation is deferred to one atomic format
-  cut, after which the live contract moves into
+  — _candidate layout; not active, and adoption is not decided. If adopted,
+  the live contract moves into
   [spec/sync-protocol.md](../spec/sync-protocol.md)._
 
 ## Decisions that live elsewhere
