@@ -347,9 +347,8 @@ const TIER_OPTIONS: Readonly<Record<string, InternalMaintenanceOptions>> = {
  * `tier` sizes the pass for its host, in the `BAERLY_MAINTENANCE_PROFILE`
  * vocabulary: `"cf-free"` fits one Workers Free invocation through the R2
  * binding, `"cf-paid"` one Workers Paid invocation, and `"node"` (the
- * default) is unbounded. On Workers Free with storage reached over
- * `fetch` (S3 over HTTP) a whole pass does not fit one invocation;
- * alternate `phase: "compact"` and `phase: "gc"` across invocations.
+ * default) is unbounded. S3 storage on Workers needs Paid, with
+ * `"cf-paid"`.
  *
  * Errors propagate; log them from the cron handler. On Cloudflare an
  * uncaught error reaches the Workers dashboard.
@@ -368,12 +367,8 @@ const TIER_OPTIONS: Readonly<Record<string, InternalMaintenanceOptions>> = {
  * const res = await runScheduledMaintenance(target);
  * console.log("folded", res.folded, "deleted", res.gcDeleted);
  *
- * // Cloudflare, R2 binding: one bounded pass per invocation.
+ * // Cloudflare: one bounded pass per invocation.
  * await runScheduledMaintenance(target, { tier: "cf-paid" });
- *
- * // Cloudflare Free, S3 over HTTP: alternate the phases.
- * const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
- * await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
  * ```
  */
 export const runScheduledMaintenance = async (

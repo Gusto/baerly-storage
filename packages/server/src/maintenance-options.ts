@@ -33,9 +33,9 @@ export interface MaintenanceOptions {
    * Run one phase instead of the whole pass. `"compact"` folds the
    * collection's recent writes; `"gc"` deletes data nothing references any
    * more. Omitted, the pass runs both and then retires old log entries.
-   * Use it on Workers Free with storage reached over `fetch` (S3 over
-   * HTTP), where a whole pass does not fit one invocation: alternate the
-   * two phases across invocations.
+   * A whole pass fits one invocation on every supported host; alternate
+   * the two phases across invocations only where it does not (`"cf-free"`
+   * with storage reached over `fetch`).
    */
   readonly phase?: "compact" | "gc";
   /** Forwarded to every storage call. */
@@ -124,10 +124,10 @@ export interface InternalBoundedMaintenanceOptions extends BoundedMaintenanceOpt
    * @internal Fold once the live tail reaches this many entries, whatever
    * the tail-to-snapshot ratio. Absent ⇒ only the ratio trigger (with the
    * `minEntriesToCompact` floor) folds. The Cloudflare adapter passes
-   * `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` on Workers Free when storage is
-   * reached through `fetch` rather than the R2 binding, where a write that
-   * replays a ratio-length tail plus the fold it triggers would not fit in
-   * one request.
+   * `CF_FREE_FETCH_FOLD_AT_TAIL_ENTRIES` under the `cf-free` profile when
+   * storage is reached through `fetch` rather than the R2 binding, where a
+   * write that replays a ratio-length tail plus the fold it triggers would
+   * not fit in one request.
    */
   readonly foldAtTailEntries?: number;
 }
