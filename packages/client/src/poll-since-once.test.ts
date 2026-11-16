@@ -3,14 +3,9 @@ import type { SinceResponse } from "./contract.ts";
 import { pollSinceOnce } from "./poll-since-once.ts";
 import type { RequestContext } from "./request.ts";
 import { MockFetch } from "./testing/index.ts";
+import { jsonResponse } from "../../../tests/fixtures/json-response.ts";
 
 const sinceBody = (): SinceResponse => ({ events: [], next_cursor: "c-2" });
-
-const jsonResponse = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 const ctxFor = (mock: MockFetch): RequestContext => ({
   baseUrl: "http://x",

@@ -7,12 +7,7 @@ import { createBaerlyClient } from "../client.ts";
 import { MockFetch } from "../testing/index.ts";
 import { BaerlyProvider } from "./provider.ts";
 import { useMutation } from "./use-mutation.ts";
-
-const jsonResponse = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+import { jsonResponse } from "../../../../tests/fixtures/json-response.ts";
 
 const makeClient = (mock: MockFetch) =>
   createBaerlyClient({ baseUrl: "http://x", fetch: mock.fetch });

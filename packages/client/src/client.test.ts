@@ -8,17 +8,12 @@ import { withSignal } from "./internal/context.ts";
 import type { BaerlyWarning } from "./request.ts";
 import type { HttpOkEnvelope } from "./contract.ts";
 import { MockFetch } from "./testing/index.ts";
+import { jsonResponse } from "../../../tests/fixtures/json-response.ts";
 
 const okEnvelope = <T>(data: T): HttpOkEnvelope<T> => ({
   data,
   _meta: { manifest_pointer: "mock-cursor", fresh: true },
 });
-
-const jsonResponse = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 describe("createBaerlyClient", () => {
   test("table().where().all() issues GET /v1/c/<name>?where=<wire-json>", async () => {

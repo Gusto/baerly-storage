@@ -7,17 +7,12 @@ import { createBaerlyClient } from "../client.ts";
 import { MockFetch } from "../testing/index.ts";
 import { BaerlyProvider } from "./provider.ts";
 import { useQuery, type UseQueryResult } from "./use-query.ts";
+import { jsonResponse } from "../../../../tests/fixtures/json-response.ts";
 
 const okEnvelope = <T>(data: T) => ({
   data,
   _meta: { manifest_pointer: "mock-cursor", fresh: true },
 });
-
-const jsonResponse = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 const sinceForever = (): Response => {
   // Resolve never — emulate the long-poll holding the connection
