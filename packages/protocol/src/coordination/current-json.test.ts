@@ -164,12 +164,12 @@ describe("readCurrentJson", () => {
     async () => {
       const s = new MemoryStorage();
       await s.put("k", new TextEncoder().encode("{not json"));
-      // L209 StringLiteral→`` kill: message must contain "valid JSON" — the exact phrase
-      // from the error template. The equivalent BlockStatement→{} mutant (L206) produces
+      // readCurrentJson JSON-parse catch message StringLiteral→`` kill: message must contain "valid JSON" — the exact phrase
+      // from the error template. The equivalent BlockStatement→{} mutant (parse catch block) produces
       // "parsed body is not an object" (from assertCurrentJson on undefined), which does
       // NOT contain "valid JSON".
-      // L206 BlockStatement→{}: with empty catch, parsed=undefined → assertCurrentJson(undefined)
-      // throws "not an object". "valid JSON" absent → test FAILS → kills L206.
+      // parse-catch BlockStatement→{}: with empty catch, parsed=undefined → assertCurrentJson(undefined)
+      // throws "not an object". "valid JSON" absent → test FAILS → kills the parse-catch BlockStatement mutant.
       await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
         code: "InvalidResponse",
         message: expect.stringMatching(/valid JSON/),
@@ -614,8 +614,8 @@ const rawSeed = (): Record<string, unknown> => ({
 });
 
 describe("assertCurrentJson — top-level shape guard", () => {
-  // L428: `parsed === null || typeof parsed !== "object"`
-  // Kill the `||`→`&&` LogicalOperator mutant (L428) and the
+  // assertCurrentJson object guard: `parsed === null || typeof parsed !== "object"`
+  // Kill the `||`→`&&` LogicalOperator mutant (the object guard) and the
   // ConditionalExpression→false mutants: need cases for both `null` and
   // non-object non-null to independently exercise each operand.
   plainTest("rejects null body with InvalidResponse", async () => {
@@ -666,8 +666,8 @@ describe("assertCurrentJson — top-level shape guard", () => {
 });
 
 describe("assertCurrentJson — schema_version guard", () => {
-  // L441/444: `r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION`
-  // StringLiteral survivors at L444 are in the error message; kill by
+  // assertCurrentJson schema_version guard: `r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION`
+  // StringLiteral survivors in that error message; kill by
   // asserting the message contains the key string.
   plainTest(
     "rejects schema_version 0 with message naming the required version and the recovery action",
@@ -742,7 +742,7 @@ describe("assertCurrentJson — schema_version guard", () => {
 });
 
 describe("assertCurrentJson — snapshot field", () => {
-  // L447: `typeof r["snapshot"] === "string" || r["snapshot"] === null`
+  // assertCurrentJson snapshot guard: `typeof r["snapshot"] === "string" || r["snapshot"] === null`
   // The EqualityOperator mutant changes `=== null` → `!== null`.
   // The ConditionalExpression mutants negate individual branches.
   // Kill: (a) non-string non-null value must throw, (b) null must pass,
@@ -783,7 +783,7 @@ describe("assertCurrentJson — snapshot field", () => {
 });
 
 describe("assertCurrentJson — tail_hint guard", () => {
-  // L453: three-operand compound:
+  // assertCurrentJson tail_hint guard, three-operand compound:
   //   typeof r["tail_hint"] !== "number" || !Number.isInteger(r["tail_hint"]) || r["tail_hint"] < 0
   // Kill the LogicalOperator (||→&&) mutants: non-number kills `typeof` leg;
   // non-integer kills `isInteger` leg; -1 kills `< 0` leg.
@@ -843,7 +843,7 @@ describe("assertCurrentJson — tail_hint guard", () => {
 });
 
 describe("assertCurrentJson — log_seq_start guard (type/integer/negative)", () => {
-  // L460: same three-operand structure as tail_hint.
+  // assertCurrentJson log_seq_start guard: same three-operand structure as tail_hint.
 
   plainTest("rejects log_seq_start: 'abc' (string, not a number)", async () => {
     const s = new MemoryStorage();
@@ -874,7 +874,7 @@ describe("assertCurrentJson — log_seq_start guard (type/integer/negative)", ()
 });
 
 describe("assertCurrentJson — log_seq_start <= tail_hint guard", () => {
-  // L469: `r["log_seq_start"] > r["tail_hint"]`
+  // assertCurrentJson log_seq_start/tail_hint cross-check: `r["log_seq_start"] > r["tail_hint"]`
   // Kill EqualityOperator (> → >=) mutant: log_seq_start === tail_hint must pass.
   // Already tested in existing suite. Here we add the exact-equal case to
   // distinguish `>` from `>=`.
@@ -899,7 +899,7 @@ describe("assertCurrentJson — log_seq_start <= tail_hint guard", () => {
     });
   });
 
-  // L472: StringLiteral×2 — message must include the actual numeric values of both fields.
+  // cross-check error message StringLiteral×2 — message must include the actual numeric values of both fields.
   // When String(r["log_seq_start"]) or String(r["tail_hint"]) → "", the values vanish.
   // Using distinct values (7, 3) that don't appear in field names kills both mutants.
   plainTest(
@@ -911,7 +911,7 @@ describe("assertCurrentJson — log_seq_start <= tail_hint guard", () => {
       expect(err).toBeInstanceOf(BaerlyError);
       expect((err as BaerlyError).message).toMatch(/log_seq_start/);
       expect((err as BaerlyError).message).toMatch(/tail_hint/);
-      // Actual numeric values present (kills L472 StringLiteral→"" on both String() calls)
+      // Actual numeric values present (kills the cross-check message StringLiteral→"" on both String() calls)
       expect((err as BaerlyError).message).toContain("7");
       expect((err as BaerlyError).message).toContain("3");
     },
@@ -919,7 +919,7 @@ describe("assertCurrentJson — log_seq_start <= tail_hint guard", () => {
 });
 
 describe("assertCurrentJson — writer_fence sub-object guard", () => {
-  // L476: `fence === null || typeof fence !== "object"`
+  // assertCurrentJson writer_fence object guard: `fence === null || typeof fence !== "object"`
   // Kill ConditionalExpression→false: need null writer_fence AND non-object.
   plainTest("rejects writer_fence: null", async () => {
     const s = new MemoryStorage();
@@ -948,7 +948,7 @@ describe("assertCurrentJson — writer_fence sub-object guard", () => {
     });
   });
 
-  // L477: StringLiteral — message must mention "writer_fence missing"
+  // writer_fence-missing error message StringLiteral — message must mention "writer_fence missing"
   plainTest("error message for missing writer_fence mentions 'writer_fence'", async () => {
     const s = new MemoryStorage();
     const { writer_fence: _omit, ...without } = rawSeed();
@@ -957,7 +957,7 @@ describe("assertCurrentJson — writer_fence sub-object guard", () => {
     expect((err as BaerlyError).message).toMatch(/writer_fence/);
   });
 
-  // L480: epoch — three-operand: typeof/isInteger/< 0
+  // writer_fence.epoch guard — three-operand: typeof/isInteger/< 0
   plainTest("rejects writer_fence.epoch: '1' (string)", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: "1", owner: "", claimed_at: "" } });
@@ -1014,7 +1014,7 @@ describe("assertCurrentJson — writer_fence sub-object guard", () => {
     expect(got!.json.writer_fence.epoch).toBe(1);
   });
 
-  // L486: owner — typeof check
+  // writer_fence.owner guard — typeof check
   plainTest("rejects writer_fence.owner: 42 (number, not string)", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", { ...rawSeed(), writer_fence: { epoch: 0, owner: 42, claimed_at: "" } });
@@ -1040,7 +1040,7 @@ describe("assertCurrentJson — writer_fence sub-object guard", () => {
     expect(got!.json.writer_fence.owner).toBe("");
   });
 
-  // L492: claimed_at — typeof check
+  // writer_fence.claimed_at guard — typeof check
   plainTest("rejects writer_fence.claimed_at: 123 (number)", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", {
@@ -1072,7 +1072,7 @@ describe("assertCurrentJson — writer_fence sub-object guard", () => {
     expect(got!.json.writer_fence.claimed_at).toBe("");
   });
 
-  // L498: lease_until — optional field: if present must be string
+  // writer_fence.lease_until guard — optional field: if present must be string
   plainTest("rejects writer_fence.lease_until: 99 (number) when present", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", {
@@ -1121,7 +1121,7 @@ describe("assertCurrentJson — writer_fence sub-object guard", () => {
 });
 
 describe("assertCurrentJson — snapshot_bytes guard", () => {
-  // L515: ConditionalExpression→false survivor — need a non-number/string test
+  // snapshot_bytes type guard ConditionalExpression→false survivor — need a non-number/string test
   plainTest("rejects snapshot_bytes: 'big' (string)", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", { ...rawSeed(), snapshot_bytes: "big" });
@@ -1149,7 +1149,7 @@ describe("assertCurrentJson — snapshot_bytes guard", () => {
     });
   });
 
-  // L517: StringLiteral — error message must mention snapshot_bytes
+  // snapshot_bytes error message StringLiteral — error message must mention snapshot_bytes
   plainTest("error message for bad snapshot_bytes contains 'snapshot_bytes'", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", { ...rawSeed(), snapshot_bytes: -5 });
@@ -1166,7 +1166,7 @@ describe("assertCurrentJson — snapshot_bytes guard", () => {
 });
 
 describe("assertCurrentJson — snapshot_rows guard", () => {
-  // L525: ConditionalExpression→false survivor
+  // snapshot_rows type guard ConditionalExpression→false survivor
   plainTest("rejects snapshot_rows: {} (object, not a number)", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", { ...rawSeed(), snapshot_rows: {} });
@@ -1194,7 +1194,7 @@ describe("assertCurrentJson — snapshot_rows guard", () => {
 });
 
 describe("assertCurrentJson — last_warned_seq guard", () => {
-  // L536: ConditionalExpression→false — the outer `r["last_warned_seq"] !== undefined` check.
+  // last_warned_seq presence guard ConditionalExpression→false — the outer `r["last_warned_seq"] !== undefined` check.
   // Kill by testing that when last_warned_seq IS undefined, the record is accepted.
   plainTest("accepts record with last_warned_seq absent (undefined)", async () => {
     const s = new MemoryStorage();
@@ -1203,7 +1203,7 @@ describe("assertCurrentJson — last_warned_seq guard", () => {
     expect(got!.json.last_warned_seq).toBeUndefined();
   });
 
-  // L538: EqualityOperator → `r["last_warned_seq"] <= 0`
+  // last_warned_seq range check EqualityOperator → `r["last_warned_seq"] <= 0`
   // Kill: last_warned_seq 0 must be accepted (valid boundary); -1 must be rejected.
   plainTest("accepts last_warned_seq: 0 (kills <= 0 mutant)", async () => {
     const s = new MemoryStorage();
@@ -1318,14 +1318,14 @@ describe("assertCurrentJson — log_delete_floor guard", () => {
 });
 
 describe("translateCasError — all three branches", () => {
-  // L556: `e instanceof BaerlyError && e.code === "WriteConflict"`
+  // translateCasError WriteConflict branch: `e instanceof BaerlyError && e.code === "WriteConflict"`
   // Survivors: ConditionalExpression→true/false, EqualityOperator (code!=="WriteConflict"),
   // LogicalOperator (&&→||), StringLiteral in message.
   //
   // To exercise translateCasError from the outside we trigger storage CAS failures
   // via createCurrentJson (if-none-match) and casUpdateCurrentJson (if-match).
   // We also use a custom Storage that throws non-BaerlyError to cover the
-  // third branch (L562).
+  // third branch (the final `return e`).
 
   plainTest(
     "WriteConflict on createCurrentJson comes back as code:WriteConflict with 'CAS lost' annotation",
@@ -1335,12 +1335,12 @@ describe("translateCasError — all three branches", () => {
       const err = await createCurrentJson(s, "k-cas", seedJson()).catch((error: unknown) => error);
       expect(err).toBeInstanceOf(BaerlyError);
       expect((err as BaerlyError).code).toBe("WriteConflict");
-      // L556 ConditionalExpression→false kill: message must contain the "CAS lost" annotation.
+      // translateCasError WriteConflict branch ConditionalExpression→false kill: message must contain the "CAS lost" annotation.
       // When the first branch body is emptied (BlockStatement→{}) or its condition is →false,
       // translateCasError falls to `return e` and the annotation is absent.
-      // L556 StringLiteral→"": "WriteConflict" → "" means the condition is never true;
+      // translateCasError WriteConflict branch StringLiteral→"": "WriteConflict" → "" means the condition is never true;
       // same fallthrough; annotation absent.
-      // Using a distinctive key "k-cas" ensures the message contains it (kills L557 StringLiteral).
+      // Using a distinctive key "k-cas" ensures the message contains it (kills the annotation message StringLiteral).
       expect((err as BaerlyError).message).toMatch(/CAS lost/);
       expect((err as BaerlyError).message).toContain("k-cas");
     },
@@ -1368,7 +1368,7 @@ describe("translateCasError — all three branches", () => {
     "non-BaerlyError from storage comes back as code:InvalidResponse (third branch)",
     async () => {
       // Build a Storage that throws a plain Error on put to exercise the
-      // translateCasError fallthrough branch (L562 in the source).
+      // translateCasError fallthrough branch (the final `return e`).
       const inner = new MemoryStorage();
       const throwing: Storage = {
         get: (k, o) => inner.get(k, o),
@@ -1422,7 +1422,7 @@ describe("translateCasError — all three branches", () => {
 });
 
 describe("createCurrentJson + casUpdateCurrentJson — signal propagation", () => {
-  // L238, L289: ConditionalExpression for `opts?.signal !== undefined`
+  // casUpdate/create `opts?.signal !== undefined` ConditionalExpression for `opts?.signal !== undefined`
   // Kill the ConditionalExpression→true/false mutants: verify that when signal IS
   // provided it is forwarded (exercising the spread arm), and when it is absent
   // the call still succeeds (exercising the omitted arm).
@@ -1481,7 +1481,7 @@ describe("createCurrentJson + casUpdateCurrentJson — signal propagation", () =
 
 describe("createCurrentJson — assertCurrentJson pre-flight", () => {
   // createCurrentJson calls assertCurrentJson(initial, key) before hitting storage.
-  // This kills L206 BlockStatement→{} (the assertCurrentJson call in createCurrentJson).
+  // This kills the BlockStatement→{} mutant (the assertCurrentJson call in createCurrentJson).
   plainTest(
     "createCurrentJson rejects a malformed initial record before touching storage",
     async () => {
@@ -1499,7 +1499,7 @@ describe("createCurrentJson — assertCurrentJson pre-flight", () => {
 
 describe("casUpdateCurrentJson — assertCurrentJson on mutated output", () => {
   // casUpdateCurrentJson also calls assertCurrentJson(next, key) on the mutator's
-  // return value. This kills L276 StringLiteral on the casUpdate do-not-exist path.
+  // return value. This kills the StringLiteral mutant on the casUpdate do-not-exist path.
   plainTest(
     "casUpdateCurrentJson throws InvalidResponse with key in message when key missing",
     async () => {
