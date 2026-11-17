@@ -39,7 +39,7 @@ Exactly one page **owns** each figure — states it with its framing and its pro
 
 ## Build an app
 
-From zero to a working `client.collection().insert()`. **The canonical surface is [`packages/server/API.md`](../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`** — installed consumers read the `dist/` copy, repo contributors read the source; they are the same file, copied into `dist/` at build. It carries the public API, Verifier presets, observability field reference, client-fetch wrapping recipes, and the trusted-fields recipe.
+From zero to a working `client.collection().insert()`. **The canonical surface is [`packages/server/API.md`](../packages/server/API.md), published as `node_modules/@gusto/baerly-storage/dist/API.md`** — installed consumers read the `dist/` copy, repo contributors read the source; they are the same file, copied into `dist/` at build. It carries the public API, Verifier presets, observability field reference, and the trusted-fields recipe; its companion `RECIPES.md` carries error-keyed fixes and the gated-adapter, Node storage-credential and client-fetch wrapping recipes.
 
 - [`guide/cheatsheet.md`](guide/cheatsheet.md) — One-screen quick reference: verbs, modifiers, errors, and the HTTP wire. The thing to show someone in 30 seconds; the full surface stays in API.md.
 - [`packages/server/API.md`](../packages/server/API.md) — the canonical public-API reference (see above).

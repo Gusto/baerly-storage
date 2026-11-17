@@ -10,7 +10,19 @@
 
 ### `BaerlyError code="SchemaError"` on insert/update/replace
 
-**Cause:** the document failed schema validation, OR the body is not valid JSON / contains an array where `DocumentValue` is required, OR a `null` field value (use `.optional()`; `null` in an _update patch_ is the RFC 7386 deletion sentinel, not a storable value). **Fix:** read `error.issues` (each `{ path, message }`) for the offending field path. Declare `_id: z.string()` (required) in your schema — the validator runs on the post-image, so optional `_id` is wrong.
+**Cause:** the document failed schema validation (including a `null` your schema does not allow: `.optional()` rejects `null`), OR the body is not valid JSON / contains an array where `DocumentValue` is required. **Fix:** read `error.issues` (each `{ path, message }`) for the offending field path. Declare `_id: z.string()` (required) in your schema — the validator runs on the post-image, so optional `_id` is wrong.
+
+### `Type 'null' is not assignable to type 'DocumentValue'` (TS2322)
+
+**Cause:** `null` is not part of the typed document contract. `DocumentValue` excludes it, so `insert`, `replace` and `update` reject a `null` value at compile time, even on a collection whose schema uses `.nullable()` (the row type then admits `null`, the write types still do not).
+
+The runtime is more permissive:
+
+- `insert` and `replace` (in-process and over HTTP) store `null` at any depth as written, and reads return it. With a bound schema, the schema decides: `.optional()` rejects `null` with `SchemaError`, `.nullable()` accepts it.
+- In an `update` patch, a `null` member deletes that field (RFC 7386). A patch object written under a field that is absent or not an object is stored as written, nulls included.
+- A predicate cannot match `null`: `.where({ field: null })` throws `InvalidConfig`, and no other value matches a stored `null`.
+
+**Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove a field from a row, `replace` it without that field. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.
 
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
@@ -135,10 +147,236 @@ Retrying is an explicit at-least-once choice and may repeat logical work: a same
 - Don't widen branded types (`UUID`, `ContentVersionId`) with `as string`.
 - Don't put `SHARED_SECRET` in the SPA bundle — it is server-to-server only.
 - Don't mutate `VerifierResult.tenantPrefix` between the verifier and `Db.create` — the dispatcher pins the tenant from the verifier's return.
-- `z.string().nullable()` in a schema — `DocumentValue` excludes `null`.
+- `z.string().nullable()` in a schema: the runtime stores the `null`, but the typed write contract excludes it (`DocumentValue` has no `null`). Use `.optional()`; see the TS2322 entry above.
 - Raw SQL / `WHERE` clauses / hand-built query AST — the only query surface is the `.where(...)` method chain.
-- `.all()` on a hot path — page or cursor-iterate; `.all()` is for bounded result sets.
+- Paging or cursor-iterating `.all()`: there is no offset, page or cursor API. Bound every read instead: scope it with `.where(...)` and cap it with `.limit(n)` (plus `.order(...)` for a stable top N). Each read still folds the whole collection, so a limit caps the rows returned, not the work done. Under `baerlyWorker`, a read that needs more work than one request allows is refused with `CapacityExceeded` (see above); other hosts do not bound reads.
 - Relying on baerly to cap or scope a read. `GET /v1/c/:collection` (and `.all()`) returns the **whole collection** — there is no default row cap, and auth pins a tenant, not a row owner. Scope non-owner reads in your own route: inject a `where owner_id = <verified id>` predicate and clamp `limit = min(requested ?? MAX, MAX)`. Rejecting `?limit` backfires — it forces the uncapped path. See `docs/guide/auth.md` § Authorization Boundary.
+
+## Recipe — authoring a gated adapter
+
+Use this shape to serve the `/v1/*` API from your own server, under your own path, behind your own policy: `createRouter` from `@gusto/baerly-storage/http` does the routing, and your code does everything in front of it. `createRouter` has no auth seam. It serves every request it receives as the tenant of the `Db` you hand it, so the order is fixed:
+
+1. Authenticate first, with a preset `Verifier` from `@gusto/baerly-storage/auth` or your own.
+2. Take the tenant from the verified identity (`tenantPrefix`), never from the URL, a header or the body.
+3. Apply your own gate (roles, collection allow-lists) before any `Db` work.
+4. Build a fresh `Db` per request with `Db.create({ storage, app, tenant, config })`.
+5. Strip your mount prefix: the router matches `/v1/...` paths.
+
+```ts
+// src/server/db-route.ts — serves /db/v1/* behind a JWT and a role check.
+import { BaerlyError, Db } from "@gusto/baerly-storage";
+import { bearerJwt } from "@gusto/baerly-storage/auth";
+import { createRouter, mapError } from "@gusto/baerly-storage/http";
+import { resolveStorageFromEnv } from "@gusto/baerly-storage/node";
+import config from "../../baerly.config.ts";
+
+const PREFIX = "/db";
+const { storage } = resolveStorageFromEnv();
+const verifier = bearerJwt({
+  jwks: "https://login.example.com/.well-known/jwks.json",
+  issuer: "https://login.example.com/",
+  audience: "https://api.example.com/",
+});
+
+export async function handleDb(req: Request): Promise<Response> {
+  try {
+    const verified = await verifier(req); // (1) authenticate first
+    if (verified === null) throw new BaerlyError("Unauthorized", "Missing or invalid token");
+    const roles = (verified.identity as { roles?: unknown }).roles; // unverified shape
+    if (req.method !== "GET" && !(Array.isArray(roles) && roles.includes("editor"))) {
+      throw new BaerlyError("AccessDenied", "Writes need the editor role"); // (3) → 403
+    }
+    const db = Db.create({ storage, app: config.app, tenant: verified.tenantPrefix, config }); // (2, 4)
+    const url = new URL(req.url);
+    url.pathname = url.pathname.slice(PREFIX.length); // (5) /db/v1/c/notes → /v1/c/notes
+    return await createRouter({ db }).fetch(new Request(url, req));
+  } catch (err) {
+    const { status, envelope } = mapError(err); // verifier and Db.create throws
+    return Response.json(envelope, { status });
+  }
+}
+```
+
+Dispatch only `/db/*` requests to `handleDb`. The router maps its own errors to the wire envelope (with `Retry-After` on `MaintenancePending`); the `catch` covers what runs before it. `mapError` sends `AccessDenied` with a generic message. On Workers, build the storage inside `fetch` with `r2BindingStorage(env.BUCKET)` instead of `resolveStorageFromEnv()`. Authentication picks a tenant, not a row owner; scope reads in the gate too (see [Anti-patterns](#anti-patterns-compile-clean-but-wrong), "Relying on baerly to cap or scope a read").
+
+**What the stock adapters add.** `baerlyWorker` and `baerlyNode` do more than run the verifier: they serve `/v1/healthz` and `/v1/spec`, emit the canonical log line, and select the host's maintenance profile. A bare `createRouter` still runs write-tick maintenance on writes, but under the default profile, the smallest one, on every host: its fold ceilings are the Workers Free ones, so a collection refuses growth with `CapacityExceeded` sooner than under `baerlyNode`. It does not read the operator's maintenance settings, and on Workers it folds before the response rather than in `ctx.waitUntil`, and neither budgets storage calls against the invocation's subrequest limit nor bounds reads. When you need that behavior, keep the stock adapter and gate in front of it: pass your policy as its `verifier`, or check the request and strip your prefix before delegating, to `baerlyNode(...).fetch(req)` on Node (see API.md, "Recipe — custom routes in front of `baerlyNode`") or `baerlyWorker(...).fetch(req, env, ctx)` on Workers (see API.md, "Recipe — server-stamped trusted fields").
+
+## Recipe — storage credentials on Node
+
+The Node storage factories (`s3Storage`, `r2Storage`, `minioStorage`, `gcsStorage` from `@gusto/baerly-storage/node`) take one `credentials` field: either a static `Credentials` object or a `CredentialsProvider`, an async function returning one. On Workers, use the R2 binding (`r2BindingStorage(env.BUCKET)`) instead; it needs no credentials.
+
+```ts
+type Credentials = {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly sessionToken?: string;
+  readonly expiration?: Date; // absent ⇒ static
+};
+type CredentialsProvider = () => Promise<Credentials>;
+```
+
+`gcsStorage` signs GOOG4-HMAC-SHA256 with a GCS HMAC key (Cloud Console → Cloud Storage → Settings → Interoperability): pass the access ID as `accessKeyId` and the secret as `secretAccessKey`. Service-account keys, OAuth and ADC are not supported.
+
+### Static credentials
+
+```ts
+import { s3Storage } from "@gusto/baerly-storage/node";
+
+export const storage = s3Storage({
+  region: process.env["AWS_REGION"] ?? "us-east-1",
+  bucket: process.env["BUCKET"]!,
+  credentials: {
+    accessKeyId: process.env["AWS_ACCESS_KEY_ID"]!,
+    secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"]!,
+  },
+});
+```
+
+`resolveStorageFromEnv()` builds the same thing from `BUCKET` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (plus `R2_ACCOUNT_ID` for R2); use a factory directly when you need a provider below.
+
+### Expiration and refresh
+
+A provider is called on the first signed request. The signer caches what it returns until five minutes before `expiration`, then calls the provider again; concurrent requests share one in-flight call, and a rejected call is retried on the next request. A result without `expiration` is cached for the life of the storage handle, so a provider of rotating credentials must return the credentials' real `expiration` on every result; otherwise storage requests start failing once the first credentials expire.
+
+### EKS: `fromEks()`
+
+```ts
+import { fromEks, s3Storage } from "@gusto/baerly-storage/node";
+
+export const storage = s3Storage({
+  region: process.env["AWS_REGION"] ?? "us-east-1",
+  bucket: process.env["BUCKET"]!,
+  credentials: fromEks(),
+});
+```
+
+`fromEks()` checks the environment on every call: EKS Pod Identity when `AWS_CONTAINER_CREDENTIALS_FULL_URI` is set (it also reads the token file named by `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`), else IRSA when `AWS_WEB_IDENTITY_TOKEN_FILE` is set (it also needs `AWS_ROLE_ARN`, exchanges the token with STS `AssumeRoleWithWebIdentity`, and honors `AWS_ROLE_SESSION_NAME` and `AWS_REGION` / `AWS_DEFAULT_REGION`), else it throws `InvalidConfig`. To pin one mechanism, use `fromEksPodIdentity()` or `fromWebIdentity()` from the same subpath. All three return `expiration`, so refresh is automatic.
+
+### Your own provider
+
+```ts
+import { type CredentialsProvider, s3Storage } from "@gusto/baerly-storage/node";
+
+// Stand-in for your secrets store; it must report when the credentials expire.
+declare function fetchFromVault(): Promise<{
+  id: string;
+  secret: string;
+  token: string;
+  expiresAt: string;
+}>;
+
+const fromVault: CredentialsProvider = async () => {
+  const s = await fetchFromVault();
+  return {
+    accessKeyId: s.id,
+    secretAccessKey: s.secret,
+    sessionToken: s.token,
+    expiration: new Date(s.expiresAt),
+  };
+};
+
+export const storage = s3Storage({
+  region: "us-east-1",
+  bucket: "my-bucket",
+  credentials: fromVault,
+});
+```
+
+### AWS SDK credential providers
+
+The `Credentials` shape matches the AWS SDK's `AwsCredentialIdentity`, so any provider from `@aws-sdk/credential-providers` (ECS task roles, EC2 instance metadata, SSO, `~/.aws/config` profiles, the default Node chain) passes through unchanged, `expiration` included. baerly-storage does not depend on the AWS SDK; add `@aws-sdk/credential-providers` to your app when you need one.
+
+```ts
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
+import { s3Storage } from "@gusto/baerly-storage/node";
+
+export const storage = s3Storage({
+  region: process.env["AWS_REGION"] ?? "us-east-1",
+  bucket: process.env["BUCKET"]!,
+  credentials: fromNodeProviderChain(),
+});
+```
+
+## Recipe — wrapping the client `fetch`
+
+`createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns: logging, tracing, auth refresh. The `Fetcher` type, exported from `@gusto/baerly-storage/client`, is `(req: Request) => Promise<Response>`.
+
+Wrappers compose as ordinary JavaScript functions: outermost sees the request first and the response last; innermost is closest to the network.
+
+### Hook callbacks (success / error)
+
+```ts
+import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
+
+const withHooks =
+  (
+    next: Fetcher,
+    onSuccess: (req: Request, res: Response) => void,
+    onError: (req: Request, err: unknown) => void,
+  ): Fetcher =>
+  async (req) => {
+    try {
+      const res = await next(req);
+      onSuccess(req, res);
+      return res;
+    } catch (err) {
+      onError(req, err);
+      throw err;
+    }
+  };
+
+export const client = createBaerlyClient({
+  baseUrl: "https://api.example.com",
+  fetch: withHooks(
+    (req) => globalThis.fetch(req),
+    (req, res) => console.info({ url: req.url, status: res.status }),
+    (req, err) => console.error({ url: req.url, err }),
+  ),
+});
+```
+
+`onSuccess` fires for **any** HTTP response that completes — 4xx and 5xx included, because those are not thrown exceptions. Branch on `res.ok` if you want "2xx only."
+
+### Retries are built in
+
+Don't add a retry wrapper. The client calls `fetch` once per attempt, so a wrapper that retries multiplies the client's own attempts. The client already makes up to 3 attempts, with jittered backoff or the server's `Retry-After`:
+
+- `GET` requests and auto-ID inserts are resent after a transport failure: a thrown `fetch`, or a 5xx, 408 or 429 response with no error envelope (a proxy or CDN answering for the server). An auto-ID insert keeps its minted `_id`, so a resend replays the first commit instead of adding a row.
+- Every verb is resent after `MaintenancePending` (503), waiting its `retryAfter`.
+- An enveloped `NetworkError` (502) is not resent: the server's storage adapter already retried it.
+
+Other writes (an insert with your own `_id`, `update`, `replace`, `delete`) are sent once on a transport failure, because the first attempt may have committed. Decide at the call site whether to repeat one; an `AmbiguousCommit` needs a re-read first (see [AmbiguousCommit recovery](#ambiguouscommit-recovery)). Pass `opts.signal` to bound how long a call, retries included, may take.
+
+### Refresh credentials on 401
+
+```ts
+import type { Fetcher } from "@gusto/baerly-storage/client";
+
+export const withAuthRefresh =
+  (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
+  async (req) => {
+    const res = await next(req.clone());
+    if (res.status !== 401) return res;
+    const token = await refresh();
+    const retried = new Request(req, {
+      headers: new Headers({
+        ...Object.fromEntries(req.headers),
+        Authorization: `Bearer ${token}`,
+      }),
+    });
+    return next(retried);
+  };
+```
+
+If the refreshed call also returns 401, the wrapper returns that response unchanged — no second retry, avoiding an infinite refresh loop on a stale/revoked token. Wire sign-out / re-auth-prompt into the caller, not into this wrapper. The `req.clone()` is required because a `Request` body is a one-shot stream.
+
+### Long-poll calls (`GET /v1/since`)
+
+The long-poll path routes through the same `Fetcher`. Logging and auth-refresh wrappers apply uniformly. If a wrapper needs to distinguish long-poll from one-shot reads, inspect `req.url` for `/v1/since`. Most wrappers don't need to.
+
+### Composition order
+
+The outer wrapper sees what the inner one does: `withHooks(withAuthRefresh(fetch, refresh), …)` observes only the final response of a refreshed call, while `withAuthRefresh(withHooks(fetch, …), refresh)` observes both the 401 and the retried call. Pick by what you want to observe.
 
 ## Where to look next
 

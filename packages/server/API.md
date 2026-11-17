@@ -36,7 +36,7 @@ import { defineConfig, type RowOf } from "@gusto/baerly-storage/config";
 //   so `baerly.config.ts` siblings (e.g. `types.ts`) can import the inferred
 //   row type without reaching into the server barrel.
 
-// HTTP helpers — for embed-by-hand routers that don't mount `createRouter`
+// HTTP router + error mapping — custom adapters and embed-by-hand routes
 import { createRouter, mapError } from "@gusto/baerly-storage/http";
 
 // Browser / Node client (HTTP)
@@ -238,7 +238,7 @@ await db.collection("tickets").where({ status: "closed" }).delete();
 
 Every row type must satisfy `{ [k: string]: DocumentValue }` where `DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
 
-Note: `null` is intentionally NOT a valid stored value. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel; allowing it as a stored value would collapse "this field is null" with "delete this field". Use `.optional()` in your schema for absent values.
+Note: `null` is not part of the typed contract. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel, so a stored `null` would collapse "this field is null" with "delete this field". Use `.optional()` in your schema for absent values. The runtime still stores a `null` that reaches `insert` / `replace` (RECIPES.md, TS2322).
 
 Two ways to get a typed row:
 
@@ -324,6 +324,8 @@ app.post("/notes", async (c) => {
 
 `mapError` accepts any thrown value. Caller-facing codes (`SchemaError`, `NotFound`, `PayloadTooLarge`, `CapacityExceeded`, `AlreadyExists`, predicate `InvalidConfig`) keep their message. Diagnostics (`Internal`, `NetworkError`, `InvalidResponse`, storage `AccessDenied` / `InvalidConfig`, `WriteConflict`) keep code/status/`retriable` with a generic wire message; the full error goes to observability. Other throws become `500 Internal`, message redacted. The status/envelope shape is locked.
 
+To serve the whole `/v1/*` API from your own server behind your own auth, gate and mount path, see RECIPES.md, "Recipe — authoring a gated adapter".
+
 ## `defineConfig({ app, tenant, target, collections })`
 
 Scaffold-aware: lives at `@gusto/baerly-storage/config`. Holds both deploy metadata (`app`, `tenant`, `target`, `domain`, `cloudflareAccess`, `requiredSecrets`, `observability`) AND the runtime schema map.
@@ -355,7 +357,7 @@ Schemas: any [StandardSchema v1](https://standardschema.dev) validator (Zod 3.24
 
 **Author `_id` as required, not `.optional()`.** The validator runs on the post-image — by the time it fires, the server has already filled in a UUIDv7 `_id` for inserts that omit it, so every row the validator sees has `_id` present. Declaring `_id: z.string()` (required) matches that runtime invariant. `Collection<T>.insert` still accepts a doc without `_id` (the public signature is `insert(doc: Partial<T> & DocumentData)`), so authoring `_id` as required does not break the "omit and let the server mint it" path. The win is on the read side: `db.collection("tickets").all()` is typed `Ticket[]` with `_id: string` (required), so route handlers and response schemas don't need a parallel "\_id-required" row type.
 
-`_id` is server-minted (UUIDv7, sorts by mint time) — there is no exported id generator, and minting one client-side is unsupported. For a write that must reference its own id, write the parent first and read back the `_id` the server returns; design cross-collection writes parent-first with cleanup, not by pre-minting ids.
+An insert that omits `_id` gets a minted UUIDv7 (sorts by mint time); there is no exported id generator. In-process `insert` mints in the kernel. `createBaerlyClient` mints in the SDK and sends `mintedId`, so its resends replay. A raw-HTTP `POST` without `doc._id` is minted by the server; resending it adds a second row. To reference a new row's id, write the parent first and use the returned `_id`; design cross-collection writes parent-first with cleanup.
 
 Do not declare `indexes`: they are validated at `Db.create` but never speed up or change a read, which folds the whole snapshot and log, and change no storage call a write makes.
 
@@ -387,6 +389,8 @@ await client.collection("tickets").all({ signal: ac.signal });
 That extra options bag is the **only** API difference between `Collection<T>` and `ClientCollection<T>`. Same modifiers, same terminals, same predicates.
 
 `onWarning(w)` gets server warnings on successful writes; see RECIPES.md, `CapacityExceeded`.
+
+To log, trace or refresh auth on every request, wrap `fetch`; the client already retries (RECIPES.md, "Recipe — wrapping the client `fetch`").
 
 ## Long-poll: `/v1/since`
 
@@ -546,7 +550,7 @@ baerlyNode({
 
 **Local dev (`wrangler dev`, no Vite).** Declare `auth: "none"` in `baerly.config.ts` for the dev posture — the adapter synthesizes a verifier that pins every request to `config.tenant` without consulting the `Authorization` header. Swap to `auth: "shared-secret"` (or pass a custom `Verifier` on the factory) when you're ready to gate by wire credentials. Production CF Worker recipes layer CF Access in front of the Worker route; the verifier reads the resulting JWT:
 
-**`auth` only gates the kernel's HTTP router.** `auth: "none"` / `"shared-secret"` is read by `baerlyWorker` / `baerlyNode` / the underlying `createRouter` — it controls who can hit `/v1/*`. If you use `Db` directly (no `createRouter`, no `baerlyWorker`/`baerlyNode`, e.g. server-internal jobs or your own Hono router), `auth` is inert: every `Db.create` callsite already carries an explicit `tenant:`, and your handler's own auth layer decides who reaches the call. Set `auth: "none"` in the config to silence the typecheck requirement in that case.
+**`auth` is enforced only by `baerlyWorker` / `baerlyNode`** (the dev Vite plugin and `baerly doctor` also read it). They resolve the verifier (from `auth`, or the `verifier:` override) and run it before building the per-request `Db` and router. `createRouter` has no auth seam: it serves every request it receives as its `Db`'s tenant. If you call `Db` or `createRouter` yourself (server-internal jobs, your own router), `auth` is inert and your code must authenticate and pick the tenant; set `auth: "none"` to satisfy the required field.
 
 ```ts
 // baerly.config.ts
@@ -565,7 +569,7 @@ import config from "../../baerly.config.ts";
 export default baerlyWorker(() => ({ config }));
 ```
 
-`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from `@gusto/baerly-storage/node` are re-exports of one factory family — same shape (bucket + credentials), all hide their request signer (SigV4 for S3/R2/MinIO, GOOG4-HMAC for GCS) and XML parsing behind the package boundary.
+`s3Storage` / `r2Storage` / `minioStorage` / `gcsStorage` from `@gusto/baerly-storage/node` are re-exports of one factory family — same shape (bucket + credentials), all hide their request signer (SigV4 for S3/R2/MinIO, GOOG4-HMAC for GCS) and XML parsing behind the package boundary. `credentials` takes static keys or an async provider (EKS, expiring, AWS SDK): RECIPES.md, "Recipe — storage credentials on Node".
 
 ### Verifier presets
 
@@ -701,7 +705,7 @@ export default {
 
 The client reads via the normal `GET /v1/c/messages` route and tails via `GET /v1/since?collection=messages&cursor=…` — both still served by `inner`. Only writes go through `/api/messages`. Reads stay uncapped and tenant-wide — scope and clamp them in your route too (see RECIPES.md).
 
-**Known limitations of this recipe.** The custom-route `Db.create` is a second instance — it doesn't share `baerlyWorker`'s `observableStorage(...)` wrapping (so custom-route writes don't land in the canonical-line storage counters). Worker point reads always reach storage and see direct SDK writes. For small chat-shaped apps the observability gap is being tracked as a follow-up. If you also need PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for each verb.
+**Known limitations of this recipe.** The custom-route `Db.create` runs outside `baerlyWorker`'s request handling: its writes don't land in the canonical-line storage counters, run write-tick maintenance before the response instead of in `ctx.waitUntil`, and aren't budgeted against the subrequest limit (RECIPES.md, gated adapter). Worker reads always reach storage, so they see these writes. If you also need PATCH/PUT/DELETE on the same collection, repeat steps (1) and (2) for each verb.
 
 ## Recipe — custom routes in front of `baerlyNode`
 
@@ -729,97 +733,6 @@ serve({
 The handle's `fetch` is the documented embedding seam (it's also what the Vite dev middleware and tests consume) — there's no separate `createApp` to reach for. If you don't need a _custom_ probe path, skip all of this and point your platform at the built-in `GET /v1/healthz` (see above).
 
 > **Monorepo note.** `@hono/node-server` (and its `hono` peer) ship as dependencies of the Node adapter, so the `serve` import resolves out of the box in a scaffolded app. In a monorepo that prunes unused peers (e.g. `yarn workspaces focus` in CI), add `@hono/node-server` to the app's own `dependencies` so the import survives the prune.
-
-## Recipe — wrapping the client `fetch`
-
-`createBaerlyClient({ fetch: customFetcher })` is the one composable seam for cross-cutting HTTP concerns. The `Fetcher` type is one line:
-
-```ts
-import { type Fetcher } from "@gusto/baerly-storage/client";
-// type Fetcher = (req: Request) => Promise<Response>;
-```
-
-Wrappers compose as ordinary JavaScript functions: outermost sees the request first and the response last; innermost is closest to the network. Three recipes cover the common cases.
-
-### Hook callbacks (success / error)
-
-```ts
-import { createBaerlyClient, type Fetcher } from "@gusto/baerly-storage/client";
-
-const withHooks =
-  (
-    next: Fetcher,
-    onSuccess: (req: Request, res: Response) => void,
-    onError: (req: Request, err: unknown) => void,
-  ): Fetcher =>
-  async (req) => {
-    try {
-      const res = await next(req);
-      onSuccess(req, res);
-      return res;
-    } catch (err) {
-      onError(req, err);
-      throw err;
-    }
-  };
-
-const client = createBaerlyClient({
-  baseUrl: "https://api.example.com",
-  fetch: withHooks(
-    globalThis.fetch,
-    (req, res) => log.info({ url: req.url, status: res.status }),
-    (req, err) => log.error({ url: req.url, err }),
-  ),
-});
-```
-
-`onSuccess` fires for **any** HTTP response that completes — 4xx and 5xx included, because those are not thrown exceptions. Branch on `res.ok` if you want "2xx only."
-
-### Retry on transient failures (GET only)
-
-```ts
-const withRetry =
-  (next: Fetcher, max = 3, baseMs = 100): Fetcher =>
-  async (req) => {
-    for (let i = 0; i < max - 1; i++) {
-      const res = await next(req.clone());
-      if (res.ok || res.status < 500 || req.method !== "GET") return res;
-      await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
-    }
-    return next(req);
-  };
-```
-
-Only retry idempotent reads. `POST` / `PATCH` / `DELETE` may have succeeded on the server even when the client sees a 5xx (commit fence then network drop). Writes are CAS-guarded so duplicates don't corrupt state — but they may surface as `PreconditionFailed`. The `req.clone()` is required because a `Request` body is a one-shot stream.
-
-### Refresh credentials on 401
-
-```ts
-const withAuthRefresh =
-  (next: Fetcher, refresh: () => Promise<string>): Fetcher =>
-  async (req) => {
-    const res = await next(req.clone());
-    if (res.status !== 401) return res;
-    const token = await refresh();
-    const retried = new Request(req, {
-      headers: new Headers({
-        ...Object.fromEntries(req.headers),
-        Authorization: `Bearer ${token}`,
-      }),
-    });
-    return next(retried);
-  };
-```
-
-If the refreshed call also returns 401, the wrapper returns that response unchanged — no second retry, avoiding an infinite refresh loop on a stale/revoked token. Wire sign-out / re-auth-prompt into the caller, not into this wrapper.
-
-### Long-poll calls (`GET /v1/since`)
-
-The long-poll path routes through the same `Fetcher`. Retry, logging, and auth-refresh wrappers apply uniformly. If a wrapper needs to distinguish long-poll from one-shot reads, inspect `req.url` for `/v1/since`. Most wrappers don't need to.
-
-### Composition order
-
-The outer wrapper sees retries — `withRetry(withLogging(fetch))` logs each attempt; `withLogging(withRetry(fetch))` logs the final outcome once. Pick by what you want to observe.
 
 ## Anti-patterns
 

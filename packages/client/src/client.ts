@@ -41,10 +41,14 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
   readonly baseUrl: string;
   /**
    * Optional. Defaults to `globalThis.fetch`. Wrap your own to add
-   * logging, retries, tracing, or auth-refresh — the entire client
-   * routes every request through this one function. This is the
+   * logging, tracing, or auth-refresh — the entire client routes every
+   * request through this one function, once per attempt. This is the
    * `link` middleware story (tRPC) and the `interceptor` story
    * (axios) without new API surface.
+   *
+   * Don't add retries here: the client already retries `GET`s and
+   * auto-ID inserts on transport failures, and every verb on
+   * `MaintenancePending`, so a retrying wrapper multiplies attempts.
    *
    * @example
    * ```ts
@@ -56,32 +60,23 @@ export interface BaerlyClientOptions<TConfig extends BaerlyConfig = UnboundConfi
    *   return res;
    * };
    *
-   * // Retry idempotent reads on 5xx (max 3 total attempts, 100ms backoff).
-   * const withRetry = (next: Fetcher): Fetcher => async (req) => {
-   *   for (let i = 0; i < 2; i++) {
-   *     const res = await next(req.clone());
-   *     if (res.ok || res.status < 500 || req.method !== "GET") return res;
-   *     await new Promise((r) => setTimeout(r, 100 * (i + 1)));
-   *   }
-   *   return next(req);
-   * };
-   *
    * const client = createBaerlyClient({
    *   baseUrl: "https://api.example.com",
-   *   fetch: withRetry(withLogging),
+   *   fetch: withLogging,
    * });
    * ```
    *
-   * See `dist/API.md` → "Recipe — wrapping the client `fetch`"
-   * for `onSuccess` / `onError` helpers and a composition pattern.
+   * See `dist/RECIPES.md` → "Recipe — wrapping the client `fetch`"
+   * for `onSuccess` / `onError` hooks, 401 auth refresh, and
+   * composition order.
    */
   readonly fetch?: Fetcher;
   /**
    * Optional. Forwarded on every request. Typically
    * `{ Authorization: "Bearer <token>" }`. For credential refresh
    * (fresh JWT per call, 401-driven re-issue, etc.) wrap
-   * {@link BaerlyClientOptions.fetch} instead — see the retry +
-   * logging examples above.
+   * {@link BaerlyClientOptions.fetch} instead — see the logging
+   * example above.
    */
   readonly headers?: Headers | Record<string, string>;
   /**
@@ -192,15 +187,20 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
    * Insert a new document. Returns its `_id`.
    *
    * A non-empty string `_id` is caller-chosen and sent as-is; a second
-   * insert of the same `_id` rejects with `AlreadyExists`. When `_id` is
-   * omitted (or `""`, or not a string), the client mints a UUIDv7 before
-   * the request is sent and flags it as minted, so the server answers a
-   * retransmission of that same request with the original `{ _id }` while
-   * the stored row still matches, instead of a duplicate row. The client
-   * resends an insert only after a `MaintenancePending` refusal, with the
-   * same body and so the same minted `_id`; calling `insert(doc)` again
-   * mints a new auto-ID and is a new insert.
-   * The caller's `doc` is not modified.
+   * insert of the same `_id` rejects with `AlreadyExists`. A present
+   * `_id` that is not a string (`null` included) throws `InvalidConfig`
+   * before any request is sent. When `_id` is omitted or `""`, the client
+   * mints a UUIDv7 before the request is sent and flags it as minted, so
+   * the server answers a retransmission of that same request with the
+   * original `{ _id }` while the stored row still matches, instead of a
+   * duplicate row.
+   *
+   * A minted insert is resent with the same body, and so the same minted
+   * `_id`, after a transport failure (a thrown `fetch`, or a 5xx, 408 or
+   * 429 response with no error envelope) and after a `MaintenancePending`
+   * refusal. An insert with a caller-chosen `_id` is resent only after
+   * `MaintenancePending`. Calling `insert(doc)` again mints a new auto-ID
+   * and is a new insert. The caller's `doc` is not modified.
    */
   insert(doc: Partial<T> & DocumentData, opts?: TerminalOptions): Promise<{ readonly _id: string }>;
   /** JSON-merge-patch applied to one row by primary key. */
