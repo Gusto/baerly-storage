@@ -36,6 +36,8 @@ describe("loadSnapshotAsMap — schema_version refusal", () => {
     expect(msg).not.toMatch(/recreate|bucket/i);
     if (v === SNAPSHOT_SCHEMA_VERSION + 1) {
       expect(msg).toMatch(/newer baerly-storage release/);
+    } else {
+      expect(msg).toMatch(/restore/i);
     }
   });
 });

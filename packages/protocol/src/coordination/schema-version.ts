@@ -19,4 +19,4 @@ export const unsupportedSchemaVersionMessage = (
 ): string =>
   isNewerSchemaVersion(found, supported)
     ? `${where}: schema_version ${found} was written by a newer baerly-storage release; this build supports schema_version ${supported}. Run that release or newer.`
-    : `${where}: unsupported schema_version ${String(found)}; this build supports schema_version ${supported}. This object was not written by this build.`;
+    : `${where}: unsupported schema_version ${String(found)}; this build supports schema_version ${supported}. This object was not written by this build; restore it from a backup made by this release, or point the app at the right data.`;

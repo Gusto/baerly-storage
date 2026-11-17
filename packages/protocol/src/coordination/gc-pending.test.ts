@@ -148,6 +148,8 @@ describe("gc-pending", () => {
     expect(msg).not.toMatch(/recreate|bucket/i);
     if (v === 99) {
       expect(msg).toMatch(/newer baerly-storage release/);
+    } else {
+      expect(msg).toMatch(/restore/i);
     }
   });
 
