@@ -28,7 +28,7 @@
 import { encodeJsonBytes } from "../bytes.ts";
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants.ts";
 import { BaerlyError, isWriteConflict } from "../errors.ts";
-import { unsupportedSchemaVersionMessage } from "./schema-version.ts";
+import { isNewerSchemaVersion, unsupportedSchemaVersionMessage } from "./schema-version.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
@@ -510,11 +510,9 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
       r["schema_version"],
       CURRENT_JSON_SCHEMA_VERSION,
     );
-    const newer =
-      typeof r["schema_version"] === "number" && r["schema_version"] > CURRENT_JSON_SCHEMA_VERSION;
     throw new BaerlyError(
       "InvalidResponse",
-      newer
+      isNewerSchemaVersion(r["schema_version"], CURRENT_JSON_SCHEMA_VERSION)
         ? base
         : `${base} For local dev only, stale data from another build can be cleared by deleting the local data directory (e.g. \`rm -rf .baerly-data\`).`,
     );
