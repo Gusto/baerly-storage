@@ -131,6 +131,26 @@ describe("gc-pending", () => {
     });
   });
 
+  test.each([99, 1.5, "one", 0])("schema_version %j message names both versions", async (v) => {
+    const s = new MemoryStorage();
+    await s.put(
+      KEY,
+      new TextEncoder().encode(
+        JSON.stringify({ schema_version: v, candidates: [], last_swept_at: "" }),
+      ),
+      { contentType: "application/json" },
+    );
+    const err = await readGcPending(s, KEY).catch((error: unknown) => error);
+    expect(err).toMatchObject({ code: "InvalidResponse" });
+    const msg = (err as Error).message;
+    expect(msg).toContain(String(v));
+    expect(msg).toContain(String(GC_PENDING_SCHEMA_VERSION));
+    expect(msg).not.toMatch(/recreate|bucket/i);
+    if (v === 99) {
+      expect(msg).toMatch(/newer baerly-storage release/);
+    }
+  });
+
   test("rejects malformed body on read", async () => {
     const s = new MemoryStorage();
     await s.put(KEY, new TextEncoder().encode("{ not json"), {
@@ -270,7 +290,7 @@ describe("gc-pending", () => {
     // This kills both StringLiteral → "" mutations on this line
     expect((err as BaerlyError).message).toContain("schema_version");
     expect((err as BaerlyError).message).toContain("0");
-    expect((err as BaerlyError).message).toContain("expected");
+    expect((err as BaerlyError).message).toContain("supports");
     expect((err as BaerlyError).message).toContain("1");
   });
 

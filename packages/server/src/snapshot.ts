@@ -16,6 +16,7 @@ import {
   snapshotHash,
   SNAPSHOT_SCHEMA_VERSION,
   type Storage,
+  unsupportedSchemaVersionMessage,
 } from "@baerly/protocol";
 import { isOwnCollection } from "./collection-alias.ts";
 
@@ -167,7 +168,11 @@ export const loadSnapshotAsMap = async (
   if (body.schema_version !== SNAPSHOT_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
-      `compact: snapshot ${key} has unsupported schema_version ${String(body.schema_version)}`,
+      unsupportedSchemaVersionMessage(
+        `compact: snapshot ${key}`,
+        body.schema_version,
+        SNAPSHOT_SCHEMA_VERSION,
+      ),
     );
   }
   if (!isOwnCollection(body.collection, expectedCollection)) {
