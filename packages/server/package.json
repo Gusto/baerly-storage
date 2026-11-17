@@ -79,7 +79,7 @@
   "dependencies": {
     "@baerly/protocol": "workspace:*",
     "@logtape/logtape": "^2.3.5",
-    "hono": "^4.13.14",
-    "jose": "^6.2.13"
+    "hono": "^4.13.19",
+    "jose": "^6.2.17"
   }
 }
