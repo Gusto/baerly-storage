@@ -12,7 +12,12 @@ function buildS3Storage(opts: {
   credentials: Credentials | CredentialsProvider;
 }): Storage {
   const sign = refreshingSigner({ region: opts.region, credentials: opts.credentials });
-  return new S3HttpStorage({ endpoint: opts.endpoint, bucket: opts.bucket, sign });
+  return new S3HttpStorage({
+    endpoint: opts.endpoint,
+    bucket: opts.bucket,
+    sign,
+    ...(sign.invalidate !== undefined && { invalidateCredentials: sign.invalidate }),
+  });
 }
 
 /**
