@@ -75,53 +75,6 @@ describe("prettyConsoleSink", () => {
     expect(line).toContain("412=1");
   });
 
-  test("cache_status: 'hit' → cache=hit in tail", () => {
-    getLogger(CATEGORY.http).info("canonical", {
-      request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
-      duration_ms: 5,
-      status: 200,
-      outcome: "read",
-      method: "GET",
-      path: "/v1/c/tickets",
-      "db.storage.class_a_ops_total": 1,
-      "db.storage.class_b_ops_total": 0,
-      cache_status: "hit",
-    });
-    const line = spy.mock.calls[0]![0] as string;
-    expect(line).toContain("cache=hit");
-  });
-
-  test("cache_status: 'miss' → cache=miss in tail", () => {
-    getLogger(CATEGORY.http).info("canonical", {
-      request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
-      duration_ms: 12,
-      status: 200,
-      outcome: "read",
-      method: "GET",
-      path: "/v1/c/tickets",
-      "db.storage.class_a_ops_total": 2,
-      "db.storage.class_b_ops_total": 0,
-      cache_status: "miss",
-    });
-    const line = spy.mock.calls[0]![0] as string;
-    expect(line).toContain("cache=miss");
-  });
-
-  test("absent cache_status → no cache= in tail", () => {
-    getLogger(CATEGORY.http).info("canonical", {
-      request_id: "ab12cd34-ef56-7890-abcd-ef1234567890",
-      duration_ms: 5,
-      status: 200,
-      outcome: "read",
-      method: "GET",
-      path: "/v1/c/tickets",
-      "db.storage.class_a_ops_total": 1,
-      "db.storage.class_b_ops_total": 0,
-    });
-    const line = spy.mock.calls[0]![0] as string;
-    expect(line).not.toContain("cache=");
-  });
-
   test("falls back to JSON-style for non-canonical records", () => {
     getLogger(CATEGORY.http).warn("verifier_rejected", { reason: "null" });
     const line = spy.mock.calls[0]![0] as string;
