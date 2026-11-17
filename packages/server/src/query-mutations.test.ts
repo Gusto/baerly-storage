@@ -272,10 +272,9 @@ describe("Query.update", () => {
     // optional-key extension doesn't satisfy the index signature.
     const t = db.collection(COLL) as Collection<TicketDoc>;
     await t.insert({ _id: "n1", title: "x", flag: true });
-    // `null` per RFC 7386 deletes the key. The locked patch type is
-    // `Partial<T>` (no `null` at the type level); test the runtime
-    // contract via cast.
-    await t.update("n1", { flag: null as unknown as DocumentData });
+    // `null` per RFC 7386 deletes the key; `MergePatch<T>` admits it on
+    // the index-signature keys `TicketDoc` inherits.
+    await t.update("n1", { flag: null });
     const after = await t.get("n1");
     expect(after).toBeDefined();
     expect(after!["_id"]).toBe("n1");

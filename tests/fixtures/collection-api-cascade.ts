@@ -535,16 +535,8 @@ const runUpdateContract = async (
     expect(row["marker"]).toBe(true);
   }
 
-  // RFC 7386: null strips a key from the post-image. `Partial<T>`'s
-  // type forbids `null` at the leaf (the locked predicate / patch
-  // value type is `DocumentValue = string | number | boolean |
-  // DocumentData`), so we route through an `unknown` cast —
-  // this is testing the runtime merge contract, which IS
-  // `merge(target, null) === undefined` per `packages/protocol/src/json.ts`.
-  const { modified: stripped } = await db
-    .collection(t)
-    .where({ k: "a" })
-    .update({ marker: null } as unknown as Partial<Doc>);
+  // RFC 7386: null strips a key from the post-image.
+  const { modified: stripped } = await db.collection(t).where({ k: "a" }).update({ marker: null });
   expect(stripped).toBe(2);
   const afterStrip = await db.collection(t).where({ k: "a" }).all();
   for (const row of afterStrip) {

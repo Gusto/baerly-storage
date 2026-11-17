@@ -224,7 +224,7 @@
     },
     {
       "name": "update",
-      "params": "id: string, patch: Partial<T>",
+      "params": "id: string, patch: MergePatch<T>",
       "returns": "Promise<{ modified: number }>",
       "throws": [
         "SchemaError",
@@ -290,7 +290,7 @@
     },
     {
       "name": "update",
-      "params": "patch: Partial<T>",
+      "params": "patch: MergePatch<T>",
       "returns": "Promise<{ modified: number }>",
       "throws": [
         "SchemaError",

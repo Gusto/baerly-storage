@@ -11,6 +11,7 @@ import {
   type CollectionNames,
   type DocumentData,
   EMPTY_PREDICATE_WIRE,
+  type MergePatch,
   normalizePredicateArg,
   type OrderSpec,
   type PredicateArg,
@@ -206,10 +207,14 @@ export interface ClientCollection<T extends DocumentData = DocumentData> {
     doc: Partial<T> & DocumentData & { _id?: string },
     opts?: TerminalOptions,
   ): Promise<{ readonly _id: string }>;
-  /** JSON-merge-patch applied to one row by primary key. */
+  /**
+   * JSON-merge-patch (RFC 7386) applied to one row by primary key.
+   * `null` deletes an optional field; a required field is removed with
+   * `replace` (see {@link MergePatch}).
+   */
   update(
     id: string,
-    patch: Partial<T>,
+    patch: MergePatch<T>,
     opts?: TerminalOptions,
   ): Promise<{ readonly modified: number }>;
   /** Whole-document replace on one row by primary key. */

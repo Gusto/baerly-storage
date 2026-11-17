@@ -13,6 +13,7 @@ export type {
   BaerlyErrorOptions,
   DocumentData,
   LogEntry,
+  MergePatch,
   OrderSpec,
   Predicate,
   PredicateArg,
