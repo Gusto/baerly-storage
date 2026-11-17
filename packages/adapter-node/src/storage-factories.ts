@@ -1,5 +1,5 @@
 import type { Storage } from "@baerly/protocol";
-import { S3HttpStorage } from "./s3-http.ts";
+import { S3HttpStorage, withCredentialInvalidation } from "./s3-http.ts";
 import { GcsHttpStorage } from "./gcs-http.ts";
 import { refreshingSigner } from "./credentials/signer.ts";
 import { goog4Signer } from "./credentials/goog4-signer.ts";
@@ -12,12 +12,10 @@ function buildS3Storage(opts: {
   credentials: Credentials | CredentialsProvider;
 }): Storage {
   const sign = refreshingSigner({ region: opts.region, credentials: opts.credentials });
-  return new S3HttpStorage({
-    endpoint: opts.endpoint,
-    bucket: opts.bucket,
-    sign,
-    ...(sign.invalidate !== undefined && { invalidateCredentials: sign.invalidate }),
-  });
+  const storage = new S3HttpStorage({ endpoint: opts.endpoint, bucket: opts.bucket, sign });
+  return sign.invalidate === undefined
+    ? storage
+    : withCredentialInvalidation(storage, sign.invalidate);
 }
 
 /**

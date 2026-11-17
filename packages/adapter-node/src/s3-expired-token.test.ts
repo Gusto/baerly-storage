@@ -10,7 +10,7 @@ import { createObservabilityContext, runWithContext } from "@baerly/server/obser
 import { describe, expect, test } from "vitest";
 import { refreshingSigner } from "./credentials/signer.ts";
 import type { Credentials } from "./credentials/types.ts";
-import { S3HttpStorage } from "./s3-http.ts";
+import { S3HttpStorage, type S3HttpStorageOptions, withCredentialInvalidation } from "./s3-http.ts";
 
 const s3Error = (code: string, message = "boom"): Response =>
   new Response(
@@ -48,11 +48,10 @@ const mkStorage = (
 ) => {
   const sign = refreshingSigner({ region: "us-east-1", credentials: provider });
   const seen: Request[] = [];
-  const storage = new S3HttpStorage({
+  const base = new S3HttpStorage({
     endpoint: "https://example.invalid",
     bucket: "b",
     sign,
-    ...(sign.invalidate !== undefined && { invalidateCredentials: sign.invalidate }),
     fetch: (async (input: RequestInfo | URL) => {
       const req = input as Request;
       seen.push(req);
@@ -61,6 +60,8 @@ const mkStorage = (
     retries,
     backoffMs: 0,
   });
+  const storage =
+    sign.invalidate === undefined ? base : withCredentialInvalidation(base, sign.invalidate);
   return { storage, seen };
 };
 
@@ -151,6 +152,16 @@ describe("S3 expired session token", () => {
     expect(results.every((r) => r?.etag === '"e"')).toBe(true);
     expect(state.calls).toBe(2);
     expect(seen).toHaveLength(16);
+  });
+
+  test("the credential-invalidation hook is not part of the public options", () => {
+    const options: S3HttpStorageOptions = {
+      endpoint: "e",
+      bucket: "b",
+      // @ts-expect-error — internal wiring only (`withCredentialInvalidation`).
+      invalidateCredentials() {},
+    };
+    expect(options).toBeDefined();
   });
 
   test("credentials with no refresh path (static) surface AccessDenied without a resend", async () => {
