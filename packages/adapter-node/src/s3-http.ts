@@ -47,15 +47,6 @@ export interface S3HttpStorageOptions {
    */
   sign?: (req: Request) => Promise<Request>;
   /**
-   * Drops the credentials that signed `signed` (a request `sign` returned) so
-   * the next `sign` resolves fresh ones. When set, a `400 ExpiredToken` /
-   * `TokenRefreshRequired` response triggers one such refresh and one resend
-   * per storage call, charged to the request ledger like any attempt; a
-   * second rejection (or none set) is `AccessDenied` naming the S3 code.
-   * `refreshingSigner(...).invalidate` fits this seam.
-   */
-  invalidateCredentials?: (signed: Request) => void;
-  /**
    * Retries after the first attempt, for throttled and transient failures
    * alike (and per `list` page). Default `STORAGE_RETRY_MAX_ATTEMPTS - 1`
    * (2, so 3 attempts in total); `0` sends each request once. Must be a
@@ -70,6 +61,24 @@ export interface S3HttpStorageOptions {
    */
   backoffMs?: number;
 }
+
+let attachInvalidate: (storage: S3HttpStorage, invalidate: (signed: Request) => void) => void;
+
+/**
+ * Internal wiring (not re-exported from the package entries): make `storage`
+ * drop the credentials that signed a request (`refreshingSigner(...).invalidate`)
+ * and resend once per storage call when S3 answers `400 ExpiredToken` /
+ * `TokenRefreshRequired`. The resend is charged to the request ledger like any
+ * attempt; a second rejection, or storage without this wiring, is
+ * `AccessDenied` naming the S3 code.
+ */
+export const withCredentialInvalidation = (
+  storage: S3HttpStorage,
+  invalidate: (signed: Request) => void,
+): S3HttpStorage => {
+  attachInvalidate(storage, invalidate);
+  return storage;
+};
 
 /**
  * `Storage` impl that speaks the S3 REST API directly. Works against
@@ -87,7 +96,7 @@ export class S3HttpStorage implements Storage {
   readonly #bucket: string;
   readonly #fetch: typeof fetch;
   readonly #sign?: (req: Request) => Promise<Request>;
-  readonly #invalidate?: (signed: Request) => void;
+  #invalidate?: (signed: Request) => void;
   readonly #retries: number | undefined;
   readonly #backoffMs: number | undefined;
 
@@ -96,9 +105,14 @@ export class S3HttpStorage implements Storage {
     this.#bucket = options.bucket;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#sign = options.sign;
-    this.#invalidate = options.invalidateCredentials;
     this.#retries = options.retries;
     this.#backoffMs = options.backoffMs;
+  }
+
+  static {
+    attachInvalidate = (storage, invalidate) => {
+      storage.#invalidate = invalidate;
+    };
   }
 
   #objectUrl(key: string): string {
