@@ -35,43 +35,14 @@ allowBuilds:
 # install path in `README.md` relies on.
 linkWorkspacePackages: true
 
-# Force-resolve transitive dev-tooling deps off versions flagged by
-# Dependabot. All three alerts are dev-scope and unreachable in our
-# Node/pnpm toolchain, but upstream parents still drag the vulnerable
-# versions on their latest releases, so we pin the patched transitives
-# here rather than carry permanently-open alerts:
-#   - esbuild >= 0.28.1: GHSA-gv7w-rqvm-qjhr (Deno-only RCE) +
-#     GHSA-g7r4-m6w7-qqqr (Windows dev-server traversal). Our direct
-#     dep and vite already float to 0.28.1; this also lifts
-#     @cloudflare/vitest-plugin off its exact-pinned 0.27.3.
+# Force-resolve a transitive dev-tooling dep off a version flagged by
+# Dependabot. The alert is dev-scope and unreachable in our toolchain,
+# but no released parent depends on the patched version yet, so we pin
+# it here rather than carry a permanently-open alert:
 #   - qs >= 6.15.2: GHSA-q8mj-m7cp-5q26 (stringify DoS), pulled via
 #     typed-rest-client -> @stryker-mutator (manual mutation testing).
-#     No released parent uses 6.15.2 yet.
-#   - ws >= 8.21.0: GHSA-96hv-2xvq-fx4p (memory-exhaustion DoS), pulled
-#     via @cloudflare/vite-plugin + miniflare + wrangler on ws@8.20.1.
-#     8.21.0 is a patch bump (already in the tree via happy-dom) and
-#     dedupes ws to a single version.
-#   - undici >= 7.28.0: GHSA-hm92-r4w5-c3mj + GHSA-vmh5-mc38-953g
-#     (SOCKS5 proxy high-sev), plus four medium/low Set-Cookie/cache
-#     issues, pulled via @cloudflare/vitest-plugin -> wrangler +
-#     miniflare on undici@7.24.8. The example apps' newer miniflare
-#     already resolves 7.28.0; the version-scoped selector lifts only
-#     the stale copy. 7.x-internal patch bump.
-#   - dompurify >= 3.4.11: GHSA-cmwh-pvxp-8882 (ALLOWED_ATTR
-#     pollution), pulled via mermaid on dompurify@3.4.10 (docs mermaid
-#     validation only). mermaid accepts ^3, so a 3.x patch bump.
-#   - js-yaml >= 3.15.0: GHSA-h67p-54hq-rp68 (quadratic-complexity
-#     merge-key DoS), pulled via read-yaml-file -> @manypkg ->
-#     changesets on js-yaml@3.14.2 (release tooling). The 3.x-scoped
-#     selector patches that copy while leaving the separate 4.2.0
-#     copy untouched.
 overrides:
-  esbuild: ^0.28.1
   qs: ">=6.15.2"
-  ws: ">=8.21.0"
-  undici@<7.28.0: "^7.28.0"
-  dompurify@<3.4.11: "^3.4.11"
-  js-yaml@<3.15.0: "^3.15.0"
 
 # Stryker's sandbox rewrites `tsconfig.json` with the classic compiler
 # API (`ts.parseConfigFileTextToJson`) but never declares `typescript`,
