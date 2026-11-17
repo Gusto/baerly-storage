@@ -105,6 +105,10 @@ describe("S3 expired session token", () => {
       expect(err).toBeInstanceOf(BaerlyError);
       expect((err as BaerlyError).code).toBe("AccessDenied");
       expect((err as BaerlyError).message).toContain(code);
+      // States what happened and the remedy; never points at bucket policy.
+      expect((err as BaerlyError).message).toMatch(/even after a (credentials )?refresh/);
+      expect((err as BaerlyError).message).toContain("accurate `expiration`");
+      expect((err as BaerlyError).message).not.toMatch(/policy|permission/i);
       expect(seen).toHaveLength(2);
       expect(state.calls).toBe(2);
     },

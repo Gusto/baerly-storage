@@ -122,8 +122,8 @@ export const s3ExpiredTokenCode = async (res: Response): Promise<string | undefi
 /**
  * {@link mapStorageError} for the S3 adapter: a `400` carrying an
  * expired-token code is a credentials failure, so it maps to the permanent
- * `AccessDenied` with the S3 code in the message; every other response maps
- * as {@link mapStorageError} does.
+ * `AccessDenied` whose message carries the S3 code, the state and the remedy;
+ * every other response maps as {@link mapStorageError} does.
  */
 export const mapS3StorageError = async (
   res: Response,
@@ -133,7 +133,11 @@ export const mapS3StorageError = async (
   if ((await s3ExpiredTokenCode(res)) !== undefined) {
     return new BaerlyError(
       "AccessDenied",
-      `${verb} ${key}: ${xmlErrorDetail(400, await res.text())}`,
+      `${verb} ${key}: ${xmlErrorDetail(400, await res.text())} — the credentials provider returned expired credentials even after a refresh; it should return fresh credentials with an accurate \`expiration\`.`,
+      {
+        resolution:
+          "Return fresh credentials with an accurate `expiration` from the credentials provider; static session credentials must be replaced.",
+      },
     );
   }
   return mapStorageError(res, verb, key);
