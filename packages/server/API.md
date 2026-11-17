@@ -240,7 +240,7 @@ await db.collection("tickets").where({ status: "closed" }).delete();
 
 Every row type must satisfy `{ [k: string]: DocumentValue }` where `DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
 
-Note: `null` is not a stored value in the typed contract. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel, so a stored `null` would collapse "this field is null" with "delete this field". `MergePatch<T>` admits `null` only on optional keys (nested plain objects recurse; arrays replace whole); remove a required field with `replace`. Use `.optional()` in your schema for absent values. The runtime still stores a `null` that reaches `insert` / `replace` (RECIPES.md, TS2322).
+Note: `null` is not a stored value in the typed contract. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel, so a stored `null` would collapse "this field is null" with "delete this field". `MergePatch<T>` admits `null` only on optional keys (a required nested object takes a nested patch; an optional one takes its whole value or `null`; arrays replace whole); remove a required field with `replace`. Use `.optional()` in your schema for absent values. The runtime still stores a `null` that reaches `insert` / `replace` (RECIPES.md, TS2322).
 
 Two ways to get a typed row:
 

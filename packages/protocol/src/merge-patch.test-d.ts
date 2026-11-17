@@ -1,8 +1,9 @@
 /**
  * Type-level assertions for `MergePatch<T>`, the `update` patch type:
  * `null` deletes an optional key and is refused on a required one,
- * nested plain objects take a nested patch, and arrays, scalars and
- * non-plain objects are replaced whole.
+ * required plain-object members take a nested patch, optional ones take
+ * their whole value or `null`, and arrays, scalars and non-plain
+ * objects are replaced whole.
  *
  * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default include
@@ -49,7 +50,18 @@ export const _nestedOptionalNull: MergePatch<Ticket> = { meta: { reviewer: null 
 export const _nestedPartial: MergePatch<Ticket> = { meta: { owner: "ada" } };
 export const _nestedWhole: MergePatch<Ticket> = { meta: { owner: "ada", reviewer: "bo" } };
 export const _optionalObjectNull: MergePatch<Ticket> = { extra: null };
-export const _optionalObjectNestedNull: MergePatch<Ticket> = { extra: { flag: null } };
+export const _optionalObjectWhole: MergePatch<Ticket> = { extra: { flag: true } };
+export const _optionalObjectWholeEmpty: MergePatch<Ticket> = { extra: {} };
+export const _requiredObjectNestedPartial: MergePatch<Ticket> = { meta: { reviewer: "bo" } };
+
+// @ts-expect-error — an optional object takes its whole value or `null`, not a nested patch.
+export const _optionalObjectNestedNullRejected: MergePatch<Ticket> = { extra: { flag: null } };
+
+type Doc = { profile?: { name: string; nick?: string } };
+
+// @ts-expect-error — a partial of an optional object is not its whole value; pass `name` too or use `replace`.
+export const _optionalObjectPartialRejected: MergePatch<Doc> = { profile: { nick: "x" } };
+export const _optionalObjectWholeAccepted: MergePatch<Doc> = { profile: { name: "n" } };
 
 // @ts-expect-error — a nested required key cannot be deleted either.
 export const _nestedRequiredNullRejected: MergePatch<Ticket> = { meta: { owner: null } };
