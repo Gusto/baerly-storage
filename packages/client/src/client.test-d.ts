@@ -57,7 +57,7 @@ const boundTicketCollection = boundClient.collection("tickets");
 const boundTicketQuery = boundTicketCollection.where({ status: "open" });
 type BoundFirst = Awaited<ReturnType<typeof boundTicketQuery.first>>;
 export type _BoundFirstInfersTicket = Expect<
-  Equal<BoundFirst, (TicketShape & DocumentData) | undefined>
+  Equal<BoundFirst, (TicketShape & DocumentData & { _id: string }) | undefined>
 >;
 
 // Companion assertion: the underlying table handle threads the same
@@ -79,6 +79,36 @@ type UnboundCollection = typeof unboundAnyCollection;
 export type _UnboundCollectionDefaultsToDocumentData = Expect<
   Equal<UnboundCollection, ClientCollection<Record<string, unknown> & DocumentData>>
 >;
+
+// (C) Rows carry `_id: string` on both bound and unbound clients, so a
+// row's `_id` feeds the by-id verbs directly; `insert` takes only a
+// string `_id`.
+const unboundRows = await unboundAnyCollection.all();
+export type _UnboundClientRowIdIsString = Expect<
+  Equal<(typeof unboundRows)[number]["_id"], string>
+>;
+const unboundGot = await unboundAnyCollection.get("x");
+export type _UnboundClientGetIdIsString = Expect<
+  Equal<NonNullable<typeof unboundGot>["_id"], string>
+>;
+export type _BoundClientRowIdIsString = Expect<Equal<NonNullable<BoundFirst>["_id"], string>>;
+
+export const _clientRowIdFeedsByIdVerbs = async () => {
+  for (const row of await unboundAnyCollection.all()) {
+    await unboundAnyCollection.delete(row._id);
+  }
+  const row = await unboundAnyCollection.where({ done: false }).first();
+  if (row !== undefined) {
+    await unboundAnyCollection.get(row._id);
+    await unboundAnyCollection.replace(row._id, { ...row, done: true });
+  }
+};
+
+export const _clientInsertIdMustBeAString = async () => {
+  await unboundAnyCollection.insert({ _id: "n-1", title: "supplied" });
+  // @ts-expect-error — a supplied `_id` must be a string.
+  await unboundAnyCollection.insert({ _id: 42, title: "x" });
+};
 
 export const _idIsNotAPredicateKeyOnClientTypedTables = () => {
   // @ts-expect-error — `_id` is excluded from `Path<T>` on typed shapes.

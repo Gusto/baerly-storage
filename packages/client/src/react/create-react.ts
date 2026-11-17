@@ -88,8 +88,9 @@ export interface BaerlyReact<TConfig extends BaerlyConfig> {
  * ```
  *
  * Omit the type parameter (`createBaerlyReact()`) for an unbound app;
- * collection names widen to `string` and rows to `DocumentData`,
- * matching the in-process `Db.collection` fallback.
+ * collection names widen to `string` and rows to
+ * `DocumentData & { _id: string }`, matching the in-process
+ * `Db.collection` fallback.
  */
 export const createBaerlyReact = <
   TConfig extends BaerlyConfig = UnboundConfig,

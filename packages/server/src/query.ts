@@ -119,6 +119,14 @@ export interface CollectionReadContext {
 }
 
 /**
+ * A materialised row: `T` plus the string `_id` it is stored under, the
+ * shape the public read terminals return.
+ *
+ * @internal
+ */
+type Row<T extends DocumentData> = T & { _id: string };
+
+/**
  * What `runRead` hands back: the materialised rows plus the cursor
  * + freshness pair surfaced as `_meta` on read response envelopes
  * (see `contract.ts:HttpOkMeta`). The public `Query<T>` terminals
@@ -128,7 +136,7 @@ export interface CollectionReadContext {
  * @internal
  */
 export interface ReadResult<T extends DocumentData> {
-  readonly rows: T[];
+  readonly rows: Row<T>[];
   readonly manifestPointer: string;
   readonly fresh: boolean;
 }
@@ -1259,7 +1267,7 @@ const runRead = async <T extends DocumentData>(
  */
 interface StoredRow<T extends DocumentData> {
   readonly docId: string;
-  readonly doc: T;
+  readonly doc: Row<T>;
 }
 
 /**
@@ -1344,7 +1352,9 @@ const runReadRows = async <T extends DocumentData>(
   //        a straight `set` is correct (a `merge(prev, post)` would
   //        carry forward keys the writer dropped).
   // D: tombstone — remove from the map.
-  const docs = new Map<string, T>(baseDocs as Map<string, T>);
+  // Every post-image the writer commits carries its `doc_id` as a string
+  // `_id`, which is what lets the fold be typed `Row<T>`.
+  const docs = new Map<string, Row<T>>(baseDocs as Map<string, Row<T>>);
   foldLogEntriesOnto(docs, entries, { collection: ctx.collectionName });
   foldLogEntriesOnto(docs, probe.entries, { collection: ctx.collectionName });
 
