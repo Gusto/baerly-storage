@@ -45,7 +45,7 @@ const withServer = async <T>(
     ...(opts.webRoot !== undefined && { webRoot: opts.webRoot }),
   });
   const server = createServer(getRequestListener(app.fetch));
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   try {
     return await body(`http://127.0.0.1:${address.port}`, storage);
