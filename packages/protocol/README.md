@@ -2,10 +2,10 @@
 
 **Internal implementation detail of [`baerly-storage`](../../). Not a public API.**
 
-If you're writing application code, import from `baerly-storage`:
+If you're writing application code, import from `@gusto/baerly-storage`:
 
 ```ts
-import { BaerlyError, MemoryStorage, type Storage, type Verifier } from "baerly-storage";
+import { BaerlyError, MemoryStorage, type Storage, type Verifier } from "@gusto/baerly-storage";
 ```
 
 This package holds the pure protocol kernel — types, errors, JSON merge-patch, constants, hashing, ordered maps, the `Storage` interface, and the `MemoryStorage` impl. It has no Node-only deps and is Worker-bundleable. HTTP S3 storage lives in `@baerly/adapter-node`; R2 binding storage lives in `@baerly/adapter-cloudflare`. `baerly-storage` re-exports the user-facing surface; the internal adapter packages consume this package directly.

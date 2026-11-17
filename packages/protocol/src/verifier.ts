@@ -72,7 +72,7 @@ export interface VerifierResult {
  *
  * @example
  * ```ts
- * import type { Verifier } from "baerly-storage";
+ * import type { Verifier } from "@gusto/baerly-storage";
  *
  * // A trivial Verifier that pins every request to one tenant.
  * // Useful for tests and single-tenant deployments instead of the
