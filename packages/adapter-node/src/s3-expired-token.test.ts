@@ -7,7 +7,7 @@
 
 import { BaerlyError, RequestLedger } from "@baerly/protocol";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { refreshingSigner } from "./credentials/signer.ts";
 import type { Credentials } from "./credentials/types.ts";
 import { S3HttpStorage, type S3HttpStorageOptions, withCredentialInvalidation } from "./s3-http.ts";
@@ -156,6 +156,28 @@ describe("S3 expired session token", () => {
     expect(results.every((r) => r?.etag === '"e"')).toBe(true);
     expect(state.calls).toBe(2);
     expect(seen).toHaveLength(16);
+  });
+
+  test("the expired first response's body is cancelled before the resend", async () => {
+    const { provider } = mkProvider();
+    const cancels: ReturnType<typeof vi.spyOn>[] = [];
+    const { storage } = mkStorage((req) => {
+      if (signedWith(req) !== "ASIA1") {
+        return ok();
+      }
+      const res = s3Error("ExpiredToken");
+      // `clone()` swaps `res.body` for a fresh branch: spy on that one.
+      const clone = res.clone.bind(res);
+      res.clone = () => {
+        const copy = clone();
+        cancels.push(vi.spyOn(res.body!, "cancel"));
+        return copy;
+      };
+      return res;
+    }, provider);
+    await storage.get("k");
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0]).toHaveBeenCalledTimes(1);
   });
 
   test("the credential-invalidation hook is not part of the public options", () => {

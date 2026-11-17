@@ -153,6 +153,8 @@ export class S3HttpStorage implements Storage {
     ) {
       return first.res;
     }
+    // Release the socket held by the unread original body (the code was read from a clone).
+    await first.res.body?.cancel();
     call.refreshed = true;
     this.#invalidate(first.signed);
     currentRequestLedger()?.acquire("external", currentRequestHold());
