@@ -29,15 +29,6 @@ export interface MaintenanceOptions {
    * unbounded.
    */
   readonly tier?: "cf-free" | "cf-paid" | "node";
-  /**
-   * Run one phase instead of the whole pass. `"compact"` folds the
-   * collection's recent writes; `"gc"` deletes data nothing references any
-   * more. Omitted, the pass runs both and then retires old log entries.
-   * A whole pass fits one invocation on every supported host; alternate
-   * the two phases across invocations only where it does not (`"cf-free"`
-   * with storage reached over `fetch`).
-   */
-  readonly phase?: "compact" | "gc";
   /** Forwarded to every storage call. */
   readonly signal?: AbortSignal;
 }
@@ -60,13 +51,13 @@ export interface MaintenanceResult {
   readonly gcDeleted: number;
   /**
    * Objects marked for deletion that a later pass deletes once their grace
-   * period ends. `0` when the pass did not run its GC phase.
+   * period ends.
    */
   readonly pending: number;
 }
 
 /**
- * The internal pass's options: the per-phase knobs the tiers set, plus
+ * The internal pass's options: the compact and GC knobs the tiers set, plus
  * test seams. Surfaced via `@baerly/server/_internal/maintenance` and
  * `@baerly/server/_internal/testing`, neither of which is published.
  *
@@ -87,7 +78,7 @@ export interface InternalMaintenanceOptions {
   readonly gc?: InternalRunGcOptions;
   /** @internal Log retention options (window size, max deletes per pass). */
   readonly logRetention?: LogRetentionOptions;
-  /** Forwarded to every phase. */
+  /** Forwarded to compaction, GC and log retirement. */
   readonly signal?: AbortSignal;
 }
 

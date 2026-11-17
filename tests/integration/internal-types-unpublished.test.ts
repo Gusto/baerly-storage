@@ -6,7 +6,7 @@
  * grace override. They reach test fixtures, the CLI and the adapters
  * through the `@baerly/server/_internal/*` subpaths, which are
  * deliberately absent from `publishConfig.exports`; the published
- * `runScheduledMaintenance()` takes only `tier` / `phase` / `signal`.
+ * `runScheduledMaintenance()` takes only `tier` / `signal`.
  *
  * The failure this catches is subtle: a widening only has to be
  * `export`ed from a module that HAPPENS to be a published entry point
@@ -170,7 +170,7 @@ describe("internal option widenings stay off the published type surface", () => 
       runScheduledMaintenance(
         target,
         // @ts-expect-error — `graceMillis` is an `InternalRunGcOptions`
-        // knob; the published options carry `tier` / `phase` / `signal` only.
+        // knob; the published options carry `tier` / `signal` only.
         // GC_GRACE_PERIOD_MILLIS: production MUST NOT go below the default.
         { gc: { graceMillis: 0 } },
       );

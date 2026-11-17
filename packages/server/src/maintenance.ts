@@ -259,9 +259,8 @@ const profileToScheduledOptions = (
  * {@link runScheduledMaintenance} pass per invocation is safe. Free CPU is
  * the tighter limit there (about 0.25 ms per binding call against a 10 ms
  * budget), which is why the caps stay at their measured values. Through
- * `fetch` a whole pass does not fit 45, so a scheduler on that host
- * alternates `phase: "compact"` and `phase: "gc"` across invocations. The
- * compaction row fits there because `compact()` lowers its tail probe to
+ * `fetch` (an unsupported Free host) a whole pass does not fit 45 calls;
+ * the compaction row alone does, because `compact()` lowers its tail probe to
  * what the ledger has left after its `current.json` GET, net of the fold
  * it may certify (prior-snapshot GET + N log GETs +
  * `COMPACT_FOLD_WRITE_REQUESTS`): 45 − 1 − 23 = 21 probe GETs, so a pass
@@ -351,7 +350,7 @@ const TIER_OPTIONS: Readonly<Record<string, InternalMaintenanceOptions>> = {
  *
  * @throws BaerlyError code="InvalidConfig" when `app`, `tenant` or
  *   `collection` is not a name `Db.create` / `db.collection` accepts, or
- *   `tier` / `phase` is not one of the listed values.
+ *   `tier` is not one of the listed values.
  *
  * @example
  * ```ts
@@ -375,18 +374,12 @@ export const runScheduledMaintenance = async (
   assertNameSegment(app, "app", "runScheduledMaintenance");
   assertNameSegment(tenant, "tenant", "runScheduledMaintenance");
   assertNameSegment(collection, "collection", "runScheduledMaintenance");
-  const { tier = "node", phase, signal } = options;
+  const { tier = "node", signal } = options;
   const tierOptions = Object.hasOwn(TIER_OPTIONS, tier) ? TIER_OPTIONS[tier] : undefined;
   if (tierOptions === undefined) {
     throw new BaerlyError(
       "InvalidConfig",
       `runScheduledMaintenance: tier must be "cf-free", "cf-paid" or "node", got ${JSON.stringify(tier)}`,
-    );
-  }
-  if (phase !== undefined && phase !== "compact" && phase !== "gc") {
-    throw new BaerlyError(
-      "InvalidConfig",
-      `runScheduledMaintenance: phase must be "compact" or "gc", got ${JSON.stringify(phase)}`,
     );
   }
   // The same key layout `Db` writes under (`db-read-seams.ts`).
@@ -395,14 +388,7 @@ export const runScheduledMaintenance = async (
     currentJsonKey: `app/${app}/tenant/${tenant}/manifests/${collection}/current.json`,
   };
   const passOptions = { ...tierOptions, ...(signal !== undefined && { signal }) };
-  if (phase === "gc") {
-    return summarize(undefined, await gcPhase(args, passOptions), 0);
-  }
-  if (phase === "compact") {
-    return summarize(await compactPhase(args, passOptions), undefined, 0);
-  }
-  const pass = await runMaintenancePass(args, passOptions);
-  return summarize(pass.compact, pass.gc, pass.retired);
+  return summarize(await runMaintenancePass(args, passOptions));
 };
 
 /**
@@ -417,19 +403,19 @@ const DEFERRAL_REASONS: Readonly<
   "probe-budget-checkpointed": "budget",
 };
 
-/** Format-neutral summary of the phases that ran. */
-const summarize = (
-  compactRes: CompactResult | undefined,
-  gcRes: RunGcResult | undefined,
-  retired: number,
-): MaintenanceResult => {
-  const reason = DEFERRAL_REASONS[compactRes?.skippedReason ?? ""];
+/** Format-neutral summary of one whole pass. */
+const summarize = ({
+  compact: compactRes,
+  gc: gcRes,
+  retired,
+}: MaintenancePassResult): MaintenanceResult => {
+  const reason = DEFERRAL_REASONS[compactRes.skippedReason ?? ""];
   return {
     // A lost CAS reports the entries it would have folded; none landed.
-    folded: compactRes?.written === true ? compactRes.entriesFolded : 0,
+    folded: compactRes.written ? compactRes.entriesFolded : 0,
     ...(reason !== undefined && { deferred: { reason } }),
-    gcDeleted: (gcRes?.swept ?? 0) + retired,
-    pending: gcRes?.pendingDepth ?? 0,
+    gcDeleted: gcRes.swept + retired,
+    pending: gcRes.pendingDepth,
   };
 };
 

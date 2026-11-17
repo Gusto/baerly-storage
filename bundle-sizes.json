@@ -20,11 +20,11 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 351044,
-      "gz": 111680,
-      "minGz": 29973,
+      "raw": 350591,
+      "gz": 111540,
+      "minGz": 29900,
       "ratchet": {
-        "raw": 386304,
+        "raw": 385792,
         "gz": 122880,
         "minGz": 33024
       },
@@ -56,9 +56,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 580974,
-      "gz": 176426,
-      "minGz": 58180,
+      "raw": 580521,
+      "gz": 176310,
+      "minGz": 58110,
       "ratchet": {
         "raw": 634624,
         "gz": 193024,
@@ -92,9 +92,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 506597,
-      "gz": 153433,
-      "minGz": 49724,
+      "raw": 506144,
+      "gz": 153311,
+      "minGz": 49647,
       "ratchet": {
         "raw": 552704,
         "gz": 167680,
@@ -116,11 +116,11 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 164368,
-      "gz": 53794,
-      "minGz": 13208,
+      "raw": 163915,
+      "gz": 53645,
+      "minGz": 13135,
       "ratchet": {
-        "raw": 180992,
+        "raw": 180480,
         "gz": 59136,
         "minGz": 14592
       },
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 764888,
+      "raw": 764435,
       "ratchet": {
         "raw": 832512
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 773846,
+      "raw": 773393,
       "ratchet": {
         "raw": 842496
       },
