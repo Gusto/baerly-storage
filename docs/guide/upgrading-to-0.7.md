@@ -119,7 +119,7 @@ for (const row of await notes.all()) await notes.delete(row._id);
 const rows = (await notes.all()) as Array<{ _id: string; title: string }>;
 ```
 
-**`update` patches are typed `MergePatch<T>`.** (Types only, compatible.) `null` now type-checks on an optional field and deletes it, so drop any `null as never` cast; `null` on a required field is a compile error, use `replace`.
+**`update` patches are typed `MergePatch<T>`.** (Types only; no runtime change.) `null` now type-checks on an optional field and deletes it, so drop any `null as never` cast; `null` on a required field is a compile error, use `replace`. A generic helper that types its patch as `Partial<T>` no longer type-checks against `update`: type the patch as `MergePatch<T>` instead.
 
 **First insert wins.** Of concurrent inserts of one `_id`, one commits and the rest throw `AlreadyExists` (with `err._id`). Code that used a duplicate insert as an upsert must call `replace(id, doc)` or `update(id, patch)`.
 
