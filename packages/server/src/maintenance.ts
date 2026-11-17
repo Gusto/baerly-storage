@@ -350,8 +350,8 @@ const TIER_OPTIONS: Readonly<Record<string, InternalMaintenanceOptions>> = {
  *
  * @throws BaerlyError code="InvalidConfig" when `app`, `tenant` or
  *   `collection` is not a name `Db.create` / `db.collection` accepts, or
- *   `tier` is not one of the listed values, or when the removed `phase`
- *   option is passed.
+ *   `tier` is not one of the listed values, or when an option this
+ *   release no longer accepts is passed.
  *
  * @example
  * ```ts
