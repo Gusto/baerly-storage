@@ -165,3 +165,45 @@ describe("refreshingSigner — concurrency", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("refreshingSigner — invalidate", () => {
+  const url = "https://s3.us-east-1.amazonaws.com/b/k";
+  const mk = () => {
+    let calls = 0;
+    const sign = refreshingSigner({
+      region: "us-east-1",
+      credentials: async () => {
+        calls += 1;
+        return { accessKeyId: `ASIA${calls}`, secretAccessKey: "s" };
+      },
+    });
+    return { sign, calls: () => calls };
+  };
+
+  test("a static-credentials signer has no invalidate", () => {
+    const sign = refreshingSigner({
+      region: "us-east-1",
+      credentials: { accessKeyId: "AKIA", secretAccessKey: "s" },
+    });
+    expect(sign.invalidate).toBeUndefined();
+  });
+
+  test("invalidating a signed request re-resolves even for credentials with no expiration", async () => {
+    const { sign, calls } = mk();
+    const first = await sign(new Request(url));
+    sign.invalidate!(first);
+    const second = await sign(new Request(url));
+    expect(calls()).toBe(2);
+    expect(second.headers.get("Authorization")).toContain("Credential=ASIA2/");
+  });
+
+  test("invalidating a request signed by already-replaced credentials is a no-op", async () => {
+    const { sign, calls } = mk();
+    const stale = await sign(new Request(url));
+    sign.invalidate!(stale);
+    await sign(new Request(url));
+    sign.invalidate!(stale);
+    await sign(new Request(url));
+    expect(calls()).toBe(2);
+  });
+});

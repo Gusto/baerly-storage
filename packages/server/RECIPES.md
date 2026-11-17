@@ -273,7 +273,7 @@ export const storage = s3Storage({
 
 ### Expiration and refresh
 
-A provider is called on the first signed request. The signer caches what it returns until five minutes before `expiration`, then calls the provider again; concurrent requests share one in-flight call, and a rejected call is retried on the next request. A result without `expiration` is cached for the life of the storage handle, so a provider of rotating credentials must return the credentials' real `expiration` on every result; otherwise storage requests start failing once the first credentials expire.
+A provider is called on the first signed request. The signer caches what it returns until five minutes before `expiration`, then calls the provider again; concurrent requests share one in-flight call, and a rejected call is retried on the next request. A result without `expiration` is cached for the life of the storage handle, so a provider of rotating credentials must return the credentials' real `expiration` on every result; otherwise storage requests start failing once the first credentials expire. As a backstop, an S3 `400 ExpiredToken` or `TokenRefreshRequired` response drops the cached credentials and resends the request once with a fresh provider call; a second such response throws `AccessDenied` naming the S3 code.
 
 ### EKS: `fromEks()`
 

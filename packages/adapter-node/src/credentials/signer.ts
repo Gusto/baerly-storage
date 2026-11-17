@@ -12,11 +12,20 @@ function buildAwsClient(creds: Credentials, region: string): AwsClient {
   });
 }
 
+/**
+ * A SigV4 signer. `invalidate` is present only for a credentials provider:
+ * given a request this signer returned, it drops the credentials that signed
+ * it so the next `sign` calls the provider again.
+ */
+export type RefreshingSigner = ((req: Request) => Promise<Request>) & {
+  invalidate?: (signed: Request) => void;
+};
+
 export function refreshingSigner(opts: {
   region: string;
   credentials: Credentials | CredentialsProvider;
   now?: () => number;
-}): (req: Request) => Promise<Request> {
+}): RefreshingSigner {
   const region = opts.region;
   const now = opts.now ?? (() => Date.now());
 
@@ -29,8 +38,19 @@ export function refreshingSigner(opts: {
     buildAwsClient(creds, region),
   );
 
-  return async (req) => {
+  const signedBy = new WeakMap<Request, AwsClient>();
+  const sign = async (req: Request): Promise<Request> => {
     const aws = await resolve();
-    return aws.sign(req);
+    const signed = await aws.sign(req);
+    signedBy.set(signed, aws);
+    return signed;
   };
+  return Object.assign(sign, {
+    invalidate(signed: Request) {
+      const aws = signedBy.get(signed);
+      if (aws !== undefined) {
+        resolve.invalidate(aws);
+      }
+    },
+  });
 }

@@ -8,9 +8,17 @@ import {
   type StorageListEntry,
   type StoragePutOptions,
   type StoragePutResult,
+  currentRequestHold,
+  currentRequestLedger,
 } from "@baerly/protocol";
-import { mapStorageError, retryAfterCause } from "./http-transport.ts";
+import { mapS3StorageError, retryAfterCause, s3ExpiredTokenCode } from "./http-transport.ts";
 import { parseListObjectsV2CommandOutput } from "./xml.ts";
+
+/** State shared by the attempts of one storage call. */
+interface CallState {
+  /** The call already refreshed credentials after an expired-token response. */
+  refreshed: boolean;
+}
 
 /**
  * Construction-time options for {@link S3HttpStorage}. Everything is
@@ -38,6 +46,15 @@ export interface S3HttpStorageOptions {
    * directly.
    */
   sign?: (req: Request) => Promise<Request>;
+  /**
+   * Drops the credentials that signed `signed` (a request `sign` returned) so
+   * the next `sign` resolves fresh ones. When set, a `400 ExpiredToken` /
+   * `TokenRefreshRequired` response triggers one such refresh and one resend
+   * per storage call, charged to the request ledger like any attempt; a
+   * second rejection (or none set) is `AccessDenied` naming the S3 code.
+   * `refreshingSigner(...).invalidate` fits this seam.
+   */
+  invalidateCredentials?: (signed: Request) => void;
   /**
    * Retries after the first attempt, for throttled and transient failures
    * alike (and per `list` page). Default `STORAGE_RETRY_MAX_ATTEMPTS - 1`
@@ -70,6 +87,7 @@ export class S3HttpStorage implements Storage {
   readonly #bucket: string;
   readonly #fetch: typeof fetch;
   readonly #sign?: (req: Request) => Promise<Request>;
+  readonly #invalidate?: (signed: Request) => void;
   readonly #retries: number | undefined;
   readonly #backoffMs: number | undefined;
 
@@ -78,6 +96,7 @@ export class S3HttpStorage implements Storage {
     this.#bucket = options.bucket;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#sign = options.sign;
+    this.#invalidate = options.invalidateCredentials;
     this.#retries = options.retries;
     this.#backoffMs = options.backoffMs;
   }
@@ -90,10 +109,10 @@ export class S3HttpStorage implements Storage {
     return `${this.#endpoint}/${this.#bucket}/${encodeURIComponent(key)}`;
   }
 
-  async #dispatch(req: Request): Promise<Response> {
+  async #send(req: Request): Promise<{ res: Response; signed: Request }> {
     const signed = this.#sign ? await this.#sign(req) : req;
     try {
-      return await this.#fetch(signed);
+      return { res: await this.#fetch(signed), signed };
     } catch (error) {
       if (error instanceof BaerlyError) {
         throw error;
@@ -103,8 +122,33 @@ export class S3HttpStorage implements Storage {
     }
   }
 
-  #retry<T>(fn: () => Promise<T>, put?: StoragePutOptions): Promise<T> {
-    return retryStorageCall(fn, {
+  /**
+   * Send one request. An expired-session-token `400` drops the credentials
+   * that signed it and resends once per storage call (`call` is shared by the
+   * attempts of one `#retry`, so the retry policy cannot add a second
+   * refresh). The resend is charged to the ledger here because it is a
+   * request `retryStorageCall` did not count. A second expired-token
+   * response is returned as is and maps to `AccessDenied`.
+   */
+  async #dispatch(make: () => Request, call: CallState): Promise<Response> {
+    const first = await this.#send(make());
+    if (
+      this.#invalidate === undefined ||
+      call.refreshed ||
+      (await s3ExpiredTokenCode(first.res)) === undefined
+    ) {
+      return first.res;
+    }
+    call.refreshed = true;
+    this.#invalidate(first.signed);
+    currentRequestLedger()?.acquire("external", currentRequestHold());
+    const second = await this.#send(make());
+    return second.res;
+  }
+
+  #retry<T>(fn: (call: CallState) => Promise<T>, put?: StoragePutOptions): Promise<T> {
+    const call: CallState = { refreshed: false };
+    return retryStorageCall(() => fn(call), {
       ...(this.#retries !== undefined && { retries: this.#retries }),
       ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
       conditionalCreate: put?.ifNoneMatch === "*",
@@ -119,9 +163,10 @@ export class S3HttpStorage implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     opts?.signal?.throwIfAborted();
     const url = this.#objectUrl(key);
-    return this.#retry(async () => {
+    return this.#retry(async (call) => {
       const res = await this.#dispatch(
-        new Request(url, { method: "GET", signal: opts?.signal ?? null }),
+        () => new Request(url, { method: "GET", signal: opts?.signal ?? null }),
+        call,
       );
       switch (res.status) {
         case 200: {
@@ -136,7 +181,7 @@ export class S3HttpStorage implements Storage {
           return null;
         }
         default: {
-          throw await mapStorageError(res, "GET", key);
+          throw await mapS3StorageError(res, "GET", key);
         }
       }
     });
@@ -153,16 +198,18 @@ export class S3HttpStorage implements Storage {
     if (opts?.ifNoneMatch === "*") {
       headers.set("If-None-Match", "*");
     }
-    return this.#retry(async () => {
+    return this.#retry(async (call) => {
       const res = await this.#dispatch(
-        new Request(url, {
-          method: "PUT",
-          headers,
-          // TS lib.dom narrows BodyInit and a generic `Uint8Array<ArrayBufferLike>`
-          // is not assignable; the runtime accepts it.
-          body: body as BodyInit,
-          signal: opts?.signal ?? null,
-        }),
+        () =>
+          new Request(url, {
+            method: "PUT",
+            headers,
+            // TS lib.dom narrows BodyInit and a generic `Uint8Array<ArrayBufferLike>`
+            // is not assignable; the runtime accepts it.
+            body: body as BodyInit,
+            signal: opts?.signal ?? null,
+          }),
+        call,
       );
       if (res.status === 412) {
         throw new BaerlyError("WriteConflict", `PUT ${key}: precondition failed`);
@@ -194,7 +241,7 @@ export class S3HttpStorage implements Storage {
         );
       }
       if (res.status !== 200 && res.status !== 204) {
-        throw await mapStorageError(res, "PUT", key);
+        throw await mapS3StorageError(res, "PUT", key);
       }
       const etag = res.headers.get("ETag");
       if (etag === null) {
@@ -212,15 +259,16 @@ export class S3HttpStorage implements Storage {
   async delete(key: string, opts?: { signal?: AbortSignal }): Promise<void> {
     opts?.signal?.throwIfAborted();
     const url = this.#objectUrl(key);
-    await this.#retry(async () => {
+    await this.#retry(async (call) => {
       const res = await this.#dispatch(
-        new Request(url, { method: "DELETE", signal: opts?.signal ?? null }),
+        () => new Request(url, { method: "DELETE", signal: opts?.signal ?? null }),
+        call,
       );
       // 200 / 204 / 404 → success (idempotent); any other status is a real
       // failure (403 → AccessDenied, 429/≥500 → retryable NetworkError, else
       // InvalidResponse) rather than a silently-swallowed non-2xx.
       if (res.status !== 200 && res.status !== 204 && res.status !== 404) {
-        throw await mapStorageError(res, "DELETE", key);
+        throw await mapS3StorageError(res, "DELETE", key);
       }
     });
   }
@@ -258,12 +306,13 @@ export class S3HttpStorage implements Storage {
       // One retry budget per page: 429 and 5xx share the attempt counter,
       // so a page costs at most `retries + 1` requests whatever fails.
       const parsed = parseListObjectsV2CommandOutput(
-        await this.#retry(async () => {
+        await this.#retry(async (call) => {
           const res = await this.#dispatch(
-            new Request(url, { method: "GET", signal: opts?.signal ?? null }),
+            () => new Request(url, { method: "GET", signal: opts?.signal ?? null }),
+            call,
           );
           if (res.status !== 200) {
-            throw await mapStorageError(res, "LIST", prefix);
+            throw await mapS3StorageError(res, "LIST", prefix);
           }
           return res.text();
         }),

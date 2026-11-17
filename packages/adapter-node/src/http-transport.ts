@@ -99,3 +99,42 @@ export const mapStorageError = async (
 
 const isThrottle = (status: number, body: string): boolean =>
   status === 429 || (status === 503 && parseS3Error(body)?.Code === "SlowDown");
+
+/**
+ * S3 error codes for an expired STS session token. S3 answers these with
+ * HTTP 400, not 403; AWS SDKs treat them as a signal to refresh credentials.
+ */
+const EXPIRED_TOKEN_CODES: ReadonlySet<string> = new Set(["ExpiredToken", "TokenRefreshRequired"]);
+
+/**
+ * Read the S3 expired-token code from a `400` response, or `undefined` for
+ * any other response. Reads a clone, so `res` stays readable for
+ * {@link mapS3StorageError}.
+ */
+export const s3ExpiredTokenCode = async (res: Response): Promise<string | undefined> => {
+  if (res.status !== 400) {
+    return undefined;
+  }
+  const code = parseS3Error(await res.clone().text())?.Code;
+  return code !== undefined && EXPIRED_TOKEN_CODES.has(code) ? code : undefined;
+};
+
+/**
+ * {@link mapStorageError} for the S3 adapter: a `400` carrying an
+ * expired-token code is a credentials failure, so it maps to the permanent
+ * `AccessDenied` with the S3 code in the message; every other response maps
+ * as {@link mapStorageError} does.
+ */
+export const mapS3StorageError = async (
+  res: Response,
+  verb: string,
+  key: string,
+): Promise<BaerlyError> => {
+  if ((await s3ExpiredTokenCode(res)) !== undefined) {
+    return new BaerlyError(
+      "AccessDenied",
+      `${verb} ${key}: ${xmlErrorDetail(400, await res.text())}`,
+    );
+  }
+  return mapStorageError(res, verb, key);
+};
