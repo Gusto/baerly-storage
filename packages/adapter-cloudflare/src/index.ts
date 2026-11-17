@@ -14,8 +14,8 @@
  * bytes. Do NOT import from `@gusto/baerly-storage/node` in a Worker —
  * that barrel drags `node:http` / `node:path`.
  *
- * The `fetch(req, env, ctx)` Worker mount lives at the `/worker`
- * subpath: `import { baerlyWorker } from "@baerly/adapter-cloudflare/worker"`.
+ * The `fetch(req, env, ctx)` Worker mount is exported from this entry:
+ * `import { baerlyWorker } from "@gusto/baerly-storage/cloudflare"`.
  * The adapter ships the full CRUD surface via the shared
  * `createRouter` factory in `@baerly/server`; callers thread a
  * `Verifier` through `baerlyWorker((env) => ({ verifier }))` to
