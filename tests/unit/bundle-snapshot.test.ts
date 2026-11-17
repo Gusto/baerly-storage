@@ -7,8 +7,10 @@ import {
   formatViolation,
   loadSnapshot,
   nextSnapshot,
+  ratchetFor,
   type Snapshot,
   ungatedAxes,
+  unratchetedAxes,
 } from "../../scripts/bundle-sizes.ts";
 
 const policy = {
@@ -17,6 +19,7 @@ const policy = {
     shipped: { pct: 0.02, axes: ["raw", "gz", "minGz"] as const },
     tooling: { pct: 0.1, axes: ["raw"] as const },
   },
+  ratchet: { headroomPercent: 10, roundBytes: 256 },
 };
 
 const snap = (entries: Snapshot["entries"]): Snapshot => ({ policy, entries });
@@ -303,6 +306,7 @@ describe("nextSnapshot", () => {
       raw: 200,
       gz: 160,
       minGz: 80,
+      ratchet: { raw: 256, gz: 256, minGz: 256 },
       hardCeiling: { raw: 1024, gz: 512 },
       note: "no runtime closure",
     });
@@ -313,7 +317,12 @@ describe("nextSnapshot", () => {
     // Writing gz anyway would commit a baseline nothing compares against.
     const entries: Snapshot["entries"] = { "dev.js": { tier: "tooling", raw: 1000, note: "n" } };
     const next = nextSnapshot(snap(entries), { "dev.js": { raw: 1100, gz: 400 } });
-    expect(next.entries["dev.js"]).toEqual({ tier: "tooling", raw: 1100, note: "n" });
+    expect(next.entries["dev.js"]).toEqual({
+      tier: "tooling",
+      raw: 1100,
+      ratchet: { raw: 1280 },
+      note: "n",
+    });
   });
 
   test("writes an axis a hard ceiling needs even when the tier omits it", () => {
@@ -337,7 +346,15 @@ describe("nextSnapshot", () => {
     };
     const measured = { "index.js": { raw: 100000, gz: 30000, minGz: 10000 } };
     const once = nextSnapshot(snap(scrambled), measured);
-    expect(Object.keys(once.entries["index.js"]!)).toEqual(["tier", "raw", "gz", "minGz", "note"]);
+    expect(Object.keys(once.entries["index.js"]!)).toEqual([
+      "tier",
+      "raw",
+      "gz",
+      "minGz",
+      "ratchet",
+      "note",
+    ]);
+    expect(Object.keys(once.entries["index.js"]!.ratchet!)).toEqual(["raw", "gz", "minGz"]);
     expect(JSON.stringify(nextSnapshot(once, measured))).toBe(JSON.stringify(once));
   });
 
@@ -353,6 +370,317 @@ describe("nextSnapshot", () => {
     const original = snap(shipped);
     nextSnapshot(original, { "index.js": { raw: 999999, gz: 999999, minGz: 999999 } });
     expect(original.entries["index.js"]?.raw).toBe(100000);
+  });
+});
+
+// The delta gate re-arms at every baseline, so it bounds each step and never
+// the walk. The ratchet is the bound on the walk: `--write` seeds it, lowers
+// it on a shrink, and has no path that raises it.
+describe("ratchet", () => {
+  const ratchetPolicy = policy.ratchet;
+  const index = (
+    raw: number,
+    gz: number,
+    minGz: number,
+    ratchet?: Snapshot["entries"][string]["ratchet"],
+  ): Snapshot["entries"] => ({
+    "index.js": {
+      tier: "shipped",
+      raw,
+      gz,
+      minGz,
+      ...(ratchet !== undefined && { ratchet }),
+      note: "kernel barrel",
+    },
+  });
+
+  describe("ratchetFor", () => {
+    test("adds the headroom and rounds UP to the next roundBytes multiple", () => {
+      // 100000 × 1.1 = 110000, which is 429.69 × 256 → 430 × 256.
+      expect(ratchetFor(100000, ratchetPolicy)).toBe(110080);
+    });
+
+    test("is exact on a measurement whose headroom lands on a boundary", () => {
+      // 12800 × 1.1 is 14080 = 55 × 256 exactly; float `× 1.1` gives
+      // 14080.000000000002, which a ceil would push to the next multiple.
+      expect(ratchetFor(12800, ratchetPolicy)).toBe(14080);
+    });
+
+    test("a tiny entry rounds to one roundBytes unit, never to zero", () => {
+      expect(ratchetFor(1, ratchetPolicy)).toBe(256);
+      expect(ratchetFor(0, ratchetPolicy)).toBe(0);
+    });
+  });
+
+  test("seeding: --write fills every tier-gated axis from the measurement", () => {
+    const next = nextSnapshot(snap(index(100000, 30000, 10000)), {
+      "index.js": { raw: 100000, gz: 30000, minGz: 10000 },
+    });
+    expect(next.entries["index.js"]?.ratchet).toEqual({
+      raw: ratchetFor(100000, ratchetPolicy),
+      gz: ratchetFor(30000, ratchetPolicy),
+      minGz: ratchetFor(10000, ratchetPolicy),
+    });
+  });
+
+  test("seeding is deterministic: the same build seeds byte-identical bounds", () => {
+    const measured = { "index.js": { raw: 123457, gz: 40001, minGz: 9999 } };
+    const a = nextSnapshot(snap(index(1, 1, 1)), measured);
+    const b = nextSnapshot(snap(index(9, 9, 9)), measured);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  test("seeding a tooling entry bounds only the axis its tier gates", () => {
+    const entries: Snapshot["entries"] = { "dev.js": { tier: "tooling", raw: 1000, note: "n" } };
+    const next = nextSnapshot(snap(entries), { "dev.js": { raw: 1000, gz: 400 } });
+    expect(next.entries["dev.js"]?.ratchet).toEqual({ raw: 1280 });
+  });
+
+  test("shrink: --write lowers the bound to the shrunk measurement's ratchet", () => {
+    const bounds = { raw: 110080, gz: 33024, minGz: 11008 };
+    const next = nextSnapshot(snap(index(100000, 30000, 10000, bounds)), {
+      "index.js": { raw: 80000, gz: 30000, minGz: 9000 },
+    });
+    expect(next.entries["index.js"]?.ratchet).toEqual({
+      raw: ratchetFor(80000, ratchetPolicy), // 88064: lowered
+      gz: 33024, // unchanged measurement re-derives the same bound
+      minGz: ratchetFor(9000, ratchetPolicy), // 9984: lowered
+    });
+  });
+
+  test("shrink then regrow: the lowered bound holds, so the win stays locked in", () => {
+    const start = snap(index(100000, 30000, 10000, { raw: 110080, gz: 33024, minGz: 11008 }));
+    const shrunk = nextSnapshot(start, { "index.js": { raw: 80000, gz: 30000, minGz: 10000 } });
+    // Back to the old size: +25% from the new baseline is a delta trip, and
+    // even past that, the regrowth exceeds the lowered ratchet.
+    const v = compareSnapshot(shrunk, { "index.js": { raw: 100000, gz: 30000, minGz: 10000 } });
+    expect(v.filter((x) => x.kind === "ratchet")).toEqual([
+      {
+        kind: "ratchet",
+        entry: "index.js",
+        axis: "raw",
+        bound: 88064,
+        measured: 100000,
+        raiseTo: 110080,
+      },
+    ]);
+  });
+
+  test("growth within the bound passes and --write does not raise the bound", () => {
+    const bounds = { raw: 110080, gz: 33024, minGz: 11008 };
+    const s = snap(index(100000, 30000, 10000, bounds));
+    const measured = { "index.js": { raw: 101500, gz: 30300, minGz: 10150 } }; // +1.5%
+    expect(compareSnapshot(s, measured)).toEqual([]);
+    const next = nextSnapshot(s, measured);
+    expect(next.entries["index.js"]?.ratchet).toEqual(bounds);
+    expect(next.entries["index.js"]?.raw).toBe(101500);
+  });
+
+  test("growth beyond the bound trips even when the delta gate passes", () => {
+    // +1.5% is inside the 2% delta, but past a bound set close to the baseline.
+    const s = snap(index(100000, 30000, 10000, { raw: 101000, gz: 33024, minGz: 11008 }));
+    const v = compareSnapshot(s, { "index.js": { raw: 101500, gz: 30000, minGz: 10000 } });
+    expect(v).toEqual([
+      {
+        kind: "ratchet",
+        entry: "index.js",
+        axis: "raw",
+        bound: 101000,
+        measured: 101500,
+        raiseTo: ratchetFor(101500, ratchetPolicy),
+      },
+    ]);
+    expect(blocksWrite(v[0]!)).toBe(true);
+  });
+
+  test("growth beyond the bound: --write's snapshot keeps the bound, never raises it", () => {
+    // The CLI refuses to write past a ratchet violation; this pins the second
+    // line of defence, so a write path that skipped the refusal still could
+    // not ratify the growth.
+    const s = snap(index(100000, 30000, 10000, { raw: 101000, gz: 33024, minGz: 11008 }));
+    const next = nextSnapshot(s, { "index.js": { raw: 150000, gz: 45000, minGz: 15000 } });
+    expect(next.entries["index.js"]?.ratchet).toEqual({ raw: 101000, gz: 33024, minGz: 11008 });
+  });
+
+  test("repeated rebaselines: delta-legal steps accumulate into a ratchet trip", () => {
+    // Six +1.9% steps, each inside the 2% delta gate, each rebaselined with
+    // --write. The delta gate never fires; the ratchet seeded at the start
+    // does once the walk passes 10%, and its bound never moved on the way.
+    let s = nextSnapshot(snap(index(100000, 30000, 10000)), {
+      "index.js": { raw: 100000, gz: 30000, minGz: 10000 },
+    });
+    const seeded = s.entries["index.js"]!.ratchet;
+    let raw = 100000;
+    const kinds: string[][] = [];
+    for (let step = 0; step < 6; step++) {
+      raw = Math.floor(raw * 1.019);
+      const measured = { "index.js": { raw, gz: 30000, minGz: 10000 } };
+      const v = compareSnapshot(s, measured);
+      kinds.push(v.map((x) => x.kind));
+      if (v.some(blocksWrite)) {
+        break;
+      }
+      s = nextSnapshot(s, measured);
+      expect(s.entries["index.js"]!.ratchet).toEqual(seeded);
+    }
+    expect(kinds.flat()).not.toContain("delta");
+    expect(kinds.at(-1)).toEqual(["ratchet"]);
+    expect(kinds).toHaveLength(6); // +11.9% cumulative on step 6; +9.8% on step 5 passes
+  });
+
+  test("a hand-raised bound clears the violation, and --write keeps it", () => {
+    const s = snap(index(100000, 30000, 10000, { raw: 101000, gz: 33024, minGz: 11008 }));
+    const measured = { "index.js": { raw: 101500, gz: 30000, minGz: 10000 } };
+    const [v] = compareSnapshot(s, measured);
+    // The deliberate edit the failure message asks for.
+    const raised = structuredClone(s);
+    raised.entries["index.js"]!.ratchet!.raw = v!.kind === "ratchet" ? v!.raiseTo : NaN;
+    expect(compareSnapshot(raised, measured)).toEqual([]);
+    expect(nextSnapshot(raised, measured).entries["index.js"]?.ratchet?.raw).toBe(111872);
+  });
+
+  test("a bound hand-raised past the derived value is stale, and --write lowers it", () => {
+    // Hand edits loosen to what the measurement justifies, not beyond it.
+    const s = snap(index(100000, 30000, 10000, { raw: 500000, gz: 33024, minGz: 11008 }));
+    const measured = { "index.js": { raw: 100000, gz: 30000, minGz: 10000 } };
+    expect(compareSnapshot(s, measured).map((v) => v.kind)).toEqual(["stale"]);
+    const next = nextSnapshot(s, measured);
+    expect(next.entries["index.js"]?.ratchet?.raw).toBe(110080);
+    expect(compareSnapshot(next, measured)).toEqual([]);
+  });
+
+  describe("a shrink locks in without anyone remembering", () => {
+    const bounds = { raw: 110080, gz: 33024, minGz: 11008 };
+    const start = snap(index(100000, 30000, 10000, bounds));
+    const shrunk = { "index.js": { raw: 80000, gz: 30000, minGz: 10000 } };
+
+    test("an unwritten shrink fails the check as a stale bound", () => {
+      expect(compareSnapshot(start, shrunk)).toEqual([
+        {
+          kind: "stale",
+          entry: "index.js",
+          axis: "raw",
+          bound: 110080,
+          measured: 80000,
+          lowerTo: 88064,
+        },
+      ]);
+    });
+
+    test("a stale bound is cleared by --write, not refused by it", () => {
+      const [v] = compareSnapshot(start, shrunk);
+      expect(blocksWrite(v!)).toBe(false);
+      expect(compareSnapshot(nextSnapshot(start, shrunk), shrunk)).toEqual([]);
+    });
+
+    test("after --write, regrowth past the lowered bound fails", () => {
+      // 90000 is far under the old bound (110080) but past the new one (88064).
+      const written = nextSnapshot(start, shrunk);
+      const v = compareSnapshot(written, { "index.js": { raw: 90000, gz: 30000, minGz: 10000 } });
+      expect(v).toContainEqual(
+        expect.objectContaining({ kind: "ratchet", axis: "raw", bound: 88064 }),
+      );
+    });
+
+    test("a shrink too small to move the derived bound is not stale", () => {
+      // 99990 × 1.1 still rounds up to 110080.
+      expect(
+        compareSnapshot(start, { "index.js": { raw: 99990, gz: 30000, minGz: 10000 } }),
+      ).toEqual([]);
+    });
+
+    test("the stale message tells the author to run --write", () => {
+      const [v] = compareSnapshot(start, shrunk);
+      expect(formatViolation(v!, 256)).toBe(
+        [
+          "FAIL index.js raw ratchet 110080 is stale: 80000 now derives 88064",
+          "     This entry shrank. Run `pnpm bundle-sizes --write` to lower the ratchet and",
+          "     commit the result, so regrowing back to the old size cannot pass.",
+        ].join("\n"),
+      );
+    });
+  });
+
+  test("structural ceilings stay distinct: --write leaves them as written", () => {
+    const entries: Snapshot["entries"] = {
+      "app-config.js": {
+        tier: "shipped",
+        raw: 147,
+        gz: 137,
+        minGz: 70,
+        hardCeiling: { raw: 1024, gz: 512 },
+        note: "no runtime closure",
+      },
+    };
+    let s = snap(entries);
+    for (const raw of [147, 120, 147]) {
+      s = nextSnapshot(s, { "app-config.js": { raw, gz: 137, minGz: 70 } });
+      expect(s.entries["app-config.js"]?.hardCeiling).toEqual({ raw: 1024, gz: 512 });
+    }
+  });
+
+  test("structural ceilings stay distinct: crossing one reports kind ceiling", () => {
+    const entries: Snapshot["entries"] = {
+      "app-config.js": {
+        tier: "shipped",
+        raw: 147,
+        gz: 137,
+        minGz: 70,
+        ratchet: { raw: 256, gz: 256, minGz: 256 },
+        hardCeiling: { raw: 1024, gz: 512 },
+        note: "no runtime closure",
+      },
+    };
+    // A hand-raised ratchet does not loosen the structural ceiling. Raised to
+    // exactly what the measurement derives, so the bound is neither crossed
+    // nor stale and only the ceiling (and the delta) can speak.
+    entries["app-config.js"]!.ratchet = { raw: 2304, gz: 256, minGz: 256 };
+    const v = compareSnapshot(snap(entries), {
+      "app-config.js": { raw: 2000, gz: 137, minGz: 70 },
+    });
+    expect(v.map((x) => x.kind).toSorted()).toEqual(["ceiling", "delta"]);
+    expect(v.every((x) => x.kind !== "ceiling" || blocksWrite(x))).toBe(true);
+  });
+
+  test("unratchetedAxes flags every tier-gated axis with no bound", () => {
+    expect(unratchetedAxes(snap(index(1, 1, 1, { raw: 256 })))).toEqual([
+      { entry: "index.js", axis: "gz" },
+      { entry: "index.js", axis: "minGz" },
+    ]);
+    const tooling: Snapshot["entries"] = {
+      "dev.js": { tier: "tooling", raw: 1, ratchet: { raw: 256 }, note: "n" },
+    };
+    expect(unratchetedAxes(snap(tooling))).toEqual([]);
+  });
+
+  test("the committed snapshot bounds every tier-gated axis", () => {
+    expect(unratchetedAxes(loadSnapshot())).toEqual([]);
+  });
+
+  test("a ratchet violation names the bound, the hand edit and the value to set", () => {
+    expect(
+      formatViolation(
+        {
+          kind: "ratchet",
+          entry: "index.js",
+          axis: "minGz",
+          bound: 11008,
+          measured: 11200,
+          raiseTo: 12544,
+        },
+        256,
+      ),
+    ).toBe(
+      [
+        "FAIL index.js min-gz 11200 exceeds RATCHET 11008 (+192)",
+        "     The ratchet bounds accumulated growth; `--write` lowers it but will NOT raise it.",
+        '     If intended: hand-edit bundle-sizes.json entries["index.js"].ratchet.minGz',
+        "     to 12544 (the measurement plus standard headroom), then",
+        "     `pnpm bundle-sizes --write`, and say why in the commit message.",
+        "     Do NOT trim JSDoc, comments, or error text to fit — those ship",
+        "     un-stripped in raw/gz but vanish under a consumer's minifier.",
+      ].join("\n"),
+    );
   });
 });
 

@@ -22,6 +22,6 @@ Canonical content lives at [`docs/contributing/conventions/bundle-budgets.md`](.
 
 Three things to know before you edit:
 
-1. **`min-gz` is the axis a consumer pays.** `raw`/`gz` are diagnostics. All three are delta-gated, so growth rate — not an absolute number — is what bounds size. The lone exception is `app-config.js`, which carries absolute `raw`/`gz` ceilings asserting it has no runtime closure at all.
+1. **`min-gz` is the axis a consumer pays.** `raw`/`gz` are diagnostics. All three are delta-gated per change and ratchet-bounded across changes; both are derived from measurements, not hand-picked numbers. The lone absolute limit is `app-config.js`'s `raw`/`gz` ceilings, which assert it has no runtime closure at all.
 2. **Never trim JSDoc, comments, or error text to fit a budget.** Comments ship un-stripped in `raw`/`gz` but vanish under a consumer's minifier, so golfing them buys bytes nobody pays while costing documentation quality.
-3. **Intended growth is cleared with `pnpm bundle-sizes --write`** plus a reason in the commit message. Do not write a changelog entry into any file. A ceiling violation is not clearable this way — `--write` refuses, because that failure means the entry gained a closure, not bytes.
+3. **Intended growth is cleared with `pnpm bundle-sizes --write`** plus a reason in the commit message. Do not write a changelog entry into any file. `--write` refuses two violations: a **ratchet** (accumulated growth past the bound — raise `ratchet.<axis>` by hand to the value the failure prints, with a reason; deleting the bound for `--write` to reseed is the same edit) and a **ceiling** (the entry gained a closure, not bytes). A **stale** ratchet means the entry shrank: run `--write` and commit it.

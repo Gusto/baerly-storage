@@ -51,7 +51,7 @@ pre-commit:
     # Bundle budgets are NOT part of `pnpm verify` — so without this hook a
     # kernel edit that blows a budget commits green and only goes red in CI.
     # `pnpm bundle-sizes` self-builds, then compares the fresh build against
-    # the committed bundle-sizes.json (delta gate + hard ceilings). Scoped to
+    # the committed bundle-sizes.json (delta gate, ratchet, hard ceilings). Scoped to
     # bundle-affecting source so doc/test/changeset commits stay fast.
     # Policy: docs/contributing/conventions/bundle-budgets.md
     bundle-size:
