@@ -16,7 +16,7 @@
 
 Also `Type 'null' is not assignable to type 'string | undefined'` (or another field type) on an `update` patch.
 
-**Cause:** `null` is not a stored value in the typed document contract. `DocumentValue` excludes it, so `insert` and `replace` reject a `null` value at compile time, even on a collection whose schema uses `.nullable()` (the row type then admits `null`, the write types still do not). An `update` patch is a `MergePatch<T>`: `null` there means "delete this field", so it is accepted on an optional key and rejected on a required one.
+**Cause:** `null` is not a stored value in the typed document contract. `DocumentValue` excludes it, so `insert` and `replace` reject a `null` value at compile time, even on a collection whose schema uses `.nullable()` (the row type then admits `null`, the write types still do not). An `update` patch is a `MergePatch<T>`: `null` there means "delete this field", so it is accepted on an optional key and rejected on a required one. To change part of an optional object, pass the whole object or use `replace`.
 
 The runtime is more permissive:
 
