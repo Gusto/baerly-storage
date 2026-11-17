@@ -2,7 +2,7 @@
 title: Upgrading to 0.7.0
 audience: integrator
 summary: Old-to-new migration for 0.7.0, organized by what an app author and an operator must do.
-last-reviewed: 2026-11-15
+last-reviewed: 2026-11-16
 tags: [upgrade, migration, breaking-changes]
 related:
   [
@@ -24,7 +24,9 @@ Pick your starting version:
 
 Every writer to a collection must run 0.7.0 before you rely on the new write guarantees (first-wins inserts, update semantics): an older writer does not check the new conditions.
 
-0.7.0 also stops writing index markers (section 6). A 0.6.0 node that reads a bucket 0.7.0 wrote, in a mixed fleet during a rolling deploy or after a rollback, misses the rows 0.7.0 wrote from indexed queries until 0.6.0's `baerly admin rebuild-index` runs for each index. Finish the rollout before relying on indexed reads, and follow section 6 if you roll back.
+0.7.0 also stops writing index markers (section 6). On a live S3, R2 or GCS bucket, a 0.6.0 node that reads after any 0.7.0 write, in a mixed fleet during a rolling deploy or after a rollback, answers indexed queries from stale markers and misses the rows 0.7.0 wrote until 0.6.0's `baerly admin rebuild-index` runs for every index (with `--config` for a composite index). Finish the rollout before relying on indexed reads, and follow section 6 if you roll back.
+
+Back up before upgrading a live bucket. `baerly admin dump` exports collection rows only; files your app writes directly to the same `Storage` (uploaded images, exports or any other app-owned objects) need bucket versioning or a bucket copy (section 5).
 
 ## 1. App code: errors
 
@@ -106,6 +108,17 @@ const row = await orders.get(untrustedId).catch((e) => {
 });
 ```
 
+**Rows are typed `T & { _id: string }`.** (Types only.) `first`, `all` and `get`, on a collection, a query and the HTTP client, return rows whose `_id` is a string, unconfigured collections included, so pass `row._id` straight to `get`/`update`/`replace`/`delete`. `insert` types `_id` as an optional string, so a non-string insert `_id` is a compile error. Casts to row shapes, and hand-written fakes of `Collection<T>` or `ClientCollection<T>`, need `_id: string` in the row type.
+
+```ts
+// before
+for (const row of await notes.all()) await notes.delete(String(row["_id"]));
+const rows = (await notes.all()) as Array<{ title: string }>;
+// after
+for (const row of await notes.all()) await notes.delete(row._id);
+const rows = (await notes.all()) as Array<{ _id: string; title: string }>;
+```
+
 **First insert wins.** Of concurrent inserts of one `_id`, one commits and the rest throw `AlreadyExists` (with `err._id`). Code that used a duplicate insert as an upsert must call `replace(id, doc)` or `update(id, patch)`.
 
 **Replay of client-minted ids (E2).** An insert without `_id` is minted by the HTTP client (UUIDv7, client clock) and sent with `mintedId`. If a resend arrives while the live row still equals the same document (key order ignored), the server answers the original `201 { _id }` instead of `AlreadyExists`. Edges: a different current body gives `AlreadyExists`; deleting the row permits re-insertion; updating back to the original body permits replay again. A caller-chosen `_id` never replays, so it still works as a run-once guard. Calling `insert(doc)` again is a new operation with a new id. Raw HTTP callers may send `mintedId` (a canonical UUIDv7 equal to `doc._id`; anything else is `400 SchemaError`); a server without this feature ignores it and answers `409`, never a duplicate row. The client resends a minted insert up to 3 times total after a thrown `fetch` or an envelope-less 5xx, 408 or 429; other verbs are sent once for those failures.
@@ -159,10 +172,11 @@ const db = Db.create({ storage, app, tenant: claims.org.normalize("NFC") });
 ## 3. App code: client and HTTP
 
 - `createBaerlyClient` retries: `GET` up to 3 attempts; `MaintenancePending` on every verb up to 3; minted inserts after transport failures. All share one 3-attempt budget per request.
-- A Cloudflare Worker now answers a throw around the router (for example a Cache API failure) with the JSON error envelope and mapped status, not workerd's error page.
+- A Cloudflare Worker now answers a throw around the router (for example `Db.create` refusing an invalid tenant) with the JSON error envelope and mapped status, not workerd's error page.
+- A Cloudflare Worker no longer caches point-read response bodies. Every read reaches storage, so a read after a completed `PUT`, `PATCH` or direct SDK write sees that write. Code that waited out, or busted, the old cache can drop the workaround. Repeated reads of one row now cost a storage read each (section 4).
 - A `Verifier` that throws now yields its mapped status instead of an unhandled rejection.
 - Canonical log lines report capacity refusals as `outcome: "refused"` (warn level). Alerts keyed on `outcome: "conflict"` or `"error"` for those writes shift to `"refused"`. `Baerly-Capacity-Warning` and the `capacity_warning` log field are additive early signals.
-- Request budgets (Cloudflare): a call past the request's storage budget is refused with `CapacityExceeded` before it is sent; a read that cannot fit is refused whole, never truncated. `GET /v1/since` ends a long-poll early instead of failing (about 22 s on Free + S3).
+- Request budgets (Cloudflare): a call past the request's storage budget is refused with `CapacityExceeded` before it is sent; a read that cannot fit is refused whole, never truncated. `GET /v1/since` ends a long-poll early when its request budget runs out instead of failing (about 22 s under the default `cf-free` profile with S3 storage).
 - `GET /v1/since` answers a cursor that can no longer resume (its changes are no longer retained, or `baerly admin restore --force` truncated the generation it came from) with `CursorExpired` (410). 0.6.0 answered `SchemaError` (400), which still means a malformed cursor. Re-read your rows, then restart with `cursor: ""`; the changes in between are not replayed. The React subscription poll does this itself and now parks on a `SchemaError` until `refetch()`.
 
 ```ts
@@ -189,15 +203,17 @@ Host settings live here, not in app code.
 | `BAERLY_MAINTENANCE_PROFILE=CF-PAID` / `cf_paid` / `paid` | `cf-paid` exactly |
 | `BAERLY_MAINTENANCE_PROFILE=free` (meant as the default) | unset, or `cf-free` |
 
+On every host, `BAERLY_MAINTENANCE_MAX_FOLD_BYTES` must be unset, `""` or a plain positive decimal, and `BAERLY_MAINTENANCE_DISABLE` is matched case-insensitively against its closed vocabulary. On Cloudflare, `BAERLY_MAINTENANCE_PROFILE` accepts only unset, `""`, `cf-free` or `cf-paid`. Anything else is `InvalidConfig`.
+
 **Scheduled maintenance.** Optional, as before: every write already runs bounded maintenance in band. `@gusto/baerly-storage/maintenance` now exports one function, addressed by collection and sized by `tier` (the `BAERLY_MAINTENANCE_PROFILE` vocabulary: `"cf-free"`, `"cf-paid"`, or the unbounded default `"node"`). `compact`, `runGc`, their option and result types, `MaintenanceArgs`, `MaintenanceProfile`, `MAINTENANCE_PROFILE_*`, `CLOUDFLARE_FREE_TIER` / `CLOUDFLARE_PAID_TIER` and (from `/cloudflare`) `resolveCfMaintenanceProfile` are gone.
 
 ```ts
 // before
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
-const res = await runScheduledMaintenance({
-  storage,
-  currentJsonKey: "app/helpdesk/tenant/acme/manifests/tickets/current.json",
-});
+const res = await runScheduledMaintenance(
+  { storage, currentJsonKey: "app/helpdesk/tenant/acme/manifests/tickets/current.json" },
+  { compact: { minEntriesToCompact: 10 } },
+);
 console.log(res.compact.entriesFolded, res.gc.swept);
 // after
 import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
@@ -210,7 +226,7 @@ await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER)
 // after
 await runScheduledMaintenance(target, { tier: "cf-free" }); // or "cf-paid"
 
-// before (Workers Free, S3 over HTTP)
+// before (storage over fetch under "cf-free")
 if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
   await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
 } else {
@@ -223,16 +239,46 @@ await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact"
 // before
 const profile = resolveCfMaintenanceProfile((k) => env[k]);
 // after
-const tier = env.BAERLY_MAINTENANCE_PROFILE === "cf-paid" ? "cf-paid" : "cf-free";
+const tier = env.BAERLY_MAINTENANCE_PROFILE || "cf-free";
+if (tier !== "cf-free" && tier !== "cf-paid") {
+  throw new Error(`BAERLY_MAINTENANCE_PROFILE must be cf-free or cf-paid, got ${tier}`);
+}
+await runScheduledMaintenance(target, { tier });
 ```
 
 - The result is `{ folded, deferred?: { reason }, gcDeleted, pending }`. `deferred.reason` is `"contention"` (a concurrent write or pass won) or `"budget"` (the pass saved its progress locating the tail; the next pass continues). It replaces `CompactResult.skippedReason`, including `"probe-budget-checkpointed"`.
-- `minEntriesToCompact` is no longer an option. Node and `"cf-paid"` passes fold any pending write (0.6.0's bare call skipped tails under 100, and `CLOUDFLARE_PAID_TIER` under 50), so a hot Paid cron rewrites the snapshot more often. Under `"cf-free"` a pass folds one 20-entry slice only when at least 20 entries are pending.
-- Workers Free with the R2 binding fits one whole pass per invocation; the even/odd-minute alternation is needed only for storage over `fetch`. Run one collection per Cloudflare invocation. Invalid names and unknown `tier` / `phase` values throw `InvalidConfig` before any storage call.
+- `minEntriesToCompact` is no longer an option. Node (the default tier) and `"cf-paid"` passes fold from 1 pending entry (0.6.0's bare call skipped tails under 100, and `CLOUDFLARE_PAID_TIER` under 50), so a hot Paid cron rewrites the snapshot more often. Under `"cf-free"` a pass folds one 20-entry slice only when at least 20 entries are pending. Delete a raised-threshold workaround (such as `minEntriesToCompact: 10` against a long tail) along with the option.
+- One whole pass fits an invocation on Workers Free with the R2 binding and under `"cf-paid"`. The even/odd-minute `phase` alternation is needed only for storage over `fetch` under `"cf-free"`. Run one collection per Cloudflare invocation. Invalid names and unknown `tier` / `phase` values throw `InvalidConfig` before any storage call.
 
-**Host tiers.** Per-host ceilings, the pending-tail limits on Workers Free with S3 over HTTP, and which host is a guaranteed tier changed. Read the current figures in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers) rather than any you noted from 0.6.0.
+**Host tiers.** The supported hosts are Workers Free with the R2 binding, Workers Paid (S3 or R2) and serverful Node. Workers Free with S3 over HTTP is no longer supported; S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A Worker cannot tell Free from Paid, so a Paid Worker on S3 that has not set `cf-paid` runs under the default `cf-free` profile and keeps its 45-call `fetch` budget per request: past it a request gets `CapacityExceeded`, not a platform error. Runtime behavior is unchanged and nothing new is refused. Per-host ceilings changed too; read the current figures in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers) rather than any you noted from 0.6.0.
 
 **Fold-ceiling signals.** A collection past the fold ceiling now logs a `fold_deferred` warning (category `["baerly", "maintenance"]`) on its first deferral and then at most once per 1,000 writes. `db.compaction.deferred_total` gains a `gate` label, and `db.compaction.deferred_bytes_total` / `db.compaction.deferred_rows_total` are new. A scheduled pass below its fold floor with a live tail counts `db.compaction.below_min_total`. `baerly inspect` reports `fold_gate` per host profile; `inspect --json` is a storage-format diagnostic, not a stable contract, so do not build automation on its fields.
+
+**Read signals.** Every collection read reports its work on the request's canonical log line, on every host: `db.read.decoded_entries_total` (snapshot rows plus log entries decoded), `db.read.live_documents_total` (rows live after the fold) and `db.read.returned_rows_total` (rows left after predicate, order and limit). A point read or `limit(1)` still folds the whole collection, so a large decoded count beside one returned row is that read's real cost. The Cloudflare `cache_status` log field is gone with the response cache; drop dashboards and alerts keyed on it, and expect storage read volume to rise with repeated reads of the same rows.
+
+**GCS credential providers.** `gcsStorage` now resolves a `credentials` provider once and reuses the result until five minutes before its `expiration`. A provider that returns no `expiration` resolves once for the lifetime of the storage handle, so a provider that rotates credentials must return `expiration: Date` on every result. Static credential objects need no change.
+
+```ts
+// before: relied on the provider running for every request
+const storage = gcsStorage({ bucket, credentials: async () => ({ accessKeyId, secretAccessKey }) });
+// after: refreshed five minutes before expiration
+const storage = gcsStorage({
+  bucket,
+  credentials: async () => ({ accessKeyId, secretAccessKey, expiration }),
+});
+```
+
+**CLI.** `baerly cost --json` reports a monthly cost band instead of a dollar figure: `trajectory.projectedUsdPerMonth` is replaced by `trajectory.projectedUsdBand`, which is `null` for a provider without a dollar model (self-hosted), otherwise one of `"$0"`, `"<$25"`, `"$25-$50"`, `"$50-$100"`, `"$100-$250"`, `"$250-$500"` or `"$500+"`. `"$0"` appears only inside a modeled free tier. The projection covers only the selected collection; the envelope's new `scope` and `assumptions` fields say what it assumed. `gcs://` buckets are priced as GCS Standard, `--provider` accepts `gcs`, and `--profile=cf-free|node` sets the maintenance profile (default `cf-free` for R2, `node` otherwise).
+
+```ts
+// before
+const free = result.trajectory.projectedUsdPerMonth === 0;
+// after
+const free = result.trajectory.projectedUsdBand === "$0";
+```
+
+- `baerly cost` and `baerly admin usage` sample each collection's trailing log by probing the live tail instead of listing its whole `log/` prefix, so per-collection sampling no longer grows with retained history. `admin usage` still lists the tenant's `manifests/` prefix to discover collections.
+- `baerly doctor --bucket` also checks that the bucket's LIST returns keys exactly as written. It puts and deletes two throwaway objects under `__baerly_list_probe__/`, so its credentials need put, list and delete there; a mismatch is an error (exit 2) naming the likely backend encoding fault.
 
 **Storage retries.** Retry now happens at one layer, 3 attempts per request. `S3HttpStorage` and `GcsHttpStorage` `retries` defaults to `2` (was `8`); a value that is not a non-negative integer rejects with `InvalidConfig`; `backoffMs` replaces both jitter bases. `r2BindingStorage` now retries transient failures under the same policy. A conditional (`If-Match`) PUT is never resent.
 
@@ -252,11 +298,19 @@ const { etag } = await storage.put(key, body);
 - No `content/<sha>.json` objects are written. Direct bucket readers must read `entry.after` from the log entry (see the `stop-writing-content-objects` changeset). Legacy content objects are left inert.
 - GC no longer marks orphan content or stale log objects (0.6.0's `RunGcResult.marked.orphan_content` / `stale_log`); it no longer LISTs `log/`, and old log objects are retired by sequence window. Count deletions with `MaintenanceResult.gcDeleted`.
 
-**Local-fs.** `LocalFsStorage` (and `baerlyDev()`) now stores keys byte-exact on disk and writes a `.baerly-localfs.json` marker. An existing data directory is adopted only when every name already reads the same under the new encoding: lowercase ASCII names, nothing dot-prefixed, and no collection ever folded (a fold writes `snapshot/L9/`, which now encodes as `snapshot/%4c9/`, so any directory 0.6.0 compacted is refused). Otherwise every operation throws `InvalidConfig` listing the paths. There is no in-place migration: dump with 0.6.0, restore into a fresh directory with 0.7.0. Keys a case-folding filesystem already merged cannot be recovered.
+**Local-fs.** `LocalFsStorage` (and `baerlyDev()`) now stores keys byte-exact on disk and writes a `.baerly-localfs.json` marker. A local-fs directory 0.7.0 refuses with `InvalidConfig` holds dev data from an older release: move it aside or delete it, and the next write starts a fresh one. The common causes are a folded collection (`snapshot/L9/` now encodes as `snapshot/%4c9/`) and an uppercase letter in a collection name or id (a camelCase name such as `boardInvitees`). For a collection worth keeping, dump it with the older release and restore it into the fresh directory; the dump holds collection rows only. For other files the app stored in the same directory, re-put them through `Storage` instead: read each with the older release and write it with 0.7.0. A raw file copy does not work, because a file whose name holds an uppercase letter or other escaped byte does not read back as the same key under the new encoding, and `list` refuses it. A directory whose names are all lowercase ASCII, not dot-prefixed, and that holds no snapshot is adopted as-is. Keys a case-folding filesystem already merged cannot be recovered.
+
+```sh
+mv ./data ./data-0.6
+baerly admin dump    --bucket=file://$PWD/data-0.6 --app=app --tenant=t --collection=tickets > tickets.ndjson   # 0.6.0 binary
+baerly admin restore --bucket=file://$PWD/data     --app=app --tenant=t --collection=tickets < tickets.ndjson   # 0.7.0
+```
 
 ## 5. Data migration
 
 Do this per tenant, before deploying 0.7.0 for any tenant whose data may be affected.
+
+**Backups.** Take one before upgrading a live bucket. `baerly admin dump` covers collection rows only. Files the app writes directly to the same `Storage` (uploaded images, exports or any other app-owned objects) are not in it; enable bucket versioning or copy the bucket to keep them.
 
 **Preflight (read-only).**
 
@@ -302,7 +356,7 @@ baerly admin restore --bucket=$B --app=app --tenant=t --collection=tickets --for
 - Removed: `rebuildIndex` (from `@gusto/baerly-storage/maintenance`), `allIndexKeysFor`, `baerly admin rebuild-index`, and `baerly admin fsck --indexes` / `--fix`. `fsck` without those flags is unchanged.
 - Legacy `index/` objects written by earlier releases are inert: nothing reads, writes or lists them. They cost only storage. To reclaim it, delete by prefix, per collection, once no 0.6.0 node reads the bucket: `app/<app>/tenant/<tenant>/manifests/<collection>/index/` (under your bucket key prefix, if any). No cleanup is required for correctness.
 - Mixed fleet or rollback: a 0.6.0 node reading a bucket 0.7.0 wrote misses 0.7.0-written rows on indexed queries until 0.6.0's `baerly admin rebuild-index` runs for each index. That rebuild aborts on a value 0.6.0 refused in an indexed field (an array, or a value too long for a marker key), so stop writers first and follow the rollback steps in [backups.md](backups.md#legacy-index-markers). Do not delete the `index/` prefix while a rollback is still possible.
-- Rebuild a composite index (`on: ["status", "owner"]`) with `--config`: 0.6.0's `--on` takes one field, so `--on=status,owner` names a single field called `status,owner` and rebuilds the wrong markers.
+- Rebuild a composite index (`on: ["status", "owner"]`) with `--config`: 0.6.0's `--on` takes one field, so `--on=status,owner` is read as a single field called `status,owner`, and the rebuild deletes the index's real markers as orphans.
 
 ```sh
 # 0.6.0 binary, once per kept index

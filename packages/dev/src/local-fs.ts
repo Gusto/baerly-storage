@@ -110,8 +110,9 @@ const compareKeysUtf8 = (a: string, b: string): number => {
  * A directory written by an older release, before keys were escaped, is
  * adopted as-is when every name in it already reads the same under the
  * encoding; otherwise every operation refuses with `InvalidConfig`.
- * Recover such a directory by dumping it with the older release
- * (`baerly admin dump`) and restoring into a fresh one (`baerly admin
+ * Such a directory is dev data: move it aside or delete it. Collections
+ * worth keeping can be dumped with the older release (`baerly admin
+ * dump`, rows only) and restored into a fresh directory (`baerly admin
  * restore`). Data a folding filesystem has already merged is not
  * recoverable.
  *
@@ -573,14 +574,19 @@ export class LocalFsStorage implements Storage {
       }
       throw new BaerlyError(
         "InvalidConfig",
-        `LocalFsStorage: ${this.#root} has no ${FORMAT_MARKER} marker and holds paths that ` +
-          `are not valid under the current key encoding:\n` +
+        `LocalFsStorage: ${this.#root} holds dev data from an older release, which this ` +
+          `release cannot read. Move the directory aside or delete it; the next write ` +
+          `starts a fresh one. The usual causes are a folded collection (\`snapshot/L9/\`) ` +
+          `and an uppercase letter in a collection name or id (a camelCase name such as ` +
+          `\`boardInvitees\`). To keep a collection's rows, dump it with the older release ` +
+          `(\`baerly admin dump\`) and restore into the fresh directory ` +
+          `(\`baerly admin restore\`); a dump holds collection rows only, not other files ` +
+          `the app stored here. Paths not valid under the current key encoding (no ` +
+          `${FORMAT_MARKER} marker):\n` +
           `${shown.join("\n")}\n` +
-          `If a path is a stray file that is not data, move it out of the directory. ` +
-          `Otherwise the directory was written by an older release that stored keys ` +
-          `verbatim: dump it with that release (\`baerly admin dump\`) and restore into a ` +
-          `fresh directory (\`baerly admin restore\`). Keys that differed only by case or ` +
-          `Unicode normalization may already have been merged by the filesystem.`,
+          `If a listed path is a stray file that is not data, move it out of the directory ` +
+          `instead. Keys that differed only by case or Unicode normalization may already ` +
+          `have been merged by the filesystem.`,
       );
     }
     await stampFormatMarker(marker);
