@@ -14,7 +14,9 @@
 
 ### `Type 'null' is not assignable to type 'DocumentValue'` (TS2322)
 
-**Cause:** `null` is not part of the typed document contract. `DocumentValue` excludes it, so `insert`, `replace` and `update` reject a `null` value at compile time, even on a collection whose schema uses `.nullable()` (the row type then admits `null`, the write types still do not).
+Also `Type 'null' is not assignable to type 'string | undefined'` (or another field type) on an `update` patch.
+
+**Cause:** `null` is not a stored value in the typed document contract. `DocumentValue` excludes it, so `insert` and `replace` reject a `null` value at compile time, even on a collection whose schema uses `.nullable()` (the row type then admits `null`, the write types still do not). An `update` patch is a `MergePatch<T>`: `null` there means "delete this field", so it is accepted on an optional key and rejected on a required one.
 
 The runtime is more permissive:
 
@@ -22,7 +24,7 @@ The runtime is more permissive:
 - In an `update` patch, a `null` member deletes that field (RFC 7386). A patch object written under a field that is absent or not an object is stored as written, nulls included.
 - A predicate cannot match `null`: `.where({ field: null })` throws `InvalidConfig`, and no other value matches a stored `null`.
 
-**Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove a field from a row, `replace` it without that field. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.
+**Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove an optional field, `update(id, { field: null })`; to remove a required field, `replace` the row without it. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.
 
 ### `Type 'Bookmark' does not satisfy the constraint 'DocumentData'` (TS2344)
 

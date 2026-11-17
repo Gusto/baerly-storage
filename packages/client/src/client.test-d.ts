@@ -115,6 +115,15 @@ export const _idIsNotAPredicateKeyOnClientTypedTables = () => {
   void boundTicketCollection.where({ _id: "x" });
 };
 
+// (D) `update` takes a `MergePatch<T>`: `null` deletes an optional (or
+// unbound) key and is refused on a required one.
+export const _clientUpdateNullDeletesOptionalKeys = async () => {
+  await unboundAnyCollection.update("x", { note: null, meta: { at: null } });
+  await boundTicketCollection.update("t-1", { status: "closed" });
+  // @ts-expect-error — `status` is required on the bound row; use `replace`.
+  await boundTicketCollection.update("t-1", { status: null });
+};
+
 // The `_*` aliases above are exported as `type` rather than declared
 // module-local because `noUnusedLocals: true` flags unused type
 // aliases regardless of the leading-underscore prefix (the

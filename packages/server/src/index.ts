@@ -48,6 +48,8 @@ export type { SchemaIssue, SchemaValidator } from "./schema.ts";
  *   `.where(...)`-argument shapes. Consumers writing a helper that
  *   forwards a predicate — or naming a collection handle in a shared
  *   interface — need these instead of hand-rolling a structural shim.
+ * - {@link MergePatch}: the `update` patch type, for a helper that
+ *   builds or forwards a patch.
  * - {@link Storage} + its result types
  *   ({@link StorageGetResult}, {@link StorageListEntry},
  *   {@link StoragePutResult}): the interface every storage adapter
@@ -64,6 +66,7 @@ export {
   type BaerlyErrorCode,
   type BaerlyErrorOptions,
   type DocumentData,
+  type MergePatch,
   MemoryStorage,
   type Query,
   type Storage,

@@ -143,7 +143,7 @@ const COLLECTION_METHODS: ReadonlyArray<SpecMethod> = [
   },
   {
     name: "update",
-    params: "id: string, patch: Partial<T>",
+    params: "id: string, patch: MergePatch<T>",
     returns: "Promise<{ modified: number }>",
     throws: [
       "SchemaError",
@@ -193,7 +193,7 @@ const QUERY_METHODS: ReadonlyArray<SpecMethod> = [
   { name: "count", params: "", returns: "Promise<number>", throws: ["CapacityExceeded"] },
   {
     name: "update",
-    params: "patch: Partial<T>",
+    params: "patch: MergePatch<T>",
     returns: "Promise<{ modified: number }>",
     throws: [
       "SchemaError",

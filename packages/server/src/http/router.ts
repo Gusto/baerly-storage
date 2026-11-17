@@ -28,6 +28,7 @@ import {
   type BaerlyErrorCode,
   EMPTY_PREDICATE_WIRE,
   isUuidV7,
+  type MergePatch,
   type OrderSpec,
   type PredicateWire,
   validateWire,
@@ -183,7 +184,9 @@ export function createRouter(options: CreateRouterOptions): Hono {
     const { collection, id } = c.req.param();
     const body = await readJsonBody(c, MAX_BODY_BYTES);
     const patch = assertJsonBodyField(body, "patch");
-    const { modified } = await db.collection(collection).update(id, patch as Partial<DocumentData>);
+    const { modified } = await db
+      .collection(collection)
+      .update(id, patch as MergePatch<DocumentData>);
     if (modified === 0) {
       throw new BaerlyError("NotFound", `No such row: ${id}`);
     }

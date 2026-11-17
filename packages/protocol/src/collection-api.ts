@@ -1,4 +1,4 @@
-import type { DocumentValue, DocumentData } from "./json.ts";
+import type { DocumentValue, DocumentData, MergePatch } from "./json.ts";
 import type { PredicateArg, PredicateBuilder } from "./query/builder.ts";
 
 export type { PredicateArg, PredicateBuilder };
@@ -167,8 +167,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
 
   /**
    * JSON-merge-patch (RFC 7386) applied to one row by primary key.
-   * For predicate-aware bulk mutation, use
-   * `.where(predicate).update(patch)` on {@link Query}.
+   * `null` deletes an optional field; a required field is removed with
+   * `replace` (see {@link MergePatch}). For predicate-aware bulk
+   * mutation, use `.where(predicate).update(patch)` on {@link Query}.
    *
    * Returns `{ modified: 0 }` when no row exists at `id` (over HTTP,
    * `404 NotFound`).
@@ -221,10 +222,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    * @example
    * ```ts
    * const { modified } = await db.collection("tickets")
-   *   .update(id, { status: "closed" });
+   *   .update(id, { status: "closed", note: null }); // `null` deletes `note`
    * ```
    */
-  update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
+  update(id: string, patch: MergePatch<T>): Promise<{ modified: number }>;
 
   /**
    * Whole-document replace on one row by primary key. Throws
@@ -532,8 +533,9 @@ export interface Query<T extends DocumentData = DocumentData> {
 
   /**
    * Predicate-aware bulk mutation: JSON-merge-patch (RFC 7386)
-   * applied to every matching doc. `null` at any field deletes it. For
-   * the single-row case prefer {@link Collection.update}(id, patch).
+   * applied to every matching doc. `null` deletes an optional field;
+   * a required field is removed with `replace` (see {@link MergePatch}).
+   * For the single-row case prefer {@link Collection.update}(id, patch).
    *
    * Each row commits on its own (there is no multi-row transaction): a
    * failure part-way leaves the rows before it applied. `modified`
@@ -599,7 +601,7 @@ export interface Query<T extends DocumentData = DocumentData> {
    *   .update({ status: "closed", closed_at: new Date().toISOString() });
    * ```
    */
-  update(patch: Partial<T>): Promise<{ modified: number }>;
+  update(patch: MergePatch<T>): Promise<{ modified: number }>;
 
   /**
    * Predicate-aware bulk delete: every matching document. For the

@@ -138,7 +138,7 @@ interface Collection<T extends DocumentData = DocumentData> {
   limit(n: number): Query<T>;
   // Writes — by primary key.
   insert(doc: Partial<T> & DocumentData & { _id?: string }): Promise<{ _id: string }>;
-  update(id: string, patch: Partial<T>): Promise<{ modified: number }>;
+  update(id: string, patch: MergePatch<T>): Promise<{ modified: number }>;
   replace(id: string, doc: T): Promise<void>;
   delete(id: string): Promise<{ deleted: number }>;
 }
@@ -151,7 +151,7 @@ interface Query<T> extends /* Collection<T>'s modifiers */ {
   first(): Promise<(T & { _id: string }) | undefined>;
   all(): Promise<(T & { _id: string })[]>;
   count(): Promise<number>;
-  update(patch: Partial<T>): Promise<{ modified: number }>;   // bulk
+  update(patch: MergePatch<T>): Promise<{ modified: number }>; // bulk
   delete(): Promise<{ deleted: number }>;                      // bulk
 }
 ```
@@ -211,7 +211,9 @@ await db.collection("tickets").insert({ status: "open", title: "ship it" });
 
 // By-id (Collection<T>):
 await db.collection("tickets").update("01HQ...", { status: "closed" });
-// → { modified: 1 }  (JSON-merge-patch RFC 7386; `null` deletes a field)
+// → { modified: 1 }  (JSON-merge-patch RFC 7386)
+await db.collection("tickets").update("01HQ...", { note: null });
+// `null` deletes an optional field; a required one is a TS error, use `replace`
 
 await db.collection("tickets").replace("01HQ...", {
   _id: "01HQ...",
@@ -238,7 +240,7 @@ await db.collection("tickets").where({ status: "closed" }).delete();
 
 Every row type must satisfy `{ [k: string]: DocumentValue }` where `DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>`.
 
-Note: `null` is not part of the typed contract. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel, so a stored `null` would collapse "this field is null" with "delete this field". Use `.optional()` in your schema for absent values. The runtime still stores a `null` that reaches `insert` / `replace` (RECIPES.md, TS2322).
+Note: `null` is not a stored value in the typed contract. In a JSON-merge-patch (RFC 7386) `update`, `null` is the field-deletion sentinel, so a stored `null` would collapse "this field is null" with "delete this field". `MergePatch<T>` admits `null` only on optional keys (nested plain objects recurse; arrays replace whole); remove a required field with `replace`. Use `.optional()` in your schema for absent values. The runtime still stores a `null` that reaches `insert` / `replace` (RECIPES.md, TS2322).
 
 Two ways to get a typed row:
 

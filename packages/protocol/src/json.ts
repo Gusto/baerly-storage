@@ -25,6 +25,47 @@ export type DocumentData = { [x: string]: DocumentValue };
  */
 export type DocumentValue = string | number | boolean | DocumentData | Array<DocumentValue>;
 
+/**
+ * The patch an `update` takes for a row of type `T`: a JSON Merge Patch
+ * (RFC 7396), typed against the row.
+ *
+ * - Every key is optional; a key left out is left unchanged.
+ * - An optional key also accepts `null`, which deletes the field.
+ *   A required key does not: remove it with `replace` instead.
+ * - A nested plain object accepts a nested `MergePatch`, merged field
+ *   by field.
+ * - Arrays and scalars replace the stored value whole; array elements
+ *   are never merged.
+ *
+ * On an unbound collection (`T` is `DocumentData`) every key is
+ * optional, so any field accepts a value or `null`.
+ *
+ * @example
+ * ```ts
+ * type Ticket = { title: string; note?: string; meta?: { owner?: string } };
+ *
+ * const patch: MergePatch<Ticket> = {
+ *   note: null, // deletes `note`
+ *   meta: { owner: "ada" }, // merges into `meta`
+ * };
+ * // @ts-expect-error — `title` is required; use `replace` to remove it
+ * const bad: MergePatch<Ticket> = { title: null };
+ * ```
+ */
+export type MergePatch<T> = {
+  [K in keyof T]?: {} extends Pick<T, K> ? MergePatchValue<T[K]> | null : MergePatchValue<T[K]>;
+};
+
+/**
+ * One member of a {@link MergePatch}: arrays and non-plain values as
+ * written, a plain object as a nested patch. Distributes over unions.
+ */
+type MergePatchValue<V> = V extends readonly unknown[]
+  ? V
+  : V extends { [x: string]: unknown }
+    ? MergePatch<V>
+    : V;
+
 export type JSONObject = { [x: string]: JSONValue };
 export type JSONValue = string | number | boolean | null | JSONObject | Array<JSONValue>;
 

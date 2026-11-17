@@ -40,6 +40,7 @@ import {
   type DocumentData,
   type LogEntry,
   logSeqStartOf,
+  type MergePatch,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
   matchesWire,
   merge,
@@ -909,12 +910,12 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
 const mergeAndValidate = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   row: DocumentData,
-  patch: Partial<T>,
+  patch: MergePatch<T>,
 ): Promise<DocumentData> => {
   const merged = merge(row, patch as Partial<DocumentData>);
   if (merged === undefined) {
     // `merge(target, patch)` returns undefined only when patch is
-    // null at the root. `Partial<T>` cannot be `null` at the type
+    // null at the root. `MergePatch<T>` cannot be `null` at the type
     // level; defensive check for runtime caller misuse via cast.
     throw new BaerlyError(
       "SchemaError",
@@ -975,7 +976,7 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   before deciding whether to resume; absence does not prove a create failed.
  *   See `Writer.commit`.
  * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
- *   `undefined` (defensive — `Partial<T>` cannot be `null` at the
+ *   `undefined` (defensive — `MergePatch<T>` cannot be `null` at the
  *   root in the type system), or the schema rejected a post-image; at a
  *   row's commit (re-applied to a newer version) rows before it are
  *   already applied.
@@ -1002,7 +1003,7 @@ const mergeAndValidate = async <T extends DocumentData>(
 const runUpdate = async <T extends DocumentData>(
   ctx: CollectionReadContext,
   state: QueryState<T>,
-  patch: Partial<T>,
+  patch: MergePatch<T>,
 ): Promise<{ modified: number }> => {
   // The patch is also checked before any I/O. `merge` treats a `Date` or
   // `Map` patch value as an object to merge field by field, so over an
