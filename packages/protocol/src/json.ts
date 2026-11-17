@@ -32,13 +32,18 @@ export type DocumentValue = string | number | boolean | DocumentData | Array<Doc
  * - Every key is optional; a key left out is left unchanged.
  * - An optional key also accepts `null`, which deletes the field.
  *   A required key does not: remove it with `replace` instead.
- * - A required plain-object member accepts a nested `MergePatch`,
- *   merged field by field.
+ * - A required object member with a single object type accepts a nested
+ *   `MergePatch`, merged field by field. Union-valued members require a
+ *   whole value because the current value may belong to another variant.
  * - An optional plain-object member takes its whole value or `null`,
  *   never a nested patch: to change part of an optional object, pass
  *   the whole object or use `replace`.
  * - Arrays and scalars replace the stored value whole; array elements
  *   are never merged.
+ *
+ * Supplying a whole object still merges its fields; use `replace` to
+ * discard existing fields. Values must be plain JSON at runtime; this
+ * structural type cannot distinguish data-only classes from interfaces.
  *
  * On an unbound collection (`T` is `DocumentData`) every key is
  * optional, so any field accepts a value, a nested patch or `null`.
@@ -55,7 +60,7 @@ export type DocumentValue = string | number | boolean | DocumentData | Array<Doc
  * const patch: MergePatch<Ticket> = {
  *   note: null, // deletes `note`
  *   meta: { reviewer: null }, // merges into the required `meta`
- *   extra: { flag: true }, // replaces `extra` whole
+ *   extra: { flag: true }, // supplies the whole optional object
  * };
  * // @ts-expect-error — `title` is required; use `replace` to remove it
  * const bad: MergePatch<Ticket> = { title: null };
@@ -63,20 +68,24 @@ export type DocumentValue = string | number | boolean | DocumentData | Array<Doc
  */
 export type MergePatch<T> = {
   [K in keyof T]?: string extends K
-    ? MergePatchValue<T[K]> | null
+    ? MergePatchObjectValue<T[K]> | null
     : {} extends Pick<T, K>
       ? T[K] | null
       : MergePatchValue<T[K]>;
 };
 
 /**
- * One required (or index-signature) member of a {@link MergePatch}:
- * arrays and non-plain values as written, a plain object as a nested
- * patch. Distributes over unions.
+ * Only a single object type guarantees that required nested fields
+ * already exist. A union may switch variants, so it takes a whole value.
  */
-type MergePatchValue<V> = V extends readonly unknown[]
+type MergePatchValue<V> = true extends IsUnion<V> ? V : MergePatchObjectValue<V>;
+
+type IsUnion<T, Whole = T> = T extends Whole ? ([Whole] extends [T] ? false : true) : never;
+
+/** Index-signature values stay permissive, including nested patches. */
+type MergePatchObjectValue<V> = V extends readonly unknown[]
   ? V
-  : V extends { [x: string]: unknown }
+  : V extends object
     ? MergePatch<V>
     : V;
 

@@ -2,8 +2,8 @@
  * Type-level assertions for `MergePatch<T>`, the `update` patch type:
  * `null` deletes an optional key and is refused on a required one,
  * required plain-object members take a nested patch, optional ones take
- * their whole value or `null`, and arrays, scalars and non-plain
- * objects are replaced whole.
+ * their whole value or `null`, union-valued members take whole values,
+ * and arrays and scalars are replaced whole.
  *
  * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default include
@@ -54,6 +54,16 @@ export const _optionalObjectWhole: MergePatch<Ticket> = { extra: { flag: true } 
 export const _optionalObjectWholeEmpty: MergePatch<Ticket> = { extra: {} };
 export const _requiredObjectNestedPartial: MergePatch<Ticket> = { meta: { reviewer: "bo" } };
 
+interface Profile {
+  name: string;
+  note?: string;
+}
+type InterfaceDoc = { profile: Profile };
+export const _interfaceNestedPartial: MergePatch<InterfaceDoc> = { profile: { note: "new" } };
+export const _interfaceNestedDelete: MergePatch<InterfaceDoc> = { profile: { note: null } };
+// @ts-expect-error — interfaces preserve required fields too.
+export const _interfaceRequiredNullRejected: MergePatch<InterfaceDoc> = { profile: { name: null } };
+
 // @ts-expect-error — an optional object takes its whole value or `null`, not a nested patch.
 export const _optionalObjectNestedNullRejected: MergePatch<Ticket> = { extra: { flag: null } };
 
@@ -89,19 +99,7 @@ export type _ReadonlyArrayKeptWhole = Expect<
 >;
 export const _readonlyArrayReplace: MergePatch<Frozen> = { ids: [1, 2], opt: null };
 
-// --- Non-plain objects are replaced whole ---------------------------
-
-class Point {
-  x = 0;
-  y = 0;
-}
-type WithInstances = { at?: Date; p: Point };
-export type _DateKeptWhole = Expect<Equal<NonNullable<MergePatch<WithInstances>["at"]>, Date>>;
-export type _ClassInstanceKeptWhole = Expect<
-  Equal<NonNullable<MergePatch<WithInstances>["p"]>, Point>
->;
-
-// --- Unions distribute ----------------------------------------------
+// --- Top-level unions distribute; member unions take whole values ---
 
 type Shape = { kind: "circle"; r: number; label?: string } | { kind: "square"; side: number };
 export const _unionOptionalNull: MergePatch<Shape> = { label: null };
@@ -112,7 +110,21 @@ export const _unionRequiredNullRejected: MergePatch<Shape> = { r: null };
 
 type Slot = { value: string | { id: string; note?: string } };
 export const _memberUnionScalar: MergePatch<Slot> = { value: "x" };
-export const _memberUnionNestedNull: MergePatch<Slot> = { value: { note: null } };
+export const _memberUnionWhole: MergePatch<Slot> = { value: { id: "new", note: "n" } };
+// @ts-expect-error — the current value may be a scalar, so an object needs its required id.
+export const _memberUnionPartialRejected: MergePatch<Slot> = { value: { note: "new" } };
+// @ts-expect-error — union-valued members take a whole value, not a nested deletion.
+export const _memberUnionNestedNullRejected: MergePatch<Slot> = { value: { note: null } };
+
+type ShapeSlot = { shape: Shape };
+export const _objectUnionWhole: MergePatch<ShapeSlot> = { shape: { kind: "square", side: 2 } };
+// @ts-expect-error — switching the discriminant must supply the new variant's required fields.
+export const _objectUnionPartialRejected: MergePatch<ShapeSlot> = { shape: { kind: "square" } };
+
+type ArraySlot = { value: string[] | { id: string } };
+export const _arrayUnionWhole: MergePatch<ArraySlot> = { value: ["a"] };
+// @ts-expect-error — an array target has no existing id to preserve.
+export const _arrayUnionPartialRejected: MergePatch<ArraySlot> = { value: {} };
 
 // --- Untyped rows stay permissive -----------------------------------
 
@@ -137,10 +149,16 @@ export const _boundRequiredNullRejected: MergePatch<BoundTicket> = { title: null
 
 declare const tickets: Collection<BoundTicket>;
 declare const notes: Collection<DocumentData>;
+declare const slots: Collection<Slot & DocumentData>;
+declare const profiles: Collection<InterfaceDoc & DocumentData>;
 export const _verbsTakeMergePatch = async () => {
   await tickets.update("t-1", { note: null, meta: { reviewer: null } });
   await tickets.where({ title: "t" }).update({ note: null });
   await notes.update("n-1", { anything: null });
+  await profiles.update("p-1", { profile: { note: null } });
+  await profiles.where({ profile: { name: "n" } }).update({ profile: { note: "new" } });
+  // @ts-expect-error — the public collection seam must preserve the whole-union requirement.
+  await slots.update("s-1", { value: { note: "new" } });
   // @ts-expect-error — required key: remove it with `replace`.
   await tickets.update("t-1", { title: null });
   // @ts-expect-error — required key on the bulk verb too.
