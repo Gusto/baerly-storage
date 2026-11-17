@@ -143,6 +143,8 @@ Most of what wants to sprawl into a PR body belongs somewhere durable instead â€
 
 No AI attribution in the title or body.
 
+Several related PRs go out as one GitHub stack (`gh stack`), not as separate PRs; see the `stacked-prs` skill (`.claude/skills/stacked-prs/`).
+
 ## Pointers
 
 - Doc topic map: [docs/README.md](docs/README.md) â€” start here if unsure where to look.
