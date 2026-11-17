@@ -16,7 +16,7 @@ minimal-cloudflare/
 ├── wrangler.jsonc            # Worker manifest — R2 binding, assets, vars
 ├── index.html                # SPA shell — Vite's entry point
 ├── baerly.config.ts          # app, tenant, target, domain
-├── AGENTS.md                 # deeper guide: predicates, schemas,
+├── AGENTS.md                 # deeper guide: where the API docs are,
 │                             #   auth recipes, graduation (Codex CLI)
 ├── CLAUDE.md                 # same content (Claude Code reads this)
 ├── src/
@@ -68,7 +68,7 @@ Public configuration (`APP`, `TENANT`) lives in `wrangler.jsonc:vars`. The defau
 
 ## Next steps
 
-1. **Read `AGENTS.md`** for the agent-facing guide — predicates, indexes, schemas, auth recipes, write-triggered maintenance, and the graduation criteria. Codex CLI reads `AGENTS.md`; Claude Code reads `CLAUDE.md`; both files are byte-identical so either surface lands you the same context.
+1. **Read `AGENTS.md`** for the agent-facing guide — pointers to the installed API docs (predicates, indexes, schemas), auth recipes, write-triggered maintenance, and the graduation criteria. Codex CLI reads `AGENTS.md`; Claude Code reads `CLAUDE.md`; both files are byte-identical so either surface lands you the same context.
 2. **Declare your first collection schema** in `baerly.config.ts` via `defineConfig({ collections: { ... } })`. The Worker adapter passes that config to `Db.create({ storage, app, tenant, config })`, so schema validation is live and bad inserts return 400.
 3. **Set up production auth** — follow `AGENTS.md` → "Going to production". Pattern A wires CF Access via an env-aware factory `verifier:` override; Pattern B flips `auth: "shared-secret"`. `baerly doctor --target=cloudflare` reports any gaps.
 4. **Check usage trends** — run the current operation-cost projection:

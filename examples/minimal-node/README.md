@@ -18,7 +18,7 @@ minimal-node/
 ├── index.html                # SPA shell — Vite's entry point
 ├── .env.example              # storage selection (local-fs default) + PORT
 ├── baerly.config.ts          # app, tenant, target, domain
-├── AGENTS.md                 # deeper guide: predicates, schemas,
+├── AGENTS.md                 # deeper guide: where the API docs are,
 │                             #   auth recipes, graduation
 ├── src/
 │   ├── server/
@@ -76,7 +76,7 @@ Verify: `curl https://<your-service>/v1/healthz`.
 
 ## Next steps
 
-1. **Read `AGENTS.md`** for the agent-facing guide — predicates, indexes, schemas, auth recipes (JWKS setup), write-triggered maintenance, and the graduation criteria. (Claude Code users: `@gusto/create-baerly-storage` mirrors `AGENTS.md` to `CLAUDE.md` at scaffold time.)
+1. **Read `AGENTS.md`** for the agent-facing guide — pointers to the installed API docs (predicates, indexes, schemas), auth recipes (JWKS setup), write-triggered maintenance, and the graduation criteria. (Claude Code users: `@gusto/create-baerly-storage` mirrors `AGENTS.md` to `CLAUDE.md` at scaffold time.)
 2. **Declare your first collection schema** in `baerly.config.ts` via `defineConfig({ collections: { ... } })`. The Node adapter passes that config to `Db.create({ storage, app, tenant, config })`, so schema validation is live and bad inserts return 400.
 3. **Set up production auth** — follow `AGENTS.md` → "Going to production". Pattern B flips `auth: "shared-secret"` and reads `SHARED_SECRET` from `process.env`; Pattern C wires `bearerJwt` against your OIDC IdP via an env-aware factory `verifier:` override (`JWKS_URL` + `JWT_ISSUER` + `JWT_AUDIENCE`). Verify the bucket with `baerly doctor --bucket=<s3-uri>` and the deployed service with `curl https://<your-service>/v1/healthz`.
 

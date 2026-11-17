@@ -24,6 +24,41 @@ The runtime is more permissive:
 
 **Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove a field from a row, `replace` it without that field. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.
 
+### `Type 'Bookmark' does not satisfy the constraint 'DocumentData'` (TS2344)
+
+**Cause:** a row type you wrote by hand for a collection the bound `config` does not declare is a plain `interface Bookmark { _id: string; url: string }`. It has no index signature, so it fails `T extends DocumentData`. The constraint is deliberate: it keeps a row JSON-compatible.
+
+**Fix:** `extends DocumentData`, then cast the handle at the construction site. On the HTTP client, build an unbound client (no `config`, so collection names widen to `string` and rows are typed `DocumentData & { _id: string }`) and cast to `ClientCollection<T>`; on an unbound `Db` (no `config`; a config-bound `Db` rejects undeclared names at compile time), cast `db.collection(name)` to `Collection<T>`. The cast is for the typed fields: every read already types `_id` as a string, so `row._id` passes to `get` / `update` / `replace` / `delete` with or without it, and `T` need not declare `_id`.
+
+```ts
+import {
+  createBaerlyClient,
+  type ClientCollection,
+  type DocumentData,
+} from "@gusto/baerly-storage/client";
+
+interface Bookmark extends DocumentData {
+  _id: string;
+  url: string;
+}
+
+const raw = createBaerlyClient({ baseUrl: "" });
+const bookmarks = raw.collection("bookmarks") as ClientCollection<Bookmark>;
+await bookmarks.all();
+```
+
+For a collection declared in `config`, don't cast: pass `config` and name the row with `RowOf<typeof config, "notes">` (API.md, `DocumentData`).
+
+The generic on `client.collection<N>(name)` is the collection name (constrained to `CollectionNames<typeof config>`), never the row type: don't pass a row type to it.
+
+### `BaerlyError code="InvalidConfig"` — `Predicate value at ... is an array`
+
+**Full message:** `Predicate value at <path> is an array — match nested objects with a sub-predicate or use callback form (q.in(field, values)) for set membership.`
+
+**Cause:** an object-literal `.where({ field: [...] })` received an array. The object form is equality only, and its values are string, number, boolean or a nested object; scalar fields reject an array at compile time, and the runtime throws this error.
+
+**Fix:** for set membership use the callback form, `.where((q) => q.in("status", ["open", "pending"]))`. To match a nested object, pass a sub-predicate (`{ assignee: { team: "platform" } }`).
+
 ### `BaerlyError code="WriteConflict"` (HTTP 409)
 
 **Cause:** another write won a race this call needed to win, and the losing commit did not land. `retriable` is `true`. A bulk `.where(...).update()` / `.delete()` may have applied earlier rows; re-issuing the call is safe. **Fix:** re-read, re-apply, and retry with bounded backoff. The in-process writer makes one commit attempt and does not retry it (storage adapters retry individual requests); a remote client that sees `retriable: true` should apply its own bounded backoff.
@@ -377,6 +412,27 @@ The long-poll path routes through the same `Fetcher`. Logging and auth-refresh w
 ### Composition order
 
 The outer wrapper sees what the inner one does: `withHooks(withAuthRefresh(fetch, refresh), …)` observes only the final response of a refreshed call, while `withAuthRefresh(withHooks(fetch, …), refresh)` observes both the 401 and the retried call. Pick by what you want to observe.
+
+## Recipe — scheduled maintenance
+
+Maintenance is automatic and write-triggered, with no cron, sidecar, scheduler, timer, lock or app-config knob, identically on every host. Every write runs a bounded GC slice inline plus a go/no-go compaction fold bounded by a fold-size ceiling whose default is safe on every tier. A size-ratio threshold means idle buckets pay nothing. Concurrent folds are safe without coordination: the commit is a compare-and-swap, so a fold that loses to a concurrent write is discarded and its leftover swept by GC. On Cloudflare the fold is deferred past the response via `ctx.waitUntil`; everywhere else it runs inline. **Reads are pure**: they never run maintenance, so the published idle-reader cost bound holds.
+
+A bucket maintains itself as long as it takes writes. A bucket served read-only does not auto-compact and pays a small, bounded replay: fine at small scale, a signal to graduate once a collection is large. The repository's `docs/spec/scale-ceilings.md` owns the per-tier envelope and `docs/about/graduation.md` the `BAERLY_MAINTENANCE_*` operator env vars (you almost never need them).
+
+A schedule is optional. To also run maintenance on one (useful for a collection served mostly read-only), call `runScheduledMaintenance` once per collection. `tier` is the `BAERLY_MAINTENANCE_PROFILE` value: `"cf-free"` or `"cf-paid"` caps the pass to fit one Workers invocation on that plan, and `"node"` (the default) is unbounded. Run one collection per Cloudflare invocation: shard the schedule or persist a collection cursor instead of looping tenants or collections.
+
+```ts
+import { runScheduledMaintenance } from "@gusto/baerly-storage/maintenance";
+
+const target = { storage, app, tenant, collection: "notes" };
+const res = await runScheduledMaintenance(target); // Node
+// res: { folded, deferred?: { reason }, gcDeleted, pending }
+await runScheduledMaintenance(target, { tier: "cf-paid" }); // a Workers Paid cron
+```
+
+One whole pass fits an invocation on Workers Free with the R2 binding and on Workers Paid. S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`.
+
+Node and Cloudflare Paid scheduled passes fold any pending write, so repeated passes drain a low-write collection to zero. Cloudflare Free folds only when at least 20 entries are pending, one 20-entry slice per pass; a remaining tail of 1–19 entries stays unfolded until more writes arrive.
 
 ## Where to look next
 
