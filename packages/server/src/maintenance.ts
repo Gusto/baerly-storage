@@ -350,7 +350,8 @@ const TIER_OPTIONS: Readonly<Record<string, InternalMaintenanceOptions>> = {
  *
  * @throws BaerlyError code="InvalidConfig" when `app`, `tenant` or
  *   `collection` is not a name `Db.create` / `db.collection` accepts, or
- *   `tier` is not one of the listed values.
+ *   `tier` is not one of the listed values, or when the removed `phase`
+ *   option is passed.
  *
  * @example
  * ```ts
@@ -380,6 +381,14 @@ export const runScheduledMaintenance = async (
     throw new BaerlyError(
       "InvalidConfig",
       `runScheduledMaintenance: tier must be "cf-free", "cf-paid" or "node", got ${JSON.stringify(tier)}`,
+    );
+  }
+  // Removed in 0.7; refuse it so an untyped caller does not silently get
+  // a different pass than it asked for.
+  if ((options as { readonly phase?: unknown }).phase !== undefined) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      "runScheduledMaintenance: `phase` was removed in 0.7; each invocation runs one whole maintenance pass — remove the option",
     );
   }
   // The same key layout `Db` writes under (`db-read-seams.ts`).

@@ -428,6 +428,16 @@ describe("runScheduledMaintenance", () => {
     }
     expect(keys).toEqual([]);
   });
+
+  test("refuses the removed phase option before any storage call", async () => {
+    const { storage, keys } = recording();
+    for (const phase of ["compact", "gc"]) {
+      await expect(
+        runScheduledMaintenance({ storage, ...TARGET }, { phase } as never),
+      ).rejects.toMatchObject({ code: "InvalidConfig", message: expect.stringContaining("phase") });
+    }
+    expect(keys).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------
