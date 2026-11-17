@@ -21,8 +21,8 @@
     "index.js": {
       "tier": "shipped",
       "raw": 351044,
-      "gz": 111680,
-      "minGz": 29973,
+      "gz": 111610,
+      "minGz": 30020,
       "ratchet": {
         "raw": 386304,
         "gz": 122880,
@@ -33,8 +33,8 @@
     "client.js": {
       "tier": "shipped",
       "raw": 39675,
-      "gz": 14056,
-      "minGz": 4967,
+      "gz": 14018,
+      "minGz": 4984,
       "ratchet": {
         "raw": 43776,
         "gz": 15616,
@@ -45,8 +45,8 @@
     "client-react.js": {
       "tier": "shipped",
       "raw": 47734,
-      "gz": 15805,
-      "minGz": 5304,
+      "gz": 15801,
+      "minGz": 5313,
       "ratchet": {
         "raw": 52736,
         "gz": 17408,
@@ -57,11 +57,11 @@
     "cloudflare.js": {
       "tier": "shipped",
       "raw": 576747,
-      "gz": 175495,
-      "minGz": 57816,
+      "gz": 175256,
+      "minGz": 57843,
       "ratchet": {
         "raw": 634624,
-        "gz": 193280,
+        "gz": 193024,
         "minGz": 63744
       },
       "note": "Worker isolate cold start. Aggregator: closure includes the index.js and http.js subgraphs, so growth that slips past those entries still surfaces here."
@@ -69,8 +69,8 @@
     "s3.js": {
       "tier": "shipped",
       "raw": 103049,
-      "gz": 33964,
-      "minGz": 12048,
+      "gz": 33819,
+      "minGz": 12002,
       "ratchet": {
         "raw": 113408,
         "gz": 37376,
@@ -81,11 +81,11 @@
     "gcs.js": {
       "tier": "shipped",
       "raw": 98782,
-      "gz": 32838,
-      "minGz": 10422,
+      "gz": 32695,
+      "minGz": 10389,
       "ratchet": {
         "raw": 108800,
-        "gz": 36352,
+        "gz": 36096,
         "minGz": 11520
       },
       "note": "Worker-safe GCS entry, so consumer-facing. Smaller than s3.js because the GOOG4 signer is lighter than aws4fetch."
@@ -93,20 +93,20 @@
     "http.js": {
       "tier": "shipped",
       "raw": 502370,
-      "gz": 152492,
-      "minGz": 49362,
+      "gz": 152383,
+      "minGz": 49332,
       "ratchet": {
         "raw": 552704,
-        "gz": 167936,
-        "minGz": 54528
+        "gz": 167680,
+        "minGz": 54272
       },
       "note": "server-side. Also inside the cloudflare.js closure, so growth here shows up on that entry too."
     },
     "auth.js": {
       "tier": "shipped",
       "raw": 50545,
-      "gz": 15464,
-      "minGz": 8511,
+      "gz": 15364,
+      "minGz": 8470,
       "ratchet": {
         "raw": 55808,
         "gz": 17152,
@@ -117,11 +117,11 @@
     "maintenance.js": {
       "tier": "shipped",
       "raw": 164368,
-      "gz": 53794,
-      "minGz": 13208,
+      "gz": 53699,
+      "minGz": 13227,
       "ratchet": {
         "raw": 180992,
-        "gz": 59392,
+        "gz": 59136,
         "minGz": 14592
       },
       "note": "operator-side; reached from the cloudflare.js closure."
@@ -129,8 +129,8 @@
     "observability.js": {
       "tier": "shipped",
       "raw": 120445,
-      "gz": 33430,
-      "minGz": 14853,
+      "gz": 33373,
+      "minGz": 14826,
       "ratchet": {
         "raw": 132608,
         "gz": 36864,
@@ -141,7 +141,7 @@
     "app-config.js": {
       "tier": "shipped",
       "raw": 147,
-      "gz": 137,
+      "gz": 138,
       "minGz": 70,
       "ratchet": {
         "raw": 256,
