@@ -226,16 +226,6 @@ await runScheduledMaintenance({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER)
 // after
 await runScheduledMaintenance(target, { tier: "cf-free" }); // or "cf-paid"
 
-// before (storage over fetch under "cf-free")
-if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
-  await compact({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.compact);
-} else {
-  await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
-}
-// after
-const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
-await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
-
 // before
 const profile = resolveCfMaintenanceProfile((k) => env[k]);
 // after
@@ -248,7 +238,8 @@ await runScheduledMaintenance(target, { tier });
 
 - The result is `{ folded, deferred?: { reason }, gcDeleted, pending }`. `deferred.reason` is `"contention"` (a concurrent write or pass won) or `"budget"` (the pass saved its progress locating the tail; the next pass continues). It replaces `CompactResult.skippedReason`, including `"probe-budget-checkpointed"`.
 - `minEntriesToCompact` is no longer an option. Node (the default tier) and `"cf-paid"` passes fold from 1 pending entry (0.6.0's bare call skipped tails under 100, and `CLOUDFLARE_PAID_TIER` under 50), so a hot Paid cron rewrites the snapshot more often. Under `"cf-free"` a pass folds one 20-entry slice only when at least 20 entries are pending. Delete a raised-threshold workaround (such as `minEntriesToCompact: 10` against a long tail) along with the option.
-- One whole pass fits an invocation on Workers Free with the R2 binding and under `"cf-paid"`. The even/odd-minute `phase` alternation is needed only for storage over `fetch` under `"cf-free"`. Run one collection per Cloudflare invocation. Invalid names and unknown `tier` / `phase` values throw `InvalidConfig` before any storage call.
+- There is no `phase` option: every supported host runs one whole pass per invocation (Workers Free with the R2 binding under `"cf-free"`, Workers Paid under `"cf-paid"`). The even/odd-minute alternation of `compact()` and `runGc()` existed only for Workers Free with storage over `fetch`, which is no longer supported (see **Host tiers** below); move that Worker to Paid and call `runScheduledMaintenance(target, { tier: "cf-paid" })` once per invocation.
+- Run one collection per Cloudflare invocation. Invalid names and an unknown `tier` throw `InvalidConfig` before any storage call.
 
 **Host tiers.** The supported hosts are Workers Free with the R2 binding, Workers Paid (S3 or R2) and serverful Node. Workers Free with S3 over HTTP is no longer supported; S3 storage on Workers needs Paid with `BAERLY_MAINTENANCE_PROFILE=cf-paid`. A Worker cannot tell Free from Paid, so a Paid Worker on S3 that has not set `cf-paid` runs under the default `cf-free` profile and keeps its 45-call `fetch` budget per request: past it a request gets `CapacityExceeded`, not a platform error. Runtime behavior is unchanged and nothing new is refused. Per-host ceilings changed too; read the current figures in [scale-ceilings.md](../spec/scale-ceilings.md#host-support-tiers) rather than any you noted from 0.6.0.
 

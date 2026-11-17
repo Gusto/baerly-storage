@@ -69,7 +69,6 @@ import {
   CLOUDFLARE_PAID_TIER,
   crossesGcBoundary,
   runBoundedMaintenance,
-  runScheduledMaintenance,
 } from "./maintenance.ts";
 import { createObservabilityContext, runWithContext } from "./observability/context.ts";
 import { snapshotKey } from "./snapshot.ts";
@@ -265,10 +264,10 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
   });
 
   // Workers Free with storage over `fetch`: each invocation gets a fresh
-  // ledger whose `external` pool allows `externalLimit` calls. The
-  // scheduled compact sizes its tail probe from what the ledger has left
-  // after its `current.json` GET, net of the fold it may run, so a pass
-  // behind a stale `tail_hint` fits instead of being refused mid-fold.
+  // ledger whose `external` pool allows `externalLimit` calls. A
+  // `cf-free` compaction sizes its tail probe from what the ledger has
+  // left after its `current.json` GET, net of the fold it may run, so a
+  // pass behind a stale `tail_hint` fits instead of being refused mid-fold.
   const freeFetchCompactTicks = async (
     externalLimit: number,
   ): Promise<{
@@ -288,15 +287,14 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
         external: externalLimit,
       });
       const res = await runWithContext(createObservabilityContext({ ledger }), () =>
-        runScheduledMaintenance(
-          { storage: counted.storage, app: "t", tenant: "x", collection: COLL },
-          { tier: "cf-free", phase: "compact" },
-        ),
+        compact({ storage: counted.storage, currentJsonKey: KEY }, CLOUDFLARE_FREE_TIER.compact),
       );
       perPassOps.push(counted.getOps());
       summaries.push({
-        folded: res.folded,
-        ...(res.deferred !== undefined && { deferred: res.deferred }),
+        folded: res.written ? res.entriesFolded : 0,
+        ...(res.skippedReason === "probe-budget-checkpointed" && {
+          deferred: { reason: "budget" },
+        }),
       });
       const current = await readCurrentJson(inner, KEY);
       states.push({
@@ -314,7 +312,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     return { perPassOps, summaries, states };
   };
 
-  test("scheduled compact over fetch drains a stale tail_hint within the 45-call ledger", async () => {
+  test("cf-free compaction over fetch drains a stale tail_hint within the 45-call ledger", async () => {
     const { perPassOps, summaries, states } = await freeFetchCompactTicks(
       CF_FREE_EXTERNAL_REQUEST_LIMIT,
     );
@@ -327,7 +325,7 @@ describe("CLOUDFLARE_FREE_TIER budget", () => {
     expect(states.at(-1)).toEqual({ log_seq_start: 100, tail_hint: 100 });
   });
 
-  test("a scheduled compact the ledger cuts short reports a budget deferral and resumes", async () => {
+  test("a cf-free compaction the ledger cuts short reports a budget deferral and resumes", async () => {
     // 30 calls leave a 7-GET probe after the fold's reserve, short of the
     // 20-entry fold floor: the pass checkpoints its lower bound, and the
     // next pass probes on from there until a fold's worth is certified.

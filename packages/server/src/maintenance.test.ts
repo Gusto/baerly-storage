@@ -391,31 +391,8 @@ describe("runScheduledMaintenance", () => {
         return base.put(key, body, opts);
       },
     };
-    const res = await runScheduledMaintenance({ storage, ...TARGET }, { phase: "compact" });
-    expect(res).toEqual({
-      folded: 0,
-      deferred: { reason: "contention" },
-      gcDeleted: 0,
-      pending: 0,
-    });
-  });
-
-  test('phase "compact" folds without touching GC state', async () => {
-    const { storage, base, keys } = recording();
-    await seed(base, 10);
-    const res = await runScheduledMaintenance({ storage, ...TARGET }, { phase: "compact" });
-    expect(res).toEqual({ folded: 10, gcDeleted: 0, pending: 0 });
-    expect(keys.filter((k) => k.includes("/gc/"))).toEqual([]);
-  });
-
-  test('phase "gc" runs GC without folding', async () => {
-    const { storage, base, keys } = recording();
-    await seed(base, 10);
-    const res = await runScheduledMaintenance({ storage, ...TARGET }, { phase: "gc" });
-    expect(res.folded).toBe(0);
-    expect(keys.some((k) => k.includes("/gc/"))).toBe(true);
-    const head = await readCurrentJson(base, KEY);
-    expect(head?.json.log_seq_start).toBe(0);
+    const res = await runScheduledMaintenance({ storage, ...TARGET });
+    expect(res).toMatchObject({ folded: 0, deferred: { reason: "contention" } });
   });
 
   test("a whole pass counts retired log objects as deleted", async () => {
@@ -443,7 +420,6 @@ describe("runScheduledMaintenance", () => {
       [{ storage, ...TARGET, tenant: "" }, {}],
       [{ storage, ...TARGET }, { tier: "cf_paid" }],
       [{ storage, ...TARGET }, { tier: "toString" }],
-      [{ storage, ...TARGET }, { phase: "retire" }],
     ];
     for (const [target, options] of cases) {
       await expect(runScheduledMaintenance(target, options)).rejects.toMatchObject({

@@ -2,12 +2,12 @@
 "@gusto/baerly-storage": minor
 ---
 
-**Breaking:** `@gusto/baerly-storage/maintenance` exports one function, `runScheduledMaintenance(target, options)`. It is addressed by collection (`{ storage, app, tenant, collection }`, the names you pass to `Db.create` and `db.collection`), not by a `current.json` key, and sized by `tier` (the `BAERLY_MAINTENANCE_PROFILE` vocabulary: `"cf-free"`, `"cf-paid"`, or the unbounded default `"node"`). `phase: "compact"` / `"gc"` runs one phase, which replaces the direct `compact()` / `runGc()` alternation on Workers Free with storage over `fetch`. It returns `{ folded, deferred?: { reason }, gcDeleted, pending }`. This entry replaces every earlier `/maintenance` recipe in this release's changelog.
+**Breaking:** `@gusto/baerly-storage/maintenance` exports one function, `runScheduledMaintenance(target, options)`. It is addressed by collection (`{ storage, app, tenant, collection }`, the names you pass to `Db.create` and `db.collection`), not by a `current.json` key, and sized by `tier` (the `BAERLY_MAINTENANCE_PROFILE` vocabulary: `"cf-free"`, `"cf-paid"`, or the unbounded default `"node"`). One call runs one whole pass on every supported host. It returns `{ folded, deferred?: { reason }, gcDeleted, pending }`. This entry replaces every earlier `/maintenance` recipe in this release's changelog.
 
 - Removed from `@gusto/baerly-storage/maintenance`: `compact`, `runGc`, `CompactOptions`, `CompactResult`, `RunGcOptions`, `RunGcResult`, `MaintenanceArgs`, `MaintenanceProfile`, `MAINTENANCE_PROFILE_CF_FREE`, `MAINTENANCE_PROFILE_CF_PAID`, `MAINTENANCE_PROFILE_NODE`, `CLOUDFLARE_FREE_TIER` and `CLOUDFLARE_PAID_TIER`. `MaintenanceOptions` and `MaintenanceResult` keep their names with the new shapes; `MaintenanceTarget` is new.
 - Removed from `@gusto/baerly-storage/cloudflare`: `resolveCfMaintenanceProfile`. Pass the `BAERLY_MAINTENANCE_PROFILE` value as `tier`.
 - `minEntriesToCompact` is no longer an option. Node and `"cf-paid"` scheduled passes fold any pending write. Under `"cf-free"`, a pass folds one 20-entry slice only when at least 20 entries are pending; a remaining tail of 1–19 entries stays unfolded until more writes arrive.
-- Invalid `app` / `tenant` / `collection` names, and unknown `tier` / `phase` values, throw `InvalidConfig` before any storage call.
+- Invalid `app` / `tenant` / `collection` names, and an unknown `tier`, throw `InvalidConfig` before any storage call.
 
 In-band maintenance is unchanged and still needs no import; a schedule stays optional.
 
@@ -38,9 +38,8 @@ if (Math.floor(controller.scheduledTime / 60_000) % 2 === 0) {
 } else {
   await runGc({ storage, currentJsonKey }, CLOUDFLARE_FREE_TIER.gc);
 }
-// after
-const even = Math.floor(controller.scheduledTime / 60_000) % 2 === 0;
-await runScheduledMaintenance(target, { tier: "cf-free", phase: even ? "compact" : "gc" });
+// after: Workers Free with S3 is unsupported; on Workers Paid, one whole pass
+await runScheduledMaintenance(target, { tier: "cf-paid" });
 
 // before
 const profile = resolveCfMaintenanceProfile((k) => env[k]);
