@@ -24,6 +24,7 @@ import {
   GC_PENDING_SCHEMA_VERSION,
 } from "../constants.ts";
 import { BaerlyError, isWriteConflict } from "../errors.ts";
+import { unsupportedSchemaVersionMessage } from "./schema-version.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
@@ -349,7 +350,11 @@ const assertGcPending = (parsed: unknown, key: string): GcPending => {
   if (r["schema_version"] !== GC_PENDING_SCHEMA_VERSION) {
     throw new BaerlyError(
       "InvalidResponse",
-      `gc/pending.json at ${key}: unsupported schema_version ${String(r["schema_version"])}; expected ${GC_PENDING_SCHEMA_VERSION}`,
+      unsupportedSchemaVersionMessage(
+        `gc/pending.json at ${key}`,
+        r["schema_version"],
+        GC_PENDING_SCHEMA_VERSION,
+      ),
     );
   }
   if (!Array.isArray(r["candidates"])) {

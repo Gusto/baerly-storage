@@ -677,25 +677,38 @@ describe("assertCurrentJson — schema_version guard", () => {
       await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
         code: "InvalidResponse",
         // The general-branch message must stay actionable: name the
-        // required version AND prescribe the scratch-data recovery, so a
+        // supported version AND carry a local-dev-only recovery hint, so a
         // future bump (v2→v3, …) is self-documenting without a bespoke
         // per-version branch like the v1 reject above it.
-        message: expect.stringMatching(/schema_version.*requires.*\d/i),
+        message: expect.stringMatching(/schema_version.*supports schema_version \d/i),
       });
     },
   );
 
-  plainTest(
-    "general schema-mismatch message prescribes wiping the dev bucket or recreating the bucket",
-    async () => {
-      const s = new MemoryStorage();
-      await putRaw(s, "k", { ...rawSeed(), schema_version: 0 });
-      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
-        code: "InvalidResponse",
-        message: expect.stringMatching(/wipe|recreate|\.baerly-data/i),
-      });
-    },
-  );
+  plainTest.each([
+    ["newer", 99],
+    ["non-integer", 1.5],
+    ["string", "three"],
+    ["pre-0.3 v1", 1],
+    ["pre-0.3 v2", 2],
+  ] as const)("%s schema_version message names both versions, no bucket advice", async (_n, v) => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), schema_version: v });
+    const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
+    expect(err).toMatchObject({ code: "InvalidResponse" });
+    const msg = (err as Error).message;
+    expect(msg).toContain(String(v));
+    expect(msg).toContain(String(CURRENT_JSON_SCHEMA_VERSION));
+    expect(msg).not.toMatch(/recreate|bucket/i);
+  });
+
+  plainTest("newer schema_version says a newer release wrote it", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), schema_version: CURRENT_JSON_SCHEMA_VERSION + 1 });
+    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+      message: expect.stringMatching(/newer baerly-storage release/),
+    });
+  });
 
   plainTest(
     "rejects schema_version 99 with message containing the unknown version number",

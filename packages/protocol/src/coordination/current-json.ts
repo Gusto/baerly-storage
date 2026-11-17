@@ -28,6 +28,7 @@
 import { encodeJsonBytes } from "../bytes.ts";
 import { CURRENT_JSON_CONTENT_TYPE, CURRENT_JSON_SCHEMA_VERSION } from "../constants.ts";
 import { BaerlyError, isWriteConflict } from "../errors.ts";
+import { unsupportedSchemaVersionMessage } from "./schema-version.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
 /**
@@ -500,13 +501,22 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (r["schema_version"] === 1 || r["schema_version"] === 2) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key} uses schema v${String(r["schema_version"])} from a pre-0.3.0 internal build; this build requires schema v${CURRENT_JSON_SCHEMA_VERSION}. Dump/restore with the old build, or re-provision scratch/local buckets.`,
+      `current.json at ${key} uses schema v${String(r["schema_version"])} from a pre-0.3.0 internal build; this build requires schema v${CURRENT_JSON_SCHEMA_VERSION}. Dump/restore with the old build, or re-provision local scratch data.`,
     );
   }
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {
+    const base = unsupportedSchemaVersionMessage(
+      `current.json at ${key}`,
+      r["schema_version"],
+      CURRENT_JSON_SCHEMA_VERSION,
+    );
+    const newer =
+      typeof r["schema_version"] === "number" && r["schema_version"] > CURRENT_JSON_SCHEMA_VERSION;
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key}: unsupported schema_version ${String(r["schema_version"])}; this build requires ${CURRENT_JSON_SCHEMA_VERSION}. This almost always means stale scratch data from a different build — wipe the local dev bucket (e.g. \`rm -rf .baerly-data\`) or recreate the R2/S3 bucket, then retry.`,
+      newer
+        ? base
+        : `${base} For local dev only, stale data from another build can be cleared by deleting the local data directory (e.g. \`rm -rf .baerly-data\`).`,
     );
   }
   if (!(typeof r["snapshot"] === "string" || r["snapshot"] === null)) {
