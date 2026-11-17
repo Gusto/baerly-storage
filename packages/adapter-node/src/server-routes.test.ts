@@ -67,7 +67,7 @@ const withServer = async <T>(
     ...(opts.config !== undefined && { config: opts.config }),
   });
   const server = createServer(getRequestListener(app.fetch));
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   try {
     return await body(`http://127.0.0.1:${address.port}`, storage);
@@ -374,7 +374,7 @@ describe("createApp dev landing", () => {
       dev: { app: "tickets", uiUrl: "http://localhost:5173" },
     });
     const server = createServer(getRequestListener(app.fetch));
-    await new Promise<void>((resolve) => server.listen(0, resolve));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address() as AddressInfo;
     try {
       return await body(`http://127.0.0.1:${address.port}`);

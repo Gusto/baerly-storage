@@ -111,7 +111,7 @@ for (const variant of VARIANTS) {
         verifier,
       }).fetch;
       server = createServer(getRequestListener(requestHandler));
-      await new Promise<void>((resolve) => server.listen(0, resolve));
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const addr = server.address();
       if (!addr || typeof addr === "string") {
         throw new Error("no port");
