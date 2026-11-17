@@ -702,6 +702,16 @@ describe("assertCurrentJson — schema_version guard", () => {
     expect(msg).not.toMatch(/recreate|bucket/i);
   });
 
+  plainTest("a fractional version above the supported one is not 'newer'", async () => {
+    const s = new MemoryStorage();
+    await putRaw(s, "k", { ...rawSeed(), schema_version: CURRENT_JSON_SCHEMA_VERSION + 0.5 });
+    const err = await readCurrentJson(s, "k").catch((error: unknown) => error);
+    const msg = (err as Error).message;
+    expect(msg).not.toMatch(/newer baerly-storage release/);
+    expect(msg).toMatch(/not written by this build/);
+    expect(msg).toMatch(/local data directory/);
+  });
+
   plainTest("newer schema_version says a newer release wrote it", async () => {
     const s = new MemoryStorage();
     await putRaw(s, "k", { ...rawSeed(), schema_version: CURRENT_JSON_SCHEMA_VERSION + 1 });
