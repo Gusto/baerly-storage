@@ -179,7 +179,7 @@ const target: MaintenanceTarget = {
   tenant: "t",
   collection: "tickets",
 };
-const options: MaintenanceOptions = { tier: "cf-free", phase: "gc" };
+const options: MaintenanceOptions = { tier: "cf-free" };
 export const run = async (): Promise<number> => {
   const res: MaintenanceResult = await runScheduledMaintenance(target, options);
   return res.folded + res.gcDeleted + res.pending + (res.deferred?.reason.length ?? 0);
@@ -243,6 +243,17 @@ import type { MaintenanceOptions } from "@gusto/baerly-storage/maintenance";
 
 const leaked: MaintenanceOptions = { compact: { minEntriesToCompact: 10 } };
 void leaked;
+`,
+  },
+  {
+    name: "negative-phase-on-maintenance-options",
+    expect: "fails",
+    codes: ["TS2353", "TS2322"],
+    source: `
+import type { MaintenanceOptions } from "@gusto/baerly-storage/maintenance";
+
+const removed: MaintenanceOptions = { phase: "gc" };
+void removed;
 `,
   },
   {
