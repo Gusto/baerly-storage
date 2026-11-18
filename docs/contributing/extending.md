@@ -162,18 +162,18 @@ Both forms compile to the same `SchemaValidator`-shaped object; `validateOrThrow
 
 ### What gets validated
 
-| Verb      | Validated value                                                   |
-| --------- | ----------------------------------------------------------------- |
-| `insert`  | `{ ...doc, _id }` — the post-image with the minted/honoured `_id` |
-| `update`  | `merge(prev, patch)` — the merged post-image, not the patch       |
-| `replace` | `{ ...doc, _id: existingId }` — the post-image                    |
-| `delete`  | — (no body to validate)                                           |
+| Verb      | Validated value                                                       |
+| --------- | --------------------------------------------------------------------- |
+| `insert`  | `{ ...doc, _id }` — the post-image with the minted/honoured `_id`     |
+| `update`  | `applyMergePatch(prev, patch)` — the merged post-image, not the patch |
+| `replace` | `{ ...doc, _id: existingId }` — the post-image                        |
+| `delete`  | — (no body to validate)                                               |
 
 For `update`, validate the merged result. A partial patch such as `{ status: "closed" }` is not expected to satisfy a full-row schema.
 
 `_id` is part of the validated shape and is required. The post-image always carries `_id` (the server mints a UUIDv7 for inserts that omit it), so the schema must assert it — author `_id: z.string()`, not `.optional()`.
 
-For any field that may be **absent**, reach for `.optional()`, not `.nullable()`. `DocumentValue` has no `null` member — RFC 7396 merge-patch (which `merge()` in `packages/protocol/src/json.ts` implements) treats `null` in an update patch as a deletion sentinel, not a stored value. A schema declaring `assignee: z.string().nullable()` type-checks but diverges from runtime: the type says `string | null`, but a `find()` call returns the field as `undefined` (absent), never `null`. If you need to teach the merge-patch semantics, frame it as "passing `tags: null` in an update deletes the field," not "the field can hold null."
+For any field that may be **absent**, reach for `.optional()`, not `.nullable()`. `DocumentValue` has no `null` member — RFC 7396 merge-patch (which `applyMergePatch()` in `packages/protocol/src/json.ts` implements) treats `null` in an update patch as a deletion sentinel, not a stored value. A schema declaring `assignee: z.string().nullable()` type-checks but diverges from runtime: the type says `string | null`, but a `find()` call returns the field as `undefined` (absent), never `null`. If you need to teach the merge-patch semantics, frame it as "passing `tags: null` in an update deletes the field," not "the field can hold null."
 
 A multi-row `update()` is **not** transactional across rows. Validation runs per row on the merged post-image, and each row commits independently: if row N fails, rows 0..N-1 are already committed and stay committed, and the call throws `BaerlyError{code:"SchemaError"}` on row N. The schema boundary inherits the per-row atomicity contract; it does not add all-or-nothing semantics on top of it.
 

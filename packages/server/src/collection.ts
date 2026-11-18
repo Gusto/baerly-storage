@@ -130,7 +130,7 @@ export const makeCollection = <T extends DocumentData>(
      *   may not have been applied. Re-read by `id`; absence is not proof of
      *   failure. Not retriable-by-default; see `Writer.commit`.
      * @throws BaerlyError code="SchemaError" — merged post-image rejected by the
-     *   collection's bound validator, or `merge(prev, patch)` produced
+     *   collection's bound validator, or `applyMergePatch(prev, patch)` produced
      *   `undefined`.
      * @throws BaerlyError code="InvalidConfig" — the patch's top-level `_id`
      *   is present and is not `id` (`null` included), or `id` holds an

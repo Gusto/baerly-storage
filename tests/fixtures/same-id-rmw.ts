@@ -36,7 +36,7 @@ import {
   decodeJsonBytes,
   type LogEntry,
   logObjectKey,
-  merge,
+  applyMergePatch,
   type Storage,
 } from "@baerly/protocol";
 import { Db, type IndexDefinition } from "@baerly/server";
@@ -319,7 +319,7 @@ export const assertEvalPlanQualHistory = async (
     if (op.kind === "batch") {
       expect({ at, predecessorStatus: prev!["status"] }).toEqual({ at, predecessorStatus: "open" });
     }
-    expect({ at, after }).toEqual({ at, after: merge(prev!, patchFor(op, k)) });
+    expect({ at, after }).toEqual({ at, after: applyMergePatch(prev!, patchFor(op, k)) });
   }
 
   // Completeness: a write that should have landed did. An op reads and

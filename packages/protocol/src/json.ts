@@ -159,16 +159,27 @@ const isPlainObject = (value: DocumentValue | undefined): value is DocumentData 
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
- * JSON Merge Patch (RFC 7386).
+ * Apply a JSON Merge Patch to a document, exactly as RFC 7396 §2 defines
+ * it. This is what `update` commits: `applyMergePatch(row, patch)`.
  *
- * Update `target` with a merge patch. Plain-object values recurse
- * key-by-key; primitives, arrays, and type-mismatched values replace
- * the target wholesale. A `null` value in `patch` deletes the key.
+ * An object patch merges key by key into the target, or into `{}` when
+ * the target is absent or not an object. A `null` member deletes that
+ * key, at every depth, so a patch never stores a `null` member: under an
+ * absent field, `{ meta: { a: 1, b: null } }` stores `meta: { a: 1 }`.
+ * A scalar or array patch replaces the target whole; arrays are opaque
+ * values, so a `null` inside one is kept. An `undefined` member is
+ * absent, as in the patch's JSON form.
  *
- * RFC 7386 explicitly treats arrays as opaque values: an array in a
- * patch replaces the target array — there is no element-wise merge.
+ * Two values outside RFC 7396's JSON domain: an `undefined` patch is the
+ * identity (returns `target`), and a `null` patch at the root returns
+ * `undefined`, since a document cannot be `null`.
+ *
+ * `__proto__`, `constructor` and `prototype` members are skipped
+ * (`FORBIDDEN_MERGE_KEYS`). Recursion follows the patch, whose depth
+ * `assertDocumentValues` caps at `MAX_DOCUMENT_DEPTH` before `update`
+ * applies it.
  */
-export function merge<T extends DocumentValue>(
+export function applyMergePatch<T extends DocumentValue>(
   target: T | undefined,
   patch: Partial<T> | null | undefined,
 ): T | undefined {
@@ -178,18 +189,13 @@ export function merge<T extends DocumentValue>(
   if (patch === null) {
     return undefined;
   }
-
-  // Patch is primitive or an array → replace target wholesale.
   if (!isPlainObject(patch as DocumentValue)) {
     return patch as T;
   }
-  // Patch is a plain object but target isn't → replace.
-  if (!isPlainObject(target)) {
-    return patch as T;
-  }
-
-  const combined = { ...(target as DocumentData) } as T;
-  for (const key of Object.keys(patch) as Array<Extract<keyof T, string>>) {
+  // An absent or non-object target merges as `{}` (RFC 7396 §2).
+  const combined: DocumentData = isPlainObject(target) ? { ...target } : {};
+  const members = patch as Record<string, DocumentValue | null | undefined>;
+  for (const key of Object.keys(members)) {
     // Object.keys returns own enumerable string keys — but `__proto__`
     // is an own property when patches arrive via JSON.parse (HTTP PATCH
     // bodies hit this path through query.ts:runUpdate). Guard remains
@@ -197,13 +203,66 @@ export function merge<T extends DocumentValue>(
     if (FORBIDDEN_MERGE_KEYS.has(key)) {
       continue;
     }
-    if (patch[key] === null) {
+    const value = members[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (value === null) {
       delete combined[key];
     } else {
-      combined[key] = merge(target[key] as DocumentValue, patch[key] as DocumentValue) as T[Extract<
-        keyof T,
-        string
-      >];
+      combined[key] = applyMergePatch(combined[key], value)!;
+    }
+  }
+  return combined as T;
+}
+
+/**
+ * Coalesce two merge patches into one: the summary patch for `earlier`
+ * followed by `later`. Folding from `undefined`,
+ * `fold(coalesceMergePatches, undefined, patches)` summarizes a window.
+ *
+ * Unlike {@link applyMergePatch}, an object patch over an absent or
+ * non-object accumulator is taken as written, nulls included, so
+ * `coalesceMergePatches(undefined, { x: null })` keeps the delete as
+ * `{ x: null }`. The summary is exact only inside the type-stable window
+ * `docs/spec/json-merge-patch.md` ("Log can be coalesced") describes: a
+ * `later` delete of a key `earlier` set removes it from the summary, and
+ * a delete followed by an object re-add cannot be expressed. No runtime
+ * path coalesces patches today; `update` commits full post-images.
+ */
+export function coalesceMergePatches<T extends DocumentValue>(
+  earlier: T | undefined,
+  later: Partial<T> | null | undefined,
+): T | undefined {
+  if (later === undefined) {
+    return earlier;
+  }
+  if (later === null) {
+    return undefined;
+  }
+
+  // Later patch is primitive or an array → replace wholesale.
+  if (!isPlainObject(later as DocumentValue)) {
+    return later as T;
+  }
+  // Later patch is a plain object but the accumulator isn't → take it
+  // as written, so its deletes survive.
+  if (!isPlainObject(earlier)) {
+    return later as T;
+  }
+
+  const combined = { ...(earlier as DocumentData) } as T;
+  for (const key of Object.keys(later) as Array<Extract<keyof T, string>>) {
+    if (FORBIDDEN_MERGE_KEYS.has(key)) {
+      continue;
+    }
+    if (later[key] === null) {
+      delete combined[key];
+    } else {
+      combined[key] = coalesceMergePatches(
+        earlier[key] as DocumentValue,
+        later[key] as DocumentValue,
+      ) as T[Extract<keyof T, string>];
     }
   }
   return combined as T;

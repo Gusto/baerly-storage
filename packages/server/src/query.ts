@@ -39,7 +39,7 @@ import {
   type MergePatch,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
   matchesWire,
-  merge,
+  applyMergePatch,
   mergePredicateWires,
   normalizePredicateArg,
   validateWire,
@@ -896,7 +896,7 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
 };
 
 /**
- * `merge(row, patch)` as `update` commits it, validated against the
+ * `applyMergePatch(row, patch)` as `update` commits it, validated against the
  * collection's schema.
  *
  * @throws BaerlyError code="InvalidConfig" — the post-image holds a value
@@ -911,9 +911,9 @@ const mergeAndValidate = async <T extends DocumentData>(
   row: DocumentData,
   patch: MergePatch<T>,
 ): Promise<DocumentData> => {
-  const merged = merge(row, patch as Partial<DocumentData>);
+  const merged = applyMergePatch(row, patch as Partial<DocumentData>);
   if (merged === undefined) {
-    // `merge(target, patch)` returns undefined only when patch is
+    // `applyMergePatch(target, patch)` returns undefined only when patch is
     // null at the root. `MergePatch<T>` cannot be `null` at the type
     // level; defensive check for runtime caller misuse via cast.
     throw new BaerlyError(
@@ -944,7 +944,7 @@ const mergeAndValidate = async <T extends DocumentData>(
 
 /**
  * `Query.update` implementation. Materialises the predicate/order/
- * limit-filtered match set, applies RFC 7386 `merge(prev, patch)`
+ * limit-filtered match set, applies RFC 7396 `applyMergePatch(prev, patch)`
  * per row, and emits one `op:"U"` `LogEntry` per affected `doc_id`
  * — one `Writer.commit()` round-trip apiece.
  *
@@ -974,7 +974,7 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   partial-progress `modified` count is NOT returned. Re-read rows by `_id`
  *   before deciding whether to resume; absence does not prove a create failed.
  *   See `Writer.commit`.
- * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
+ * @throws BaerlyError code="SchemaError" — `applyMergePatch(prev, patch)` produced
  *   `undefined` (defensive — `MergePatch<T>` cannot be `null` at the
  *   root in the type system), the patch (checked before I/O) or a merged
  *   post-image nests deeper than `MAX_DOCUMENT_DEPTH`, or the schema
@@ -1006,7 +1006,7 @@ const runUpdate = async <T extends DocumentData>(
   state: QueryState<T>,
   patch: MergePatch<T>,
 ): Promise<{ modified: number }> => {
-  // The patch is also checked before any I/O. `merge` treats a `Date` or
+  // The patch is also checked before any I/O. `applyMergePatch` treats a `Date` or
   // `Map` patch value as an object to merge field by field, so over an
   // object field it would vanish from the post-image instead of being
   // refused there. `undefined` members are absent, as in the post-image.
@@ -1352,7 +1352,7 @@ const runReadRows = async <T extends DocumentData>(
 
   // ── Step 3. Fold per doc_id, seeded from the snapshot. ────────────
   // I / U: post-image overwrite. `entry.after` is the full post-image;
-  //        a straight `set` is correct (a `merge(prev, post)` would
+  //        a straight `set` is correct (an `applyMergePatch(prev, post)` would
   //        carry forward keys the writer dropped).
   // D: tombstone — remove from the map.
   // Every post-image the writer commits carries its `doc_id` as a string

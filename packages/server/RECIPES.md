@@ -21,7 +21,7 @@ Also `Type 'null' is not assignable to type 'string | undefined'` (or another fi
 The runtime is more permissive:
 
 - `insert` and `replace` (in-process and over HTTP) store `null` at any depth as written, and reads return it. With a bound schema, the schema decides: `.optional()` rejects `null` with `SchemaError`, `.nullable()` accepts it.
-- In an `update` patch, a `null` member deletes that field (RFC 7386). A patch object written under a field that is absent or not an object is stored as written, nulls included.
+- In an `update` patch, a `null` member deletes that field at any depth (RFC 7396), so a patch never stores `null`, including in a patch object written under a field that is absent or not an object. A `null` inside an array is stored as written.
 - A predicate cannot match `null`: `.where({ field: null })` throws `InvalidConfig`, and no other value matches a stored `null`.
 
 **Fix:** model an absent value by omitting the field, with `.optional()` in the schema. To remove an optional field, `update(id, { field: null })`; to remove a required field, `replace` the row without it. Don't cast `null` past the types to store it: typed rows and predicates do not account for stored nulls.

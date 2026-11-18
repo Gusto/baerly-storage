@@ -54,7 +54,7 @@ export const MAX_DOCUMENT_BYTES = 1_048_576;
  * each merged post-image, in the HTTP client before it sends, and on
  * `baerly admin restore`'s dump lines. Without a cap, a document
  * committed on a host with a deep call stack can overflow a recursive
- * path (`merge`, `jsonValueEqual`, `JSON.stringify`) on a host with a
+ * path (`applyMergePatch`, `jsonValueEqual`, `JSON.stringify`) on a host with a
  * shallower one, wedging reads or folds of its collection; on Node 26 a
  * document of about 8,000 levels already overflows. Only writes are
  * checked, so a row stored deeper by an earlier release stays readable
@@ -1208,7 +1208,8 @@ export const MAINTENANCE_TAIL_HINT_REFRESH_WRITES: number = 128;
 export const MANIFEST_POINTER_EMPTY_SNAPSHOT: string = "none";
 
 /**
- * Keys that must never propagate through {@link merge}: assigning to
+ * Keys that must never propagate through {@link applyMergePatch} or
+ * {@link coalesceMergePatches}: assigning to
  * them on a plain object pollutes the prototype chain. The literal
  * `{ __proto__: ... }` syntax is a prototype-setter (not an own key)
  * and bypasses `Object.keys`, but `JSON.parse('{"__proto__":...}')`
@@ -1219,7 +1220,7 @@ export const MANIFEST_POINTER_EMPTY_SNAPSHOT: string = "none";
  * caller-supplied object can re-use the same defence without
  * duplicating the keyword list.
  *
- * @see packages/protocol/src/json.ts (merge)
+ * @see packages/protocol/src/json.ts (applyMergePatch, coalesceMergePatches)
  * @see docs/spec/json-merge-patch.md
  */
 export const FORBIDDEN_MERGE_KEYS: ReadonlySet<string> = new Set([

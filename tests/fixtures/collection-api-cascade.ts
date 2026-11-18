@@ -509,7 +509,7 @@ const runLegacyIllFormedIdRow = async (
   await expect(rows.where({}).all()).resolves.toEqual([{ _id: "keep", label: "keep" }]);
 };
 
-/** Update contract: RFC 7386 — multiple matches, `null` strips key. */
+/** Update contract: RFC 7396 — multiple matches, `null` strips a key at every depth. */
 const runUpdateContract = async (
   db: Db,
   storage: Storage,
@@ -538,6 +538,20 @@ const runUpdateContract = async (
   for (const row of afterStrip) {
     expect("marker" in row).toBe(false);
   }
+
+  // RFC 7396: an object patch under an absent or scalar field merges into
+  // `{}`, so its nested nulls are dropped, never stored.
+  const { _id } = await db.collection(t).insert({ k: "c", scalar: 1 });
+  await db.collection(t).update(_id, {
+    meta: { a: 1, b: null, deep: { c: null } },
+    scalar: { d: 2, e: null },
+  });
+  await expect(db.collection(t).get(_id)).resolves.toStrictEqual({
+    _id,
+    k: "c",
+    meta: { a: 1, deep: {} },
+    scalar: { d: 2 },
+  });
 };
 
 /** `Collection.replace(id, doc)`: by-id whole-document overwrite; `NotFound` on missing. */
