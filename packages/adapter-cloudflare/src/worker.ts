@@ -20,7 +20,7 @@ import {
   type Verifier,
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { resolveVerifier } from "@baerly/server/_internal/kernel";
+import { resolveVerifier, withNosniff } from "@baerly/server/_internal/kernel";
 import { createRouter, mapError } from "@baerly/server/http";
 import { handleSpecRequest } from "@baerly/server/spec";
 import {
@@ -42,6 +42,7 @@ import {
   type ReadEnvelope,
   flushUnauthorizedAndRespond,
   logMaintenanceWarning,
+  requestIdFrom,
 } from "@baerly/server/_internal/observability";
 import { isR2BindingStorage } from "./r2-binding-storage.ts";
 import { resolveWorkerStorage } from "./resolve-storage.ts";
@@ -605,7 +606,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
     return resolved;
   };
 
-  return {
+  const exported: ExportedHandler<E> = {
     async fetch(req, env, ctx): Promise<Response> {
       const url = new URL(req.url);
 
@@ -637,7 +638,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
         const fault = new BaerlyError("Internal", "internal error", { cause: error });
         const { status, envelope } = mapError(fault);
         const failedCtx = createObservabilityContext({
-          request_id: req.headers.get("x-request-id") ?? crypto.randomUUID(),
+          request_id: requestIdFrom(req.headers),
         });
         flushCanonicalLine(failedCtx, failedCtx.recorder, {
           unit: "http",
@@ -689,7 +690,7 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       //
       // The router uses this ambient context and never flushes a
       // competing canonical line. The adapter owns the flush.
-      const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+      const requestId = requestIdFrom(req.headers);
       // In-band write-tick maintenance: the writer reads
       // `getCurrentContext()?.maintenance` at its post-commit dispatch
       // point. On CF the fold is dispatched via `ctx.waitUntil` (off the
@@ -803,4 +804,9 @@ export function baerlyWorker<E extends BaerlyEnv = BaerlyEnv>(
       }
     },
   };
+  // Every response leaves through `withNosniff`, including the healthz /
+  // spec / dev-landing short-circuits ahead of the router.
+  const route = exported.fetch!;
+  exported.fetch = async (req, env, ctx) => withNosniff(await route(req, env, ctx));
+  return exported;
 }

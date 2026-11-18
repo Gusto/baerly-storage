@@ -72,6 +72,42 @@ describe("baerlyWorker ambient context", () => {
   });
 });
 
+describe("baerlyWorker response hardening", () => {
+  const env = (): BaerlyEnv => ({ BUCKET: getBinding(), APP: "t" });
+  const request = (path: string, headers?: Record<string, string>) =>
+    new Request(`https://x${path}`, headers === undefined ? {} : { headers }) as Request<
+      unknown,
+      IncomingRequestCfProperties
+    >;
+
+  test("an x-request-id outside the id charset is replaced with a generated id", async () => {
+    const seen: Array<ReturnType<typeof getCurrentContext>> = [];
+    const verifier: Verifier = async () => {
+      seen.push(getCurrentContext());
+      return null;
+    };
+    const handler = baerlyWorker(() => ({ verifier, config: testConfig }));
+    await handler.fetch!(
+      request("/v1/c/things", { "x-request-id": "a".repeat(129) }),
+      env(),
+      makeNoopCtx(),
+    );
+    expect(seen[0]!.request_id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test("sends X-Content-Type-Options: nosniff on healthz and API responses", async () => {
+    const handler = baerlyWorker(() => ({ verifier: denyVerifier, config: testConfig }));
+    for (const path of ["/v1/healthz", "/v1/c/things", "/v1/spec"]) {
+      const res = await handler.fetch!(request(path), env(), makeNoopCtx());
+      await res.arrayBuffer();
+      expect({ path, nosniff: res.headers.get("x-content-type-options") }).toEqual({
+        path,
+        nosniff: "nosniff",
+      });
+    }
+  });
+});
+
 describe("baerlyWorker scheduled", () => {
   test("no-ops when `options.scheduled` is unset", async () => {
     const bucket = getBinding();

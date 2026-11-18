@@ -1,5 +1,6 @@
 import { type DevLandingOptions } from "@baerly/dev";
 import { MAX_BODY_BYTES } from "@baerly/server/http";
+import { withNosniff } from "@baerly/server/_internal/kernel";
 import { Hono } from "hono/tiny";
 import { applyBodyCap } from "./middleware/body-cap.ts";
 import { devLandingMiddleware } from "./middleware/dev-landing.ts";
@@ -55,6 +56,16 @@ export interface CreateAppOptions extends CreateFetchHandlerOptions {
 export function createApp(opts: CreateAppOptions): Hono {
   const fetchHandler = createFetchHandler(opts);
   const app = new Hono();
+
+  // First, so every response below it (dev landing, static assets, the
+  // body-cap 413, the cascade) carries `X-Content-Type-Options: nosniff`.
+  app.use("*", async (c, next) => {
+    await next();
+    const res = withNosniff(c.res);
+    if (res !== c.res) {
+      c.res = res;
+    }
+  });
 
   // Order: dev-landing → static-assets → cascade. The dev
   // short-circuit must precede static-assets so a `webRoot` that

@@ -6,6 +6,35 @@ import { readProjectedToken } from "./token-file.ts";
 const FETCH_TIMEOUT_MS = 2_000;
 
 /**
+ * Hosts the agent can live on: the ECS agent, the EKS Pod Identity agent
+ * (IPv4 and IPv6), and loopback. `127.0.0.0/8` is matched separately.
+ * WHATWG URL parsing canonicalizes the hostname first, so alternate
+ * spellings (`[0:0:0:0:0:0:0:1]`, `2130706433`) compare equal.
+ */
+const AGENT_HOSTS: ReadonlySet<string> = new Set([
+  "169.254.170.2",
+  "169.254.170.23",
+  "[fd00:ec2::23]",
+  "localhost",
+  "[::1]",
+]);
+
+const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+function isAgentUri(uri: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return false;
+  }
+  return AGENT_HOSTS.has(url.hostname) || LOOPBACK_V4.test(url.hostname);
+}
+
+/**
  * Resolve AWS credentials from the EKS Pod Identity agent (the 2023
  * successor to IRSA). The agent runs on each EKS node and exchanges
  * the pod's projected service-account token for short-lived AWS
@@ -19,6 +48,11 @@ const FETCH_TIMEOUT_MS = 2_000;
  *
  * Both are required. Agent should respond instantly on the node-local
  * link — 2 s timeout protects against hangs.
+ *
+ * The URI must name the agent: loopback, or the ECS / EKS link-local
+ * addresses (the AWS SDK's container-credentials allow-list). Anything
+ * else throws `InvalidConfig` before the token file is read, so a
+ * misconfigured or injected env var never sends the token off-node.
  */
 export function fromEksPodIdentity(
   opts: {
@@ -36,6 +70,12 @@ export function fromEksPodIdentity(
       throw new BaerlyError(
         "InvalidConfig",
         "fromEksPodIdentity: AWS_CONTAINER_CREDENTIALS_FULL_URI not set",
+      );
+    }
+    if (!isAgentUri(uri)) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        "fromEksPodIdentity: AWS_CONTAINER_CREDENTIALS_FULL_URI must be an http(s) URL on loopback, 169.254.170.2, 169.254.170.23 or [fd00:ec2::23]",
       );
     }
     if (tokenPath === undefined || tokenPath === "") {

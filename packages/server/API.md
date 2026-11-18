@@ -618,7 +618,7 @@ import { sharedSecret, bearerJwt, cloudflareAccess } from "@gusto/baerly-storage
 
 | Field | Meaning |
 | --- | --- |
-| `request_id` | Correlation key. Set from `X-Request-Id` if provided, else minted fresh. |
+| `request_id` | Correlation key. Set from `X-Request-Id` when it is at most 128 characters of `[A-Za-z0-9_.:/+=@-]`, else minted fresh. |
 | `method` / `path` / `status` | HTTP request line + response code. |
 | `duration_ms` | `performance.now()` delta, monotonic wall-clock. |
 | `outcome` | `"read"`/`"committed"` (<400), `"conflict"` (409), `"refused"` (capacity), `"error"`. |
