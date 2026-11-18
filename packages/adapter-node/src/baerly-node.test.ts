@@ -346,33 +346,24 @@ describe("baerlyNode config.auth synthesis", () => {
       auth: "shared-secret",
       collections: {},
     };
-    const prior = process.env["SHARED_SECRET"];
-    process.env["SHARED_SECRET"] = "topsecret";
-    try {
-      const port = await reservePort();
-      const handle = baerlyNode({ config, storage });
-      activeHandle = handle;
-      await handle.listen(port);
+    vi.stubEnv("SHARED_SECRET", "topsecret");
+    const port = await reservePort();
+    const handle = baerlyNode({ config, storage });
+    activeHandle = handle;
+    await handle.listen(port);
 
-      const okRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer topsecret",
-        },
-        body: JSON.stringify({ doc: { _id: "ss-1", v: 1 } }),
-      });
-      expect(okRes.status).toBe(201);
+    const okRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer topsecret",
+      },
+      body: JSON.stringify({ doc: { _id: "ss-1", v: 1 } }),
+    });
+    expect(okRes.status).toBe(201);
 
-      const badRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`);
-      expect(badRes.status).toBe(401);
-    } finally {
-      if (prior === undefined) {
-        delete process.env["SHARED_SECRET"];
-      } else {
-        process.env["SHARED_SECRET"] = prior;
-      }
-    }
+    const badRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`);
+    expect(badRes.status).toBe(401);
   });
 
   test('auth: "shared-secret" with missing env throws synchronously at baerlyNode() with the locked message', () => {
@@ -383,16 +374,9 @@ describe("baerlyNode config.auth synthesis", () => {
       auth: "shared-secret",
       collections: {},
     };
-    const prior = process.env["SHARED_SECRET"];
-    delete process.env["SHARED_SECRET"];
-    try {
-      expect(() => baerlyNode({ config, storage: new MemoryStorage() })).toThrow(
-        SHARED_SECRET_MISSING_MESSAGE,
-      );
-    } finally {
-      if (prior !== undefined) {
-        process.env["SHARED_SECRET"] = prior;
-      }
-    }
+    vi.stubEnv("SHARED_SECRET", undefined);
+    expect(() => baerlyNode({ config, storage: new MemoryStorage() })).toThrow(
+      SHARED_SECRET_MISSING_MESSAGE,
+    );
   });
 });

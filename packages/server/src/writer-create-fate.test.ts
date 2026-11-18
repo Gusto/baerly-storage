@@ -8,7 +8,7 @@ import {
   type StoragePutOptions,
   type StoragePutResult,
 } from "@baerly/protocol";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { Db } from "./db.ts";
 import {
@@ -106,8 +106,6 @@ const sumCounter = (ctx: ObservabilityContext, name: string): number =>
     .reduce((acc, c) => acc + c.value, 0);
 
 describe("Writer create fate", () => {
-  afterEach(() => vi.restoreAllMocks());
-
   test("a lost ack is adopted by one readback, with no same-slot resend", async () => {
     const storage = new CreateFateStorage("lost-ack");
     await createCurrentJson(storage, CURRENT_KEY, logStateCurrentJson());

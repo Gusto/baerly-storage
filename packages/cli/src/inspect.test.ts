@@ -285,10 +285,6 @@ describe("baerly inspect", () => {
         .result.fold_gate;
     };
 
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
     test("an empty collection is open on every profile", async () => {
       await provisionAt({ snapshot_bytes: 0, snapshot_rows: 0 });
       const gate = await inspectGate();

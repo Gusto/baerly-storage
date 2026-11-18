@@ -86,9 +86,6 @@ import { makeValidDocIdArb } from "../fixtures/scalar-doc-id-arbitraries.ts";
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 /**
  * Per-property timeout, in ms. At `FC_NUM_RUNS=100` (default

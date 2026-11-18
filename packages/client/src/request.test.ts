@@ -55,7 +55,6 @@ describe("request GET retry", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
   test.each([502, 503, 504, 408, 429])(
@@ -248,7 +247,6 @@ describe("request minted-insert transport retry (E3)", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
   const created = (): Response => new Response(JSON.stringify({ _id: "m" }), { status: 201 });
@@ -393,7 +391,6 @@ describe("request MaintenancePending retry", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
   test.each(["GET", "POST", "PATCH", "PUT", "DELETE"] as const)(

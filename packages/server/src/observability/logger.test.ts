@@ -1,21 +1,10 @@
 import { configure, getConfig, reset } from "@logtape/logtape";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { CATEGORY, configureObservability, getLogger } from "./logger.ts";
 import { collectingSink } from "../../../../tests/fixtures/collecting-sink.ts";
 
 describe("configureObservability + getLogger", () => {
-  let prevLogLevel: string | undefined;
-
-  beforeEach(() => {
-    prevLogLevel = process.env["LOG_LEVEL"];
-  });
-
   afterEach(async () => {
-    if (prevLogLevel === undefined) {
-      delete process.env["LOG_LEVEL"];
-    } else {
-      process.env["LOG_LEVEL"] = prevLogLevel;
-    }
     await reset();
   });
 
@@ -41,7 +30,7 @@ describe("configureObservability + getLogger", () => {
 
   test("LOG_LEVEL env override is honoured when no typed option supplied", async () => {
     const { records, sink } = collectingSink();
-    process.env["LOG_LEVEL"] = "debug";
+    vi.stubEnv("LOG_LEVEL", "debug");
     await configureObservability({ sink });
     getLogger(CATEGORY.http).debug("kept");
     getLogger(CATEGORY.http).info("kept");
@@ -50,7 +39,7 @@ describe("configureObservability + getLogger", () => {
 
   test("LOG_LEVEL=warn maps to LogTape 'warning' and filters info out", async () => {
     const { records, sink } = collectingSink();
-    process.env["LOG_LEVEL"] = "warn";
+    vi.stubEnv("LOG_LEVEL", "warn");
     await configureObservability({ sink });
     getLogger(CATEGORY.http).info("dropped");
     getLogger(CATEGORY.http).warn("kept");

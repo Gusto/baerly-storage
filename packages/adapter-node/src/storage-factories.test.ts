@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { GcsHttpStorage } from "./gcs-http.ts";
 import { gcsStorage, minioStorage, r2Storage, s3Storage } from "./storage-factories.ts";
 
@@ -43,8 +43,6 @@ describe("storage factories", () => {
 });
 
 describe("s3Storage with a credentials provider", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
   test("refreshes the provider once after an ExpiredToken 400", async () => {
     let calls = 0;
     const fetchStub = vi.fn<typeof fetch>(async (input) => {

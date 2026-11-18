@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { localFsStorage } from "./local-fs-storage.ts";
 
 const collectKeys = async (s: ReturnType<typeof localFsStorage>): Promise<string[]> => {
@@ -13,10 +13,6 @@ const collectKeys = async (s: ReturnType<typeof localFsStorage>): Promise<string
 };
 
 describe("localFsStorage", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   test("round-trips under an explicit dataDir", async () => {
     const dir = await mkdtemp(join(tmpdir(), "baerly-lfs-arg-"));
     try {

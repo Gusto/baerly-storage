@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { PAAS_MARKERS } from "../env.ts";
 import { BaerlyError } from "../errors.ts";
 import { defineStorageConformanceSuite } from "./conformance.ts";
@@ -280,10 +280,6 @@ describe("getOrCreateMemoryStorageForBucket() and resetMemoryStorage()", () => {
 // CI (CI=true only) never trips it.
 // --------------------------------------------------------------------
 describe("MemoryStorage production guard", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   test("constructs without opt-in in a non-deployed env (dev/test default)", () => {
     expect(() => new MemoryStorage()).not.toThrow();
   });

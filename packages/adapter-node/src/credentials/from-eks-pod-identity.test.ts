@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { fromEksPodIdentity } from "./from-eks-pod-identity.ts";
 
 const AGENT_RESPONSE = JSON.stringify({
@@ -15,9 +15,6 @@ describe("fromEksPodIdentity", () => {
       "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
       "/var/run/secrets/eks.amazonaws.com/serviceaccount/token",
     );
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
   });
 
   test("reads token file, GETs agent endpoint with Authorization header, returns parsed creds with expiration", async () => {

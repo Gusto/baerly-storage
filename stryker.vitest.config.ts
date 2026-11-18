@@ -15,8 +15,10 @@ export default defineConfig({
     // Shared fast-check wiring (FC_NUM_RUNS) — matches the default project
     // so property-based protocol tests behave identically under Stryker.
     setupFiles: ["tests/setup/fast-check.ts"],
-    // Forks pool mirrors the default project.
-    pool: "forks",
+    // Same mock/env hygiene as the root config.
+    restoreMocks: true,
+    unstubEnvs: true,
+    unstubGlobals: true,
     // Full assertion diffs (the default truncates at ~40 chars).
     chaiConfig: { truncateThreshold: 0 },
   },

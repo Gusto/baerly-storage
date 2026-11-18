@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fc } from "@fast-check/vitest";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { LocalFsStorage } from "./local-fs.ts";
 
@@ -362,25 +362,16 @@ describe("LocalFsStorage — impl-specific", () => {
     // missing directory is a deterministic, dependency-free stand-in for
     // "the temp escaped the root". `os.tmpdir()` re-reads `TMPDIR` on every
     // call, so this takes effect without reloading the module.
-    const original = process.env["TMPDIR"];
-    process.env["TMPDIR"] = join(root, "..", "baerly-tmpdir-does-not-exist");
-    try {
-      await expect(s.put("unconditional", utf8("v1"))).resolves.toMatchObject({
-        etag: expect.any(String),
-      });
-      const created = await s.put("cas", utf8("v1"), { ifNoneMatch: "*" });
-      await expect(s.put("cas", utf8("v2"), { ifMatch: created.etag })).resolves.toMatchObject({
-        etag: expect.any(String),
-      });
-      expect(fromBytes((await s.get("unconditional"))!.body)).toBe("v1");
-      expect(fromBytes((await s.get("cas"))!.body)).toBe("v2");
-    } finally {
-      if (original === undefined) {
-        delete process.env["TMPDIR"];
-      } else {
-        process.env["TMPDIR"] = original;
-      }
-    }
+    vi.stubEnv("TMPDIR", join(root, "..", "baerly-tmpdir-does-not-exist"));
+    await expect(s.put("unconditional", utf8("v1"))).resolves.toMatchObject({
+      etag: expect.any(String),
+    });
+    const created = await s.put("cas", utf8("v1"), { ifNoneMatch: "*" });
+    await expect(s.put("cas", utf8("v2"), { ifMatch: created.etag })).resolves.toMatchObject({
+      etag: expect.any(String),
+    });
+    expect(fromBytes((await s.get("unconditional"))!.body)).toBe("v1");
+    expect(fromBytes((await s.get("cas"))!.body)).toBe("v2");
   });
 
   test.skipIf(FOREIGN_FS === null)(

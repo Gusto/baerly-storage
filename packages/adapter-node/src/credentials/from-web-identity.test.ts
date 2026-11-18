@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { fromWebIdentity } from "./from-web-identity.ts";
 
 // A realistic STS AssumeRoleWithWebIdentity success body (namespace attr is
@@ -27,9 +27,6 @@ describe("fromWebIdentity", () => {
       "/var/run/secrets/eks.amazonaws.com/serviceaccount/token",
     );
     vi.stubEnv("AWS_REGION", "us-west-2");
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
   });
 
   test("reads token file, POSTs AssumeRoleWithWebIdentity to regional STS, returns parsed creds with expiration", async () => {

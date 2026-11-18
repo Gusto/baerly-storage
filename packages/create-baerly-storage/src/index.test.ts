@@ -238,9 +238,8 @@ describe("create-baerly-storage runner (non-TTY)", () => {
     const calls: Array<{ pm: string; cwd: string }> = [];
     const stdout = captureStream(process.stdout);
     // Pin npm_config_user_agent so detectPm() resolves to "npm" regardless
-    // of which PM ran this suite. Same save/restore shape as pm-detect.test.ts.
-    const savedUA = process.env["npm_config_user_agent"];
-    process.env["npm_config_user_agent"] = "npm/10.5.0 node/v24.0.0 darwin x64";
+    // of which PM ran this suite.
+    vi.stubEnv("npm_config_user_agent", "npm/10.5.0 node/v24.0.0 darwin x64");
     let exitCode: number;
     try {
       exitCode = await runCreateBaerly(
@@ -256,11 +255,6 @@ describe("create-baerly-storage runner (non-TTY)", () => {
       );
     } finally {
       stdout.restore();
-      if (savedUA === undefined) {
-        delete process.env["npm_config_user_agent"];
-      } else {
-        process.env["npm_config_user_agent"] = savedUA;
-      }
     }
     expect(exitCode).toBe(0);
     expect(calls).toHaveLength(1);
@@ -274,8 +268,7 @@ describe("create-baerly-storage runner (non-TTY)", () => {
     const stderr = captureStream(process.stderr);
     // Pin npm_config_user_agent so the recovery hint reads `npm install …`
     // regardless of which PM ran this suite.
-    const savedUA = process.env["npm_config_user_agent"];
-    process.env["npm_config_user_agent"] = "npm/10.5.0 node/v24.0.0 darwin x64";
+    vi.stubEnv("npm_config_user_agent", "npm/10.5.0 node/v24.0.0 darwin x64");
     let exitCode: number;
     try {
       exitCode = await runCreateBaerly([projectName, "--target=cloudflare", "--install"], {
@@ -284,11 +277,6 @@ describe("create-baerly-storage runner (non-TTY)", () => {
     } finally {
       stdout.restore();
       stderr.restore();
-      if (savedUA === undefined) {
-        delete process.env["npm_config_user_agent"];
-      } else {
-        process.env["npm_config_user_agent"] = savedUA;
-      }
     }
     // Scaffold succeeded; only the install failed. The directory is on
     // disk and the user can re-run install themselves, so we don't roll

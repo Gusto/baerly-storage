@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { fromEks } from "./from-eks.ts";
 
 const POD_IDENTITY_RESPONSE = JSON.stringify({
@@ -18,10 +18,6 @@ const STS_RESPONSE = `<AssumeRoleWithWebIdentityResponse>
 </AssumeRoleWithWebIdentityResponse>`;
 
 describe("fromEks", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   test("routes to EKS Pod Identity when AWS_CONTAINER_CREDENTIALS_FULL_URI is set", async () => {
     vi.stubEnv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials");
     vi.stubEnv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "/var/run/secrets/token");

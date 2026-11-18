@@ -1,5 +1,5 @@
 import { Writable } from "node:stream";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   createCurrentJson,
   logObjectKey,
@@ -60,8 +60,6 @@ const fixture = async (snapshotCollection?: string) => {
   }
   return { storage, snapshot };
 };
-
-afterEach(() => vi.restoreAllMocks());
 
 describe("explicit recovery of mixed legacy collection names", () => {
   test.each([NFD, NFC])(

@@ -560,7 +560,6 @@ describe("cas_lost_total records from inside the waitUntil continuation", () => 
 
 describe("fold-wall deferral signal from inside the waitUntil continuation", () => {
   afterEach(async () => {
-    vi.restoreAllMocks();
     await reset();
   });
 
@@ -677,10 +676,6 @@ describe("fold-wall deferral signal from inside the waitUntil continuation", () 
 });
 
 describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   test("a value > CF_FREE_MAX_SAFE_FOLD_BYTES emits a one-time console.warn naming the risk and remedies", async () => {
     const bucket = getBinding();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -821,10 +816,6 @@ describe("over-raised BAERLY_MAINTENANCE_MAX_FOLD_BYTES warns at init", () => {
  * init ceiling check resolve the profile.
  */
 describe("invalid MAX_FOLD_BYTES × PROFILE combinations on the CF request path", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   const overRaised = String(CF_FREE_MAX_SAFE_FOLD_BYTES + 1);
   const cases: Array<[string | undefined, string | undefined]> = [
     ["8mb", undefined],

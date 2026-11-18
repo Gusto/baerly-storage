@@ -37,19 +37,11 @@ export default {
   ignorePatterns: ["credentials", ".pnpm-store", ".worktrees", ".claude", ".plans", "dist"],
   // pnpm isolates each package under .pnpm/; the vitest-runner lives in its
   // own bucket, invisible to Stryker's default "@stryker-mutator/*" glob
-  // (which resolves relative to core's own isolated node_modules). Adding an
-  // explicit entry forces discovery through the project-root symlink instead.
-  plugins: ["@stryker-mutator/*", "@stryker-mutator/vitest-runner"],
-  // perTest only re-runs the tests that cover each mutant — the main speed
-  // lever. Requires the runner to report per-test coverage (vitest does).
-  coverageAnalysis: "perTest",
+  // (which resolves relative to core's own isolated node_modules). Naming it
+  // explicitly forces discovery through the project-root symlink instead.
+  plugins: ["@stryker-mutator/vitest-runner"],
   reporters: ["clear-text", "progress", "json", "html"],
   htmlReporter: { fileName: "reports/mutation/protocol.html" },
-  jsonReporter: { fileName: "reports/mutation/mutation.json" },
-  // Baseline tool: report only, never fail. `break: null` means the run
-  // exits 0 regardless of score. Revisit once a baseline is established.
-  thresholds: { high: 80, low: 60, break: null },
-  tempDirName: ".stryker-tmp",
   incremental: true,
   incrementalFile: "reports/mutation/stryker-incremental.json",
 };
