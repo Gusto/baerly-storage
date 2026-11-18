@@ -137,6 +137,27 @@ const JWKS_KID_REFRESH_MIN_INTERVAL_MS = 60_000;
  * ```
  */
 export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
+  const verifyToken = makeTokenVerifier(opts);
+  return async (req: Request): Promise<VerifierResult | null> => {
+    const header = req.headers.get("Authorization") ?? "";
+    if (!header.startsWith("Bearer ")) {
+      return null;
+    }
+    return verifyToken(header.slice("Bearer ".length));
+  };
+};
+
+/**
+ * Validate `opts` and return the token-level verifier shared by
+ * {@link bearerJwt} (token from `Authorization: Bearer`) and
+ * `cloudflareAccess` (token from `Cf-Access-Jwt-Assertion`). Takes the
+ * raw JWT, so callers never rebuild a `Request` to move it between
+ * headers. Same results as `bearerJwt`: `null` for any token-level
+ * failure, `BaerlyError{NetworkError}` for a cold-cache JWKS failure.
+ */
+export const makeTokenVerifier = (
+  opts: BearerJwtOptions,
+): ((token: string) => Promise<VerifierResult | null>) => {
   if (opts.issuer.length === 0) {
     throw new BaerlyError("InvalidConfig", "bearerJwt: issuer must be non-empty", {
       resolution: BEARER_JWT_CONFIG_RESOLUTION,
@@ -207,13 +228,7 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
         })
       : createLocalJWKSet({ keys: opts.jwks.keys as Jwk[] });
 
-  return async (req: Request): Promise<VerifierResult | null> => {
-    const header = req.headers.get("Authorization") ?? "";
-    if (!header.startsWith("Bearer ")) {
-      return null;
-    }
-    const token = header.slice("Bearer ".length);
-
+  return async (token: string): Promise<VerifierResult | null> => {
     let payload: JWTPayload;
     try {
       ({ payload } = await jwtVerify(token, resolveKey, {

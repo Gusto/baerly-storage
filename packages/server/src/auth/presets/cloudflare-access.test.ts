@@ -126,6 +126,47 @@ describe("cloudflareAccess", () => {
     expect(res!.tenantPrefix).toBe("internal");
   });
 
+  test("verifies the CF token when an unrelated non-Bearer Authorization header is also present", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      fetch: fetchStub,
+    });
+    const token = await signJwt(validPayload());
+    const req = new Request("https://api.example.com/v1/c/items", {
+      headers: { "Cf-Access-Jwt-Assertion": token, Authorization: "Basic dXNlcjpwYXNz" },
+    });
+    const res = await verifier(req);
+    expect(res).not.toBeNull();
+    expect(res!.tenantPrefix).toBe("internal");
+  });
+
+  test("an empty Cf-Access-Jwt-Assertion header → null", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      fetch: fetchStub,
+    });
+    await expect(verifier(mkReq(""))).resolves.toBeNull();
+  });
+
+  test("cold-cache JWKS fetch failure throws BaerlyError{NetworkError}", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      fetch: fetchStub,
+    });
+    const token = await signJwt(validPayload());
+    const error = await verifier(mkReq(token)).catch((error_: unknown) => error_);
+    expect(error).toBeInstanceOf(BaerlyError);
+    expect((error as BaerlyError).code).toBe("NetworkError");
+  });
+
   test.each([
     "acme.cloudflareaccess.com",
     "evil.example.com/x",
