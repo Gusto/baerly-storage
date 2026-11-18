@@ -5,7 +5,7 @@ name: test-infra
 # Run ON DEMAND via workflow_dispatch, and on pull requests that touch the
 # stack definition itself (compose file, docker/ config, this workflow) or the
 # code these suites exercise (adapter-node, the CLI export path, the export
-# integration tests) — changes `ci` cannot catch, since it never starts the
+# integration tests, the scaffolder's Docker add-on template) — changes `ci` cannot catch, since it never starts the
 # containers. Other PRs stay on the cheap `ci` job.
 #
 # NIGHTLY (enabled): the `schedule:` block runs this at 07:00 UTC. A failing
@@ -23,6 +23,7 @@ on:
       - docker/**
       - .github/workflows/test-infra.yml
       - .github/actions/setup/**
+      - packages/create-baerly-storage/templates/addons/docker/**
       - packages/adapter-node/**
       - packages/cli/src/export.ts
       - packages/cli/src/export/**
@@ -45,6 +46,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step pushes; don't leave the token in .git/config while
+          # install scripts run.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       # sqlite3 CLI: test:export-round-trip skips without it.
@@ -78,6 +83,43 @@ jobs:
         env:
           BAERLY_REQUIRED_GATES: sqlite
         run: pnpm test:export-round-trip
+
+      # Nothing else builds the scaffolder's Dockerfile template (the unit
+      # test only reads its source), so a Dependabot base-image bump would
+      # otherwise merge green without ever being built. Scaffold a real
+      # Node + docker project with the just-built CLI (outside the
+      # workspace, so it installs standalone) and build the image. No boot:
+      # a production container refuses to start without a bucket.
+      #
+      # The scaffold depends on `@gusto/baerly-storage@^<scaffolder version>`
+      # from the registry, which does not exist until that version is
+      # published (and pnpm's `minimumReleaseAge` holds it back for a day
+      # after). So the app installs the packed workspace tarball instead.
+      # The Dockerfile copies only the manifests before `pnpm install`, so
+      # the Node snippet below also adds a `COPY vendor vendor` line there; everything
+      # else in the template is built as shipped.
+      - name: Build the Docker add-on template
+        run: |
+          app="$RUNNER_TEMP/docker-addon-app"
+          (cd "$RUNNER_TEMP" && node "$GITHUB_WORKSPACE/packages/create-baerly-storage/dist/index.js" \
+            docker-addon-app --target=node --with=docker --pm=pnpm --no-git)
+          mkdir "$app/vendor"
+          pnpm pack --pack-destination "$app/vendor"
+          tarball="$(cd "$app/vendor" && ls gusto-baerly-storage-*.tgz)"
+          node -e '
+            const fs = require("node:fs");
+            const [app, tarball] = process.argv.slice(1);
+            const file = app + "/package.json";
+            const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+            pkg.dependencies["@gusto/baerly-storage"] = "file:./vendor/" + tarball;
+            fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            const manifestCopy = "COPY pnpm-lock.yaml package.json ./\n";
+            const dockerfile = fs.readFileSync(app + "/Dockerfile", "utf8");
+            if (!dockerfile.includes(manifestCopy)) throw new Error("manifest COPY not found");
+            fs.writeFileSync(app + "/Dockerfile", dockerfile.replace(manifestCopy, manifestCopy + "COPY vendor vendor\n"));
+          ' "$app" "$tarball"
+          (cd "$app" && pnpm install)
+          docker build "$app"
 
       - name: Stop storage stack
         if: always()
