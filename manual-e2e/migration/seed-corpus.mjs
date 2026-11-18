@@ -2,8 +2,15 @@
 // `@gusto/baerly-storage` install, through that version's own public API.
 // Spawned by `old-binary-harness.mjs`; not meant to be run by hand.
 //
-//   node seed-corpus.mjs --pkg <install-dir> --root <abs-dir> --out <expected.json>
-//        [--seed N] [--rows N] [--tail-writes N]
+//   node seed-corpus.mjs --pkg <install-dir> (--root <abs-dir> | --s3-bucket <name>)
+//        --out <expected.json> [--seed N] [--rows N] [--tail-writes N]
+//
+// `--root` seeds through that version's `LocalFsStorage`. `--s3-bucket` seeds
+// through that version's own `@gusto/baerly-storage/node` S3 factory
+// (`minioStorage` / `r2Storage` / `s3Storage`, picked from the endpoint the
+// same way the old CLI picks it), reading BAERLY_S3_ENDPOINT,
+// BAERLY_S3_ACCESS_KEY_ID, BAERLY_S3_SECRET_ACCESS_KEY and optional
+// BAERLY_S3_REGION from the environment. Credential values are never logged.
 //
 // `--pkg` is the scratch dir holding `node_modules/@gusto/baerly-storage`.
 // Modules are imported by absolute path so this file can live in the repo.
@@ -18,22 +25,26 @@ const { values: args } = parseArgs({
   options: {
     pkg: { type: "string" },
     root: { type: "string" },
+    "s3-bucket": { type: "string" },
     out: { type: "string" },
     seed: { type: "string", default: "1" },
     rows: { type: "string", default: "48" },
     "tail-writes": { type: "string", default: "130" },
   },
 });
-for (const k of ["pkg", "root", "out"]) {
+for (const k of ["pkg", "out"]) {
   if (!args[k]) {
     throw new Error(`missing --${k}`);
   }
+}
+if (Boolean(args.root) === Boolean(args["s3-bucket"])) {
+  throw new Error("pass exactly one of --root or --s3-bucket");
 }
 
 const dist = join(args.pkg, "node_modules/@gusto/baerly-storage/dist");
 const load = (f) => import(pathToFileURL(join(dist, f)).href);
 const { Db, defineConfig } = await load("index.js");
-const { LocalFsStorage } = await load("dev.js");
+const { LocalFsStorage } = args.root ? await load("dev.js") : {};
 const { compact, runGc } = await load("maintenance.js");
 const version = JSON.parse(
   readFileSync(join(args.pkg, "node_modules/@gusto/baerly-storage/package.json"), "utf8"),
@@ -90,7 +101,34 @@ const config = defineConfig({
     [NOTES]: {},
   },
 });
-const storage = new LocalFsStorage({ root: args.root });
+const need = (k) => {
+  const v = process.env[k];
+  if (!v) {
+    throw new Error(`${k} must be set to seed an s3:// bucket`);
+  }
+  return v;
+};
+const s3Storage = async (bucket) => {
+  const endpoint = need("BAERLY_S3_ENDPOINT");
+  const credentials = {
+    accessKeyId: need("BAERLY_S3_ACCESS_KEY_ID"),
+    secretAccessKey: need("BAERLY_S3_SECRET_ACCESS_KEY"),
+  };
+  const region = process.env["BAERLY_S3_REGION"] ?? "us-east-1";
+  const node = await load("node.js");
+  // Same dispatch as the old CLI's bucket-URI parser (`pickS3Storage`).
+  const r2Host = endpoint.match(/^https?:\/\/([^./]+)\.r2\.cloudflarestorage\.com\b/i);
+  if (r2Host) {
+    return node.r2Storage({ accountId: r2Host[1], bucket, credentials });
+  }
+  if (/^https?:\/\/s3(\.[^.]+)?\.amazonaws\.com\b/i.test(endpoint)) {
+    return node.s3Storage({ region, bucket, credentials });
+  }
+  return node.minioStorage({ endpoint, bucket, credentials });
+};
+const storage = args.root
+  ? new LocalFsStorage({ root: args.root })
+  : await s3Storage(args["s3-bucket"]);
 const db = Db.create({ storage, app: APP, tenant: TENANT, config });
 const tickets = db.collection(TICKETS);
 const notes = db.collection(NOTES);

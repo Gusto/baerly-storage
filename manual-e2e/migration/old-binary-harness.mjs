@@ -6,10 +6,27 @@
 //
 //   pnpm migration:old-binary [--versions 0.1.0,0.6.0] [--out <dir>]
 //        [--bucket <uri-template>] [--seed N] [--rows N] [--tail-writes N]
+//        [--s3-config <json-file>] [--create-bucket]
 //
-// `--bucket` may contain `{version}`; the default is
-// `file://<out>/<version>/bucket`. Only `file:///` buckets can be SEEDED
-// today; the dump step accepts any URI the old CLI understands.
+// `--bucket` may contain `{version}` (dots become dashes in an `s3://` name)
+// and `{run}` (a unique per-run id); the default is
+// `file://<out>/<version>/bucket`.
+//
+// `s3://<bucket>` seeds through the old version's own S3 storage
+// (`@gusto/baerly-storage/node`) and dumps with its own CLI. The endpoint and
+// credentials come from the environment, the same variables the old CLI
+// reads: BAERLY_S3_ENDPOINT, BAERLY_S3_ACCESS_KEY_ID,
+// BAERLY_S3_SECRET_ACCESS_KEY, optional BAERLY_S3_REGION. `--s3-config` names
+// a JSON file with `endpoint`, `accessKeyId`, `secretAccessKey`, optional
+// `region` (or the `credentials/*.json` shape, with the keys under
+// `credentials`); its values fill any variable not already set. Credential values
+// are never printed. The bucket must be empty (refused otherwise);
+// `--create-bucket` creates it when it does not exist. A key prefix in the
+// URI is not supported: use a fresh bucket per run. Example (local Minio):
+//
+//   BAERLY_S3_ENDPOINT=http://127.0.0.1:9102 BAERLY_S3_ACCESS_KEY_ID=... \
+//   BAERLY_S3_SECRET_ACCESS_KEY=... pnpm migration:old-binary \
+//     --versions 0.6.0 --bucket 's3://migproof-{version}-{run}' --create-bucket
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -29,6 +46,8 @@ const { values: args } = parseArgs({
     rows: { type: "string", default: "48" },
     "tail-writes": { type: "string", default: "130" },
     "skip-install": { type: "boolean", default: false },
+    "s3-config": { type: "string" },
+    "create-bucket": { type: "boolean", default: false },
   },
 });
 
@@ -38,6 +57,92 @@ const env = { ...process.env };
 if (!/--use-system-ca/.test(env["NODE_OPTIONS"] ?? "")) {
   env["NODE_OPTIONS"] = `${env["NODE_OPTIONS"] ?? ""} --use-system-ca`.trim();
 }
+
+// `--s3-config` fills in any BAERLY_S3_* variable the environment lacks.
+if (args["s3-config"]) {
+  // V8 quotes a snippet of the source in a SyntaxError, which can contain a
+  // secret, so the original error is deliberately not rethrown or chained.
+  let cfg;
+  try {
+    cfg = JSON.parse(readFileSync(resolve(args["s3-config"]), "utf8"));
+  } catch {
+    throw new Error(`--s3-config ${args["s3-config"]} is not readable valid JSON`);
+  }
+  if (cfg === null || typeof cfg !== "object") {
+    throw new Error(`--s3-config ${args["s3-config"]} must hold a JSON object`);
+  }
+  for (const [field, name] of [
+    ["endpoint", "BAERLY_S3_ENDPOINT"],
+    ["accessKeyId", "BAERLY_S3_ACCESS_KEY_ID"],
+    ["secretAccessKey", "BAERLY_S3_SECRET_ACCESS_KEY"],
+    ["region", "BAERLY_S3_REGION"],
+  ]) {
+    // Accepts the flat shape and the `credentials.{accessKeyId,secretAccessKey}`
+    // shape of `credentials/*.json`.
+    const value = cfg[field] ?? cfg.credentials?.[field];
+    if (!env[name] && typeof value === "string" && value !== "") {
+      env[name] = value;
+    }
+  }
+}
+const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+// Signed S3 requests for the bucket-empty check and --create-bucket. The
+// seed and dump themselves go through the OLD version's code, not this.
+const s3Client = async () => {
+  for (const k of [
+    "BAERLY_S3_ENDPOINT",
+    "BAERLY_S3_ACCESS_KEY_ID",
+    "BAERLY_S3_SECRET_ACCESS_KEY",
+  ]) {
+    if (!env[k]) {
+      throw new Error(`${k} must be set (or supplied by --s3-config) to use an s3:// bucket`);
+    }
+  }
+  const { AwsClient } = await import("aws4fetch");
+  const client = new AwsClient({
+    accessKeyId: env["BAERLY_S3_ACCESS_KEY_ID"],
+    secretAccessKey: env["BAERLY_S3_SECRET_ACCESS_KEY"],
+    region: env["BAERLY_S3_REGION"] ?? "us-east-1",
+    service: "s3",
+  });
+  const base = env["BAERLY_S3_ENDPOINT"].replace(/\/+$/, "");
+  return (method, bucket, query = "", body) =>
+    client.fetch(`${base}/${bucket}${query}`, { method, body });
+};
+const prepareS3Bucket = async (bucket) => {
+  const s3 = await s3Client();
+  let head = await s3("HEAD", bucket);
+  if (head.status === 404 && args["create-bucket"]) {
+    const region = env["BAERLY_S3_REGION"] ?? "us-east-1";
+    const hostname = new URL(env["BAERLY_S3_ENDPOINT"]).hostname;
+    const isAws = hostname.endsWith(".amazonaws.com") || hostname.endsWith(".amazonaws.com.cn");
+    // AWS requires a LocationConstraint outside us-east-1. Compatible
+    // endpoints retain their bodyless CreateBucket request.
+    const body =
+      isAws && region !== "us-east-1"
+        ? `<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>${region}</LocationConstraint></CreateBucketConfiguration>`
+        : undefined;
+    const created = await s3("PUT", bucket, "", body);
+    if (!created.ok) {
+      throw new Error(`creating bucket ${bucket} failed: HTTP ${created.status}`);
+    }
+    head = await s3("HEAD", bucket);
+  }
+  if (!head.ok) {
+    throw new Error(
+      `bucket ${bucket} is not accessible (HTTP ${head.status})${head.status === 404 ? "; pass --create-bucket to create it" : ""}`,
+    );
+  }
+  const list = await s3("GET", bucket, "?list-type=2&max-keys=1");
+  const body = await list.text();
+  if (!list.ok) {
+    throw new Error(`listing bucket ${bucket} failed: HTTP ${list.status}`);
+  }
+  if (!/<KeyCount>0<\/KeyCount>/.test(body)) {
+    throw new Error(`bucket ${bucket} is not empty; use a fresh bucket (put {run} in --bucket)`);
+  }
+};
 
 const run = (cmd, argv, opts = {}) => {
   const r = spawnSync(cmd, argv, { env, encoding: "utf8", ...opts });
@@ -52,7 +157,10 @@ const run = (cmd, argv, opts = {}) => {
 const results = [];
 for (const version of args.versions.split(",").map((v) => v.trim())) {
   const dir = join(out, version);
-  const bucketUri = (args.bucket ?? `file://${dir}/bucket`).replaceAll("{version}", version);
+  const template = args.bucket ?? `file://${dir}/bucket`;
+  const bucketUri = template
+    .replaceAll("{version}", template.startsWith("s3://") ? version.replaceAll(".", "-") : version)
+    .replaceAll("{run}", runId);
   mkdirSync(dir, { recursive: true });
 
   // 1. Install the published package, no lifecycle scripts.
@@ -78,17 +186,25 @@ for (const version of args.versions.split(",").map((v) => v.trim())) {
   }
 
   // 2. Seed with that version's own API.
-  if (!bucketUri.startsWith("file:///")) {
-    throw new Error(
-      `seeding supports file:/// buckets only (got ${bucketUri}); Minio s3:// seeding is step 4`,
-    );
-  }
-  const root = bucketUri.slice("file://".length);
-  mkdirSync(root, { recursive: true });
-  if (readdirSync(root).length > 0) {
-    throw new Error(
-      `bucket root ${root} is not empty; use a fresh --out (the default is timestamped)`,
-    );
+  let target;
+  if (bucketUri.startsWith("file:///")) {
+    const root = bucketUri.slice("file://".length);
+    mkdirSync(root, { recursive: true });
+    if (readdirSync(root).length > 0) {
+      throw new Error(
+        `bucket root ${root} is not empty; use a fresh --out (the default is timestamped)`,
+      );
+    }
+    target = ["--root", root];
+  } else if (bucketUri.startsWith("s3://")) {
+    const bucket = bucketUri.slice("s3://".length);
+    if (bucket === "" || bucket.includes("/")) {
+      throw new Error(`s3:// bucket must be a bare bucket name, no key prefix (got ${bucketUri})`);
+    }
+    await prepareS3Bucket(bucket);
+    target = ["--s3-bucket", bucket];
+  } else {
+    throw new Error(`seeding supports file:/// and s3:// buckets only (got ${bucketUri})`);
   }
   const expectedPath = join(dir, "expected.json");
   const seeded = run(
@@ -97,8 +213,7 @@ for (const version of args.versions.split(",").map((v) => v.trim())) {
       join(here, "seed-corpus.mjs"),
       "--pkg",
       dir,
-      "--root",
-      root,
+      ...target,
       "--out",
       expectedPath,
       "--seed",
