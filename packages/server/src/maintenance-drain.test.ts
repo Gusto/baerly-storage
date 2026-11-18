@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the drain test seeds doc bodies with it. */
-
 /**
  * §7.1 drain-rate invariant — EXECUTABLE.
  *

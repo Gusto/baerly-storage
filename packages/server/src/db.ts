@@ -186,7 +186,6 @@ export class Db<TConfig extends BaerlyConfig = UnboundConfig> {
   collection<N extends CollectionNames<TConfig>>(
     name: N,
   ): Collection<RowOf<TConfig, N> & DocumentData>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- impl signature must be wider than the public overload; with Predicate<T> typed, Collection<DocumentData> is no longer assignable to Collection<RowOf<...>&DocumentData> due to contravariance on where(). `any` widens correctly.
   collection(name: string): Collection<any> {
     return makeCollection<DocumentData>(collectionReadContext(this, name));
   }

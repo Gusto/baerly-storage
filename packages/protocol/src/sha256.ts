@@ -13,14 +13,5 @@ export const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
   const view = new Uint8Array(bytes.byteLength);
   view.set(bytes);
   const digest = await crypto.subtle.digest("SHA-256", view);
-  // Hand-rolled hex, not `Uint8Array.prototype.toHex()`: that TC39 method is
-  // declared by the `ESNext.TypedArrays` lib (so it type-checks) but isn't
-  // available unflagged on every runtime we support (workerd included) — it
-  // would throw at runtime.
-  const out = new Uint8Array(digest);
-  let hex = "";
-  for (let i = 0; i < out.length; i++) {
-    hex += out[i]!.toString(16).padStart(2, "0");
-  }
-  return hex;
+  return new Uint8Array(digest).toHex();
 };

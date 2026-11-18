@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key column name carried in `ColumnPlan.source`. */
-
 /**
  * Unit tests for {@link serializeExportPlan} and
  * {@link deserializeExportPlan}.

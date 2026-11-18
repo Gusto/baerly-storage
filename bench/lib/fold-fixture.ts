@@ -37,10 +37,6 @@
  * production behaviour and no constant.
  */
 
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document + snapshot shapes (see `@baerly/protocol`'s
-   `Collection<T>` / the snapshot body). */
-
 import {
   type CurrentJson,
   type DocumentData,

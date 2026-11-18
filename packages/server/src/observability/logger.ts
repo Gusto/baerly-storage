@@ -6,7 +6,7 @@
  * routes to the configured sinks. We expose a small wrapper so the
  * boot path can hand LogTape the built-in `"console-json"` shortcut
  * (or any custom `Sink` function — pretty rendering lives in
- * `@baerly/adapter-node` so picocolors stays off the kernel) and
+ * `@baerly/adapter-node` so the pretty renderer stays off the kernel) and
  * an env-driven level override.
  *
  * The wrapper is intentionally thin: anything LogTape can do
@@ -90,7 +90,7 @@ export interface ObservabilityConfig {
    *   targeting TTY environments (e.g. `@baerly/adapter-node`'s
    *   `baerlyDev()` Vite-mount path) construct a pretty sink locally
    *   and pass it as a function; the kernel deliberately does not
-   *   ship a pretty-printer to keep `picocolors` off the runtime
+   *   ship a pretty-printer to keep the pretty renderer off the runtime
    *   closure.
    *
    * Default: `"console-json"`.
@@ -224,6 +224,5 @@ const jsonConsoleSink = (): Sink => (record) => {
     message: record.message.map((m) => (typeof m === "string" ? m : JSON.stringify(m))).join(""),
     ...record.properties,
   };
-  // eslint-disable-next-line no-console -- intentional sink target
   console.log(JSON.stringify(payload));
 };

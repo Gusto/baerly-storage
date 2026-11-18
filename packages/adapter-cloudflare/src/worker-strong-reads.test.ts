@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the document key; the R2 global is test wiring. */
 import { type BaerlyAppConfig, type Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { afterEach, describe, expect, test, vi } from "vitest";

@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the run seeds doc bodies with it. */
-
 /**
  * Steady-state request costs on Workers Free with storage reached through
  * `fetch` (S3 over HTTP), where every storage call is one of the 50

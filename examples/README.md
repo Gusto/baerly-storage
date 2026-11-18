@@ -98,7 +98,7 @@ If the example should be CLI-scaffoldable, drop a `.baerly/scaffold.json` manife
     { "from": "minimal-cloudflare", "fromKey": "appName" },
     { "from": "minimal-demo", "fromKey": "tenant" }
   ],
-  "excludePaths": ["uint8array-base64.d.ts", ".baerly/scaffold.json"],
+  "excludePaths": [".baerly/scaffold.json"],
   "dropDevDeps": ["@gusto/create-baerly-storage"]
 }
 ```

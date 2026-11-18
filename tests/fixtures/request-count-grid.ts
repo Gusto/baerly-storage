@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the grid seeds doc bodies with it. */
-
 /**
  * The deterministic grid behind `request-counts.json`: exact happy-path
  * storage-call counts per route and per maintenance tick, over

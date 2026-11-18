@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; tests reference it by name. */
-
 /**
  * `update` / `replace` / `delete` racing a concurrent same-`_id` write
  * (EvalPlanQual semantics, `docs/spec/sync-protocol.md` §"Update and delete:

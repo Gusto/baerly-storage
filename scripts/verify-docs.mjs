@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, globSync } from "node:fs";
 import { join, dirname, resolve, relative } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { splitFrontmatter } from "./lib/frontmatter.mjs";
@@ -23,22 +23,13 @@ const STALE_AFTER_DAYS = 180;
 
 const findings = [];
 
-// Skip these directory NAMES anywhere they appear in the walk.
-// Planning artifacts live in root `.plans/`, outside this docs-only walk.
-const SKIP_DIR_NAMES = new Set(["node_modules"]);
+// Skip dot-entries and `node_modules` anywhere in the walk. Planning
+// artifacts live in root `.plans/`, outside this docs-only walk.
+const isSkipped = (name) => name.startsWith(".") || name === "node_modules";
 
 function walk(dir) {
-  for (const name of readdirSync(dir)) {
-    if (name.startsWith(".") || SKIP_DIR_NAMES.has(name)) {
-      continue;
-    }
-    const path = join(dir, name);
-    const st = statSync(path);
-    if (st.isDirectory()) {
-      walk(path);
-    } else if (name.endsWith(".md")) {
-      checkFile(path);
-    }
+  for (const rel of globSync("**/*.md", { cwd: dir, exclude: isSkipped }).toSorted()) {
+    checkFile(join(dir, rel));
   }
 }
 

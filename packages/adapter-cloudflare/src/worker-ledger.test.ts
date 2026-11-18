@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes. */
-
 /**
  * The Worker's per-invocation request ledger, under workerd: its limits
  * per maintenance profile, one ledger shared by a request's route and its

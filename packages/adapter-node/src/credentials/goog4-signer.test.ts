@@ -487,7 +487,7 @@ describe("goog4Signer", () => {
     const digest = new Uint8Array(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     );
-    const expectedHash = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const expectedHash = digest.toHex();
     expect(signed.headers.get("x-goog-content-sha256")).toBe(expectedHash);
     expect(signed.headers.get("x-goog-content-sha256")).not.toBe(EMPTY_SHA256);
   });

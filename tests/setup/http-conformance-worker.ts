@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is
-   the ticket-06 contract: miniflare's vitest pool sets the global; we
-   read it here so the worker entry can talk to the same R2 binding
-   the conformance setup file drains between tests. */
-
 /**
  * Worker `main` module for the Cloudflare-pool HTTP-conformance run.
  *

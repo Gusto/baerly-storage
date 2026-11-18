@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCliArgs } from "./lib/parse-cli.mjs";
 import {
   CURRENT_JSON_SCHEMA_VERSION,
   GC_PENDING_SCHEMA_VERSION,
@@ -156,7 +157,8 @@ const runCli = (): void => {
   const artifactPath = resolve(here, "../docs/contributing/version-matrix.json");
   const pkgPath = resolve(here, "../package.json");
   const createPkgPath = resolve(here, "../packages/create-baerly-storage/package.json");
-  const write = process.argv.includes("--write");
+  const { values } = parseCliArgs({ options: { write: { type: "boolean" } } });
+  const write = values.write ?? false;
 
   const fail = (msgs: string | string[]): never => {
     for (const msg of Array.isArray(msgs) ? msgs : [msgs]) {

@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; tests assert on it by name. */
-
 /**
  * The per-document size cap: a committed post-image encodes to at most
  * `MAX_DOCUMENT_BYTES`. Covers the in-process verbs, the writer itself

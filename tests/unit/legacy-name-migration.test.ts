@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key field. */
 /**
  * Legacy non-NFC app / tenant / collection names: the SDK refuses them,
  * the read-only operator CLI still reads and exports them, the writing

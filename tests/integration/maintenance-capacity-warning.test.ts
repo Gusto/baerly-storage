@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes. */
-
 /**
  * main-10 Task 5 (G7): the early capacity warning and the state it may touch,
  * on `memory` + `local-fs`, host SMALL (E = 20 rows, 5 entries per pass).

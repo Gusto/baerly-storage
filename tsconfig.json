@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2025",
-    "lib": ["ES2025", "ESNext.TypedArrays", "DOM", "DOM.Iterable"],
+    "lib": ["ES2025", "ESNext.TypedArrays", "ESNext.Collection", "DOM"],
     "module": "preserve",
 
     "verbatimModuleSyntax": true,

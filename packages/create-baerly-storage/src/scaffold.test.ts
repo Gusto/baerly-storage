@@ -573,18 +573,13 @@ describe("scaffold", () => {
       //    scaffolder is one-shot.
       expect(topPkg.devDependencies?.["@gusto/create-baerly-storage"]).toBeUndefined();
 
-      // 5. `uint8array-base64.d.ts` shim shipped — load-bearing for
-      //    `tsc -b --noEmit` against workspace-linked @baerly/protocol
-      //    until TS proper accepts esnext.typedarrays in --lib.
-      expect(result.filesWritten).toContain("uint8array-base64.d.ts");
-
-      // 6. AGENTS.md + CLAUDE.md parity (Codex CLI reads one, Claude
+      // 5. AGENTS.md + CLAUDE.md parity (Codex CLI reads one, Claude
       //    Code reads the other — they MUST be byte-identical).
       const agents = await readFile(join(result.outDir, "AGENTS.md"), "utf8");
       const claude = await readFile(join(result.outDir, "CLAUDE.md"), "utf8");
       expect(claude).toEqual(agents);
 
-      // 7. React shape: real React UI shipped at src/web/, with
+      // 6. React shape: real React UI shipped at src/web/, with
       //    Vite's `index.html` at the package root.
       if (shape === "react") {
         expect(result.filesWritten).toContain("index.html");

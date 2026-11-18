@@ -45,11 +45,7 @@ const locks = new Map<string, KeyLock>();
  * no lock-ordering cycle either.
  */
 export const withKeyLock = async <T>(lockKey: string, fn: () => Promise<T>): Promise<T> => {
-  let lock = locks.get(lockKey);
-  if (lock === undefined) {
-    lock = { tail: Promise.resolve(), waiters: 0 };
-    locks.set(lockKey, lock);
-  }
+  const lock = locks.getOrInsertComputed(lockKey, () => ({ tail: Promise.resolve(), waiters: 0 }));
   lock.waiters += 1;
 
   // Take a ticket: wait on the previous holder's release, and publish our

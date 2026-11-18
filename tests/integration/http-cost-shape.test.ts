@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes; the HTTP body wraps the
-   server's `{ _id }` response and re-encodes it as JSON. */
-
 import { createServer, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

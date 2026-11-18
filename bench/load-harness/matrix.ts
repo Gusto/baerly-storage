@@ -40,8 +40,6 @@ for (const preset of PRESETS) {
   for (const variant of VARIANTS) {
     for (const cache of CACHE_MODES) {
       const code = await run([
-        "--import",
-        "./bench/register-hooks.mjs",
         "bench/load-harness/cli.ts",
         `--preset=${preset}`,
         `--variant=${variant}`,

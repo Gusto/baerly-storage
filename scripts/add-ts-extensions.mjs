@@ -2,7 +2,7 @@
 /**
  * Rewrite extensionless relative imports to include explicit `.ts` /
  * `.tsx` extensions so workspace source is consumable by Node's
- * native `--experimental-strip-types` runtime.
+ * native type-stripping runtime.
  *
  * oxlint's `import/extensions: ["error","always"]` rule enforces this same
  * requirement over `tests/`, `packages/**`, `bench/`, `examples/`,
@@ -25,8 +25,11 @@
 import { readFile, writeFile, stat, glob } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCliArgs } from "./lib/parse-cli.mjs";
 
-const CHECK_MODE = process.argv.includes("--check");
+const {
+  values: { check: CHECK_MODE = false },
+} = parseCliArgs({ options: { check: { type: "boolean" } } });
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolvePath(HERE, "..");
 
@@ -177,7 +180,7 @@ if (CHECK_MODE) {
       `  To fix: run \`node scripts/add-ts-extensions.mjs\` (no flags) to rewrite them in place.`,
     );
     console.error(
-      `  The relative imports above must end in \`.ts\`, \`.tsx\`, \`/index.ts\`, or \`/index.tsx\` so Node's --experimental-strip-types runtime can resolve them.`,
+      `  The relative imports above must end in \`.ts\`, \`.tsx\`, \`/index.ts\`, or \`/index.tsx\` so Node's type-stripping runtime can resolve them.`,
     );
     process.exit(1);
   }

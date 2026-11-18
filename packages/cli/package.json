@@ -23,7 +23,6 @@
     "@baerly/server": "workspace:*",
     "@hono/node-server": "^2.1.8",
     "citty": "^0.2.2",
-    "jsonc-parser": "^3.3.1",
-    "picocolors": "^1.1.1"
+    "jsonc-parser": "^3.3.1"
   }
 }

@@ -41,7 +41,7 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
 - **Package manager:** pnpm. The emitted repo pins `packageManager: pnpm@12.21.0`.
 - **Test runner:** vitest.
 - **Type checker:** TypeScript 7, as pinned in `package.json`.
-- **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the code stays compatible with type-stripping runtimes (Node's `--experimental-strip-types`, esbuild's strip path). The flag bans TS constructs that can't be type-erased: write `class { x: T; constructor(x: T) { this.x = x } }` explicitly instead of parameter-property shorthand (`constructor(private x: T) {}` fails with TS1294). The same goes for `enum`, namespaces with non-type bindings, and `private` / `protected` / `public` accessibility modifiers on constructor parameters.
+- **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the code stays compatible with type-stripping runtimes (Node's built-in type stripping, esbuild's strip path). The flag bans TS constructs that can't be type-erased: write `class { x: T; constructor(x: T) { this.x = x } }` explicitly instead of parameter-property shorthand (`constructor(private x: T) {}` fails with TS1294). The same goes for `enum`, namespaces with non-type bindings, and `private` / `protected` / `public` accessibility modifiers on constructor parameters.
 
 ## Verification
 
@@ -53,7 +53,7 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
 | `pnpm test` | `vitest run` — standalone `vitest.config.ts` (Node env). The template ships `src/notes.test.ts` by default. | seconds |
 | `pnpm dev` | Run `vite` — `baerlyDev()` mounts the Node HTTP listener as Connect middleware next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build` | `tsc -b && vite build` — emits the SPA into `dist/client/` | seconds |
-| `pnpm start` | `node --experimental-strip-types src/server/index.ts` — production entry; serves the built SPA from `dist/client/` plus `/v1/*` on the same origin via `webRoot` | seconds to start |
+| `pnpm start` | `node src/server/index.ts` — production entry; serves the built SPA from `dist/client/` plus `/v1/*` on the same origin via `webRoot` | seconds to start |
 
 **`pnpm verify` exercises typecheck + tests only.** The dev-auth middleware, the SPA bundle, and any custom `/api/*` route are NOT under test — verify will exit green even when the dev plugin returns 401 on every browser request or the SPA throws on mount. For changes that touch `vite.config.ts`, `src/server/index.ts`, or SPA logic, run `pnpm dev` and exercise the change in a browser (or `curl http://localhost:5173/<path>`) before declaring the task complete.
 
@@ -150,7 +150,7 @@ Dev sees `JWKS_URL` as `undefined`, spread short-circuits, and `config.auth: "no
 
 - **Storage credentials** — the default `resolveStorage()` (`src/server/resolve-storage.ts`) reads static keys from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. For EKS (`fromEks()`), expiring or vault-issued credentials, or an `@aws-sdk/credential-providers` provider, replace that re-export with your own `s3Storage({ ..., credentials })` call, following `node_modules/@gusto/baerly-storage/dist/RECIPES.md#recipe--storage-credentials-on-node`.
 
-- **Deploy** — runs anywhere `node server.js` runs. The `package.json`'s `start` script is `node --experimental-strip-types src/server/index.ts`. Arrange the host to run `pnpm install && pnpm build` (populates `dist/client/` for the `webRoot` static-serve branch) before `pnpm start`. Set env vars from `.env.example` in the host's config.
+- **Deploy** — runs anywhere `node server.js` runs. The `package.json`'s `start` script is `node src/server/index.ts`. Arrange the host to run `pnpm install && pnpm build` (populates `dist/client/` for the `webRoot` static-serve branch) before `pnpm start`. Set env vars from `.env.example` in the host's config.
 
   Shapes: **managed PaaS** (Railway, Render, DO App Platform, Fly without Docker, Heroku) auto-detects Node and runs the root scripts directly. **VM / bare-metal** uses your process manager of choice (systemd, pm2). **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile) — scaffold with `--with=docker` to add a production Dockerfile alongside this shape, or write your own.
 

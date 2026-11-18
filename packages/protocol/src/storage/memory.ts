@@ -231,10 +231,5 @@ export const resetMemoryStorage = (): void => {
  * see each other's writes for the same bucket name.
  */
 export const getOrCreateMemoryStorageForBucket = (bucket: string): MemoryStorage => {
-  let s = sharedPerBucket.get(bucket);
-  if (s === undefined) {
-    s = new MemoryStorage();
-    sharedPerBucket.set(bucket, s);
-  }
-  return s;
+  return sharedPerBucket.getOrInsertComputed(bucket, () => new MemoryStorage());
 };

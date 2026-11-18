@@ -27,7 +27,6 @@
     "@hono/node-server": "^2.1.8",
     "@rgrove/parse-xml": "5.2.0",
     "aws4fetch": "1.0.20",
-    "hono": "^4.13.19",
-    "picocolors": "^1.1.1"
+    "hono": "^4.13.19"
   }
 }

@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is
-   the miniflare-pool ↔ test contract: `tests/setup/r2-binding.ts`
-   sets the global; we read it here to provision `current.json` from
-   outside the worker handler. */
-
 /**
  * HTTP conformance cascade — Workerd variant.
  *

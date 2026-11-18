@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { closureFiles, measureMinGz, measureRawGz } from "./bundle-measure.ts";
 import { spawnQuiet } from "./lib/quiet-spawn.mjs";
+import { parseCliArgs } from "./lib/parse-cli.mjs";
 
 /** A measured size axis. */
 export type Axis = "raw" | "gz" | "minGz";
@@ -510,8 +511,11 @@ function writeSnapshot(snapshot: Snapshot, measured: Record<string, Measured>): 
 }
 
 async function runCli(): Promise<void> {
-  const write = process.argv.includes("--write");
-  const reportOnly = process.argv.includes("--report");
+  const { values } = parseCliArgs({
+    options: { write: { type: "boolean" }, report: { type: "boolean" } },
+  });
+  const write = values.write ?? false;
+  const reportOnly = values.report ?? false;
 
   // `--report` returns before the `--write` branch, so the combination would
   // otherwise print a report and silently drop the rebaseline the caller asked

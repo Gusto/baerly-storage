@@ -114,11 +114,7 @@ export class RequestScopedMetricsRecorder implements MetricsRecorder {
     // Histograms: bucket-by-name, then emit `_count` + `_sum`.
     const buckets = new Map<string, { count: number; sum: number }>();
     for (const row of this.#histograms) {
-      let agg = buckets.get(row.name);
-      if (agg === undefined) {
-        agg = { count: 0, sum: 0 };
-        buckets.set(row.name, agg);
-      }
+      const agg = buckets.getOrInsertComputed(row.name, () => ({ count: 0, sum: 0 }));
       agg.count += 1;
       agg.sum += row.value;
     }

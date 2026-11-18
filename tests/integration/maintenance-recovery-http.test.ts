@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes. */
-
 /**
  * main-10 exit: capacity refusal and its recovery end to end over HTTP, on
  * `memory` + `local-fs`, through the Node adapter (`baerlyNode(...).fetch`:

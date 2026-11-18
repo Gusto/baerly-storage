@@ -1,5 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary key. */
-
 /**
  * @internal — the shared document model behind this package's property-based
  * suites (`compactor-randomized`, `log-retention-randomized`,

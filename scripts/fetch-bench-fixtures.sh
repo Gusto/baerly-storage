@@ -83,7 +83,6 @@ fi
 
 # --- Extract calibration ---
 echo "[fixtures] Extracting calibration → $CAL_OUT"
-node --import "$REPO_ROOT/bench/register-hooks.mjs" \
-  "$REPO_ROOT/scripts/extract-bench-calibration.ts"
+node "$REPO_ROOT/scripts/extract-bench-calibration.ts"
 
 echo "Done. calibration.json updated. Corpora cached under bench/fixtures/."

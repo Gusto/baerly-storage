@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes; the exporter threads it
-   through the materialised view and the emitted INSERT rows. */
-
 /**
  * `baerly export` — snapshot dump of one collection to SQL.
  *

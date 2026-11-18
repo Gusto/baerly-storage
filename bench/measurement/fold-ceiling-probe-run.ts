@@ -8,8 +8,7 @@
  * `bench/amortized-write-cost.ts` uses over `bench/lib/write-cost-measure.ts`.
  *
  *   BAERLY_SUBJECT_COMMIT=$(git rev-parse HEAD) \
- *     node --import ./bench/register-hooks.mjs \
- *       bench/measurement/fold-ceiling-probe-run.ts
+ *     node bench/measurement/fold-ceiling-probe-run.ts
  *
  * Takes minutes. Run it with nothing else competing for CPU; a parallel
  * `pnpm test` will corrupt the medians. (Observed: a run made while the

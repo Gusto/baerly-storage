@@ -36,6 +36,7 @@
  * ```
  */
 
+import { parseArgs as parseNodeArgs } from "node:util";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,15 +81,25 @@ import "./presets/chat-conversation-store.ts";
 // Argv parser
 // ---------------------------------------------------------------------------
 
-const argv = new Map<string, string>(
-  process.argv.slice(2).flatMap((a) => {
-    const m = /^--([^=]+)=(.*)$/.exec(a);
-    return m ? [[m[1]!, m[2]!]] : [];
-  }),
-);
+const { values: argv } = parseNodeArgs({
+  args: process.argv.slice(2),
+  options: {
+    preset: { type: "string" },
+    variant: { type: "string" },
+    "cache-mode": { type: "string" },
+    records: { type: "string" },
+    ops: { type: "string" },
+    seed: { type: "string" },
+    profile: { type: "string" },
+    "output-dir": { type: "string" },
+    tenants: { type: "string" },
+    app: { type: "string" },
+  },
+  strict: true,
+});
 
 function arg(name: string, dflt: string | undefined = undefined): string {
-  const v = argv.get(name);
+  const v = (argv as Record<string, string | undefined>)[name];
   if (v === undefined) {
     if (dflt === undefined) {
       throw new Error(`bench:load: missing required --${name}=…`);
@@ -99,7 +110,7 @@ function arg(name: string, dflt: string | undefined = undefined): string {
 }
 
 function argNumber(name: string, dflt: number): number {
-  const raw = argv.get(name);
+  const raw = (argv as Record<string, string | undefined>)[name];
   if (raw === undefined) {
     return dflt;
   }

@@ -2,7 +2,6 @@ import { describe, test, expect } from "vitest";
 import { assembleResult, type PhaseResult } from "../assemble-result.ts";
 import { getPreset } from "../presets.ts";
 // Side-effect import: registers the preset `getPreset` below resolves.
-// eslint-disable-next-line import/no-unassigned-import
 import "../presets/recent-first-crud.ts";
 import type { StorageSnapshot } from "../../types.ts";
 

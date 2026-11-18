@@ -1,4 +1,4 @@
-import { createColors } from "picocolors";
+import { styleText, type InspectColor } from "node:util";
 
 export interface DevBannerHint {
   readonly key: string;
@@ -22,7 +22,13 @@ export function printDevBanner(opts: DevBannerOpts): void {
       ? opts.plain
       : process.env["CI"] !== undefined || !process.stderr.isTTY;
   const write = opts.write ?? ((chunk) => process.stderr.write(chunk));
-  const pc = createColors(!isPlain);
+  const paint = (format: InspectColor | InspectColor[], text: string): string =>
+    isPlain ? text : styleText(format, text, { validateStream: false });
+  const pc = {
+    boldCyan: (text: string): string => paint(["bold", "cyan"], text),
+    green: (text: string): string => paint("green", text),
+    dim: (text: string): string => paint("dim", text),
+  };
   const hints = opts.hints ?? [];
 
   const lines: string[] = [];
@@ -42,7 +48,7 @@ export function printDevBanner(opts: DevBannerOpts): void {
     }
     write(lines.join("\n") + "\n");
   } else {
-    lines.push(pc.bold(pc.cyan(`▎ baerly · ${opts.name}`)));
+    lines.push(pc.boldCyan(`▎ baerly · ${opts.name}`));
     lines.push("");
 
     if (opts.primaryUrl) {

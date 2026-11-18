@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the fixtures address rows by it. */
-
 /**
  * The `db.read.*` read-work counters `runReadRows` records: decoded
  * entries (snapshot rows plus log entries), live documents after the fold

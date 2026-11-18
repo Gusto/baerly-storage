@@ -16,7 +16,7 @@
  * the entry).
  */
 
-import pc from "picocolors";
+import { styleText } from "node:util";
 
 let jsonMode = false;
 
@@ -29,13 +29,13 @@ export const isJsonMode = (): boolean => jsonMode;
 
 /**
  * Color helpers — no-ops in JSON mode (so emitted JSON stays
- * machine-parseable) and when `picocolors` detects a non-TTY or
+ * machine-parseable) and when `util.styleText` detects a non-TTY or
  * `NO_COLOR`.
  */
 export const color = {
-  red: (s: string): string => (jsonMode ? s : pc.red(s)),
-  yellow: (s: string): string => (jsonMode ? s : pc.yellow(s)),
-  dim: (s: string): string => (jsonMode ? s : pc.dim(s)),
+  red: (s: string): string => (jsonMode ? s : styleText("red", s)),
+  yellow: (s: string): string => (jsonMode ? s : styleText("yellow", s)),
+  dim: (s: string): string => (jsonMode ? s : styleText("dim", s)),
 };
 
 /**

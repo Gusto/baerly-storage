@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes; this test threads it
-   through writer + cost CLI. */
-
 /**
  * CLI test for `baerly cost`.
  *

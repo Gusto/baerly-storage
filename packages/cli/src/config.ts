@@ -13,10 +13,11 @@
  *   3. `<cwd>/baerly.config.mjs`
  *   4. `<cwd>/baerly.config.json`
  *
- * The `.ts` form requires the user to have a TS-aware Node entry
- * point (`tsx`, `--experimental-strip-types`, or a build step that
- * produced the `.js` alongside). If `import()` throws on the `.ts`
- * file, we re-wrap as `InvalidConfig` with a hint pointing at the
+ * The `.ts` form relies on Node's built-in type stripping, which handles
+ * only erasable syntax (no enums, namespaces or parameter properties);
+ * a config using other TypeScript syntax fails with
+ * `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. If `import()` throws on the
+ * `.ts` file, we re-wrap as `InvalidConfig` with a hint pointing at the
  * `.js` / `.json` fallbacks.
  */
 
@@ -115,7 +116,7 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
       mod = (await import(pathToFileURL(cfgPath).href)) as { default?: unknown };
     } catch (error) {
       const hint = cfgPath.endsWith(".ts")
-        ? " (Node cannot import .ts directly without a TS loader — point at the compiled .js or use a .json config)"
+        ? " (Node strips types only from erasable TypeScript syntax, so enums, namespaces and parameter properties fail with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX — remove them, or point at a compiled .js or a .json config)"
         : "";
       throw new BaerlyError(
         "InvalidConfig",

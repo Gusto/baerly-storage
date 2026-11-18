@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>` /
-   `Query<T>` declarations); mutation verbs surface and route it by name. */
-
 /**
  * Read engine + mutation terminals: `Query<T>` builder, the
  * three read terminals (`first`, `all`, `count`) that fold the log

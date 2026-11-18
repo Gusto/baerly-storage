@@ -64,7 +64,7 @@ After `pnpm build`, `pnpm start` serves the Vite-built SPA from `dist/client/` o
 
 ## Deploy
 
-This scaffold runs anywhere `node server.js` runs. The `package.json` exposes `build` (Vite SPA + TS check) and `start` (`node --experimental-strip-types src/server/index.ts`); arrange your host to run `pnpm install && pnpm build`, then `pnpm start` with the storage/auth env vars exported or configured in the process manager. A deployment must set a durable bucket (`BUCKET` + `AWS_*`, or `R2_ACCOUNT_ID` + creds); the server fails loud rather than running on local-fs, which is local-dev only. Self-hosting without a cloud bucket, run MinIO on the box or use SQLite + Litestream.
+This scaffold runs anywhere `node server.js` runs. The `package.json` exposes `build` (Vite SPA + TS check) and `start` (`node src/server/index.ts`); arrange your host to run `pnpm install && pnpm build`, then `pnpm start` with the storage/auth env vars exported or configured in the process manager. A deployment must set a durable bucket (`BUCKET` + `AWS_*`, or `R2_ACCOUNT_ID` + creds); the server fails loud rather than running on local-fs, which is local-dev only. Self-hosting without a cloud bucket, run MinIO on the box or use SQLite + Litestream.
 
 Concrete shapes:
 
