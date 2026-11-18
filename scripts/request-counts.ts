@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCliArgs } from "./lib/parse-cli.mjs";
 import { measureRequestCounts } from "../tests/fixtures/request-count-grid.ts";
 import {
   type CallCounts,
@@ -136,8 +137,11 @@ export const nextRequestCountSnapshot = (
 });
 
 const runCli = async (): Promise<void> => {
-  const write = process.argv.includes("--write");
-  const reportOnly = process.argv.includes("--report");
+  const { values } = parseCliArgs({
+    options: { write: { type: "boolean" }, report: { type: "boolean" } },
+  });
+  const write = values.write ?? false;
+  const reportOnly = values.report ?? false;
   if (write && reportOnly) {
     console.error("FAIL --write and --report are mutually exclusive; run one, then the other.");
     process.exit(1);

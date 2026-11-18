@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the maintenance test seeds doc bodies with it. */
-
 /**
  * Maintenance — `runMaintenancePass()` composition of
  * `compact()` + `runGc()` under `MemoryStorage`, plus the write-tick

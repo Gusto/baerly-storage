@@ -16,15 +16,7 @@ const GOOG4_REGION = "auto";
 const encoder = new TextEncoder();
 
 // SHA-256 hex comes from `@baerly/protocol` (shared with snapshotHash /
-// versionFromContent). `toHex` stays local: `sigV4Signature` still needs to
-// hex-encode raw HMAC output, which is not a SHA-256 digest.
-function toHex(bytes: Uint8Array): string {
-  let hex = "";
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i]!.toString(16).padStart(2, "0");
-  }
-  return hex;
-}
+// versionFromContent).
 
 /** RFC-3986-strict percent-encoding for canonical query components: encodes
  * everything except the unreserved set A-Za-z0-9-._~. encodeURIComponent
@@ -146,7 +138,8 @@ export async function sigV4Signature(input: {
   const dateRegionKey = await hmac(dateKey, input.region);
   const dateSvcKey = await hmac(dateRegionKey, input.service);
   const signingKey = await hmac(dateSvcKey, input.terminator);
-  return toHex(await hmac(signingKey, input.stringToSign));
+  const signature = await hmac(signingKey, input.stringToSign);
+  return signature.toHex();
 }
 
 function amzDateFrom(ms: number): { amzDate: string; yyyymmdd: string } {

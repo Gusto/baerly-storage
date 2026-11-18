@@ -1,4 +1,3 @@
-/* eslint-disable no-console -- bench script prints results */
 /**
  * Amortized billable Class A storage ops per logical write, INCLUDING
  * in-band maintenance (folds + GC), across workload shapes × maintenance

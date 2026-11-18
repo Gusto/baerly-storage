@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes (see `@baerly/protocol`'s
-   `Collection<T>` / `Query<T>` declarations); cleanup iterates the
-   returned `_id`s by name. */
-
 /**
  * Manual end-to-end check — Cloudflare Worker variant.
  *

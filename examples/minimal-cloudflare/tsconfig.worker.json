@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2024",
-    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "lib": ["ES2024", "ESNext.TypedArrays", "ESNext.Collection", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -19,10 +19,9 @@
     "isolatedModules": true,
     "erasableSyntaxOnly": true,
 
-    "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["@cloudflare/workers-types", "node"],
     "composite": true
   },
-  "include": ["src/server/**/*", "uint8array-base64.d.ts", "types.ts", "baerly.config.ts"]
+  "include": ["src/server/**/*", "types.ts", "baerly.config.ts"]
 }

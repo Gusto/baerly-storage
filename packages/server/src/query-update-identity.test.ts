@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; this suite is about it. */
-
 /**
  * `Query.update` `_id` identity, as a property against a frozen reference
  * rule: a patch is accepted iff its top-level `_id` is absent, `undefined`,

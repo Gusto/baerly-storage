@@ -1,5 +1,5 @@
 // Runs inside a subprocess spawned by check.ts, with:
-//   node --import bench/register-hooks.mjs --import eval/resolve-package.mjs \
+//   node --import eval/resolve-package.mjs \
 //        eval/run-solution.ts --solution=<abs> --task=<dir> --out=<abs>
 // Builds a fresh Db over MemoryStorage (using the task's exported config if the
 // solution provides one), runs setup() if present, calls the agent's main(db),

@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the seed populates it directly. */
-
 /**
  * Shared scaffolding for the main-10 fold-stall suites:
  * `tests/integration/maintenance-fold-stall.test.ts` (today's stall) and

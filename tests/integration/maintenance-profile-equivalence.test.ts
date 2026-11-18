@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol`'s `Collection<T>`
-   declaration); the synthetic seed populates it directly. */
-
 /**
  * Cross-profile correctness gate.
  *

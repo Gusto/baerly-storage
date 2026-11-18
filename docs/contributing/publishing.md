@@ -203,7 +203,7 @@ Both packages bump together (same release train) via the Changesets `fixed` grou
 
 The published `@gusto/baerly-storage` bundle ships a `dist/THIRD-PARTY-LICENSES.txt` file alongside the code. Here's why it exists and how it's produced.
 
-**Why.** rolldown _inlines_ our runtime deps (`aws4fetch`, `@rgrove/parse-xml`, `hono`, `@hono/node-server`, `jose`, `@logtape/logtape`, `picocolors`, plus the CLI's `citty` + `jsonc-parser`) into `dist/`. Those deps are MIT/ISC/BSD/Apache-2.0; every one of those licenses requires its copyright + permission notice to travel with any copy of the code. Bundling is a copy, so the notices must ship too.
+**Why.** rolldown _inlines_ our runtime deps (`aws4fetch`, `@rgrove/parse-xml`, `hono`, `@hono/node-server`, `jose`, `@logtape/logtape`, plus the CLI's `citty` + `jsonc-parser`) into `dist/`. Those deps are MIT/ISC/BSD/Apache-2.0; every one of those licenses requires its copyright + permission notice to travel with any copy of the code. Bundling is a copy, so the notices must ship too.
 
 **Architecture.** The notices file is generated at build time, never hand-maintained:
 

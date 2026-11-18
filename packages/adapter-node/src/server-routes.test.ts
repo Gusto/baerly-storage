@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes; the HTTP body wraps the
-   server's `{ _id }` response and re-encodes it as JSON. */
-
 /**
  * Node listener — CRUD route tests over a real `http.Server`
  * driven by `createApp` → `getRequestListener`. The `withServer`

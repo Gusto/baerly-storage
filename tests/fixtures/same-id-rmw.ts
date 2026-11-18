@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the oracle reads it by name. */
-
 /**
  * Concurrent same-`_id` read-modify-write workload and its oracle.
  *

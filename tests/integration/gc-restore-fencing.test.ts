@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; this suite threads it through the restore CLI
-   and reads it back through the collection API. */
-
 /**
  * GC ↔ `baerly admin restore` fencing — the integration seam.
  *

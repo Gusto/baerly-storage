@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the seed populates it directly. */
-
 /**
  * main-10 Task 1: reproduce today's SILENT fold stall and its recovery
  * cases on `memory` + `local-fs`.

@@ -1,3 +1,5 @@
+import { parseArgs as parseNodeArgs } from "node:util";
+
 import type { CliOptions } from "./types.ts";
 
 const USAGE = `baerly zero-shot eval harness (manual, opt-in — NOT a CI gate)
@@ -17,27 +19,23 @@ Spawns headless \`claude -p\` (needs a logged-in Claude Code; bills that login).
 Run \`pnpm build\` first — the agent is fed the built dist/API.md + dist/*.d.ts.`;
 
 function parseArgs(argv: readonly string[]): CliOptions & { help: boolean } {
-  const m = new Map<string, string>();
-  let help = false;
-  let withAgentsMd = false;
-  for (const a of argv) {
-    if (a === "--help" || a === "-h") {
-      help = true;
-    } else if (a === "--with-agents-md") {
-      withAgentsMd = true;
-    } else {
-      const mm = /^--([^=]+)=(.*)$/.exec(a);
-      if (mm) {
-        m.set(mm[1]!, mm[2]!);
-      }
-    }
-  }
+  const { values } = parseNodeArgs({
+    args: [...argv],
+    options: {
+      help: { type: "boolean", short: "h" },
+      "with-agents-md": { type: "boolean" },
+      runs: { type: "string" },
+      model: { type: "string" },
+      task: { type: "string" },
+    },
+    strict: true,
+  });
   return {
-    help,
-    runs: Number(m.get("runs") ?? "5"),
-    model: m.get("model") ?? "opus",
-    task: m.get("task"),
-    withAgentsMd,
+    help: values.help ?? false,
+    runs: Number(values.runs ?? "5"),
+    model: values.model ?? "opus",
+    task: values.task,
+    withAgentsMd: values["with-agents-md"] ?? false,
   };
 }
 

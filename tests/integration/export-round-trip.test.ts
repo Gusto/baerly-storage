@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes; the round-trip threads it
-   through writer + export + restore. */
-
 /**
  * Phase 9 gate: write → export → SQLite → restore → byte-equal dump.
  *

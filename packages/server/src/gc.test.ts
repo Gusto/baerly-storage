@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the GC test seeds and asserts on it. */
-
 /**
  * GC — `runGc()` mark + sweep under `MemoryStorage`. The
  * cross-adapter coverage (memory / local-fs / node-minio /

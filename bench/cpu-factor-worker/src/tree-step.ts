@@ -41,13 +41,7 @@ interface TreeFixture {
 const fixtures = new Map<string, TreeFixture>();
 const encoder = new TextEncoder();
 
-const hex = (buf: ArrayBuffer): string => {
-  let out = "";
-  for (const b of new Uint8Array(buf)) {
-    out += b.toString(16).padStart(2, "0");
-  }
-  return out;
-};
+const hex = (buf: ArrayBuffer): string => new Uint8Array(buf).toHex();
 
 const sha256Hex = async (bytes: BufferSource): Promise<string> =>
   hex(await crypto.subtle.digest("SHA-256", bytes));

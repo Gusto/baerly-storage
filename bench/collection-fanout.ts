@@ -1,4 +1,3 @@
-/* eslint-disable no-console -- bench script prints results */
 /**
  * Collection fan-out cost on MemoryStorage. Seeds N collections under one
  * tenant prefix, then measures via a counting Storage proxy:

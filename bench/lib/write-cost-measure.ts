@@ -70,7 +70,6 @@ export async function measure(
     for (let i = 0; i < wl.writes; i++) {
       const isUpdate = wl.workingSet > 0 && i >= wl.workingSet && i % 100 < wl.updateRatio * 100;
       const id = wl.workingSet > 0 ? `d${i % wl.workingSet}` : `d${i}`;
-      // eslint-disable-next-line no-underscore-dangle -- `_id` is the locked PK field
       await writer.commit({
         op: isUpdate ? "U" : "I",
         collection: COLLECTION,

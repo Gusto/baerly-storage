@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is the
-   miniflare-pool ↔ test contract: `tests/setup/r2-binding.ts` sets the
-   global, this file reads it. `_id` is the locked primary-key field on
-   document shapes. */
-
 /**
  * `baerlyWorker()` fetch-handler route tests. Runs under the
  * `cloudflare-pool` vitest project (workerd + miniflare) so the

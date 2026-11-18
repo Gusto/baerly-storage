@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>` /
-   `Query<T>` declarations); the cascade reads / asserts it by name. */
-
 /**
  * Collection-API integration cascade — backend-agnostic test driver.
  *

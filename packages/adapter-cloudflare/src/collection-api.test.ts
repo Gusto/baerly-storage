@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is the
-   miniflare-pool ↔ test contract: `tests/setup/r2-binding.ts` sets the
-   global, this file reads it. Underscores delimit the protocol-internal
-   name. */
-
 /**
  * Collection-API integration cascade — Workerd variant.
  *

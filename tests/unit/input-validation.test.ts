@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key field. */
 /**
  * Caller-input validation on the write and point-read verbs: a present
  * non-string insert `_id`, and a point-read id no row can be stored under,

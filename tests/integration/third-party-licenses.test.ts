@@ -32,7 +32,6 @@ const EXPECTED_LIBS = [
   "@hono/node-server",
   "jose",
   "@logtape/logtape",
-  "picocolors",
   // cli bin
   "citty",
   "jsonc-parser",
@@ -51,7 +50,7 @@ describe("third-party-licenses manifest", () => {
     for (const lib of EXPECTED_LIBS) {
       // Each block is headed by `<name>@<version>`.
       expect(manifest, `expected ${lib} in the manifest`).toMatch(
-        new RegExp(`^${lib.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}@`, "m"),
+        new RegExp(`^${RegExp.escape(lib)}@`, "m"),
       );
     }
   });
@@ -61,7 +60,7 @@ describe("third-party-licenses manifest", () => {
     // The MIT permission grant is the load-bearing notice MIT requires
     // to travel with the code; most bundled libs are MIT.
     expect(manifest).toContain("Permission is hereby granted");
-    // ISC libs (picocolors) carry their own grant wording.
+    // ISC-licensed libs carry their own grant wording.
     expect(manifest).toMatch(/Permission to use, copy, modify|Permission is hereby granted/);
   });
 

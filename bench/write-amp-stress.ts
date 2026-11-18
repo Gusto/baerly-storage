@@ -1,4 +1,3 @@
-/* eslint-disable no-console -- bench script prints results */
 /**
  * STRESS companion to bench/amortized-write-cost.ts. Drives pathological
  * workloads — extreme churn, insert bursts with large bodies, full-set

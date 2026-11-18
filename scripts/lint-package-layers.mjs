@@ -5,7 +5,7 @@
 // so the kernel stays Workerd-loadable. Violations exit non-zero with a
 // remediation hint. See docs/architecture.md (§Package layers) for the WHY.
 
-import { readdir, readFile } from "node:fs/promises";
+import { glob, readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -140,28 +140,15 @@ export function formatViolation(v) {
 
 async function walk(dir) {
   const out = [];
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const e of entries) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === "dist") {
-        continue;
-      }
-      out.push(...(await walk(p)));
-    } else if (
-      /\.(ts|tsx|mjs|cjs|js)$/.test(e.name) &&
-      !/\.test\.(ts|tsx)$/.test(e.name) &&
-      !/\.test-d\.(ts|tsx)$/.test(e.name)
-    ) {
-      out.push(p);
+  for await (const rel of glob("**/*.{ts,tsx,mjs,cjs,js}", {
+    cwd: dir,
+    exclude: (name) => name === "node_modules" || name === "dist",
+  })) {
+    if (!/\.test(-d)?\.tsx?$/.test(rel)) {
+      out.push(join(dir, rel));
     }
   }
-  return out;
+  return out.toSorted();
 }
 
 async function loadFiles() {

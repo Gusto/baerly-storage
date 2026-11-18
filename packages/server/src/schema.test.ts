@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the test fixture asserts on it by name. */
-
 /**
  * Unit-test coverage for the StandardSchemaV1 adapter
  * (`./schema.ts`). The fixture validator is hand-rolled — adding zod

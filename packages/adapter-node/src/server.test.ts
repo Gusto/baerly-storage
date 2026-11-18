@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; the maintenance test seeds doc bodies with it. */
-
 /**
  * Node adapter — `nodeMaintenanceDispatch` ops-plane wiring plus
  * `createApp` observability wiring tests. The cross-adapter
@@ -382,7 +379,7 @@ describe("resolveDefaultSink", () => {
   test("constructs the pretty sink as a function when stdout is a TTY", () => {
     process.stdout.isTTY = true;
     // The kernel only accepts `"console-json"` or a `Sink` function;
-    // the adapter constructs the pretty sink locally so picocolors
+    // the adapter constructs the pretty sink locally so the pretty renderer
     // stays off the kernel closure.
     expect(typeof resolveDefaultSink({}).sink).toBe("function");
     expect(typeof resolveDefaultSink({ level: "debug" }).sink).toBe("function");

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
@@ -14,27 +14,17 @@ const SEARCH_ROOTS: readonly string[] = [
   "examples/react-node/src",
 ];
 
-const isClientFile = (path: string): boolean =>
-  path.endsWith(".ts") || path.endsWith(".tsx") || path.endsWith(".d.ts");
-
-function walk(dir: string, out: string[] = []): readonly string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const s = statSync(full);
-    if (s.isDirectory()) {
-      walk(full, out);
-    } else if (s.isFile() && isClientFile(full)) {
-      out.push(full);
-    }
-  }
-  return out;
-}
+const walk = (dir: string): readonly string[] =>
+  globSync("**/*.{ts,tsx}", { cwd: dir }).map((rel) => join(dir, rel));
 
 describe("examples never leak SHARED_SECRET into the SPA bundle", () => {
   test("no VITE_*_SECRET references in example source files", () => {
     const offenders: string[] = [];
     for (const root of SEARCH_ROOTS) {
-      for (const file of walk(root)) {
+      const files = walk(root);
+      // A renamed source directory would otherwise pass vacuously.
+      expect(files.length, `${root} has no source files`).toBeGreaterThan(0);
+      for (const file of files) {
         const text = readFileSync(file, "utf8");
         for (const pat of FORBIDDEN_PATTERNS) {
           if (pat.test(text)) {

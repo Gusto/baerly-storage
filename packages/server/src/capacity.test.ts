@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes. */
-
 /**
  * `capacityDecision` refusal rules (main-10 G3–G5) on hand-built state, and
  * a property test that measures the byte projection against real folds,

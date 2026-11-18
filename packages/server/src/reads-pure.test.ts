@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes; test seeds doc bodies with it. */
-
 /**
  * Guard: reads NEVER tick maintenance.
  *

@@ -152,8 +152,6 @@ export async function checkSolution(opts: CheckOpts): Promise<Verdict> {
       "node",
       [
         "--import",
-        join(opts.repoRoot, "bench/register-hooks.mjs"),
-        "--import",
         join(opts.repoRoot, "eval/resolve-package.mjs"),
         join(opts.repoRoot, "eval/run-solution.ts"),
         `--solution=${opts.solutionPath}`,

@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key field. */
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {

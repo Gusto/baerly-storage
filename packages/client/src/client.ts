@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` and `_meta` are the
-   locked wire-shape field names (see `packages/protocol/src/collection-api.ts`
-   and `packages/server/src/contract.ts`); we mirror them verbatim
-   so the typed client stays structurally compatible. */
-
 import {
   assertDocumentValues,
   assertInsertIdType,

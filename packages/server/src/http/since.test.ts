@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on inserted docs. */
-
 /**
  * Long-poll handler tests — `longPollSince` + `listEventsSince`.
  * Eight cases:

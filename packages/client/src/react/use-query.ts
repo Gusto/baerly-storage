@@ -382,7 +382,6 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
     },
     // The signature/collections determine the subscription; React
     // re-subscribes when either changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [pool, signatureBase, collectionsJoin],
   );
 
@@ -456,7 +455,6 @@ const useQueryImpl = <T, TConfig extends BaerlyConfig = UnboundConfig>(
       );
     }
     return withRefetch(pool.getSnapshot(signatureBase));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pool, signatureBase]);
 
   // discoveryKindRef + discoveryErrorRef carry the latest discovery

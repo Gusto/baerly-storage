@@ -1,6 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes. */
-
 /**
  * main-10 Tasks 2–5: target behavior for growth refusal on a host that
  * cannot fold, on `memory` + `local-fs`. Rules (rows; bytes is the analogue

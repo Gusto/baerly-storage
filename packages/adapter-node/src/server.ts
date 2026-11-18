@@ -314,7 +314,7 @@ export const resolveDefaultSink = (config: ObservabilityConfig): ObservabilityCo
   // pipelines, docker logs, systemd, and pm2 cluster mode all
   // pipe stdout — `isTTY` is `undefined` (falsy) there. The kernel
   // only ships `"console-json"`; we construct the pretty sink
-  // locally and pass it as a function so picocolors stays off the
+  // locally and pass it as a function so the pretty renderer stays off the
   // kernel closure.
   const isTty = Boolean(process.stdout.isTTY);
   return { ...config, sink: isTty ? prettyConsoleSink() : "console-json" };

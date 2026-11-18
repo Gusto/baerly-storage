@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked PK field */
 /**
  * CI gate: amortized BILLABLE Class A ops (PUT + LIST; DeleteObject is
  * $0 on R2/S3) per logical write, INCLUDING in-band maintenance. This is

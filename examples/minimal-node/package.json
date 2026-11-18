@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "start": "node --experimental-strip-types src/server/index.ts",
+    "start": "node src/server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -b --noEmit",
     "verify": "pnpm run typecheck && pnpm run test"

@@ -1,8 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked
-   primary-key field on document shapes (see `@baerly/protocol`'s
-   `Collection<T>` / `Query<T>` declarations); the gate asserts the
-   round-trip by reading the server-assigned id back. */
-
 /**
  * Day-one handshake gate.
  *
@@ -62,9 +57,7 @@ const CF_ACCOUNT_ID = process.env["CF_ACCOUNT_ID"];
 const SHARED_SECRET = process.env["SHARED_SECRET"] ?? cryptoRandomSecret();
 
 function cryptoRandomSecret(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return crypto.getRandomValues(new Uint8Array(32)).toHex();
 }
 
 describe.runIf(gate("day-one-node", RUN_NODE))("day-one handshake — node target", () => {

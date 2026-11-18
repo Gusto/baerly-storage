@@ -516,9 +516,6 @@ importers:
       hono:
         specifier: ^4.13.19
         version: 4.13.19
-      picocolors:
-        specifier: ^1.1.1
-        version: 1.1.1
 
   packages/cli:
     dependencies:
@@ -543,9 +540,6 @@ importers:
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
-      picocolors:
-        specifier: ^1.1.1
-        version: 1.1.1
 
   packages/client:
     dependencies:
@@ -592,9 +586,6 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.8
         version: 2.1.8(hono@4.13.19)
-      picocolors:
-        specifier: ^1.1.1
-        version: 1.1.1
       vite:
         specifier: ^8.0.0
         version: 8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)

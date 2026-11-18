@@ -1,4 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key field. */
 /**
  * R2 stores canonically-equivalent keys as one object, so an NFC
  * collection name addresses the objects a legacy non-NFC (NFD) name

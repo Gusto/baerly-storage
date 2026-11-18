@@ -2,7 +2,7 @@
  * Pretty console sink for the `baerlyDev()` Vite-mount boot path.
  *
  * Lives in `@baerly/adapter-node` so the `@baerly/server` kernel
- * doesn't pull `picocolors` or the canonical-line column renderer
+ * doesn't pull the canonical-line column renderer
  * into its bundle. The kernel's `configureObservability` accepts any
  * `Sink` function directly; callers in TTY-friendly environments
  * (the Node adapter's `baerlyNode`) constructs this sink
@@ -10,7 +10,7 @@
  */
 
 import { type LogRecord, type Sink } from "@logtape/logtape";
-import { createColors } from "picocolors";
+import { styleText } from "node:util";
 
 /**
  * Metric keys the pretty sink reads off the canonical-line record.
@@ -42,7 +42,17 @@ const numProp = (props: Record<string, unknown>, key: string): number | undefine
   return typeof v === "number" ? v : undefined;
 };
 
-type PicoColors = ReturnType<typeof createColors>;
+type Colors = Readonly<Record<"red" | "yellow" | "cyan" | "dim", (s: string) => string>>;
+
+// `enabled` is the caller's own plain/TTY decision, so styling is forced
+// rather than re-detected from stdout.
+const createColors = (enabled: boolean): Colors => {
+  const paint =
+    (format: "red" | "yellow" | "cyan" | "dim") =>
+    (s: string): string =>
+      enabled ? styleText(format, s, { validateStream: false }) : s;
+  return { red: paint("red"), yellow: paint("yellow"), cyan: paint("cyan"), dim: paint("dim") };
+};
 
 // Color the status column by class: 5xx red, 4xx yellow, 3xx cyan,
 // 2xx/unset dim. Extracted so the canonical-line renderer doesn't carry
@@ -51,7 +61,7 @@ const colorStatus = (
   statusStr: string,
   status: number | undefined,
   plain: boolean,
-  pc: PicoColors,
+  pc: Colors,
 ): string => {
   if (plain || status === undefined) {
     return statusStr;
@@ -68,7 +78,7 @@ const colorStatus = (
   return pc.dim(statusStr);
 };
 
-const renderCanonical = (record: LogRecord, pc: PicoColors, plain: boolean): string => {
+const renderCanonical = (record: LogRecord, pc: Colors, plain: boolean): string => {
   const props = record.properties as Record<string, unknown>;
   const ts = new Date(record.timestamp).toISOString().slice(11, 19);
   const reqId = String(pickProp(props, "request_id") ?? "").slice(0, 8);
@@ -155,7 +165,6 @@ export const prettyConsoleSink = (): Sink => {
   const pc = createColors(!plain);
   return (record) => {
     if (isCanonicalRecord(record)) {
-      // eslint-disable-next-line no-console -- intentional sink target
       console.log(renderCanonical(record, pc, plain));
       return;
     }
@@ -165,7 +174,6 @@ export const prettyConsoleSink = (): Sink => {
     const props = Object.keys(record.properties).length
       ? ` ${JSON.stringify(record.properties)}`
       : "";
-    // eslint-disable-next-line no-console -- intentional sink target
     console.log(`${ts} ${record.level.toUpperCase()} ${cat} ${msg}${props}`);
   };
 };

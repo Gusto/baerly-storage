@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `__BAERLY_R2_BINDING__` is the
-   miniflare-pool ↔ test contract (set by `tests/setup/r2-binding.ts`);
-   `_id` is the locked primary-key field on document shapes. */
-
 /**
  * In-band write-tick maintenance wiring for the Cloudflare adapter.
  *

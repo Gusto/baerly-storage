@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>`
-   declaration); snapshot body docs carry it through. */
-
 /**
  * Compactor — `compact()` happy paths and invariants under
  * `MemoryStorage`. The cross-adapter coverage (memory / local-fs /

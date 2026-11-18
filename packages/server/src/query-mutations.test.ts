@@ -1,7 +1,3 @@
-/* eslint-disable no-underscore-dangle -- `_id` is the locked primary-key
-   field on document shapes (see `@baerly/protocol/src/collection-api.ts`'s `Collection<T>` /
-   `Query<T>` declarations); tests surface and assert on it by name. */
-
 /**
  * Mutation terminals — `Collection.insert`, `Query.update`,
  * `Collection.replace`, `Query.delete`. MemoryStorage-only, pure-unit; no

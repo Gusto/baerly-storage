@@ -7,17 +7,14 @@
 //   path        defaults to reports/mutation/mutation.json
 //   --file STR  only show files whose path contains STR
 import { readFileSync } from "node:fs";
+import { parseCliArgs } from "./lib/parse-cli.mjs";
 
-const args = process.argv.slice(2);
-const fileFilterIdx = args.indexOf("--file");
-const fileFilter = fileFilterIdx >= 0 ? args[fileFilterIdx + 1] : null;
-// Index of the `--file` value to skip when scanning for the positional
-// path arg. -1 (not 0) when `--file` is absent, so a custom report path
-// passed as the first positional is honored rather than skipped.
-const fileFilterValueIdx = fileFilterIdx >= 0 ? fileFilterIdx + 1 : -1;
-const path =
-  args.find((a, i) => !a.startsWith("--") && i !== fileFilterValueIdx) ??
-  "reports/mutation/mutation.json";
+const { values, positionals } = parseCliArgs({
+  options: { file: { type: "string" } },
+  allowPositionals: true,
+});
+const fileFilter = values.file ?? null;
+const path = positionals[0] ?? "reports/mutation/mutation.json";
 
 const report = JSON.parse(readFileSync(path, "utf8"));
 const byFile = new Map();

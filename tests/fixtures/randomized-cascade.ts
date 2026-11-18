@@ -346,7 +346,7 @@ export const withNetworkRetry = async <T>(
  * only: callers run it after `healNetwork`.
  */
 const collectCommittedSlots = async (inst: Instance): Promise<Set<number>> => {
-  const slotKeyPattern = new RegExp(`^${escapeRegExp(`${inst.logPrefix}/log/`)}(\\d+)\\.json$`);
+  const slotKeyPattern = new RegExp(`^${RegExp.escape(`${inst.logPrefix}/log/`)}(\\d+)\\.json$`);
   const slots = new Set<number>();
   for await (const listed of inst.storage.list(`${inst.logPrefix}/log/`)) {
     const m = slotKeyPattern.exec(listed.key);
@@ -682,9 +682,6 @@ export const runCausalConsistencyCascade = (opts: {
 // ---------------------------------------------------------------------
 // Multi-doc-per-collection cascade (Finding 3c)
 // ---------------------------------------------------------------------
-
-/** Escape a literal string for safe interpolation into a `RegExp`. */
-const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Result of {@link runMultiDocCascade}, consumed by the assertions in
