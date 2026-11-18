@@ -83,7 +83,7 @@ export interface BaerlyNodeListenOptions {
  *   container wants; pass `"127.0.0.1"` to accept loopback only.
  * - `close()` closes the server and removes the signal handlers.
  *   Resolves once `Server.close` callback fires. Safe to call
- *   multiple times.
+ *   multiple times; every call returns the same promise.
  */
 export interface BaerlyNodeHandle {
   readonly fetch: (request: Request) => Response | Promise<Response>;
@@ -97,6 +97,14 @@ export interface BaerlyNodeHandle {
    * ```
    */
   listen(port: number, options?: BaerlyNodeListenOptions): Promise<void>;
+  /**
+   * Close the server and remove the signal handlers.
+   *
+   * If a `listen()` bind is still pending, `close()` waits for it to
+   * settle and then closes the resulting listener. That pending
+   * `listen()` resolves without installing signal handlers, or rejects
+   * with the bind error.
+   */
   close(): Promise<void>;
 }
 
@@ -211,19 +219,22 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   // the "constructed but never listened" branch.
   let server: Server | undefined;
 
-  let signalHandler: ((sig: NodeJS.Signals) => void) | undefined;
-  let closed = false;
+  // The in-flight `server.listen()`. A hostname bind is asynchronous
+  // (address lookup first), and Node cannot cancel it, so `close()`
+  // waits for it to settle before closing what it bound.
+  let bind: Promise<void> | undefined;
 
-  const close = async (): Promise<void> => {
-    if (closed) {
-      return;
-    }
-    closed = true;
+  let signalHandler: ((sig: NodeJS.Signals) => void) | undefined;
+  let closing: Promise<void> | undefined;
+
+  const shutdown = async (): Promise<void> => {
     if (signalHandler !== undefined) {
       process.off("SIGTERM", signalHandler);
       process.off("SIGINT", signalHandler);
       signalHandler = undefined;
     }
+    // A failed bind leaves nothing to close; `listen()` reports its error.
+    await bind?.catch(() => undefined);
     await new Promise<void>((resolve, reject) => {
       // Factory was called but `listen()` never ran — there's no
       // `http.Server` to close. Resolve immediately.
@@ -246,6 +257,11 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     });
   };
 
+  const close = (): Promise<void> => {
+    closing ??= shutdown();
+    return closing;
+  };
+
   const listen = async (port: number, options?: BaerlyNodeListenOptions): Promise<void> => {
     // `createAdaptorServer()` builds an `http.Server` via the supplied
     // `createServer` factory and wires the Hono `fetch` handler into it
@@ -260,40 +276,30 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       createServer,
     }) as Server;
     const httpServer = server;
-    await new Promise<void>((resolve, reject) => {
+    bind = new Promise<void>((resolve, reject) => {
       const onError = (err: Error): void => {
         httpServer.off("listening", onListening);
-        httpServer.off("close", onClose);
         reject(err);
       };
       const onListening = (): void => {
         httpServer.off("error", onError);
-        httpServer.off("close", onClose);
-        resolve();
-      };
-      // close() called between `server.listen()` and the
-      // `'listening'` event cancels the bind: `'listening'` never
-      // fires; only `'close'` does. Resolve so we observe `closed`
-      // below and skip handler install.
-      const onClose = (): void => {
-        httpServer.off("error", onError);
-        httpServer.off("listening", onListening);
         resolve();
       };
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);
-      httpServer.once("close", onClose);
       if (hostname === undefined) {
         httpServer.listen(port);
       } else {
         httpServer.listen(port, hostname);
       }
     });
+    await bind;
 
-    // close() may have run while we were awaiting `'listening'`. Skip
-    // handler install so we don't leak a SIGTERM/SIGINT listener onto a
-    // closed handle.
-    if (closed) {
+    // close() may have run while the bind was pending; it closes the
+    // listener once this bind settles. Skip handler install so we don't
+    // leak a SIGTERM/SIGINT listener onto a closed handle.
+    if (closing !== undefined) {
+      await close();
       return;
     }
 
