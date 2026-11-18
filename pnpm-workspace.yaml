@@ -14,8 +14,9 @@ packages:
 # Strict by default: these guardrails fail the install rather than warn.
 # Loosen one deliberately, with a comment, rather than by default.
 #   - minimumReleaseAge: don't resolve a version until it has been on the
-#     registry a day (pnpm 12's default, stated so it can't drift), which
-#     closes the publish-then-yank window most npm compromises live in.
+#     registry a day, which closes the publish-then-yank window most npm
+#     compromises live in. It equals pnpm 12's default but stays explicit:
+#     only an explicit value turns `minimumReleaseAgeStrict` on.
 #   - trustPolicy: fail if a package's publishing trust (provenance,
 #     trusted publisher) drops below what earlier versions had.
 #   - blockExoticSubdeps: only direct deps may come from git or tarball URLs.
@@ -29,19 +30,40 @@ strictPeerDependencies: true
 
 # pnpm 11 renamed the postinstall allowlist to `allowBuilds`. Each
 # entry is `<pkg>: true|false`: `true` runs the install script,
-# `false` skips it without emitting `ERR_PNPM_IGNORED_BUILDS`.
+# `false` skips it without emitting `ERR_PNPM_IGNORED_BUILDS`. An
+# unlisted package that gains an install script fails the install
+# (`strictDepBuilds`), so keep only entries that decide something.
 #
-# `esbuild`, `lefthook`, and `workerd` ship working install scripts
-# we want to run. `sharp` is a transitive dep of `miniflare` whose
-# install script falls back to a node-gyp build on Node 24 (no
-# prebuilt for our platform/runtime combo), so we suppress it —
-# sharp still loads from its prebuilt binary at require time, and
-# nothing in this repo exercises its code path directly.
+# `esbuild` and `workerd`: trialled at `false`. Their install scripts
+# only validate the platform binary and optionally hard-link it over
+# the JS bin shim; the fallback they exist for (re-downloading a
+# MISSING platform package straight from the registry) bypasses the
+# lockfile, `trustPolicy` and `minimumReleaseAge`. With `false`, a
+# missing binary fails loudly instead. Linux CI (including
+# `test:adapter-cloudflare`) proves the JS APIs that vite, wrangler
+# and miniflare use work without the scripts. The scaffold templates
+# keep `true` until a Linux scaffold smoke test passes without them.
+#
+# `lefthook: false`: its postinstall runs `lefthook install`, which
+# duplicates `scripts/prepare.mjs` and ignores that script's
+# secondary-worktree check (re-installing in a worktree flaps
+# `core.hooksPath`). The binary resolves from the platform optional
+# dependency, so `pnpm exec lefthook` works without the script.
 allowBuilds:
-  esbuild: true
-  lefthook: true
-  workerd: true
-  sharp: false
+  esbuild: false
+  lefthook: false
+  workerd: false
+
+# `pnpm audit` has no expiry for ignores, so every entry here needs a
+# row in the exception register (scripts/check-exceptions) with a
+# revisit trigger and an expiry date. Only advisories with NO patched
+# version belong here; fixable ones get a bump or an override.
+#   - GHSA-fc5q-39xc-vjpf: picomatch <= 4.0.7 (no patched release), via
+#     vite (peer of the published package) and remark-cli's chokidar.
+#     Revisit when `pnpm view picomatch version` is above 4.0.7.
+audit:
+  ignore:
+    - GHSA-fc5q-39xc-vjpf
 
 # pnpm 10 flipped this default to `false`. Scaffolded apps (and the
 # T03 substitute pipeline) write `@baerly/*` deps as literal
@@ -58,7 +80,10 @@ linkWorkspacePackages: true
 # refuses to topologically sort a recursive run across a cycle even
 # when, as here, neither member has the script being run. Allowing the
 # cycle only frees ordering *inside* it; edges outside it (e.g.
-# create-baerly-storage -> cli for `build`) stay ordered.
+# create-baerly-storage -> cli for `build`) stay ordered. It also hides
+# any FUTURE cycle. Revisit when the adapter-node <-> dev cycle is
+# broken (move the landing page out of adapter-node, or make one edge a
+# devDependency); then delete the setting.
 ignoreWorkspaceCycles: true
 
 # Force-resolve transitive dev-tooling deps off versions flagged by
@@ -72,10 +97,13 @@ ignoreWorkspaceCycles: true
 #     @stryker-mutator/core's `~10.2.4`.
 #   - glob >= 14.0.2: GHSA-3g3m-2fjr-6pw4 (AbortSignal bypass), pulled
 #     on 10.x via remark-cli -> unified-engine (`^10.0.0`).
-#   - undici-types 6.x >= 6.23.0: not an advisory but a trust floor.
+#   - undici-types 6.x -> ^6.29.1: not an advisory but a trust floor.
 #     @types/node@22 (pulled by remark-cli -> unified-engine) wants
 #     `~6.21.0`, which predates provenance; `trustPolicy: no-downgrade`
 #     rejects it because 6.23.0+ ship with provenance. Types only.
+#     Revisit when a @types/node@22.x widens to undici-types >= 6.23,
+#     or unified-engine stops depending on @types/node@22
+#     (`pnpm why undici-types@6`).
 overrides:
   qs: ">=6.15.2"
   undici-types@>=6.0.0 <6.23.0: "^6.29.1"
