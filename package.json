@@ -201,7 +201,7 @@
     "verify:package": "node scripts/build-if-needed.mjs && BAERLY_SKIP_BUILD=1 pnpm run check:exports && BAERLY_SKIP_BUILD=1 pnpm run check:publint",
     "freeze:fold-stage0": "node scripts/freeze-fold-stage0-compatibility.mjs",
     "model:multilevel": "MODEL_PERSIST_REPORT=1 FC_NUM_RUNS=10000 vitest run --project=default --reporter=dot tests/model/multilevel",
-    "verify:rest": "pnpm run verify:examples && pnpm run format:check && node scripts/add-ts-extensions.mjs --check && node scripts/lint-use-query.mjs && node scripts/lint-package-layers.mjs && node scripts/lint-format-coverage.mjs && node scripts/check-spec-drift.ts && node scripts/check-version-matrix.ts",
+    "verify:rest": "pnpm run verify:examples && pnpm run format:check && node scripts/add-ts-extensions.mjs --check && node scripts/lint-use-query.mjs && node scripts/lint-package-layers.mjs && node scripts/lint-format-coverage.mjs && node scripts/check-spec-drift.ts && node scripts/check-version-matrix.ts && node scripts/check-exceptions.ts",
     "verify:code": "pnpm run typecheck && pnpm run lint && pnpm run verify:rest",
     "verify": "pnpm run verify:code && pnpm run verify:docs",
     "verify:agent": "tsgo --noEmit --pretty false && tsgo --noEmit --pretty false -p tsconfig.cloudflare.json && pnpm run lint --format=unix --quiet && pnpm run verify:rest && pnpm run verify:docs",

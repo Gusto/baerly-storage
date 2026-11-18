@@ -1,0 +1,143 @@
+[
+  {
+    "id": "audit-picomatch-GHSA-fc5q-39xc-vjpf",
+    "kind": "audit-ignore",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "GHSA-fc5q-39xc-vjpf",
+    "reason": "picomatch <= 4.0.7 ReDoS-class advisory with no patched release. Reached through vite (a peer of the published package, so user-side) and remark-cli's chokidar. Nothing we ship bundles picomatch.",
+    "revisit": "A picomatch release above 4.0.7 exists (`pnpm view picomatch version`). Then bump or override it and drop the ignore.",
+    "expires": "2026-12-17"
+  },
+  {
+    "id": "pin-lefthook-2.2.1",
+    "kind": "pin",
+    "files": ["package.json"],
+    "subject": "\"lefthook\": \"2.2.1\"",
+    "reason": "lefthook 2.2.2 was published by hand with no provenance, so `trustPolicy: no-downgrade` rejects it. Pinned exactly; Dependabot ignores 2.2.2.",
+    "revisit": "`pnpm view lefthook@<v> dist.attestations` is non-empty for some v > 2.2.2. Then restore a `^<v>` range and drop the Dependabot ignore.",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "dependabot-ignore-lefthook-2.2.2",
+    "kind": "dependabot-ignore",
+    "files": [".github/dependabot.yml"],
+    "subject": "lefthook",
+    "reason": "Dependabot skips lefthook 2.2.2 (no provenance), which `trustPolicy: no-downgrade` rejects and which would sink the whole weekly npm group. Pairs with the exact pin.",
+    "revisit": "`pnpm view lefthook@<v> dist.attestations` is non-empty for some v > 2.2.2. Then drop the ignore and restore a `^<v>` range.",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "dependabot-ignore-node-image-majors",
+    "kind": "dependabot-ignore",
+    "files": [".github/dependabot.yml"],
+    "subject": "node",
+    "reason": "Dependabot would propose odd-numbered, non-LTS node image majors, and cannot move the paired distroless `nodejs<N>` image, so the two Dockerfile stages would drift apart. The major is changed by hand, in both stages.",
+    "revisit": "Node image majors are changed in the template; or Dependabot can bump the distroless image in step. Then drop the ignore.",
+    "expires": "2027-05-17"
+  },
+  {
+    "id": "override-undici-types-6",
+    "kind": "override",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "undici-types@>=6.0.0 <6.23.0",
+    "reason": "@types/node@22 (via remark-cli > unified-engine) wants undici-types ~6.21.0, which predates provenance and fails `trustPolicy: no-downgrade`. Types only; nothing ships.",
+    "revisit": "A @types/node@22.x widens to undici-types >= 6.23, or unified-engine stops depending on @types/node@22 (`pnpm why undici-types@6`).",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "override-qs",
+    "kind": "override",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "qs",
+    "reason": "GHSA-q8mj-m7cp-5q26 (stringify DoS) via typed-rest-client > @stryker-mutator; no released parent takes the patched version yet. Dev scope.",
+    "revisit": "@stryker-mutator releases with typed-rest-client on qs >= 6.15.2. Then drop the override.",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "override-minimatch",
+    "kind": "override",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "minimatch@>=7.0.0 <11.0.1",
+    "reason": "GHSA-g3hv-75wg-m249 (globparts DoS) on minimatch 9.x via remark-cli > unified-engine > glob and 10.x via @stryker-mutator/core. Dev scope.",
+    "revisit": "remark-cli and @stryker-mutator/core release with minimatch >= 11.0.1. Then drop the override.",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "override-glob",
+    "kind": "override",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "glob@>=9.0.0 <14.0.2",
+    "reason": "GHSA-3g3m-2fjr-6pw4 (AbortSignal bypass) on glob 10.x via remark-cli > unified-engine. Dev scope.",
+    "revisit": "unified-engine releases with glob >= 14.0.2. Then drop the override.",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "extension-stryker-typescript-6",
+    "kind": "package-extension",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "@stryker-mutator/core",
+    "reason": "Stryker's sandbox calls the classic TypeScript compiler API, which TypeScript 7 does not export. Gives Stryker its own TypeScript 6 so `test:mutate` runs.",
+    "revisit": "Stryker supports the TypeScript 7 API. Then drop the packageExtension.",
+    "expires": "2027-02-15"
+  },
+  {
+    "id": "setting-ignore-workspace-cycles",
+    "kind": "setting",
+    "files": ["pnpm-workspace.yaml"],
+    "subject": "ignoreWorkspaceCycles",
+    "reason": "@baerly/adapter-node and @baerly/dev depend on each other; pnpm 12 refuses recursive runs across the cycle. The setting also hides any future cycle.",
+    "revisit": "The adapter-node <-> dev cycle is broken (move dev's landing page out of adapter-node, or make one edge a devDependency). Then delete the setting.",
+    "expires": "2027-05-17"
+  },
+  {
+    "id": "allow-build-esbuild-cloudflare-templates",
+    "kind": "allow-build",
+    "files": [
+      "examples/minimal-cloudflare/pnpm-workspace.yaml",
+      "examples/react-cloudflare/pnpm-workspace.yaml"
+    ],
+    "subject": "esbuild",
+    "reason": "Scaffold templates keep the install script until a Linux scaffold smoke test passes without it. The root already runs with it off.",
+    "revisit": "A Linux scaffold smoke test passes with `esbuild: false`. Then flip the templates and delete this entry.",
+    "expires": "2027-05-17"
+  },
+  {
+    "id": "allow-build-workerd-cloudflare-templates",
+    "kind": "allow-build",
+    "files": [
+      "examples/minimal-cloudflare/pnpm-workspace.yaml",
+      "examples/react-cloudflare/pnpm-workspace.yaml"
+    ],
+    "subject": "workerd",
+    "reason": "Scaffold templates keep the install script until a Linux scaffold smoke test passes without it. The root already runs with it off.",
+    "revisit": "A Linux scaffold smoke test passes with `workerd: false`. Then flip the templates and delete this entry.",
+    "expires": "2027-05-17"
+  },
+  {
+    "id": "socket-accepted-dev-only-licenses",
+    "kind": "external",
+    "files": [],
+    "subject": "Socket dashboard accepts (ADR-656): elkjs, @img/sharp-libvips-* and @img/sharp-*, lightningcss, dompurify (choose Apache-2.0), spdx-exceptions and spdx-expression-validate (CC-BY-3.0 data), khroma (MIT file, no license field)",
+    "reason": "All dev-only; none is in dist/ (the third-party-licenses test pins the bundled set). Marked in the Socket dashboard by the owner, which the repo cannot see.",
+    "revisit": "Any of them reaches a published bundle or a runtime dependency, or Socket policy changes.",
+    "expires": "2027-05-17"
+  },
+  {
+    "id": "pnpm-12-21-0-audit-drops-string-id-advisories",
+    "kind": "external",
+    "files": [],
+    "subject": "pnpm 12.21.0 `pnpm audit` silently drops advisories whose id is a string (fixed in 12.22.0, pnpm#18184), so a clean audit may under-report",
+    "reason": "12.22.0 is only on the `next-12` tag; `latest` is 12.21.0. Until the bump (CI10) lands, treat a clean `pnpm audit` as provisional.",
+    "revisit": "pnpm 12.22.0 is on `latest` and past `minimumReleaseAge`. Then bump the `devEngines.packageManager` range, the lockfile environment document and the four templates' `packageManager`, re-run `pnpm audit`, and delete this entry.",
+    "expires": "2026-12-01"
+  },
+  {
+    "id": "no-pr-time-advisory-gate",
+    "kind": "external",
+    "files": [],
+    "subject": "No PR-time advisory gate: the dependency-review action's GitHub API call is blocked by the org IP allow list on GitHub-hosted runners",
+    "reason": "A new advisory introduced by a PR is caught only by the nightly full-tree `pnpm audit` and the release-layer `pnpm audit --prod --audit-level=high`, not before merge.",
+    "revisit": "A runner on the org IP allow list exists. Then restore a diff-based PR gate (dependency-review or a lockfile-filtered `pnpm audit`) and delete this entry.",
+    "expires": "2027-02-15"
+  }
+]

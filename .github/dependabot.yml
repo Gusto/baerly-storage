@@ -81,7 +81,7 @@ updates:
     # `trustPolicy: no-downgrade` rejects it and would sink the whole weekly
     # group. package.json pins 2.2.1 exactly. Revisit (drop this entry and
     # restore a range) once `pnpm view lefthook@<v> dist.attestations` is
-    # non-empty for some v > 2.2.2; see the exception register.
+    # non-empty for some v > 2.2.2; see docs/contributing/exception-register.json.
     ignore:
       - dependency-name: "lefthook"
         versions: ["2.2.2"]
