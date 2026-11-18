@@ -423,7 +423,7 @@ function parseLimit(raw: string | undefined): number | undefined {
 /**
  * Parse the `?order=<json>` query param. Mirrors the `?where=` parser
  * shape: undefined → no order, malformed JSON → `SchemaError`. The
- * engine (`runAllWithMeta` → `sortByOrderSpec`) validates the shape
+ * engine (`runAllWithMeta` → `orderRows`) validates the shape
  * itself, so this only handles the wire-level JSON decode.
  *
  * @internal

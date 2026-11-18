@@ -74,6 +74,32 @@ export const MAX_DOCUMENT_DEPTH = 100;
 export const MAX_KEY_BYTES = 1024;
 
 /**
+ * Largest `limit` an `order(...).limit(k)` read serves from a bounded
+ * top-k heap instead of a full sort (`orderRows` in
+ * `packages/server/src/query-eval.ts`). Above it the read sorts every
+ * row, as it does with no `limit`.
+ *
+ * Measured with `bench/query-order.ts` (Node 26, random-order keys):
+ * n = 2048, k = 20 / 64: 446 -> 57 / 664 -> 150 µs; n = 65,536 about
+ * -93%. With the cap lifted the same heap keeps winning on random input
+ * (n = 2048: -51% at k = 256, +27% at k = 1000), so 64 is not the
+ * crossover. It bounds the heap's worst case, where every row replaces
+ * the root, at about `1 + 2·log2(64) = 13` comparisons per row, close
+ * to a full sort's `log2(2048) = 11` on random input at the Free row
+ * ceiling, and it covers the usual page sizes.
+ */
+export const QUERY_TOP_K_MAX = 64;
+
+/**
+ * Adjacent row pairs the top-k pre-scan always compares before it stops
+ * comparing once the keys have both risen and fallen (see
+ * {@link QUERY_TOP_K_MAX}). The rise/fall counts only choose which end
+ * of the input the heap reads from, so that nearly reversed input
+ * rarely replaces the root; they never change the result.
+ */
+export const QUERY_TOP_K_SAMPLE = 64;
+
+/**
  * Half-window (in milliseconds) within which a `LogEntry`'s embedded
  * `commit_ts` must agree with wall-clock time for downstream consumers
  * to accept the entry as causally ordered. Bound on tolerated

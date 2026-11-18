@@ -225,6 +225,7 @@
     "bench:amortized-write-cost": "node bench/amortized-write-cost.ts",
     "bench:write-amp-stress": "node bench/write-amp-stress.ts",
     "bench:collection-fanout": "node bench/collection-fanout.ts",
+    "bench:query-order": "node bench/query-order.ts",
     "bench:cpu-factor:build": "node bench/cpu-factor-worker/build.ts",
     "bench:cpu-factor:node-baseline": "node bench/cpu-factor-worker/node-baseline.ts",
     "bench:cpu-factor:analyze": "node bench/cpu-factor-worker/analyze-run.ts",
