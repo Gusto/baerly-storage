@@ -5,14 +5,15 @@ name: test-infra
 # Run ON DEMAND via workflow_dispatch, and on pull requests that touch the
 # stack definition itself (compose file, docker/ config, this workflow) or the
 # code these suites exercise (adapter-node, the CLI export path, the export
-# integration tests, the scaffolder's Docker add-on template) — changes `ci` cannot catch, since it never starts the
-# containers. Other PRs stay on the cheap `ci` job.
+# integration tests, the scaffolder's Docker add-on template) — changes `ci`
+# cannot catch, since it never starts the containers. Other PRs stay on the
+# cheap `ci` job.
 #
 # NIGHTLY (enabled): the `schedule:` block runs this at 07:00 UTC. A failing
 # scheduled run surfaces via GitHub's native scheduled-failure notification to
 # the workflow owner (whoever last edited the cron) — no bespoke
 # issue-creation step. It also detects a pinned Minio digest the registry
-# stops serving.
+# stops serving, and runs the full-tree `audit` job (never on PRs).
 on:
   schedule:
     - cron: "0 7 * * *" # 07:00 UTC nightly
@@ -41,6 +42,31 @@ permissions:
   contents: read # read-only: no issue-creation, so no issues: write needed
 
 jobs:
+  # Full-tree audit (dev dependencies included), nightly and on demand only:
+  # it fails on ANY unignored advisory, including ones this repo did not
+  # touch, so it must stay off the PR path. Advisories with no patched
+  # release are `audit.ignore` entries in pnpm-workspace.yaml, each with an
+  # exception register row. Fail closed: no --ignore-registry-errors.
+  audit:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # `!cancelled()` so one red step never hides the others: all of them
+      # report, and the job still fails if any one of them fails.
+      - name: Audit (full tree)
+        if: ${{ !cancelled() }}
+        run: pnpm audit
+      - name: Audit registry signatures
+        if: ${{ !cancelled() }}
+        run: pnpm audit signatures
+
   test-infra:
     runs-on: ubuntu-latest
     timeout-minutes: 15
