@@ -2,11 +2,9 @@
 "@gusto/baerly-storage": patch
 ---
 
-`runScheduledMaintenance` no longer inherits `compact()`'s `minEntriesToCompact` default of 100. It now applies its own scheduled default of `1` (`SCHEDULED_MIN_ENTRIES_TO_COMPACT`), so a scheduled pass folds whatever live tail exists.
+Scheduled maintenance now folds whatever live tail exists. Before, `runScheduledMaintenance` inherited the in-band write tick's floor of 100 entries (50 for the Cloudflare Paid recipe), so a cron on a low-write collection ticked green for months while folding nothing and every read paid for the unfolded tail.
 
-Previously, a cron that called `runScheduledMaintenance` with no options ticked green for months while folding nothing: a low-write collection's tail sat permanently below the 100-entry floor (measured in the wild at 36 entries — every read paying 36 S3 GETs, ~1.2s, forever) and every skip was invisible. The floor of 100 (and the write-tick floor of 50) exists for the **in-band write tick**, where a write is not a scheduling decision and folding on every write would thrash snapshot rewrites; the scheduled path — where the scheduler firing _is_ the decision to work — shares neither cost profile and no longer shares the default.
-
-The same inheritance sat one layer up: `profileToScheduledOptions` defaulted `minEntriesToCompact` to the write-tick floor of 50, so `CLOUDFLARE_PAID_TIER` — the documented Paid cron recipe — skipped any tail of 1–49. That helper now defaults to `SCHEDULED_MIN_ENTRIES_TO_COMPACT` (1). Existing `runScheduledMaintenance(args, CLOUDFLARE_PAID_TIER)` callers start folding tails of 1–49 (more snapshot rewrites on a hot Paid cron; an idle tick still costs only the `current.json` GET + tail probe). `CLOUDFLARE_FREE_TIER` still carries an explicit 20. It fits one `runScheduledMaintenance` call on Workers Free with the R2 binding. The floor is no longer configurable: `minEntriesToCompact` left the public options when scheduled maintenance became addressed by collection (see the entry of this release where `/maintenance` "exports one function"). A caller that passed `{ compact: { minEntriesToCompact: N } }` to batch folds drops the option; every Node and `"cf-paid"` scheduled pass folds what is pending, and `"cf-free"` keeps its 20-entry slice. To batch snapshot rewrites on a write-amplification-sensitive host, schedule passes less often:
+The floor is no longer configurable: `minEntriesToCompact` left the public options when scheduled maintenance became addressed by collection (see the entry of this release where `/maintenance` "exports one function"). Node and `"cf-paid"` passes fold from one pending entry; `"cf-free"` folds a 20-entry slice. Every fold rewrites the whole snapshot, so a hot cron rewrites it more often; to batch rewrites, run passes less often:
 
 ```ts
 // before
@@ -15,6 +13,4 @@ await runScheduledMaintenance(args, { compact: { minEntriesToCompact: 100 } });
 await runScheduledMaintenance({ storage, app, tenant, collection });
 ```
 
-Every fold rewrites the entire snapshot; at a 5-minute cadence the new default bounds snapshot rewrites to one per tick that actually received writes (an idle tick costs only the `current.json` GET + tail probe). The trade-off and the per-trigger floor table are documented in `docs/spec/sync-protocol.md` § "Scheduled vs in-band fold floors".
-
-Also in this change: a below-floor skip on a non-empty tail is now observable. `compact()` emits `db.compaction.below_min_total` (with the `collection` label) when it returns `skippedReason: "below-min-threshold"` with `available > 0`, so a maintenance loop that discards results can no longer look healthy while a live tail sits under the floor. An idle skip (`available === 0`) does not increment the counter — see `docs/guide/observability.md` for the response playbook.
+A pass that skips a non-empty tail below its floor now counts `db.compaction.below_min_total` (labelled by `collection`); an idle pass does not. The per-trigger floors are in `docs/spec/sync-protocol.md` § "Scheduled vs in-band fold floors".
