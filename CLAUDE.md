@@ -21,7 +21,7 @@ The protocol kernel and HTTP server are landed. Day-1 templates ship for Cloudfl
 
 ## Toolchain
 
-Read `packageManager` + `devDependencies` in `package.json`. Don't introduce alternate tooling without justification.
+Read `devEngines` + `devDependencies` in `package.json`. Don't introduce alternate tooling without justification.
 
 ## Verification
 

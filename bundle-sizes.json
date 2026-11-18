@@ -20,9 +20,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 351761,
-      "gz": 111939,
-      "minGz": 30055,
+      "raw": 352059,
+      "gz": 112036,
+      "minGz": 30087,
       "ratchet": {
         "raw": 385792,
         "gz": 122880,
@@ -33,8 +33,8 @@
     "client.js": {
       "tier": "shipped",
       "raw": 39675,
-      "gz": 14056,
-      "minGz": 4967,
+      "gz": 14060,
+      "minGz": 4971,
       "ratchet": {
         "raw": 43776,
         "gz": 15616,
@@ -56,9 +56,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 581697,
-      "gz": 176680,
-      "minGz": 58277,
+      "raw": 615778,
+      "gz": 184966,
+      "minGz": 61228,
       "ratchet": {
         "raw": 634624,
         "gz": 193024,
@@ -68,9 +68,9 @@
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 109122,
-      "gz": 35513,
-      "minGz": 12615,
+      "raw": 110118,
+      "gz": 35833,
+      "minGz": 12750,
       "ratchet": {
         "raw": 113408,
         "gz": 37376,
@@ -80,9 +80,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 103886,
-      "gz": 34022,
-      "minGz": 10894,
+      "raw": 104200,
+      "gz": 34124,
+      "minGz": 10998,
       "ratchet": {
         "raw": 108800,
         "gz": 36096,
@@ -92,9 +92,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 507314,
-      "gz": 153674,
-      "minGz": 49808,
+      "raw": 541404,
+      "gz": 162024,
+      "minGz": 52734,
       "ratchet": {
         "raw": 552704,
         "gz": 167680,
@@ -116,9 +116,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 165082,
-      "gz": 54037,
-      "minGz": 13303,
+      "raw": 165413,
+      "gz": 54142,
+      "minGz": 13337,
       "ratchet": {
         "raw": 180480,
         "gz": 59136,
@@ -128,13 +128,13 @@
     },
     "observability.js": {
       "tier": "shipped",
-      "raw": 120445,
-      "gz": 33430,
-      "minGz": 14853,
+      "raw": 154225,
+      "gz": 41657,
+      "minGz": 17847,
       "ratchet": {
-        "raw": 132608,
-        "gz": 36864,
-        "minGz": 16384
+        "raw": 169728,
+        "gz": 45824,
+        "minGz": 19712
       },
       "note": "operator-side. LogTape accounts for the bulk."
     },
@@ -156,7 +156,7 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 89889,
+      "raw": 90293,
       "ratchet": {
         "raw": 98048
       },
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 768429,
+      "raw": 803413,
       "ratchet": {
         "raw": 832512
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 777387,
+      "raw": 812371,
       "ratchet": {
         "raw": 842496
       },

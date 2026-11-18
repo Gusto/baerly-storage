@@ -1435,7 +1435,7 @@ const recordReadWork = (
 /**
  * Stable multi-key sort built from an `OrderSpec`. Keys are taken in
  * the spec's insertion order, which matches the caller's source-order
- * expectation. `Array.prototype.sort` is stable on Node 24+ and Workerd.
+ * expectation. `Array.prototype.sort` is stable on Node 26+ and Workerd.
  *
  * Top-level fields only (locked at `OrderSpec<T>`).
  * Values are `DocumentValue` — string / number / boolean / object —

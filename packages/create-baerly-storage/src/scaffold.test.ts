@@ -605,7 +605,7 @@ describe("scaffold", () => {
   }
 
   // Pin the postinstall-allowlist contract. Scaffolded apps inherit
-  // `packageManager: pnpm@11.x`, whose strict-builds gate exits with
+  // `packageManager: pnpm@12.x`, whose strict-builds gate exits with
   // `ERR_PNPM_IGNORED_BUILDS` unless the deps with install scripts
   // are listed in `pnpm-workspace.yaml#allowBuilds`. pnpm 11 reads
   // the map only from that file — `package.json#pnpm.*` is no longer

@@ -9,7 +9,7 @@
  * ignore it. We thread it through from the start so we don't have
  * to retrofit cancellation later.
  *
- * Encoding: bodies are `Uint8Array` (works in Workers + Node 24+),
+ * Encoding: bodies are `Uint8Array` (works in Workers + Node 26+),
  * not `Buffer`. Result types are `readonly` — the kernel doesn't
  * mutate what storage returns.
  *

@@ -40,7 +40,7 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
 
 ## Toolchain
 
-- **Package manager:** pnpm. The emitted repo pins `packageManager: pnpm@11.1.2`.
+- **Package manager:** pnpm. The emitted repo pins `packageManager: pnpm@12.21.0`.
 - **Test runner:** vitest.
 - **Type checker:** TypeScript 6.x, as pinned in `package.json`. (The baerly-storage monorepo itself uses TypeScript 7 via `@typescript/native-preview`.)
 - **`erasableSyntaxOnly`** is enabled in every `tsconfig*.json` so the code stays compatible with type-stripping runtimes (Node's `--experimental-strip-types`, esbuild's strip path). The flag bans TS constructs that can't be type-erased: write `class { x: T; constructor(x: T) { this.x = x } }` explicitly instead of parameter-property shorthand (`constructor(private x: T) {}` fails with TS1294). The same goes for `enum`, namespaces with non-type bindings, and `private` / `protected` / `public` accessibility modifiers on constructor parameters.

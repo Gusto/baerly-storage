@@ -20,14 +20,15 @@
 # replace the tag with `@sha256:...`.
 
 # ---- Build stage ----
-FROM node:24-bookworm-slim AS build
+FROM node:26-trixie-slim AS build
 WORKDIR /app
-
-RUN corepack enable
-# pnpm version is driven by `packageManager` in package.json (pnpm 11.1.2).
 
 # Manifest first for layer-cache hits.
 COPY pnpm-lock.yaml package.json ./
+
+# Install the exact pnpm that `packageManager` in package.json names.
+# Node 25+ no longer bundles Corepack, so npm installs it instead.
+RUN npm install --global "$(node -p 'require("./package.json").packageManager')"
 
 RUN pnpm install --frozen-lockfile
 
@@ -39,7 +40,7 @@ RUN pnpm build
 RUN pnpm install --prod --frozen-lockfile
 
 # ---- Runtime stage ----
-FROM gcr.io/distroless/nodejs24-debian12 AS runtime
+FROM gcr.io/distroless/nodejs26-debian13 AS runtime
 WORKDIR /app
 
 # Distroless's `nonroot` user is UID 65532. We run as that.

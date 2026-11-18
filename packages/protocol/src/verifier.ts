@@ -29,7 +29,7 @@ export interface VerifierResult {
  * returns 401 `BaerlyError{code:"Unauthorized"}`.
  *
  * `Request` is the standard `globalThis.Request` — the same shape
- * used by Cloudflare Workers, Node 24+, Bun, Deno, and browsers.
+ * used by Cloudflare Workers, Node 26+, Bun, Deno, and browsers.
  * The kernel does **not** depend on `node:http`, `R2Bucket`, or
  * any platform binding. Preset factories that need platform
  * primitives (e.g. CF Access reads the `Cf-Access-Jwt-Assertion`

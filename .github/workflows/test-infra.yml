@@ -22,6 +22,7 @@ on:
       - docker-compose.yml
       - docker/**
       - .github/workflows/test-infra.yml
+      - .github/actions/setup/**
       - packages/adapter-node/**
       - packages/cli/src/export.ts
       - packages/cli/src/export/**
@@ -44,14 +45,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: corepack enable
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-      # Re-enable against the Node 24 setup-node just prepended to PATH
-      # (mirrors the `ci` job's two-enable pattern).
-      - run: corepack enable
+      - uses: ./.github/actions/setup
 
       # sqlite3 CLI: test:export-round-trip skips without it.
       - name: Install sqlite3

@@ -44,8 +44,6 @@ File artifacts under gitignored `reports/mutation/`:
 - A machine-readable `mutation.json` (mutation-testing-elements schema).
 - An HTML report at `reports/mutation/protocol.html` — a renderer over that same JSON; open it in a browser to see each surviving mutant inline in the source.
 
-Config note: `stryker.config.mjs` passes `testRunnerNodeArgs: ["--js-base-64"]` to the Stryker child-process host. The vitest runner uses worker threads, and worker threads reject that flag in `execArgv`; passing it to the host lets the threads inherit Uint8Array base64 support so bytes/hashing mutants are not falsely reported as killed.
-
 Config note: `pnpm-workspace.yaml` adds `typescript` to `@stryker-mutator/core` under `packageExtensions`. Stryker's sandbox parses `tsconfig.json` with the classic compiler API but never declares `typescript`, so it otherwise picks up the hoisted TypeScript 7, which no longer exports that API, and the run dies in sandbox setup before the first mutant. The rationale is in a comment above that block.
 
 ### Agent-readable survivor list

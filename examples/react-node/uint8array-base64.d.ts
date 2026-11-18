@@ -1,5 +1,5 @@
 /**
- * TC39 Stage-4 base64 codec methods — Node 22+, Bun, Workerd. Delete
+ * TC39 Stage-4 base64 codec methods — Node 26+, Bun, Workerd. Delete
  * when TypeScript accepts `esnext.typedarrays` in `--lib`.
  */
 interface Uint8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> {
