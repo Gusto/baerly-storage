@@ -610,28 +610,22 @@ describe("scaffold", () => {
   // are listed in `pnpm-workspace.yaml#allowBuilds`. pnpm 11 reads
   // the map only from that file — `package.json#pnpm.*` is no longer
   // honoured. If any template drops the yaml or strips an expected
-  // key, this fails before it reaches a user's terminal.
+  // key, this fails before it reaches a user's terminal. The Node
+  // templates need no install script at all, so they carry NO map
+  // (and no stale `false` entries): the key must be absent.
   test.each([
     {
       target: "cloudflare" as const,
       starter: undefined,
-      expected: { esbuild: "true", workerd: "true", sharp: "false" },
+      expected: { esbuild: "true", workerd: "true" },
     },
     {
       target: "cloudflare" as const,
       starter: "react" as const,
-      expected: { esbuild: "true", workerd: "true", sharp: "false" },
+      expected: { esbuild: "true", workerd: "true" },
     },
-    {
-      target: "node" as const,
-      starter: undefined,
-      expected: { esbuild: "true" },
-    },
-    {
-      target: "node" as const,
-      starter: "react" as const,
-      expected: { esbuild: "true" },
-    },
+    { target: "node" as const, starter: undefined, expected: {} },
+    { target: "node" as const, starter: "react" as const, expected: {} },
   ])(
     "scaffolded $target/$starter ships pnpm-workspace.yaml with the expected allowBuilds map",
     async ({ target, starter, expected }) => {
@@ -646,11 +640,15 @@ describe("scaffold", () => {
       });
       expect(result.filesWritten).toContain("pnpm-workspace.yaml");
       const ws = await readFile(join(result.outDir, "pnpm-workspace.yaml"), "utf8");
-      expect(ws).toMatch(/^allowBuilds\s*:/m);
-      for (const [pkg, value] of Object.entries(expected)) {
+      const entries = Object.entries(expected);
+      expect(/^allowBuilds\s*:/m.test(ws)).toBe(entries.length > 0);
+      for (const [pkg, value] of entries) {
         // Match `<pkg>: true|false` under any indentation.
         expect(ws).toMatch(new RegExp(`^\\s+${pkg}\\s*:\\s*${value}\\s*$`, "m"));
       }
+      // No template lists a `false` entry: a dead `false` hides a package
+      // that later gains an install script, instead of failing the install.
+      expect(ws).not.toMatch(/^\s+[\w@/.-]+\s*:\s*false\s*$/m);
     },
   );
 

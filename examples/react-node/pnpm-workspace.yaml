@@ -1,12 +1,7 @@
-# pnpm 11 reads the postinstall-script allowlist only from this
-# file: `package.json#pnpm.*` is no longer honoured. Without this
-# map, `pnpm install` exits with `ERR_PNPM_IGNORED_BUILDS` for the
-# bundler chain below.
-#
-# `esbuild` ships a working install script we want to run (it
-# arrives via vite).
-allowBuilds:
-  esbuild: true
+# No `allowBuilds`: nothing in this dependency tree needs an install
+# script (vite 8 only lists esbuild as an optional peer). pnpm fails the
+# install on any unlisted package that gains one, so a new script is
+# reviewed before it runs, not skipped silently.
 
 # Supply-chain guardrails, strict by default — loosen one deliberately:
 #   - minimumReleaseAge: don't resolve a version until it has been on

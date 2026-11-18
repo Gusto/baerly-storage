@@ -3,16 +3,12 @@
 # map, `pnpm install` exits with `ERR_PNPM_IGNORED_BUILDS` for the
 # Cloudflare-stack deps below.
 #
-# - `esbuild` / `workerd` ship working install scripts we want to run.
-# - `sharp` is a transitive miniflare dep whose install script falls
-#   back to a node-gyp build on Node 24 (no prebuilt for our
-#   platform/runtime combo). Set to `false` to suppress cleanly —
-#   sharp still loads from its prebuilt binary at require time, and
-#   nothing in a scaffolded baerly app exercises its code path.
+# `esbuild` and `workerd` ship working install scripts we want to run.
+# Any other package that gains an install script fails the install
+# until it is listed here.
 allowBuilds:
   esbuild: true
   workerd: true
-  sharp: false
 
 # Supply-chain guardrails, strict by default — loosen one deliberately:
 #   - minimumReleaseAge: don't resolve a version until it has been on
