@@ -80,9 +80,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 105885,
-      "gz": 34578,
-      "minGz": 10946,
+      "raw": 106463,
+      "gz": 34741,
+      "minGz": 11057,
       "ratchet": {
         "raw": 108800,
         "gz": 36096,
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 821488,
+      "raw": 822066,
       "ratchet": {
         "raw": 832512
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 830449,
+      "raw": 831027,
       "ratchet": {
         "raw": 842496
       },
