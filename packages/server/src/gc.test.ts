@@ -9,9 +9,12 @@ import {
   type GcPending,
   type Storage,
   type StorageListEntry,
+  GC_GRACE_PERIOD_MILLIS,
   GC_MAX_PENDING_CANDIDATES,
+  GC_PASS_GRACE_FRACTION,
   GC_PENDING_CAS_MAX_ATTEMPTS,
   GC_PENDING_SCHEMA_VERSION,
+  GC_SWEEP_DELETE_BATCH_KEYS,
   SNAPSHOT_SCHEMA_VERSION,
   MemoryStorage,
   casUpdateCurrentJson,
@@ -1221,5 +1224,196 @@ describe("runGc — sweep-time revalidation", () => {
     for (const seq of [0, 1, 2, 50, 99]) {
       await expect(storage.get(logObjectKey(prefix, seq))).resolves.not.toBeNull();
     }
+  });
+});
+
+describe("runGc — a pass stops deleting once it outlives its grace", () => {
+  const T0 = Date.parse("2026-01-01T00:00:00.000Z");
+  const BUDGET_MILLIS = GC_GRACE_PERIOD_MILLIS * GC_PASS_GRACE_FRACTION;
+
+  /** A wall clock the test moves by hand; `runGc` reads it through `now`. */
+  const handClock = (): { now: () => Date; set: (ms: number) => void } => {
+    let ms = T0;
+    return {
+      now: () => new Date(ms),
+      set: (next) => {
+        ms = next;
+      },
+    };
+  };
+
+  /**
+   * Seed a floor of 1000 and `count` due, same-generation, canonical
+   * `orphan-snapshot` candidates wholly below it, so every one is
+   * sweepable and the only thing that can hold one back is the bound.
+   */
+  const seedDueSnapshots = async (storage: MemoryStorage, count: number): Promise<string[]> => {
+    await createCurrentJson(
+      storage,
+      KEY,
+      logStateCurrentJson({ log_seq_start: 1000, tail_hint: 1000 }),
+    );
+    const keys = Array.from({ length: count }, (_, i) =>
+      snapshotKey(PREFIX, i, i + 1, i.toString(16).padStart(64, "0")),
+    );
+    for (const key of keys) {
+      await storage.put(key, new TextEncoder().encode("{}"));
+    }
+    await createGcPending(storage, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: keys.map((key) => ({
+        key,
+        due_at: "2000-01-01T00:00:00.000Z",
+        reason: "orphan-snapshot" as const,
+        generation: LOG_STATE_GENERATION,
+      })),
+      last_swept_at: "",
+    });
+    return keys;
+  };
+
+  /**
+   * Seed a legacy ledger holding one due, same-generation, canonical
+   * `stale-log` candidate below the floor and no due snapshot, so the pass
+   * never re-reads `current.json` and its DELETE rests on the step-1 read.
+   */
+  const seedDueStaleLog = async (storage: MemoryStorage): Promise<string> => {
+    await createCurrentJson(storage, KEY, logStateCurrentJson({ log_seq_start: 9, tail_hint: 9 }));
+    const logKey = logObjectKey(PREFIX, 5);
+    await storage.put(logKey, new TextEncoder().encode("{}"));
+    await createGcPending(storage, PENDING_KEY, {
+      schema_version: GC_PENDING_SCHEMA_VERSION,
+      candidates: [
+        {
+          key: logKey,
+          due_at: "2000-01-01T00:00:00.000Z",
+          reason: "stale-log",
+          generation: LOG_STATE_GENERATION,
+        },
+      ],
+      last_swept_at: "",
+    });
+    return logKey;
+  };
+
+  test("a clock that crosses the bound mid-sweep stops the remaining DELETE batches", async () => {
+    const inner = new MemoryStorage();
+    const keys = await seedDueSnapshots(inner, GC_SWEEP_DELETE_BATCH_KEYS + 5);
+    const clock = handClock();
+    const { storage, trace } = tracingStorage(inner);
+    const tracedDelete = storage.delete.bind(storage);
+    // The first DELETE of the first batch moves the clock past the bound,
+    // as a process paused mid-sweep would see on resume.
+    storage.delete = async (key, opts) => {
+      clock.set(T0 + BUDGET_MILLIS + 1);
+      return tracedDelete(key, opts);
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      now: clock.now,
+    } as InternalRunGcOptions);
+
+    expect(trace.deletes.length).toBe(GC_SWEEP_DELETE_BATCH_KEYS);
+    expect(result.swept).toBe(GC_SWEEP_DELETE_BATCH_KEYS);
+    const abandoned = keys.filter((key) => !trace.deletes.includes(key));
+    expect(abandoned.length).toBe(5);
+    for (const key of abandoned) {
+      await expect(inner.get(key)).resolves.not.toBeNull();
+    }
+    // Abandoned work stays pending for a later pass; swept work leaves.
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((c) => c.key).toSorted()).toEqual(abandoned.toSorted());
+    expect(result.pendingDepth).toBe(5);
+  });
+
+  test("a clock that crosses the bound before the first batch issues no DELETE", async () => {
+    // A stall in the snapshot LIST ages the step-1 read past the bound.
+    const inner = new MemoryStorage();
+    const logKey = await seedDueStaleLog(inner);
+    const clock = handClock();
+    const { storage, trace } = tracingStorage(inner);
+    const tracedList = storage.list.bind(storage);
+    storage.list = (prefix, opts) => {
+      clock.set(T0 + BUDGET_MILLIS + 1);
+      return tracedList(prefix, opts);
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      now: clock.now,
+    } as InternalRunGcOptions);
+
+    expect(trace.deletes).toEqual([]);
+    expect(result.swept).toBe(0);
+    await expect(inner.get(logKey)).resolves.not.toBeNull();
+    const pending = await readGcPending(inner, PENDING_KEY);
+    expect(pending?.json.candidates.map((c) => c.key)).toEqual([logKey]);
+    expect(pending?.json.last_swept_at).toBe("");
+  });
+
+  test("a backward wall-clock correction does not hide a stall from the bound", async () => {
+    // The wall clock steps back a day while the monotonic clock records
+    // the stall; the larger elapsed time wins.
+    const inner = new MemoryStorage();
+    const logKey = await seedDueStaleLog(inner);
+    const clock = handClock();
+    let monoMs = 0;
+    const { storage, trace } = tracingStorage(inner);
+    const tracedList = storage.list.bind(storage);
+    storage.list = (prefix, opts) => {
+      clock.set(T0 - 24 * 60 * 60 * 1000);
+      monoMs = BUDGET_MILLIS + 1;
+      return tracedList(prefix, opts);
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      now: clock.now,
+      monotonicNow: () => monoMs,
+    } as InternalRunGcOptions);
+
+    expect(trace.deletes).toEqual([]);
+    expect(result.swept).toBe(0);
+    await expect(inner.get(logKey)).resolves.not.toBeNull();
+  });
+
+  test("a pass exactly at the bound still sweeps", async () => {
+    const inner = new MemoryStorage();
+    const keys = await seedDueSnapshots(inner, 3);
+    const clock = handClock();
+    const { storage, trace } = tracingStorage(inner);
+    const tracedGet = storage.get.bind(storage);
+    // Every read ages the pass to exactly the bound — never past it.
+    storage.get = async (key, opts) => {
+      const got = await tracedGet(key, opts);
+      clock.set(T0 + BUDGET_MILLIS);
+      return got;
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      now: clock.now,
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(3);
+    expect(trace.deletes.toSorted()).toEqual(keys.toSorted());
+  });
+
+  test("the fresh manifest re-read restarts the bound", async () => {
+    // A due snapshot forces the step-4 re-read; every DELETE rests on that
+    // read, so a stall before it (here, in the mark LIST) costs nothing.
+    const inner = new MemoryStorage();
+    const keys = await seedDueSnapshots(inner, 3);
+    const clock = handClock();
+    const { storage, trace } = tracingStorage(inner);
+    const tracedList = storage.list.bind(storage);
+    storage.list = (prefix, opts) => {
+      clock.set(T0 + BUDGET_MILLIS + 1);
+      return tracedList(prefix, opts);
+    };
+
+    const result = await runGc({ storage, currentJsonKey: KEY }, {
+      now: clock.now,
+    } as InternalRunGcOptions);
+
+    expect(result.swept).toBe(3);
+    expect(trace.deletes.toSorted()).toEqual(keys.toSorted());
   });
 });
