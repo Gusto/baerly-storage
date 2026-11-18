@@ -80,8 +80,7 @@
  * `CommitFailedException` / commit-conflict retries; neither inspects
  * the conflicting object to determine ownership.
  *
- * See `docs/spec/prior-art.md` for the consolidated IDS-shaped
- * differentiation.
+ * See `docs/spec/prior-art.md` for the wider prior-art comparison.
  *
  * @see docs/spec/sync-protocol.md §"Contention and retries"
  */
