@@ -150,6 +150,13 @@ jobs:
             fs.writeFileSync(app + "/Dockerfile", dockerfile.replace(manifestCopy, manifestCopy + "COPY vendor vendor\n"));
           ' "$app" "$tarball"
           (cd "$app" && pnpm install)
+          # The image must build from the packed workspace, not a registry
+          # copy that happens to resolve; a lockfile that lost the file:
+          # specifier would make this step test the wrong package.
+          if ! grep -Fq "file:./vendor/" "$app/pnpm-lock.yaml"; then
+            echo "::error::pnpm-lock.yaml does not resolve @gusto/baerly-storage from file:./vendor/"
+            exit 1
+          fi
           docker build "$app"
 
       - name: Stop storage stack

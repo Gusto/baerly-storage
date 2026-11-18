@@ -6,6 +6,7 @@ import {
   detectDependabotIgnores,
   detectLoosenings,
   detectSuppressions,
+  examplesMissingWorkspaceFile,
   STRICT_SETTINGS,
   validateRegister,
   type ExceptionEntry,
@@ -276,5 +277,17 @@ describe("validateRegister", () => {
 
   test("a non-external entry needs at least one file", () => {
     expect(validateRegister([entry({ files: [] })], TODAY).join("\n")).toMatch(/at least one file/);
+  });
+});
+
+describe("examplesMissingWorkspaceFile", () => {
+  test("flags an example with a package.json and no pnpm-workspace.yaml", () => {
+    expect(
+      examplesMissingWorkspaceFile([
+        { dir: "ok", hasPackageJson: true, hasWorkspaceFile: true },
+        { dir: "bad", hasPackageJson: true, hasWorkspaceFile: false },
+        { dir: "notes", hasPackageJson: false, hasWorkspaceFile: false },
+      ]),
+    ).toEqual(["examples/bad has a package.json but no pnpm-workspace.yaml"]);
   });
 });

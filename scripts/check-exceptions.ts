@@ -267,15 +267,33 @@ export const collectViolations = (
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const workspaceFiles = (): string[] => {
+/**
+ * An `examples/*` directory with a `package.json` must carry its own
+ * `pnpm-workspace.yaml`: that file holds the install policy the scaffold
+ * templates ship, and a missing one would silently skip the check.
+ */
+export const examplesMissingWorkspaceFile = (
+  examples: readonly { dir: string; hasPackageJson: boolean; hasWorkspaceFile: boolean }[],
+): string[] =>
+  examples
+    .filter((e) => e.hasPackageJson && !e.hasWorkspaceFile)
+    .map((e) => `examples/${e.dir} has a package.json but no pnpm-workspace.yaml`);
+
+const workspaceFiles = (): { files: string[]; missing: string[] } => {
   const files = ["pnpm-workspace.yaml"];
-  for (const dir of readdirSync(join(repoRoot, "examples"), { withFileTypes: true })) {
-    const rel = `examples/${dir.name}/pnpm-workspace.yaml`;
-    if (dir.isDirectory() && existsSync(join(repoRoot, rel))) {
-      files.push(rel);
+  const examples = readdirSync(join(repoRoot, "examples"), { withFileTypes: true })
+    .filter((dir) => dir.isDirectory())
+    .map((dir) => ({
+      dir: dir.name,
+      hasPackageJson: existsSync(join(repoRoot, "examples", dir.name, "package.json")),
+      hasWorkspaceFile: existsSync(join(repoRoot, "examples", dir.name, "pnpm-workspace.yaml")),
+    }));
+  for (const e of examples) {
+    if (e.hasWorkspaceFile) {
+      files.push(`examples/${e.dir}/pnpm-workspace.yaml`);
     }
   }
-  return files;
+  return { files, missing: examplesMissingWorkspaceFile(examples) };
 };
 
 /** Every text file under `.github/` (workflows, actions, config). */
@@ -291,7 +309,8 @@ const runCli = (): void => {
     readFileSync(join(repoRoot, "docs/contributing/exception-register.json"), "utf8"),
   ) as ExceptionEntry[];
   const loosenings: Loosening[] = [];
-  for (const file of workspaceFiles()) {
+  const workspaces = workspaceFiles();
+  for (const file of workspaces.files) {
     loosenings.push(
       ...detectLoosenings(file, parseYaml(readFileSync(join(repoRoot, file), "utf8"))),
     );
@@ -303,13 +322,17 @@ const runCli = (): void => {
       loosenings.push(...detectDependabotIgnores(file, parseYaml(text)));
     }
   }
-  const problems = collectViolations(
-    register,
-    loosenings,
-    (file, text) =>
-      existsSync(join(repoRoot, file)) && readFileSync(join(repoRoot, file), "utf8").includes(text),
-    today,
-  );
+  const problems = [
+    ...workspaces.missing,
+    ...collectViolations(
+      register,
+      loosenings,
+      (file, text) =>
+        existsSync(join(repoRoot, file)) &&
+        readFileSync(join(repoRoot, file), "utf8").includes(text),
+      today,
+    ),
+  ];
   if (problems.length > 0) {
     console.error(`exceptions: ${problems.length} problem(s)`);
     for (const problem of problems) {
