@@ -2,7 +2,7 @@
 title: Upgrading to 0.7.0
 audience: integrator
 summary: Old-to-new migration for 0.7.0, organized by what an app author and an operator must do.
-last-reviewed: 2026-11-17
+last-reviewed: 2026-11-18
 tags: [upgrade, migration, breaking-changes]
 related:
   [
@@ -186,6 +186,7 @@ const db = Db.create({ storage, app, tenant: claims.org.normalize("NFC") });
 - `POST`, `PATCH` and `PUT` require `Content-Type: application/json` (or a `+json` type; parameters such as `charset` are fine) and answer `415 UnsupportedMediaType` before reading the body otherwise, so a raw caller (`curl -d`, a hand-rolled `fetch`) must send the header. `createBaerlyClient` already does.
 - Canonical log lines report capacity refusals as `outcome: "refused"` (warn level). Alerts keyed on `outcome: "conflict"` or `"error"` for those writes shift to `"refused"`. `Baerly-Capacity-Warning` and the `capacity_warning` log field are additive early signals.
 - Request budgets (Cloudflare): a call past the request's storage budget is refused with `CapacityExceeded` before it is sent; a read that cannot fit is refused whole, never truncated. `GET /v1/since` ends a long-poll early when its request budget runs out instead of failing (about 22 s under the default `cf-free` profile with S3 storage).
+- HTTP `count()` honors `limit`: `client.collection(c).limit(3).count()` returns at most 3, as the server SDK does; 0.6.0 returned the full count. Drop the `limit` where you meant the total. `GET /v1/count` validates `&limit=<n>` as the list route does, so an invalid value is `SchemaError` (400).
 - `GET /v1/since` answers a cursor that can no longer resume (its changes are no longer retained, or `baerly admin restore --force` truncated the generation it came from) with `CursorExpired` (410). 0.6.0 answered `SchemaError` (400), which still means a malformed cursor. Re-read your rows, then restart with `cursor: ""`; the changes in between are not replayed. The React subscription poll does this itself and now parks on a `SchemaError` until `refetch()`.
 
 ```ts
@@ -282,7 +283,7 @@ const free = result.trajectory.projectedUsdBand === "$0";
 
 **Node static files (`webRoot`).** `baerlyNode({ webRoot })` now answers `404` for a dotfile or dot-directory other than `/.well-known/*` (`/.env`, `/.git/config`), for a symlink that resolves outside `webRoot`, and for a path holding a literal `%` (`%25`) or an encoded reserved character (`%2F`, `%3F`, `%23`). `%20` and UTF-8 escapes still serve. Rename any published file whose name needs one of those; Vite's hashed output never does.
 
-**Storage retries.** Retry now happens at one layer, 3 attempts per request. `S3HttpStorage` and `GcsHttpStorage` `retries` defaults to `2` (was `8`); a value that is not a non-negative integer rejects with `InvalidConfig`; `backoffMs` replaces both jitter bases. `r2BindingStorage` now retries transient failures under the same policy. A conditional (`If-Match`) PUT is never resent.
+**Storage retries.** Retry now happens at one layer, 3 attempts per request. `S3HttpStorage` and `GcsHttpStorage` `retries` defaults to `2` (was `8`); a value that is not a non-negative integer rejects with `InvalidConfig`; `backoffMs` replaces both jitter bases. `r2BindingStorage` now retries transient failures under the same policy. A conditional (`If-Match`) PUT is never resent. Aborting an S3 or GCS call through its `AbortSignal` now cancels the request in flight and rejects with the `AbortError` after one attempt, not a retried `NetworkError`; match cancellation on `error.name === "AbortError"`.
 
 **Custom `Storage` adapters.** `StorageListEntry.lastModified` is removed (entries are `key` + `etag`). `get` takes only `{ signal }` and returns `{ body, etag }`; `put` returns `{ etag, serverDate? }`; `versionId` and conditional GET are gone. A rejected precondition must throw `WriteConflict`, never `AlreadyExists`.
 
