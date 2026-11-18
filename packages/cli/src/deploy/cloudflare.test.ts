@@ -59,9 +59,6 @@ const makeRunner = (defaults: { readonly [key: string]: CannedReply } = {}): Run
     if (override !== undefined) {
       return override;
     }
-    if (args[0] === "deploy" && args[1] === "--help") {
-      return { code: 0, stdout: "Usage: wrangler deploy [--x-provision] [--x-auto-create] ..." };
-    }
     if (args[0] === "secret" && args[1] === "list") {
       return { code: 0, stdout: '[{"name":"SHARED_SECRET","type":"secret_text"}]' };
     }
@@ -194,14 +191,17 @@ describe("deployCloudflare", () => {
     await rm(repoRoot, { recursive: true, force: true });
   });
 
-  test("invokes wrangler deploy --x-provision --x-auto-create when supported", async () => {
+  test("ensures declared R2 buckets, then runs a plain wrangler deploy", async () => {
     await writeScaffold(repoRoot);
-    const h = makeRunner();
+    const h = makeRunner({ "r2 bucket info x": { code: 1, stderr: "not found" } });
     const exit = await deployCloudflare(makeConfig(repoRoot), { runner: h.runner });
-    h.stderr();
+    const stderr = h.stderr();
     expect(exit).toBe(0);
-    expect(h.calls).toContainEqual(["wrangler", "deploy", "--x-provision", "--x-auto-create"]);
-    expect(h.calls).not.toContainEqual(["wrangler", "deploy"]);
+    expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "info", "x"]);
+    expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "create", "x"]);
+    expect(h.calls).toContainEqual(["wrangler", "deploy"]);
+    expect(h.calls.some((c) => c.some((a) => a.startsWith("--x-")))).toBe(false);
+    expect(stderr).not.toContain("--x-provision");
   });
 
   test("CAS preflight failure aborts before any wrangler invocation", async () => {
@@ -248,7 +248,7 @@ describe("deployCloudflare", () => {
     h.stderr();
     expect(exit).toBe(0);
     expect(casProbe).toHaveBeenCalledWith("s3://good-bucket");
-    expect(h.calls).toContainEqual(["wrangler", "deploy", "--x-provision", "--x-auto-create"]);
+    expect(h.calls).toContainEqual(["wrangler", "deploy"]);
   });
 
   test("no preflight runs when probeBucketUri is omitted", async () => {
@@ -259,21 +259,6 @@ describe("deployCloudflare", () => {
     h.stderr();
     expect(exit).toBe(0);
     expect(casProbe).not.toHaveBeenCalled();
-  });
-
-  test("falls back to manual provisioning when --x-provision is missing", async () => {
-    await writeScaffold(repoRoot);
-    const h = makeRunner({
-      "deploy --help": { code: 0, stdout: "Usage: wrangler deploy [--env <env>] ..." },
-      "r2 bucket info x": { code: 1, stderr: "not found" },
-    });
-    const exit = await deployCloudflare(makeConfig(repoRoot), { runner: h.runner });
-    h.stderr();
-    expect(exit).toBe(0);
-    expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "info", "x"]);
-    expect(h.calls).toContainEqual(["wrangler", "r2", "bucket", "create", "x"]);
-    expect(h.calls).toContainEqual(["wrangler", "deploy"]);
-    expect(h.calls).not.toContainEqual(["wrangler", "deploy", "--x-provision", "--x-auto-create"]);
   });
 
   test("warns when a required secret is missing", async () => {

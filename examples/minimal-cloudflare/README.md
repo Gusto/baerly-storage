@@ -45,10 +45,8 @@ pnpm dev
 ```sh
 # One-command deploy. baerly reads `baerly.config.ts:target`, finds
 # `wrangler.jsonc`, and runs:
-#   wrangler deploy --x-provision --x-auto-create
-# which auto-creates the declared R2 bucket(s) before the deploy.
-# When the experimental flag is unavailable, baerly falls back to
-# `wrangler r2 bucket create` + `wrangler deploy`.
+#   wrangler r2 bucket create   (only for declared buckets that don't exist)
+#   wrangler deploy
 baerly deploy
 
 # Verify the deployed config — bindings, secrets, optional triggers.

@@ -47,7 +47,7 @@ The gate's `SUMMARY` assertions and stage names below are unchanged by which inv
 
 - Before a release.
 - After any change to `pnpm create @gusto/baerly-storage` (ticket 38), the deploy templates (tickets 39/40), or the auth presets (ticket 37).
-- After a `wrangler` major-version bump (the `--x-provision --x-auto-create` flags are experimental; renames break the gate).
+- After a `wrangler` major-version bump (`baerly deploy` shells out to `wrangler r2 bucket` and `wrangler deploy`; renamed subcommands break the gate).
 
 The gate is **NOT** part of `pnpm verify` or `pnpm test`. It takes minutes per run and burns small amounts of cloud quota; run it manually.
 
@@ -126,7 +126,7 @@ wrangler list | grep day-one-
 wrangler delete day-one-<unix-ms>
 ```
 
-R2 buckets created by `--x-provision --x-auto-create` survive the Worker deletion. Sweep with:
+R2 buckets created by `baerly deploy` survive the Worker deletion. Sweep with:
 
 ```sh
 wrangler r2 bucket list | grep day-one-

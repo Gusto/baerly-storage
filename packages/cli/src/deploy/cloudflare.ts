@@ -4,15 +4,12 @@
  *
  * Behavior:
  *   1. Locate `wrangler.jsonc` at the package root.
- *   2. Sniff `wrangler deploy --help` for the `--x-provision` flag.
- *   3. When present, invoke
- *      `wrangler deploy --x-provision --x-auto-create` and rely on
- *      Wrangler to auto-create the declared R2 buckets.
- *   4. When absent, parse `wrangler.jsonc` for declared
- *      `r2_buckets[]`, ensure each bucket exists (creating with
- *      `wrangler r2 bucket create` when missing), then run
- *      `wrangler deploy` without the experimental flag.
- *   5. Warn (non-fatal) on any `requiredSecret` not present in the
+ *   2. Parse `wrangler.jsonc` for declared `r2_buckets[]` and ensure
+ *      each bucket exists (creating with `wrangler r2 bucket create`
+ *      when missing). Wrangler 4.45+ also provisions declared buckets
+ *      on deploy; this step covers older Wranglers and bolt-on apps.
+ *   3. Run `wrangler deploy`.
+ *   4. Warn (non-fatal) on any `requiredSecret` not present in the
  *      Wrangler-reported secret list.
  *
  * No `wrangler secret put` is invoked — that requires interactive
@@ -98,9 +95,8 @@ export const parseR2Bindings = (wranglerPath: string): readonly R2BindingDeclara
 /**
  * Walk the declared R2 bindings; for each, run `wrangler r2 bucket
  * info <name>` and, on non-zero exit, `wrangler r2 bucket create
- * <name>`. Used as the fallback when `wrangler --x-provision` is
- * unavailable, and directly invoked by `baerly doctor
- * --target=cloudflare --fix`.
+ * <name>`. Run before every `baerly deploy`, and directly invoked by
+ * `baerly doctor --target=cloudflare --fix`.
  *
  * @throws BaerlyError code="NetworkError" — bucket creation
  *   reported a non-zero exit (Wrangler's own error already on
@@ -175,8 +171,8 @@ const warnOnMissingSecrets = async (
  *
  * @throws BaerlyError code="InvalidConfig" — `wrangler.jsonc`
  *   missing or unparseable.
- * @throws BaerlyError code="NetworkError" — the fallback path
- *   could not create a declared R2 bucket.
+ * @throws BaerlyError code="NetworkError" — `wrangler r2 bucket create`
+ *   failed for a declared R2 bucket.
  */
 export const deployCloudflare = async (
   config: AppConfig,
@@ -219,25 +215,8 @@ export const deployCloudflare = async (
     process.stderr.write(`baerly deploy: CAS preflight OK for ${opts.probeBucketUri}\n`);
   }
 
-  // Sniff Wrangler for --x-provision support.
-  const help = await runner.run("wrangler", ["deploy", "--help"], repoRoot);
-  const hasXProvision = help.code === 0 && help.stdout.includes("--x-provision");
-
   await warnOnMissingSecrets(runner, repoRoot, config.requiredSecrets ?? ["SHARED_SECRET"]);
 
-  if (hasXProvision) {
-    const r = await runner.run(
-      "wrangler",
-      ["deploy", "--x-provision", "--x-auto-create"],
-      repoRoot,
-    );
-    return r.code;
-  }
-
-  // Fallback: provision via the doctor path then deploy.
-  process.stderr.write(
-    "baerly deploy: wrangler --x-provision unavailable; falling back to manual provisioning\n",
-  );
   await ensureBindings(runner, repoRoot, wranglerPath);
   const r = await runner.run("wrangler", ["deploy"], repoRoot);
   return r.code;

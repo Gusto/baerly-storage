@@ -21,6 +21,7 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { configDefaults, defineConfig } from "vitest/config";
 import { IS_CI } from "./tests/setup/ci.ts";
+import { scaffoldWranglerCompat } from "./tests/setup/scaffold-wrangler.ts";
 
 // `pnpm test:randomize` sets `FC_NUM_RUNS=10000`. At that volume the
 // disk-bound property tests in `packages/dev/src/local-fs.test.ts`,
@@ -292,11 +293,12 @@ export default defineConfig({
               // the 4xx/5xx canonical lines. The kernel logger reads the level
               // from `globalThis.process.env.LOG_LEVEL` (not the `env` param),
               // which Workerd populates from this text binding only because
-              // `nodejs_compat` is set below — drop that flag and the level
+              // `nodejs_compat` is set in the scaffolds — drop that flag and the level
               // silently falls back to `info`.
               bindings: { APP: "http-conf", TENANT: "", LOG_LEVEL: "warn" },
-              compatibilityDate: "2026-05-01",
-              compatibilityFlags: ["nodejs_compat"],
+              // The scaffolds' own compatibility date and flags, so this
+              // gate runs the runtime configuration users deploy.
+              ...scaffoldWranglerCompat(),
             },
           }),
         ],
