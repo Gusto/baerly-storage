@@ -379,3 +379,5 @@ await ensureTable(storage, { app: "helpdesk", tenant: "demo", collection: "ticke
 ## Dependency bumps
 
 Bundled dependencies updated with no public API change: hono 4.13.2, `@hono/node-server` 2.1.1, jose 6.2.9, `@rgrove/parse-xml` 4.2.3, `@logtape/logtape` 2.3.1.
+
+Node 26 is the tested floor for `@gusto/create-baerly-storage` and the apps it generates: both declare `engines.node: ">=26"`. On older Node your package manager prints an engine warning rather than refusing, unless you enable `engine-strict`.
