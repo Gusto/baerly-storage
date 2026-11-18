@@ -99,8 +99,9 @@ Path-scoped conventions. **Read the matching file before editing.**
 | Durable schemas, wire, or version axes | [docs/contributing/conventions/versioning.md](docs/contributing/conventions/versioning.md) |
 | `bundle-sizes.json`, `rolldown.config.ts`, or any `packages/*/src/**` size-affecting change | [docs/contributing/conventions/bundle-budgets.md](docs/contributing/conventions/bundle-budgets.md) |
 | `request-counts.json`, or a change that adds or removes storage calls on a route or maintenance tick | [docs/contributing/conventions/request-counts.md](docs/contributing/conventions/request-counts.md) |
+| `package.json` deps, `pnpm-workspace.yaml`, `.github/**` | [docs/contributing/conventions/supply-chain.md](docs/contributing/conventions/supply-chain.md) |
 
-Claude users: `.claude/rules/{tests,docs,change-discipline,bundle-budgets}.md` carry `paths:` frontmatter, so they load only when you touch a matching file, and point at the same conventions. A rule that loses its `paths:` field loads unconditionally at launch instead — silently.
+Claude users: `.claude/rules/{tests,docs,change-discipline,bundle-budgets,supply-chain}.md` carry `paths:` frontmatter, so they load only when you touch a matching file, and point at the same conventions. A rule that loses its `paths:` field loads unconditionally at launch instead — silently.
 
 ## Conventions
 

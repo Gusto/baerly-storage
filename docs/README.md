@@ -76,6 +76,7 @@ For people changing the code in this repo.
   - [`contributing/conventions/versioning.md`](contributing/conventions/versioning.md)
   - [`contributing/conventions/bundle-budgets.md`](contributing/conventions/bundle-budgets.md)
   - [`contributing/conventions/request-counts.md`](contributing/conventions/request-counts.md)
+  - [`contributing/conventions/supply-chain.md`](contributing/conventions/supply-chain.md)
 
 ## Protocol & decisions
 

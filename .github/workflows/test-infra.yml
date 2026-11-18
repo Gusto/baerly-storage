@@ -58,8 +58,13 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      # `!cancelled()` so one red step never hides the others: all of them
-      # report, and the job still fails if any one of them fails.
+      # Expiry depends on today's date, so the register is re-checked
+      # nightly as well as on every PR (it also runs inside `pnpm verify`).
+      # `!cancelled()` on every check step so one red step never hides the
+      # others: all of them report, and the job still fails if any one fails.
+      - name: Exception register
+        if: ${{ !cancelled() }}
+        run: node scripts/check-exceptions.ts
       - name: Audit (full tree)
         if: ${{ !cancelled() }}
         run: pnpm audit

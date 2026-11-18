@@ -55,8 +55,8 @@ allowBuilds:
   workerd: false
 
 # `pnpm audit` has no expiry for ignores, so every entry here needs a
-# row in the exception register (scripts/check-exceptions) with a
-# revisit trigger and an expiry date. Only advisories with NO patched
+# row in docs/contributing/exception-register.json with a revisit
+# trigger and an expiry date (`scripts/check-exceptions.ts` enforces it). Only advisories with NO patched
 # version belong here; fixable ones get a bump or an override.
 #   - GHSA-fc5q-39xc-vjpf: picomatch <= 4.0.7 (no patched release), via
 #     vite (peer of the published package) and remark-cli's chokidar.
