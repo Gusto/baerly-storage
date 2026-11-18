@@ -20,7 +20,11 @@
  *   6. (lost-fold contention) A fold whose CAS loses to a concurrent
  *      write leaves an orphan snapshot; after `runGc` drains past the
  *      grace window no orphan snapshot is left unreferenced.
- *   7. (retirement) An abort anywhere inside `retireLogRange` — at the
+ *   7. (grace bound) A GC pass whose clock crosses
+ *      `GC_PASS_GRACE_FRACTION` of the default grace — at the fresh
+ *      manifest read, inside a DELETE batch, or between batches — issues
+ *      no further DELETE, and the unissued candidates stay pending.
+ *   8. (retirement) An abort anywhere inside `retireLogRange` — at the
  *      advisory gate, at the floor CAS, or between the CAS and the
  *      DELETE loop — leaves the reader's row set unchanged. Objects
  *      leaked below an already-published floor are the documented
@@ -53,8 +57,12 @@ import {
   createCurrentJson,
   type DocumentData,
   encodeJsonBytes,
+  GC_GRACE_PERIOD_MILLIS,
+  GC_PASS_GRACE_FRACTION,
+  GC_SWEEP_DELETE_BATCH_KEYS,
   MemoryStorage,
   readCurrentJson,
+  readGcPending,
   sha256Hex,
   type Storage,
   versionFromContent,
@@ -441,6 +449,96 @@ describe("GC crash never deletes a still-referenced key", () => {
 
       const after = await readAllRowIds(inner);
       expect(after).toEqual(before);
+    },
+    PROP_TIMEOUT_MS,
+  );
+});
+
+describe("GC pass bounded by its grace", () => {
+  const B = GC_SWEEP_DELETE_BATCH_KEYS;
+  propTest.prop({
+    numOrphans: fc.integer({ min: 1, max: 2 * B + 20 }),
+    // 0 = when the fresh `current.json` read resolves; k = when the k-th
+    // DELETE resolves. Multiples of B land exactly between batches.
+    crossAt: fc.oneof(fc.integer({ min: 0, max: 2 * B + 20 }), fc.constantFrom(B, 2 * B)),
+  })(
+    "no DELETE is issued once the pass outlives GC_PASS_GRACE_FRACTION of the grace",
+    async ({ numOrphans, crossAt: rawCrossAt }) => {
+      const crossAt = Math.min(rawCrossAt, numOrphans);
+      const inner = new MemoryStorage();
+      await provision(inner);
+      const writer = new Writer({ storage: inner, currentJsonKey: CURRENT_JSON_KEY });
+      for (let i = 0; i < 5; i++) {
+        await writer.commit({
+          op: "I",
+          collection: COLLECTION,
+          docId: `d-${i}`,
+          body: { _id: `d-${i}` },
+        });
+      }
+      await compact({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, {
+        minEntriesToCompact: 1,
+      } as InternalCompactOptions);
+      // Sealed orphan snapshots wholly below the floor (5): every one is
+      // sweepable once due, so only the bound can hold one back.
+      const orphans: string[] = [];
+      for (let i = 0; i < numOrphans; i++) {
+        const bytes = encodeJsonBytes({ orphan: i });
+        const key = `${TABLE_PREFIX}/snapshot/L9/000000000000-000000000001-${await sha256Hex(bytes)}.json`;
+        await inner.put(key, bytes);
+        orphans.push(key);
+      }
+      const committed = (await readCurrentJson(inner, CURRENT_JSON_KEY))!.json.snapshot;
+      const before = await readAllRowIds(inner);
+
+      let wall = Date.parse("2026-01-01T00:00:00.000Z");
+      const gcOpts = { now: () => new Date(wall) } as InternalRunGcOptions;
+      await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, gcOpts); // marks only
+      wall += GC_GRACE_PERIOD_MILLIS + 1;
+      const crossTo = wall + GC_GRACE_PERIOD_MILLIS * GC_PASS_GRACE_FRACTION + 1;
+
+      let crossed = false;
+      let manifestGets = 0;
+      const issued: string[] = [];
+      let issuedAfterCross = 0;
+      const probed: Storage = {
+        async get(k, o) {
+          const got = await inner.get(k, o);
+          if (k === CURRENT_JSON_KEY && ++manifestGets === 2 && crossAt === 0) {
+            crossed = true;
+            wall = crossTo;
+          }
+          return got;
+        },
+        put: (k, b, o) => inner.put(k, b, o),
+        list: (p, o) => inner.list(p, o),
+        async delete(k, o) {
+          issuedAfterCross += crossed ? 1 : 0;
+          issued.push(k);
+          const n = issued.length;
+          await inner.delete(k, o);
+          if (n === crossAt) {
+            crossed = true;
+            wall = crossTo;
+          }
+        },
+      };
+      const observed = await observe(inner, "gc", () =>
+        runGc({ storage: probed, currentJsonKey: CURRENT_JSON_KEY }, gcOpts),
+      );
+      expectPhysicallyClean(observed);
+      await expect(readAllRowIds(inner)).resolves.toEqual(before);
+
+      // The bound: nothing after the crossing, the crossing batch whole.
+      expect(issuedAfterCross).toBe(0);
+      expect(issued.length).toBe(Math.min(numOrphans, Math.ceil(crossAt / B) * B));
+      const abandoned = orphans.filter((k) => !issued.includes(k)).toSorted();
+      const pending = await readGcPending(inner, `${TABLE_PREFIX}/gc/pending.json`);
+      expect(pending!.json.candidates.map((c) => c.key).toSorted()).toEqual(abandoned);
+
+      // A later pass re-reads the manifest and reclaims the abandoned work.
+      await runGc({ storage: inner, currentJsonKey: CURRENT_JSON_KEY }, gcOpts);
+      await expect(listKeys(inner, `${TABLE_PREFIX}/snapshot/`)).resolves.toEqual([committed]);
     },
     PROP_TIMEOUT_MS,
   );
