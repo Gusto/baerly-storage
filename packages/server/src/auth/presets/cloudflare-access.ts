@@ -4,7 +4,7 @@ import {
   BaerlyError,
   type Verifier,
 } from "@baerly/protocol";
-import { bearerJwt } from "./bearer-jwt.ts";
+import { makeTokenVerifier } from "./bearer-jwt.ts";
 
 /**
  * Options for {@link cloudflareAccess}.
@@ -51,9 +51,10 @@ export interface CloudflareAccessOptions {
  * Cloudflare-side scaffold (`examples/minimal-cloudflare/`) defaults
  * to this factory.
  *
- * Internally a thin shim over `bearerJwt` — pulls the JWT from the
- * CF-specific header, points at CF Access's JWKS, and pins
- * issuer/audience to the CF-Access shape.
+ * Internally shares `bearerJwt`'s token verifier — pulls the JWT from
+ * the CF-specific header, points at CF Access's JWKS, and pins
+ * issuer/audience to the CF-Access shape. An `Authorization` header
+ * the app sent itself is never read.
  *
  * **Identity shape.** Same as {@link bearerJwt}: the returned
  * `identity` is the verified JWT payload CF Access mints (after IdP
@@ -104,7 +105,7 @@ export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
     );
   }
   const issuer = `https://${opts.teamDomain}.cloudflareaccess.com`;
-  const inner = bearerJwt({
+  const verifyToken = makeTokenVerifier({
     jwks: `${issuer}/cdn-cgi/access/certs`,
     issuer,
     audience: opts.audienceTag,
@@ -119,15 +120,6 @@ export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
     if (cfHeader === null) {
       return null;
     }
-    // Re-issue the request with the CF header masquerading as a
-    // Bearer Authorization so the inner bearerJwt verifier sees the
-    // shape it expects. Mutating headers on the original request is
-    // unsafe (CF Workers freeze them); clone via Request constructor.
-    // `set` replaces an Authorization header the app sent itself;
-    // appending would join both values and fail verification.
-    const headers = new Headers(req.headers);
-    headers.set("Authorization", `Bearer ${cfHeader}`);
-    const cloned = new Request(req.url, { method: req.method, headers });
-    return inner(cloned);
+    return verifyToken(cfHeader);
   };
 };

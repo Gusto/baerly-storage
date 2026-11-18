@@ -173,6 +173,10 @@ await handle.listen(Number(process.env["PORT"] ?? 8080));
 
 Use `tenantClaim` when your IdP issues one tenant per token; use `tenantPrefix` when the app is single-tenant or tenancy is enforced outside baerly-storage. They are mutually exclusive. The tenant claim decides which tenant a request reads and writes, so name a claim only an IdP admin can set; a claim the user can edit lets them pick their own tenant.
 
+JWKS caching: when `jwks` is a URL, the key set is fetched lazily and cached per verifier for `jwksCacheTtlMs` (default 600 000 ms, 10 minutes; must be `>= 0`). A longer TTL means fewer JWKS fetches, but a revoked or rotated key stays trusted until the cache expires; a shorter TTL tightens that window at the cost of more fetches. A token with an unknown `kid` triggers at most one refresh per minute. If the JWKS endpoint is unreachable with a cold cache, the verifier throws `NetworkError`; a warm cache keeps serving. `cloudflareAccess` accepts the same `jwksCacheTtlMs`.
+
+`jwks` also accepts a pre-loaded `{ keys: [...] }` document. That form never fetches anything, so there is no cache and no network failure mode, but rotating a key means redeploying with the new document. It is available on `bearerJwt` only; `cloudflareAccess` always reads Cloudflare's certs URL.
+
 Required runtime env for the AWS S3 snippet:
 
 | Env var | Purpose |
