@@ -179,7 +179,7 @@ const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean => {
   return true;
 };
 
-/** Encode bytes as URL-safe base64 (atob/btoa exist in Node 24+ and Workerd). */
+/** Encode bytes as URL-safe base64 (atob/btoa exist in Node 26+ and Workerd). */
 const bytesToBase64 = (bytes: Uint8Array): string => {
   let bin = "";
   for (let i = 0; i < bytes.length; i += 1) {

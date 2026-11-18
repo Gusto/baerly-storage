@@ -13,3 +13,13 @@ allowBuilds:
   esbuild: true
   workerd: true
   sharp: false
+
+# Supply-chain guardrails, strict by default — loosen one deliberately:
+#   - minimumReleaseAge: don't resolve a version until it has been on
+#     the registry a day, closing the publish-then-yank window.
+#   - trustPolicy: fail if a package's publishing trust (provenance,
+#     trusted publisher) drops below what earlier versions had.
+#   - blockExoticSubdeps: only direct deps may come from git or tarballs.
+minimumReleaseAge: 1440
+trustPolicy: no-downgrade
+blockExoticSubdeps: true

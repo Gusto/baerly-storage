@@ -74,7 +74,7 @@ This scaffold runs anywhere `node server.js` runs. The `package.json` exposes `b
 Concrete shapes:
 
 - **Managed PaaS** (Railway, Render, DO App Platform, Fly Machines without a Dockerfile, Heroku): push the repo to a connected GitHub repo, set env vars from `.env.example` in the dashboard, deploy. The platform's buildpack detects Node and runs the root scripts.
-- **VM / bare-metal**: clone, install Node 24+, copy `.env.example` to `.env` as a template, then export those values or configure them in your process manager (Node does not load `.env` automatically). Run `pnpm install && pnpm build && pnpm start` under systemd, pm2, or your process manager of choice.
+- **VM / bare-metal**: clone, install Node 26+, copy `.env.example` to `.env` as a template, then export those values or configure them in your process manager (Node does not load `.env` automatically). Run `pnpm install && pnpm build && pnpm start` under systemd, pm2, or your process manager of choice.
 - **Container** (Docker, k8s, ECS, Fly Machines with a Dockerfile): scaffold with `pnpm create @gusto/baerly-storage@latest my-app --target=node --with=docker` to add a production Dockerfile, `.dockerignore`, and `healthcheck.js` alongside this shape, then `docker build .`.
 
 Verify: `curl https://<your-service>/v1/healthz`.

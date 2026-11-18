@@ -1,0 +1,45 @@
+name: Set up Node and pnpm
+description: >-
+  Install Node, then pnpm from the range in package.json's `devEngines.packageManager`, and restore the pnpm store cache.
+
+# Shared by every workflow job so the toolchain is provisioned one way.
+# Actions are pinned to a full commit SHA (not a moving tag) so a
+# compromised or force-pushed tag can't silently change what runs in CI
+# (cf. the tj-actions/changed-files compromise); the trailing comment
+# records the human-readable version — bump both together. Only
+# first-party actions/* are used, covered by the org's
+# `github_owned_allowed` policy.
+
+inputs:
+  node-version:
+    description: Node major (or full version) to install.
+    default: "26"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    # Node 25+ no longer bundles Corepack, and Corepack rejects the version
+    # range in `devEngines.packageManager` anyway, so bootstrap pnpm from the
+    # registry at that range. pnpm then switches itself to the exact version
+    # pnpm-lock.yaml records (`onFail: "download"`). npm runs from outside
+    # the checkout: it applies `devEngines.packageManager` to itself, and a
+    # declared pnpm makes it refuse to run (`EBADDEVENGINES`).
+    - name: Install pnpm
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: npm install --global "pnpm@$(node -p 'require(process.argv[1]).devEngines.packageManager.version' "$GITHUB_WORKSPACE/package.json")"
+
+    - name: Locate pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-node${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-node${{ inputs.node-version }}-

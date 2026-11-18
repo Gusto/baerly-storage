@@ -6,7 +6,7 @@
 export default {
   testRunner: "vitest",
   // Point the vitest runner at the dedicated scoped config (protocol-only,
-  // Node forks, --js-base-64). Never the root two-project vitest.config.ts.
+  // Node forks). Never the root two-project vitest.config.ts.
   vitest: {
     configFile: "stryker.vitest.config.ts",
   },
@@ -40,13 +40,6 @@ export default {
   // (which resolves relative to core's own isolated node_modules). Adding an
   // explicit entry forces discovery through the project-root symlink instead.
   plugins: ["@stryker-mutator/*", "@stryker-mutator/vitest-runner"],
-  // The vitest-runner hardcodes `pool: "threads"` (worker_threads, not
-  // child-process forks). worker_threads reject --js-base-64 as an invalid
-  // execArgv flag. Passing it here injects it into the Stryker child-process
-  // host that owns each vitest instance; threads workers inherit it from the
-  // parent process, so Uint8Array.{toBase64,fromBase64} (bytes.ts, hashing)
-  // work correctly and those mutants are not falsely killed.
-  testRunnerNodeArgs: ["--js-base-64"],
   // perTest only re-runs the tests that cover each mutant — the main speed
   // lever. Requires the runner to report per-test coverage (vitest does).
   coverageAnalysis: "perTest",

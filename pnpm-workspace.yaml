@@ -1,5 +1,6 @@
-# Under pnpm 11 (pinned via `packageManager`) every resolution setting —
-# `overrides`, `packageExtensions`, `allowBuilds`, `linkWorkspacePackages` —
+# Since pnpm 11 (declared via `devEngines.packageManager` in
+# package.json), every resolution setting — `overrides`,
+# `packageExtensions`, `allowBuilds`, `linkWorkspacePackages` —
 # belongs in this file, not in a `"pnpm"` field in `package.json`. That
 # field is silently inert there: no error, no effect. The tell is `pnpm
 # install` printing `Lockfile is up to date, resolution step is skipped`
@@ -9,6 +10,22 @@ packages:
   - .
   - packages/*
   - examples/*
+
+# Strict by default: these guardrails fail the install rather than warn.
+# Loosen one deliberately, with a comment, rather than by default.
+#   - minimumReleaseAge: don't resolve a version until it has been on the
+#     registry a day (pnpm 12's default, stated so it can't drift), which
+#     closes the publish-then-yank window most npm compromises live in.
+#   - trustPolicy: fail if a package's publishing trust (provenance,
+#     trusted publisher) drops below what earlier versions had.
+#   - blockExoticSubdeps: only direct deps may come from git or tarball URLs.
+#   - engineStrict: fail on a dependency whose `engines` excludes our Node.
+#   - strictPeerDependencies: fail on missing or incompatible peers.
+minimumReleaseAge: 1440
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+engineStrict: true
+strictPeerDependencies: true
 
 # pnpm 11 renamed the postinstall allowlist to `allowBuilds`. Each
 # entry is `<pkg>: true|false`: `true` runs the install script,
@@ -35,14 +52,35 @@ allowBuilds:
 # install path in `README.md` relies on.
 linkWorkspacePackages: true
 
-# Force-resolve a transitive dev-tooling dep off a version flagged by
-# Dependabot. The alert is dev-scope and unreachable in our toolchain,
-# but no released parent depends on the patched version yet, so we pin
-# it here rather than carry a permanently-open alert:
+# `@baerly/adapter-node` and `@baerly/dev` depend on each other
+# (`dev`'s Vite plugin mounts the Node adapter; the Node adapter serves
+# `dev`'s landing page). Neither is built on its own. pnpm 12
+# refuses to topologically sort a recursive run across a cycle even
+# when, as here, neither member has the script being run. Allowing the
+# cycle only frees ordering *inside* it; edges outside it (e.g.
+# create-baerly-storage -> cli for `build`) stay ordered.
+ignoreWorkspaceCycles: true
+
+# Force-resolve transitive dev-tooling deps off versions flagged by
+# Dependabot. The alerts are dev-scope and unreachable in our toolchain,
+# but no released parent depends on the patched versions yet, so we pin
+# them here rather than carry permanently-open alerts:
 #   - qs >= 6.15.2: GHSA-q8mj-m7cp-5q26 (stringify DoS), pulled via
 #     typed-rest-client -> @stryker-mutator (manual mutation testing).
+#   - minimatch >= 11.0.1: GHSA-g3hv-75wg-m249 (globparts DoS), pulled
+#     on 9.x via remark-cli -> unified-engine -> glob and on 10.x via
+#     @stryker-mutator/core's `~10.2.4`.
+#   - glob >= 14.0.2: GHSA-3g3m-2fjr-6pw4 (AbortSignal bypass), pulled
+#     on 10.x via remark-cli -> unified-engine (`^10.0.0`).
+#   - undici-types 6.x >= 6.23.0: not an advisory but a trust floor.
+#     @types/node@22 (pulled by remark-cli -> unified-engine) wants
+#     `~6.21.0`, which predates provenance; `trustPolicy: no-downgrade`
+#     rejects it because 6.23.0+ ship with provenance. Types only.
 overrides:
   qs: ">=6.15.2"
+  undici-types@>=6.0.0 <6.23.0: "^6.29.1"
+  minimatch@>=7.0.0 <11.0.1: "^11.0.1"
+  glob@>=9.0.0 <14.0.2: "^14.0.2"
 
 # Stryker's sandbox rewrites `tsconfig.json` with the classic compiler
 # API (`ts.parseConfigFileTextToJson`) but never declares `typescript`,

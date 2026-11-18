@@ -240,10 +240,6 @@ export default defineConfig({
           // overhead per file, and the wall-clock cost of forking is
           // amortized across the suite's reload time.
           pool: "forks",
-          // Uint8Array.{toBase64,fromBase64} are TC39 Stage 4 but still gated
-          // behind --js-base-64 in current V8 (Node 24 / V8 13.6). Drop this
-          // once Node ships the methods unflagged.
-          execArgv: ["--js-base-64"],
           // Quiet the observability logger for the default suite. Many
           // integration tests boot a full HTTP app; its canonical
           // per-request line logs at `info` through the console-json
@@ -266,9 +262,7 @@ export default defineConfig({
       },
       {
         // `cloudflareTest()` (a Vite plugin) registers itself as the
-        // project's `poolRunner`, so `pool:` and `execArgv:` are not
-        // set here — Workerd ignores Node V8 flags like `--js-base-64`
-        // anyway.
+        // project's `poolRunner`, so `pool:` is not set here.
         plugins: [
           cloudflareTest({
             // `main` points at the worker module wired into miniflare

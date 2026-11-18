@@ -38,44 +38,12 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      # Actions are pinned to a full commit SHA (not a moving tag) so a
-      # compromised or force-pushed tag can't silently change what runs in
-      # CI (cf. the tj-actions/changed-files compromise); the trailing
-      # comment records the human-readable version — bump both together.
-      # Only first-party actions/* are used here (covered by the org's
-      # `github_owned_allowed` policy); pnpm is provisioned via Corepack
-      # below rather than a third-party setup action, so nothing in this
-      # workflow needs an org Actions allow-list entry.
+      # Actions are pinned to a full commit SHA; see
+      # .github/actions/setup/action.yml for the policy.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Provision pnpm with Corepack (bundled with Node) from the version
-      # pinned in package.json's `packageManager` field (pnpm@11.1.2) — the
-      # canonical, zero-third-party-action way to manage the package manager.
-      # Must run BEFORE setup-node: the `pnpm` shim has to exist on PATH when
-      # setup-node's `cache: pnpm` step shells `pnpm store path` to resolve
-      # the store dir to cache. (This enable targets the runner's
-      # pre-installed Node; it is re-run after setup-node below so the shim
-      # also resolves against the Node 24 that setup-node installs.)
-      # NOTE: Node 25 stops bundling Corepack — a future Node bump will need
-      # `npm i -g corepack` before this step.
-      - run: corepack enable
-
-      # Node 24 is required, not optional: the default vitest project sets
-      # `execArgv: ["--js-base-64"]` — a V8 flag that enables
-      # Uint8Array.{toBase64,fromBase64}, which are TC39 Stage 4 but still
-      # behind a flag in V8 13.6 / Node 24. The engines field in package.json
-      # is `>=24`. cache: pnpm uses the pnpm store for node_modules caching.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-
-      # Re-enable Corepack against the Node 24 that setup-node just installed
-      # (it prepends its own toolcache bin to PATH over the pre-installed
-      # Node the first enable targeted). Cheap, idempotent insurance that the
-      # `pnpm` shim the install/test steps below invoke resolves against the
-      # pinned Node — not the runner's default.
-      - run: corepack enable
+      # Node 26 (current LTS) + pnpm from `devEngines.packageManager`.
+      - uses: ./.github/actions/setup
 
       # `pnpm install` triggers the `prepare` hook (scripts/prepare.mjs),
       # which builds dist/. The Test and Verify-package steps below set
@@ -117,9 +85,9 @@ jobs:
       # Cloudflare adapter tests under @cloudflare/vitest-plugin
       # (miniflare / workerd). No credentials, no external network. The workerd
       # binary ships inside the `@cloudflare/workerd-<platform>` npm package — a
-      # normal pnpm dependency — so it's already in the pnpm store and restored
-      # by setup-node's `cache: pnpm` above (its restore-keys even cover the
-      # lockfile-changed case). No separate workerd cache buys anything.
+      # normal pnpm dependency — so it's already in the pnpm store the setup
+      # action restores (its restore-keys even cover the lockfile-changed
+      # case). No separate workerd cache buys anything.
       - name: Test (Cloudflare adapter)
         run: pnpm test:adapter-cloudflare
 

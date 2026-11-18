@@ -11,9 +11,8 @@ related: ["../../CLAUDE.md"]
 
 ## Prerequisites
 
-- [pnpm](https://pnpm.io) ≥ 11 (the repo declares `packageManager: pnpm@11.1.2`).
+- Node ≥ 26.13.1 and [pnpm](https://pnpm.io) 12, both declared in `package.json#devEngines`. pnpm fails any install or script on an older Node, and a pnpm outside the declared range switches itself to the version `pnpm-lock.yaml` records. Install pnpm with `npm install --global pnpm@12` from outside the repo: npm refuses to run inside it, because `devEngines` names pnpm. Corepack isn't bundled with Node 26.
 - [Docker](https://docker.com) + Docker Compose (for local MinIO).
-- Node 22+ (`@types/node@^22.9.0` and `tsgo` target).
 
 ## Initial setup
 
