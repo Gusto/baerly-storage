@@ -353,7 +353,7 @@ describe("baerlyNode", () => {
     expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
   });
 
-  test("close() called mid-bind tears down without installing signal handlers", async () => {
+  test("close() during a pending bind closes the listener once the bind lands", async () => {
     const port = await reservePort();
     const handle = baerlyNode({
       config: testConfig,
@@ -363,13 +363,55 @@ describe("baerlyNode", () => {
     const sigtermBefore = process.listenerCount("SIGTERM");
     const sigintBefore = process.listenerCount("SIGINT");
 
-    const listenPromise = handle.listen(port, { hostname: LOOPBACK });
-    await handle.close();
-    await listenPromise;
+    // A hostname makes `server.listen()` bind asynchronously, so `close()`
+    // here runs before the server is listening.
+    const listenSpy = vi.spyOn(Server.prototype, "listen");
+    let httpServer: Server | undefined;
+    try {
+      const listenPromise = handle.listen(port, { hostname: LOOPBACK });
+      httpServer = listenSpy.mock.contexts[0] as Server;
+      expect(httpServer.listening).toBe(false);
+      await Promise.all([handle.close(), handle.close(), listenPromise]);
 
-    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
-    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
-    activeHandle = undefined;
+      expect(httpServer.listening).toBe(false);
+      expect(httpServer.address()).toBeNull();
+      await expect(hostlessHealthzStatusLine(port)).rejects.toMatchObject({
+        code: "ECONNREFUSED",
+      });
+      expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
+      expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
+    } finally {
+      if (httpServer?.listening) {
+        await new Promise<void>((resolve) => httpServer!.close(() => resolve()));
+      }
+      listenSpy.mockRestore();
+    }
+  });
+
+  test("close() settles when a pending hostname bind fails", async () => {
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, LOOPBACK, resolve));
+    const { port } = blocker.address() as AddressInfo;
+    const handle = baerlyNode({
+      config: testConfig,
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
+    });
+    activeHandle = handle;
+    const sigtermBefore = process.listenerCount("SIGTERM");
+    const sigintBefore = process.listenerCount("SIGINT");
+    try {
+      const listening = handle.listen(port, { hostname: LOOPBACK });
+      await Promise.all([
+        expect(listening).rejects.toMatchObject({ code: "EADDRINUSE" }),
+        handle.close(),
+        handle.close(),
+      ]);
+      expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
+      expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
   });
 });
 
