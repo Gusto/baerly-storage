@@ -22,7 +22,7 @@ import {
 } from "@baerly/protocol";
 import { Writer } from "@baerly/server/_internal/testing";
 import { createObservabilityContext, runWithContext } from "@baerly/server/observability";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { wrapCountingStorage } from "../../../tests/fixtures/counting-storage.ts";
 import { logStateCurrentJson } from "../../../tests/fixtures/log-state.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
@@ -38,8 +38,6 @@ const R2_SAME_KEY_RATE_LIMIT =
 // The workerd message seen when an invocation exhausts its subrequests.
 const SUBREQUEST_LIMIT =
   "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
-
-afterEach(() => vi.restoreAllMocks());
 
 interface FakePage {
   readonly keys: readonly string[];

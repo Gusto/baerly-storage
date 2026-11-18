@@ -62,9 +62,6 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 const WARNING_FIELD = "capacity_warning";
 const WARNING_HEADER = "Baerly-Capacity-Warning";

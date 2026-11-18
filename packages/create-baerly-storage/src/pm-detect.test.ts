@@ -1,21 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { detectPm, installCommand, runCommand } from "./pm-detect.ts";
 
 describe("detectPm", () => {
   // detectPm reads `process.env.npm_config_user_agent` when its arg
-  // defaults. Stash + clear around each case so the "undefined →
-  // npm" branch is exercised regardless of which PM ran the suite.
-  let saved: string | undefined;
+  // defaults. Clear it for each case so the "undefined → npm" branch is
+  // exercised regardless of which PM ran the suite.
   beforeEach(() => {
-    saved = process.env["npm_config_user_agent"];
-    delete process.env["npm_config_user_agent"];
-  });
-  afterEach(() => {
-    if (saved === undefined) {
-      delete process.env["npm_config_user_agent"];
-    } else {
-      process.env["npm_config_user_agent"] = saved;
-    }
+    vi.stubEnv("npm_config_user_agent", undefined);
   });
 
   test("defaults to npm when the user-agent is undefined", () => {

@@ -616,7 +616,6 @@ describe("subscription-pool", () => {
       expect(callTimes).toEqual([0, 125, 375, 375, 500]);
       unsubscribe();
     } finally {
-      vi.restoreAllMocks();
       vi.useRealTimers();
     }
   });
@@ -659,7 +658,6 @@ describe("subscription-pool", () => {
       expect(new Set(gaps.slice(7)).size).toBe(1);
       unsubscribe();
     } finally {
-      vi.restoreAllMocks();
       vi.useRealTimers();
     }
   });
@@ -864,7 +862,6 @@ describe("subscription-pool", () => {
       expect(callTimes).toEqual([0, 0, 125, 125, 375, 375, 875, 875]);
       unsubscribe();
     } finally {
-      vi.restoreAllMocks();
       vi.useRealTimers();
     }
   });
@@ -922,7 +919,6 @@ describe("subscription-pool", () => {
       expect(callTimes).toEqual([0, 0, 125, 125, 250]);
     } finally {
       unsubscribe?.();
-      vi.restoreAllMocks();
       vi.useRealTimers();
     }
   });
@@ -979,7 +975,6 @@ describe("subscription-pool", () => {
       expect(pool.getSnapshot("pending")).toMatchObject({ status: "ok", data: [{ _id: "kept" }] });
       unsubscribe();
     } finally {
-      vi.restoreAllMocks();
       vi.useRealTimers();
     }
   });

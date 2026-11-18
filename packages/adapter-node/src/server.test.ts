@@ -136,13 +136,9 @@ describe("nodeMaintenanceDispatch", () => {
 
   test("threads BAERLY_MAINTENANCE_MAX_FOLD_BYTES → maxFoldBytes via process.env (vi.stubEnv)", () => {
     vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", "1048576");
-    try {
-      // Default reader is `process.env`, which vi.stubEnv patches.
-      const m = nodeMaintenanceDispatch();
-      expect(m.maxFoldBytes).toBe(1048576);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    // Default reader is `process.env`, which vi.stubEnv patches.
+    const m = nodeMaintenanceDispatch();
+    expect(m.maxFoldBytes).toBe(1048576);
   });
 
   test("rejects a non-numeric BAERLY_MAINTENANCE_MAX_FOLD_BYTES with InvalidConfig", () => {
@@ -155,12 +151,8 @@ describe("nodeMaintenanceDispatch", () => {
 
   test("threads BAERLY_MAINTENANCE_DISABLE → disabled via process.env (vi.stubEnv)", () => {
     vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "1");
-    try {
-      const m = nodeMaintenanceDispatch();
-      expect(m.disabled).toBe(true);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    const m = nodeMaintenanceDispatch();
+    expect(m.disabled).toBe(true);
   });
 
   test("treats falsy BAERLY_MAINTENANCE_DISABLE values as not-disabled", () => {
@@ -449,41 +441,37 @@ describe("createFetchHandler", () => {
     });
 
     vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "yes");
-    try {
-      const health = await app.fetch(new Request("http://x/v1/healthz"));
-      expect(health.status).toBe(200);
-      await expect(health.json()).resolves.toEqual({ ok: true });
+    const health = await app.fetch(new Request("http://x/v1/healthz"));
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toEqual({ ok: true });
 
-      const spec = await app.fetch(new Request("http://x/v1/spec"));
-      expect(spec.status).toBe(200);
+    const spec = await app.fetch(new Request("http://x/v1/spec"));
+    expect(spec.status).toBe(200);
 
-      const invalid = await app.fetch(new Request("http://x/v1/c/c"));
-      expect(invalid.status).toBe(400);
-      expect(invalid.headers.get("content-type")).toContain("application/json");
-      await expect(invalid.json()).resolves.toMatchObject({
-        error: { code: "InvalidConfig", message: "invalid server configuration" },
-      });
+    const invalid = await app.fetch(new Request("http://x/v1/c/c"));
+    expect(invalid.status).toBe(400);
+    expect(invalid.headers.get("content-type")).toContain("application/json");
+    await expect(invalid.json()).resolves.toMatchObject({
+      error: { code: "InvalidConfig", message: "invalid server configuration" },
+    });
 
-      const line = records.find(
-        (record) =>
-          record.message.join("") === "canonical" &&
-          record.category.join(".") === "baerly.http" &&
-          record.properties["status"] === 400,
-      );
-      expect(line?.properties).toMatchObject({
-        status: 400,
-        outcome: "error",
-        method: "GET",
-        path: "/v1/c/c",
-        error: { code: "InvalidConfig" },
-      });
+    const line = records.find(
+      (record) =>
+        record.message.join("") === "canonical" &&
+        record.category.join(".") === "baerly.http" &&
+        record.properties["status"] === 400,
+    );
+    expect(line?.properties).toMatchObject({
+      status: 400,
+      outcome: "error",
+      method: "GET",
+      path: "/v1/c/c",
+      error: { code: "InvalidConfig" },
+    });
 
-      vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "false");
-      const recovered = await app.fetch(new Request("http://x/v1/c/c"));
-      expect(recovered.status).toBe(200);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    vi.stubEnv("BAERLY_MAINTENANCE_DISABLE", "false");
+    const recovered = await app.fetch(new Request("http://x/v1/c/c"));
+    expect(recovered.status).toBe(200);
   });
 
   test("returns 401 envelope when the verifier returns null on a /v1/t path", async () => {
@@ -637,20 +625,15 @@ describe("createFetchHandler", () => {
     const maxFoldBytes = 512;
     vi.stubEnv("BAERLY_MAINTENANCE_MAX_FOLD_BYTES", String(maxFoldBytes));
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const handler = createFetchHandler({
-        app: "t",
-        storage,
-        verifier: okVerifier,
-        observability: { level: "info", sink },
-      });
-      // A delete is not growth, so it commits and its write tick runs.
-      const res = await handler(new Request("http://x/v1/c/c/d0", { method: "DELETE" }));
-      expect(res.status).toBe(204);
-    } finally {
-      vi.restoreAllMocks();
-      vi.unstubAllEnvs();
-    }
+    const handler = createFetchHandler({
+      app: "t",
+      storage,
+      verifier: okVerifier,
+      observability: { level: "info", sink },
+    });
+    // A delete is not growth, so it commits and its write tick runs.
+    const res = await handler(new Request("http://x/v1/c/c/d0", { method: "DELETE" }));
+    expect(res.status).toBe(204);
 
     const deferLogs = records.filter((r) => r.category.join(".") === "baerly.maintenance");
     expect(deferLogs).toHaveLength(1);

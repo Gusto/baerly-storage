@@ -21,7 +21,7 @@
  *   HTTP, the same insert is admitted through in-band maintenance alone.
  */
 
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { type ClientCollection, createBaerlyClient } from "@baerly/client";
 import {
   type BaerlyAppConfig,
@@ -111,13 +111,6 @@ const clientOn = (handler: Handler) => {
 const VARIANTS = makeVariants("baerly-recovery-http-");
 
 describe("main-10 exit: refusal and recovery over HTTP (Node adapter, declared C)", () => {
-  beforeEach(() => {
-    vi.unstubAllEnvs();
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   for (const variant of VARIANTS) {
     describe(variant.label, () => {
       let cleanups: Array<() => Promise<void>> = [];

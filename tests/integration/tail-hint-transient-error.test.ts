@@ -21,7 +21,7 @@ import {
   readCurrentJson,
   type Storage,
 } from "@baerly/protocol";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { compact, type InternalCompactOptions } from "../../packages/server/src/compactor.ts";
 import {
   runBoundedMaintenance,
@@ -99,10 +99,6 @@ const FAULT_SEQS = [HINT, HINT + MAINTENANCE_TAIL_HINT_REFRESH_WRITES, TAIL - 1,
 
 const firstLogGet = (gets: readonly string[]): string | undefined =>
   gets.find((key) => key.startsWith(`${PREFIX}/log/`));
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 describe("tail_hint: a transient tail-probe error is not a tail", () => {
   for (const path of PATHS) {

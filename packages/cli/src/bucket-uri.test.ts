@@ -1,31 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { DEFAULT_GCS_ENDPOINT } from "@baerly/adapter-node";
 import { parseBucketUri } from "./bucket-uri.ts";
 
-// Save/restore only the GCS HMAC env vars this suite mutates, so it can't
-// leak into (or be perturbed by) the ambient environment.
-const GCS_ENV_KEYS = ["BAERLY_GCS_HMAC_ACCESS_KEY_ID", "BAERLY_GCS_HMAC_SECRET"] as const;
-
 describe("parseBucketUri — gcs://", () => {
-  let saved: Record<string, string | undefined>;
-
   beforeEach(() => {
-    saved = {};
-    for (const k of GCS_ENV_KEYS) {
-      saved[k] = process.env[k];
-    }
-    process.env["BAERLY_GCS_HMAC_ACCESS_KEY_ID"] = "GOOG1ETESTKEY";
-    process.env["BAERLY_GCS_HMAC_SECRET"] = "test-secret";
-  });
-
-  afterEach(() => {
-    for (const k of GCS_ENV_KEYS) {
-      if (saved[k] === undefined) {
-        delete process.env[k];
-      } else {
-        process.env[k] = saved[k];
-      }
-    }
+    vi.stubEnv("BAERLY_GCS_HMAC_ACCESS_KEY_ID", "GOOG1ETESTKEY");
+    vi.stubEnv("BAERLY_GCS_HMAC_SECRET", "test-secret");
   });
 
   test("resolves a bare bucket to the native GCS endpoint + HMAC creds from env", async () => {
@@ -52,7 +32,7 @@ describe("parseBucketUri — gcs://", () => {
   });
 
   test("rejects a missing HMAC env var with InvalidConfig", async () => {
-    delete process.env["BAERLY_GCS_HMAC_ACCESS_KEY_ID"];
+    vi.stubEnv("BAERLY_GCS_HMAC_ACCESS_KEY_ID", undefined);
     await expect(parseBucketUri("gcs://my-bucket")).rejects.toMatchObject({
       code: "InvalidConfig",
     });

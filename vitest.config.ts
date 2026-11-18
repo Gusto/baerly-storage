@@ -1,5 +1,5 @@
-// Vitest 4 `projects:` split. The default project runs the in-tree and
-// Node-only suites under `pool: "forks"` (same as before). The
+// Vitest `projects:` split. The default project runs the in-tree and
+// Node-only suites under the default `forks` pool. The
 // `cloudflare-pool` project runs `r2BindingStorage` conformance under
 // `@cloudflare/vitest-plugin` so the test executes against a
 // real Workerd R2 binding. Both projects share
@@ -9,10 +9,9 @@
 // `CONFORMANCE=1`, `EXPORT_SMOKE=1`, and `MINIO=1` stay scoped to the
 // default project — the matching test files live under
 // `tests/integration/` or use `describe.runIf` inside the file, not in
-// any adapter package. `ADAPTER_CLOUDFLARE=1` is recommended (but not
-// enforced) for selecting the `cloudflare-pool` project; the standard
-// invocation is `vitest run --project=cloudflare-pool` via the
-// `test:adapter-cloudflare` script.
+// any adapter package. The `cloudflare-pool` project is selected with
+// `vitest run --project=cloudflare-pool` (the `test:adapter-cloudflare`
+// script).
 //
 // `@cloudflare/vitest-plugin` has no `pool` + `poolOptions.workers`
 // shape. The API is `plugins: [cloudflareTest({ miniflare: {…} })]`
@@ -91,7 +90,7 @@ const exportSmokeExclude = process.env["EXPORT_SMOKE"] === "1" ? [] : ["**/expor
 const dayOneExclude =
   process.env["DAY_ONE_TARGETS"] !== undefined ? [] : ["**/day-one-handshake.test.ts"];
 
-// Vitest 4.1.10 parses repeatable CLI `--exclude` flags, but inline projects
+// Vitest parses repeatable CLI `--exclude` flags, but inline projects
 // do not inherit them when `--project=default` is selected. Keep the flags on
 // `test:randomize` as the command contract and mirror them into this project's
 // actual exclusion list. The script-only marker avoids excluding the dedicated
@@ -175,6 +174,22 @@ const cfS3E2eGlob = "tests/integration/s3-worker-e2e.test.ts";
 
 export default defineConfig({
   test: {
+    // Inline projects inherit these root options; `setupFiles` arrays are
+    // concatenated (the `cloudflare-pool` project adds its R2 binding setup).
+    //
+    // Shared fast-check wiring so `FC_NUM_RUNS` applies in either runtime.
+    setupFiles: ["tests/setup/fast-check.ts"],
+    testTimeout: vitestTestTimeoutMs,
+    hookTimeout: vitestTestTimeoutMs,
+    // Default truncates assertion diffs at ~40 chars — useless for
+    // fast-check shrinking failures on document trees. Full diffs only
+    // print on failure, so log size is bounded.
+    chaiConfig: { truncateThreshold: 0 },
+    // A leaked spy, stubbed env var or stubbed global can't cross tests.
+    // Safe because no test runs concurrently.
+    restoreMocks: true,
+    unstubEnvs: true,
+    unstubGlobals: true,
     projects: [
       {
         test: {
@@ -225,21 +240,10 @@ export default defineConfig({
             // real test suites and would fail to even import.
             "tests/fixtures/check-acceptance/**/*.test.ts",
           ],
-          setupFiles: ["tests/setup/fast-check.ts"],
           // Gate manifest: fails the run when a gated suite this run
           // expected (opt-in env or `BAERLY_REQUIRED_GATES`) skipped.
           // See `tests/setup/gate-manifest.ts`.
           globalSetup: ["tests/setup/gate-ledger.ts"],
-          testTimeout: vitestTestTimeoutMs,
-          hookTimeout: vitestTestTimeoutMs,
-          // Process isolation. Vitest 4's default `pool: 'threads'` with
-          // `isolate: true` rebuilds the module graph for every test file
-          // inside a worker thread; the per-file setup overhead starves
-          // `randomized.test.ts`'s tight 5ms polling loop when the suite
-          // grows. Forks have process-level isolation with no rebuild
-          // overhead per file, and the wall-clock cost of forking is
-          // amortized across the suite's reload time.
-          pool: "forks",
           // Quiet the observability logger for the default suite. Many
           // integration tests boot a full HTTP app; its canonical
           // per-request line logs at `info` through the console-json
@@ -254,10 +258,6 @@ export default defineConfig({
           // miniflare `bindings` below — the console-json sink DOES reach
           // miniflare stdout, so it needs identical quieting.
           env: { LOG_LEVEL: "warn" },
-          // Default truncates assertion diffs at ~40 chars — useless for
-          // fast-check shrinking failures on document trees. Full diffs only
-          // print on failure, so log size is bounded.
-          chaiConfig: { truncateThreshold: 0 },
         },
       },
       {
@@ -316,12 +316,9 @@ export default defineConfig({
           // `globalThis.__BAERLY_R2_BINDING__` for the conformance
           // factory to consume.
           //
-          // `tests/setup/fast-check.ts` is also loaded so
+          // `tests/setup/fast-check.ts` (root `setupFiles`) is loaded too, so
           // `FC_NUM_RUNS` keeps working inside the Workers pool.
-          setupFiles: ["tests/setup/fast-check.ts", "tests/setup/r2-binding.ts"],
-          testTimeout: vitestTestTimeoutMs,
-          hookTimeout: vitestTestTimeoutMs,
-          chaiConfig: { truncateThreshold: 0 },
+          setupFiles: ["tests/setup/r2-binding.ts"],
         },
       },
     ],
@@ -331,12 +328,9 @@ export default defineConfig({
     // `--reporter=dot` for long suites (`test:randomize`, `test:fuzz-maintenance`)
     // when progress signal matters more than compactness.
     //
-    // `reporters` is a top-level option in vitest 4's config — `ProjectConfig`
-    // doesn't accept it, so the setting applies across both projects from here.
-    // Use a conditional spread: omitting the field entirely (vs. `undefined`)
-    // is required — vitest 4.1's `resolveConfig` reads `.length` on the value
-    // and crashes when the literal `undefined` is present.
-    ...(process.env["CLAUDECODE"] ? { reporters: ["minimal"] satisfies string[] } : {}),
+    // `reporters` is a top-level option — `ProjectConfig` doesn't accept it,
+    // so the setting applies across both projects from here.
+    reporters: process.env["CLAUDECODE"] ? ["minimal"] : undefined,
     coverage: {
       provider: "v8",
       include: ["src/**", "packages/*/src/**"],

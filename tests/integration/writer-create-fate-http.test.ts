@@ -9,9 +9,7 @@ import {
 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
-import { afterEach, expect, test, vi } from "vitest";
-
-afterEach(() => vi.restoreAllMocks());
+import { expect, test, vi } from "vitest";
 
 test.each(["exhausted-resends", "unreadable-occupant"] as const)(
   "HTTP and SDK preserve create fate after %s without duplicating an auto-ID insert",

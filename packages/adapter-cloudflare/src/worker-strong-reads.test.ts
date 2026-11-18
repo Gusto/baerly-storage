@@ -1,6 +1,6 @@
 import { type BaerlyAppConfig, type Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { mockExecutionContext } from "../../../tests/fixtures/mock-execution-context.ts";
 import { r2BindingStorage } from "./r2-binding-storage.ts";
 import { baerlyWorker, type BaerlyEnv } from "./worker.ts";
@@ -67,8 +67,6 @@ const expectRow = async (response: Response, value: string) => {
     _meta: { fresh: true, manifest_pointer: expect.any(String) },
   });
 };
-
-afterEach(() => vi.restoreAllMocks());
 
 describe("Worker storage-backed point reads", () => {
   test("GET → PUT replacement → GET sees the replacement before and after waitUntil drains", async () => {

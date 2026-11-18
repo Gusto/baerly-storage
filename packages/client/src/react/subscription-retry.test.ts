@@ -1,5 +1,5 @@
 import { BaerlyError } from "@baerly/protocol";
-import { afterEach, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { MAINTENANCE_PENDING_CLIENT_MAX_WAIT_MILLIS } from "../request-retry.ts";
 import {
   pollRetryDelay,
@@ -10,10 +10,6 @@ import {
 
 const boundFor = (attempt: number): number =>
   Math.min(SUBSCRIPTION_RETRY_MAX_MILLIS, SUBSCRIPTION_RETRY_INITIAL_MILLIS * 2 ** attempt);
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 test("the delay floor doubles per attempt and then saturates", () => {
   // `Math.random() === 0` returns the bottom of each jitter band, which
