@@ -59,7 +59,9 @@ class R2BindingStorageImpl implements Storage {
   async get(key: string, opts?: StorageGetOptions): Promise<StorageGetResult | null> {
     assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
-    const obj = await this.#callBinding(() => this.#bucket.get(key), `GET ${key}`);
+    const obj = await this.#callBinding(() => this.#bucket.get(key), `GET ${key}`, {
+      signal: opts?.signal,
+    });
     if (obj === null) {
       return null;
     }
@@ -90,6 +92,7 @@ class R2BindingStorageImpl implements Storage {
         // An `etagMatches` CAS is never resent: a resend after a lost ack
         // would see its own write as a precondition failure.
         compareAndSwap: opts?.ifMatch !== undefined,
+        signal: opts?.signal,
       },
     );
     if (result === null) {
@@ -112,7 +115,9 @@ class R2BindingStorageImpl implements Storage {
     assertValidStorageKey(key);
     opts?.signal?.throwIfAborted();
     // R2.delete is idempotent — matches the `Storage.delete` contract.
-    await this.#callBinding(() => this.#bucket.delete(key), `DELETE ${key}`);
+    await this.#callBinding(() => this.#bucket.delete(key), `DELETE ${key}`, {
+      signal: opts?.signal,
+    });
   }
 
   async *list(
@@ -144,7 +149,9 @@ class R2BindingStorageImpl implements Storage {
       if (cap !== Infinity) {
         listOpts.limit = Math.min(cap - yielded, 1000);
       }
-      const page = await this.#callBinding(() => this.#bucket.list(listOpts), `LIST ${prefix}`);
+      const page = await this.#callBinding(() => this.#bucket.list(listOpts), `LIST ${prefix}`, {
+        signal: opts?.signal,
+      });
       for (const obj of page.objects) {
         if (yielded >= cap) {
           return;
@@ -173,7 +180,8 @@ class R2BindingStorageImpl implements Storage {
    * the binding ever adds typed errors, tighten the sniff and keep the
    * message fallback for older runtimes.
    *
-   * `AccessDenied` and `InvalidConfig` are permanent and not retried. An
+   * `AccessDenied` and `InvalidConfig` are permanent and not retried, and
+   * no attempt follows the caller's abort, whatever its reason. An
    * `ifMatch` put (`compareAndSwap`) gets one attempt and no retry at all.
    * Two `NetworkError`s have distinct retry behavior:
    *
@@ -200,8 +208,13 @@ class R2BindingStorageImpl implements Storage {
   #callBinding<T>(
     fn: () => Promise<T>,
     op: string,
-    mode: { conditionalCreate?: boolean; compareAndSwap?: boolean } = {},
+    mode: {
+      conditionalCreate?: boolean;
+      compareAndSwap?: boolean;
+      signal?: AbortSignal | undefined;
+    } = {},
   ): Promise<T> {
+    const { signal, ...retryMode } = mode;
     return retryStorageCall(
       async () => {
         try {
@@ -232,7 +245,9 @@ class R2BindingStorageImpl implements Storage {
       },
       // Binding calls are subrequests to an internal service: charged to
       // the request ledger's `internal` pool only.
-      { ...mode, pool: "internal" },
+      // The binding takes no signal, so a call in flight runs to its end;
+      // once the caller has aborted, no further attempt is made.
+      { ...retryMode, pool: "internal", ...(signal !== undefined && { signal }) },
     );
   }
 }

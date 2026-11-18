@@ -126,6 +126,91 @@ describe("retryStorageCall attempt cap", () => {
     expect(waits).toEqual([]);
   });
 
+  test.each([
+    ["a custom reason", new Error("stop")],
+    ["a deadline", new DOMException("deadline", "TimeoutError")],
+  ] as const)("an abort with %s ends the loop and surfaces the reason", async (_label, reason) => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fn = async (): Promise<never> => {
+      calls += 1;
+      controller.abort(reason);
+      throw controller.signal.reason;
+    };
+    const { sleep, waits } = recordingSleep();
+    await expect(
+      retryStorageCall(fn, { sleep, signal: controller.signal, conditionalCreate: true }),
+    ).rejects.toBe(reason);
+    expect(calls).toBe(1);
+    expect(waits).toEqual([]);
+  });
+
+  test("an abort during a backoff ends the loop before the next attempt", async () => {
+    const controller = new AbortController();
+    const reason = new Error("stop");
+    const { fn, calls } = sequence([transient()]);
+    const sleep = async (): Promise<void> => {
+      controller.abort(reason);
+    };
+    await expect(retryStorageCall(fn, { sleep, signal: controller.signal })).rejects.toBe(reason);
+    expect(calls()).toBe(1);
+  });
+
+  test.each(["AccessDenied", "InvalidConfig"] as const)(
+    "a %s abort during backoff preserves a create's uncertain outcome",
+    async (code) => {
+      const controller = new AbortController();
+      const reason = new BaerlyError(code, "sibling request failed");
+      const { fn, calls } = sequence([transient()]);
+      const outcome = retryStorageCall(fn, {
+        conditionalCreate: true,
+        signal: controller.signal,
+        sleep: async () => controller.abort(reason),
+      });
+      await expect(outcome).rejects.toMatchObject({ code: "NetworkError", cause: reason });
+      await expect(outcome).rejects.not.toMatchObject({ cause: { notApplied: true } });
+      expect(calls()).toBe(1);
+    },
+  );
+
+  test("a create's transient failure after an abort keeps its unknown outcome", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fn = async (): Promise<never> => {
+      calls += 1;
+      controller.abort();
+      throw transient();
+    };
+    const { sleep, waits } = recordingSleep();
+    const outcome = retryStorageCall(fn, {
+      sleep,
+      signal: controller.signal,
+      conditionalCreate: true,
+    });
+    await expect(outcome).rejects.toMatchObject({ code: "NetworkError" });
+    await expect(outcome).rejects.not.toMatchObject({ cause: { notApplied: true } });
+    expect(calls).toBe(1);
+    expect(waits).toEqual([]);
+  });
+
+  test("a create's permanent failure after an abort still reports an earlier uncertain attempt", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fn = async (): Promise<never> => {
+      calls += 1;
+      if (calls === 1) {
+        throw transient();
+      }
+      controller.abort();
+      throw new BaerlyError("AccessDenied", "403");
+    };
+    const { sleep } = recordingSleep();
+    await expect(
+      retryStorageCall(fn, { sleep, signal: controller.signal, conditionalCreate: true }),
+    ).rejects.toMatchObject({ code: "NetworkError", cause: { code: "AccessDenied" } });
+    expect(calls).toBe(2);
+  });
+
   test.each([1.5, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     "retries: %s is rejected as InvalidConfig before any attempt",
     async (retries) => {

@@ -128,8 +128,8 @@ export class S3HttpStorage implements Storage {
     try {
       return { res: await this.#fetch(signed), signed };
     } catch (error) {
-      // A cancelled call surfaces as the caller's abort, not a retryable
-      // NetworkError, so the retry loop ends on it.
+      // A cancelled call surfaces as the caller's abort reason, whatever
+      // it is, not a retryable NetworkError; the retry loop ends on it.
       if (error instanceof BaerlyError || signed.signal.aborted) {
         throw error;
       }
@@ -157,6 +157,8 @@ export class S3HttpStorage implements Storage {
     }
     // Release the socket held by the unread original body (the code was read from a clone).
     await first.res.body?.cancel();
+    // A resend after the caller aborted would only re-sign and fail.
+    first.signed.signal.throwIfAborted();
     call.refreshed = true;
     this.#invalidate(first.signed);
     currentRequestLedger()?.acquire("external", currentRequestHold());
@@ -164,17 +166,22 @@ export class S3HttpStorage implements Storage {
     return second.res;
   }
 
-  #retry<T>(fn: (call: CallState) => Promise<T>, put?: StoragePutOptions): Promise<T> {
+  #retry<T>(
+    fn: (call: CallState) => Promise<T>,
+    opts?: Pick<StoragePutOptions, "ifMatch" | "ifNoneMatch" | "signal">,
+  ): Promise<T> {
     const call: CallState = { refreshed: false };
     return retryStorageCall(() => fn(call), {
       ...(this.#retries !== undefined && { retries: this.#retries }),
       ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
-      conditionalCreate: put?.ifNoneMatch === "*",
+      conditionalCreate: opts?.ifNoneMatch === "*",
       // An If-Match PUT is never resent: a resend after a lost ack would
       // see its own write as a 412.
-      compareAndSwap: put?.ifMatch !== undefined && put.ifNoneMatch !== "*",
+      compareAndSwap: opts?.ifMatch !== undefined && opts.ifNoneMatch !== "*",
       // Every request leaves through `fetch`: the ledger's external pool.
       pool: "external",
+      // Any caller abort ends the call; the loop never resends past it.
+      ...(opts?.signal !== undefined && { signal: opts.signal }),
     });
   }
 
@@ -202,7 +209,7 @@ export class S3HttpStorage implements Storage {
           throw await mapS3StorageError(res, "GET", key);
         }
       }
-    });
+    }, opts);
   }
 
   async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
@@ -288,7 +295,7 @@ export class S3HttpStorage implements Storage {
       if (res.status !== 200 && res.status !== 204 && res.status !== 404) {
         throw await mapS3StorageError(res, "DELETE", key);
       }
-    });
+    }, opts);
   }
 
   async *list(
@@ -333,7 +340,7 @@ export class S3HttpStorage implements Storage {
             throw await mapS3StorageError(res, "LIST", prefix);
           }
           return res.text();
-        }),
+        }, opts),
       );
 
       for (const entry of parsed.Contents ?? []) {

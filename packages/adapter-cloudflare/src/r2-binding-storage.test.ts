@@ -111,3 +111,25 @@ describe("r2BindingStorage.list maxKeys", () => {
     expect(calls[1]?.cursor).toBe("tok1");
   });
 });
+
+describe("r2BindingStorage abort", () => {
+  test.each([
+    ["a default abort", (): unknown => undefined],
+    ["a custom reason", (): unknown => new Error("stop")],
+    ["a deadline", (): unknown => new DOMException("deadline", "TimeoutError")],
+  ] as const)("a get aborted with %s is not retried", async (_label, makeReason) => {
+    const controller = new AbortController();
+    let calls = 0;
+    const bucket = {
+      get: () => {
+        calls += 1;
+        controller.abort(makeReason());
+        return Promise.reject(new Error("internal error"));
+      },
+    } as unknown as R2Bucket;
+    const outcome = r2BindingStorage(bucket).get("k", { signal: controller.signal });
+    // The binding call was already in flight, so its own failure surfaces.
+    await expect(outcome).rejects.toMatchObject({ code: "NetworkError" });
+    expect(calls).toBe(1);
+  });
+});

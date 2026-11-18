@@ -71,6 +71,17 @@ export interface StorageRetryOptions {
    * that leaves through `fetch`.
    */
   readonly pool?: RequestPool;
+  /**
+   * The caller's `AbortSignal`. Once it has aborted, whatever the reason,
+   * no further attempt is signed, backed off or sent: an attempt that
+   * fails after the abort ends the loop, and a backoff the abort lands in
+   * ends with `signal.reason`, subject to conditional-create uncertainty
+   * handling. A failure that is not a {@link BaerlyError}
+   * (the adapter's rethrown abort reason) surfaces as is; a `BaerlyError`
+   * goes through the final-attempt path, so a conditional create keeps
+   * its unknown outcome.
+   */
+  readonly signal?: AbortSignal;
   /** Jitter source in `[0, 1)`. Test seam; defaults to `Math.random`. */
   readonly random?: () => number;
   /** Backoff sleep. Test seam; defaults to `delay`. */
@@ -90,11 +101,12 @@ const isRefused = (e: unknown): boolean =>
   e instanceof BaerlyError && (e.cause as { refused?: boolean } | undefined)?.refused === true;
 
 /**
- * `true` for an `AbortError`: the caller cancelled the call through its
- * `AbortSignal`. A resend would fail the same way, so the loop ends and
- * the error surfaces as is, as the other adapters raise it. Matched on
- * `name` like the writer's predicate: workerd and undici reject with
- * different `DOMException` classes.
+ * `true` for an `AbortError`: a cancellation raised by a call that did
+ * not pass its signal in {@link StorageRetryOptions.signal}. A resend
+ * would fail the same way, so the loop ends and the error surfaces as is,
+ * as the other adapters raise it. Matched on `name` like the writer's
+ * predicate: workerd and undici reject with different `DOMException`
+ * classes. A passed signal covers every abort reason, not only this name.
  */
 const isAbortError = (e: unknown): boolean =>
   typeof e === "object" && e !== null && "name" in e && e.name === "AbortError";
@@ -139,7 +151,8 @@ export const storageRetryDelayMillis = (
  * one counter for throttles and transient failures alike, full-jitter
  * backoff between attempts (see {@link storageRetryDelayMillis}). A
  * {@link PERMANENT_STORAGE_ERROR_CODES} failure, an error whose cause
- * carries `refused: true`, or an `AbortError` ends the loop at once.
+ * carries `refused: true`, an `AbortError`, or a failure after
+ * `opts.signal` aborted ends the loop at once.
  *
  * Every adapter wraps each request — one object call, or one `list`
  * page — in exactly one `retryStorageCall`, so a failing call costs at
@@ -172,10 +185,13 @@ export const retryStorageCall = async <T>(
   let uncertain = false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      // A backoff abort must preserve an earlier create's unknown outcome.
+      opts.signal?.throwIfAborted();
       ledger?.acquire(pool, currentRequestHold());
       return await fn();
     } catch (error) {
-      if (isAbortError(error)) {
+      const aborted = opts.signal?.aborted === true;
+      if (isAbortError(error) || (aborted && !(error instanceof BaerlyError))) {
         throw error;
       }
       if (error instanceof BaerlyError && PERMANENT_STORAGE_ERROR_CODES.has(error.code)) {
@@ -198,7 +214,7 @@ export const retryStorageCall = async <T>(
       // The attempt cap and a refusal end here, through the one final-attempt
       // path. Only a create whose every attempt was provably unapplied
       // reports `notApplied`; a throttle may retain an unknown outcome.
-      if (attempt >= retries || refused) {
+      if (attempt >= retries || refused || aborted) {
         if (opts.conditionalCreate === true && error instanceof BaerlyError) {
           if (!uncertain) {
             throw new BaerlyError(error.code, error.message, {
