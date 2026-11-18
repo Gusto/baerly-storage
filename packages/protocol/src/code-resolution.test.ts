@@ -12,6 +12,7 @@ describe("CODE_RESOLUTIONS", () => {
       "AlreadyExists",
       "AmbiguousCommit",
       "PayloadTooLarge",
+      "UnsupportedMediaType",
       "Unauthorized",
       "AccessDenied",
       "NotFound",

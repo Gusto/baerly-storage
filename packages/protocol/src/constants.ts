@@ -15,6 +15,15 @@ export const DOCUMENT_ERROR_PATH_EDGE_SEGMENTS = 4;
 export const DOCUMENT_ERROR_PATH_KEY_CHARS = 64;
 
 /**
+ * Characters of a refused request `Content-Type` an `UnsupportedMediaType`
+ * error echoes before eliding the rest. The header is caller-controlled
+ * and its message is public, so this keeps one long header from making
+ * the error body and the log line unbounded. 100 holds any registered
+ * media type with a short parameter.
+ */
+export const UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS = 100;
+
+/**
  * Max encoded size of one committed document (UTF-8 bytes of
  * `encodeJsonBytes(post-image)`, the bytes `LogEntry.after` is stored
  * as): 1 MiB.

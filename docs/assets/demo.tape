@@ -33,7 +33,7 @@ Set PlaybackSpeed 1.0
 Type "# 1. write a row — a normal request to your app handler, no database server"
 Enter
 Sleep 600ms
-Type `curl -s "$BASE_URL/v1/c/tickets" -H "Authorization: Bearer $TOKEN" -d '{"doc":{"title":"Onboard Alex","status":"open"}}'`
+Type `curl -s "$BASE_URL/v1/c/tickets" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"doc":{"title":"Onboard Alex","status":"open"}}'`
 Enter
 Sleep 2s
 # → 201 { "_id": "..." }

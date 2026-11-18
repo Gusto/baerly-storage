@@ -155,6 +155,15 @@ export type BaerlyErrorCode =
    */
   | "PayloadTooLarge"
   /**
+   * A body-bearing HTTP route (`POST`, `PATCH`, `PUT`) got a request
+   * whose `Content-Type` is missing or is not `application/json` or a
+   * `+json` type. HTTP server maps to 415 and refuses before reading
+   * the body. Parameters such as `charset` are allowed. The JSON-only
+   * rule is the CSRF defense for ambient auth: a `text/plain` or
+   * form-encoded POST is a CORS-simple request another origin can send.
+   */
+  | "UnsupportedMediaType"
+  /**
    * A predicate is structurally well-formed but contradicts itself —
    * no document can match. Emitted by `validateWire` and
    * `mergePredicateWires`. Triggers:
@@ -228,6 +237,7 @@ export const ERROR_CODES = [
   "Unauthorized",
   "NotFound",
   "PayloadTooLarge",
+  "UnsupportedMediaType",
   "UnsatisfiablePredicate",
   "CursorExpired",
   "UseQueryAwaitedRecorder",

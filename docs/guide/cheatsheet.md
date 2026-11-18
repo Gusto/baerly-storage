@@ -80,6 +80,7 @@ One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), n
 | `AccessDenied` | 403 | S3 403 or bucket policy denied |
 | `NotFound` | 404 | Row by id not found |
 | `PayloadTooLarge` | 413 | Body > 1 MiB |
+| `UnsupportedMediaType` | 415 | `POST` / `PATCH` / `PUT` body not sent as `application/json` |
 | `UnsatisfiablePredicate` | 400 | Well-formed predicate that contradicts itself |
 | `CursorExpired` | 410 | `/v1/since` cursor can no longer resume; restart with `cursor=` |
 | `NetworkError` | 502 | Transport (S3 5xx, retries exhausted) |
@@ -98,6 +99,8 @@ One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), n
 | `GET    /v1/count?collection=<name>&where=<json>` | — | `{ data: { count }, _meta }` |
 | `GET    /v1/since?collection=<name>&cursor=<opaque>` | — | `{ events, next_cursor }` |
 | `GET    /v1/healthz` | — | `200 {"ok":true}` (anonymous, pre-auth) |
+
+`POST`, `PATCH` and `PUT` require `Content-Type: application/json` (a `+json` type or a `charset` parameter is fine); anything else, or no type, is `415 UnsupportedMediaType`, refused before the body is read.
 
 `POST` also takes an optional `"mintedId"`: an SDK that minted `doc._id` (a UUIDv7) sends it there too. An identical retransmission returns `201 {_id}` when the current live row matches; a different current body yields `AlreadyExists`. Deletion permits reinsertion. Calling `insert(doc)` again is a new operation and mints a new auto-ID.
 

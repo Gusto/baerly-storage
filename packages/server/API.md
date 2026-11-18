@@ -302,6 +302,7 @@ try {
 | `Unauthorized`           | 401  | Verifier returned no identity                    |
 | `NotFound`               | 404  | Row by id not found                              |
 | `PayloadTooLarge`        | 413  | Body > 1 MiB cap                                 |
+| `UnsupportedMediaType`   | 415  | Write body not sent as `application/json`        |
 | `UnsatisfiablePredicate` | 400  | Predicate contradicts itself (empty `in`, …)     |
 
 Only `NetworkError`, `WriteConflict` and `MaintenancePending` are `retriable`. Recovery: [RECIPES.md](RECIPES.md#ambiguouscommit-recovery).
@@ -486,7 +487,7 @@ await mutate((c) => c.collection("notes").insert({ body }));
 
 ## HTTP wire format
 
-The JS SDK is the canonical path. Reach for `curl` only when debugging. Mutation bodies are wrapped:
+The JS SDK is the canonical path. Reach for `curl` only when debugging. Mutation bodies are wrapped and need `Content-Type: application/json` (else `415 UnsupportedMediaType`):
 
 | Route                          | Body              | Response         |
 | ------------------------------ | ----------------- | ---------------- |

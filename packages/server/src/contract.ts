@@ -154,6 +154,7 @@ export interface SinceResponse {
  * | 409    | The request needs more work than this host does in one request → `code:"CapacityExceeded"` (not retriable, message kept; a read returns no rows, a write commits nothing). |
  * | 410    | `/v1/since` cursor can no longer resume → `code:"CursorExpired"` (not retriable, message kept; restart with `cursor: ""`). |
  * | 413    | Request body exceeded `MAX_BODY_BYTES` → `code:"PayloadTooLarge"`. |
+ * | 415    | `POST` / `PATCH` / `PUT` body not typed `application/json` (or `+json`) → `code:"UnsupportedMediaType"`, refused before the body is read. |
  * | 503    | Maintenance is behind → `code:"MaintenancePending"` (retriable, message kept, `Retry-After` header and `retryAfter` seconds). |
  * | 502    | Storage/network upstream failed → `code:"NetworkError"` / `code:"InvalidResponse"` with a generic message. |
  * | 500    | Anything else → `code:"Internal"` with a generic message.         |
@@ -176,6 +177,7 @@ export type HttpStatus =
   | 409
   | 410
   | 413
+  | 415
   | 500
   | 502
   | 503;

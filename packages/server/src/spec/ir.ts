@@ -85,6 +85,8 @@ const ERROR_SUMMARY: Record<BaerlyErrorCode, string> = {
   Unauthorized: "Verifier returned no identity.",
   NotFound: "Addressed resource does not exist.",
   PayloadTooLarge: "Request body exceeded MAX_BODY_BYTES.",
+  UnsupportedMediaType:
+    "A POST, PATCH or PUT body was not sent as application/json (or a +json type).",
   UnsatisfiablePredicate: "Predicate is well-formed but contradicts itself.",
   UseQueryAwaitedRecorder: "A useQuery callback awaited a recorder terminal.",
   UnexpectedWriteInQuery: "A write verb was called inside a useQuery callback.",

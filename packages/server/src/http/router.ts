@@ -30,6 +30,7 @@ import {
   isUuidV7,
   type MergePatch,
   type OrderSpec,
+  UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS,
   type PredicateWire,
   validateWire,
   WHERE_ORDER_JSON_RESOLUTION,
@@ -469,6 +470,7 @@ export const ERROR_TO_STATUS: ReadonlyMap<BaerlyErrorCode, HttpStatus> = new Map
   ["MaintenancePending", 503],
   ["CursorExpired", 410],
   ["PayloadTooLarge", 413],
+  ["UnsupportedMediaType", 415],
   ["SchemaError", 400],
   ["InvalidConfig", 400],
   ["UnsatisfiablePredicate", 400],
@@ -546,6 +548,9 @@ const ERROR_CODE_POLICY = {
     messagePolicy: "public",
   },
   PayloadTooLarge: {
+    messagePolicy: "public",
+  },
+  UnsupportedMediaType: {
     messagePolicy: "public",
   },
   SchemaError: {
@@ -687,6 +692,12 @@ function mapToResponse(c: Context, err: unknown): Response {
  * Read and parse the JSON request body. Returns the parsed value
  * (an `unknown` — caller narrows). Throws `BaerlyError`:
  *
+ *   - `"UnsupportedMediaType"` (→ 415), before any read, unless the
+ *     `Content-Type` is `application/json` or a `+json` type
+ *     (parameters such as `charset` allowed). Requiring it keeps every
+ *     write route off the CORS-simple request list, so another origin
+ *     cannot forge a write under ambient auth (`auth: "none"`, cookie
+ *     sessions).
  *   - `"PayloadTooLarge"` (→ 413) when the body exceeds `maxBytes`:
  *     up front from `Content-Length`, else as soon as the running size
  *     of a chunked body passes the cap. The read stops there and the
@@ -700,6 +711,18 @@ function mapToResponse(c: Context, err: unknown): Response {
  * Hono's `app.onError` sink routes the throw through `mapToResponse`.
  */
 async function readJsonBody(c: Context, maxBytes: number): Promise<unknown> {
+  const [typeAndSubtype = ""] = (c.req.header("content-type") ?? "").split(";");
+  const mediaType = typeAndSubtype.trim().toLowerCase();
+  if (mediaType !== "application/json" && !/^[a-z0-9.+-]+\/[a-z0-9.+-]+\+json$/.test(mediaType)) {
+    let got = mediaType === "" ? "no Content-Type" : mediaType;
+    if (got.length > UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS) {
+      got = `${got.slice(0, UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS)}…`;
+    }
+    throw new BaerlyError(
+      "UnsupportedMediaType",
+      `${c.req.method} bodies must be sent as application/json; got ${got}`,
+    );
+  }
   const tooLarge = (): BaerlyError =>
     new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
   const lenHeader = c.req.header("content-length");
