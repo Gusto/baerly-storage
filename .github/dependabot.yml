@@ -1,21 +1,22 @@
 # Dependabot version updates.
 #
-# Scope: the GitHub Actions used by our workflows. Those `uses:` refs are
-# pinned to full commit SHAs (see .github/workflows/ci.yml) for supply-chain
-# safety, which means they can't drift on their own — Dependabot is how they
-# stay current. It understands the `owner/repo@<sha> # vX.Y.Z` format and
-# opens a PR that bumps BOTH the SHA and the trailing version comment, with
-# the upstream release notes attached for review.
+# Every ecosystem we pin is covered, so nothing drifts behind silently:
+# GitHub Actions (pinned to full commit SHAs, which can't move on their
+# own), npm (the pnpm workspace: runtime deps, tooling and the examples),
+# the docker-compose dev stack (digest-pinned), and the scaffolder's
+# Dockerfile template. Security updates come from the org-level Dependabot
+# alert config and are not subject to the cooldowns below.
 #
-# npm dependency *security* updates are handled by the org-level Dependabot
-# alert config and don't need an entry here. We deliberately do NOT enable
-# npm *version* updates: the runtime footprint is curated by hand (see the
-# anti-patterns section of CLAUDE.md), so automated npm bump PRs would be noise.
+# Version bumps never add a dependency, so they don't conflict with the
+# hand-curated runtime footprint (CLAUDE.md anti-patterns); review each
+# runtime bump against bundle-sizes.json like any other change.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    # "/" scans .github/workflows for github-actions; it is not a filesystem path.
-    directory: "/"
+    # "/" scans .github/workflows; the composite setup action lives outside it.
+    directories:
+      - "/"
+      - "/.github/actions/setup"
     schedule:
       interval: "weekly"
     # Let a freshly-published action ref "bake" before we propose it. The
@@ -54,7 +55,63 @@ updates:
       prefix: "ci"
       include: "scope"
     labels:
-      # npm version updates are disabled (see header), so every Dependabot PR
-      # here is a GitHub Actions bump — `dependencies` alone identifies them.
-      # A separate `github-actions` label added no filter value, so it's gone.
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Same reasoning as the Actions cooldown; pnpm's own `minimumReleaseAge`
+    # (pnpm-workspace.yaml) is the floor under this.
+    cooldown:
+      default-days: 7
+    groups:
+      npm-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      npm:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      docker-compose:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/packages/create-baerly-storage/templates/addons/docker"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
       - "dependencies"
