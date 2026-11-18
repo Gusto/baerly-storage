@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from "node:module";
 
 const failAt = process.env.PUBLISH_STUB_FAIL;
 
-childProcess.execSync = (command, options = {}) => {
+childProcess.execSync = (command) => {
   process.stderr.write(`STUB_COMMAND:${command}\n`);
 
   const failed =
@@ -19,11 +19,6 @@ childProcess.execSync = (command, options = {}) => {
     const error = new Error(`stubbed failure: ${command}`);
     error.stderr = Buffer.from(`stubbed failure: ${command}`);
     throw error;
-  }
-
-  if (command.startsWith("npm access get status ")) {
-    const output = `${command.match(/status (\S+)/)?.[1]}: public`;
-    return options.encoding ? output : Buffer.from(output);
   }
 
   if (command.startsWith("pnpm ")) {

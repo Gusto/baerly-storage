@@ -27,6 +27,7 @@ import { outro } from "@clack/prompts";
 import pc from "picocolors";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { version } from "../package.json" with { type: "json" };
 import { runWizard } from "./prompts.ts";
 import { type Addon, KNOWN_ADDONS, scaffold } from "./scaffold.ts";
 import { boltOnExistingWrangler } from "./bolt-on.ts";
@@ -424,7 +425,7 @@ const handleCreateBaerly = async (
 export const main = defineCommand({
   meta: {
     name: "create-baerly-storage",
-    version: "0.0.0",
+    version,
     description: "Scaffold a new baerly app (Cloudflare Worker or self-hosted Node).",
   },
   args: CREATE_BAERLY_ARGS,

@@ -2,7 +2,7 @@
 title: Publishing
 audience: maintainer
 summary: "How to publish @gusto/baerly-storage + @gusto/create-baerly-storage publicly to npmjs.com."
-last-reviewed: 2026-07-15
+last-reviewed: 2026-11-17
 tags: [publishing, release, npm]
 related: ["development.md", "../../CLAUDE.md"]
 ---
@@ -13,7 +13,9 @@ Two packages publish from this repo, both scoped to `@gusto/` and both published
 
 ## Cutting a release
 
-Versioning and the changelog are driven by [Changesets](https://github.com/changesets/changesets). Publishing goes through `pnpm release`, which gates on artifact freshness, builds, validates packaging, and passes `--access public` explicitly.
+Versioning and the changelog are driven by [Changesets](https://github.com/changesets/changesets). Publishing happens only in CI: pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes both packages with npm [trusted publishing](https://docs.npmjs.com/trusted-publishers/). No npm token exists for these packages, and every release from 0.7.0 on carries a provenance attestation.
+
+Provenance makes the move one-way. Our scaffolds set pnpm's `trustPolicy: no-downgrade`, so once a version carries provenance, an install refuses a later version that doesn't. A token-published release after 0.7.0 would break every scaffolded app's install; that refusal is the guarantee.
 
 Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be fresh at publish time. `pnpm changeset:version` regenerates both automatically; `pnpm release` refuses to publish a stale one.
 
@@ -48,7 +50,7 @@ Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be fresh at
 
    Wait for `ci` to pass, then **squash- or rebase-merge** it. A merge commit is rejected by the linear-history rule.
 
-4. **Tag the merged commit.** Tags are unrestricted (no tag ruleset), so the tag pushes directly once the release commit is on `main`:
+4. **Tag the merged commit.** A tag ruleset on `refs/tags/v*` restricts creating, moving and deleting release tags to the owner and admins:
 
    ```sh
    git switch main && git pull --ff-only
@@ -56,16 +58,15 @@ Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be fresh at
    git tag "v$V" && git push origin "v$V"
    ```
 
-5. **Publish** from the tagged `main`:
+5. **Approve the deployment.** The tag push starts the `release` workflow's `publish` job, which waits on the `npm-publish` environment's required reviewer. Approve it in the Actions tab. The job then:
+   - checks that the tag equals `v<version>` for both packages and that the tagged commit is on `origin/main`;
+   - installs with the pnpm store cache disabled, so a cache entry written by another run can't reach a tarball;
+   - runs `pnpm release` (see [The `pnpm release` script](#the-pnpm-release-script)), which exchanges the job's OIDC token for a short-lived publish credential;
+   - checks that both published versions carry `dist.attestations`.
 
-   ```sh
-   pnpm release
-   ```
+6. **Run the [post-publish smoke](#post-publish-smoke).**
 
-   `pnpm release` first checks that generated artifacts are fresh (`verify:artifacts`, aborting closed on any drift), then runs `pnpm build` (which copies the updated `CHANGELOG.md` into `dist/CHANGELOG.md`), validates both packages with `check:exports`
-   - `check:publint` (a finding aborts before publishing), then publishes both with `--access public`.
-
-> **Prefer `pnpm release` over `changeset publish`.** `pnpm release` (`scripts/publish.mjs`) builds before packing, so `dist/` is fresh and `dist/CHANGELOG.md` is current before the tarball is cut.
+> **Never `changeset publish`, and never publish from a laptop.** `pnpm release` builds before packing, so `dist/` and `dist/CHANGELOG.md` are current when the tarball is cut. A local publish has no OIDC token, so it would either fail or ship without provenance.
 
 | Package                        | Path                              | Bin                     |
 | ------------------------------ | --------------------------------- | ----------------------- |
@@ -78,14 +79,14 @@ The published subpaths (`./cloudflare`, `./auth`, `./http`, `./node`, `./config`
 
 ## One-time setup
 
-No `~/.npmrc` scope routing is needed — the default registry (`https://registry.npmjs.org/`) is the target. You just need to be logged in to npm as a member of the `@gusto` org with publish rights:
+These are repository and npm-org settings, not files in the repo. Each one is a control the release depends on:
 
-```sh
-npm login            # standard npmjs.com login
-npm whoami           # confirm you're authenticated
-```
+1. **npm trusted publisher**, set by Gusto's npm org admins on **each** package (Settings → Trusted Publisher → GitHub Actions): organization `Gusto`, repository `baerly-storage`, workflow `release.yml`, environment `npm-publish`. A new config expires if no publish uses it within 2 days, and a config can't be edited, only replaced. Renaming the workflow file or the environment breaks publishing until the config is replaced.
+2. **`npm-publish` GitHub environment**: the owner as required reviewer, a deployment tag rule of `v*`, and no secrets. This gate holds even if bad code reaches `main`.
+3. **Tag ruleset** on `refs/tags/v*`: creation, update and deletion restricted to the owner and admins.
+4. **After the first trusted publish succeeds:** on both packages, Settings → Publishing access → "Require two-factor authentication and disallow tokens". Revoke any automation token that could publish these packages.
 
-Membership in the `@gusto` org (and the publish role) is granted by Gusto's npm org admins. Don't add an `@gusto:registry=` line — that would point installs at a registry that doesn't exist and is the root cause of agents inventing a "Gusto private registry."
+No `~/.npmrc` scope routing is needed — the default registry (`https://registry.npmjs.org/`) is the target. Don't add an `@gusto:registry=` line — that would point installs at a registry that doesn't exist and is the root cause of agents inventing a "Gusto private registry."
 
 ## Pre-publish gate
 
@@ -135,22 +136,22 @@ pnpm check:publint   # publint — both published manifests are well-formed
 
 Both build first, then pack with `pnpm pack` (so `publishConfig.exports` applies). Neither is wired into `verify`/CI — the build + packs belong at release time, not on every PR.
 
-## Publish via `pnpm release`
+## The `pnpm release` script
 
-`pnpm release` (`scripts/publish.mjs`) is the sanctioned path. It:
+`pnpm release` (`scripts/publish.mjs`) is what the `release` workflow runs. It:
 
 1. **checks generated artifacts are fresh** — `verify:artifacts` (`check-spec-drift` + `check-version-matrix`). A stale checked-in `baerly.spec.json` or `version-matrix.json` aborts the release closed, before the build even runs. This runs on `--dry-run` too.
 2. builds,
 3. **validates both published packages** as a pre-publish gate — `check:exports` (attw: every entry point resolves for consumers) and `check:publint` (publint: both manifests are well-formed). A finding aborts the release closed, before any bytes reach npm; nothing is published. This runs on `--dry-run` too. The gate reuses the build from step 2 (`BAERLY_SKIP_BUILD=1`), so it doesn't rebuild `dist/`.
 4. publishes both packages with an **explicit** `--access public` (pnpm has historically dropped `publishConfig.access` on the wire, so the flag is passed by hand to be safe).
 
+Its only flag is `--dry-run`. Flags parse strictly, so a typo such as `--dryrun` aborts instead of publishing.
+
 ```sh
-pnpm release --dry-run     # build + validate + pack + report visibility, no writes
-pnpm release               # the real thing
-pnpm release --otp=123456  # forward a 2FA one-time code if prompted
+pnpm release --dry-run     # gates + pack both packages, no writes
 ```
 
-Review the dry-run file list — anything outside `dist/` is a packaging bug. A green `pnpm release` ends with `✓ Both packages published.`
+Run the dry run locally, or from the Actions tab (`release` → Run workflow), which runs it on a clean runner without publish permissions. Review the file list — anything outside `dist/` is a packaging bug.
 
 ## Post-publish smoke
 
@@ -165,10 +166,11 @@ ls node_modules/@gusto/baerly-storage/dist/
 
 Expected: `dist/index.js`, `dist/API.md`, `dist/baerly.js` present.
 
-Presence isn't enough — assert the published tarball's content matches the published version too. This catches drift that any local gate missed, e.g. a manual `pnpm publish` bypassing `publish.mjs` entirely. Run from the repo root, so `package.json` reflects the version you just published:
+Presence isn't enough — assert the published tarball's content matches the published version too. This catches drift that any local gate missed, e.g. a manual `pnpm publish` bypassing `publish.mjs` entirely. Read the version in the repo, then run `npm` from outside it, because npm refuses every command inside a checkout whose `devEngines.packageManager` names pnpm (`EBADDEVENGINES`):
 
 ```sh
 V=$(node -p "require('./package.json').version")
+cd "$(mktemp -d)"
 npm pack "@gusto/baerly-storage@$V"            # downloads the published tarball
 tar -xzOf "gusto-baerly-storage-$V.tgz" package/dist/baerly.spec.json \
   | node -e 'const s=JSON.parse(require("fs").readFileSync(0));const v=process.argv[1];if(s.serverVersion!==v){console.error(`FAIL: published spec serverVersion ${s.serverVersion} != ${v}`);process.exit(1)}console.log("ok:",s.serverVersion)' "$V"
@@ -177,6 +179,15 @@ rm -f "gusto-baerly-storage-$V.tgz"
 
 Expected: `ok: <version>`. A hand-corrupted or stale tarball makes it exit 1.
 
+Provenance check (the workflow's last step runs the first command too):
+
+```sh
+pnpm view "@gusto/baerly-storage@$V" dist.attestations
+pnpm view "@gusto/create-baerly-storage@$V" dist.attestations
+```
+
+Both must print an attestation object. In the scaffold smoke below, `npm audit signatures` must pass after install.
+
 Scaffold smoke:
 
 ```sh
@@ -184,6 +195,7 @@ cd /tmp
 pnpm create @gusto/baerly-storage@latest baerly-smoke-app --target=cloudflare
 cd baerly-smoke-app
 pnpm install
+npm audit signatures
 pnpm baerly doctor --target=cloudflare
 ```
 
@@ -217,5 +229,35 @@ The notices file ships via the root package's `files: ["dist"]` — no extra pac
 ## Notes on the publish config
 
 - `publishConfig.access` is set to `"public"` on both published packages, and `pnpm release` also passes `--access public` explicitly. If you add a third published `@gusto/*` package, set `"access": "public"` in its `publishConfig`.
-- `publishConfig.provenance` is intentionally NOT set. npm provenance (Sigstore attestations) is only available when publishing from a supported CI/OIDC environment (e.g. GitHub Actions) — it cannot be generated by a manual `pnpm release` from a laptop, where it would fail the publish. Enable it if/when release moves into CI.
+- `publishConfig.provenance` is intentionally NOT set. Left unset, trusted publishing decides, and pnpm attaches provenance on its own for a public package published from a public repository.
 - The 7 workspace `@baerly/*` packages have `"private": true` as a defensive lock. Never remove these flags — those packages are bundled into the published `@gusto/baerly-storage`, never shipped separately. (This is a workspace-packaging detail, unrelated to the project being open source.)
+
+## Incident runbook
+
+Open a private [GitHub Security Advisory](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/creating-a-repository-security-advisory) for the repo first in every case: it is the coordination space and, once published, the notice users and Dependabot see. Involve Gusto Security.
+
+### A release of ours is compromised
+
+A version was published that we didn't build from `main`, or one that ships malicious or badly broken code.
+
+1. Deprecate the version on both packages so installs warn: `npm deprecate "@gusto/baerly-storage@<v>" "<reason>; upgrade to <fixed>"`, and the same for `@gusto/create-baerly-storage`. Run `npm` from outside the checkout. Unpublishing is limited by npm's policy and breaks lockfiles, so deprecate instead.
+2. Fix on `main`, then cut a fixed release through the normal tag flow. The fixed release carries provenance, so `trustPolicy: no-downgrade` keeps accepting it.
+3. Publish the advisory naming the affected range and the fixed version.
+4. If the bad version didn't come from `release.yml`, someone published outside trusted publishing; treat it as credential exposure too.
+
+### A dependency we bundle is compromised
+
+`@gusto/baerly-storage` inlines its runtime deps into `dist/` (see [Third-party license notices](#third-party-license-notices)), and `@gusto/create-baerly-storage` bundles its CLI deps. A compromised version of one of them is in our tarball if our lockfile resolved it when we built.
+
+1. Check: `pnpm why <dep>` on the release tag, and `dist/THIRD-PARTY-LICENSES.txt` in the published tarball, which lists each bundled `name@version`.
+2. Pin the lockfile to a clean version (an `overrides` entry if no clean version satisfies the range), rebuild, and cut a patch release.
+3. Deprecate the affected versions and publish the advisory, as above.
+
+### Publish credentials may be exposed
+
+A token, an npm account with publish rights, or the `npm-publish` environment may be in the wrong hands.
+
+1. Revoke the token or reset the account's credentials. In npm, check each package's maintainers and trusted-publisher config, and remove anything unexpected.
+2. Confirm both packages still have "disallow tokens" set, so only `release.yml` can publish.
+3. Check that the tag ruleset and the `npm-publish` environment's reviewer rule are unchanged, and audit recent tags and `release` runs.
+4. Compare every version published since the suspected exposure with a tagged `release` run that published it. Treat any version without one as a compromised release (above).

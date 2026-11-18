@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -27,6 +28,21 @@ describe("dist generated artifacts are fresh vs the package version", () => {
       readFileSync(resolve(ROOT, "packages/server/spec/baerly.spec.json"), "utf8"),
     );
   });
+});
+
+describe("published bins report the package version", () => {
+  for (const [bin, manifest] of [
+    ["dist/baerly.js", "package.json"],
+    ["packages/create-baerly-storage/dist/index.js", "packages/create-baerly-storage/package.json"],
+  ] as const) {
+    test(`${bin} --version`, () => {
+      const result = spawnSync(process.execPath, [resolve(ROOT, bin), "--version"], {
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe(read(manifest).version);
+    });
+  }
 });
 
 // `version-matrix.json`'s `packageSemver` freshness is not duplicated here —
