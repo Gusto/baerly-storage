@@ -1,4 +1,5 @@
-import { type AddressInfo, createServer as createNetServer } from "node:net";
+import { Server } from "node:http";
+import { type AddressInfo, connect, createServer as createNetServer } from "node:net";
 import {
   type BaerlyAppConfig,
   CURRENT_JSON_SCHEMA_VERSION,
@@ -75,6 +76,52 @@ describe("baerlyNode", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
+  });
+
+  test("listen binds the server exactly once", async () => {
+    // A second `listen()` on a server whose first bind is still pending
+    // only works because the later call wins a race; one bind is the
+    // contract.
+    const listenSpy = vi.spyOn(Server.prototype, "listen");
+    try {
+      const port = await reservePort();
+      const handle = baerlyNode({
+        config: testConfig,
+        storage: new MemoryStorage(),
+        verifier: sharedDevVerifier,
+      });
+      activeHandle = handle;
+      await handle.listen(port);
+      expect(listenSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      listenSpy.mockRestore();
+    }
+  });
+
+  test("an HTTP/1.0 request without a Host header is served", async () => {
+    // The request URL is built from Host; without one the listener
+    // falls back to the bound hostname rather than answering 400.
+    const port = await reservePort();
+    const handle = baerlyNode({
+      config: testConfig,
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
+    });
+    activeHandle = handle;
+    await handle.listen(port);
+    const reply = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.end("GET /v1/healthz HTTP/1.0\r\n\r\n");
+      });
+      let data = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        data += chunk;
+      });
+      socket.on("end", () => resolve(data));
+      socket.on("error", reject);
+    });
+    expect(reply.split("\r\n")[0]).toMatch(/^HTTP\/1\.[01] 200 /);
   });
 
   test("close() shuts down the server and is idempotent", async () => {
