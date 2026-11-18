@@ -1,6 +1,8 @@
 import { BaerlyError, SHARED_SECRET_CONFIG_RESOLUTION, type Verifier } from "@baerly/protocol";
 import { timingSafeEqual } from "../internal/timing-safe-equal.ts";
 
+const utf8Encoder = new TextEncoder();
+
 /**
  * Options for {@link sharedSecret}.
  *
@@ -64,10 +66,10 @@ export const sharedSecret = (opts: SharedSecretOptions): Verifier => {
       { resolution: SHARED_SECRET_CONFIG_RESOLUTION },
     );
   }
-  const expected = new TextEncoder().encode(`Bearer ${opts.secret}`);
+  const expected = utf8Encoder.encode(`Bearer ${opts.secret}`);
   return async (req: Request) => {
     const header = req.headers.get("Authorization") ?? "";
-    const actual = new TextEncoder().encode(header);
+    const actual = utf8Encoder.encode(header);
     if (!timingSafeEqual(expected, actual)) {
       return null;
     }

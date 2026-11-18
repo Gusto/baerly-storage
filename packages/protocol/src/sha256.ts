@@ -7,11 +7,20 @@
  * (e.g. {@link versionFromContent}'s content keys) slice the return.
  */
 export const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
-  // Copy via fresh ArrayBuffer: tsc narrows `Uint8Array` to
-  // `Uint8Array<ArrayBufferLike>`, which `crypto.subtle.digest` rejects
-  // (wants `ArrayBufferView<ArrayBuffer>`). See microsoft/TypeScript#61375.
-  const view = new Uint8Array(bytes.byteLength);
-  view.set(bytes);
+  // tsc narrows `Uint8Array` to `Uint8Array<ArrayBufferLike>`, which
+  // `crypto.subtle.digest` rejects (wants `ArrayBufferView<ArrayBuffer>`;
+  // microsoft/TypeScript#61375). A view over an `ArrayBuffer` is passed
+  // through and hashes only its own bytes, even at an offset; digest
+  // copies its input synchronously. A `SharedArrayBuffer`-backed view is
+  // not a valid `BufferSource`, so copy that case.
+  let view: Uint8Array<ArrayBuffer>;
+  if (bytes.buffer instanceof ArrayBuffer) {
+    // Narrowing `bytes.buffer` does not narrow `bytes`; the check above is the proof.
+    view = bytes as Uint8Array<ArrayBuffer>;
+  } else {
+    view = new Uint8Array(bytes.byteLength);
+    view.set(bytes);
+  }
   const digest = await crypto.subtle.digest("SHA-256", view);
   return new Uint8Array(digest).toHex();
 };

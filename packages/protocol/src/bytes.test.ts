@@ -2,6 +2,15 @@ import { describe, expect, test } from "vitest";
 import { decodeJsonBytes, encodeJsonBytes } from "./bytes.ts";
 import type { LogEntry } from "./log.ts";
 
+describe("decodeJsonBytes BOM", () => {
+  test("a leading-BOM body decodes as before (BOM stripped, repeatably)", () => {
+    const body = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"a":1}')]);
+    expect(decodeJsonBytes(body)).toEqual({ a: 1 });
+    expect(decodeJsonBytes(body)).toEqual({ a: 1 });
+    expect(decodeJsonBytes(new TextEncoder().encode('{"b":2}'))).toEqual({ b: 2 });
+  });
+});
+
 describe("encodeJsonBytes / decodeJsonBytes", () => {
   // Order-stable round-trip (premise P2 of log-conflict-adoption.ts):
   // the writer's lost-ack self-retry adopts via a full-entry

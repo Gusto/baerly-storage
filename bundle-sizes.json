@@ -20,9 +20,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 357721,
-      "gz": 113878,
-      "minGz": 30564,
+      "raw": 357931,
+      "gz": 113949,
+      "minGz": 30597,
       "ratchet": {
         "raw": 385792,
         "gz": 122880,
@@ -56,9 +56,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 625263,
-      "gz": 188315,
-      "minGz": 62132,
+      "raw": 625500,
+      "gz": 188378,
+      "minGz": 62162,
       "ratchet": {
         "raw": 634624,
         "gz": 193024,
@@ -80,9 +80,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 105811,
-      "gz": 34549,
-      "minGz": 10916,
+      "raw": 105885,
+      "gz": 34578,
+      "minGz": 10946,
       "ratchet": {
         "raw": 108800,
         "gz": 36096,
@@ -92,9 +92,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 549019,
-      "gz": 164513,
-      "minGz": 53386,
+      "raw": 549229,
+      "gz": 164577,
+      "minGz": 53415,
       "ratchet": {
         "raw": 552704,
         "gz": 167680,
@@ -104,9 +104,9 @@
     },
     "auth.js": {
       "tier": "shipped",
-      "raw": 52470,
-      "gz": 15989,
-      "minGz": 8675,
+      "raw": 52497,
+      "gz": 15995,
+      "minGz": 8674,
       "ratchet": {
         "raw": 55808,
         "gz": 17152,
@@ -116,9 +116,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 168570,
-      "gz": 55160,
-      "minGz": 13525,
+      "raw": 168747,
+      "gz": 55219,
+      "minGz": 13560,
       "ratchet": {
         "raw": 180480,
         "gz": 59136,
@@ -156,7 +156,7 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 90597,
+      "raw": 90700,
       "ratchet": {
         "raw": 97792
       },
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 819888,
+      "raw": 820046,
       "ratchet": {
         "raw": 832512
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 828846,
+      "raw": 829004,
       "ratchet": {
         "raw": 842496
       },
