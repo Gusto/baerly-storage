@@ -193,6 +193,25 @@ describe("createApp webRoot static-asset handling", () => {
     });
   });
 
+  test("sends X-Content-Type-Options: nosniff on static, API, and cascade error responses", async () => {
+    await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
+      for (const path of ["/index.html", "/assets/app.hash.js", "/v1/healthz", "/v1/c/things"]) {
+        const res = await fetch(`${baseUrl}${path}`);
+        await res.arrayBuffer();
+        expect({ path, nosniff: res.headers.get("x-content-type-options") }).toEqual({
+          path,
+          nosniff: "nosniff",
+        });
+      }
+      const miss = await fetch(`${baseUrl}/missing.json`, {
+        headers: { Accept: "application/json" },
+      });
+      await miss.arrayBuffer();
+      expect(miss.status).toBe(401);
+      expect(miss.headers.get("x-content-type-options")).toBe("nosniff");
+    });
+  });
+
   test("HEAD returns 200 + Content-Length with an empty body", async () => {
     await withServer({ verifier: denyVerifier, webRoot }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/index.html`, { method: "HEAD" });

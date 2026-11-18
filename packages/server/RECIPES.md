@@ -287,7 +287,7 @@ export const storage = s3Storage({
 });
 ```
 
-`fromEks()` checks the environment on every call: EKS Pod Identity when `AWS_CONTAINER_CREDENTIALS_FULL_URI` is set (it also reads the token file named by `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`), else IRSA when `AWS_WEB_IDENTITY_TOKEN_FILE` is set (it also needs `AWS_ROLE_ARN`, exchanges the token with STS `AssumeRoleWithWebIdentity`, and honors `AWS_ROLE_SESSION_NAME` and `AWS_REGION` / `AWS_DEFAULT_REGION`), else it throws `InvalidConfig`. To pin one mechanism, use `fromEksPodIdentity()` or `fromWebIdentity()` from the same subpath. All three return `expiration`, so refresh is automatic.
+`fromEks()` checks the environment on every call: EKS Pod Identity when `AWS_CONTAINER_CREDENTIALS_FULL_URI` is set (it also reads the token file named by `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`), else IRSA when `AWS_WEB_IDENTITY_TOKEN_FILE` is set (it also needs `AWS_ROLE_ARN`, exchanges the token with STS `AssumeRoleWithWebIdentity`, and honors `AWS_ROLE_SESSION_NAME` and `AWS_REGION` / `AWS_DEFAULT_REGION`), else it throws `InvalidConfig`. Pod Identity refuses an `AWS_CONTAINER_CREDENTIALS_FULL_URI` that is not loopback or the ECS / EKS agent address, so the token never leaves the node. To pin one mechanism, use `fromEksPodIdentity()` or `fromWebIdentity()` from the same subpath. All three return `expiration`, so refresh is automatic.
 
 ### Your own provider
 

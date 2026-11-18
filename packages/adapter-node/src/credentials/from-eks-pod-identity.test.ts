@@ -51,6 +51,45 @@ describe("fromEksPodIdentity", () => {
     await expect(fromEksPodIdentity()()).rejects.toMatchObject({ code: "InvalidConfig" });
   });
 
+  test.each([
+    "http://169.254.170.2/v1/credentials",
+    "http://169.254.170.23/v1/credentials",
+    "http://[fd00:ec2::23]/v1/credentials",
+    "http://127.0.0.1:8080/creds",
+    "http://127.1.2.3/creds",
+    "http://localhost:51679/creds",
+    "http://[::1]/creds",
+  ])("sends the token to an agent address: %s", async (uri) => {
+    vi.stubEnv("AWS_CONTAINER_CREDENTIALS_FULL_URI", uri);
+    const fakeFetch = vi.fn<typeof fetch>(
+      async () => new Response(AGENT_RESPONSE, { status: 200 }),
+    );
+    await fromEksPodIdentity({ fetch: fakeFetch, readFile: async () => "T" })();
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    "http://169.254.169.254/latest/meta-data/",
+    "http://attacker.example/creds",
+    "https://attacker.example/creds",
+    "http://169.254.170.23.attacker.example/creds",
+    "http://127.0.0.1.attacker.example/creds",
+    "file:///etc/passwd",
+    "not a url",
+  ])("refuses a non-agent URI without sending the token: %s", async (uri) => {
+    vi.stubEnv("AWS_CONTAINER_CREDENTIALS_FULL_URI", uri);
+    const fakeFetch = vi.fn<typeof fetch>(
+      async () => new Response(AGENT_RESPONSE, { status: 200 }),
+    );
+    const fakeReadFile = vi.fn<(path: string, encoding: "utf8") => Promise<string>>(
+      async () => "T",
+    );
+    await expect(
+      fromEksPodIdentity({ fetch: fakeFetch, readFile: fakeReadFile })(),
+    ).rejects.toMatchObject({ code: "InvalidConfig" });
+    expect(fakeFetch).not.toHaveBeenCalled();
+  });
+
   test("throws InvalidConfig when AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE is missing", async () => {
     vi.stubEnv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "");
     await expect(fromEksPodIdentity()()).rejects.toMatchObject({ code: "InvalidConfig" });

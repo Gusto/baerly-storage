@@ -31,6 +31,7 @@ import {
   type ObservabilityContext,
 } from "./context.ts";
 import { deriveOutcome, isCapacityRefusal } from "./derive-outcome.ts";
+import { requestIdFrom } from "./request-id.ts";
 import type { RequestScopedMetricsRecorder } from "./recorder.ts";
 
 /** Options accepted by {@link flushCanonicalLine}. */
@@ -86,7 +87,7 @@ export const flushCanonicalLine = (
 
 /**
  * HTTP unit-of-work scope. Opens an {@link ObservabilityContext} from the
- * inbound `Request` (request id from `x-request-id` header or generated),
+ * inbound `Request` (request id from a valid `x-request-id` header or generated),
  * runs `fetch(req)` under {@link runWithContext}, and flushes the canonical
  * line in finally with `unit: "http"`.
  *
@@ -108,7 +109,7 @@ export const withHttpObservability = async (
   req: Request,
   fetch: (req: Request) => Promise<Response> | Response,
 ): Promise<Response> => {
-  const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+  const requestId = requestIdFrom(req.headers);
   const ctx = createObservabilityContext({
     request_id: requestId,
   });

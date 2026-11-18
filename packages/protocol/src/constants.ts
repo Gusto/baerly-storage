@@ -1271,3 +1271,12 @@ export const SHARED_SECRET_MISSING_MESSAGE: string =
  * codec to get one `"-"`.
  */
 export const NO_GENERATION = "-";
+
+/**
+ * Longest inbound `x-request-id` the adapters carry onto the canonical
+ * log line; a longer one is replaced with a generated id. 128 holds
+ * every common id format with room to spare (UUID 36, W3C
+ * `traceparent` 55, an X-Ray `Root=…;Parent=…;Sampled=…` header ~80)
+ * while keeping a caller from inflating every log line it touches.
+ */
+export const MAX_REQUEST_ID_LENGTH = 128;

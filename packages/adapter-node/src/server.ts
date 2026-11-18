@@ -25,6 +25,7 @@ import {
   createObservabilityContext,
   flushUnauthorizedAndRespond,
   logMaintenanceWarning,
+  requestIdFrom,
 } from "@baerly/server/_internal/observability";
 
 /**
@@ -196,7 +197,7 @@ export function createFetchHandler(
       }));
     }
 
-    const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    const requestId = requestIdFrom(request.headers);
     // In-band maintenance: the writer reads `getCurrentContext()?.maintenance`
     // at its post-commit dispatch point. Read per request so the ops-plane env
     // vars (and any `vi.stubEnv` in tests) are observed at call time.

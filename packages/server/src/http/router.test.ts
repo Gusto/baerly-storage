@@ -417,6 +417,17 @@ describe("observability middleware", () => {
     expect(lines[0]!.properties["request_id"]).toBe("known-id");
   });
 
+  test("an x-request-id outside the id charset is replaced", async () => {
+    const app = buildApp();
+    const req = new Request("http://localhost/v1/c/things?where=%7B%22clauses%22%3A%5B%5D%7D", {
+      headers: { "x-request-id": "forged id=1" },
+    });
+    await withHttpObservability(req, (r) => app.fetch(r));
+    const lines = canonical();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.properties["request_id"]).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   test("error path emits one canonical error line", async () => {
     const db = Db.create({
       storage: new MemoryStorage(),

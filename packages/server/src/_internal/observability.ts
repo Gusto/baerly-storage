@@ -9,6 +9,7 @@
  */
 export { flushUnauthorizedAndRespond } from "../observability/canonical.ts";
 export { logMaintenanceWarning } from "../observability/logger.ts";
+export { requestIdFrom } from "../observability/request-id.ts";
 export {
   type InternalObservabilityContext,
   type InternalObservabilityContextInit,

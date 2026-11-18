@@ -318,6 +318,56 @@ describe("createApp observability", () => {
     expect(props["request_id"]).toBe(correlation);
   });
 
+  test.each([
+    ["over 128 characters", "a".repeat(129)],
+    ["holding a tab", "id\tforged=1"],
+    ["non-ASCII", "caf\u00e9"],
+    ["holding a space", "two words"],
+    ["holding a quote", 'id"x'],
+    ["empty", ""],
+  ])("replaces an x-request-id that is %s with a generated id", async (_label, supplied) => {
+    const storage = new MemoryStorage();
+    const tenant = "acme";
+    await provision(storage, tenant, "c");
+
+    const { records, sink } = collectingSink();
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const { url } = await startServer({
+      app: "t",
+      storage,
+      verifier,
+      observability: { level: "debug", sink },
+    });
+
+    const res = await fetch(`${url}/v1/c/c`, { headers: { "x-request-id": supplied } });
+    expect(res.status).toBe(200);
+
+    const props = findCanonical(records, "http")!.properties as Record<string, unknown>;
+    expect(props["request_id"]).not.toBe(supplied);
+    expect(props["request_id"]).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test("keeps a 128-character x-request-id in the id charset", async () => {
+    const storage = new MemoryStorage();
+    const tenant = "acme";
+    await provision(storage, tenant, "c");
+
+    const { records, sink } = collectingSink();
+    const verifier: Verifier = async () => ({ tenantPrefix: tenant, identity: {} });
+    const { url } = await startServer({
+      app: "t",
+      storage,
+      verifier,
+      observability: { level: "debug", sink },
+    });
+
+    const supplied = `Root=1-5f84c7a1-${"b".repeat(100)}:A_b.c/d+e=@`.slice(0, 128);
+    const res = await fetch(`${url}/v1/c/c`, { headers: { "x-request-id": supplied } });
+    expect(res.status).toBe(200);
+    const props = findCanonical(records, "http")!.properties as Record<string, unknown>;
+    expect(props["request_id"]).toBe(supplied);
+  });
+
   test("canonical line for a successful GET has no cache_status property", async () => {
     const storage = new MemoryStorage();
     const tenant = "acme";
