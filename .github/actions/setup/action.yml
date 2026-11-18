@@ -1,6 +1,6 @@
 name: Set up Node and pnpm
 description: >-
-  Install Node, then pnpm from the range in package.json's `devEngines.packageManager`, and restore the pnpm store cache.
+  Install Node, then the exact pnpm version recorded in pnpm-lock.yaml, and restore the pnpm store cache.
 
 # Shared by every workflow job so the toolchain is provisioned one way.
 # Actions are pinned to a full commit SHA (not a moving tag) so a
@@ -8,7 +8,9 @@ description: >-
 # (cf. the tj-actions/changed-files compromise); the trailing comment
 # records the human-readable version — bump both together. Only
 # first-party actions/* are used, covered by the org's
-# `github_owned_allowed` policy.
+# `github_owned_allowed` policy. That policy is a prerequisite: any
+# non-`actions/*` action needs an org allow-list request first (the repo
+# runs with `allowed_actions: selected`).
 
 inputs:
   node-version:
@@ -24,14 +26,24 @@ runs:
 
     # Node 25+ no longer bundles Corepack, and Corepack rejects the version
     # range in `devEngines.packageManager` anyway, so bootstrap pnpm from the
-    # registry at that range. pnpm then switches itself to the exact version
-    # pnpm-lock.yaml records (`onFail: "download"`). npm runs from outside
+    # registry. Install the EXACT version pnpm-lock.yaml records under
+    # `packageManagerDependencies.pnpm` (not the range), so a pnpm release
+    # published minutes ago cannot run in CI before pnpm's own
+    # `minimumReleaseAge` / `trustPolicy` apply. pnpm then confirms it
+    # against the lockfile (`onFail: "download"`). npm runs from outside
     # the checkout: it applies `devEngines.packageManager` to itself, and a
     # declared pnpm makes it refuse to run (`EBADDEVENGINES`).
     - name: Install pnpm
       shell: bash
       working-directory: ${{ runner.temp }}
-      run: npm install --global "pnpm@$(node -p 'require(process.argv[1]).devEngines.packageManager.version' "$GITHUB_WORKSPACE/package.json")"
+      run: |
+        version="$(node -e '
+          const lock = require("node:fs").readFileSync(process.argv[1], "utf8");
+          const m = /packageManagerDependencies:\s+pnpm:\s+specifier:[^\n]*\n\s+version:\s+(\d+\.\d+\.\d+)\s/.exec(lock);
+          if (!m) { console.error("pnpm version not found in pnpm-lock.yaml"); process.exit(1); }
+          console.log(m[1]);
+        ' "$GITHUB_WORKSPACE/pnpm-lock.yaml")"
+        npm install --global "pnpm@${version}"
 
     - name: Locate pnpm store
       id: pnpm-store

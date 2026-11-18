@@ -77,6 +77,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # lefthook 2.2.2 was published by hand with no provenance, so
+    # `trustPolicy: no-downgrade` rejects it and would sink the whole weekly
+    # group. package.json pins 2.2.1 exactly. Revisit (drop this entry and
+    # restore a range) once `pnpm view lefthook@<v> dist.attestations` is
+    # non-empty for some v > 2.2.2; see the exception register.
+    ignore:
+      - dependency-name: "lefthook"
+        versions: ["2.2.2"]
     open-pull-requests-limit: 2
     commit-message:
       prefix: "chore"
@@ -110,6 +118,13 @@ updates:
       docker:
         patterns:
           - "*"
+    # Node majors move with `engines` and the distroless `nodejs<N>` image,
+    # which Dependabot cannot bump (it is a name, not a tag). Taking a major
+    # here would also propose odd-numbered, non-LTS tags. Change the major by
+    # hand, in both stages together.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore"
       include: "scope"

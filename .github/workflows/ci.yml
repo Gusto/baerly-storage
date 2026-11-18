@@ -41,6 +41,10 @@ jobs:
       # Actions are pinned to a full commit SHA; see
       # .github/actions/setup/action.yml for the policy.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step pushes; don't leave the token in .git/config while
+          # install scripts run.
+          persist-credentials: false
 
       # Node 26 (current LTS) + pnpm from `devEngines.packageManager`.
       - uses: ./.github/actions/setup
