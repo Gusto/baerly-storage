@@ -37,6 +37,9 @@ const OXFMT_EXT = new Set([
   "jsonc",
   "html",
   "css",
+  "yaml",
+  "yml",
+  "toml",
 ]);
 
 // Prose: formatted by oxfmt (`format:check`, guarded below) and validated
@@ -46,8 +49,6 @@ const MARKDOWN_EXT = new Set(["md", "mdx"]);
 
 // Data / config / binary: no formatter owns these by design.
 const UNFORMATTED_EXT = new Set([
-  "yaml",
-  "yml",
   "sh",
   "png",
   "gif", // rendered demo assets (docs/assets/demo.gif from a .tape script)
@@ -55,7 +56,6 @@ const UNFORMATTED_EXT = new Set([
   "ico",
   "txt",
   "example",
-  "toml",
   "tape", // VHS terminal-demo scripts (docs/assets/*.tape) — no formatter owns these
 ]);
 

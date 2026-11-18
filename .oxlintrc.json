@@ -35,7 +35,6 @@
     "unicorn/no-zero-fractions": "error",
     "unicorn/no-await-expression-member": "error",
     "eslint/no-nested-ternary": "error",
-    "unicorn/no-nested-ternary": "error",
     "vitest/require-mock-type-parameters": "error",
     "vitest/require-to-throw-message": "error"
   },
@@ -61,6 +60,190 @@
         "vitest/valid-title": "off",
         "unicorn/consistent-function-scoping": "off",
         "import/no-unassigned-import": "off"
+      }
+    },
+    // Package layer direction (docs/architecture.md, Package layers). One
+    // block per package; a block's forbidden set is every other @baerly/*
+    // package minus its allow list. Test files are exempt. Specifier regexes
+    // cover bare, subpath, dynamic and relative cross-package imports.
+    {
+      "files": ["packages/protocol/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(server|dev|adapter-node|adapter-cloudflare|client|cli|create-baerly-storage)(/|$)",
+                "message": "@baerly/protocol imports no other @baerly/* package (protocol must remain pure). Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(server|dev|adapter-node|adapter-cloudflare|client|cli|create-baerly-storage)/",
+                "message": "@baerly/protocol imports no other @baerly/* package (protocol must remain pure). Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "group": ["node:*", "node:*/**"],
+                "message": "@baerly/protocol must stay Workerd-loadable: no node: builtins are allowed. Move Node-only code into @baerly/dev or @baerly/adapter-node."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/server/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(dev|adapter-node|adapter-cloudflare|client|cli|create-baerly-storage)(/|$)",
+                "message": "@baerly/server may only import @baerly/protocol. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(dev|adapter-node|adapter-cloudflare|client|cli|create-baerly-storage)/",
+                "message": "@baerly/server may only import @baerly/protocol. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "group": ["node:*", "node:*/**", "!node:async_hooks"],
+                "message": "@baerly/server must stay Workerd-loadable: only node:async_hooks is allowed. Move Node-only code into @baerly/dev or @baerly/adapter-node."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/dev/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(adapter-cloudflare|client|cli|create-baerly-storage)(/|$)",
+                "message": "@baerly/dev may only import @baerly/protocol, @baerly/server, @baerly/adapter-node. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(adapter-cloudflare|client|cli|create-baerly-storage)/",
+                "message": "@baerly/dev may only import @baerly/protocol, @baerly/server, @baerly/adapter-node. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/adapter-node/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(adapter-cloudflare|client|cli|create-baerly-storage)(/|$)",
+                "message": "@baerly/adapter-node may only import @baerly/protocol, @baerly/server, @baerly/dev. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(adapter-cloudflare|client|cli|create-baerly-storage)/",
+                "message": "@baerly/adapter-node may only import @baerly/protocol, @baerly/server, @baerly/dev. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/adapter-cloudflare/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(adapter-node|client|cli|create-baerly-storage)(/|$)",
+                "message": "@baerly/adapter-cloudflare may only import @baerly/protocol, @baerly/server, @baerly/dev. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(adapter-node|client|cli|create-baerly-storage)/",
+                "message": "@baerly/adapter-cloudflare may only import @baerly/protocol, @baerly/server, @baerly/dev. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "group": ["node:*", "node:*/**", "!node:async_hooks"],
+                "message": "@baerly/adapter-cloudflare must stay Workerd-loadable: only node:async_hooks is allowed. Move Node-only code into @baerly/dev or @baerly/adapter-node."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/client/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(dev|adapter-node|adapter-cloudflare|cli|create-baerly-storage)(/|$)",
+                "message": "@baerly/client may only import @baerly/protocol, @baerly/server. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(dev|adapter-node|adapter-cloudflare|cli|create-baerly-storage)/",
+                "message": "@baerly/client may only import @baerly/protocol, @baerly/server. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/cli/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(create-baerly-storage)(/|$)",
+                "message": "@baerly/cli may only import @baerly/protocol, @baerly/server, @baerly/dev, @baerly/adapter-node, @baerly/adapter-cloudflare, @baerly/client. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(create-baerly-storage)/",
+                "message": "@baerly/cli may only import @baerly/protocol, @baerly/server, @baerly/dev, @baerly/adapter-node, @baerly/adapter-cloudflare, @baerly/client. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/create-baerly-storage/src/**"],
+      "excludeFiles": ["**/*.test.ts", "**/*.test.tsx", "**/*.test-d.ts", "**/*.test-d.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@baerly/(dev|adapter-node|adapter-cloudflare|client)(/|$)",
+                "message": "@baerly/create-baerly-storage may only import @baerly/protocol, @baerly/server, @baerly/cli. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              },
+              {
+                "regex": "^(\\.\\./)+(dev|adapter-node|adapter-cloudflare|client)/",
+                "message": "@baerly/create-baerly-storage may only import @baerly/protocol, @baerly/server, @baerly/cli. Move the symbol down or invert the dependency; see docs/architecture.md (Package layers)."
+              }
+            ]
+          }
+        ]
       }
     }
   ]
