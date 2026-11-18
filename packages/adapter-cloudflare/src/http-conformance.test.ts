@@ -59,6 +59,7 @@ describe("HTTP conformance", () => {
       // the Node-side variants already cover the invariant.
       supportsAbort: false,
       supportsSinceTimeoutOverride: true,
+      streamsRequestBody: true,
       // Pre-seed tail_hint and log_seq_start so the overflow regression
       // test only needs ONE insert instead of 1025 sequential fetches.
       provisionTableAtSeq: async (table, nextSeq) => {

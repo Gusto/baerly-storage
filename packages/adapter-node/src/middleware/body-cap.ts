@@ -8,8 +8,8 @@ import { errorEnvelope } from "@baerly/server/http";
  * ...)` — that listener raced with `@hono/node-server`'s own body
  * reader and dropped the first chunks of every POST. Wrapping
  * `req.body` with a counting `TransformStream` puts the cap in the
- * same reader chain as the kernel router's `c.req.arrayBuffer()`
- * consumer, so there is no race.
+ * same reader chain as the kernel router's `readJsonBody`, which
+ * reads `c.req.raw.body` itself, so there is no race.
  *
  * Two cap-trip paths, both drain the upstream `IncomingMessage`
  * (`resume()`) so the client's body write completes and the 413

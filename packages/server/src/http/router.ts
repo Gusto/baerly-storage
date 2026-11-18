@@ -291,10 +291,10 @@ export function createRouter(options: CreateRouterOptions): Hono {
  * The Node adapter (`@baerly/adapter-node`) imports this constant
  * and passes it to `applyBodyCap`, which wraps the request body
  * with a counting `TransformStream` so chunked uploads trip the cap
- * mid-stream rather than materialising the full buffer. The
- * router's `readJsonBody` keeps the cap as a defence-in-depth check
- * (Content-Length pre-read + post-`arrayBuffer` length) for adapters
- * whose platform doesn't pre-cap.
+ * mid-stream and the upstream `IncomingMessage` is drained. The
+ * router's `readJsonBody` enforces the same cap on every host
+ * (Content-Length pre-check, then a counted streaming read), which is
+ * the only cap on Workers.
  *
  * @internal — exported for tests and for the Node adapter's
  *   `applyBodyCap` helper. Promote to
@@ -687,36 +687,46 @@ function mapToResponse(c: Context, err: unknown): Response {
  * Read and parse the JSON request body. Returns the parsed value
  * (an `unknown` — caller narrows). Throws `BaerlyError`:
  *
- *   - `"PayloadTooLarge"` (→ 413) when the body exceeds `maxBytes`,
- *     detected via `Content-Length` pre-check, post-`arrayBuffer`
- *     length check, or — if the host adapter pumps the body through
- *     a `ReadableStream` (the Node adapter does) — a `BaerlyError`
- *     surfaced via `controller.error(...)` on the upstream pump.
+ *   - `"PayloadTooLarge"` (→ 413) when the body exceeds `maxBytes`:
+ *     up front from `Content-Length`, else as soon as the running size
+ *     of a chunked body passes the cap. The read stops there and the
+ *     stream is cancelled, so no host buffers more than `maxBytes`
+ *     (workerd has no platform cap). A `BaerlyError` surfaced by an
+ *     upstream pump (the Node adapter's `applyBodyCap`) is re-thrown
+ *     verbatim.
  *   - `"SchemaError"` (→ 400) for empty bodies, JSON parse failures,
  *     and any other read failure.
  *
  * Hono's `app.onError` sink routes the throw through `mapToResponse`.
  */
 async function readJsonBody(c: Context, maxBytes: number): Promise<unknown> {
+  const tooLarge = (): BaerlyError =>
+    new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
   const lenHeader = c.req.header("content-length");
-  if (lenHeader !== undefined) {
-    const parsed = Number.parseInt(lenHeader, 10);
-    if (Number.isFinite(parsed) && parsed > maxBytes) {
-      throw new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
-    }
+  if (lenHeader !== undefined && Number.parseInt(lenHeader, 10) > maxBytes) {
+    throw tooLarge();
   }
-  // Read with an early-exit guard for chunked transfers. If the
-  // upstream adapter (e.g. `@baerly/adapter-node`) caps the body at
-  // the stream-pump layer, the rejected `arrayBuffer()` carries a
-  // `BaerlyError{code:"PayloadTooLarge"}` which we re-throw verbatim;
-  // any other read failure becomes a 400 SchemaError.
-  let raw: string;
+  let raw = "";
   try {
-    const buffer = await c.req.arrayBuffer();
-    if (buffer.byteLength > maxBytes) {
-      throw new BaerlyError("PayloadTooLarge", `Body exceeds ${maxBytes} bytes`);
+    const body = c.req.raw.body;
+    if (body !== null) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let size = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        size += value.byteLength;
+        if (size > maxBytes) {
+          reader.cancel().catch(() => {});
+          throw tooLarge();
+        }
+        raw += decoder.decode(value, { stream: true });
+      }
+      raw += decoder.decode();
     }
-    raw = new TextDecoder().decode(buffer);
   } catch (error) {
     if (error instanceof BaerlyError) {
       throw error;
