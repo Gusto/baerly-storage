@@ -4,7 +4,7 @@
  * optional string `_id`. Holds for unbound collections (row type
  * `DocumentData`), bound-config collections, and user row interfaces.
  *
- * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
+ * Validated by `tsc --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default include
  * glob (see `vitest.config.ts`).
  */

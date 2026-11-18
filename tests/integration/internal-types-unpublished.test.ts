@@ -30,7 +30,7 @@
  * The gate has two layers, because each covers the other's blind spot:
  *
  *   1. A compile-time pin on the knob that actually risks data loss.
- *      `@ts-expect-error` fails `tsgo --noEmit` if the call ever STOPS
+ *      `@ts-expect-error` fails `tsc --noEmit` if the call ever STOPS
  *      being an error, so it pins the invariant itself rather than a
  *      naming convention. Narrow but exact.
  *   2. A name scan over every published entry `.d.ts`. Broad — it covers
@@ -163,7 +163,7 @@ describe("internal option widenings stay off the published type surface", () => 
     // maintenance-entry.ts`), so this covers the shipped entry.
     //
     // Never invoked — the assertion IS the `@ts-expect-error`. It fails
-    // `tsgo --noEmit` if this stops being a type error, i.e. if
+    // `tsc --noEmit` if this stops being a type error, i.e. if
     // `graceMillis` becomes reachable from the published options type
     // again. The runtime `expect` below only keeps the binding used.
     const reopenedLeak = (target: MaintenanceTarget) =>

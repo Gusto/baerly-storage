@@ -208,7 +208,7 @@ export type BaerlyErrorCode =
 /**
  * Runtime enumeration of every {@link BaerlyErrorCode}. The spec
  * generator and the drift gate iterate this to assert the IR lists
- * each code; the type guard in `spec/ir-schema.test.ts` fails tsgo if
+ * each code; the type guard in `spec/ir-schema.test.ts` fails tsc if
  * this tuple and the union diverge. Keep order stable for deterministic
  * artifact diffs. This is the canonical code list — do not re-list
  * codes elsewhere (see RETRIABLE_CODES, the sibling retriable subset).
@@ -237,7 +237,7 @@ export const ERROR_CODES = [
 
 // Exhaustiveness guard: every union member must appear in ERROR_CODES.
 // If a code is added to BaerlyErrorCode without a tuple entry, this
-// errors at tsgo time (the union is not assignable to the tuple's union).
+// errors at tsc time (the union is not assignable to the tuple's union).
 type _ErrorCodesExhaustive = [BaerlyErrorCode] extends [(typeof ERROR_CODES)[number]]
   ? true
   : ["missing code in ERROR_CODES", Exclude<BaerlyErrorCode, (typeof ERROR_CODES)[number]>];

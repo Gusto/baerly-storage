@@ -91,6 +91,6 @@ Regenerate the live picture any time with `pnpm test:mutate` then `pnpm mutate:s
 
 ## Design notes
 
-- **No TypeScript checker plugin.** Stryker can pre-filter mutants that fail to compile via `@stryker-mutator/typescript-checker`, but that plugin runs real `tsc`; this repo typechecks with tsgo. Rather than add a divergent toolchain, we skip it — a type-invalid mutant runs through vitest's esbuild transform and is killed (or survives) on its own. The cost is a slightly slower run, not wrong results.
+- **No TypeScript checker plugin.** Stryker can pre-filter mutants that fail to compile via `@stryker-mutator/typescript-checker`, but that plugin runs the classic TypeScript 6 checker, while this repo typechecks with TypeScript 7 (native). Rather than add a divergent toolchain, we skip it — a type-invalid mutant runs through vitest's esbuild transform and is killed (or survives) on its own. The cost is a slightly slower run, not wrong results.
 - **Dedicated vitest config.** `stryker.vitest.config.ts` is a flat single-project config scoped to protocol unit tests, kept separate from the root `vitest.config.ts` so the Workerd `cloudflare-pool` project and the whole-repo globs never enter a mutation run.
 - **Explicit `vitest-runner` in `plugins`.** Under pnpm's isolated `node_modules`, Stryker's default `@stryker-mutator/*` plugin glob does not resolve `@stryker-mutator/vitest-runner` from the project root, so it is listed explicitly in `stryker.config.mjs`.

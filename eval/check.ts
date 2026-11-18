@@ -13,7 +13,7 @@ export interface CheckOpts {
 }
 
 /**
- * Environment for processes that run model-written code (tsgo, the runner):
+ * Environment for processes that run model-written code (tsc, the runner):
  * only what node/pnpm need, so credentials in the parent env (AWS_*, CF_*,
  * tokens) never reach it.
  */
@@ -92,8 +92,8 @@ function writeTsconfig(dir: string, repoRoot: string, solutionPaths: readonly st
 }
 
 /**
- * One tsgo pass over several solutions. Returns a failing Verdict per solution
- * path that has errors (or all of them when tsgo fails without naming a file).
+ * One tsc pass over several solutions. Returns a failing Verdict per solution
+ * path that has errors (or all of them when tsc fails without naming a file).
  */
 export async function typecheckAll(
   repoRoot: string,
@@ -104,7 +104,7 @@ export async function typecheckAll(
   try {
     const tsconfig = writeTsconfig(tmp, repoRoot, solutionPaths);
     const r = await run(
-      join(repoRoot, "node_modules", ".bin", "tsgo"),
+      join(repoRoot, "node_modules", ".bin", "tsc"),
       ["--noEmit", "--pretty", "false", "-p", tsconfig],
       repoRoot,
       60_000,
@@ -115,7 +115,7 @@ export async function typecheckAll(
     const timedOut = r.error?.message === "ETIMEDOUT";
     const prefix = timedOut ? "typecheck timed out:\n" : "typecheck failed:\n";
     const lines = r.output.trim().split("\n");
-    // tsgo prints paths relative to the repo root.
+    // tsc prints paths relative to the repo root.
     const own = new Map(
       solutionPaths.map((path) => [
         path,

@@ -15,7 +15,7 @@ For a code-oriented view (read-this-first lifecycle), see the module map in [CLA
 
 ## Public API surface
 
-The `Db` class is the entry point. `db.collection<T>(name)` returns a typed `Collection<T>` carrying the locked SQL-shape API (`first` / `all` / `count` / `get` / `insert` / `update` / `replace` / `delete`) and the predicate AST (`where` / `order` / `limit`). All public methods carry JSDoc with `@example` blocks — your IDE or `tsgo` is the canonical reference. Change notifications are delivered out-of-band by the HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route.
+The `Db` class is the entry point. `db.collection<T>(name)` returns a typed `Collection<T>` carrying the locked SQL-shape API (`first` / `all` / `count` / `get` / `insert` / `update` / `replace` / `delete`) and the predicate AST (`where` / `order` / `limit`). All public methods carry JSDoc with `@example` blocks — your IDE or `tsc` is the canonical reference. Change notifications are delivered out-of-band by the HTTP `/v1/since?collection=<name>&cursor=<opaque>` long-poll route.
 
 - [`packages/server/src/db.ts`](../../packages/server/src/db.ts) — `Db` class
 - [`packages/server/src/collection.ts`](../../packages/server/src/collection.ts) — `Collection<T>` verbs

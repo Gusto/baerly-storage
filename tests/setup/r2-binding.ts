@@ -19,7 +19,7 @@
 // `Cloudflare.Env` ships empty in `@cloudflare/workers-types`; augment
 // it locally with the `BUCKET` binding wired in `vitest.config.ts`
 // (`miniflare.r2Buckets: ["BUCKET"]`). This avoids a cast at the use
-// site and keeps the binding name discoverable via tsgo.
+// site and keeps the binding name discoverable via tsc.
 declare global {
   namespace Cloudflare {
     interface Env {

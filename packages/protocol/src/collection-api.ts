@@ -314,7 +314,7 @@ export interface Collection<T extends DocumentData = DocumentData> {
 /**
  * Decrementing depth markers for {@link Path}'s recursion cap.
  * The default of 4 means dotted paths up to `a.b.c.d.e` are legal;
- * `a.b.c.d.e.f` is rejected. Keeps `tsgo` recursion bounded.
+ * `a.b.c.d.e.f` is rejected. Keeps `tsc` recursion bounded.
  * @internal
  */
 type _PathDepth = [never, 0, 1, 2, 3, 4];

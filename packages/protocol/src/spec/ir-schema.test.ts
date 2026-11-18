@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 describe("spec IR shared enumerations", () => {
   test("PREDICATE_OPS mirrors PredicateOpName 1:1", () => {
     // Type-level: each side assignable to the other. A drift (op added to
-    // the union but not the tuple, or vice versa) fails tsgo, not just here.
+    // the union but not the tuple, or vice versa) fails tsc, not just here.
     const _opFromTuple: PredicateOpName = PREDICATE_OPS[0];
     const _check: readonly PredicateOpName[] = PREDICATE_OPS;
     void _opFromTuple;

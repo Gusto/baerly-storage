@@ -9,7 +9,7 @@
  * from {@link PredicateBuilder} (`or`, `not`, `regex`, `ne`, `exists`)
  * fail typecheck on invocation.
  *
- * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
+ * Validated by `tsc --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default include
  * glob (see `vitest.config.ts`).
  *

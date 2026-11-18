@@ -106,7 +106,7 @@ const freshTableName = (prefix: string): string => `${prefix}-${uuid().slice(0, 
  * Doc shape threaded through the cascade. We type generic verbs as
  * `Collection<DocumentData>` (the default) because the locked
  * `T extends DocumentData` constraint forbids optional
- * fields under strict-object-mode tsgo — a named interface with
+ * fields under strict-object-mode tsc — a named interface with
  * `readonly k?: string` is not assignable to
  * `{ [x: string]: DocumentValue }`. Static doc-shape typing comes
  * back with a future schema-validation pass; today the table

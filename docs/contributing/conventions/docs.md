@@ -14,7 +14,7 @@ Conventions for content under `docs/`.
 ## Source of truth
 
 - Prose in `docs/` is hand-written. `docs/spec/attachments/**` is the carve-out for regenerated benchmark evidence and is intentionally treated as unformatted data.
-- Public API type/hover docs live as JSDoc on `packages/server/src/db.ts` and `packages/server/src/collection.ts`. IDE hover and `tsgo` consume those directly.
+- Public API type/hover docs live as JSDoc on `packages/server/src/db.ts` and `packages/server/src/collection.ts`. IDE hover and `tsc` consume those directly.
 - The curated installed quick reference lives at `packages/server/API.md` and is copied to `node_modules/@gusto/baerly-storage/dist/API.md` at build time. Keep it aligned with JSDoc and the exported `.d.ts` surface; it is the first file headless agents are expected to read.
 
 ## Style

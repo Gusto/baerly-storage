@@ -81,7 +81,7 @@ run("pnpm", ["exec", "attw", join(outDir, tarball), "--profile", "esm-only", "-f
 //
 // Two fixture classes:
 //   - POSITIVE: must compile clean. This is the non-vacuity guard — if the
-//     harness stops actually running tsgo, the positive control fails.
+//     harness stops actually running tsc, the positive control fails.
 //   - NEGATIVE: must fail, AND the diagnostic must be attributed to that
 //     fixture's own file with one of its declared expected codes, so an
 //     unrelated TypeScript error can never satisfy a negative test.
@@ -429,7 +429,7 @@ for (const fixture of CONSUMER_FIXTURES) {
 
   const result = spawnSync(
     "pnpm",
-    ["exec", "tsgo", "--noEmit", "--pretty", "false", "-p", join(dir, "tsconfig.json")],
+    ["exec", "tsc", "--noEmit", "--pretty", "false", "-p", join(dir, "tsconfig.json")],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
