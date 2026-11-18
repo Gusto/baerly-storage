@@ -1,24 +1,39 @@
 #!/usr/bin/env node
 // Publish the two public @gusto packages to npmjs.com.
 //
-// Both packages are open-source and publish with `--access public`.
-// `publishConfig.access: "public"` is set in each package.json, but
-// pnpm has historically dropped that flag on the wire, so this script
-// passes `--access public` explicitly to be safe.
+// Runs in `.github/workflows/release.yml` on a `v*` tag push. npm trusted
+// publishing exchanges the job's OIDC token for a short-lived publish
+// credential and attaches provenance, so there is no token or OTP here;
+// `publishConfig.provenance` stays unset so trusted publishing decides.
+//
+// Both packages publish with `--access public`. `publishConfig.access` is
+// set in each package.json too; the flag is passed explicitly because
+// pnpm has historically dropped it on the wire.
 //
 // Usage:
-//   pnpm release                  publish both packages
-//   pnpm release --dry-run        pack + report current visibility, no writes
-//   pnpm release --otp=123456     forward a 2FA one-time code
+//   pnpm release              publish both packages (CI only)
+//   pnpm release --dry-run    gate + pack both packages, no writes
+//
+// Flags parse strictly: an unknown or mistyped flag (`--dryrun`,
+// `--dry-run=true`) aborts instead of falling through to a real publish.
 
 import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+let dryRun;
+try {
+  ({
+    values: { "dry-run": dryRun },
+  } = parseArgs({ options: { "dry-run": { type: "boolean", default: false } }, strict: true }));
+} catch (error) {
+  console.error(`\n✗ RELEASE ABORTED — ${error.message}. Usage: pnpm release [--dry-run]`);
+  process.exit(1);
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(ROOT);
-
-const REGISTRY = "https://registry.npmjs.org/";
 
 // `filter: null` == the root package (published from CWD).
 const PACKAGES = [
@@ -26,36 +41,9 @@ const PACKAGES = [
   { name: "@gusto/create-baerly-storage", filter: "@gusto/create-baerly-storage" },
 ];
 
-const args = process.argv.slice(2);
-const dryRun = args.includes("--dry-run");
-const otpArg = args.find((a) => a.startsWith("--otp="));
-const otpFlag = otpArg ? ` --otp=${otpArg.split("=")[1]}` : "";
-
 const run = (cmd) => execSync(cmd, { stdio: "inherit" });
 const runWithEnv = (cmd, env) =>
   execSync(cmd, { stdio: "inherit", env: { ...process.env, ...env } });
-
-// `npm access get status <pkg>` prints e.g. "@gusto/x: public".
-function statusOf(name) {
-  try {
-    const out = execSync(`npm access get status ${name} --registry=${REGISTRY}`, {
-      encoding: "utf8",
-    });
-    const o = out.toLowerCase();
-    if (o.includes("public")) {
-      return "public";
-    }
-    if (o.includes("private")) {
-      return "private";
-    }
-    return `unknown(${out.trim()})`;
-  } catch (error) {
-    const msg = String(error.stderr || error.message || "")
-      .trim()
-      .split("\n")[0];
-    return `error(${msg})`;
-  }
-}
 
 const problems = [];
 
@@ -90,9 +78,7 @@ try {
 
 for (const pkg of PACKAGES) {
   const where = pkg.filter ? `--filter ${pkg.filter} ` : "";
-  const cmd =
-    `pnpm ${where}publish --access public --no-git-checks` +
-    `${dryRun ? " --dry-run" : ""}${otpFlag}`;
+  const cmd = `pnpm ${where}publish --access public --no-git-checks${dryRun ? " --dry-run" : ""}`;
   console.log(`\n▶ ${dryRun ? "Dry-run publish" : "Publishing"} ${pkg.name}…`);
   try {
     // Pass BAERLY_SKIP_BUILD so the `prepare` hook — which pnpm publish
@@ -106,19 +92,15 @@ for (const pkg of PACKAGES) {
 }
 
 if (dryRun) {
-  console.log("\n▶ Dry-run — current registry visibility (no changes made):");
-  for (const pkg of PACKAGES) {
-    console.log(`   ${pkg.name}: ${statusOf(pkg.name)}`);
-  }
-  console.log("");
   if (problems.length > 0) {
-    console.error("✗ RELEASE DRY-RUN FAILED — issues:");
+    console.error("\n✗ RELEASE DRY-RUN FAILED — issues:");
     for (const p of problems) {
       console.error(`   - ${p}`);
     }
     console.error("");
     process.exit(1);
   }
+  console.log("\n✓ Dry run passed. Nothing published.\n");
   process.exit(0);
 }
 

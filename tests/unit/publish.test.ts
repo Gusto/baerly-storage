@@ -28,7 +28,6 @@ for (const pkg of PACKAGES) {
     expect(result.code).toBe(1);
     expect(result.output).toContain(`publish exited non-zero for ${pkg}`);
     expect(result.output).toContain(`${pkg}: publish step failed`);
-    expect(result.output).toContain("STUB_COMMAND:npm access get status");
     for (const command of DRY_RUN_COMMANDS) {
       expect(result.output).toContain(command);
     }
@@ -39,11 +38,10 @@ test("dry-run succeeds when both package simulations succeed", () => {
   const result = runPublish(["--dry-run"]);
 
   expect(result.code).toBe(0);
-  expect(result.output).toContain("@gusto/baerly-storage: public");
-  expect(result.output).toContain("@gusto/create-baerly-storage: public");
   for (const command of DRY_RUN_COMMANDS) {
     expect(result.output).toContain(command);
   }
+  expect(result.output).not.toContain("STUB_COMMAND:npm ");
 });
 
 for (const failure of ["artifacts", "packaging"]) {
@@ -63,9 +61,20 @@ test("real publish mode retains both package commands and success status", () =>
   const result = runPublish([]);
 
   expect(result.code).toBe(0);
-  expect(result.output).toContain("STUB_COMMAND:pnpm publish --access public --no-git-checks");
+  expect(result.output).toContain("STUB_COMMAND:pnpm publish --access public --no-git-checks\n");
   expect(result.output).toContain(
-    "STUB_COMMAND:pnpm --filter @gusto/create-baerly-storage publish --access public --no-git-checks",
+    "STUB_COMMAND:pnpm --filter @gusto/create-baerly-storage publish --access public --no-git-checks\n",
   );
   expect(result.output).toContain("Both packages published.");
 });
+
+// A mistyped flag must never fall through to a real publish.
+for (const args of [["--dryrun"], ["--dry-run=true"], ["--otp=123456"], ["extra"]]) {
+  test(`rejects ${args.join(" ")} before running anything`, () => {
+    const result = runPublish(args);
+
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("RELEASE ABORTED");
+    expect(result.output).not.toContain("STUB_COMMAND:");
+  });
+}

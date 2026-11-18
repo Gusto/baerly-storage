@@ -1,0 +1,108 @@
+# Publishes @gusto/baerly-storage and @gusto/create-baerly-storage to npm
+# with trusted publishing: the job's OIDC token is exchanged for a
+# short-lived publish credential, and npm attaches provenance. No npm token
+# exists in this repo. See docs/contributing/publishing.md.
+#
+# - Push of a `v*` tag: the `publish` job runs in the `npm-publish`
+#   environment, which holds the required-reviewer gate and the `v*` tag
+#   rule. npm's trusted-publisher config names this file and that
+#   environment, so renaming either breaks publishing.
+# - workflow_dispatch: the `dry-run` job runs the same gates and packs both
+#   packages without publishing. It never gets `id-token: write`.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+# Two releases must never interleave, and a cancelled publish can leave one
+# package published without the other.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No pnpm store cache on the release path: a poisoned cache entry
+      # written by any other workflow run must not reach a tarball.
+      - uses: ./.github/actions/setup
+        with:
+          cache: "false"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Release dry run
+        run: pnpm release --dry-run
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) + provenance
+    steps:
+      # Full history so the on-main check below can see origin/main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check the tag names the package version and is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          root="v$(node -p 'require("./package.json").version')"
+          scaffolder="v$(node -p 'require("./packages/create-baerly-storage/package.json").version')"
+          if [ "$TAG" != "$root" ] || [ "$TAG" != "$scaffolder" ]; then
+            echo "::error::tag $TAG does not match package versions ($root, $scaffolder)"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::tag $TAG points at a commit that is not on origin/main"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup
+        with:
+          cache: "false"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Publish
+        run: pnpm release
+
+      # The registry can take a moment to serve a new version's metadata.
+      - name: Check both packages carry provenance attestations
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          v="${TAG#v}"
+          for pkg in @gusto/baerly-storage @gusto/create-baerly-storage; do
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              att="$(pnpm view "$pkg@$v" dist.attestations --json 2>/dev/null || true)"
+              if [ -n "$att" ] && [ "$att" != "null" ] && [ "$att" != "{}" ]; then
+                echo "$pkg@$v: attestations present"
+                continue 2
+              fi
+              sleep 15
+            done
+            echo "::error::$pkg@$v has no dist.attestations"
+            exit 1
+          done

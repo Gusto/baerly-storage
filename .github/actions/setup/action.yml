@@ -1,6 +1,6 @@
 name: Set up Node and pnpm
 description: >-
-  Install Node, then the exact pnpm version recorded in pnpm-lock.yaml, and restore the pnpm store cache.
+  Install Node, then the exact pnpm version recorded in pnpm-lock.yaml, and (unless `cache` is "false") restore the pnpm store cache.
 
 # Shared by every workflow job so the toolchain is provisioned one way.
 # Actions are pinned to a full commit SHA (not a moving tag) so a
@@ -16,6 +16,10 @@ inputs:
   node-version:
     description: Node major (or full version) to install.
     default: "26"
+  cache:
+    description: >-
+      Restore and save the pnpm store cache. The release workflow sets "false" so a poisoned cache entry can't reach a published tarball.
+    default: "true"
 
 runs:
   using: composite
@@ -46,11 +50,13 @@ runs:
         npm install --global "pnpm@${version}"
 
     - name: Locate pnpm store
+      if: inputs.cache == 'true'
       id: pnpm-store
       shell: bash
       run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
-    - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+    - if: inputs.cache == 'true'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
         key: pnpm-store-${{ runner.os }}-node${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}

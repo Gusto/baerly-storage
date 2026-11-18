@@ -16,6 +16,9 @@
  */
 import { defineCommand } from "citty";
 import { runBin } from "./bin-runner.ts";
+// The bin ships inside `@gusto/baerly-storage`, so its version is the root
+// package's. rolldown inlines only the `version` field.
+import { version } from "../../../package.json" with { type: "json" };
 
 /**
  * `baerly admin <command>` — operator-side reconciliation, inspection,
@@ -38,7 +41,7 @@ const admin = defineCommand({
 const main = defineCommand({
   meta: {
     name: "baerly",
-    version: "0.0.0",
+    version,
     description: "Vendorless document database CLI.",
   },
   // Order matters: citty renders --help in declaration order.
