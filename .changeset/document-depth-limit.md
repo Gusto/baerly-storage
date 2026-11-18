@@ -1,0 +1,5 @@
+---
+"@gusto/baerly-storage": minor
+---
+
+**Breaking:** a document nests at most 100 levels (`MAX_DOCUMENT_DEPTH`, MongoDB's limit), where each object or array is a level and the document itself is the first. `insert`, `replace`, an `update` patch and each merged post-image (by id or by predicate) deeper than that throw `BaerlyError{code:"SchemaError"}` (HTTP 400) before any write. The message names the limit and the path to the first container past it, `err.issues` carries the full path, and `err.resolution` says how to flatten the data. The HTTP client (`createBaerlyClient`) applies the same check before it sends, and `baerly admin restore` refuses a deeper dump line with its line number. Before, nesting was unbounded: a document deep enough to overflow the call stack failed with `500 Internal`, and one that fit a deep-stack host could overflow a recursive path on a host with a shallower stack. A row an earlier release stored deeper stays readable and deletable, and an update that flattens it under the limit commits.

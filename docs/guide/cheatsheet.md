@@ -72,7 +72,7 @@ One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), n
 | `code` | HTTP | When |
 | --- | --- | --- |
 | `InvalidConfig` | 400 | Bad config/input (bucket, malformed predicate, document > 1 MiB) |
-| `SchemaError` | 400 | JSON shape invalid or bound schema rejected the doc |
+| `SchemaError` | 400 | JSON shape invalid (incl. nested > 100 levels) or bound schema rejected the doc |
 | `WriteConflict` | 409 | Lost a write race; re-read, then retry (`retriable`) |
 | `AlreadyExists` | 409 | `insert` `_id` collision (duplicate `_id`); never retry |
 | `AmbiguousCommit` | 409 | A committing create may be durable, but its outcome could not be resolved |

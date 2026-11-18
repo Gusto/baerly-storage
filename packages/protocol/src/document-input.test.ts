@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { MAX_DOCUMENT_DEPTH } from "./constants.ts";
 import { assertDocumentValues, assertInsertIdType } from "./document-input.ts";
 import { BaerlyError } from "./errors.ts";
 
@@ -11,6 +12,29 @@ const refusal = (value: unknown, verb = "insert"): BaerlyError => {
     return error as BaerlyError;
   }
   throw new Error("expected assertDocumentValues to throw");
+};
+
+const depthRefusal = (value: unknown, verb = "insert"): BaerlyError => {
+  try {
+    assertDocumentValues(value, verb);
+  } catch (error) {
+    expect(error).toBeInstanceOf(BaerlyError);
+    expect(error).toMatchObject({ code: "SchemaError" });
+    return error as BaerlyError;
+  }
+  throw new Error("expected assertDocumentValues to throw");
+};
+
+/**
+ * A value `levels` containers deep, the root included: objects
+ * (`{ d: … }`) or arrays (`[…]`), with a scalar leaf.
+ */
+const nested = (levels: number, kind: "object" | "array" = "object"): unknown => {
+  let value: unknown = kind === "object" ? { leaf: 1 } : [1];
+  for (let i = 1; i < levels; i++) {
+    value = kind === "object" ? { d: value } : [value];
+  }
+  return value;
 };
 
 class Ticket {
@@ -156,8 +180,10 @@ describe("assertDocumentValues", () => {
     for (let i = 0; i < 100_000; i++) {
       deep = { d: deep };
     }
-    const { message } = refusal(deep);
-    expect(message).toBe("insert: document value at d.d.d.d.….d.d.d.leaf is NaN");
+    const error = depthRefusal(deep);
+    expect(error.message).toBe(
+      `insert: document value at d.d.d.d.….d.d.d.d nests deeper than the ${MAX_DOCUMENT_DEPTH}-level document limit`,
+    );
   });
 
   test("keeps a path at the edge length whole", () => {
@@ -171,6 +197,64 @@ describe("assertDocumentValues", () => {
     const { message } = refusal({ [key]: Number.NaN });
     expect(message.length).toBeLessThan(200);
     expect(message).toContain(`["${"k".repeat(64)}"…]`);
+  });
+});
+
+describe("assertDocumentValues: nesting depth", () => {
+  test.each(["object", "array"] as const)(
+    "accepts %s nesting exactly MAX_DOCUMENT_DEPTH levels deep, the root included",
+    (kind) => {
+      expect(() =>
+        assertDocumentValues({ _id: "a", v: nested(MAX_DOCUMENT_DEPTH - 1, kind) }, "insert"),
+      ).not.toThrow();
+    },
+  );
+
+  test.each(["object", "array"] as const)(
+    "refuses %s nesting one level past the limit as SchemaError, naming the limit",
+    (kind) => {
+      const error = depthRefusal({ _id: "a", v: nested(MAX_DOCUMENT_DEPTH, kind) });
+      expect(error.message).toContain(`${MAX_DOCUMENT_DEPTH}-level document limit`);
+      expect(error.message).toMatch(/^insert: document value at v/);
+      expect(error.resolution).toBeTypeOf("string");
+      expect(error.retriable).toBe(false);
+      const issues = error.issues ?? [];
+      expect(issues).toHaveLength(1);
+      // The path to the first container past the limit: `v`, then one
+      // step per level below it.
+      expect(issues[0]!.path).toHaveLength(MAX_DOCUMENT_DEPTH);
+      expect(issues[0]!.path[0]).toBe("v");
+    },
+  );
+
+  test("a scalar or empty container in the deepest allowed container is fine", () => {
+    // Under `{ v: … }`, the innermost object sits at level
+    // MAX_DOCUMENT_DEPTH - 1 and its empty `e` / `o` at the limit itself.
+    let value: unknown = { s: "x", n: null, e: [], o: {} };
+    for (let i = 3; i < MAX_DOCUMENT_DEPTH; i++) {
+      value = { d: value };
+    }
+    expect(() => assertDocumentValues({ v: value }, "insert")).not.toThrow();
+    expect(() => assertDocumentValues({ v: { w: value } }, "insert")).toThrow(
+      expect.objectContaining({ code: "SchemaError" }),
+    );
+  });
+
+  test("an update patch is held to the same limit", () => {
+    const options = { undefinedMembersAbsent: true };
+    expect(() =>
+      assertDocumentValues({ v: nested(MAX_DOCUMENT_DEPTH - 1) }, "update", options),
+    ).not.toThrow();
+    expect(() =>
+      assertDocumentValues({ v: nested(MAX_DOCUMENT_DEPTH) }, "update", options),
+    ).toThrow(expect.objectContaining({ code: "SchemaError" }));
+  });
+
+  test("a shared container is measured at each depth it appears", () => {
+    const shared = nested(MAX_DOCUMENT_DEPTH - 1);
+    expect(() => assertDocumentValues({ a: shared, b: { c: shared } }, "insert")).toThrow(
+      expect.objectContaining({ code: "SchemaError" }),
+    );
   });
 });
 

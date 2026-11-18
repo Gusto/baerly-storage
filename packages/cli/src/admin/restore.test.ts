@@ -23,6 +23,7 @@ import {
   BaerlyError,
   type DocumentData,
   MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENT_DEPTH,
 } from "@baerly/protocol";
 import { LocalFsStorage } from "@baerly/dev";
 import { Writer } from "@baerly/server/_internal/testing";
@@ -752,6 +753,19 @@ describe("baerly admin restore", () => {
       expect(err).toContain("1 row committed");
       // The remedy must reach stderr, not only the structured error.
       expect(err).toContain("Store a finite number or null");
+    });
+
+    test("a row at the document depth cap restores; one level past it is refused", async () => {
+      // `{ _id, v: { d: … {} } }`: the root plus `levels - 1` objects.
+      const deep = (id: string, levels: number): string =>
+        `{"_id":"${id}","v":${'{"d":'.repeat(levels - 2)}{}${"}".repeat(levels - 2)}}\n`;
+      const { code, err } = await run(
+        row("a") + deep("at", MAX_DOCUMENT_DEPTH) + deep("over", MAX_DOCUMENT_DEPTH + 1),
+      );
+      expect(code).toBe(1);
+      expect(err).toContain('line 3 (_id "over") has an invalid document');
+      expect(err).toContain(`nests deeper than the ${MAX_DOCUMENT_DEPTH}-level document limit`);
+      expect(err).toContain("2 rows committed");
     });
 
     test("a row over the per-document size cap is refused with line and count", async () => {

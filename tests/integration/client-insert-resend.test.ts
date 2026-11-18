@@ -1,5 +1,5 @@
 import { createBaerlyClient } from "@baerly/client";
-import { MemoryStorage, uuidv7 } from "@baerly/protocol";
+import { MAX_DOCUMENT_DEPTH, MemoryStorage, uuidv7 } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import { createRouter } from "@baerly/server/http";
 import { expect, test } from "vitest";
@@ -33,11 +33,11 @@ test("a resent auto-ID insert replays as the original success and leaves one row
 test("an accepted deeply nested insert supports an identical HTTP resend", async () => {
   const db = Db.create({ storage: new MemoryStorage(), app: "client-resend", tenant: "deep" });
   const router = createRouter({ db });
-  // Deep enough to exercise a nested replay end to end, and well under the
-  // depth at which V8's recursive JSON.stringify overflows a test worker's
-  // stack. The comparator's own stack safety is pinned in `json.test.ts`.
+  // A document at the nesting cap (`MAX_DOCUMENT_DEPTH`, the root
+  // included) exercises a nested replay end to end. The comparator's own
+  // stack safety on deeper values is pinned in `json.test.ts`.
   let nested: Record<string, unknown> = {};
-  for (let i = 0; i < 1000; i++) {
+  for (let i = 0; i < MAX_DOCUMENT_DEPTH - 2; i++) {
     nested = { nested };
   }
   const _id = uuidv7();

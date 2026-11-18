@@ -45,6 +45,28 @@ export const UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS = 100;
 export const MAX_DOCUMENT_BYTES = 1_048_576;
 
 /**
+ * Max nesting depth of one document or update patch: 100 levels, where
+ * each object or array is a level and the document itself is the first.
+ * A scalar adds none, so `{ a: [1] }` is 2 levels deep.
+ *
+ * `assertDocumentValues` refuses a deeper value as `SchemaError` before
+ * any write: on `insert` and `replace`, on an update patch and on
+ * each merged post-image, in the HTTP client before it sends, and on
+ * `baerly admin restore`'s dump lines. Without a cap, a document
+ * committed on a host with a deep call stack can overflow a recursive
+ * path (`merge`, `jsonValueEqual`, `JSON.stringify`) on a host with a
+ * shallower one, wedging reads or folds of its collection; on Node 26 a
+ * document of about 8,000 levels already overflows. Only writes are
+ * checked, so a row stored deeper by an earlier release stays readable
+ * and deletable.
+ *
+ * 100 is MongoDB's limit for BSON documents ("Nested Depth for BSON
+ * Documents", MongoDB Limits and Thresholds). Any snapshot format must
+ * hold a row at this depth.
+ */
+export const MAX_DOCUMENT_DEPTH = 100;
+
+/**
  * Max total object-key length S3 and R2 accept (UTF-8 bytes). A key
  * over this fails the PUT with an opaque provider 400; baerly surfaces
  * it early as InvalidConfig. See docs/spec/storage-compatibility.md.

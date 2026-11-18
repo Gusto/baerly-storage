@@ -33,6 +33,7 @@ baerly-storage is built for production apps that live within a defined workload 
 | Writes to one collection³ | ~30/min sustained | Same | Same | Writers race to create the same next log entry; losers retry. Contention, not capacity |
 | Collections per tenant⁴ | ~100 (soft) | Same | Same | Nothing enforces a cap; the cost is operator tooling, and that cost is bucket round-trips rather than host CPU |
 | Size of one document⁵ | 1 MiB of JSON | Same | Same | Enforced on every write, in-process and over HTTP; a larger document belongs in rows of its own or outside the database |
+| Nesting depth of one document⁶ | 100 levels | Same | Same | Enforced on every write, in-process and over HTTP, so a row written on one host cannot overflow another host's call stack |
 
 ¹ A paid Worker keeps the **free-tier** budgets until you set `BAERLY_MAINTENANCE_PROFILE=cf-paid`; billing alone changes nothing. The Node adapter selects its profile automatically.
 
@@ -43,6 +44,8 @@ baerly-storage is built for production apps that live within a defined workload 
 ⁴ Derivation: [Collection fan-out](#collection-fan-out).
 
 ⁵ 1,048,576 bytes of the row's JSON, `_id` included (`MAX_DOCUMENT_BYTES`). An insert, `replace`, or `update` whose resulting row is larger fails with `InvalidConfig` and writes nothing, so a small patch that would grow a row past the limit is refused too. A row stored larger by an earlier release stays readable and deletable, and an update that shrinks it under the limit commits.
+
+⁶ Each object or array is a level, the document itself included (`MAX_DOCUMENT_DEPTH`, MongoDB's limit). An insert, `replace`, `update` patch, or merged row nested deeper fails with `SchemaError` and writes nothing. A row stored deeper by an earlier release stays readable and deletable, and an update that flattens it under the limit commits.
 
 **Stored bytes are not on this table because they are not a fit limit.** Nothing in baerly-storage measures or enforces per-tenant storage; a tenant is only a key prefix. Stored bytes become a cost line at the R2 free-tier storage boundary, and [cost-model.md](../about/cost-model.md) owns that figure.
 
