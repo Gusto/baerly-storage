@@ -47,7 +47,7 @@ function canonicalUri(pathname: string): string {
   );
 }
 
-async function hmac(key: Uint8Array, data: string): Promise<Uint8Array> {
+async function hmac(key: Uint8Array, data: string): Promise<Uint8Array<ArrayBuffer>> {
   const view = new Uint8Array(key.byteLength);
   view.set(key);
   const cryptoKey = await crypto.subtle.importKey(
@@ -59,6 +59,21 @@ async function hmac(key: Uint8Array, data: string): Promise<Uint8Array> {
   );
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(data));
   return new Uint8Array(sig);
+}
+
+/** SHA-256 hex of the empty payload: the `x-goog-content-sha256` of a bodyless request. @see https://docs.cloud.google.com/storage/docs/authentication/canonical-requests */
+const EMPTY_PAYLOAD_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/** The GOOG4 signing key for one secret and UTC day, imported once for reuse.
+ * Same key chain as {@link sigV4Signature}, which stays the uncached oracle. */
+async function importSigningKey(secretAccessKey: string, yyyymmdd: string): Promise<CryptoKey> {
+  const dateKey = await hmac(encoder.encode(GOOG4_KEY_PREFIX + secretAccessKey), yyyymmdd);
+  const dateRegionKey = await hmac(dateKey, GOOG4_REGION);
+  const dateSvcKey = await hmac(dateRegionKey, GOOG4_SERVICE);
+  const signingKey = await hmac(dateSvcKey, GOOG4_REQUEST);
+  return crypto.subtle.importKey("raw", signingKey, { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
 }
 
 /** Pure: build the GOOG4 canonical request string. Exported for the intermediates test. */
@@ -120,7 +135,8 @@ export async function goog4StringToSign(input: {
  * The SigV4-family signing machinery: four-stage HMAC key chain + final HMAC.
  * Identical between GOOG4 and AWS SigV4 modulo the {keyPrefix, terminator,
  * service, region} constants — which is exactly what the AWS-vector oracle
- * exploits to prove this in CI. Exported for oracle 1.
+ * exploits to prove this in CI. Exported for oracle 1 and as the uncached
+ * reference that `goog4Signer`'s cached signing key is tested against.
  */
 export async function sigV4Signature(input: {
   keyPrefix: string;
@@ -164,17 +180,38 @@ export function goog4Signer(opts: Goog4SignerOptions): (req: Request) => Promise
   const now = opts.now ?? (() => Date.now());
   const resolve = credentialResolver(opts.credentials, now, (creds) => creds);
 
+  // The derived signing key depends only on the secret and the UTC day, so
+  // each signer keeps the one it last used (a key cache like aws4fetch's per
+  // `AwsClient`). Per closure, not module-wide: two signers with different
+  // credentials never evict each other, and the secret stays in the closure
+  // that already holds it. A rejected derivation is dropped, so the next call
+  // derives again rather than failing until the day rolls over.
+  let cachedKey: { secret: string; yyyymmdd: string; key: Promise<CryptoKey> } | undefined;
+  const signingKeyFor = (secret: string, yyyymmdd: string): Promise<CryptoKey> => {
+    if (cachedKey?.secret === secret && cachedKey.yyyymmdd === yyyymmdd) {
+      return cachedKey.key;
+    }
+    const entry = { secret, yyyymmdd, key: importSigningKey(secret, yyyymmdd) };
+    cachedKey = entry;
+    entry.key.catch(() => {
+      if (cachedKey === entry) {
+        cachedKey = undefined;
+      }
+    });
+    return entry.key;
+  };
+
   return async (req) => {
     const creds = await resolve();
     const { amzDate, yyyymmdd } = amzDateFrom(now());
     const scope = `${yyyymmdd}/${GOOG4_REGION}/${GOOG4_SERVICE}/${GOOG4_REQUEST}`;
 
-    const body = new Uint8Array(await req.clone().arrayBuffer());
-    // `body` already owns a fresh ArrayBuffer, so `sha256Hex`'s defensive copy
-    // is redundant for this caller — but the shared helper keeps it for callers
-    // whose Uint8Array may be a view over a larger buffer (TS#61375). Not worth
-    // special-casing the shared helper; correctness over one avoided copy.
-    const payloadHash = await sha256Hex(body);
+    // Only a null body is bodyless (GET, DELETE, LIST). An empty-body PUT
+    // still has a body stream and takes the read-and-hash path.
+    const payloadHash =
+      req.body === null
+        ? EMPTY_PAYLOAD_SHA256
+        : await sha256Hex(new Uint8Array(await req.clone().arrayBuffer()));
 
     const url = new URL(req.url);
     const headers = new Headers(req.headers);
@@ -217,15 +254,10 @@ export function goog4Signer(opts: Goog4SignerOptions): (req: Request) => Promise
       scope,
       canonicalRequest: canonical,
     });
-    const signature = await sigV4Signature({
-      keyPrefix: GOOG4_KEY_PREFIX,
-      terminator: GOOG4_REQUEST,
-      service: GOOG4_SERVICE,
-      region: GOOG4_REGION,
-      secretAccessKey: creds.secretAccessKey,
-      yyyymmdd,
-      stringToSign,
-    });
+    const signingKey = await signingKeyFor(creds.secretAccessKey, yyyymmdd);
+    const signature = new Uint8Array(
+      await crypto.subtle.sign("HMAC", signingKey, encoder.encode(stringToSign)),
+    ).toHex();
 
     const signedHeaderList = Object.keys(signedHeaders)
       .map((n) => n.toLowerCase())

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { gate } from "../../../../tests/setup/gates.ts";
 import type { Credentials } from "./types.ts";
 import {
@@ -490,5 +490,151 @@ describe("goog4Signer", () => {
     const expectedHash = digest.toHex();
     expect(signed.headers.get("x-goog-content-sha256")).toBe(expectedHash);
     expect(signed.headers.get("x-goog-content-sha256")).not.toBe(EMPTY_SHA256);
+  });
+});
+
+// Recompute a signed request's GOOG4 signature from its own headers with the
+// uncached `sigV4Signature`, the reference the signer's cached key must match.
+async function oracleSignature(signed: Request, secretAccessKey: string): Promise<string> {
+  const amzDate = signed.headers.get("x-goog-date")!;
+  const yyyymmdd = amzDate.slice(0, 8);
+  const signedHeaders: Record<string, string> = {};
+  for (const [name, value] of signed.headers) {
+    if (name === "host" || name === "content-type" || name.startsWith("x-goog-")) {
+      signedHeaders[name] = value;
+    }
+  }
+  const stringToSign = await goog4StringToSign({
+    algorithm: "GOOG4-HMAC-SHA256",
+    amzDate,
+    scope: `${yyyymmdd}/auto/storage/goog4_request`,
+    canonicalRequest: goog4CanonicalRequest({
+      method: signed.method,
+      url: signed.url,
+      signedHeaders,
+      hashedPayload: signed.headers.get("x-goog-content-sha256")!,
+    }),
+  });
+  return sigV4Signature({
+    keyPrefix: "GOOG4",
+    terminator: "goog4_request",
+    service: "storage",
+    region: "auto",
+    secretAccessKey,
+    yyyymmdd,
+    stringToSign,
+  });
+}
+
+function signatureOf(signed: Request): string {
+  return /Signature=([0-9a-f]{64})$/.exec(signed.headers.get("Authorization")!)![1]!;
+}
+
+describe("goog4Signer signing-key cache", () => {
+  const DAY = 24 * 60 * 60_000;
+  const T0 = Date.parse("2025-01-01T12:00:00Z");
+  const get = (key = "k") => new Request(`https://storage.googleapis.com/b/${key}`);
+  // A miss derives the key: four chain HMACs plus importing the result.
+  const KEY_DERIVATION_IMPORTS = 5;
+
+  test("reuses the key within a UTC day and re-derives on rollover", async () => {
+    let currentTime = T0;
+    const sign = goog4Signer({
+      credentials: { accessKeyId: "GOOG_ID", secretAccessKey: "SECRET_A" },
+      now: () => currentTime,
+    });
+    const importKey = vi.spyOn(crypto.subtle, "importKey");
+
+    const first = await sign(get("a"));
+    expect(importKey).toHaveBeenCalledTimes(KEY_DERIVATION_IMPORTS);
+    importKey.mockClear();
+    currentTime += 60_000;
+    const hit = await sign(get("b"));
+    expect(importKey).not.toHaveBeenCalled();
+    expect(signatureOf(first)).toBe(await oracleSignature(first, "SECRET_A"));
+    expect(signatureOf(hit)).toBe(await oracleSignature(hit, "SECRET_A"));
+
+    importKey.mockClear();
+    currentTime += DAY;
+    const nextDay = await sign(get("c"));
+    expect(importKey).toHaveBeenCalledTimes(KEY_DERIVATION_IMPORTS);
+    expect(nextDay.headers.get("x-goog-date")!.slice(0, 8)).toBe("20250102");
+    expect(signatureOf(nextDay)).toBe(await oracleSignature(nextDay, "SECRET_A"));
+  });
+
+  test("a secret rotated within the same day is not signed with the old key", async () => {
+    let currentTime = T0;
+    let secret = "SECRET_OLD";
+    const sign = goog4Signer({
+      credentials: async () => ({
+        accessKeyId: "GOOG_ID",
+        secretAccessKey: secret,
+        expiration: new Date(currentTime + 10 * 60_000),
+      }),
+      now: () => currentTime,
+    });
+    const before = await sign(get());
+    expect(signatureOf(before)).toBe(await oracleSignature(before, "SECRET_OLD"));
+
+    secret = "SECRET_NEW";
+    currentTime += 6 * 60_000; // inside the five-minute refresh buffer
+    const after = await sign(get());
+    expect(after.headers.get("x-goog-date")!.slice(0, 8)).toBe("20250101");
+    expect(signatureOf(after)).toBe(await oracleSignature(after, "SECRET_NEW"));
+    expect(signatureOf(after)).not.toBe(await oracleSignature(after, "SECRET_OLD"));
+  });
+
+  test("two signers with different secrets keep their own keys when interleaved", async () => {
+    const signA = goog4Signer({
+      credentials: { accessKeyId: "ID_A", secretAccessKey: "SECRET_A" },
+      now: () => T0,
+    });
+    const signB = goog4Signer({
+      credentials: { accessKeyId: "ID_B", secretAccessKey: "SECRET_B" },
+      now: () => T0,
+    });
+    await signA(get());
+    await signB(get());
+    const importKey = vi.spyOn(crypto.subtle, "importKey");
+    const signed: [Request, string][] = [];
+    for (let i = 0; i < 3; i++) {
+      signed.push([await signA(get(`a${i}`)), "SECRET_A"], [await signB(get(`b${i}`)), "SECRET_B"]);
+    }
+    // Neither signer evicted the other's key.
+    expect(importKey).not.toHaveBeenCalled();
+    for (const [req, secret] of signed) {
+      expect(signatureOf(req)).toBe(await oracleSignature(req, secret));
+    }
+  });
+
+  test("a rejected key derivation is evicted and the next call derives again", async () => {
+    const sign = goog4Signer({
+      credentials: { accessKeyId: "GOOG_ID", secretAccessKey: "SECRET_A" },
+      now: () => T0,
+    });
+    vi.spyOn(crypto.subtle, "importKey").mockRejectedValueOnce(new Error("importKey failed"));
+    await expect(sign(get())).rejects.toThrow("importKey failed");
+    const retried = await sign(get());
+    expect(signatureOf(retried)).toBe(await oracleSignature(retried, "SECRET_A"));
+  });
+
+  test("a null-body request is hashed as empty without cloning; an empty-body PUT still reads its body", async () => {
+    const sign = goog4Signer({
+      credentials: { accessKeyId: "GOOG_ID", secretAccessKey: "SECRET_A" },
+      now: () => T0,
+    });
+    const clone = vi.spyOn(Request.prototype, "clone");
+    for (const method of ["GET", "DELETE"]) {
+      const signed = await sign(new Request("https://storage.googleapis.com/b/k", { method }));
+      expect(signed.headers.get("x-goog-content-sha256")).toBe(EMPTY_SHA256);
+      expect(signatureOf(signed)).toBe(await oracleSignature(signed, "SECRET_A"));
+    }
+    expect(clone).not.toHaveBeenCalled();
+
+    const emptyPut = await sign(
+      new Request("https://storage.googleapis.com/b/k", { method: "PUT", body: "" }),
+    );
+    expect(clone).toHaveBeenCalledTimes(1);
+    expect(emptyPut.headers.get("x-goog-content-sha256")).toBe(EMPTY_SHA256);
   });
 });
