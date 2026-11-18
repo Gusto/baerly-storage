@@ -511,6 +511,42 @@ export const GC_PENDING_CONTENT_TYPE: string = "application/json";
 export const GC_GRACE_PERIOD_MILLIS: number = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * Fraction of the GC grace one `runGc` pass may spend between the
+ * `current.json` read its DELETEs rest on and each DELETE batch. Once
+ * the elapsed time exceeds `graceMillis * GC_PASS_GRACE_FRACTION`, the
+ * pass issues no further DELETEs and leaves the remaining due
+ * candidates in `gc/pending.json` for a later pass, which re-reads the
+ * manifest.
+ *
+ * Why 1/10:
+ *  - **A live pass never trips it.** Against the 7-day default the
+ *    budget is ~16.8 hours, and a pass on every first-class host lasts
+ *    seconds. Only a paused or starved process crosses it.
+ *  - **It bounds how stale a DELETE's liveness proof can be.** It
+ *    matters for the legacy `stale-log` arm, whose DELETE can rest on
+ *    the pass's first `current.json` read: a candidate is due no earlier
+ *    than its mark plus the grace, so a DELETE issued within `f` of the
+ *    grace after that read rests on one taken at least `(1 - f)` of the
+ *    grace after the mark. An `orphan-snapshot` DELETE always rests on
+ *    the sweep-time re-read, taken after the candidate came due, so a
+ *    full grace after its mark.
+ *
+ * In-band, by design: one clock comparison per DELETE batch, no lease
+ * and no knob. Elapsed time is the larger of one node's wall-clock and
+ * monotonic readings, so neither cross-node skew nor a backward clock
+ * correction shortens it, and a suspend the monotonic clock skips still
+ * shows on the wall clock. The after-the-mark figures rest on `due_at`
+ * and so keep invariant 14's wall-clock limitation. A pass with
+ * `graceMillis: 0` (tests only) has no grace to keep a fraction of and
+ * is not bounded.
+ *
+ * @see docs/spec/sync-protocol.md (invariant 14)
+ * @see packages/server/src/gc.ts
+ */
+// Stryker disable next-line ArithmeticOperator: internal tuning value, not an off-process contract — asserting the literal would be a tautological change-detector. See docs/contributing/mutation-testing.md constants policy.
+export const GC_PASS_GRACE_FRACTION: number = 1 / 10;
+
+/**
  * Cap on candidates kept in `gc/pending.json` to bound the size of
  * the file. The compactor marks at most this many candidates per
  * pass; subsequent passes pick up the rest. Larger collections will
@@ -906,6 +942,21 @@ export const NODE_MAINTENANCE_GC_MAX_MARKS: number = 200;
 
 /** Node-tier candidate DELETE cap per pass. 10× CF-free. @see {@link NODE_MAINTENANCE_FOLD_ENTRIES_PER_PASS} */
 export const NODE_MAINTENANCE_GC_MAX_SWEEPS: number = 100;
+
+/**
+ * Keys per parallel DELETE batch in a `runGc` sweep. The pass checks
+ * {@link GC_PASS_GRACE_FRACTION} before each batch, so this is how many
+ * DELETEs can land after the bound is crossed.
+ *
+ * Equal to the largest in-band sweep cap
+ * ({@link NODE_MAINTENANCE_GC_MAX_SWEEPS}), so every write-tick GC
+ * slice issues its DELETEs as one batch and pays no added round trip.
+ * Only a pass with a larger or no sweep cap splits its sweep. Batching
+ * changes no request count.
+ *
+ * @see packages/server/src/gc.ts
+ */
+export const GC_SWEEP_DELETE_BATCH_KEYS: number = NODE_MAINTENANCE_GC_MAX_SWEEPS;
 
 /**
  * Node-tier GC cadence (boundary-crossing). Shorter than the CF-free `WRITE_TICK_GC_INTERVAL`

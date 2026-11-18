@@ -18,6 +18,14 @@
  * candidate OUT of the ledger without deleting it, when a generation or
  * liveness recheck fails.
  *
+ * **A pass is bounded by the grace it relies on.** Sweep DELETEs go out
+ * in batches of {@link GC_SWEEP_DELETE_BATCH_KEYS}. Before each batch,
+ * a pass whose sweep-gate `current.json` read is older than
+ * {@link GC_PASS_GRACE_FRACTION} of the grace issues no further DELETEs;
+ * the unissued candidates stay pending, still due, for a later pass.
+ * That bounds how stale a DELETE's liveness proof can be (sync-protocol
+ * invariant 14) without a lease or a scheduler.
+ *
  * Stale log objects are reclaimed by a sequence window rather than a
  * timed mark-and-sweep. See `log-retention.ts` for the computed-range
  * deletion path.
@@ -103,7 +111,9 @@ import {
   GC_GRACE_PERIOD_MILLIS,
   GC_MARK_LIST_PAGE_KEYS,
   GC_MAX_PENDING_CANDIDATES,
+  GC_PASS_GRACE_FRACTION,
   GC_PENDING_SCHEMA_VERSION,
+  GC_SWEEP_DELETE_BATCH_KEYS,
   NO_GENERATION,
   isWriteConflict,
   casUpdateGcPending,
@@ -141,7 +151,8 @@ export interface InternalRunGcOptions extends RunGcOptions {
   /**
    * @internal Override grace-period for tests. Defaults to
    * {@link GC_GRACE_PERIOD_MILLIS} (7 days). Tests use `0` to bypass
-   * the grace and exercise the sweep path in one pass.
+   * the grace and exercise the sweep path in one pass; a zero grace also
+   * lifts the {@link GC_PASS_GRACE_FRACTION} bound on the pass.
    */
   readonly graceMillis?: number;
 
@@ -165,10 +176,21 @@ export interface InternalRunGcOptions extends RunGcOptions {
   /**
    * @internal Clock injection for tests. Defaults to
    * `() => new Date()`. The function is invoked at mark time (to
-   * compute every candidate's `due_at`) and at sweep time (to
-   * compare against candidate `due_at`).
+   * compute every candidate's `due_at`), at sweep time (to compare
+   * against candidate `due_at`), and around the `current.json` reads and
+   * DELETE batches (to enforce {@link GC_PASS_GRACE_FRACTION}).
    */
   readonly now?: () => Date;
+
+  /**
+   * @internal Monotonic clock injection for tests, in milliseconds.
+   * Defaults to `() => performance.now()`. The grace bound takes the
+   * larger of this clock's elapsed time and `now`'s, so a backward
+   * wall-clock correction cannot make a stalled pass look younger, and a
+   * suspend the monotonic clock does not count still shows on the wall
+   * clock.
+   */
+  readonly monotonicNow?: () => number;
 }
 
 /**
@@ -204,6 +226,12 @@ export interface RunGcResult {
    * see module JSDoc.
    */
   readonly pendingDepth: number;
+}
+
+/** One instant on the wall clock and the monotonic clock, in milliseconds. */
+interface PassStamp {
+  readonly wall: number;
+  readonly mono: number;
 }
 
 const DEFAULT_MAX_MARKS = Number.MAX_SAFE_INTEGER;
@@ -243,6 +271,12 @@ export const runGc = async (
   const maxMarks = internal.maxMarksPerRun ?? DEFAULT_MAX_MARKS;
   const maxSweeps = internal.maxSweepsPerRun ?? DEFAULT_MAX_SWEEPS;
   const now = internal.now ?? ((): Date => new Date());
+  const monotonicNow = internal.monotonicNow ?? ((): number => performance.now());
+  /** Both clocks at one instant; see {@link elapsedSince}. */
+  const stamp = (): PassStamp => ({ wall: now().getTime(), mono: monotonicNow() });
+  /** The larger of the two clocks' elapsed times, so neither can understate it. */
+  const elapsedSince = (from: PassStamp): number =>
+    Math.max(now().getTime() - from.wall, monotonicNow() - from.mono);
   const { prefix: collectionPrefix, name: collectionName } =
     collectionFromCurrentJsonKey(currentJsonKey);
   const pendingKey = gcPendingKey(collectionPrefix);
@@ -250,6 +284,9 @@ export const runGc = async (
   const signalOpts = signal !== undefined ? { signal } : undefined;
 
   // ── Step 1. Read current.json (skip silently if absent). ────────
+  // Stamped BEFORE the GET: the body reflects some instant after the
+  // request left, so the stamp can only overstate the read's age.
+  const currentReadAt = stamp();
   const cur = await readCurrentJson(storage, currentJsonKey, signalOpts);
   if (cur === null) {
     return zeroGcResult();
@@ -353,6 +390,7 @@ export const runGc = async (
   const hasDueSnapshot = sweepCandidates.some(
     (candidate) => candidate.reason === "orphan-snapshot" && Date.parse(candidate.due_at) <= nowMs,
   );
+  const freshReadAt = hasDueSnapshot ? stamp() : currentReadAt;
   const freshCurrent = hasDueSnapshot
     ? await readCurrentJson(storage, currentJsonKey, signalOpts)
     : undefined;
@@ -362,6 +400,9 @@ export const runGc = async (
   // the fresher one narrows — never widens — the window between the
   // read a decision rests on and the DELETE it authorises.
   const fenceCurrent = freshCurrent?.json ?? current;
+  // When the read behind `fenceCurrent` was taken; the sweep's grace
+  // bound is measured from here.
+  const fenceReadAt = freshCurrent?.json !== undefined ? freshReadAt : currentReadAt;
   const fenceGeneration = fenceCurrent.generation ?? NO_GENERATION;
   const fenceFloor = logSeqStartOf(fenceCurrent);
   const rescuedKeys = new Set<string>();
@@ -488,9 +529,25 @@ export const runGc = async (
     }
   }
   // Idempotent DELETE on every in-tree Storage impl — a 404 is a
-  // no-op. Parallel via Promise.all; one failure aborts the rest,
-  // but the per-key DELETEs that landed are durable.
-  await Promise.all(toSweep.map((c) => storage.delete(c.key, signalOpts)));
+  // no-op. Each batch is parallel via Promise.all; one failure aborts
+  // the rest, but the per-key DELETEs that landed are durable.
+  //
+  // Bounded by the grace it relies on: before each batch, a pass whose
+  // `fenceCurrent` read is older than `GC_PASS_GRACE_FRACTION` of the
+  // grace stops deleting. The unissued candidates stay in the ledger,
+  // still due, for a pass that re-reads the manifest. A zero grace (tests
+  // only) has no window to keep a fraction of, so it is not bounded.
+  const sweepBudgetMillis = grace * GC_PASS_GRACE_FRACTION;
+  const swept: GcCandidate[] = [];
+  for (let start = 0; start < toSweep.length; start += GC_SWEEP_DELETE_BATCH_KEYS) {
+    if (grace > 0 && elapsedSince(fenceReadAt) > sweepBudgetMillis) {
+      break;
+    }
+    const batch = toSweep.slice(start, start + GC_SWEEP_DELETE_BATCH_KEYS);
+    await Promise.all(batch.map((c) => storage.delete(c.key, signalOpts)));
+    swept.push(...batch);
+  }
+  const abandonedCount = toSweep.length - swept.length;
 
   // ── Step 5. CAS-write pending.json. ─────────────────────────────
   // MERGE this pass's results INTO the latest stored value rather than
@@ -503,13 +560,14 @@ export const runGc = async (
   // performed, so the helper safely retries the merge on conflict.
   // `mergeGcPending` drops terminal keys via its existing `sweptKeys`
   // merge input. Positively-live rescues are terminal ledger resolutions too,
-  // but only `toSweep` drives DELETEs, result counts, timestamps, and metrics.
-  const sweptKeys = new Set([...toSweep.map((candidate) => candidate.key), ...droppedKeys]);
+  // but only `swept` (the DELETEs actually issued) drives result counts,
+  // timestamps, and metrics.
+  const sweptKeys = new Set([...swept.map((candidate) => candidate.key), ...droppedKeys]);
   // `""` when this pass swept nothing — sourcing the no-sweep truth from
   // `latest` (via the merge's "take later" rule) rather than our stale
   // read. With no contention this is observably identical: `latest`
   // equals our read, so the later-of-the-two is the same value.
-  const lastSweptAt = toSweep.length > 0 ? now().toISOString() : "";
+  const lastSweptAt = swept.length > 0 ? now().toISOString() : "";
   const markedSummary = {
     orphan_snapshot: markedOrphanSnapshot,
   };
@@ -549,7 +607,7 @@ export const runGc = async (
     if (isWriteConflict(error)) {
       // Best-effort: we know `remaining.length` is at least the
       // post-sweep depth; concurrent passes may have moved it.
-      pendingDepth = remaining.length;
+      pendingDepth = remaining.length + abandonedCount;
     } else {
       throw error;
     }
@@ -561,10 +619,10 @@ export const runGc = async (
   const labels = { collection: collectionName };
   const metrics = ctxMetrics();
   metrics.gauge("db.orphan.candidate_count", pendingDepth, labels);
-  metrics.gauge("db.gc.entries_swept_per_second", toSweep.length, labels);
-  if (toSweep.length > 0) {
+  metrics.gauge("db.gc.entries_swept_per_second", swept.length, labels);
+  if (swept.length > 0) {
     const byReason = new Map<GcCandidate["reason"], number>();
-    for (const c of toSweep) {
+    for (const c of swept) {
       byReason.set(c.reason, (byReason.get(c.reason) ?? 0) + 1);
     }
     for (const [reason, count] of byReason) {
@@ -592,7 +650,7 @@ export const runGc = async (
 
   return {
     marked: markedSummary,
-    swept: toSweep.length,
+    swept: swept.length,
     dropped: {
       stale_generation: staleGenerationKeys.size,
       still_live: rescuedKeys.size,
