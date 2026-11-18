@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseSync, Visitor } from "rolldown/utils";
 import { describe, expect, test } from "vitest";
 import { isUnacceptableLicense } from "../../scripts/third-party-licenses.mjs";
 
@@ -75,6 +76,51 @@ describe("third-party-licenses manifest", () => {
     // the tarball.
     expect(existsSync(resolve(distDir, ".third-party-licenses.lib.json"))).toBe(false);
     expect(existsSync(resolve(distDir, ".third-party-licenses.cli.json"))).toBe(false);
+  });
+});
+
+// `@gusto/create-baerly-storage` bundles every third-party dependency (its
+// rolldown config externalizes only `node:` builtins), so its tarball ships
+// its own notices file next to `dist/index.js`.
+describe("create-baerly-storage bundles its dependencies with notices", () => {
+  const scaffolderDist = resolve(__dirname, "../../packages/create-baerly-storage/dist");
+  const scaffolderPkg = JSON.parse(
+    readFileSync(resolve(scaffolderDist, "../package.json"), "utf8"),
+  ) as { dependencies?: Record<string, string> };
+
+  test("declares no runtime dependencies", () => {
+    expect(scaffolderPkg.dependencies ?? {}).toEqual({});
+  });
+
+  test("dist/index.js imports only Node builtins", () => {
+    const path = resolve(scaffolderDist, "index.js");
+    const { program, errors } = parseSync(path, readFileSync(path, "utf8"), { lang: "js" });
+    expect(errors).toEqual([]);
+    const specifiers: string[] = [];
+    const add = (node: unknown) => {
+      if (node !== null && typeof node === "object" && "value" in node) {
+        specifiers.push(String(node.value));
+      }
+    };
+    new Visitor({
+      ImportDeclaration: (n) => add(n.source),
+      ExportAllDeclaration: (n) => add(n.source),
+      ExportNamedDeclaration: (n) => add(n.source),
+      ImportExpression: (n) => add(n.source),
+    }).visit(program);
+    expect(specifiers.length).toBeGreaterThan(0);
+    expect(specifiers.filter((s) => !s.startsWith("node:"))).toEqual([]);
+  });
+
+  test("dist/THIRD-PARTY-LICENSES.txt lists every bundled lib with its text", () => {
+    const manifest = readFileSync(resolve(scaffolderDist, "THIRD-PARTY-LICENSES.txt"), "utf8");
+    expect(manifest).toContain("The @gusto/create-baerly-storage published package");
+    for (const lib of ["@clack/prompts", "@clack/core", "citty", "sisteransi"]) {
+      expect(manifest, `expected ${lib} in the manifest`).toMatch(
+        new RegExp(`^${lib.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}@`, "m"),
+      );
+    }
+    expect(manifest).toContain("Permission is hereby granted");
   });
 });
 

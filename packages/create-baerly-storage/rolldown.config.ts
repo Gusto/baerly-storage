@@ -9,6 +9,12 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { defineConfig } from "rolldown";
+import { createRollupLicensePlugin } from "rollup-license-plugin";
+import {
+  isUnacceptableLicense,
+  NOTICES_FILENAME,
+  renderNotices,
+} from "../../scripts/third-party-licenses.mjs";
 
 /**
  * Bundle the scaffolder entry; copy the runnable example trees from
@@ -131,12 +137,29 @@ const copyTemplates = () => ({
 
 export default defineConfig({
   input: "src/index.ts",
-  external: ["@clack/prompts", "citty", "picocolors", /^node:/],
+  // Every third-party dependency is bundled. `npm create` installs this
+  // package on the user's machine outside our lockfile and pnpm policies
+  // (`minimumReleaseAge`, `trustPolicy`), so an external `^` range would let
+  // a hijacked patch release of a prompt or arg library run on every new
+  // scaffold. Bundled, the tarball ships exactly the code our lockfile
+  // resolved, under our provenance attestation.
+  external: [/^node:/],
   output: {
     file: "dist/index.js",
     format: "esm",
     sourcemap: true,
     banner: "#!/usr/bin/env node",
   },
-  plugins: [copyTemplates()],
+  // `dist/THIRD-PARTY-LICENSES.txt` carries the bundled deps' notices; the
+  // build fails on a non-permissive license.
+  plugins: [
+    copyTemplates(),
+    createRollupLicensePlugin({
+      outputFilename: false,
+      unacceptableLicenseTest: isUnacceptableLicense,
+      additionalFiles: {
+        [NOTICES_FILENAME]: (packages) => renderNotices("@gusto/create-baerly-storage", packages),
+      },
+    }),
+  ],
 });

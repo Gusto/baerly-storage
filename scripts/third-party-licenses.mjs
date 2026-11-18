@@ -84,6 +84,43 @@ export function isUnacceptableLicense(licenseIdentifier) {
 }
 
 /**
+ * Render the human-readable notices file for `packageName` from
+ * `rollup-license-plugin` package records: deduped by `name@version`,
+ * sorted, each with its verbatim license text.
+ */
+export function renderNotices(packageName, records) {
+  const byKey = new Map();
+  for (const pkg of records) {
+    byKey.set(`${pkg.name}@${pkg.version}`, pkg);
+  }
+  const packages = [...byKey.values()].toSorted((a, b) =>
+    a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name),
+  );
+  const SEP = `${"=".repeat(78)}\n`;
+  const header = [
+    "THIRD-PARTY SOFTWARE LICENSES",
+    "",
+    `The ${packageName} published package bundles (inlines) the`,
+    "third-party libraries listed below into its `dist/` output. Their",
+    "licenses require their copyright and permission notices to travel with",
+    "any copy of their code. The verbatim notices follow.",
+    "",
+    "This file is generated at build time from each dependency's own LICENSE",
+    "file and is not hand-maintained.",
+    "",
+  ].join("\n");
+  const blocks = packages.map((p) => {
+    const meta = [`${p.name}@${p.version}`, `License: ${p.license}`];
+    if (p.repository) {
+      meta.push(`Repository: ${p.repository}`);
+    }
+    const text = (p.licenseText || "").trim() || "(no license text found in package)";
+    return `${meta.join("\n")}\n\n${text}\n`;
+  });
+  return `${header}\n${SEP}${blocks.join(`\n${SEP}`)}\n`;
+}
+
+/**
  * Shared `rollup-license-plugin` options. `outputFilename` is the only
  * per-build difference, so callers pass it in.
  */

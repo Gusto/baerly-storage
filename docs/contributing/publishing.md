@@ -224,6 +224,8 @@ The published `@gusto/baerly-storage` bundle ships a `dist/THIRD-PARTY-LICENSES.
 
 The notices file ships via the root package's `files: ["dist"]` — no extra packaging wiring. `tests/integration/third-party-licenses.test.ts` pins that it exists, lists every bundled lib across both builds, and carries verbatim text.
 
+**The scaffolder.** `@gusto/create-baerly-storage` has no runtime dependencies: its rolldown config (`packages/create-baerly-storage/rolldown.config.ts`) bundles `@clack/prompts`, `citty` and their transitive deps, and externalizes only `node:` builtins. `npm create` installs the scaffolder outside our lockfile and pnpm policies, so a `^` range there would let a hijacked patch release run on every new scaffold; bundled, the tarball ships exactly what our lockfile resolved. The same plugin, with the same allowlist, writes `packages/create-baerly-storage/dist/THIRD-PARTY-LICENSES.txt` in that build, and the same test pins it.
+
 **Allowlist gate.** `scripts/third-party-licenses.mjs` holds the permissive-license allowlist (MIT / ISC / BSD-2 / BSD-3 / Apache-2.0 / 0BSD / Unlicense / CC0-1.0) and the SPDX acceptability check. The plugin calls it as `unacceptableLicenseTest`, and the merge step re-checks as a belt-and-suspenders guard. **The build fails** if any bundled dep carries a non-permissive license (e.g. any copyleft GPL/AGPL/LGPL/MPL), so a license-incompatible dep can never silently ship.
 
 ## Notes on the publish config
@@ -247,7 +249,7 @@ A version was published that we didn't build from `main`, or one that ships mali
 
 ### A dependency we bundle is compromised
 
-`@gusto/baerly-storage` inlines its runtime deps into `dist/` (see [Third-party license notices](#third-party-license-notices)), and `@gusto/create-baerly-storage` bundles its CLI deps. A compromised version of one of them is in our tarball if our lockfile resolved it when we built.
+`@gusto/baerly-storage` inlines its runtime deps into `dist/` (see [Third-party license notices](#third-party-license-notices)), and `@gusto/create-baerly-storage` bundles all of its deps. A compromised version of one of them is in our tarball if our lockfile resolved it when we built.
 
 1. Check: `pnpm why <dep>` on the release tag, and `dist/THIRD-PARTY-LICENSES.txt` in the published tarball, which lists each bundled `name@version`.
 2. Pin the lockfile to a clean version (an `overrides` entry if no clean version satisfies the range), rebuild, and cut a patch release.

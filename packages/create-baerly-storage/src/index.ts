@@ -13,7 +13,7 @@
  * overhead beats the dedup at this scale.
  */
 import { runCommand, showUsage, type CommandMeta, type Resolvable } from "citty";
-import pc from "picocolors";
+import { styleText } from "node:util";
 import { main } from "./runner.ts";
 
 const resolve = async <T>(v: Resolvable<T>): Promise<T> => {
@@ -29,7 +29,9 @@ const writeError = (json: boolean, code: string, message: string): void => {
       `${JSON.stringify({ error: { code, message, command: "create-baerly-storage" } })}\n`,
     );
   } else {
-    process.stderr.write(`${pc.red("create-baerly-storage:")} ${code}: ${message}\n`);
+    process.stderr.write(
+      `${styleText("red", "create-baerly-storage:", { stream: process.stderr })} ${code}: ${message}\n`,
+    );
   }
 };
 

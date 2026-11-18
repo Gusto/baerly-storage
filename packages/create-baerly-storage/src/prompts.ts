@@ -11,9 +11,9 @@
  * and `process.exit(1)` (same exit code as a user error).
  */
 import { cancel, confirm, intro, isCancel, note, select, text } from "@clack/prompts";
-import pc from "picocolors";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { styleText } from "node:util";
 import { defaultGitRunner, type GitRunner } from "./git.ts";
 import type { Addon } from "./scaffold.ts";
 
@@ -99,7 +99,7 @@ export const runWizard = async (
   input: WizardInput,
   opts: { readonly gitRunner?: GitRunner } = {},
 ): Promise<WizardOutput> => {
-  intro(pc.bold(pc.cyan("create-baerly-storage")));
+  intro(styleText(["bold", "cyan"], "create-baerly-storage"));
   const projectName = input.projectName ?? (await promptProjectName());
   const outDir = projectName === "." ? process.cwd() : resolve(process.cwd(), projectName);
   const wranglerPath = resolve(outDir, "wrangler.jsonc");

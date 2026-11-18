@@ -24,9 +24,9 @@
  */
 import { defineCommand, parseArgs, type ArgsDef, type ParsedArgs } from "citty";
 import { outro } from "@clack/prompts";
-import pc from "picocolors";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { styleText } from "node:util";
 import { version } from "../package.json" with { type: "json" };
 import { runWizard } from "./prompts.ts";
 import { type Addon, KNOWN_ADDONS, scaffold } from "./scaffold.ts";
@@ -156,7 +156,7 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
           ? "  (no changes — already bolted on)"
           : result.changes.map((c) => `  ${c}`).join("\n");
       outro(
-        `${pc.green("✓")} bolted baerly onto ${opts.outDir}\n\n` +
+        `${styleText("green", "✓")} bolted baerly onto ${opts.outDir}\n\n` +
           `Changes:\n${changesBlock}\n\n` +
           `Paste this into ${result.snippetTarget}, replacing the stock handler:\n\n` +
           result.snippet +
@@ -164,7 +164,7 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
           result.nextSteps.map((s) => `  ${s}`).join("\n"),
       );
     } else {
-      process.stdout.write(`${pc.green("✓")} bolted baerly onto ${opts.outDir}\n`);
+      process.stdout.write(`${styleText("green", "✓")} bolted baerly onto ${opts.outDir}\n`);
       if (result.changes.length > 0) {
         process.stdout.write(`\n  Changes:\n`);
         for (const c of result.changes) {
@@ -189,7 +189,9 @@ const dispatchBoltOn = async (opts: DispatchBoltOnOpts): Promise<number> => {
         `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly-storage" } })}\n`,
       );
     } else {
-      process.stderr.write(`${pc.red("create-baerly-storage:")} ${msg}\n`);
+      process.stderr.write(
+        `${styleText("red", "create-baerly-storage:", { stream: process.stderr })} ${msg}\n`,
+      );
     }
     return 1;
   }
@@ -367,7 +369,9 @@ const handleCreateBaerly = async (
         } else if (outcome.reason === "no-identity") {
           hint = `git user.name / user.email are not configured. Set them with \`git config --global user.name '…'\` + \`git config --global user.email '…'\`, then commit manually.`;
         }
-        process.stderr.write(`${pc.yellow("create-baerly-storage:")} git init skipped — ${hint}\n`);
+        process.stderr.write(
+          `${styleText("yellow", "create-baerly-storage:", { stream: process.stderr })} git init skipped — ${hint}\n`,
+        );
       }
     }
     if (install) {
@@ -375,7 +379,7 @@ const handleCreateBaerly = async (
       const { code } = await installer.run(pm, result.outDir);
       if (code !== 0) {
         process.stderr.write(
-          `${pc.yellow("create-baerly-storage:")} install exited with code ${code}. ` +
+          `${styleText("yellow", "create-baerly-storage:", { stream: process.stderr })} install exited with code ${code}. ` +
             `Run \`${pm} install\` in ${result.outDir} manually.\n`,
         );
       }
@@ -394,14 +398,14 @@ const handleCreateBaerly = async (
       );
     } else if (isInteractive) {
       outro(
-        `${pc.green("✓")} ${result.outDir}\n` +
+        `${styleText("green", "✓")} ${result.outDir}\n` +
           `\n  Next steps:\n` +
           result.nextSteps.map((s) => `    ${s}`).join("\n"),
       );
     } else {
       // Non-TTY, non-JSON: keep the existing plaintext output
       // bit-for-bit so any scripts parsing it don't break.
-      process.stdout.write(`${pc.green("✓")} scaffolded ${result.outDir}\n`);
+      process.stdout.write(`${styleText("green", "✓")} scaffolded ${result.outDir}\n`);
       process.stdout.write(`\n  Next steps:\n`);
       for (const s of result.nextSteps) {
         process.stdout.write(`    ${s}\n`);
@@ -416,7 +420,9 @@ const handleCreateBaerly = async (
         `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly-storage" } })}\n`,
       );
     } else {
-      process.stderr.write(`${pc.red("create-baerly-storage:")} ${msg}\n`);
+      process.stderr.write(
+        `${styleText("red", "create-baerly-storage:", { stream: process.stderr })} ${msg}\n`,
+      );
     }
     return 1;
   }
@@ -456,7 +462,9 @@ export const runCreateBaerly = async (
         `${JSON.stringify({ error: { code: "InvalidConfig", message: msg, command: "create-baerly-storage" } })}\n`,
       );
     } else {
-      process.stderr.write(`${pc.red("create-baerly-storage:")} ${msg}\n`);
+      process.stderr.write(
+        `${styleText("red", "create-baerly-storage:", { stream: process.stderr })} ${msg}\n`,
+      );
     }
     return 1;
   }
