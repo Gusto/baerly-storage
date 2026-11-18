@@ -3,6 +3,7 @@ import { fc } from "@fast-check/vitest";
 import { beforeAll, describe, expect, test } from "vitest";
 import { defineStorageConformanceSuite } from "@baerly/protocol/conformance";
 import { S3HttpStorage } from "./s3-http.ts";
+import { sigV4Signer } from "./s3-signer.ts";
 import { createBucket } from "../../../tests/fixtures/s3-fixtures.ts";
 import { gate } from "../../../tests/setup/gates.ts";
 import {
@@ -30,7 +31,13 @@ const signer = new AwsClient({
   region: MINIO_REGION,
   service: "s3",
 });
-const sign = (req: Request): Promise<Request> => signer.sign(req);
+// The shipped signer, so the suite covers its header-only signing; the raw
+// `AwsClient` above only creates the bucket.
+const sign = sigV4Signer({
+  accessKeyId: MINIO_ACCESS_KEY,
+  secretAccessKey: MINIO_SECRET_KEY,
+  region: MINIO_REGION,
+});
 
 // A bare `.` / `..` *key* is unaddressable over the S3 HTTP API on every
 // backend (RFC 3986 dot-segment removal rewrites `<bucket>/.` before the

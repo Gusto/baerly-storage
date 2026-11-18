@@ -1,5 +1,6 @@
 import { BaerlyError } from "@baerly/protocol";
 import { AwsClient } from "aws4fetch";
+import { signHeadersOnly } from "./sigv4-sign.ts";
 
 /**
  * Static-credential inputs for {@link sigV4Signer}.
@@ -84,5 +85,5 @@ export function sigV4Signer(opts: SigV4SignerOptions): (req: Request) => Promise
     region,
     service: "s3",
   });
-  return (req: Request) => client.sign(req);
+  return (req: Request) => signHeadersOnly(client, req);
 }

@@ -26,6 +26,7 @@ import { DEFAULT_GCS_ENDPOINT, GcsHttpStorage, S3HttpStorage } from "@baerly/ada
 // baerly-storage/gcs` subpath source — exactly as the s3-worker suites
 // import `sigV4Signer` from `s3.ts` (the `/s3` subpath source).
 import { goog4Signer } from "../../packages/adapter-node/src/gcs.ts";
+import { sigV4Signer } from "../../packages/adapter-node/src/s3.ts";
 import {
   type ConformanceOptions,
   defineStorageConformanceSuite,
@@ -129,11 +130,16 @@ describe("conformance", () => {
       // GCS native is the sanctioned path: SigV4 (`AwsClient`) can't carry
       // `x-goog-if-generation-match` (GCS rejects mixed `x-amz-*`/`x-goog-*`
       // with 400 ExcessHeaderValues), so GCS signs with GOOG4-HMAC-SHA256 and
-      // drives `GcsHttpStorage`. Every other endpoint stays on the shared
-      // SigV4 `AwsClient` → `S3HttpStorage` path untouched.
+      // drives `GcsHttpStorage`. Every other endpoint signs with the shipped
+      // `sigV4Signer` → `S3HttpStorage` path; the raw `AwsClient` above only
+      // creates the bucket.
       const sign: (req: Request) => Promise<Request> = isGcs
         ? goog4Signer({ credentials: c.credentials })
-        : (req: Request): Promise<Request> => signer.sign(req);
+        : sigV4Signer({
+            accessKeyId: c.credentials.accessKeyId,
+            secretAccessKey: c.credentials.secretAccessKey,
+            region: c.region,
+          });
 
       const isMinio = ep.name === "node-minio";
       // R2 guarantees strongly consistent S3 LIST. The existing polling

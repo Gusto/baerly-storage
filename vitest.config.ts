@@ -321,6 +321,10 @@ export default defineConfig({
           // `tests/setup/fast-check.ts` (root `setupFiles`) is loaded too, so
           // `FC_NUM_RUNS` keeps working inside the Workers pool.
           setupFiles: ["tests/setup/r2-binding.ts"],
+          // Host-side echo server for the S3 PUT framing test in
+          // `tests/integration/s3-worker-wire.test.ts`, which needs a real
+          // socket to see `Content-Length` vs chunked.
+          globalSetup: ["tests/setup/s3-wire-echo-server.ts"],
         },
       },
     ],
