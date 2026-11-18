@@ -281,7 +281,12 @@ const HTTP_ROUTES: SpecIR["httpRoutes"] = [
     auth: "verified",
     summary: "Delete a document by id (204; 404 when absent).",
   },
-  { method: "GET", path: "/v1/count", auth: "verified", summary: "Count matching rows." },
+  {
+    method: "GET",
+    path: "/v1/count",
+    auth: "verified",
+    summary: "Count matching rows (?collection=, ?where=, ?limit=).",
+  },
   {
     method: "GET",
     path: "/v1/since",

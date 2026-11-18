@@ -234,7 +234,11 @@ export interface ClientQuery<T extends DocumentData = DocumentData> {
   first(opts?: TerminalOptions): Promise<(T & { _id: string }) | undefined>;
   /** Every matching document. Pair with `.limit(n)` on large collections. */
   all(opts?: TerminalOptions): Promise<(T & { _id: string })[]>;
-  /** Count matching rows. Issues `GET /v1/count?collection=&where=`; server returns a scalar. */
+  /**
+   * Count matching rows, at most `limit` when one is set (as the server
+   * SDK's `count()` does). Issues `GET /v1/count?collection=&where=&limit=`;
+   * server returns a scalar.
+   */
   count(opts?: TerminalOptions): Promise<number>;
 }
 
@@ -530,6 +534,9 @@ const makeClientQuery = <T extends DocumentData>(
       params.set("collection", collectionName);
       if (state.wire.clauses.length > 0) {
         params.set("where", JSON.stringify(state.wire));
+      }
+      if (state.limit !== undefined) {
+        params.set("limit", String(state.limit));
       }
       const { count } = await request<{ count: number }>(ctx, {
         method: "GET",

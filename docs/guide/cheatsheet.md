@@ -96,7 +96,7 @@ One class, `BaerlyError`. Discriminate by `.code` (survives realm boundaries), n
 | `PUT    /v1/c/:collection/:id` | `{"doc":{…}}` | `200 {modified}` |
 | `DELETE /v1/c/:collection/:id` | — | `204` |
 | `GET    /v1/c/:collection` | — | `{ data, _meta }` |
-| `GET    /v1/count?collection=<name>&where=<json>` | — | `{ data: { count }, _meta }` |
+| `GET    /v1/count?collection=<name>&where=<json>&limit=<n>` | — | `{ data: { count }, _meta }` |
 | `GET    /v1/since?collection=<name>&cursor=<opaque>` | — | `{ events, next_cursor }` |
 | `GET    /v1/healthz` | — | `200 {"ok":true}` (anonymous, pre-auth) |
 
