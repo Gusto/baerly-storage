@@ -71,7 +71,13 @@ import {
 } from "./doc-id.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeReadTail } from "./log-tail.ts";
-import { countMatches, filterRows, limitedLength, type StoredDoc } from "./query-eval.ts";
+import {
+  countMatches,
+  filterRows,
+  limitedLength,
+  orderRows,
+  type StoredDoc,
+} from "./query-eval.ts";
 import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { ReadBudget } from "./read-admission.ts";
@@ -1385,9 +1391,9 @@ const runReadRows = async <T extends DocumentData>(
       rows = filterRows(docs, state.wire);
     }
 
-    // ── Step 5. Apply order. ────────────────────────────────────────
+    // ── Step 5. Apply order (with a small `limit`, a bounded top-k). ─
     if (state.order !== undefined) {
-      rows = sortByOrderSpec(rows, state.order);
+      rows = orderRows(rows, state.order, state.limit);
     }
 
     // ── Step 6. Apply limit (`rows` is this read's own array). ──────
@@ -1439,48 +1445,4 @@ const recordReadWork = (
   recorder.counter("db.read.decoded_entries_total", decoded, labels);
   recorder.counter("db.read.live_documents_total", live, labels);
   recorder.counter("db.read.returned_rows_total", returned, labels);
-};
-
-/**
- * Stable multi-key sort built from an `OrderSpec`. Keys are taken in
- * the spec's insertion order, which matches the caller's source-order
- * expectation. `Array.prototype.sort` is stable on Node 26+ and Workerd.
- *
- * Top-level fields only (locked at `OrderSpec<T>`).
- * Values are `DocumentValue` — string / number / boolean / object —
- * but only the primitive types are sensibly orderable; comparing two
- * objects falls through to "considered equal," which preserves the
- * stable-sort order of the input.
- */
-const sortByOrderSpec = <T extends DocumentData>(
-  rows: StoredRow<T>[],
-  spec: OrderSpec<T>,
-): StoredRow<T>[] => {
-  const entries = Object.entries(spec) as Array<[keyof T, "asc" | "desc"]>;
-  return rows.toSorted((a, b) => {
-    for (const [field, dir] of entries) {
-      const av: T[keyof T] | undefined = a.doc[field];
-      const bv: T[keyof T] | undefined = b.doc[field];
-      if (av === bv) {
-        continue;
-      }
-      // `undefined` (missing field) sorts low under asc / high under
-      // desc — same shape SQL's `NULLS FIRST` gives on asc.
-      if (av === undefined) {
-        return dir === "desc" ? 1 : -1;
-      }
-      if (bv === undefined) {
-        return dir === "desc" ? -1 : 1;
-      }
-      // string / number / boolean compare uniformly under `<`. Booleans
-      // compare false < true (JS default). Object values fall through
-      // as "considered equal" — see JSDoc above.
-      if (typeof av === "object" || typeof bv === "object") {
-        continue;
-      }
-      const cmp = av < bv ? -1 : 1;
-      return dir === "desc" ? -cmp : cmp;
-    }
-    return 0;
-  });
 };
