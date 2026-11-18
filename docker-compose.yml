@@ -8,7 +8,7 @@ services:
     # MinIO stopped publishing minio/minio (Docker Hub and quay.io) and archived
     # its repo. Chainguard rebuilds MinIO from source; its free tier ships only
     # `latest`, so the digest is the only version signal.
-    image: cgr.dev/chainguard/minio:latest@sha256:68aab277f9748c7c3eb85f178744adba1655c8e33a86987b22d2879ca507c332
+    image: cgr.dev/chainguard/minio:latest@sha256:7618b82bba99aadd77fcf59eb6cfd89b4b8b8e01ac796c474d57a1c1abf17e79
     command: server /data/minio --console-address :9090
     ports:
       - ${BAERLY_MINIO_HOST_PORT:-9102}:9000
