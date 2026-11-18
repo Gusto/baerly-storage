@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { BaerlyError, STORAGE_RETRY_MAX_DELAY_MILLIS } from "@baerly/protocol";
 import { S3HttpStorage } from "./s3-http.ts";
+import { sigV4Signer } from "./s3-signer.ts";
 
 const mkStorage = (
   fetchImpl: typeof fetch,
@@ -666,4 +667,47 @@ describe("sign callback", () => {
     const req = upstreamFetch.mock.calls[0]![0] as Request;
     expect(req.headers.get("X-Signed")).toBe("1");
   });
+});
+
+// A fetch that hangs until the request's signal aborts, then rejects with
+// its reason, the way undici and workerd do.
+const hangUntilAborted = () => {
+  let calls = 0;
+  const fetchImpl = ((input: RequestInfo | URL) => {
+    calls += 1;
+    const { signal } = input as Request;
+    return new Promise<Response>((_resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }) as typeof fetch;
+  return { fetchImpl, calls: () => calls };
+};
+
+describe("S3HttpStorage abort", () => {
+  test.each([
+    ["get", (s: S3HttpStorage, signal: AbortSignal) => s.get("k", { signal })],
+    ["put", (s: S3HttpStorage, signal: AbortSignal) => s.put("k", new Uint8Array(8), { signal })],
+  ] as const)(
+    "a %s aborted in flight rejects with the AbortError after one attempt",
+    async (_op, call) => {
+      const { fetchImpl, calls } = hangUntilAborted();
+      const s = new S3HttpStorage({
+        endpoint: "https://example.invalid",
+        bucket: "b",
+        fetch: fetchImpl,
+        sign: sigV4Signer({ accessKeyId: "AKIA", secretAccessKey: "secret", region: "us-east-1" }),
+        retries: 2,
+        backoffMs: 1,
+      });
+      const controller = new AbortController();
+      const pending = call(s, controller.signal);
+      setTimeout(() => controller.abort(), 5);
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(calls()).toBe(1);
+    },
+  );
 });

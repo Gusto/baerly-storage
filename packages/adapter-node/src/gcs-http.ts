@@ -88,7 +88,9 @@ export class GcsHttpStorage implements Storage {
     try {
       return await this.#fetch(signed);
     } catch (error) {
-      if (error instanceof BaerlyError) {
+      // A cancelled call surfaces as the caller's abort, not a retryable
+      // NetworkError, so the retry loop ends on it.
+      if (error instanceof BaerlyError || signed.signal.aborted) {
         throw error;
       }
       const msg = error instanceof Error ? error.message : String(error);
