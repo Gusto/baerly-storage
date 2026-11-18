@@ -15,10 +15,6 @@ interface Options {
  * by {@link createApp} (in `app.ts`) ahead of `staticAssetsMiddleware`
  * so the dev short-circuit wins over any on-disk `index.html` /
  * `favicon.ico` that might live in `webRoot`.
- *
- * Mirrors the imperative dev-landing block in
- * `packages/adapter-node/src/server.ts` (which the hand-rolled
- * `handle()` bridge still uses until the bridge cutover).
  */
 export function devLandingMiddleware(opts: Options): MiddlewareHandler {
   return async (c, next) => {

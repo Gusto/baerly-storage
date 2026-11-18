@@ -58,10 +58,6 @@ interface Options {
  * middleware. The actual byte pump runs through
  * `@hono/node-server`'s response writer, which handles backpressure +
  * client-disconnect cleanly.
- *
- * Mirrors the imperative `serveStaticAsset` in
- * `packages/adapter-node/src/server.ts` (which the hand-rolled
- * `handle()` bridge still uses until T04 cuts over).
  */
 export function staticAssetsMiddleware(opts: Options): MiddlewareHandler {
   return async (c, next) => {

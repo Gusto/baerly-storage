@@ -76,7 +76,7 @@
         "gz": 37376,
         "minGz": 13312
       },
-      "note": "Worker-safe S3 entry, so consumer-facing. Demonstrated catch: fast-xml-parser is pinned at 5.8.0 because 5.9.3 inflated this closure ~25%."
+      "note": "Worker-safe S3 entry, so consumer-facing."
     },
     "gcs.js": {
       "tier": "shipped",
