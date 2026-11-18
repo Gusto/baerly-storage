@@ -20,6 +20,13 @@ import { isUnacceptableLicense } from "../../scripts/third-party-licenses.mjs";
 const distDir = resolve(__dirname, "../../dist");
 const manifestPath = resolve(distDir, "THIRD-PARTY-LICENSES.txt");
 
+/** Placeholder `renderNotices` writes when a package ships no license file. */
+const MISSING_LICENSE_TEXT = "(no license text found in package)";
+
+/** Package names from a notices file's `<name>@<version>` block headers. */
+const noticeNames = (manifest: string): string[] =>
+  [...manifest.matchAll(/^(@?[^@\s]+)@\S+\nLicense: /gm)].map((m) => m[1]!).toSorted();
+
 // Every third-party lib bundled into the root package across both
 // rolldown builds. The library entries (root config) bundle the first
 // group; the `baerly` bin (cli config) adds citty + jsonc-parser. The
@@ -63,6 +70,10 @@ describe("third-party-licenses manifest", () => {
     expect(manifest).toContain("Permission is hereby granted");
     // ISC-licensed libs carry their own grant wording.
     expect(manifest).toMatch(/Permission to use, copy, modify|Permission is hereby granted/);
+  });
+
+  test("carries license text for every lib", () => {
+    expect(readFileSync(manifestPath, "utf8")).not.toContain(MISSING_LICENSE_TEXT);
   });
 
   test("declares every package's license and a copyright notice", () => {
@@ -112,15 +123,30 @@ describe("create-baerly-storage bundles its dependencies with notices", () => {
     expect(specifiers.filter((s) => !s.startsWith("node:"))).toEqual([]);
   });
 
-  test("dist/THIRD-PARTY-LICENSES.txt lists every bundled lib with its text", () => {
+  // The expected set comes from the bundle itself: every `node_modules`
+  // package the sourcemap names was inlined into `dist/index.js`.
+  test("dist/THIRD-PARTY-LICENSES.txt lists exactly the bundled libs", () => {
+    const map = JSON.parse(readFileSync(resolve(scaffolderDist, "index.js.map"), "utf8")) as {
+      sources: string[];
+    };
+    const bundled = new Set<string>();
+    for (const source of map.sources) {
+      const name = /.*node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(source)?.[1];
+      if (name !== undefined) {
+        bundled.add(name);
+      }
+    }
+    // Guards against a sourcemap that stopped naming node_modules paths.
+    expect([...bundled]).toEqual(expect.arrayContaining(["@clack/prompts", "citty"]));
+
     const manifest = readFileSync(resolve(scaffolderDist, "THIRD-PARTY-LICENSES.txt"), "utf8");
     expect(manifest).toContain("The @gusto/create-baerly-storage published package");
-    for (const lib of ["@clack/prompts", "@clack/core", "citty", "sisteransi"]) {
-      expect(manifest, `expected ${lib} in the manifest`).toMatch(
-        new RegExp(`^${lib.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}@`, "m"),
-      );
-    }
-    expect(manifest).toContain("Permission is hereby granted");
+    expect(noticeNames(manifest)).toEqual([...bundled].toSorted());
+  });
+
+  test("dist/THIRD-PARTY-LICENSES.txt carries license text for every lib", () => {
+    const manifest = readFileSync(resolve(scaffolderDist, "THIRD-PARTY-LICENSES.txt"), "utf8");
+    expect(manifest).not.toContain(MISSING_LICENSE_TEXT);
   });
 });
 
