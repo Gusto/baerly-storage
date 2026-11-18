@@ -580,7 +580,7 @@ export default baerlyWorker(() => ({ config }));
 | Preset | Identity source | Tenant derivation |
 | --- | --- | --- |
 | `sharedSecret` | `Authorization: Bearer <secret>` with constant-time compare | `tenantPrefix:` option (single-tenant only) |
-| `bearerJwt` | JWT over JWKS, `iss` + `aud` + `alg` allowlist | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
+| `bearerJwt` | JWT over JWKS, `iss` + `aud` + required `exp` + `alg` allowlist | Configurable `tenantClaim` (default `"tenant"`) or fixed `tenantPrefix:` override |
 | `cloudflareAccess` | `Cf-Access-Jwt-Assertion` header (thin shim over `bearerJwt`) | Same as `bearerJwt` |
 
 ```ts
