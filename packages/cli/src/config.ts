@@ -25,7 +25,12 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { AUTH_CONFIG_VALUES, type AuthConfig, BaerlyError } from "@baerly/protocol";
+import {
+  AUTH_CONFIG_VALUES,
+  type AuthConfig,
+  BaerlyError,
+  CF_ACCESS_TEAM_NAME_PATTERN,
+} from "@baerly/protocol";
 
 export interface AppConfig {
   readonly app: string;
@@ -202,10 +207,10 @@ export const loadAppConfig = async (cwd: string = process.cwd()): Promise<AppCon
     const cfa = cfaRaw as Record<string, unknown>;
     const td = cfa["teamDomain"];
     const aud = cfa["audienceTag"];
-    if (typeof td !== "string" || td.length === 0) {
+    if (typeof td !== "string" || !CF_ACCESS_TEAM_NAME_PATTERN.test(td)) {
       throw new BaerlyError(
         "InvalidConfig",
-        `baerly: ${cfgPath}: \`cloudflareAccess.teamDomain\` must be a non-empty string`,
+        `baerly: ${cfgPath}: \`cloudflareAccess.teamDomain\` must be a bare team name of lowercase letters, digits and "-", such as "acme" (got ${JSON.stringify(td)})`,
       );
     }
     if (typeof aud !== "string" || aud.length === 0) {

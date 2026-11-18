@@ -72,3 +72,46 @@ describe("loadAppConfig — auth field", () => {
     }
   });
 });
+
+describe("loadAppConfig — cloudflareAccess field", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "baerly-cli-config-"));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const writeConfig = async (teamDomain: string): Promise<void> => {
+    await writeFile(
+      join(root, "baerly.config.json"),
+      JSON.stringify({
+        app: "x",
+        tenant: "t",
+        target: "cloudflare",
+        auth: "none",
+        cloudflareAccess: { teamDomain, audienceTag: "a".repeat(64) },
+      }),
+      "utf8",
+    );
+  };
+
+  test.each(["acme.cloudflareaccess.com", "evil.example.com/x", "user@acme", "Acme"])(
+    "rejects teamDomain %j that is not a bare team name",
+    async (teamDomain) => {
+      await writeConfig(teamDomain);
+      await expect(loadAppConfig(root)).rejects.toThrowError(
+        expect.objectContaining({
+          code: "InvalidConfig",
+          message: expect.stringContaining("cloudflareAccess.teamDomain"),
+        }),
+      );
+    },
+  );
+
+  test("accepts a bare team name and round-trips it", async () => {
+    await writeConfig("acme-2");
+    const config = await loadAppConfig(root);
+    expect(config.cloudflareAccess?.teamDomain).toBe("acme-2");
+  });
+});
