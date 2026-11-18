@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { serve } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
-import type { BaerlyAppConfig, Storage, Verifier } from "@baerly/protocol";
+import { type BaerlyAppConfig, isDeployedEnv, type Storage, type Verifier } from "@baerly/protocol";
 import { resolveVerifier } from "@baerly/server/_internal/kernel";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createApp } from "./app.ts";
@@ -142,14 +142,20 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     config: opts.config,
     readEnv: (k) => process.env[k],
   });
-  // auth=none startup banner: emit one info line when the operator
-  // opted into no-auth via config (not when they passed a real
-  // verifier override). Suppressed for shared-secret — operator
-  // already knows.
+  // auth=none startup banner: one line when the operator opted into
+  // no-auth via config (not when they passed a real verifier override).
+  // Suppressed for shared-secret — operator already knows. Raised to
+  // warn when the process looks deployed; never refused, because
+  // auth=none is the zero-config default.
   if (opts.verifier === undefined && opts.config.auth === "none") {
-    console.log(
-      `[baerly] auth=none — all requests resolve to tenant=${JSON.stringify(opts.config.tenant)}`,
-    );
+    const tenant = JSON.stringify(opts.config.tenant);
+    if (isDeployedEnv(process.env)) {
+      console.warn(
+        `[baerly] auth=none in a deployed environment — every request, from any caller, gets full access to tenant=${tenant}`,
+      );
+    } else {
+      console.log(`[baerly] auth=none — all requests resolve to tenant=${tenant}`);
+    }
   }
   const app = createApp({
     app: opts.config.app,

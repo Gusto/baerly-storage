@@ -589,6 +589,8 @@ import { sharedSecret, bearerJwt, cloudflareAccess } from "@gusto/baerly-storage
 
 **`tenantPrefix:` (on `bearerJwt` and `cloudflareAccess`).** Pins every verified request to a fixed tenant, bypassing claim lookup. Use this in single-tenant deployments where the IdP doesn't ship a tenant claim — the default `tenantClaim: "tenant"` would 401 every request because vanilla CF Access JWTs carry only `sub`/`email`. Signature, audience, and expiry checks are still enforced; only tenant derivation is replaced.
 
+**`tenantClaim:`** picks the tenant a request reads and writes, so name a claim only an IdP admin can set. A claim the user can edit (profile metadata, a self-service attribute) lets them pick their own tenant.
+
 **Why a function and not a class?** The source repo's `docs/guide/auth.md` records the properties the shape upholds and the rejected alternatives (class hierarchy, middleware chain, closed enum, kernel-side composition).
 
 ## Observability

@@ -171,7 +171,7 @@ const handle = baerlyNode({
 await handle.listen(Number(process.env["PORT"] ?? 8080));
 ```
 
-Use `tenantClaim` when your IdP issues one tenant per token; use `tenantPrefix` when the app is single-tenant or tenancy is enforced outside baerly-storage. They are mutually exclusive.
+Use `tenantClaim` when your IdP issues one tenant per token; use `tenantPrefix` when the app is single-tenant or tenancy is enforced outside baerly-storage. They are mutually exclusive. The tenant claim decides which tenant a request reads and writes, so name a claim only an IdP admin can set; a claim the user can edit lets them pick their own tenant.
 
 Required runtime env for the AWS S3 snippet:
 

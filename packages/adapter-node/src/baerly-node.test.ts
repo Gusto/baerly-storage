@@ -4,6 +4,7 @@ import {
   CURRENT_JSON_SCHEMA_VERSION,
   createCurrentJson,
   MemoryStorage,
+  PAAS_MARKERS,
   SHARED_SECRET_MISSING_MESSAGE,
   type Verifier,
 } from "@baerly/protocol";
@@ -364,6 +365,60 @@ describe("baerlyNode config.auth synthesis", () => {
 
     const badRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`);
     expect(badRes.status).toBe(401);
+  });
+
+  describe('auth: "none" startup line', () => {
+    const noneConfig: BaerlyAppConfig = {
+      app: "t",
+      tenant: "banner-tenant",
+      target: "node",
+      auth: "none",
+      collections: {},
+    };
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+    const stubLocalEnv = (): void => {
+      vi.stubEnv("NODE_ENV", "test");
+      for (const marker of PAAS_MARKERS) {
+        vi.stubEnv(marker, "");
+      }
+    };
+
+    test("logs at info level on a local machine", () => {
+      stubLocalEnv();
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      baerlyNode({ config: noneConfig, storage: new MemoryStorage({ ephemeral: true }) });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("auth=none"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("auth=none"));
+    });
+
+    test("warns that every request gets full tenant access when deployed", () => {
+      stubLocalEnv();
+      vi.stubEnv("NODE_ENV", "production");
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      baerlyNode({ config: noneConfig, storage: new MemoryStorage({ ephemeral: true }) });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/auth=none.*every request.*full access.*"banner-tenant"/),
+      );
+      expect(log).not.toHaveBeenCalledWith(expect.stringContaining("auth=none"));
+    });
+
+    test("is silent when a verifier override is passed, even when deployed", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      baerlyNode({
+        config: noneConfig,
+        storage: new MemoryStorage({ ephemeral: true }),
+        verifier: sharedDevVerifier,
+      });
+      expect(log).not.toHaveBeenCalledWith(expect.stringContaining("auth=none"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("auth=none"));
+    });
   });
 
   test('auth: "shared-secret" with missing env throws synchronously at baerlyNode() with the locked message', () => {

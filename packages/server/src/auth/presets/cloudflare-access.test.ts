@@ -110,6 +110,47 @@ describe("cloudflareAccess", () => {
     ).toThrowError(expect.objectContaining({ code: "InvalidConfig" }));
   });
 
+  test("replaces an Authorization header the app also sent instead of appending to it", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      fetch: fetchStub,
+    });
+    const token = await signJwt(validPayload());
+    const req = new Request("https://api.example.com/v1/c/items", {
+      headers: { "Cf-Access-Jwt-Assertion": token, Authorization: "Bearer app-session-token" },
+    });
+    const res = await verifier(req);
+    expect(res).not.toBeNull();
+    expect(res!.tenantPrefix).toBe("internal");
+  });
+
+  test.each([
+    "acme.cloudflareaccess.com",
+    "evil.example.com/x",
+    "user@evil.example.com",
+    "acme/",
+    "Acme",
+    "acme:8443",
+  ])(
+    "throws BaerlyError{InvalidConfig} when teamDomain %j is not a bare team name",
+    (teamDomain) => {
+      expect(() => cloudflareAccess({ teamDomain, audienceTag: AUDIENCE_TAG })).toThrowError(
+        expect.objectContaining({
+          code: "InvalidConfig",
+          message: expect.stringContaining("teamDomain"),
+        }),
+      );
+    },
+  );
+
+  test("accepts a hyphenated, digit-bearing team name", () => {
+    expect(() =>
+      cloudflareAccess({ teamDomain: "acme-corp-2", audienceTag: AUDIENCE_TAG }),
+    ).not.toThrow();
+  });
+
   test("throws BaerlyError{InvalidConfig} on empty teamDomain", () => {
     try {
       cloudflareAccess({ teamDomain: "", audienceTag: AUDIENCE_TAG });
