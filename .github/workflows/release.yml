@@ -1,14 +1,16 @@
 # Publishes @gusto/baerly-storage and @gusto/create-baerly-storage to npm
-# with trusted publishing: the job's OIDC token is exchanged for a
-# short-lived publish credential, and npm attaches provenance. No npm token
-# exists in this repo. See docs/contributing/publishing.md.
+# with trusted publishing and provenance. No npm token exists in this repo.
+# See docs/contributing/publishing.md.
 #
-# - Push of a `v*` tag: the `publish` job runs in the `npm-publish`
-#   environment, which holds the required-reviewer gate and the `v*` tag
-#   rule. npm's trusted-publisher config names this file and that
+# - Push of a `v*` tag: `pack` installs, gates and packs both packages into
+#   tarballs with no OIDC token, then `publish` publishes those exact
+#   tarballs. Only `publish` gets `id-token: write` and the `npm-publish`
+#   environment (required reviewer, `v*` tag rule), and it runs no install
+#   and no lifecycle scripts, so no dependency or build plugin can mint the
+#   token. npm's trusted-publisher config names this file and that
 #   environment, so renaming either breaks publishing.
-# - workflow_dispatch: the `dry-run` job runs the same gates and packs both
-#   packages without publishing. It never gets `id-token: write`.
+# - workflow_dispatch: the `dry-run` job runs the same gates and a publish
+#   dry run. It never gets `id-token: write`.
 name: release
 
 on:
@@ -48,14 +50,12 @@ jobs:
       - name: Release dry run
         run: pnpm release --dry-run
 
-  publish:
+  pack:
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: npm-publish
     permissions:
       contents: read
-      id-token: write # npm trusted publishing (OIDC) + provenance
     steps:
       # Full history so the on-main check below can see origin/main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,11 +85,48 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Publish
-        run: pnpm release
+      - name: Gate and pack
+        run: pnpm release --pack="$RUNNER_TEMP/tarballs"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) + provenance
+    steps:
+      # Checked out only for the setup action and scripts/publish.mjs;
+      # nothing is installed or built here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        with:
+          cache: "false"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
+
+      # `--provenance` makes a failed signature fail the publish instead of
+      # publishing unattested. The script refuses outside a tag run.
+      - name: Publish the packed tarballs
+        run: node scripts/publish.mjs --publish="$RUNNER_TEMP/tarballs"
 
       # The registry can take a moment to serve a new version's metadata.
       - name: Check both packages carry provenance attestations
+        working-directory: ${{ runner.temp }}
         env:
           TAG: ${{ github.ref_name }}
         run: |
