@@ -20,9 +20,9 @@
   "entries": {
     "index.js": {
       "tier": "shipped",
-      "raw": 353647,
-      "gz": 112414,
-      "minGz": 30343,
+      "raw": 354507,
+      "gz": 112729,
+      "minGz": 30347,
       "ratchet": {
         "raw": 385792,
         "gz": 122880,
@@ -56,9 +56,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 621189,
-      "gz": 186764,
-      "minGz": 61912,
+      "raw": 622049,
+      "gz": 187085,
+      "minGz": 61920,
       "ratchet": {
         "raw": 634624,
         "gz": 193024,
@@ -68,8 +68,8 @@
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 110142,
-      "gz": 35708,
+      "raw": 110218,
+      "gz": 35732,
       "minGz": 12730,
       "ratchet": {
         "raw": 113408,
@@ -80,9 +80,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 103978,
-      "gz": 33897,
-      "minGz": 10915,
+      "raw": 104054,
+      "gz": 33922,
+      "minGz": 10912,
       "ratchet": {
         "raw": 108800,
         "gz": 36096,
@@ -92,9 +92,9 @@
     },
     "http.js": {
       "tier": "shipped",
-      "raw": 544955,
-      "gz": 163057,
-      "minGz": 53180,
+      "raw": 545805,
+      "gz": 163362,
+      "minGz": 53185,
       "ratchet": {
         "raw": 552704,
         "gz": 167680,
@@ -116,9 +116,9 @@
     },
     "maintenance.js": {
       "tier": "shipped",
-      "raw": 165280,
-      "gz": 54000,
-      "minGz": 13337,
+      "raw": 165356,
+      "gz": 54028,
+      "minGz": 13339,
       "ratchet": {
         "raw": 180480,
         "gz": 59136,
@@ -156,7 +156,7 @@
     },
     "dev.js": {
       "tier": "tooling",
-      "raw": 88764,
+      "raw": 88840,
       "ratchet": {
         "raw": 97792
       },
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 815814,
+      "raw": 816674,
       "ratchet": {
         "raw": 832512
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 824772,
+      "raw": 825632,
       "ratchet": {
         "raw": 842496
       },

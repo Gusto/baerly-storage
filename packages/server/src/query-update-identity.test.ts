@@ -73,7 +73,8 @@ const referenceAccepts = (rowId: string, patchId: PatchId): boolean => {
 
 /**
  * A nested `_id` is an ordinary field, never the row's identity, so any
- * value under `sub._id` is accepted and stored as given.
+ * value under `sub._id` is accepted: a non-null one is stored as given,
+ * and `null` deletes the member (RFC 7396), leaving `sub: {}`.
  */
 const nestedIdArb: fc.Arbitrary<unknown> = fc.option(
   fc.oneof(validDocIdArb, fc.constant(null), fc.integer()),
@@ -133,7 +134,7 @@ describe("Query.update — _id identity property", () => {
             _id: rowId,
             k: 1,
             touched: true,
-            ...(nestedId === undefined ? {} : { sub: { _id: nestedId } }),
+            ...(nestedId === undefined ? {} : { sub: nestedId === null ? {} : { _id: nestedId } }),
           },
         ]);
       } else {

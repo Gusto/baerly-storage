@@ -3,7 +3,7 @@ title: JSON merge patch (RFC 7396)
 audience: spec
 doc_type: semantic-reference
 summary: Sparse JSON updates plus the algebraic boundaries for safe patch coalescing.
-last-reviewed: 2026-06-22
+last-reviewed: 2026-11-17
 tags: [protocol, json, rfc-7396, rfc-7386, merge-patch]
 related: [sync-protocol.md]
 ---
@@ -13,6 +13,13 @@ related: [sync-protocol.md]
 JSON Merge Patch is a [standardized](https://datatracker.ietf.org/doc/html/rfc7396) way to send the part of a JSON document that changed instead of sending the whole document. RFC 7396 obsoletes the earlier RFC 7386 document, but the merge rule is the same one used throughout this repo. A patch looks like the document it changes: object fields recurse, ordinary values replace, and `null` deletes a field.
 
 That small rule is why baerly-storage can accept sparse patches at the API boundary. The server applies the patch to the current row, validates the merged row, and commits the resulting full post-image. The algebra in this page explains update semantics and local sparse-patch coalescing; today's committed `U` log entries are full post-images, not sparse patches.
+
+Two functions in `packages/protocol/src/json.ts` carry the two jobs, and they differ only where a patch meets an absent or non-object value:
+
+- **Application** (`applyMergePatch(state, patch)`, written `merge` on this page) is RFC 7396 §2 exactly, and is what `update` commits. An object patch merges into `{}` when the target is absent or not an object, so a `null` member deletes at every depth and is never stored: `merge({}, {a:{b:1,c:null}}) = {a:{b:1}}`.
+- **Coalescing** (`coalesceMergePatches(acc, patch)`, written `coalesce`) summarizes a patch window. An object patch over an absent or non-object accumulator is taken as written, nulls included, so deletion intent survives: `coalesce(undefined, {x:null}) = {x:null}`. No runtime path coalesces today.
+
+Outside RFC 7396's JSON domain, both treat an `undefined` patch as the identity, and `merge` returns `undefined` for a root `null` patch, because a document cannot be `null`.
 
 The key constraint is **type-stable, delete-aware coalescing**. A _patch window_ is a contiguous list of patches you want to replace with one summary patch. _Type-stable_ means a path keeps the same JSON kind - object, array, or scalar - through that window. _Delete-aware_ means treating `null` deletes as information that can be lost if a later object patch re-adds only part of the deleted subtree.
 
@@ -142,9 +149,11 @@ merge(merge(a, b), c) == merge(a, merge(b, c)) // NOT TRUE IN GENERAL
 The subtlety is that `merge` has different branches for objects and non-objects. When a path changes kind, grouping can change which branch runs.
 
 ```text
-merge(merge(0, {}), 0) = 0
+a = {x:1, y:1}, b = 0, c = {x:2}
+
+merge(merge(a, b), c) = merge(0, {x:2})     = {x:2}
 !==
-merge(0, merge({}, 0)) = {}
+merge(a, merge(b, c)) = merge(a, {x:2})     = {x:2, y:1}
 ```
 
 ---
@@ -154,7 +163,7 @@ merge(0, merge({}, 0)) = {}
 The simplest structured patch window has two constraints: paths keep a stable JSON kind, and the window does not use `null` deletes. Under those constraints, regrouping does not change which branch of `merge` runs, so `merge` _is_ associative.
 
 ```text
-merge(merge(a, b), c) == merge(a, merge(b, c)) for structured docs
+merge(merge(a, b), c) == merge(a, coalesce(b, c)) for structured docs
 ```
 
 JSON generated from a typed model usually has the type-stable part of that shape: a field that is an object stays an object, and a field that is a scalar or array stays a leaf. Deletes need a separate caveat because `null` carries deletion intent, and a later object patch may re-add only part of the deleted subtree.
@@ -207,7 +216,7 @@ If you apply the same patch twice in a row on top of a state, the second applica
 merge(merge(s, a), a) = merge(s, a)
 ```
 
-States and patches are different domains because patches may contain `null` as deletion intent. This is _state-application_ idempotence; `merge(a,a)=a` does **not** hold for delete patches. For example, `merge({k:null},{k:null}) = {}`.
+States and patches are different domains because patches may contain `null` as deletion intent. This is _state-application_ idempotence; `coalesce(a,a)=a` does **not** hold for delete patches. For example, `coalesce({k:null},{k:null}) = {}`.
 
 This is the narrow retry property: an accidental duplicate application immediately after the first one is harmless. It does not make reordered or interleaved retries harmless; overlapping writes are still resolved by the ordered log.
 
@@ -266,16 +275,16 @@ baerly-storage's current committed `U` log entries are full post-images, so the 
 Coalescing means replacing an ordered patch window with one summary patch:
 
 ```text
-log_patch = fold(merge, undefined, patches)
+log_patch = fold(coalesce, undefined, patches)
 ```
 
 That summary can be useful when a client works while disconnected and later reconnects: instead of transmitting every patch in the local window, it can transmit one summary patch.
 
-The `undefined` accumulator is load-bearing. Folding `{x:null}` from `{}` would produce `{}` and lose deletion intent. Folding it from `undefined` preserves `{x:null}` as the summary patch.
+The `undefined` accumulator is load-bearing. Folding `{x:null}` from `{}` would produce `{}` and lose deletion intent. Folding it from `undefined` preserves `{x:null}` as the summary patch. This is the one place `coalesce` must differ from `merge`, which applies a patch to a state and so drops every `null` member.
 
 Deletion is the boundary. Delete-free windows coalesce safely. A delete followed by a scalar or array replacement of the same key can also summarize safely. The unsafe case is delete-then-object-re-add, because an object patch re-adds fields by merging with the target that existed before the deleted subtree.
 
-Counterexample: `s={x:{a:1,b:2}}`, `p1={x:null}`, `p2={x:{a:9}}`. Sequential replay gives `{x:{a:9}}` (`b` is gone), but coalescing with `merge(s, merge(p1,p2))` gives `{x:{a:9,b:2}}`. The field `b` resurrects because `merge(null,{a:9})` drops the deletion intent. Pure additive and scalar-overwrite patches coalesce safely; delete-then-object-re-add does not. RFC 7396 cannot encode delete-then-set-object in a single patch.
+Counterexample: `s={x:{a:1,b:2}}`, `p1={x:null}`, `p2={x:{a:9}}`. Sequential replay gives `{x:{a:9}}` (`b` is gone), but coalescing with `merge(s, coalesce(p1,p2))` gives `{x:{a:9,b:2}}`. The field `b` resurrects because `coalesce(null,{a:9})` drops the deletion intent. Pure additive and scalar-overwrite patches coalesce safely; delete-then-object-re-add does not. RFC 7396 cannot encode delete-then-set-object in a single patch.
 
 ---
 
@@ -306,7 +315,7 @@ This is useful for optimistic local views. It is not baerly-storage's recovery r
 
 ## JSON merge difference: `diff`
 
-> **Not part of the baerly-storage kernel.** `diff` is not a baerly-storage API. For this helper surface, `@baerly/protocol` exports `merge`, not `diff`. This section uses the prior-art `mps3` implementation to name the _state-relative_ inverse of `merge` (`merge(a, diff(b, a)) == b`). Clients already send merge-patch documents; the writer never computes a diff.
+> **Not part of the baerly-storage kernel.** `diff` is not a baerly-storage API. For this helper surface, `@baerly/protocol` exports `applyMergePatch` (`merge` on this page) and `coalesceMergePatches`, not `diff`. This section uses the prior-art `mps3` implementation to name the _state-relative_ inverse of `merge` (`merge(a, diff(b, a)) == b`). Clients already send merge-patch documents; the writer never computes a diff.
 
 If `merge` is the forward step `s_1 = merge(s_0, p)`, then `diff` asks for a patch that moves one known state to another known state. Given target state `b` and base state `a`, `diff(b, a)` produces a patch that moves `a` to `b`:
 
