@@ -2,7 +2,7 @@
 title: Upgrading to 0.7.0
 audience: integrator
 summary: Old-to-new migration for 0.7.0, organized by what an app author and an operator must do.
-last-reviewed: 2026-11-16
+last-reviewed: 2026-11-17
 tags: [upgrade, migration, breaking-changes]
 related:
   [
@@ -64,6 +64,7 @@ New codes and what to do:
 | `MaintenancePending` | 503 + `Retry-After` | yes | Nothing committed. Wait `err.retryAfter` seconds, repeat. |
 | `InvalidConfig` | 400 | no | The input is outside the write domain (sections 2 and 3). |
 | `CursorExpired` | 410 | no | A `/v1/since` cursor can no longer resume. Re-read, then restart with `cursor: ""` (section 3). |
+| `UnsupportedMediaType` | 415 | no | A `POST`, `PATCH` or `PUT` body was not sent as JSON. Send `Content-Type: application/json` (section 3). |
 
 ```ts
 import { BaerlyError } from "@gusto/baerly-storage";
@@ -92,7 +93,7 @@ The bundled client (`createBaerlyClient`) retries `MaintenancePending` on every 
 
 **Ids (caller-supplied or minted).**
 
-- An `_id` must be a string in NFC (`id === id.normalize("NFC")`) that follows the key rules: non-empty, no `/`, not `.` or `..`, no control character, no leading `_`, at most 256 UTF-8 bytes. Otherwise `insert`, `replace`, `POST` and `PUT` throw `InvalidConfig` (400) before writing.
+- An `_id` must be a well-formed string (no unpaired UTF-16 surrogate, `id.isWellFormed()`) in NFC (`id === id.normalize("NFC")`) that follows the key rules: non-empty, no `/`, not `.` or `..`, no control character, no leading `_`, at most 256 UTF-8 bytes. Otherwise `insert`, `replace`, `POST` and `PUT` throw `InvalidConfig` (400) before writing.
 - `insert({ _id: 42 })` (any present non-string `_id`, including `null`) used to be replaced by a generated UUIDv7 silently. It now throws. Omit `_id`, `undefined` and `""` still generate one.
 - `get(id)` with an id no row can have used to answer "not found". It now throws `InvalidConfig`. Point reads do not require NFC, so legacy rows stay readable.
 
@@ -166,7 +167,7 @@ await db.collection("messages").insert({ threadId, ...next });
 
 - Row order among ties is not stable between releases. Add an explicit `order(...)` before a `limit` whenever the choice of rows matters.
 
-**Collection, app and tenant names must be NFC** (section 5 has the legacy recipe). `Db.create` (including `config.collections` keys), `db.collection`, `ensureTable`, every HTTP route and the writing CLI verbs throw `InvalidConfig` for a non-NFC name. Names are never normalized for you.
+**Collection, app and tenant names must be NFC** (section 5 has the legacy recipe). `Db.create` (including `config.collections` keys), `db.collection`, `ensureTable`, every HTTP route and the writing CLI verbs throw `InvalidConfig` for a non-NFC name or one holding an unpaired UTF-16 surrogate. Names are never normalized for you.
 
 ```ts
 // before
@@ -181,7 +182,7 @@ const db = Db.create({ storage, app, tenant: claims.org.normalize("NFC") });
 - A Cloudflare Worker now answers a throw around the router (for example `Db.create` refusing an invalid tenant) with the JSON error envelope and mapped status, not workerd's error page.
 - A Cloudflare Worker no longer caches point-read response bodies. Every read reaches storage, so a read after a completed `PUT`, `PATCH` or direct SDK write sees that write. Code that waited out, or busted, the old cache can drop the workaround. Repeated reads of one row now cost a storage read each (section 4).
 - A `Verifier` that throws now yields its mapped status instead of an unhandled rejection.
-- `bearerJwt` and `cloudflareAccess` reject a token without an `exp` claim (401), and refuse a negative `clockSkewMs` or `jwksCacheTtlMs` with `InvalidConfig`. A custom issuer must set `exp` on every token.
+- `bearerJwt` and `cloudflareAccess` reject a token without an `exp` claim (401), and refuse a negative or `NaN` `clockSkewMs` or `jwksCacheTtlMs`, or an infinite `clockSkewMs`, with `InvalidConfig`. A custom issuer must set `exp` on every token. `cloudflareAccess` also refuses a `teamDomain` that is not a bare team name (`acme`, not `acme.cloudflareaccess.com`) with `InvalidConfig` at startup; a full host never verified a token.
 - `POST`, `PATCH` and `PUT` require `Content-Type: application/json` (or a `+json` type; parameters such as `charset` are fine) and answer `415 UnsupportedMediaType` before reading the body otherwise, so a raw caller (`curl -d`, a hand-rolled `fetch`) must send the header. `createBaerlyClient` already does.
 - Canonical log lines report capacity refusals as `outcome: "refused"` (warn level). Alerts keyed on `outcome: "conflict"` or `"error"` for those writes shift to `"refused"`. `Baerly-Capacity-Warning` and the `capacity_warning` log field are additive early signals.
 - Request budgets (Cloudflare): a call past the request's storage budget is refused with `CapacityExceeded` before it is sent; a read that cannot fit is refused whole, never truncated. `GET /v1/since` ends a long-poll early when its request budget runs out instead of failing (about 22 s under the default `cf-free` profile with S3 storage).
@@ -267,7 +268,7 @@ const storage = gcsStorage({
 });
 ```
 
-**CLI.** `baerly cost --json` reports a monthly cost band instead of a dollar figure: `trajectory.projectedUsdPerMonth` is replaced by `trajectory.projectedUsdBand`, which is `null` for a provider without a dollar model (self-hosted), otherwise one of `"$0"`, `"<$25"`, `"$25-$50"`, `"$50-$100"`, `"$100-$250"`, `"$250-$500"` or `"$500+"`. `"$0"` appears only inside a modeled free tier. The projection covers only the selected collection; the envelope's new `scope` and `assumptions` fields say what it assumed. `gcs://` buckets are priced as GCS Standard, `--provider` accepts `gcs`, and `--profile=cf-free|node` sets the maintenance profile (default `cf-free` for R2, `node` otherwise).
+**CLI.** `baerly cost --json` reports a monthly cost band instead of a dollar figure: `trajectory.projectedUsdPerMonth` is replaced by `trajectory.projectedUsdBand`, which is `null` for a provider without a dollar model (self-hosted), otherwise one of `"$0"`, `"<$25"`, `"$25-$50"`, `"$50-$100"`, `"$100-$250"`, `"$250-$500"` or `"$500+"`. `"$0"` appears only inside a modeled free tier. The projection covers only the selected collection; the envelope's new `scope` and `assumptions` fields say what it assumed. `gcs://` buckets are priced as GCS Standard, `--provider` accepts `gcs`, `--region=<location>` drops GCS's free allowance outside `us-west1`, `us-central1` and `us-east1`, and `--profile=cf-free|node` sets the maintenance profile (default `cf-free` for R2, `node` otherwise).
 
 ```ts
 // before
@@ -278,6 +279,8 @@ const free = result.trajectory.projectedUsdBand === "$0";
 
 - `baerly cost` and `baerly admin usage` sample each collection's trailing log by probing the live tail instead of listing its whole `log/` prefix, so per-collection sampling no longer grows with retained history. `admin usage` still lists the tenant's `manifests/` prefix to discover collections.
 - `baerly doctor --bucket` also checks that the bucket's LIST returns keys exactly as written. It puts and deletes two throwaway objects under `__baerly_list_probe__/`, so its credentials need put, list and delete there; a mismatch is an error (exit 2) naming the likely backend encoding fault.
+
+**Node static files (`webRoot`).** `baerlyNode({ webRoot })` now answers `404` for a dotfile or dot-directory other than `/.well-known/*` (`/.env`, `/.git/config`), for a symlink that resolves outside `webRoot`, and for a path holding a literal `%` (`%25`) or an encoded reserved character (`%2F`, `%3F`, `%23`). `%20` and UTF-8 escapes still serve. Rename any published file whose name needs one of those; Vite's hashed output never does.
 
 **Storage retries.** Retry now happens at one layer, 3 attempts per request. `S3HttpStorage` and `GcsHttpStorage` `retries` defaults to `2` (was `8`); a value that is not a non-negative integer rejects with `InvalidConfig`; `backoffMs` replaces both jitter bases. `r2BindingStorage` now retries transient failures under the same policy. A conditional (`If-Match`) PUT is never resent.
 
@@ -336,7 +339,7 @@ Point the app at `café-v2`. A non-NFC app or tenant migrates the same way, one 
 
 - refuses a line whose `_id` repeats an earlier line, is outside the key rules, or is not NFC, with `InvalidConfig` (exit 1) naming the line number and the escaped `_id`;
 - refuses values outside plain JSON (for example `1e999`);
-- refuses a line whose row encodes to more than 1 MiB, naming the line number. Split such a row in the NDJSON (section 2) before restoring; in place, an oversized row stays readable and deletable;
+- refuses a line whose row encodes to more than 1 MiB, or nests deeper than 100 levels, naming the line number. Split or flatten such a row in the NDJSON (section 2) before restoring; in place, such a row stays readable and deletable;
 - reports how many rows were already committed on every failure. Restore commits row by row: rows before the failing line stay committed, the failing line and later lines do not. Fix the dump, then restore into a fresh target or with `--force`. Restore never rewrites an `_id`.
 
 ```sh
@@ -384,6 +387,6 @@ await ensureTable(storage, { app: "helpdesk", tenant: "demo", collection: "ticke
 
 ## Dependency bumps
 
-Bundled dependencies updated with no public API change: hono 4.13.2, `@hono/node-server` 2.1.1, jose 6.2.9, `@rgrove/parse-xml` 4.2.3, `@logtape/logtape` 2.3.1.
+Bundled dependencies updated with no public API change: hono 4.13.19, `@hono/node-server` 2.1.8, jose 6.2.17, `@rgrove/parse-xml` 5.2.0, `@logtape/logtape` 2.4.2.
 
-Node 26 is the tested floor for `@gusto/create-baerly-storage` and the apps it generates: both declare `engines.node: ">=26"`. On older Node your package manager prints an engine warning rather than refusing, unless you enable `engine-strict`.
+Node 26 is the tested floor. `@gusto/baerly-storage` (was `>=24`), `@gusto/create-baerly-storage` and the apps it generates declare `engines.node: ">=26"`; upgrade the Node your app and CI run on. On older Node your package manager prints an engine warning rather than refusing, unless you enable `engine-strict`.
