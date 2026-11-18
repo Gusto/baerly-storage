@@ -40,10 +40,10 @@ import {
  *   `["RS256", "ES256", "EdDSA"]`. `none`, `HS256`, anything else
  *   is rejected without consulting the JWKS.
  * - `clockSkewMs` — tolerance for `exp` / `nbf` checks. Defaults to
- *   60 000 (60 s).
+ *   60 000 (60 s). Must be a finite number `>= 0`.
  * - `jwksCacheTtlMs` — JWKS HTTP cache TTL. Defaults to 600 000
- *   (10 min). The cache is per-factory-call; a fresh `bearerJwt()`
- *   call starts cold.
+ *   (10 min). Must be `>= 0`. The cache is per-factory-call; a fresh
+ *   `bearerJwt()` call starts cold.
  * - `fetch` — `fetch` override. Defaults to `globalThis.fetch`.
  *   Tests inject a stub.
  */
@@ -109,11 +109,14 @@ const JWKS_KID_REFRESH_MIN_INTERVAL_MS = 60_000;
  * `groups`, …) pass through verbatim. The kernel types it as
  * `unknown` to keep `Verifier` plain; cast at the call site with the
  * payload shape your IdP emits, e.g. `const id = result.identity as
- * { sub: string }`. Token-level failures (bad signature, expired,
- * wrong audience, missing/non-string tenant claim) return `null`.
+ * { sub: string }`. Token-level failures (bad signature, missing or
+ * past `exp`, wrong audience, missing/non-string tenant claim) return
+ * `null`. Every token must carry `exp` (RFC 9068 §2.2); a token without
+ * one is rejected, not accepted forever.
  *
  * @throws BaerlyError code="InvalidConfig" — required option
- *   missing, `issuer`/`audience` empty, `algorithms` empty.
+ *   missing, `issuer`/`audience` empty, `algorithms` empty,
+ *   `clockSkewMs` negative or non-finite, `jwksCacheTtlMs` negative.
  * @throws BaerlyError code="NetworkError" — JWKS fetch failed AND
  *   the cache is cold. A stale cache hit on a network failure is
  *   preferred over throwing (jose serves the stale JWKS until the
@@ -165,10 +168,29 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
     }
   }
 
+  const clockSkewMs = opts.clockSkewMs ?? DEFAULT_CLOCK_SKEW_MS;
+  // `!(x >= 0)` also refuses NaN. An infinite skew would disable the
+  // `exp` / `nbf` checks outright; an infinite cache TTL is jose's
+  // documented "never expire" and stays allowed.
+  if (!(clockSkewMs >= 0) || !Number.isFinite(clockSkewMs)) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `bearerJwt: clockSkewMs must be a finite number >= 0 (got ${String(clockSkewMs)})`,
+      { resolution: BEARER_JWT_CONFIG_RESOLUTION },
+    );
+  }
+  const cacheMaxAge = opts.jwksCacheTtlMs ?? DEFAULT_JWKS_CACHE_TTL_MS;
+  if (!(cacheMaxAge >= 0)) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `bearerJwt: jwksCacheTtlMs must be >= 0 (got ${String(cacheMaxAge)})`,
+      { resolution: BEARER_JWT_CONFIG_RESOLUTION },
+    );
+  }
+
   const tenantClaim = opts.tenantClaim ?? DEFAULT_TENANT_CLAIM;
   const fixedTenantPrefix = opts.tenantPrefix;
-  const clockToleranceSec = (opts.clockSkewMs ?? DEFAULT_CLOCK_SKEW_MS) / 1000;
-  const cacheMaxAge = opts.jwksCacheTtlMs ?? DEFAULT_JWKS_CACHE_TTL_MS;
+  const clockToleranceSec = clockSkewMs / 1000;
 
   const resolveKey =
     typeof opts.jwks === "string"
@@ -196,6 +218,8 @@ export const bearerJwt = (opts: BearerJwtOptions): Verifier => {
         audience: opts.audience,
         algorithms: [...algorithms],
         clockTolerance: clockToleranceSec,
+        // jose checks `exp` only when present; this makes it mandatory.
+        requiredClaims: ["exp"],
       }));
     } catch (error) {
       if (isJwksFetchFailure(error)) {

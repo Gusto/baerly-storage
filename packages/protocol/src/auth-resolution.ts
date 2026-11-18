@@ -4,7 +4,7 @@ export const SHARED_SECRET_CONFIG_RESOLUTION: string =
 
 /** Corrective action for a `bearerJwt(...)` preset misconfig; crosses the wire. */
 export const BEARER_JWT_CONFIG_RESOLUTION: string =
-  'Provide non-empty `issuer`, `audience`, and at least one `algorithms` entry; `tenantClaim` and `tenantPrefix` are mutually exclusive and `tenantPrefix` must be non-empty with no "/".';
+  'Provide non-empty `issuer`, `audience`, and at least one `algorithms` entry; `tenantClaim` and `tenantPrefix` are mutually exclusive and `tenantPrefix` must be non-empty with no "/"; `clockSkewMs` and `jwksCacheTtlMs`, when set, must be >= 0.';
 
 /** Corrective action for a `cloudflareAccess(...)` preset misconfig; crosses the wire. */
 export const CLOUDFLARE_ACCESS_CONFIG_RESOLUTION: string =

@@ -122,6 +122,12 @@ describe("bearerJwt — reject paths return null", () => {
     await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
+  test("JWT without exp → null (exp is required, RFC 9068 §2.2)", async () => {
+    const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
+    const token = await signJwt(validPayload({ exp: undefined }));
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
+  });
+
   test("wrong issuer → null", async () => {
     const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE });
     const token = await signJwt(validPayload({ iss: "https://evil.example.com/" }));
@@ -170,6 +176,12 @@ describe("bearerJwt — tenantPrefix override", () => {
       clockSkewMs: 1_000,
     });
     const token = await signJwt(validPayload({ exp: Math.floor(Date.now() / 1000) - 600 }));
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
+  });
+
+  test("still rejects a token without exp", async () => {
+    const verifier = bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, tenantPrefix: "main" });
+    const token = await signJwt(validPayload({ exp: undefined }));
     await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
@@ -273,6 +285,26 @@ describe("bearerJwt — config validation", () => {
     expect(() => bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, algorithms: [] })).toThrow(
       BaerlyError,
     );
+  });
+
+  test.each([
+    ["clockSkewMs", -1],
+    ["clockSkewMs", Number.NaN],
+    ["clockSkewMs", Number.POSITIVE_INFINITY],
+    ["jwksCacheTtlMs", -1],
+    ["jwksCacheTtlMs", Number.NaN],
+  ])("throws BaerlyError{InvalidConfig} on %s = %d", (option, value) => {
+    expect(() =>
+      bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, [option]: value }),
+    ).toThrowError(
+      expect.objectContaining({ code: "InvalidConfig", message: expect.stringContaining(option) }),
+    );
+  });
+
+  test("accepts zero clockSkewMs and zero jwksCacheTtlMs", () => {
+    expect(() =>
+      bearerJwt({ jwks, issuer: ISSUER, audience: AUDIENCE, clockSkewMs: 0, jwksCacheTtlMs: 0 }),
+    ).not.toThrow();
   });
 
   test("InvalidConfig throws carry a resolution string", () => {

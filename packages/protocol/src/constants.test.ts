@@ -57,7 +57,7 @@ describe("wire-contract constants", () => {
 
   test("BEARER_JWT_CONFIG_RESOLUTION is locked corrective-action wording", () => {
     expect(BEARER_JWT_CONFIG_RESOLUTION).toBe(
-      'Provide non-empty `issuer`, `audience`, and at least one `algorithms` entry; `tenantClaim` and `tenantPrefix` are mutually exclusive and `tenantPrefix` must be non-empty with no "/".',
+      'Provide non-empty `issuer`, `audience`, and at least one `algorithms` entry; `tenantClaim` and `tenantPrefix` are mutually exclusive and `tenantPrefix` must be non-empty with no "/"; `clockSkewMs` and `jwksCacheTtlMs`, when set, must be >= 0.',
     );
   });
 

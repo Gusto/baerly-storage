@@ -100,7 +100,7 @@ Set:
 
 ## Pattern C: Node JWKS production
 
-For Node, the SPA sends its OIDC bearer token as `Authorization: Bearer $JWT`. `bearerJwt` verifies signature, issuer, and audience against JWKS, the provider's public key set, before storage I/O.
+For Node, the SPA sends its OIDC bearer token as `Authorization: Bearer $JWT`. `bearerJwt` verifies signature, issuer, audience, and a required `exp` against JWKS, the provider's public key set, before storage I/O.
 
 ```ts
 import { bearerJwt } from "@gusto/baerly-storage/auth";

@@ -90,6 +90,26 @@ describe("cloudflareAccess", () => {
     await expect(verifier(mkReq(token))).resolves.toBeNull();
   });
 
+  test("CF-Access JWT without exp → null", async () => {
+    const fetchStub = vi.fn<typeof fetch>(async () => new Response(jwksBody, { status: 200 }));
+    const verifier = cloudflareAccess({
+      teamDomain: TEAM_DOMAIN,
+      audienceTag: AUDIENCE_TAG,
+      fetch: fetchStub,
+    });
+    const token = await signJwt(validPayload({ exp: undefined }));
+    await expect(verifier(mkReq(token))).resolves.toBeNull();
+  });
+
+  test("throws BaerlyError{InvalidConfig} on negative clockSkewMs or jwksCacheTtlMs", () => {
+    expect(() =>
+      cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: AUDIENCE_TAG, clockSkewMs: -1 }),
+    ).toThrowError(expect.objectContaining({ code: "InvalidConfig" }));
+    expect(() =>
+      cloudflareAccess({ teamDomain: TEAM_DOMAIN, audienceTag: AUDIENCE_TAG, jwksCacheTtlMs: -1 }),
+    ).toThrowError(expect.objectContaining({ code: "InvalidConfig" }));
+  });
+
   test("throws BaerlyError{InvalidConfig} on empty teamDomain", () => {
     try {
       cloudflareAccess({ teamDomain: "", audienceTag: AUDIENCE_TAG });
