@@ -523,4 +523,49 @@ describe("GcsHttpStorage abort", () => {
       expect(calls).toBe(1);
     },
   );
+
+  // Whatever the caller aborts with, the call ends after the attempt it
+  // was in flight on and rejects with that reason.
+  const ops = [
+    ["get", (s: GcsHttpStorage, signal: AbortSignal) => s.get("k", { signal })],
+    [
+      "create",
+      (s: GcsHttpStorage, signal: AbortSignal) =>
+        s.put("k", new Uint8Array(8), { ifNoneMatch: "*", signal }),
+    ],
+  ] as const;
+  const reasons = [
+    ["a default abort", () => undefined],
+    ["a custom reason", () => new Error("stop")],
+    ["a deadline", () => new DOMException("deadline", "TimeoutError")],
+  ] as const;
+  test.each(
+    ops.flatMap(([op, call]) => reasons.map(([label, make]) => [op, label, call, make] as const)),
+  )("a %s aborted with %s is not retried", async (_op, _label, call, makeReason) => {
+    const controller = new AbortController();
+    const reason = makeReason();
+    let calls = 0;
+    const fetchImpl = ((input: RequestInfo | URL) => {
+      calls += 1;
+      if (calls === 1) {
+        controller.abort(reason);
+      }
+      throw (input as Request).signal.reason;
+    }) as typeof fetch;
+    const s = new GcsHttpStorage({
+      bucket: "b",
+      sign: passthroughSign,
+      fetch: fetchImpl,
+      backoffMs: 0,
+    });
+    const error: unknown = await call(s, controller.signal).then(
+      () => undefined,
+      (error_: unknown) => error_,
+    );
+    // The caller's own reason, by identity; a bare abort() mints an AbortError.
+    expect(error).toBe(controller.signal.reason);
+    expect(error).toBe(reason ?? error);
+    expect(error).toMatchObject({ name: reason === undefined ? "AbortError" : reason.name });
+    expect(calls).toBe(1);
+  });
 });

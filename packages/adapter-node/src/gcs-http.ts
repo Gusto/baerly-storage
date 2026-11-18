@@ -88,8 +88,8 @@ export class GcsHttpStorage implements Storage {
     try {
       return await this.#fetch(signed);
     } catch (error) {
-      // A cancelled call surfaces as the caller's abort, not a retryable
-      // NetworkError, so the retry loop ends on it.
+      // A cancelled call surfaces as the caller's abort reason, whatever
+      // it is, not a retryable NetworkError; the retry loop ends on it.
       if (error instanceof BaerlyError || signed.signal.aborted) {
         throw error;
       }
@@ -98,16 +98,21 @@ export class GcsHttpStorage implements Storage {
     }
   }
 
-  #retry<T>(fn: () => Promise<T>, put?: StoragePutOptions): Promise<T> {
+  #retry<T>(
+    fn: () => Promise<T>,
+    opts?: Pick<StoragePutOptions, "ifMatch" | "ifNoneMatch" | "signal">,
+  ): Promise<T> {
     return retryStorageCall(fn, {
       ...(this.#retries !== undefined && { retries: this.#retries }),
       ...(this.#backoffMs !== undefined && { backoffMs: this.#backoffMs }),
-      conditionalCreate: put?.ifNoneMatch === "*",
+      conditionalCreate: opts?.ifNoneMatch === "*",
       // A generation-match CAS is never resent: a resend after a lost ack
       // would see its own write as a 412.
-      compareAndSwap: put?.ifMatch !== undefined && put.ifNoneMatch !== "*",
+      compareAndSwap: opts?.ifMatch !== undefined && opts.ifNoneMatch !== "*",
       // Every request leaves through `fetch`: the ledger's external pool.
       pool: "external",
+      // Any caller abort ends the call; the loop never resends past it.
+      ...(opts?.signal !== undefined && { signal: opts.signal }),
     });
   }
 
@@ -138,7 +143,7 @@ export class GcsHttpStorage implements Storage {
           throw await mapStorageError(res, "GET", key);
         }
       }
-    });
+    }, opts);
   }
 
   async put(key: string, body: Uint8Array, opts?: StoragePutOptions): Promise<StoragePutResult> {
@@ -202,7 +207,7 @@ export class GcsHttpStorage implements Storage {
       if (res.status !== 200 && res.status !== 204 && res.status !== 404) {
         throw await mapStorageError(res, "DELETE", key);
       }
-    });
+    }, opts);
   }
 
   async *list(
@@ -241,7 +246,7 @@ export class GcsHttpStorage implements Storage {
             throw await mapStorageError(res, "LIST", prefix);
           }
           return res.text();
-        }),
+        }, opts),
       );
 
       for (const entry of parsed.Contents ?? []) {
