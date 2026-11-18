@@ -123,15 +123,6 @@
     "expires": "2027-05-17"
   },
   {
-    "id": "pnpm-12-21-0-audit-drops-string-id-advisories",
-    "kind": "external",
-    "files": [],
-    "subject": "pnpm 12.21.0 `pnpm audit` silently drops advisories whose id is a string (fixed in 12.22.0, pnpm#18184), so a clean audit may under-report",
-    "reason": "12.22.0 is only on the `next-12` tag; `latest` is 12.21.0. Until the bump (CI10) lands, treat a clean `pnpm audit` as provisional.",
-    "revisit": "pnpm 12.22.0 is on `latest` and past `minimumReleaseAge`. Then bump the `devEngines.packageManager` range, the lockfile environment document and the four templates' `packageManager`, re-run `pnpm audit`, and delete this entry.",
-    "expires": "2026-12-01"
-  },
-  {
     "id": "no-pr-time-advisory-gate",
     "kind": "external",
     "files": [],
