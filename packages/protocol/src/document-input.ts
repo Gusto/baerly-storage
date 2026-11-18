@@ -1,4 +1,8 @@
-import { DOCUMENT_ERROR_PATH_EDGE_SEGMENTS, DOCUMENT_ERROR_PATH_KEY_CHARS } from "./constants.ts";
+import {
+  DOCUMENT_ERROR_PATH_EDGE_SEGMENTS,
+  DOCUMENT_ERROR_PATH_KEY_CHARS,
+  MAX_DOCUMENT_DEPTH,
+} from "./constants.ts";
 import { BaerlyError } from "./errors.ts";
 
 const INSERT_ID_RESOLUTION =
@@ -38,6 +42,7 @@ const TO_JSON_RESOLUTION =
   "Remove the toJSON hook and pass its intended JSON data explicitly. Documents and patches must not customize JSON serialization.";
 const CIRCULAR_RESOLUTION =
   "Remove the circular reference: a document is a tree of plain objects and arrays.";
+const DEPTH_RESOLUTION = `Keep each document at most ${MAX_DOCUMENT_DEPTH} levels deep (each object or array is a level, the document itself included): flatten nested data into compound keys or arrays of records, or move a deep subtree into rows of its own.`;
 
 /** Inspect descriptors so even a toJSON getter is refused without running it. */
 const hasJsonHook = (value: object): boolean => {
@@ -61,6 +66,8 @@ type Pending = {
   readonly value: unknown;
   readonly parent: Pending | undefined;
   readonly key: string | number | undefined;
+  /** Levels from the root, which is level 1 (see {@link MAX_DOCUMENT_DEPTH}). */
+  readonly depth: number;
 };
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
@@ -75,17 +82,23 @@ const renderSegment = (key: string | number): string => {
   return IDENTIFIER.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
 };
 
+/** The keys from the root to `at`. */
+const keysOf = (at: Pending): Array<string | number> => {
+  const keys: Array<string | number> = [];
+  for (let step: Pending | undefined = at; step?.key !== undefined; step = step.parent) {
+    keys.push(step.key);
+  }
+  keys.reverse();
+  return keys;
+};
+
 /**
  * The path from the root to `at`, as `a.b[2]["c d"]`. A deep path keeps
  * its first and last {@link DOCUMENT_ERROR_PATH_EDGE_SEGMENTS} segments
  * around a `.…` marker, so the message stays bounded.
  */
 const pathOf = (at: Pending): string => {
-  const keys: Array<string | number> = [];
-  for (let step: Pending | undefined = at; step?.key !== undefined; step = step.parent) {
-    keys.push(step.key);
-  }
-  keys.reverse();
+  const keys = keysOf(at);
   const edge = DOCUMENT_ERROR_PATH_EDGE_SEGMENTS;
   const path =
     keys.length > 2 * edge
@@ -106,6 +119,19 @@ const refuse = (verb: string, at: Pending, what: string, resolution: string): ne
       : `${verb}: document value at ${path} is ${what}`,
     { resolution },
   );
+};
+
+/**
+ * The first container past {@link MAX_DOCUMENT_DEPTH}. `SchemaError`, not
+ * `InvalidConfig`: the value is valid JSON, but its shape is outside what
+ * a document may be. `issues` carries the full path.
+ */
+const refuseDepth = (verb: string, at: Pending): never => {
+  const message = `nests deeper than the ${MAX_DOCUMENT_DEPTH}-level document limit`;
+  throw new BaerlyError("SchemaError", `${verb}: document value at ${pathOf(at)} ${message}`, {
+    resolution: DEPTH_RESOLUTION,
+    issues: [{ path: keysOf(at), message }],
+  });
 };
 
 /** Options for {@link assertDocumentValues}. */
@@ -129,14 +155,16 @@ export interface DocumentValuesOptions {
  * naming the path of the first offending value (capped, see
  * {@link DOCUMENT_ERROR_PATH_EDGE_SEGMENTS}), as do circular references.
  * Callable or accessor `toJSON` properties (own or inherited) are refused
- * without invoking them, including on the root and on arrays.
+ * without invoking them, including on the root and on arrays. A value
+ * nested deeper than {@link MAX_DOCUMENT_DEPTH} levels is refused too, as
+ * `SchemaError`.
  *
  * Allowed: strings, finite numbers (`-0` included), booleans, `null` (at
  * any depth), arrays, and plain objects (prototype `Object.prototype` or
  * `null`). The root itself may be any object; its own
  * enumerable fields are checked. A top-level `_id: undefined` counts as
  * absent, as on `insert`; with `undefinedMembersAbsent`, every
- * `undefined` object member does. No depth or `null` limits are applied.
+ * `undefined` object member does. No `null` limits are applied.
  * Size is checked separately, on the whole post-image a write commits
  * (`assertDocumentSize`).
  *
@@ -155,6 +183,9 @@ export interface DocumentValuesOptions {
  *   (`"insert"`, `"replace"`, `"update"`, …).
  * @throws BaerlyError code="InvalidConfig" — `value` holds a value outside
  *   the JSON document domain. The message names its path.
+ * @throws BaerlyError code="SchemaError" — `value` nests an object or
+ *   array deeper than {@link MAX_DOCUMENT_DEPTH} levels. The message names
+ *   the limit and the (capped) path; `issues` holds the full path.
  */
 export const assertDocumentValues = (
   value: unknown,
@@ -167,7 +198,7 @@ export const assertDocumentValues = (
   // path; a container reached again through its own subtree is a cycle
   // (a container shared by two branches is fine, as in JSON.stringify).
   const pending: Array<Pending | { readonly exit: object }> = [
-    { value, parent: undefined, key: undefined },
+    { value, parent: undefined, key: undefined, depth: 1 },
   ];
   const ancestors = new Set<object>();
   while (pending.length > 0) {
@@ -202,6 +233,9 @@ export const assertDocumentValues = (
     if (ancestors.has(current)) {
       return refuse(verb, next, "a circular reference", CIRCULAR_RESOLUTION);
     }
+    if (next.depth > MAX_DOCUMENT_DEPTH) {
+      return refuseDepth(verb, next);
+    }
     if (hasJsonHook(current)) {
       return refuse(verb, next, "an object with a toJSON hook", TO_JSON_RESOLUTION);
     }
@@ -210,7 +244,7 @@ export const assertDocumentValues = (
       pending.push({ exit: current });
       // Pushed in reverse so the first offending element is reported first.
       for (let i = current.length - 1; i >= 0; i--) {
-        pending.push({ value: current[i], parent: next, key: i });
+        pending.push({ value: current[i], parent: next, key: i, depth: next.depth + 1 });
       }
       continue;
     }
@@ -241,7 +275,7 @@ export const assertDocumentValues = (
       ) {
         continue;
       }
-      pending.push({ value: member, parent: next, key });
+      pending.push({ value: member, parent: next, key, depth: next.depth + 1 });
     }
   }
 };

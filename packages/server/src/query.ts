@@ -738,8 +738,10 @@ const withLiveBefore = (
  * @throws BaerlyError code="AmbiguousCommit" — a committing create may be
  *   durable, but its outcome could not be resolved. The row may or may not
  *   have been inserted. Not retriable-by-default; see `Writer.commit`.
- * @throws BaerlyError code="SchemaError" — from the per-collection
- *   `SchemaValidator` threaded via `collectionReadContext`.
+ * @throws BaerlyError code="SchemaError" — `doc` nests deeper than
+ *   `MAX_DOCUMENT_DEPTH` (see `assertDocumentValues`), checked before I/O;
+ *   or from the per-collection `SchemaValidator` threaded via
+ *   `collectionReadContext`.
  *
  * @internal — exported for `Collection.insert` in `./collection.ts` to delegate
  *             without duplicating the auto-id / collision-check /
@@ -901,7 +903,8 @@ const assertPatchKeepsId = (patch: unknown, docId: string): void => {
  *   JSON cannot store as written (see `assertDocumentValues`), or encodes
  *   to more than `MAX_DOCUMENT_BYTES` (see `assertDocumentSize`).
  * @throws BaerlyError code="SchemaError" — the merge produced `undefined`,
- *   or the schema rejected the post-image.
+ *   the post-image nests deeper than `MAX_DOCUMENT_DEPTH`, or the schema
+ *   rejected the post-image.
  */
 const mergeAndValidate = async <T extends DocumentData>(
   ctx: CollectionReadContext,
@@ -973,7 +976,9 @@ const mergeAndValidate = async <T extends DocumentData>(
  *   See `Writer.commit`.
  * @throws BaerlyError code="SchemaError" — `merge(prev, patch)` produced
  *   `undefined` (defensive — `MergePatch<T>` cannot be `null` at the
- *   root in the type system), or the schema rejected a post-image; at a
+ *   root in the type system), the patch (checked before I/O) or a merged
+ *   post-image nests deeper than `MAX_DOCUMENT_DEPTH`, or the schema
+ *   rejected a post-image; at a
  *   row's commit (re-applied to a newer version) rows before it are
  *   already applied.
  * @throws BaerlyError code="InvalidConfig" — the patch (checked before
@@ -1093,8 +1098,9 @@ const runUpdate = async <T extends DocumentData>(
  *   value JSON cannot store as written (see `assertDocumentValues`), or
  *   `{ ...doc, _id: id }` encodes to more than `MAX_DOCUMENT_BYTES` (see
  *   `assertDocumentSize`). Checked before I/O.
- * @throws BaerlyError code="SchemaError" — post-image rejected by
- *   the collection's bound validator.
+ * @throws BaerlyError code="SchemaError" — `doc` nests deeper than
+ *   `MAX_DOCUMENT_DEPTH` (checked before I/O), or the post-image is
+ *   rejected by the collection's bound validator.
  * @throws BaerlyError code="WriteConflict" — a rejected storage precondition
  *   `Writer.commit()` does not resolve; nothing was committed.
  * @throws BaerlyError code="AmbiguousCommit" — a committing create may be

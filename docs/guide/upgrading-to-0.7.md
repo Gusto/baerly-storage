@@ -158,6 +158,8 @@ await db.collection("threads").update(threadId, { messages: [...messages, next] 
 await db.collection("messages").insert({ threadId, ...next });
 ```
 
+**A document nests at most 100 levels.** Each object or array is a level, the document itself included. `insert`, `replace`, an `update` patch and each merged row deeper than that throw `SchemaError` (400) before any write, naming the limit and the path; the client checks before sending, and `baerly admin restore` refuses such a line with its line number. A row an earlier release stored deeper stays readable and deletable, and an update that flattens it under the limit commits.
+
 **Reads fold authoritative state.** Every read and every mutation target is selected from the full snapshot plus the committed log. Declared `indexes` do not make a read cheaper (section 6), so every query costs the same snapshot and log load whether or not it matches anything.
 
 - Row order among ties is not stable between releases. Add an explicit `order(...)` before a `limit` whenever the choice of rows matters.

@@ -129,6 +129,9 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         `_id`, encodes to more than 1 MiB (1,048,576 bytes) of JSON;
    *         nothing was written. Split large or growing data into rows
    *         of their own.
+   * @throws BaerlyError{code: "SchemaError"} — the document nests
+   *         deeper than 100 levels (each object or array is a level, the
+   *         document itself included); nothing was written.
    * @throws BaerlyError{code: "AlreadyExists"} — caller-supplied `_id`
    *         is held by a live row, including one a concurrent insert
    *         committed first: of concurrent inserts of one `_id`, exactly
@@ -215,6 +218,10 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         encode to more than 1 MiB of JSON; nothing was committed. A
    *         row already stored larger (by an earlier release) can still
    *         be read, deleted, or updated down under the cap.
+   * @throws BaerlyError{code: "SchemaError"} — the patch or the merged
+   *         row nests deeper than 100 levels; nothing was committed. A
+   *         row already stored deeper can still be read, deleted, or
+   *         updated down under the limit.
    * @throws BaerlyError{code: "InvalidResponse"} — the stored row's
    *         `_id` is not the string `id`. Repair it with
    *         `replace(id, doc)`.
@@ -261,6 +268,8 @@ export interface Collection<T extends DocumentData = DocumentData> {
    *         was written.
    * @throws BaerlyError{code: "InvalidConfig"} — `doc`, with `_id: id`,
    *         encodes to more than 1 MiB of JSON; nothing was written.
+   * @throws BaerlyError{code: "SchemaError"} — `doc` nests deeper than
+   *         100 levels; nothing was written.
    *
    * @example
    * ```ts
@@ -579,7 +588,8 @@ export interface Query<T extends DocumentData = DocumentData> {
    *         repeat the call.
    * @throws BaerlyError{code: "SchemaError"} — patch produced an
    *         invalid doc, including when re-applied to a row's newest
-   *         version at its commit (rows before it are then applied).
+   *         version at its commit (rows before it are then applied), or
+   *         the patch or a merged row nests deeper than 100 levels.
    * @throws BaerlyError{code: "InvalidConfig"} — the patch's
    *         top-level `_id` is present and is not a matched row's
    *         `_id` (`null` included), or a matched row's `_id` is not
