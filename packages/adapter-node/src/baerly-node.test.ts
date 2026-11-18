@@ -176,6 +176,30 @@ describe("baerlyNode", () => {
     activeHandle = undefined;
   });
 
+  test("listen() after close() rejects and binds nothing", async () => {
+    const port = await reservePort();
+    const handle = baerlyNode({
+      config: testConfig,
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
+    });
+    await handle.listen(port, { hostname: LOOPBACK });
+    await handle.close();
+    activeHandle = undefined;
+    await expect(handle.listen(port, { hostname: LOOPBACK })).rejects.toMatchObject({
+      code: "InvalidConfig",
+    });
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const socket = connect(port, LOOPBACK, () => {
+          socket.destroy();
+          resolve();
+        });
+        socket.on("error", reject);
+      }),
+    ).rejects.toMatchObject({ code: "ECONNREFUSED" });
+  });
+
   test("rejects a `maintenance` option (cut — maintenance is in-band, not scheduled)", () => {
     baerlyNode({
       config: testConfig,

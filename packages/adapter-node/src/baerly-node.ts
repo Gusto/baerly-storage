@@ -1,7 +1,13 @@
 import { createServer, type Server } from "node:http";
 import { createAdaptorServer } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
-import { type BaerlyAppConfig, isDeployedEnv, type Storage, type Verifier } from "@baerly/protocol";
+import {
+  BaerlyError,
+  type BaerlyAppConfig,
+  isDeployedEnv,
+  type Storage,
+  type Verifier,
+} from "@baerly/protocol";
 import { resolveVerifier } from "@baerly/server/_internal/kernel";
 import type { ObservabilityConfig } from "@baerly/server/observability";
 import { createApp } from "./app.ts";
@@ -83,12 +89,16 @@ export interface BaerlyNodeListenOptions {
  *   container wants; pass `"127.0.0.1"` to accept loopback only.
  * - `close()` closes the server and removes the signal handlers.
  *   Resolves once `Server.close` callback fires. Safe to call
- *   multiple times; every call returns the same promise.
+ *   multiple times; every call returns the same promise. A closed
+ *   handle is final: `listen()` after `close()` rejects with
+ *   `BaerlyError("InvalidConfig")`; create a new handle instead.
  */
 export interface BaerlyNodeHandle {
   readonly fetch: (request: Request) => Response | Promise<Response>;
   /**
    * Bind the server on `port`, every interface unless `hostname` is set.
+   * Rejects with `BaerlyError("InvalidConfig")` once `close()` has been
+   * called.
    *
    * @example
    * ```ts
@@ -263,6 +273,14 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   };
 
   const listen = async (port: number, options?: BaerlyNodeListenOptions): Promise<void> => {
+    // A closed handle can never be closed again (`close()` returns the
+    // settled promise), so a bind here would leak the port.
+    if (closing !== undefined) {
+      throw new BaerlyError(
+        "InvalidConfig",
+        "baerlyNode: listen() called after close(); create a new handle",
+      );
+    }
     // `createAdaptorServer()` builds an `http.Server` via the supplied
     // `createServer` factory and wires the Hono `fetch` handler into it
     // (backpressure, client-abort → AbortController, stream cleanup)
