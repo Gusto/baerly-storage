@@ -10,13 +10,11 @@ import { scaffold } from "./scaffold.ts";
 // The scaffolder's `STARTER_TO_EXAMPLE` map resolves a
 // `<target>:<starter>` compound key to the matching example
 // directory under this root.
-const TEMPLATES_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "examples",
-);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ENGINES = JSON.parse(
+  await readFile(resolve(HERE, "..", "..", "..", "package.json"), "utf8"),
+).engines;
+const TEMPLATES_ROOT = resolve(HERE, "..", "..", "..", "examples");
 const EXAMPLE_DIRS = [
   resolve(TEMPLATES_ROOT, "minimal-cloudflare"),
   resolve(TEMPLATES_ROOT, "minimal-node"),
@@ -598,6 +596,35 @@ describe("scaffold", () => {
       }
     });
   }
+
+  // Every scaffolded app declares the Node floor the repo tests on, and so
+  // does the scaffolder that writes it.
+  test.each([
+    { target: "cloudflare" as const, starter: undefined },
+    { target: "cloudflare" as const, starter: "react" as const },
+    { target: "node" as const, starter: undefined },
+    { target: "node" as const, starter: "react" as const },
+  ])(
+    "scaffolded $target/$starter declares the repo's engines.node",
+    async ({ target, starter }) => {
+      const label = starter === undefined ? target : `${target}-${starter}`;
+      const result = await scaffold({
+        projectName: `engines-${label}`,
+        target,
+        ...(starter !== undefined && { starter }),
+        pm: "pnpm",
+        templatesRoot: TEMPLATES_ROOT,
+        outRoot,
+      });
+      const pkg = JSON.parse(await readFile(join(result.outDir, "package.json"), "utf8"));
+      expect(pkg.engines).toEqual(REPO_ENGINES);
+    },
+  );
+
+  test("create-baerly-storage declares the repo's engines.node", async () => {
+    const pkg = JSON.parse(await readFile(resolve(HERE, "..", "package.json"), "utf8"));
+    expect(pkg.engines).toEqual(REPO_ENGINES);
+  });
 
   // Pin the postinstall-allowlist contract. Scaffolded apps inherit
   // `packageManager: pnpm@12.x`, whose strict-builds gate exits with
