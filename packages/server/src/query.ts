@@ -38,7 +38,7 @@ import {
   logSeqStartOf,
   type MergePatch,
   MANIFEST_POINTER_EMPTY_SNAPSHOT,
-  matchesWire,
+  compileWire,
   applyMergePatch,
   mergePredicateWires,
   normalizePredicateArg,
@@ -71,6 +71,7 @@ import {
 } from "./doc-id.ts";
 import { foldLogEntriesOnto, walkLogRange } from "./log-walk.ts";
 import { probeReadTail } from "./log-tail.ts";
+import { countMatches, filterRows, limitedLength, type StoredDoc } from "./query-eval.ts";
 import { dispatchWriteTick } from "./maintenance.ts";
 import { getCurrentContext } from "./observability/context.ts";
 import { ReadBudget } from "./read-admission.ts";
@@ -133,7 +134,10 @@ type Row<T extends DocumentData> = T & { _id: string };
  * @internal
  */
 export interface ReadResult<T extends DocumentData> {
+  /** The rows read; empty under {@link ReadOptions.countOnly}. */
   readonly rows: Row<T>[];
+  /** How many rows the read selected: `rows.length`, or the count under `countOnly`. */
+  readonly count: number;
   readonly manifestPointer: string;
   readonly fresh: boolean;
 }
@@ -272,7 +276,7 @@ export const makeQuery = <T extends DocumentData>(
     },
     count: async () => {
       const res = await runRead<T>(ctx, state, { countOnly: true });
-      return res.rows.length;
+      return res.count;
     },
     update: (patch) => runUpdate<T>(ctx, state, patch),
     delete: () => runDelete<T>(ctx, state),
@@ -306,7 +310,11 @@ export const runAllWithMeta = <T extends DocumentData>(
 
 /** Options for a read terminal. */
 export interface ReadOptions {
-  /** The caller returns only the row count, so the output bound does not apply. */
+  /**
+   * The caller returns only the row count, so the output bound does not
+   * apply. The read counts matches without materialising rows: `rows` is
+   * empty and `count` carries the result, cut by `limit` as `all()` is.
+   */
   readonly countOnly?: boolean;
 }
 
@@ -1033,8 +1041,9 @@ const runUpdate = async <T extends DocumentData>(
   // Re-derive a row's post-image from a version committed after this
   // read: the predicate must still hold, then the same merge and schema
   // check as above.
+  const stillMatches = state.wire === undefined ? undefined : compileWire(state.wire);
   const rebase = async (latest: DocumentData): Promise<DocumentData | undefined> => {
-    if (state.wire !== undefined && !matchesWire(state.wire, latest)) {
+    if (stillMatches !== undefined && !stillMatches(latest)) {
       return undefined;
     }
     return await mergeAndValidate(ctx, latest, patch);
@@ -1203,9 +1212,7 @@ const runDelete = async <T extends DocumentData>(
 ): Promise<{ deleted: number }> => {
   const read = await runReadRows<T>(ctx, state);
   const docIds = read.rows.map((row) => storedRowId(row, "delete"));
-  const { wire } = state;
-  const stillMatches =
-    wire === undefined ? undefined : (latest: DocumentData) => matchesWire(wire, latest);
+  const stillMatches = state.wire === undefined ? undefined : compileWire(state.wire);
   const admission = await admitWrites(
     ctx,
     read,
@@ -1256,22 +1263,16 @@ const runRead = async <T extends DocumentData>(
 ): Promise<ReadResult<T>> => {
   // The host's read envelope admits the read (see `read-admission.ts`).
   const budget = new ReadBudget(ctx.collectionName);
-  const { rows, manifestPointer, fresh } = await runReadRows(ctx, state, budget);
-  if (opts?.countOnly !== true) {
+  const countOnly = opts?.countOnly === true;
+  const { rows, count, manifestPointer, fresh } = await runReadRows(ctx, state, budget, countOnly);
+  if (!countOnly) {
     budget.admitOutput(rows.length);
   }
-  return { rows: rows.map((row) => row.doc), manifestPointer, fresh };
+  return { rows: rows.map((row) => row.doc), count, manifestPointer, fresh };
 };
 
-/**
- * A materialised row paired with the `doc_id` it is stored under. The
- * mutation verbs commit under `docId`, and check that the row's own `_id`
- * agrees with it (see {@link storedRowId}).
- */
-interface StoredRow<T extends DocumentData> {
-  readonly docId: string;
-  readonly doc: Row<T>;
-}
+/** A folded row of `T` paired with its storage key (see {@link StoredDoc}). */
+type StoredRow<T extends DocumentData> = StoredDoc<Row<T>>;
 
 /**
  * {@link runRead}, keeping each row's storage key. Every call, a write
@@ -1283,8 +1284,12 @@ const runReadRows = async <T extends DocumentData>(
   state: QueryState<T>,
   // A write verb's pre-commit read is bounded by the request ledger only.
   budget: ReadBudget = new ReadBudget(ctx.collectionName, {}),
+  // Count matches instead of materialising rows (see `ReadOptions`).
+  countOnly = false,
 ): Promise<{
   readonly rows: StoredRow<T>[];
+  /** Rows selected after predicate and limit: `rows.length`, or the count under `countOnly`. */
+  readonly count: number;
   readonly manifestPointer: string;
   readonly fresh: boolean;
   /**
@@ -1313,7 +1318,7 @@ const runReadRows = async <T extends DocumentData>(
   // never carries `""`.
   if (head === null) {
     recordReadWork(ctx.collectionName, 0, 0, 0);
-    return { rows: [], manifestPointer: "m1:0000000000000", fresh, tail: 0 };
+    return { rows: [], count: 0, manifestPointer: "m1:0000000000000", fresh, tail: 0 };
   }
 
   // Load the snapshot, if any. `compact()` guarantees:
@@ -1364,28 +1369,29 @@ const runReadRows = async <T extends DocumentData>(
   // ── Step 4. Apply predicate. ──────────────────────────────────────
   // PK fast-path: a single `eq` clause on `_id` short-circuits the
   // O(n) scan with a `Map.get` on the same snapshot — observable
-  // contract unchanged.
+  // contract unchanged. Otherwise one pass over the fold builds only
+  // the matching rows; a count builds none, since order cannot change it.
   const fastId = singleIdFromPredicate(state.wire);
-  let rows: StoredRow<T>[];
-  if (fastId !== undefined) {
-    const hit = docs.get(fastId);
-    rows = hit === undefined ? [] : [{ docId: fastId, doc: hit }];
+  let rows: StoredRow<T>[] = [];
+  let count: number;
+  if (countOnly && fastId === undefined) {
+    // ── Steps 5-6 for a count: `limit` cuts it as it cuts `rows`. ───
+    count = limitedLength(countMatches(docs, state.wire), state.limit);
   } else {
-    rows = Array.from(docs, ([docId, doc]) => ({ docId, doc }));
-    if (state.wire !== undefined) {
-      const w = state.wire;
-      rows = rows.filter((row) => matchesWire(w, row.doc));
+    if (fastId !== undefined) {
+      const hit = docs.get(fastId);
+      rows = hit === undefined ? [] : [{ docId: fastId, doc: hit }];
+    } else {
+      rows = filterRows(docs, state.wire);
     }
-  }
 
-  // ── Step 5. Apply order. ──────────────────────────────────────────
-  if (state.order !== undefined) {
-    rows = sortByOrderSpec(rows, state.order);
-  }
+    // ── Step 5. Apply order. ────────────────────────────────────────
+    if (state.order !== undefined) {
+      rows = sortByOrderSpec(rows, state.order);
+    }
 
-  // ── Step 6. Apply limit. ──────────────────────────────────────────
-  if (state.limit !== undefined && state.limit < rows.length) {
-    rows = rows.slice(0, state.limit);
+    // ── Step 6. Apply limit (`rows` is this read's own array). ──────
+    count = rows.length = limitedLength(rows.length, state.limit);
   }
 
   // Counts the fold already holds: `docs` is not touched after Step 3, so
@@ -1394,11 +1400,12 @@ const runReadRows = async <T extends DocumentData>(
     ctx.collectionName,
     baseDocs.size + entries.length + probe.entries.length,
     docs.size,
-    rows.length,
+    count,
   );
 
   return {
     rows,
+    count,
     manifestPointer: serializeManifestPointer(head.json, tail),
     fresh,
     tail,

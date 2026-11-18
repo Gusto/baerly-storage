@@ -52,14 +52,14 @@ export const matchesWire = (wire: PredicateWire, doc: JSONObject): boolean => {
   return true;
 };
 
-const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined => {
+const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined =>
   // Fast path: no dot → top-level lookup. Avoids allocating a split
   // array for the common case.
-  // Stryker disable next-line StringLiteral,BlockStatement,ConditionalExpression: fast-path equivalence — for any valid field, the slow split-and-traverse path produces the same result; the fast path is a performance optimisation only
-  if (!field.includes(".")) {
-    return doc[field];
-  }
-  const segments = field.split(".");
+  // Stryker disable next-line StringLiteral,ConditionalExpression: fast-path equivalence — for any valid field, the slow split-and-traverse path produces the same result; the fast path is a performance optimisation only
+  field.includes(".") ? walkPath(doc, field.split(".")) : doc[field];
+
+/** Follow a split dotted path from `doc`; `undefined` when it cannot be consumed. */
+const walkPath = (doc: JSONObject, segments: readonly string[]): JSONValue | undefined => {
   let cursor: JSONValue | undefined = doc;
   for (const segment of segments) {
     if (
@@ -77,6 +77,38 @@ const lookupPath = (doc: JSONObject, field: string): JSONValue | undefined => {
     cursor = (cursor as JSONObject)[segment];
   }
   return cursor;
+};
+
+/**
+ * Compile a validated wire-form predicate into a per-document test that
+ * agrees with {@link matchesWire} on every document. Each dotted clause
+ * path is split once here rather than once per document, so a filter
+ * over n rows pays one split per clause instead of n. Clause order,
+ * path walk and clause matchers are {@link matchesWire}'s.
+ *
+ * Same pre-condition as {@link matchesWire}: `wire` has passed
+ * {@link validateWire}.
+ *
+ * @example
+ * ```ts
+ * const open = compileWire({ clauses: [{ op: "eq", field: "meta.state", value: "open" }] });
+ * docs.filter(open);
+ * ```
+ */
+export const compileWire = (wire: PredicateWire): ((doc: JSONObject) => boolean) => {
+  const compiled = wire.clauses.map((clause) => ({
+    clause,
+    field: clause.field,
+    segments: clause.field.includes(".") ? clause.field.split(".") : undefined,
+  }));
+  return (doc) => {
+    for (const { clause, field, segments } of compiled) {
+      if (!matchesClause(clause, segments === undefined ? doc[field] : walkPath(doc, segments))) {
+        return false;
+      }
+    }
+    return true;
+  };
 };
 
 const matchesClause = (clause: PredicateClause, actual: JSONValue | undefined): boolean => {
