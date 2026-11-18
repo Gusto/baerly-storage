@@ -65,7 +65,7 @@ public async collections(): Promise<string[]> {
 ### Conventions to follow
 
 - **Check for redundancy first.** Before adding a method, run the "One canonical form per operation" check in [conventions/change-discipline.md](conventions/change-discipline.md). If the new method's operation is already expressible via an existing type-valid path, plan for removal of the old path in the same PR — or amend the [API surface lock](conventions/change-discipline.md#api-surface-lock) with the justification for keeping both.
-- **JSDoc with `@example`.** IDE hover and `tsgo` surface these directly from source — they are the public-API reference.
+- **JSDoc with `@example`.** IDE hover and `tsc` surface these directly from source — they are the public-API reference.
 - **No request state on `Db`.** `Db` carries stable construction state: the `Storage` handle, the `app` / `tenant` pair, and derived schema/index maps. Per-request state belongs in the caller; per-write state belongs in a fresh `Writer`.
 - **Reads are on-demand.** Use the injected `#storage` directly for `list` / `get` reads; use `Collection<T>.where(...).all()` for log-fold reads. Don't build a parallel cache layer.
 - **No new throw without `BaerlyError`.** If the method can fail, throw `new BaerlyError("Code", "context")` from `packages/protocol/src/errors.ts`. Optional fields go in the third argument: `{ cause, issues, status, resolution, _id }`.

@@ -104,7 +104,7 @@ const runAttack = async (
 };
 
 // Checked construction (not an `as` cast): the record is mapped
-// through a `(): LogEntry` function so tsgo tracks every field against
+// through a `(): LogEntry` function so tsc tracks every field against
 // the protocol type. A future rename/removal of a `LogEntry` field
 // surfaces here as a compile error rather than a silently-bogus key.
 const arbForgedEntry: fc.Arbitrary<LogEntry> = fc

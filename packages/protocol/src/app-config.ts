@@ -162,7 +162,7 @@ export type AuthConfig = (typeof AUTH_CONFIG_VALUES)[number];
  *
  * Exposed at `@gusto/baerly-storage/config`. Imported by the
  * `baerly.config.ts` that `npm create baerly` emits, and by anyone
- * who wants IDE/`tsgo` type inference on the full scaffold-aware
+ * who wants IDE/`tsc` type inference on the full scaffold-aware
  * config shape on top of the runtime `BaerlyConfig.collections` map.
  *
  * One `baerly.config.ts` carries both scaffold metadata (consumed by
@@ -240,7 +240,7 @@ export interface BaerlyAppConfig extends BaerlyConfig {
 
 /**
  * Identity helper that pins the config's TypeScript shape so IDEs
- * surface autocomplete and `tsgo --noEmit` catches typos at write
+ * surface autocomplete and `tsc --noEmit` catches typos at write
  * time. Returns its input verbatim — no runtime transformation.
  *
  * Two overloads: one for the scaffold-flavoured `BaerlyAppConfig`

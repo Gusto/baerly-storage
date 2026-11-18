@@ -7,7 +7,7 @@
  *                   unknown-collection-name fallthrough that the
  *                   public docs promise.
  *
- * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
+ * Validated by `tsc --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default
  * include glob (see `vitest.config.ts`).
  */
@@ -144,7 +144,7 @@ export const _idIsNotAPredicateKeyOnTypedTables = () => {
 // guard is in `db.test.ts`, but the reason a future HTTP route, CDC
 // path, or adapter cannot read below `log_seq_start` is that omitting
 // the manifest does not compile. Arity is the pin; delete the third
-// parameter and this file fails `tsgo --noEmit`.
+// parameter and this file fails `tsc --noEmit`.
 export const _logReadsRequireTheManifest = () => {
   // @ts-expect-error — `current` is required; a bare seq has no floor.
   void getLogEntry(dbLegacy, "any", 0);

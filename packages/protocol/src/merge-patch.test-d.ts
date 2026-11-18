@@ -5,7 +5,7 @@
  * their whole value or `null`, union-valued members take whole values,
  * and arrays and scalars are replaced whole.
  *
- * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
+ * Validated by `tsc --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — the `.test-d.ts` extension is outside the default include
  * glob (see `vitest.config.ts`).
  */

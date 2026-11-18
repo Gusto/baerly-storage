@@ -99,7 +99,7 @@ is idempotent — re-running is safe. Full reference:
 
 ## Toolchain
 
-pnpm · vitest · TypeScript 7 (tsgo) · oxfmt · oxlint · rolldown
+pnpm · vitest · TypeScript 7 · oxfmt · oxlint · rolldown
 
 ## Verification
 

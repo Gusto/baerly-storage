@@ -50,7 +50,7 @@ import {
 } from "@baerly/protocol";
 // Type-only import — `maintenance.ts` imports this module's runtime
 // values (`getCurrentContext`), so a value import here would form a
-// runtime cycle. A type-only edge erases at build time, so tsgo /
+// runtime cycle. A type-only edge erases at build time, so tsc /
 // rolldown see no cycle.
 import type { MaintenanceDispatch } from "../maintenance.ts";
 import type { ReadEnvelope } from "../read-admission.ts";

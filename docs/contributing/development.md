@@ -79,7 +79,7 @@ docker compose -p baerly-storage-alt up -d --wait
 ## Type checking, formatting, linting
 
 ```sh
-pnpm typecheck        # tsgo --noEmit (TypeScript 7 in strict mode)
+pnpm typecheck        # tsc --noEmit (TypeScript 7 in strict mode)
 pnpm format           # oxfmt (writes in place)
 pnpm format:check     # oxfmt --check (no writes; CI mode)
 pnpm lint             # oxlint
@@ -91,7 +91,7 @@ pnpm lint             # oxlint
 pnpm build       # rolldown bundle to dist/ (index.js + index.d.ts)
 ```
 
-Public-API documentation lives as JSDoc on `packages/server/src/db.ts` and `packages/server/src/collection.ts`. IDE hover and `tsgo` consume it directly. The curated installed quick reference source is `packages/server/API.md`, copied to `dist/API.md` at build time. Keep both aligned with the exported `.d.ts` surface.
+Public-API documentation lives as JSDoc on `packages/server/src/db.ts` and `packages/server/src/collection.ts`. IDE hover and `tsc` consume it directly. The curated installed quick reference source is `packages/server/API.md`, copied to `dist/API.md` at build time. Keep both aligned with the exported `.d.ts` surface.
 
 ## The verification ritual
 
@@ -108,7 +108,7 @@ pnpm build        # exercise the build path (rolldown bundle)
 - **vitest, not bun:test.** A `import { test } from "bun:test"` will silently mismatch and produce confusing errors. Always import from `"vitest"`.
 - **No `baseUrl`.** `tsconfig.json` uses `moduleResolution: "bundler"` and no `baseUrl`. Cross-package imports use the `@baerly/<pkg>` workspace name; sibling imports are relative (`import { makeCollection } from "./collection.ts"`).
 - **`oxfmt --write` modifies files.** Use `format:check` if you only want to verify.
-- **`tsgo` is the TS 7 native preview.** Errors look slightly different from `tsc` 5.x output but the diagnostics map 1:1.
+- **`tsc` is TypeScript 7, the native compiler.** Errors look slightly different from TypeScript 5.x output but the diagnostics map 1:1.
 - **Clock-skew tests are sensitive.** The protocol has a `LAG_WINDOW_MILLIS` (5s) tolerance — if your machine clock drifts > 5s from NTP, expect flakes in `time.test.ts` and `randomized.test.ts`.
 - **`pnpm install` errors with `lefthook install`.** If `git config core.hooksPath` is set to something `lefthook install` doesn't expect (common when another tool in your dotfiles owns the hooks path), the `prepare` script fails. Workarounds, in order of preference: `lefthook install --reset-hooks-path`, or `git config --unset core.hooksPath && pnpm install`, or as a last resort `pnpm install --ignore-scripts` (skips the `prepare` step entirely; you'll need to wire pre-commit hooks manually).
 
@@ -154,15 +154,11 @@ It is green on `main`, so a local failure usually means the current branch intro
 
 ### Lefthook's typecheck fails on an import you didn't touch
 
-`tsgo --noEmit` resolves `baerly-storage/<subpath>` specifiers via the root `package.json` `exports` map, which points at `./dist/*.d.ts` — not at `packages/*/src/`. `pnpm install` rebuilds `dist/` via `prepare`, but `dist/` can drift from source between installs during ordinary edits. If the failure is `Module "baerly-storage/<sub>" has no exported member "X"` and `X` is present in the matching package's `src/index.ts`, run `pnpm build` before assuming the source is wrong. A fresh `git worktree` starts with no `dist/` at all — run `pnpm worktree:bootstrap` once after `git worktree add`, and again after rebasing onto a `main` that touched the kernel, so dist-consuming tests and byte-budget assertions measure the current tree.
-
-### `tsgo --noEmit` reports a `Cannot find module` that disappears on retry
-
-In a fresh `git worktree` especially, `tsgo --noEmit` (the typecheck gate in `verify`/`verify:agent`/the lefthook hook) is occasionally non-deterministic: successive runs on the same unchanged tree report 0 errors, then several, then a different set, then 0 again. The spurious errors are always `TS2307 Cannot find module` against workspace packages or special specifiers (`@baerly/server`, `cloudflare:test`, …). If you see that shape, re-run once before editing the flagged files. A reproducing error is real — fix it. A green retry does not clear a red run: treat the red one as authoritative and find the cause.
+`tsc --noEmit` resolves `baerly-storage/<subpath>` specifiers via the root `package.json` `exports` map, which points at `./dist/*.d.ts` — not at `packages/*/src/`. `pnpm install` rebuilds `dist/` via `prepare`, but `dist/` can drift from source between installs during ordinary edits. If the failure is `Module "baerly-storage/<sub>" has no exported member "X"` and `X` is present in the matching package's `src/index.ts`, run `pnpm build` before assuming the source is wrong. A fresh `git worktree` starts with no `dist/` at all — run `pnpm worktree:bootstrap` once after `git worktree add`, and again after rebasing onto a `main` that touched the kernel, so dist-consuming tests and byte-budget assertions measure the current tree.
 
 ### `pnpm build` breaks after editing a tsconfig's `include`/`exclude`
 
-Adding or removing a `packages/*/src` path from the root `tsconfig.json` breaks declaration emit: `rolldown-plugin-dts` (`rolldown.config.ts`) runs `tsgo` against the tsconfig it's told to use, so an excluded package has no program to emit from and `pnpm build` dies with `tsgo did not generate dts file for .../src/index.ts`. No fast gate catches this — `verify:agent` never builds, and `test:agent`'s `pretest` skips the build whenever `dist/` already exists — so run `pnpm build` explicitly after touching a tsconfig's `include`/`exclude` or `rolldown.config.ts`; don't infer build health from a green `verify:agent`/`test:agent`. The repo has three tsconfigs by design: root (Node-only), `tsconfig.cloudflare.json` (Workers surface), and `tsconfig.build.json` (both, dts emit only).
+Adding or removing a `packages/*/src` path from the root `tsconfig.json` breaks declaration emit: `rolldown-plugin-dts` (`rolldown.config.ts`) runs `tsc` against the tsconfig it's told to use, so an excluded package has no program to emit from and `pnpm build` dies with `tsgo did not generate dts file for .../src/index.ts`. No fast gate catches this — `verify:agent` never builds, and `test:agent`'s `pretest` skips the build whenever `dist/` already exists — so run `pnpm build` explicitly after touching a tsconfig's `include`/`exclude` or `rolldown.config.ts`; don't infer build health from a green `verify:agent`/`test:agent`. The repo has three tsconfigs by design: root (Node-only), `tsconfig.cloudflare.json` (Workers surface), and `tsconfig.build.json` (both, dts emit only).
 
 ### The pre-commit hook didn't fire
 

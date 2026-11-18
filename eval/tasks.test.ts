@@ -16,7 +16,7 @@ const taskNames = readdirSync(tasksDir, { withFileTypes: true })
 
 // Each golden runs through the same path a real agent solution takes: copied
 // into a fresh in-repo sandbox (see eval/sandbox.ts), so dependency resolution
-// (e.g. `zod`) is the one a real solution gets. All goldens share one tsgo
+// (e.g. `zod`) is the one a real solution gets. All goldens share one tsc
 // pass; the runtime checks then run concurrently.
 const sandboxes = new Map<string, string>();
 let typecheckPass: Promise<Map<string, Verdict>>;

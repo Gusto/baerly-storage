@@ -11,7 +11,7 @@ import type { DocumentValue } from "../json.ts";
 /**
  * Runtime mirror of {@link PredicateOpName}. The type derives from this
  * tuple so the value is the single source of truth: the spec generator
- * and the drift gate enumerate `PREDICATE_OPS`, and tsgo rejects any
+ * and the drift gate enumerate `PREDICATE_OPS`, and tsc rejects any
  * member added to the type-union without a matching tuple entry.
  */
 export const PREDICATE_OPS = ["eq", "gt", "gte", "lt", "lte", "in"] as const;

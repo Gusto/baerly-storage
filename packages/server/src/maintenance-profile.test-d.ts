@@ -6,7 +6,7 @@
  * the canonical interface `MaintenanceProfile` lives in `./maintenance.ts`.
  * Plain structural assignability only catches one drift direction; `Equal`
  * is EXACT, so a renamed, added, removed, or retyped field on EITHER side
- * fails `tsgo --noEmit`. This `.test-d.ts` is typechecked but never bundled,
+ * fails `tsc --noEmit`. This `.test-d.ts` is typechecked but never bundled,
  * so the guard costs zero bundle bytes — the "keep field-identical" comments
  * on both definitions now name a mechanism that is actually enforced.
  */

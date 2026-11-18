@@ -57,7 +57,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Full static gate: typecheck (tsgo --noEmit), example typechecks,
+      # Full static gate: typecheck (tsc --noEmit), example typechecks,
       # lint (oxlint), format check (oxfmt), import/layer linters, and
       # doc checks. See the `verify` script in package.json.
       - name: Verify

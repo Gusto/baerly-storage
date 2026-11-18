@@ -4,7 +4,7 @@
  * `as Promise<Note[]>` cast: the React surface must thread `TConfig`
  * so `c.collection("notes").all()` infers the real row type.
  *
- * Validated by `tsgo --noEmit` (via `pnpm verify`). Not picked up by
+ * Validated by `tsc --noEmit` (via `pnpm verify`). Not picked up by
  * vitest — `.test-d.ts` is outside the default include glob.
  */
 

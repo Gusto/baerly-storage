@@ -7,7 +7,7 @@
  * (e.g. {@link versionFromContent}'s content keys) slice the return.
  */
 export const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
-  // Copy via fresh ArrayBuffer: tsgo narrows `Uint8Array` to
+  // Copy via fresh ArrayBuffer: tsc narrows `Uint8Array` to
   // `Uint8Array<ArrayBufferLike>`, which `crypto.subtle.digest` rejects
   // (wants `ArrayBufferView<ArrayBuffer>`). See microsoft/TypeScript#61375.
   const view = new Uint8Array(bytes.byteLength);

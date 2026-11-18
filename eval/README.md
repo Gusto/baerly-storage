@@ -52,13 +52,13 @@ Each task directory contains:
 
 These tasks are a deliberately small, growable sample — not full vocabulary coverage. They touch `insert` / `get` / `first` / `all` / `count` / `update` / `delete`, the `where`, `order` and `limit` modifiers, the `eq` / `gte` / `in` operators, and the `BaerlyError` `code` / `retriable` / `retryAfter` model. `replace`, the `gt` / `lt` / `lte` operators and pagination over `/v1/since` are not exercised. The `retry-helper` and `ambiguous-commit` tasks check the agent's exported function against fake operations, because a `MemoryStorage` `Db` cannot raise `MaintenancePending` or `AmbiguousCommit`.
 
-This eval measures whether an agent reaches a **working** answer zero-shot. It does **not** prove the closed-vocabulary _type_ guarantees (e.g. that `.where({ _id })` does not type-check while `.get(id)` does, or that `or` / `ne` / `regex` / `exists` are absent). Those are locked at the type level in `packages/protocol/src/collection-api.test-d.ts` (under the `tsgo` gate) — that is their home, not here.
+This eval measures whether an agent reaches a **working** answer zero-shot. It does **not** prove the closed-vocabulary _type_ guarantees (e.g. that `.where({ _id })` does not type-check while `.get(id)` does, or that `or` / `ne` / `regex` / `exists` are absent). Those are locked at the type level in `packages/protocol/src/collection-api.test-d.ts` (under the `tsc` gate) — that is their home, not here.
 
 ## Scoring
 
 Pass-rate per task = (passing runs) / (total runs). A run passes when:
 
-1. The generated `solution.ts` typechecks against `dist/*.d.ts` via `tsgo --noEmit`.
+1. The generated `solution.ts` typechecks against `dist/*.d.ts` via `tsc --noEmit`.
 2. The checker (`eval/tasks/<name>/check.ts`) passes when run against the solution with a fresh `MemoryStorage` `Db`.
 
 The checked-in historical pass rates are invalid for the current harness; run a fresh live eval before drawing conclusions about model accuracy.

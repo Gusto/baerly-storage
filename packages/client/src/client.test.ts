@@ -662,7 +662,7 @@ describe("onWarning", () => {
 // bag that `Collection<T>` does not carry — but the names match
 // 1:1 so call-site refactors port across. `where` returns
 // `ClientQuery<T>` (a structural subset of `Query<T>` — no mutation
-// verbs on the wire) so it is not asserted here either. tsgo errors
+// verbs on the wire) so it is not asserted here either. tsc errors
 // when one of the read-side names drifts. Pure type position; no
 // runtime emit.
 type _ShapeParityProbe =
