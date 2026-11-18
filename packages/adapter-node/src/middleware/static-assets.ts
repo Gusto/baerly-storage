@@ -1,226 +1,122 @@
-import { createReadStream, type Stats } from "node:fs";
-import { stat } from "node:fs/promises";
-import {
-  extname,
-  relative as relativePath,
-  resolve as resolvePath,
-  sep as pathSep,
-} from "node:path";
-import { Readable } from "node:stream";
-import type { ReadableStream as NodeReadableStream } from "node:stream/web";
-import type { MiddlewareHandler } from "hono";
-
-/**
- * Map a file extension to its `Content-Type`. The set is deliberately
- * small — every entry corresponds to something Vite or a typical SPA
- * pipeline actually emits. Unknown extensions fall back to
- * `application/octet-stream`, which keeps the browser from sniffing
- * untrusted bytes as HTML.
- */
-const MIME_TYPES: Readonly<Record<string, string>> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".txt": "text/plain; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-};
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { serveStatic } from "@hono/node-server/serve-static";
+import type { Context, MiddlewareHandler } from "hono";
 
 interface Options {
   readonly webRoot: string;
 }
 
 /**
- * Serve files from `webRoot` for GET/HEAD requests that miss `/v1/*`.
+ * Serve files from `webRoot` for GET/HEAD requests that miss `/v1/*`,
+ * via `@hono/node-server/serve-static`.
  *
- * HTML navigation (`Accept: text/html`) that misses an on-disk file
- * falls back to `<webRoot>/index.html` (SPA shell). Non-HTML misses
- * pass through `next()` so the cascade emits its 404 envelope.
+ * That handler owns MIME types, `Content-Length`, `Last-Modified`,
+ * Range requests, and request-path validation, falling through to the
+ * cascade's 404 envelope on a rejected path. Hono hands it the path
+ * already `decodeURI`'d, so `%20` and UTF-8 escapes name ordinary
+ * files. What still holds a `%` after that decode is an encoded
+ * reserved character (`%2F`, `%3F`, `%23`) or a literal `%` (`%25`),
+ * and those are rejected, as are `.`/`..` segments and repeated or
+ * back-slashes. This wrapper adds what it does not:
  *
- * Path resolution rejects `..` segments and absolute paths so the
- * middleware can't escape `webRoot`. Pure `node:fs` + `node:path` —
- * no new dependency.
- *
- * The response body is built as
- * `new Response(Readable.toWeb(createReadStream(...)))`, keeping the
- * middleware Fetch-shaped so it composes cleanly with other Hono
- * middleware. The actual byte pump runs through
- * `@hono/node-server`'s response writer, which handles backpressure +
- * client-disconnect cleanly.
+ * - Dotfiles and dot-directories (`/.env`, `/.git/config`) fall
+ *   through, except `/.well-known/*`.
+ * - A file whose real path (after symlinks) leaves `webRoot` falls
+ *   through.
+ * - HTML navigation (`Accept: text/html`) that misses on disk gets
+ *   `<webRoot>/index.html` (SPA shell). Other misses fall through.
+ * - `Cache-Control`: `public, max-age=3600` under `assets/` (Vite's
+ *   hashed bundles), `no-cache` everywhere else.
  */
 export function staticAssetsMiddleware(opts: Options): MiddlewareHandler {
+  const root = resolve(opts.webRoot);
+  const onFound = (path: string, c: Context): void => {
+    const rel = relative(root, resolve(path)).split(sep).join("/");
+    c.header("Cache-Control", rel.startsWith("assets/") ? "public, max-age=3600" : "no-cache");
+  };
+  const files = serveStatic({
+    root,
+    // `serveStatic` joins the validated request path onto `root`, so
+    // rejecting here (with a path that cannot stat) is the one place
+    // that sees the final filesystem target before it is opened.
+    rewriteRequestPath: (path) => (servesFromRoot(root, path) ? path : UNSERVABLE),
+    onFound,
+  });
+  const shell = serveStatic({ root, path: "index.html", onFound });
+
   return async (c, next) => {
     const method = c.req.method;
-    if (method !== "GET" && method !== "HEAD") {
+    if ((method !== "GET" && method !== "HEAD") || c.req.path.startsWith("/v1/")) {
       return next();
     }
-    const path = new URL(c.req.url).pathname;
-    if (path.startsWith("/v1/")) {
+    if (hasDotSegment(c.req.path)) {
       return next();
     }
-
-    const resolved = resolveUnderWebRoot(path, opts.webRoot);
-    if (resolved === null) {
-      // Traversal / absolute path / NUL byte / malformed encoding.
-      // Fall through to the cascade.
-      return next();
-    }
-
-    const resolution = await resolveStaticTarget(resolved, opts.webRoot, c.req.header("accept"));
-    if (resolution === null) {
-      return next();
-    }
-    const { target, stats } = resolution;
-
-    const ext = extname(target).toLowerCase();
-    const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-    // Vite emits long-lived hashed bundles under `assets/`; everything
-    // else (including `index.html`, which is fetched on every nav)
-    // wants a fresh copy.
-    const relForCache = relativePath(opts.webRoot, target).split(pathSep).join("/");
-    const cacheControl =
-      relForCache.startsWith("assets/") && target !== resolvePath(opts.webRoot, "index.html")
-        ? "public, max-age=3600"
-        : "no-cache";
-
-    const headers: Record<string, string> = {
-      "content-type": contentType,
-      "content-length": String(stats.size),
-      "cache-control": cacheControl,
-    };
-
-    if (method === "HEAD") {
-      return new Response(null, { status: 200, headers });
-    }
-
-    const nodeWeb = Readable.toWeb(
-      createReadStream(target),
-    ) as unknown as NodeReadableStream<Uint8Array>;
-    return new Response(nodeWeb as unknown as ReadableStream<Uint8Array>, {
-      status: 200,
-      headers,
+    // Hono's `Next` resolves to void, so a response produced inside it
+    // has to land on `c.res` rather than be returned.
+    return files(c, async () => {
+      if (
+        c.req.header("accept")?.includes("text/html") !== true ||
+        !servesFromRoot(root, "index.html")
+      ) {
+        await next();
+        return;
+      }
+      const res = await shell(c, next);
+      if (res !== undefined) {
+        c.res = res;
+      }
     });
   };
 }
 
-/**
- * Resolve a request path under `webRoot` without allowing `..` escape
- * or absolute-segment hijacking. Returns the resolved absolute path on
- * success, or `null` when the request should fall through (traversal
- * attempt, NUL byte, malformed URL encoding).
- */
-function resolveUnderWebRoot(reqPath: string, webRoot: string): string | null {
-  let relative = reqPath;
-  if (relative === "" || relative === "/") {
-    relative = "/index.html";
-  } else if (relative.endsWith("/")) {
-    relative = `${relative}index.html`;
-  }
+/** A path `statSync` rejects (NUL byte), so `serveStatic` treats it as a miss. */
+const UNSERVABLE = "/\0";
 
-  // Reject NUL bytes immediately — no filesystem call should ever see
-  // one.
-  if (relative.includes("\0")) {
-    return null;
-  }
-
-  // Walk the segments, URL-decoding each one in isolation. Decoding
-  // the whole path string would let `%2F` (`/`) sneak through as a
-  // segment separator that bypasses the per-segment `..` check.
-  const segments: string[] = [];
-  for (const raw of relative.split("/")) {
-    if (raw === "") {
-      continue;
-    }
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch {
-      return null;
-    }
-    if (decoded === "" || decoded === ".") {
-      continue;
-    }
-    if (decoded === "..") {
-      return null;
-    }
-    if (decoded.includes("\0")) {
-      return null;
-    }
-    if (decoded.includes("/") || decoded.includes("\\")) {
-      return null;
-    }
-    segments.push(decoded);
-  }
-
-  const resolved = resolvePath(webRoot, ...segments);
-  const rel = relativePath(webRoot, resolved);
-  // `path.relative` returns `""` when `resolved === webRoot` (the
-  // directory itself) and a `..`-prefixed path when `resolved` escapes
-  // `webRoot`. Both are rejected.
-  if (rel === "" || rel.startsWith("..") || rel.startsWith(`..${pathSep}`)) {
-    return null;
-  }
-  return resolved;
+/** `.well-known` is the one dot-directory a web app is expected to publish (RFC 8615). */
+function hasDotSegment(path: string): boolean {
+  return path.split("/").some((segment) => segment.startsWith(".") && segment !== ".well-known");
 }
 
 /**
- * Determine whether the request should fall back to `index.html` on a
- * filesystem miss. Browsers send `Accept: text/html,...` for SPA
- * navigations; programmatic `fetch()` calls for missing JSON / image
- * assets do not, and they get the kernel's 404 envelope instead.
+ * True when `requestPath` (already validated by `serveStatic`) names a
+ * missing file, or an existing file or directory whose real path stays
+ * inside `root`. For a directory, its `index.html` is checked too,
+ * since that is what `serveStatic` opens.
  */
-function wantsHtmlFallback(accept: string | undefined): boolean {
-  if (typeof accept !== "string") {
-    return false;
+function servesFromRoot(root: string, requestPath: string): boolean {
+  const target = join(root, requestPath);
+  const realRoot = realpathOrNull(root);
+  if (realRoot === null) {
+    return true;
   }
-  return accept.includes("text/html");
+  const candidates = [target];
+  if (isDirectory(target)) {
+    candidates.push(join(target, "index.html"));
+  }
+  return candidates.every((candidate) => {
+    const real = realpathOrNull(candidate);
+    if (real === null) {
+      return true;
+    }
+    const rel = relative(realRoot, real);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  });
 }
 
-async function resolveStaticTarget(
-  resolved: string,
-  webRoot: string,
-  accept: string | undefined,
-): Promise<{ target: string; stats: Stats } | null> {
-  const primary = await statFile(resolved);
-  if (primary !== null) {
-    return { target: resolved, stats: primary };
-  }
-  if (!wantsHtmlFallback(accept)) {
-    return null;
-  }
-  const indexPath = resolvePath(webRoot, "index.html");
-  const fallback = await statFile(indexPath);
-  if (fallback === null) {
-    return null;
-  }
-  return { target: indexPath, stats: fallback };
-}
-
-/**
- * `fs.stat` that returns `null` for the missing-file cases that this
- * handler treats as a fall-through (ENOENT / ENOTDIR / non-file).
- * Other errors (EACCES, EIO, ...) propagate.
- */
-async function statFile(target: string): Promise<Stats | null> {
+function realpathOrNull(path: string): string | null {
   try {
-    const stats = await stat(target);
-    return stats.isFile() ? stats : null;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") {
-      return null;
-    }
-    throw error;
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
   }
 }
