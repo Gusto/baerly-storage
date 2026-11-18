@@ -89,6 +89,16 @@ const isThrottled = (e: unknown): boolean =>
 const isRefused = (e: unknown): boolean =>
   e instanceof BaerlyError && (e.cause as { refused?: boolean } | undefined)?.refused === true;
 
+/**
+ * `true` for an `AbortError`: the caller cancelled the call through its
+ * `AbortSignal`. A resend would fail the same way, so the loop ends and
+ * the error surfaces as is, as the other adapters raise it. Matched on
+ * `name` like the writer's predicate: workerd and undici reject with
+ * different `DOMException` classes.
+ */
+const isAbortError = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && "name" in e && e.name === "AbortError";
+
 const retryAfterMillis = (e: unknown): number | undefined => {
   if (!(e instanceof BaerlyError)) {
     return undefined;
@@ -128,8 +138,8 @@ export const storageRetryDelayMillis = (
  * for a `compareAndSwap` call),
  * one counter for throttles and transient failures alike, full-jitter
  * backoff between attempts (see {@link storageRetryDelayMillis}). A
- * {@link PERMANENT_STORAGE_ERROR_CODES} failure, or an error whose cause
- * carries `refused: true`, ends the loop at once.
+ * {@link PERMANENT_STORAGE_ERROR_CODES} failure, an error whose cause
+ * carries `refused: true`, or an `AbortError` ends the loop at once.
  *
  * Every adapter wraps each request — one object call, or one `list`
  * page — in exactly one `retryStorageCall`, so a failing call costs at
@@ -165,6 +175,9 @@ export const retryStorageCall = async <T>(
       ledger?.acquire(pool, currentRequestHold());
       return await fn();
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       if (error instanceof BaerlyError && PERMANENT_STORAGE_ERROR_CODES.has(error.code)) {
         if (opts.conditionalCreate === true && uncertain && !isWriteConflict(error)) {
           throw new BaerlyError(

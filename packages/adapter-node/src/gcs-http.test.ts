@@ -489,3 +489,38 @@ describe("GcsHttpStorage.list retry + pagination", () => {
     }
   });
 });
+
+describe("GcsHttpStorage abort", () => {
+  test.each([
+    ["get", (s: GcsHttpStorage, signal: AbortSignal) => s.get("k", { signal })],
+    ["put", (s: GcsHttpStorage, signal: AbortSignal) => s.put("k", new Uint8Array(8), { signal })],
+  ] as const)(
+    "a %s aborted in flight rejects with the AbortError after one attempt",
+    async (_op, call) => {
+      let calls = 0;
+      const fetchImpl = ((input: RequestInfo | URL) => {
+        calls += 1;
+        const { signal } = input as Request;
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }) as typeof fetch;
+      const s = new GcsHttpStorage({
+        bucket: "b",
+        sign: passthroughSign,
+        fetch: fetchImpl,
+        retries: 2,
+        backoffMs: 1,
+      });
+      const controller = new AbortController();
+      const pending = call(s, controller.signal);
+      setTimeout(() => controller.abort(), 5);
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(calls).toBe(1);
+    },
+  );
+});

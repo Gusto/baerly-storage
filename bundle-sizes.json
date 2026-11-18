@@ -56,9 +56,9 @@
     },
     "cloudflare.js": {
       "tier": "shipped",
-      "raw": 625585,
-      "gz": 188406,
-      "minGz": 62162,
+      "raw": 626075,
+      "gz": 188577,
+      "minGz": 62200,
       "ratchet": {
         "raw": 634624,
         "gz": 193024,
@@ -68,11 +68,11 @@
     },
     "s3.js": {
       "tier": "shipped",
-      "raw": 113408,
-      "gz": 36397,
-      "minGz": 12709,
+      "raw": 113923,
+      "gz": 36575,
+      "minGz": 12748,
       "ratchet": {
-        "raw": 113408,
+        "raw": 125440,
         "gz": 37376,
         "minGz": 13312
       },
@@ -80,9 +80,9 @@
     },
     "gcs.js": {
       "tier": "shipped",
-      "raw": 106463,
-      "gz": 34741,
-      "minGz": 11057,
+      "raw": 106978,
+      "gz": 34924,
+      "minGz": 11096,
       "ratchet": {
         "raw": 108800,
         "gz": 36096,
@@ -164,7 +164,7 @@
     },
     "node.js": {
       "tier": "tooling",
-      "raw": 822066,
+      "raw": 822606,
       "ratchet": {
         "raw": 832512
       },
@@ -172,7 +172,7 @@
     },
     "dev-vite.js": {
       "tier": "tooling",
-      "raw": 831027,
+      "raw": 831567,
       "ratchet": {
         "raw": 842496
       },

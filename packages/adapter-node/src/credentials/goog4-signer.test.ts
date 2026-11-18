@@ -562,6 +562,18 @@ describe("goog4Signer signing-key cache", () => {
     expect(signatureOf(nextDay)).toBe(await oracleSignature(nextDay, "SECRET_A"));
   });
 
+  test("concurrent first use shares one key derivation", async () => {
+    const sign = goog4Signer({
+      credentials: { accessKeyId: "GOOG_ID", secretAccessKey: "SECRET_A" },
+      now: () => T0,
+    });
+    const importKey = vi.spyOn(crypto.subtle, "importKey");
+    const [a, b] = await Promise.all([sign(get("a")), sign(get("b"))]);
+    expect(importKey).toHaveBeenCalledTimes(KEY_DERIVATION_IMPORTS);
+    expect(signatureOf(a)).toBe(await oracleSignature(a, "SECRET_A"));
+    expect(signatureOf(b)).toBe(await oracleSignature(b, "SECRET_A"));
+  });
+
   test("a secret rotated within the same day is not signed with the old key", async () => {
     let currentTime = T0;
     let secret = "SECRET_OLD";

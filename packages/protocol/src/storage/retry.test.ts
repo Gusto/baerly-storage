@@ -117,6 +117,15 @@ describe("retryStorageCall attempt cap", () => {
     expect(waits).toEqual([]);
   });
 
+  test("an AbortError ends the loop on the first attempt and surfaces as is", async () => {
+    const abort = new DOMException("This operation was aborted", "AbortError");
+    const { fn, calls } = sequence([abort]);
+    const { sleep, waits } = recordingSleep();
+    await expect(retryStorageCall(fn, { sleep, conditionalCreate: true })).rejects.toBe(abort);
+    expect(calls()).toBe(1);
+    expect(waits).toEqual([]);
+  });
+
   test.each([1.5, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     "retries: %s is rejected as InvalidConfig before any attempt",
     async (retries) => {
