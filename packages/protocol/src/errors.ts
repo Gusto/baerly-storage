@@ -148,10 +148,10 @@ export type BaerlyErrorCode =
   /**
    * Request body exceeded the server's size cap. HTTP server maps
    * to 413. Cap is `MAX_BODY_BYTES` (1 MiB today; exported from
-   * `packages/server/src/http/router.ts`). The Node adapter
-   * enforces during the `node:http` stream pump so the process
-   * never materializes a multi-MiB body; Workers also rely on
-   * platform-side caps (16 MB free / 100 MB paid).
+   * `packages/server/src/http/router.ts`). The router counts bytes
+   * while it reads a chunked body and stops at the cap on every
+   * host; the Node adapter also enforces it during the `node:http`
+   * stream pump and drains the rest of the upload.
    */
   | "PayloadTooLarge"
   /**

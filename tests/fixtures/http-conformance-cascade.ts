@@ -78,6 +78,14 @@ export interface HttpConformanceOptions {
    * would time out the test runner.
    */
   readonly supportsSinceTimeoutOverride?: boolean;
+  /**
+   * When true, the call site's `fetch` streams a request body to the
+   * server as it is produced, so the cascade can send a chunked body
+   * that passes the cap and then stalls, and expect a 413 before it
+   * ends. Default: **false**. The Node-side `nodeFetch` buffers the
+   * body before writing it; the Workerd `SELF.fetch` streams.
+   */
+  readonly streamsRequestBody?: boolean;
   /** Tenant prefix the test Verifier maps to. Default: `conformance-tenant`. */
   readonly tenantPrefix?: string;
   /** Bearer token the test Verifier accepts. Default: `test-token`. */
@@ -237,6 +245,7 @@ export const runHttpConformanceCascade = (opts: {
   const supportsCAS = o.supportsCAS ?? false;
   const supportsLongPoll = o.supportsLongPoll ?? true;
   const supportsSinceTimeoutOverride = o.supportsSinceTimeoutOverride ?? false;
+  const streamsRequestBody = o.streamsRequestBody ?? false;
   const tenantPrefix = o.tenantPrefix ?? CONFORMANCE_TENANT;
   const bearerToken = o.bearerToken ?? CONFORMANCE_BEARER;
   const bodyArb = o.bodyArb ?? DEFAULT_BODY_ARB;
@@ -515,6 +524,80 @@ export const runHttpConformanceCascade = (opts: {
         const env = (await res.json()) as ErrorEnvelope;
         expect(env.error?.code).toBe("PayloadTooLarge");
       });
+
+      // No Content-Length, and the stream stalls once it passes the
+      // cap: a server that buffers the whole body before checking
+      // never answers.
+      test.skipIf(!streamsRequestBody)(
+        "chunked POST past 1 MiB returns 413 PayloadTooLarge before the body ends",
+        async () => {
+          const table = await mintTable("rt-big-chunked");
+          const chunk = new Uint8Array(64 * 1024).fill(0x20);
+          let sent = 0;
+          const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (sent > 1 << 20) {
+                return new Promise<void>(() => {});
+              }
+              sent += chunk.byteLength;
+              controller.enqueue(chunk);
+              return undefined;
+            },
+          });
+          const res = await doFetch(
+            new Request(`${BASE}/v1/c/${table}`, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${bearerToken}`,
+                "content-type": "application/json",
+              },
+              body,
+              duplex: "half",
+            } as RequestInit & { duplex: "half" }),
+          );
+          expect(res.status).toBe(413);
+          const env = (await res.json()) as ErrorEnvelope;
+          expect(env.error?.code).toBe("PayloadTooLarge");
+        },
+      );
+
+      // Exactly at the cap reaches the parser (whitespace is invalid
+      // JSON, so 400); one byte over is 413. Sent as a stream without
+      // Content-Length; a variant whose fetch buffers sends a length.
+      for (const [bytes, status, code] of [
+        [1 << 20, 400, "SchemaError"],
+        [(1 << 20) + 1, 413, "PayloadTooLarge"],
+      ] as const) {
+        test(`chunked POST of ${bytes} bytes returns ${status} ${code}`, async () => {
+          const table = await mintTable("rt-cap-edge");
+          let left: number = bytes;
+          const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (left === 0) {
+                controller.close();
+                return;
+              }
+              const n = Math.min(64 * 1024, left);
+              left -= n;
+              controller.enqueue(new Uint8Array(n).fill(0x20));
+            },
+          });
+          const res = await doFetch(
+            new Request(`${BASE}/v1/c/${table}`, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${bearerToken}`,
+                "content-type": "application/json",
+              },
+              body,
+              duplex: "half",
+            } as RequestInit & { duplex: "half" }),
+          );
+          expect(res.status).toBe(status);
+          const env = (await res.json()) as ErrorEnvelope;
+          expect(env.error?.code).toBe(code);
+        });
+      }
 
       for (const fieldCount of [0, 1, 16, 256]) {
         test(`round-trip doc with ${fieldCount} fields`, async () => {

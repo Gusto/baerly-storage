@@ -18,7 +18,7 @@ import {
   runWithContext,
   withHttpObservability,
 } from "../observability/index.ts";
-import { createRouter, mapError } from "./router.ts";
+import { createRouter, MAX_BODY_BYTES, mapError } from "./router.ts";
 import { collectingSink } from "../../../../tests/fixtures/collecting-sink.ts";
 
 const buildApp = (): ReturnType<typeof createRouter> => {
@@ -725,5 +725,101 @@ describe("collection-segment validation closes the traversal bypass", () => {
       "http://localhost/v1/c/caf%C3%A9?where=%7B%22clauses%22%3A%5B%5D%7D",
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe("request body cap", () => {
+  type ErrorEnvelope = { error: { code: string } };
+  // A chunked body with no Content-Length that passes the cap and then
+  // stalls. Reading it to the end would never finish, so a 413 proves
+  // the router stops reading as soon as the running size passes the cap.
+  const stalledOversizedBody = (): ReadableStream<Uint8Array> => {
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    let sent = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent > MAX_BODY_BYTES) {
+          return new Promise<void>(() => {});
+        }
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+        return undefined;
+      },
+    });
+  };
+
+  test.each([
+    ["POST", "/v1/c/notes"],
+    ["PATCH", `/v1/c/notes/${uuidv7()}`],
+    ["PUT", `/v1/c/notes/${uuidv7()}`],
+  ])("%s with a chunked body past the cap returns 413 mid-stream", async (method, path) => {
+    const app = buildApp();
+    const res = await app.fetch(
+      new Request(`http://localhost${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: stalledOversizedBody(),
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+    );
+    expect(res.status).toBe(413);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("PayloadTooLarge");
+  });
+
+  // Whitespace is invalid JSON, so a body that gets past the cap
+  // answers 400 SchemaError from the parser.
+  const chunkedWhitespace = (bytes: number): ReadableStream<Uint8Array> => {
+    const chunkSize = 64 * 1024;
+    let left = bytes;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (left === 0) {
+          controller.close();
+          return;
+        }
+        const n = Math.min(chunkSize, left);
+        left -= n;
+        controller.enqueue(new Uint8Array(n).fill(0x20));
+      },
+    });
+  };
+
+  test.each([
+    [MAX_BODY_BYTES, 400, "SchemaError"],
+    [MAX_BODY_BYTES + 1, 413, "PayloadTooLarge"],
+  ])("a chunked body of %i bytes returns %i %s", async (bytes, status, code) => {
+    const app = buildApp();
+    const res = await app.fetch(
+      new Request("http://localhost/v1/c/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: chunkedWhitespace(bytes),
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+    );
+    expect(res.status).toBe(status);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe(code);
+  });
+
+  test("a chunked body under the cap is read and committed", async () => {
+    const app = buildApp();
+    const bytes = new TextEncoder().encode(JSON.stringify({ doc: { title: "streamed" } }));
+    const res = await app.fetch(
+      new Request("http://localhost/v1/c/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes.subarray(0, 5));
+            controller.enqueue(bytes.subarray(5));
+            controller.close();
+          },
+        }),
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+    );
+    expect(res.status).toBe(201);
   });
 });
