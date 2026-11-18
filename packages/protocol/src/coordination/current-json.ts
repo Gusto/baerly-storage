@@ -31,6 +31,9 @@ import { BaerlyError, isWriteConflict } from "../errors.ts";
 import { isNewerSchemaVersion, unsupportedSchemaVersionMessage } from "./schema-version.ts";
 import type { Storage, StoragePutOptions, StoragePutResult } from "../storage/types.ts";
 
+// Default options only (no `stream`), so no state carries between calls.
+const utf8Decoder = new TextDecoder();
+
 /**
  * Per-collection control object. CAS-protected. One per
  * `(tenant, collection)` key — for example
@@ -265,7 +268,7 @@ export async function readCurrentJson(
   if (got === null) {
     return null;
   }
-  const text = new TextDecoder().decode(got.body);
+  const text = utf8Decoder.decode(got.body);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

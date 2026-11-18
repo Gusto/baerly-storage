@@ -1,6 +1,8 @@
 import { MAX_DOCUMENT_BYTES } from "./constants.ts";
 import { BaerlyError } from "./errors.ts";
 
+const utf8Encoder = new TextEncoder();
+
 // Kept apart from `document-input.ts`: the HTTP client bundles that module
 // for its pre-send value check, and the size cap is the server's to enforce.
 const DOCUMENT_SIZE_RESOLUTION = `Keep each document at or under ${MAX_DOCUMENT_BYTES} bytes (1 MiB) of JSON: move large or growing data (attachments, long histories, arrays that keep growing) into rows of their own, or store blobs outside the database and keep a reference.`;
@@ -14,7 +16,7 @@ const jsonByteLengthAbove = (json: string, limit: number): number | undefined =>
   if (json.length * 3 <= limit) {
     return undefined;
   }
-  const bytes = new TextEncoder().encode(json).byteLength;
+  const bytes = utf8Encoder.encode(json).byteLength;
   return bytes > limit ? bytes : undefined;
 };
 
