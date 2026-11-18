@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,20 +112,39 @@ describe("--pack", () => {
 });
 
 describe("--publish", () => {
+  // A real gzipped tarball holding only `package/package.json`.
+  const writeTarball = (file: string, manifest: Record<string, unknown>) => {
+    const stage = mkdtempSync(join(tmpdir(), "publish-stage-"));
+    try {
+      mkdirSync(join(stage, "package"));
+      writeFileSync(join(stage, "package", "package.json"), JSON.stringify(manifest));
+      const tar = spawnSync("tar", ["-czf", join(dir, file), "-C", stage, "package"]);
+      expect(tar.status).toBe(0);
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+    }
+  };
+  const manifestFor = (file: string) => ({
+    name: file.startsWith("gusto-create-")
+      ? "@gusto/create-baerly-storage"
+      : "@gusto/baerly-storage",
+    version: VERSION,
+    publishConfig: { access: "public" },
+  });
   const writeTarballs = (names: readonly string[]) => {
     for (const name of names) {
-      writeFileSync(join(dir, name), "");
+      writeTarball(name, manifestFor(name));
     }
   };
 
-  test("publishes both tarballs with --provenance, without gates or a build", () => {
+  test("publishes both tarballs with npm --provenance, without gates or a build", () => {
     writeTarballs(TARBALLS);
     const result = runPublish([`--publish=${dir}`], { env: TAG_RUN });
 
     expect(result.code).toBe(0);
     for (const name of TARBALLS) {
       expect(result.output).toContain(
-        `STUB_COMMAND:pnpm publish "${join(dir, name)}" --provenance --access public --no-git-checks\n`,
+        `STUB_COMMAND:npm publish "${join(dir, name)}" --provenance --access public --ignore-scripts --registry https://registry.npmjs.org/\n`,
       );
     }
     expect(result.output).not.toContain("verify:");
@@ -161,6 +180,37 @@ describe("--publish", () => {
       expect(result.output).not.toContain("STUB_COMMAND:");
     });
   }
+
+  // npm applies a packed manifest's publishConfig, so a tarball must not be
+  // able to rename, retag or redirect its own publish.
+  for (const [label, override] of [
+    ["names another package", { name: "@gusto/other" }],
+    ["packs another version", { version: "0.0.1" }],
+    ["sets publishConfig.registry", { publishConfig: { registry: "https://evil.example/" } }],
+    ["sets publishConfig.tag", { publishConfig: { access: "public", tag: "next" } }],
+    ["sets restricted access", { publishConfig: { access: "restricted" } }],
+  ] as const) {
+    test(`refuses a tarball whose manifest ${label}`, () => {
+      const [root, scaffolder] = TARBALLS;
+      writeTarball(root!, manifestFor(root!));
+      writeTarball(scaffolder!, { ...manifestFor(scaffolder!), ...override });
+      const result = runPublish([`--publish=${dir}`], { env: TAG_RUN });
+
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("RELEASE ABORTED");
+      expect(result.output).not.toContain("STUB_COMMAND:");
+    });
+  }
+
+  test("refuses a tarball without a package manifest", () => {
+    writeTarballs(TARBALLS.slice(0, 1));
+    writeFileSync(join(dir, TARBALLS[1]!), "not a tarball");
+    const result = runPublish([`--publish=${dir}`], { env: TAG_RUN });
+
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("could not read package/package.json");
+    expect(result.output).not.toContain("STUB_COMMAND:");
+  });
 
   test("reports a failed package publish", () => {
     writeTarballs(TARBALLS);

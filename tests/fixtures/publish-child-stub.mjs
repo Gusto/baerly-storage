@@ -33,6 +33,10 @@ childProcess.execSync = (command) => {
     throw error;
   }
 
+  if (command.startsWith("npm publish ")) {
+    return Buffer.alloc(0);
+  }
+
   if (command.startsWith("pnpm ")) {
     if (command.includes(" pack ")) {
       fakePack(command);
