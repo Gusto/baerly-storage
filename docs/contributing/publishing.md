@@ -58,15 +58,13 @@ Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be fresh at
    git tag "v$V" && git push origin "v$V"
    ```
 
-5. **Approve the deployment.** The tag push starts the `release` workflow's `publish` job, which waits on the `npm-publish` environment's required reviewer. Approve it in the Actions tab. The job then:
-   - checks that the tag equals `v<version>` for both packages and that the tagged commit is on `origin/main`;
-   - installs with the pnpm store cache disabled, so a cache entry written by another run can't reach a tarball;
-   - runs `pnpm release` (see [The `pnpm release` script](#the-pnpm-release-script)), which exchanges the job's OIDC token for a short-lived publish credential;
-   - checks that both published versions carry `dist.attestations`.
+5. **Approve the deployment.** The tag push runs the `release` workflow in two jobs:
+   - `pack` has no OIDC token. It checks that the tag equals `v<version>` for both packages and that the tagged commit is on `origin/main`, installs with the pnpm store cache disabled (so a cache entry written by another run can't reach a tarball), runs `pnpm release --pack` (see [The `pnpm release` script](#the-pnpm-release-script)) and uploads the two tarballs as an artifact.
+   - `publish` waits on the `npm-publish` environment's required reviewer; approve it in the Actions tab. It is the only job with `id-token: write`, and it runs no install, build or lifecycle script, so no dependency or build plugin can mint the token. It publishes the uploaded tarballs with `--provenance`, which exchanges the OIDC token for a short-lived publish credential, then checks that both published versions carry `dist.attestations`.
 
 6. **Run the [post-publish smoke](#post-publish-smoke).**
 
-> **Never `changeset publish`, and never publish from a laptop.** `pnpm release` builds before packing, so `dist/` and `dist/CHANGELOG.md` are current when the tarball is cut. A local publish has no OIDC token, so it would either fail or ship without provenance.
+> **Never `changeset publish`, and never publish from a laptop.** `pnpm release` builds before packing, so `dist/` and `dist/CHANGELOG.md` are current when the tarball is cut. A local publish would ship without provenance, so `scripts/publish.mjs --publish` refuses to run outside a GitHub Actions tag run.
 
 | Package                        | Path                              | Bin                     |
 | ------------------------------ | --------------------------------- | ----------------------- |
@@ -138,18 +136,20 @@ Both build first, then pack with `pnpm pack` (so `publishConfig.exports` applies
 
 ## The `pnpm release` script
 
-`pnpm release` (`scripts/publish.mjs`) is what the `release` workflow runs. It:
-
-1. **checks generated artifacts are fresh** — `verify:artifacts` (`check-spec-drift` + `check-version-matrix`). A stale checked-in `baerly.spec.json` or `version-matrix.json` aborts the release closed, before the build even runs. This runs on `--dry-run` too.
-2. builds,
-3. **validates both published packages** as a pre-publish gate — `check:exports` (attw: every entry point resolves for consumers) and `check:publint` (publint: both manifests are well-formed). A finding aborts the release closed, before any bytes reach npm; nothing is published. This runs on `--dry-run` too. The gate reuses the build from step 2 (`BAERLY_SKIP_BUILD=1`), so it doesn't rebuild `dist/`.
-4. publishes both packages with an **explicit** `--access public` (pnpm has historically dropped `publishConfig.access` on the wire, so the flag is passed by hand to be safe).
-
-Its only flag is `--dry-run`. Flags parse strictly, so a typo such as `--dryrun` aborts instead of publishing.
+`scripts/publish.mjs` has three modes, and takes exactly one. Flags parse strictly, so a typo such as `--dryrun` aborts instead of doing anything.
 
 ```sh
-pnpm release --dry-run     # gates + pack both packages, no writes
+pnpm release --dry-run                    # gates, then a publish dry run of both packages
+pnpm release --pack=<dir>                 # gates, then pack both packages into <dir> (the `pack` job)
+node scripts/publish.mjs --publish=<dir>  # publish the two tarballs in <dir> (the `publish` job)
 ```
+
+The gates, which `--dry-run` and `--pack` both run:
+
+1. **Generated artifacts are fresh** — `verify:artifacts` (`check-spec-drift` + `check-version-matrix`). A stale checked-in `baerly.spec.json` or `version-matrix.json` aborts before the build runs.
+2. **Build and packaging contract** — `verify:package` builds, then runs `check:exports` (attw: every entry point resolves for consumers) and `check:publint` (publint: both manifests are well-formed). A finding aborts before anything is packed. Packing reuses that build (`BAERLY_SKIP_BUILD=1`).
+
+`--publish` runs no gates and no build. It refuses unless `GITHUB_ACTIONS=true` and `GITHUB_REF_TYPE=tag`, requires the directory to hold exactly the two tarballs for the tag's version, and publishes each with `--provenance --access public`. `--provenance` makes a failed signature fail the publish; without it pnpm would warn and publish unattested. `--access public` is passed by hand because pnpm has historically dropped `publishConfig.access` on the wire.
 
 Run the dry run locally, or from the Actions tab (`release` → Run workflow), which runs it on a clean runner without publish permissions. Review the file list — anything outside `dist/` is a packaging bug.
 
@@ -228,8 +228,8 @@ The notices file ships via the root package's `files: ["dist"]` — no extra pac
 
 ## Notes on the publish config
 
-- `publishConfig.access` is set to `"public"` on both published packages, and `pnpm release` also passes `--access public` explicitly. If you add a third published `@gusto/*` package, set `"access": "public"` in its `publishConfig`.
-- `publishConfig.provenance` is intentionally NOT set. Left unset, trusted publishing decides, and pnpm attaches provenance on its own for a public package published from a public repository.
+- `publishConfig.access` is set to `"public"` on both published packages, and `scripts/publish.mjs` also passes `--access public` explicitly. If you add a third published `@gusto/*` package, set `"access": "public"` in its `publishConfig`.
+- Provenance is requested with `--provenance` on the publish command rather than `publishConfig.provenance`, so a local `pnpm pack` or dry run doesn't try to sign. Left unset, pnpm treats provenance as best-effort under trusted publishing and publishes unattested when signing fails; one unattested release would make our scaffolds' `trustPolicy: no-downgrade` refuse every later release.
 - The 7 workspace `@baerly/*` packages have `"private": true` as a defensive lock. Never remove these flags — those packages are bundled into the published `@gusto/baerly-storage`, never shipped separately. (This is a workspace-packaging detail, unrelated to the project being open source.)
 
 ## Incident runbook
