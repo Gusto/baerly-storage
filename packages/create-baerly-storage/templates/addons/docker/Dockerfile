@@ -2,7 +2,7 @@
 # Distroless final stage, non-root user, HEALTHCHECK via a Node
 # script (distroless ships no wget/curl).
 #
-# Runtime path: node --experimental-strip-types src/server/index.ts.
+# Runtime path: node src/server/index.ts (Node strips types natively).
 # No `tsc` emit at runtime — the server runs straight off TS source.
 # The SPA bundle (vite build) lives under dist/client/ and is served
 # by baerlyNode({ webRoot }).
@@ -68,10 +68,11 @@ ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-# Node-script HEALTHCHECK — distroless ships no wget/curl.
+# Node-script HEALTHCHECK — distroless ships no wget/curl. Distroless
+# keeps node at /nodejs/bin/node, off PATH, so name it absolutely.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["node", "healthcheck.js"]
+  CMD ["/nodejs/bin/node", "healthcheck.js"]
 
-# Distroless's entrypoint IS node; we pass --experimental-strip-types
-# and the TS source path as args.
-ENTRYPOINT ["node", "--experimental-strip-types", "src/server/index.ts"]
+# Distroless's entrypoint IS /nodejs/bin/node; CMD supplies its args.
+# Node strips TypeScript types by default (since 23.6); no flag needed.
+CMD ["src/server/index.ts"]
