@@ -51,7 +51,7 @@ Public API docs: the JSDoc on `baerly-storage`'s `Db` and `Collection` is the ca
 | `pnpm test` | `vitest run` — standalone `vitest.config.ts` (Node env, ignores `vite.config.ts` so the Cloudflare plugin doesn't load). The template ships `src/notes.test.ts` by default. | seconds |
 | `pnpm dev` | Run `vite` — the Cloudflare plugin runs the Worker inside `workerd` next to the SPA dev server; same origin on :5173 | seconds to start |
 | `pnpm build` | `tsc -b && vite build` — emits `dist/client/` for the Workers Assets binding | seconds |
-| `pnpm deploy` | `wrangler deploy` — ships Worker + assets in one shipment (auto-creates R2 on first run via `--x-provision`) | seconds |
+| `pnpm deploy` | `wrangler deploy` — ships Worker + assets in one shipment (Wrangler auto-creates the declared R2 bucket on first run) | seconds |
 
 **`pnpm verify` exercises typecheck + tests only.** The dev-auth middleware, the SPA bundle, and any custom `/api/*` route are NOT under test — verify will exit green even when the dev plugin returns 401 on every browser request or the SPA throws on mount. For changes that touch `vite.config.ts`, `src/server/index.ts`, or SPA logic, run `pnpm dev` and exercise the change in a browser (or `curl http://localhost:5173/<path>`) before declaring the task complete.
 
@@ -224,7 +224,7 @@ export default defineConfig({
 
 - **Secrets vs. vars** — `wrangler.jsonc:vars` carries non-secret config (`APP`, `TENANT`, and CF Access identifiers `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUDIENCE_TAG` — both are public identifiers, not secrets). Secrets like `SHARED_SECRET` (only required if you flip `auth` to `"shared-secret"`) live in `.dev.vars` for local `wrangler dev` and behind `wrangler secret put` in production. `baerly doctor --target=cloudflare` reads `CF_ACCESS_*` from `wrangler.jsonc:vars` only, so setting them via `wrangler secret put` would silently defeat the doctor check.
 
-- **Deploy** — `baerly deploy --target=cloudflare` runs `wrangler deploy --x-provision --x-auto-create` (Wrangler 4.10+) to auto-create the declared R2 buckets and ship the Worker. When the experimental flag is unavailable it falls back to `wrangler r2 bucket create` + `wrangler deploy`. The fallback is also what `baerly doctor --target=cloudflare --fix` exercises.
+- **Deploy** — `baerly deploy --target=cloudflare` creates any missing declared R2 buckets with `wrangler r2 bucket create`, then runs `wrangler deploy` to ship the Worker. The bucket step is also what `baerly doctor --target=cloudflare --fix` exercises.
 
 ## Anti-patterns
 

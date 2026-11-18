@@ -52,10 +52,36 @@ const handler = baerlyWorker(() => ({
   sincePollIntervalMs: 50,
 }));
 
+// Probe for `worker-request-signal.test.ts`: when a `/v1/since` long-poll
+// is aborted by its client, `enable_request_signal` lets the router see the
+// disconnect and settle the poll early. Records when the last poll settled.
+interface SinceProbe {
+  readonly startedAt: number;
+  settledAt?: number;
+}
+let lastSince: SinceProbe | undefined;
+
 export default {
   fetch(req: Request, env: BaerlyEnv, ctx: ExecutionContext): Response | Promise<Response> {
     // `baerlyWorker` returns an `ExportedHandler<Env>` whose `fetch`
     // is `(Request, Env, ExecutionContext) => Promise<Response>`.
+    const url = new URL(req.url);
+    if (url.pathname === "/__probe/since") {
+      return Response.json(lastSince ?? null);
+    }
+    if (url.pathname === "/v1/since") {
+      const probe: SinceProbe = { startedAt: Date.now() };
+      lastSince = probe;
+      return Promise.resolve(
+        handler.fetch!(
+          req as unknown as Parameters<NonNullable<typeof handler.fetch>>[0],
+          env,
+          ctx,
+        ),
+      ).finally(() => {
+        probe.settledAt = Date.now();
+      });
+    }
     return handler.fetch!(
       req as unknown as Parameters<NonNullable<typeof handler.fetch>>[0],
       env,

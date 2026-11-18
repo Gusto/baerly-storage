@@ -227,8 +227,8 @@ describe.runIf(
       stamp("install-complete");
 
       // DEPLOY: `baerly deploy --target=cloudflare`. Ticket 39's
-      // command shells `wrangler --x-provision --x-auto-create
-      // deploy` and reads CLOUDFLARE_API_TOKEN +
+      // command creates missing R2 buckets, runs `wrangler deploy`,
+      // and reads CLOUDFLARE_API_TOKEN +
       // CLOUDFLARE_ACCOUNT_ID. The `SHARED_SECRET` is set inline
       // via `wrangler secret put` — non-interactive variant.
       await execa("pnpm", ["exec", "baerly", "deploy", "--target=cloudflare"], {

@@ -48,9 +48,8 @@ wrangler login
 export SHARED_SECRET="$(openssl rand -hex 32)"
 echo "$SHARED_SECRET" | wrangler secret put SHARED_SECRET
 
-# 4. Deploy. `baerly deploy` auto-provisions the R2 bucket via
-#    `wrangler deploy --x-provision --x-auto-create` (with a
-#    `wrangler r2 bucket create` fallback).
+# 4. Deploy. `baerly deploy` creates any missing R2 bucket with
+#    `wrangler r2 bucket create`, then runs `wrangler deploy`.
 pnpm baerly deploy
 
 # 5. Note the deployed URL (e.g.

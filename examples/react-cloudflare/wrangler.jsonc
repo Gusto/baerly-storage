@@ -6,7 +6,9 @@
   "name": "react-cloudflare",
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-10-23",
-  "compatibility_flags": ["nodejs_compat"],
+  // `enable_request_signal` lets `/v1/since` see client disconnects. It is the
+  // default from compatibility_date 2026-11-17; drop it when the date moves past that.
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
 
   "r2_buckets": [
     {
