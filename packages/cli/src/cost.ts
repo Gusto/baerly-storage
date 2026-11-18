@@ -37,6 +37,8 @@ import {
   costProfileFor,
   defaultCostProfileFor,
   detectProvider,
+  GCS_ALWAYS_FREE_REGIONS,
+  gcsPricingForRegion,
   pricingFor,
   type ProviderTag,
 } from "./cost/provider.ts";
@@ -44,6 +46,7 @@ import {
   project,
   type CostProfileTag,
   type ProjectedUsdBand,
+  type ProviderPricing,
   type Trajectory,
 } from "./cost/project.ts";
 import { estimateWritesPerMin } from "./admin/usage.ts";
@@ -76,6 +79,13 @@ const COST_ARGS = {
       "Override host maintenance profile (cf-free|node). Inferred as cf-free for R2 and node otherwise.",
     valueHint: "cf-free|node",
   },
+  region: {
+    type: "string",
+    required: false,
+    description:
+      "GCS bucket location (e.g. us-central1). The Always Free allowance applies only in us-west1, us-central1 and us-east1; omit it to keep the disclosed assumption. GCS only.",
+    valueHint: "region",
+  },
   json: JSON_ARG,
 } as const satisfies ArgsDef;
 
@@ -89,7 +99,7 @@ const GCS_PRICING_BASIS = {
   freeAllowance: {
     classAOperationsPerMonth: 5_000,
     storageGbMonth: 5,
-    eligibleRegions: ["us-west1", "us-central1", "us-east1"],
+    eligibleRegions: GCS_ALWAYS_FREE_REGIONS,
   },
 } as const;
 
@@ -99,6 +109,18 @@ const GCS_UNMODELED = [
   "egress",
   "soft-delete-retention",
 ] as const;
+
+/** One-line disclosure of whether the GCS always-free allowance applies. */
+const renderGcsAllowance = (region: string | undefined): string => {
+  const indent = "                       ";
+  if (region === undefined) {
+    return `${indent}5,000 Class A ops and 5 GB-month free allowance assumes us-west1, us-central1, or us-east1`;
+  }
+  if (GCS_ALWAYS_FREE_REGIONS.includes(region)) {
+    return `${indent}5,000 Class A ops and 5 GB-month free allowance applies in ${region}`;
+  }
+  return `${indent}no free allowance in ${region} (it applies only in us-west1, us-central1, or us-east1); US-regional rates assumed`;
+};
 
 /** Compact `1.5M` / `22k` / `842` rendering for Class A op counts. */
 const formatOps = (n: number): string => {
@@ -142,7 +164,7 @@ const renderUsdBand = (band: ProjectedUsdBand): string => {
 };
 
 /** Advisory rendered after 100 writes/min and before the hard trigger. */
-const renderAdvisoryLine = (trajectory: Trajectory): string => {
+const renderAdvisoryLine = (trajectory: Trajectory, pricing: ProviderPricing): string => {
   if (trajectory.percentOfAdvisory < 100 || trajectory.percentOfGraduation >= 100) {
     return "";
   }
@@ -153,12 +175,7 @@ const renderAdvisoryLine = (trajectory: Trajectory): string => {
       `                       Hard graduation trigger: 50M Class A/mo. Self-hosted — bill model not modelled.\n`
     );
   }
-  const atAdvisory = project(
-    100,
-    0,
-    pricingFor(trajectory.provider),
-    costProfileFor(trajectory.profile),
-  );
+  const atAdvisory = project(100, 0, pricing, costProfileFor(trajectory.profile));
   const costNote = `${renderUsdBand(atAdvisory!.projectedUsdBand!)} on ${providerDisplayName(trajectory.provider)}`;
   return (
     `  advisory:            ~100 writes/min crossed (${costNote}, object-storage ops). Object storage buys\n` +
@@ -168,11 +185,11 @@ const renderAdvisoryLine = (trajectory: Trajectory): string => {
   );
 };
 
-const renderTrajectory = (trajectory: Trajectory): string => {
+const renderTrajectory = (trajectory: Trajectory, pricing: ProviderPricing): string => {
   const writesPerMin = trajectory.writesPerMin.toFixed(trajectory.writesPerMin < 10 ? 1 : 0);
   const classA = formatOps(trajectory.classAPerMonth);
   if (trajectory.projectedUsdBand === null) {
-    const advisory = renderAdvisoryLine(trajectory);
+    const advisory = renderAdvisoryLine(trajectory, pricing);
     return [
       `  trajectory:          ~${writesPerMin} writes/min  →  ~${classA} Class A/mo`,
       `                       ${trajectory.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger. Self-hosted — bill model not modelled.`,
@@ -187,7 +204,7 @@ const renderTrajectory = (trajectory: Trajectory): string => {
   const tail = trajectory.withinFreeTier
     ? `${trajectory.percentOfFreeTier!.toFixed(0)}% of free-tier Class A budget. ${trajectory.percentOfFreeTier! < 50 ? "Well inside the promise." : "Approaching free-tier ceiling."}`
     : `${trajectory.percentOfGraduation.toFixed(2)}% of 50M/mo graduation trigger.`;
-  const advisory = renderAdvisoryLine(trajectory);
+  const advisory = renderAdvisoryLine(trajectory, pricing);
   return [
     `  trajectory:          ~${writesPerMin} writes/min  →  ~${classA} Class A/mo  →  ${usd}`,
     `                       ${tail}`,
@@ -227,11 +244,21 @@ const bundle = defineBaerlySubcommand({
       typeof args.provider === "string" && args.provider.length > 0
         ? (args.provider as ProviderTag)
         : undefined;
+    const region =
+      typeof args.region === "string" && args.region.length > 0
+        ? args.region.toLowerCase()
+        : undefined;
     const provider = detectProvider({
       bucketUri: args.bucket,
       s3Endpoint: process.env["BAERLY_S3_ENDPOINT"],
       override: providerOverride,
     });
+    if (region !== undefined && provider !== "gcs") {
+      throw new BaerlyError(
+        "InvalidConfig",
+        `baerly cost: --region applies only to GCS buckets (provider is ${provider})`,
+      );
+    }
     if (provider === "dev") {
       throw new BaerlyError(
         "InvalidConfig",
@@ -248,12 +275,8 @@ const bundle = defineBaerlySubcommand({
     const verdict = await estimateWritesPerMin(bucket.storage, app, tenant, args.collection, {
       keyPrefix: bucket.keyPrefix,
     });
-    const trajectory = project(
-      verdict.writesPerMin,
-      0,
-      pricingFor(provider),
-      costProfileFor(profileTag),
-    );
+    const pricing = provider === "gcs" ? gcsPricingForRegion(region) : pricingFor(provider);
+    const trajectory = project(verdict.writesPerMin, 0, pricing, costProfileFor(profileTag));
     if (trajectory === null) {
       throw new BaerlyError(
         "InvalidConfig",
@@ -279,7 +302,19 @@ const bundle = defineBaerlySubcommand({
       provider === "gcs"
         ? {
             ...commonAssumptions,
-            pricingBasis: GCS_PRICING_BASIS,
+            // A known region states whether the allowance applies; an unknown
+            // one keeps the disclosure and the allowance.
+            pricingBasis:
+              region === undefined
+                ? GCS_PRICING_BASIS
+                : {
+                    ...GCS_PRICING_BASIS,
+                    freeAllowance: {
+                      ...GCS_PRICING_BASIS.freeAllowance,
+                      applies: GCS_ALWAYS_FREE_REGIONS.includes(region),
+                    },
+                  },
+            ...(region === undefined ? {} : { bucketRegion: region }),
             unmodeled: GCS_UNMODELED,
           }
         : commonAssumptions;
@@ -293,10 +328,10 @@ const bundle = defineBaerlySubcommand({
           `  assumptions:         provider=${provider}; profile=${profileTag} (${assumptions.maintenanceProfileSource}); free-tier and dollar projection assumes 0 other account Class A ops and 0 stored bytes\n` +
           (provider === "gcs"
             ? `  GCS pricing basis:   GCS Standard storage; flat namespace; regional pricing\n` +
-              `                       5,000 Class A ops and 5 GB-month free allowance assumes us-west1, us-central1, or us-east1\n` +
+              `${renderGcsAllowance(region)}\n` +
               `                       actual HNS, dual/multi-region pricing, egress, and soft-delete retention are not detected or modeled\n`
             : "") +
-          `${renderTrajectory(trajectory)}\n`,
+          `${renderTrajectory(trajectory, pricing)}\n`,
       );
     }
     return 0;

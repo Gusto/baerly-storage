@@ -326,6 +326,89 @@ describe("baerly cost", () => {
     );
   });
 
+  describe("--region (GCS always-free allowance)", () => {
+    const costJson = async (
+      ...extra: string[]
+    ): Promise<{ assumptions: Record<string, unknown>; trajectory: Trajectory }> => {
+      await provision(storage);
+      // Two entries 30 minutes apart: ~0.033 writes/min, ~4.3k Class A/mo on
+      // the node profile, inside the 5,000 Class A/mo allowance.
+      await seedEntriesDeterministic(storage, 2, 30 * 60_000);
+      const stdout = captureStream(process.stdout);
+      try {
+        const exitCode = await runCost([
+          `--bucket=file://${root}`,
+          `--app=${APP}`,
+          `--tenant=${TENANT}`,
+          `--collection=${COLL}`,
+          "--provider=gcs",
+          ...extra,
+          "--json",
+        ]);
+        expect(exitCode).toBe(0);
+      } finally {
+        stdout.restore();
+      }
+      return (
+        JSON.parse(stdout.captured.join("").trim()) as {
+          result: { assumptions: Record<string, unknown>; trajectory: Trajectory };
+        }
+      ).result;
+    };
+
+    test("an unknown region keeps the allowance and the disclosure", async () => {
+      const { assumptions, trajectory } = await costJson();
+      expect(trajectory.withinFreeTier).toBe(true);
+      expect(trajectory.projectedUsdBand).toBe("$0");
+      expect(assumptions).not.toHaveProperty("bucketRegion");
+      expect(assumptions["pricingBasis"]).not.toHaveProperty("freeAllowance.applies");
+    });
+
+    test("an eligible region keeps the allowance", async () => {
+      const { assumptions, trajectory } = await costJson("--region=us-central1");
+      expect(trajectory.withinFreeTier).toBe(true);
+      expect(trajectory.projectedUsdBand).toBe("$0");
+      expect(assumptions["bucketRegion"]).toBe("us-central1");
+    });
+
+    test("a region outside the eligible list pays from the first request", async () => {
+      const { assumptions, trajectory } = await costJson("--region=europe-west1");
+      expect(trajectory.withinFreeTier).toBe(false);
+      expect(trajectory.percentOfFreeTier).toBeNull();
+      expect(trajectory.projectedUsdBand).toBe("<$25");
+      expect(assumptions["bucketRegion"]).toBe("europe-west1");
+      expect(assumptions["pricingBasis"]).toMatchObject({
+        freeAllowance: { applies: false },
+      });
+    });
+
+    test("region names are case-insensitive", async () => {
+      const { trajectory } = await costJson("--region=US-EAST1");
+      expect(trajectory.withinFreeTier).toBe(true);
+    });
+  });
+
+  test("--region without a GCS provider is rejected", async () => {
+    await provision(storage);
+    await seedEntries(storage, 3);
+    const stderr = captureStream(process.stderr);
+    let exitCode: number;
+    try {
+      exitCode = await runCost([
+        `--bucket=file://${root}`,
+        `--app=${APP}`,
+        `--tenant=${TENANT}`,
+        `--collection=${COLL}`,
+        "--provider=r2",
+        "--region=europe-west1",
+      ]);
+    } finally {
+      stderr.restore();
+    }
+    expect(exitCode).toBe(1);
+    expect(stderr.captured.join("")).toContain("--region applies only to GCS");
+  });
+
   test("--provider=gcs text discloses pricing basis and unmodeled bucket settings", async () => {
     await provision(storage);
     await seedEntries(storage, 3);

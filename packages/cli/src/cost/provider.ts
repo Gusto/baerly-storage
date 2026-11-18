@@ -87,6 +87,9 @@ const AWS_S3_PRICING: ProviderPricing = {
   usdPerGbMonth: 0.023,
 };
 
+/** Locations where the Always Free allowance applies. */
+export const GCS_ALWAYS_FREE_REGIONS: readonly string[] = ["us-west1", "us-central1", "us-east1"];
+
 /**
  * Google Cloud Storage Standard, flat-namespace, regional price table.
  * The allowance applies only in the eligible US regions documented by
@@ -131,6 +134,16 @@ export const costProfileFor = (profile: CostProfileTag): CostProfile =>
 
 export const defaultCostProfileFor = (provider: ProviderTag): CostProfileTag =>
   provider === "r2" ? "cf-free" : "node";
+
+/**
+ * GCS pricing for a bucket in `region`. Outside {@link GCS_ALWAYS_FREE_REGIONS}
+ * the free allowance is dropped; the per-op and per-GB rates stay the
+ * US-regional ones, which the CLI discloses as modeled.
+ */
+export const gcsPricingForRegion = (region: string | undefined): ProviderPricing =>
+  region === undefined || GCS_ALWAYS_FREE_REGIONS.includes(region.toLowerCase())
+    ? GCS_PRICING
+    : { ...GCS_PRICING, freeClassAPerMonth: 0, freeStorageGb: 0 };
 
 export const pricingFor = (provider: ProviderTag): ProviderPricing => {
   switch (provider) {
