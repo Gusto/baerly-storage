@@ -101,6 +101,8 @@ const resolveCfSink = (config: ObservabilityConfig | undefined): ObservabilityCo
  *     vocabulary: unset / `""` / `"0"` / `"false"` → not disabled;
  *     `"1"` / `"true"` → disabled; anything else throws
  *     `BaerlyError{code:"InvalidConfig"}` when maintenance dispatch is built.
+ *     Stops automatic maintenance only (the in-band tick and its `waitUntil`
+ *     continuation); `runScheduledMaintenance` is caller-owned and unaffected.
  *   - `BAERLY_MAINTENANCE_PROFILE` — opt-in profile selector. Set to
  *     `"cf-paid"` on a paid Worker to select
  *     {@link MAINTENANCE_PROFILE_CF_PAID}, which raises BOTH the per-pass
@@ -283,7 +285,8 @@ const CF_FREE_FETCH_TICK = {
  *   - `BAERLY_MAINTENANCE_DISABLE` → `disabled` (kill switch). Closed,
  *     case-insensitive vocabulary: unset/`""`/`"0"`/`"false"` → `false`;
  *     `"1"`/`"true"` → `true`; anything else throws
- *     `BaerlyError{code:"InvalidConfig"}`.
+ *     `BaerlyError{code:"InvalidConfig"}`. Covers automatic maintenance
+ *     only; it does not stop `runScheduledMaintenance`.
  *   - `BAERLY_MAINTENANCE_PROFILE` → `options.profile`, via
  *     {@link resolveCfMaintenanceProfile} (closed vocabulary; anything
  *     outside it throws `BaerlyError{code:"InvalidConfig"}`).
