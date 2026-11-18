@@ -179,6 +179,21 @@ describe("doctorCloudflare", () => {
     expect(f?.severity).toBe("error");
   });
 
+  test("reports an error naming the expected form when teamDomain is a full host", async () => {
+    await writeScaffold(repoRoot);
+    const { runner } = makeRunner();
+    const cfg = makeConfig(repoRoot, {
+      cloudflareAccess: { teamDomain: "acme.cloudflareaccess.com", audienceTag: "a".repeat(64) },
+    });
+    const report = await doctorCloudflare(cfg, { runner });
+    expect(report.status).toBe("error");
+    const f = findingFor(report.findings, "cloudflareAccess.teamDomain");
+    expect(f?.severity).toBe("error");
+    expect(f?.message).toMatch(/bare team name/);
+    expect(f?.message).toContain('"acme.cloudflareaccess.com"');
+    expect(findingFor(report.findings, "cloudflareAccess")).toBeUndefined();
+  });
+
   test("accepts a well-formed 64-char hex audienceTag", async () => {
     await writeScaffold(repoRoot);
     const { runner } = makeRunner();

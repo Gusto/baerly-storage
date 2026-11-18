@@ -27,7 +27,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
-import { BaerlyError, SHARED_SECRET_MISSING_MESSAGE } from "@baerly/protocol";
+import {
+  BaerlyError,
+  CF_ACCESS_TEAM_NAME_PATTERN,
+  SHARED_SECRET_MISSING_MESSAGE,
+} from "@baerly/protocol";
 import type { AppConfig } from "../config.ts";
 import { ensureBindings, parseR2Bindings, type ProcessRunner } from "../deploy/cloudflare.ts";
 
@@ -350,15 +354,18 @@ export const doctorCloudflare = async (
     });
   }
 
-  // 4. cloudflareAccess — when configured, audience tag must be
+  // 4. cloudflareAccess — when configured, the team domain must be the
+  //    bare team name the preset accepts, and the audience tag must be
   //    64 lowercase-hex chars.
   if (config.cloudflareAccess !== undefined) {
     const { teamDomain, audienceTag } = config.cloudflareAccess;
-    if (teamDomain.length === 0) {
+    const teamDomainOk = CF_ACCESS_TEAM_NAME_PATTERN.test(teamDomain);
+    if (!teamDomainOk) {
       findings.push({
         severity: "error",
         check: "cloudflareAccess.teamDomain",
-        message: "cloudflareAccess.teamDomain in baerly.config.ts is empty.",
+        message: `cloudflareAccess.teamDomain in baerly.config.ts must be a bare team name of lowercase letters, digits and "-" (got ${JSON.stringify(teamDomain)}).`,
+        fix: 'Use the team name only, e.g. "acme" for acme.cloudflareaccess.com.',
       });
     }
     if (!/^[0-9a-f]{64}$/.test(audienceTag)) {
@@ -368,7 +375,7 @@ export const doctorCloudflare = async (
         message: `cloudflareAccess.audienceTag must be 64 lowercase-hex chars (got ${JSON.stringify(audienceTag)}).`,
         fix: "Copy the AUD tag from the Cloudflare Access app's configuration tab.",
       });
-    } else if (teamDomain.length > 0) {
+    } else if (teamDomainOk) {
       findings.push({
         severity: "ok",
         check: "cloudflareAccess",

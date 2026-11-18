@@ -1,4 +1,9 @@
-import { CLOUDFLARE_ACCESS_CONFIG_RESOLUTION, BaerlyError, type Verifier } from "@baerly/protocol";
+import {
+  CF_ACCESS_TEAM_NAME_PATTERN,
+  CLOUDFLARE_ACCESS_CONFIG_RESOLUTION,
+  BaerlyError,
+  type Verifier,
+} from "@baerly/protocol";
 import { bearerJwt } from "./bearer-jwt.ts";
 
 /**
@@ -80,9 +85,7 @@ export interface CloudflareAccessOptions {
  * ```
  */
 export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
-  // The team name is interpolated into the JWKS host, so anything past
-  // `[a-z0-9-]` (a `/`, `@`, `.` or `:`) could point it at another host.
-  if (!/^[a-z0-9-]+$/.test(opts.teamDomain)) {
+  if (!CF_ACCESS_TEAM_NAME_PATTERN.test(opts.teamDomain)) {
     throw new BaerlyError(
       "InvalidConfig",
       `cloudflareAccess: teamDomain must be a bare team name of lowercase letters, digits and "-" (got ${JSON.stringify(
