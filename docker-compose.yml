@@ -1,11 +1,14 @@
 name: baerly-storage
 
+# Every image is pinned by digest (the tag is for humans); Dependabot's
+# docker-compose updater bumps tag and digest together.
+
 services:
   minio:
     # MinIO stopped publishing minio/minio (Docker Hub and quay.io) and archived
     # its repo. Chainguard rebuilds MinIO from source; its free tier ships only
-    # `latest`, so the digest is the pin. Bump it deliberately.
-    image: cgr.dev/chainguard/minio:latest@sha256:18c8fa28697b25e0f34c6faae171079e88a03efb8e76a21d3b5d07b4e3cbef3e
+    # `latest`, so the digest is the only version signal.
+    image: cgr.dev/chainguard/minio:latest@sha256:68aab277f9748c7c3eb85f178744adba1655c8e33a86987b22d2879ca507c332
     command: server /data/minio --console-address :9090
     ports:
       - ${BAERLY_MINIO_HOST_PORT:-9102}:9000
@@ -22,7 +25,7 @@ services:
       retries: 30
 
   toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.12.0
+    image: ghcr.io/shopify/toxiproxy:2.13.0@sha256:5d3dae09bc185dcc5ff6cf43abf6062a4a720aff0c4306a471e773acdcd107aa
     command: ["-host=0.0.0.0", "-config=/etc/toxiproxy/config.json"]
     ports:
       - ${BAERLY_TOXIPROXY_HOST_PORT:-9104}:9104
@@ -41,7 +44,7 @@ services:
       retries: 20
 
   postgres:
-    image: postgres:16.13-alpine
+    image: postgres:18.7-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015
     # Host port 5433 to avoid clashing with a local dev Postgres on 5432.
     ports:
       - ${BAERLY_POSTGRES_HOST_PORT:-5433}:5432
