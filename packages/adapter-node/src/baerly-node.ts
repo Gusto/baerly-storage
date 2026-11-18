@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { serve } from "@hono/node-server";
+import { createAdaptorServer } from "@hono/node-server";
 import type { DevLandingOptions } from "@baerly/dev";
 import { type BaerlyAppConfig, isDeployedEnv, type Storage, type Verifier } from "@baerly/protocol";
 import { resolveVerifier } from "@baerly/server/_internal/kernel";
@@ -85,7 +85,7 @@ export interface BaerlyNodeHandle {
  *
  * Composes:
  * - {@link createApp} → exposed as `handle.fetch` for in-process
- *   embedding; wrapped in `@hono/node-server.serve({ fetch, createServer })`
+ *   embedding; wrapped in `@hono/node-server.createAdaptorServer({ fetch, createServer })`
  *   lazily when `listen()` is called.
  * - SIGTERM + SIGINT handlers installed on `listen()` that call
  *   `close()` and `process.exit(0)`. On any error during close,
@@ -170,7 +170,7 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       sincePollIntervalMs: opts.sincePollIntervalMs,
     }),
   });
-  // `serve()` is deferred to `listen()` so calling `baerlyNode(opts)`
+  // Server construction is deferred to `listen()` so calling `baerlyNode(opts)`
   // without `.listen()` does NOT create an `http.Server` or install
   // signal handlers. The `fetch` handler is exposed on the returned
   // handle for in-process embedding (Vite middleware, tests). `server`
@@ -214,15 +214,14 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   };
 
   const listen = async (port: number): Promise<void> => {
-    // `serve()` builds an `http.Server` via the supplied `createServer`
-    // factory and wires the Hono `fetch` handler into it (handling
-    // backpressure, client-abort → AbortController, and stream
-    // cleanup natively). The `port` / `hostname` here are placeholders —
-    // the actual bind happens via the explicit `server.listen(port)`
-    // call below, which overrides them.
-    server = serve({
+    // `createAdaptorServer()` builds an `http.Server` via the supplied
+    // `createServer` factory and wires the Hono `fetch` handler into it
+    // (backpressure, client-abort → AbortController, stream cleanup)
+    // without binding; the single bind is the `listen(port)` below.
+    // `hostname` is only the fallback Host for building the request URL
+    // when a request carries none (HTTP/1.0); it does not affect the bind.
+    server = createAdaptorServer({
       fetch: app.fetch,
-      port: 0,
       hostname: "0.0.0.0",
       createServer,
     }) as Server;
