@@ -21,7 +21,8 @@ const utf8Encoder = new TextEncoder();
 const EPHEMERAL_ENV_OPT_IN = "BAERLY_ALLOW_EPHEMERAL_STORAGE";
 
 // Read process env without a `node:` import so protocol stays Workerd-
-// loadable (on Workerd `process` is absent → env is `{}` → not deployed).
+// loadable. With `nodejs_compat`, Workerd populates `process.env` from text
+// bindings, so the deployed-environment guard also applies on Workers.
 const readProcessEnv = (): Record<string, string | undefined> =>
   (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 

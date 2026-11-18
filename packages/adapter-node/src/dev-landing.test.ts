@@ -129,7 +129,7 @@ describe("devLandingMiddleware via createApp", () => {
     // distinct `favicon.ico` payload; the dev middleware must short-
     // circuit with 204 BEFORE static-assets has a chance to serve
     // the on-disk file. This is the load-bearing precedence
-    // assertion the bridge cutover (T04) needs to keep passing.
+    // assertion.
     const webRoot = await mkdtemp(join(tmpdir(), "baerly-dev-precedence-"));
     try {
       await writeFile(join(webRoot, "index.html"), "<!doctype html><title>on-disk</title>");
