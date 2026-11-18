@@ -713,7 +713,7 @@ The client reads via the normal `GET /v1/c/messages` route and tails via `GET /v
 
 ## Recipe — custom routes in front of `baerlyNode`
 
-`baerlyNode(...).listen(port)` is the shortcut for the common case: no custom routes, the kernel owns the whole port. To put your own route in front of the kernel (a fixed-path health probe, a trusted-stamp write route à la the recipe above), grab the web-standard `fetch` handler off the handle instead of calling `.listen()`, and serve it yourself. `serve()` here is the same `@hono/node-server` entry `.listen()` uses internally — you're just taking ownership of the dispatch:
+`baerlyNode(...).listen(port)` is the shortcut for the common case: no custom routes, the kernel owns the whole port. It binds every interface; `.listen(port, { hostname: "127.0.0.1" })` binds loopback only. To put your own route in front of the kernel (a fixed-path health probe, a trusted-stamp write route à la the recipe above), grab the web-standard `fetch` handler off the handle instead of calling `.listen()`, and serve it yourself. `serve()` comes from the same `@hono/node-server` package `.listen()` uses internally — you're just taking ownership of the dispatch:
 
 ```ts
 // src/server/index.ts

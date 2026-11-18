@@ -73,4 +73,8 @@ export {
   fromWebIdentity,
 } from "./credentials/index.ts";
 export { baerlyNode } from "./baerly-node.ts";
-export type { BaerlyNodeHandle, BaerlyNodeOptions } from "./baerly-node.ts";
+export type {
+  BaerlyNodeHandle,
+  BaerlyNodeListenOptions,
+  BaerlyNodeOptions,
+} from "./baerly-node.ts";

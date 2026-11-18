@@ -53,6 +53,15 @@ export interface BaerlyNodeOptions {
   readonly sincePollIntervalMs?: number;
 }
 
+/** Options for {@link BaerlyNodeHandle.listen}. */
+export interface BaerlyNodeListenOptions {
+  /**
+   * Address to bind, passed to Node's `server.listen(port, host)`.
+   * Omit to bind every interface.
+   */
+  readonly hostname?: string;
+}
+
 /**
  * Handle returned by {@link baerlyNode}. Composes a running
  * `node:http` server lifecycle.
@@ -61,21 +70,33 @@ export interface BaerlyNodeOptions {
  *   directly for in-process embedding (Vite middleware via
  *   `@hono/node-server.getRequestListener`, custom servers, tests).
  *   Calling `fetch` does not start the `node:http` server; the
- *   server lifecycle is owned by `listen(port)` / `close()`.
+ *   server lifecycle is owned by `listen()` / `close()`.
  *   Hono's optional `env`/`executionCtx` parameters are intentionally
  *   omitted from the signature — this is a Node-host handle, and
  *   those parameters are Workers-only.
- * - `listen(port)` binds the server, installs SIGTERM/SIGINT
- *   handlers that call `close()` and exit `0`, and resolves once
- *   the server is actually listening (after Node's `'listening'`
- *   event fires). Throws on `'error'` from the server.
+ * - `listen(port, { hostname })` binds the server, installs
+ *   SIGTERM/SIGINT handlers that call `close()` and exit `0`, and
+ *   resolves once the server is actually listening (after Node's
+ *   `'listening'` event fires). Throws on `'error'` from the server.
+ *   Without `hostname` it binds every interface (Node's default:
+ *   `::` dual-stack, or `0.0.0.0` without IPv6), which is what a
+ *   container wants; pass `"127.0.0.1"` to accept loopback only.
  * - `close()` closes the server and removes the signal handlers.
  *   Resolves once `Server.close` callback fires. Safe to call
  *   multiple times.
  */
 export interface BaerlyNodeHandle {
   readonly fetch: (request: Request) => Response | Promise<Response>;
-  listen(port: number): Promise<void>;
+  /**
+   * Bind the server on `port`, every interface unless `hostname` is set.
+   *
+   * @example
+   * ```ts
+   * // Loopback only, e.g. behind a reverse proxy on the same host.
+   * await handle.listen(8080, { hostname: "127.0.0.1" });
+   * ```
+   */
+  listen(port: number, options?: BaerlyNodeListenOptions): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -131,6 +152,18 @@ export interface BaerlyNodeHandle {
  * await handle.listen(Number(process.env["PORT"] ?? 8080));
  * ```
  */
+/**
+ * Host used to build the request URL when a request carries no Host
+ * header (HTTP/1.0): the bound address, with an IPv6 literal bracketed
+ * so the URL parses, or `0.0.0.0` for an all-interfaces bind.
+ */
+function fallbackHost(hostname: string | undefined): string {
+  if (hostname === undefined) {
+    return "0.0.0.0";
+  }
+  return hostname.includes(":") ? `[${hostname}]` : hostname;
+}
+
 export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
   // Node can `await` / throw at top level (unlike CF Workers), so
   // verifier resolution lives here at factory time. An unset
@@ -213,16 +246,17 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
     });
   };
 
-  const listen = async (port: number): Promise<void> => {
+  const listen = async (port: number, options?: BaerlyNodeListenOptions): Promise<void> => {
     // `createAdaptorServer()` builds an `http.Server` via the supplied
     // `createServer` factory and wires the Hono `fetch` handler into it
     // (backpressure, client-abort → AbortController, stream cleanup)
-    // without binding; the single bind is the `listen(port)` below.
-    // `hostname` is only the fallback Host for building the request URL
-    // when a request carries none (HTTP/1.0); it does not affect the bind.
+    // without binding; the single bind is the `listen()` below.
+    // `createAdaptorServer`'s `hostname` is only the fallback Host (see
+    // `fallbackHost`); it does not affect the bind.
+    const hostname = options?.hostname;
     server = createAdaptorServer({
       fetch: app.fetch,
-      hostname: "0.0.0.0",
+      hostname: fallbackHost(hostname),
       createServer,
     }) as Server;
     const httpServer = server;
@@ -237,7 +271,7 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
         httpServer.off("close", onClose);
         resolve();
       };
-      // close() called between `server.listen(port)` and the
+      // close() called between `server.listen()` and the
       // `'listening'` event cancels the bind: `'listening'` never
       // fires; only `'close'` does. Resolve so we observe `closed`
       // below and skip handler install.
@@ -249,7 +283,11 @@ export function baerlyNode(opts: BaerlyNodeOptions): BaerlyNodeHandle {
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);
       httpServer.once("close", onClose);
-      httpServer.listen(port);
+      if (hostname === undefined) {
+        httpServer.listen(port);
+      } else {
+        httpServer.listen(port, hostname);
+      }
     });
 
     // close() may have run while we were awaiting `'listening'`. Skip

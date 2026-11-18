@@ -38,9 +38,12 @@ const testConfig: BaerlyAppConfig = {
  * Reserve and immediately release an ephemeral port so the test can
  * bind `baerlyNode` to a known port and round-trip through it via
  * `fetch`. `baerlyNode.listen(0)` would let the OS pick a port, but
- * the helper deliberately doesn't expose the bound port (the public
- * surface is `listen(port)` only) — so we pick a free one upfront.
+ * the helper deliberately doesn't expose the bound port — so we pick a
+ * free one upfront.
  */
+/** Tests bind the same address they fetch, so dual-stack resolution can't split them. */
+const LOOPBACK = "127.0.0.1";
+
 const reservePort = async (): Promise<number> => {
   const probe = createNetServer();
   const port = await new Promise<number>((resolve) => {
@@ -52,6 +55,21 @@ const reservePort = async (): Promise<number> => {
   await new Promise<void>((resolve) => probe.close(() => resolve()));
   return port;
 };
+
+/** Send `GET /v1/healthz` as HTTP/1.0 with no Host header; resolve the status line. */
+const hostlessHealthzStatusLine = (port: number): Promise<string> =>
+  new Promise<string>((resolve, reject) => {
+    const socket = connect(port, LOOPBACK, () => {
+      socket.end("GET /v1/healthz HTTP/1.0\r\n\r\n");
+    });
+    let data = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      data += chunk;
+    });
+    socket.on("end", () => resolve(data.split("\r\n")[0] ?? ""));
+    socket.on("error", reject);
+  });
 
 describe("baerlyNode", () => {
   let activeHandle: BaerlyNodeHandle | undefined;
@@ -70,7 +88,7 @@ describe("baerlyNode", () => {
       verifier: sharedDevVerifier,
     });
     activeHandle = handle;
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
 
     const res = await fetch(`http://127.0.0.1:${port}/v1/healthz`);
     expect(res.status).toBe(200);
@@ -93,6 +111,27 @@ describe("baerlyNode", () => {
       activeHandle = handle;
       await handle.listen(port);
       expect(listenSpy).toHaveBeenCalledTimes(1);
+      // No hostname binds every interface.
+      const bound = (listenSpy.mock.contexts[0] as Server).address() as AddressInfo;
+      expect(["::", "0.0.0.0"]).toContain(bound.address);
+    } finally {
+      listenSpy.mockRestore();
+    }
+  });
+
+  test("listen binds only the given hostname", async () => {
+    const listenSpy = vi.spyOn(Server.prototype, "listen");
+    try {
+      const port = await reservePort();
+      const handle = baerlyNode({
+        config: testConfig,
+        storage: new MemoryStorage(),
+        verifier: sharedDevVerifier,
+      });
+      activeHandle = handle;
+      await handle.listen(port, { hostname: LOOPBACK });
+      const bound = (listenSpy.mock.contexts[0] as Server).address() as AddressInfo;
+      expect(bound).toMatchObject({ address: LOOPBACK, port });
     } finally {
       listenSpy.mockRestore();
     }
@@ -109,19 +148,19 @@ describe("baerlyNode", () => {
     });
     activeHandle = handle;
     await handle.listen(port);
-    const reply = await new Promise<string>((resolve, reject) => {
-      const socket = connect(port, "127.0.0.1", () => {
-        socket.end("GET /v1/healthz HTTP/1.0\r\n\r\n");
-      });
-      let data = "";
-      socket.setEncoding("utf8");
-      socket.on("data", (chunk: string) => {
-        data += chunk;
-      });
-      socket.on("end", () => resolve(data));
-      socket.on("error", reject);
+    await expect(hostlessHealthzStatusLine(port)).resolves.toMatch(/^HTTP\/1\.[01] 200 /);
+  });
+
+  test("an HTTP/1.0 request without a Host header is served on a given hostname", async () => {
+    const port = await reservePort();
+    const handle = baerlyNode({
+      config: testConfig,
+      storage: new MemoryStorage(),
+      verifier: sharedDevVerifier,
     });
-    expect(reply.split("\r\n")[0]).toMatch(/^HTTP\/1\.[01] 200 /);
+    activeHandle = handle;
+    await handle.listen(port, { hostname: LOOPBACK });
+    await expect(hostlessHealthzStatusLine(port)).resolves.toMatch(/^HTTP\/1\.[01] 200 /);
   });
 
   test("close() shuts down the server and is idempotent", async () => {
@@ -131,7 +170,7 @@ describe("baerlyNode", () => {
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
     });
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
     await handle.close();
     await expect(handle.close()).resolves.toBeUndefined();
     activeHandle = undefined;
@@ -160,7 +199,7 @@ describe("baerlyNode", () => {
       verifier: sharedDevVerifier,
     });
     activeHandle = handle;
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
     expect(setIntervalSpy).not.toHaveBeenCalled();
     setIntervalSpy.mockRestore();
   });
@@ -260,7 +299,7 @@ describe("baerlyNode", () => {
       storage: new MemoryStorage(),
       verifier: sharedDevVerifier,
     });
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
 
     process.emit("SIGTERM", "SIGTERM");
     await vi.waitFor(() => {
@@ -283,7 +322,7 @@ describe("baerlyNode", () => {
     });
     const sigtermBefore = process.listenerCount("SIGTERM");
     const sigintBefore = process.listenerCount("SIGINT");
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
     expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore + 1);
     expect(process.listenerCount("SIGINT")).toBe(sigintBefore + 1);
     await handle.close();
@@ -324,7 +363,7 @@ describe("baerlyNode", () => {
     const sigtermBefore = process.listenerCount("SIGTERM");
     const sigintBefore = process.listenerCount("SIGINT");
 
-    const listenPromise = handle.listen(port);
+    const listenPromise = handle.listen(port, { hostname: LOOPBACK });
     await handle.close();
     await listenPromise;
 
@@ -368,7 +407,7 @@ describe("baerlyNode config.auth synthesis", () => {
     const port = await reservePort();
     const handle = baerlyNode({ config, storage });
     activeHandle = handle;
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
 
     // No Authorization header — `auth: "none"` pins anonymously.
     const res = await fetch(`http://127.0.0.1:${port}/v1/c/c`, {
@@ -398,7 +437,7 @@ describe("baerlyNode config.auth synthesis", () => {
     const port = await reservePort();
     const handle = baerlyNode({ config, storage });
     activeHandle = handle;
-    await handle.listen(port);
+    await handle.listen(port, { hostname: LOOPBACK });
 
     const okRes = await fetch(`http://127.0.0.1:${port}/v1/c/c`, {
       method: "POST",
