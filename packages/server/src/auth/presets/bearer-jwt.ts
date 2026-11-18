@@ -28,7 +28,10 @@ import {
  * - `tenantClaim` — name of the claim that carries the tenant
  *   identifier. Defaults to `"tenant"`. Custom IdPs may use a
  *   namespaced claim (`"https://example.com/tenant"`); set to that
- *   string. Mutually exclusive with `tenantPrefix`.
+ *   string. The claim picks the tenant a request reads and writes, so
+ *   it must be one only an IdP admin can set; a claim the user can
+ *   edit (profile metadata, a self-service attribute) lets them pick
+ *   their own tenant. Mutually exclusive with `tenantPrefix`.
  * - `tenantPrefix` — pin every verified token to a fixed tenant
  *   string, bypassing claim lookup. Use for single-tenant
  *   deployments where the IdP doesn't ship a tenant claim (the

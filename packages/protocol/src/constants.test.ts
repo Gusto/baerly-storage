@@ -63,7 +63,7 @@ describe("wire-contract constants", () => {
 
   test("CLOUDFLARE_ACCESS_CONFIG_RESOLUTION is locked corrective-action wording", () => {
     expect(CLOUDFLARE_ACCESS_CONFIG_RESOLUTION).toBe(
-      "Pass a non-empty `teamDomain` and a 64-char lowercase-hex `audienceTag` (the Application Audience (AUD) tag from the CF Access app config).",
+      'Pass a bare team name as `teamDomain` (lowercase letters, digits and "-", e.g. `acme`) and a 64-char lowercase-hex `audienceTag` (the Application Audience (AUD) tag from the CF Access app config).',
     );
   });
 });

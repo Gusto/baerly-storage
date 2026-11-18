@@ -4,8 +4,10 @@ import { bearerJwt } from "./bearer-jwt.ts";
 /**
  * Options for {@link cloudflareAccess}.
  *
- * - `teamDomain` — your CF Access team domain, e.g. `acme`. The
- *   factory derives the JWKS URL from this:
+ * - `teamDomain` — your CF Access team name, e.g. `acme`: lowercase
+ *   letters, digits and `-` only, not the full
+ *   `acme.cloudflareaccess.com` host. The factory derives the JWKS URL
+ *   from this:
  *   `https://<teamDomain>.cloudflareaccess.com/cdn-cgi/access/certs`
  *   and the issuer as
  *   `https://<teamDomain>.cloudflareaccess.com`.
@@ -14,7 +16,10 @@ import { bearerJwt } from "./bearer-jwt.ts";
  * - `tenantClaim` — same as `BearerJwtOptions.tenantClaim`.
  *   Defaults to `"tenant"`. Set to a custom claim if you've wired
  *   CF Access to a SAML / OIDC provider that ships a tenant in a
- *   namespaced claim. Mutually exclusive with `tenantPrefix`.
+ *   namespaced claim. The claim picks the tenant a request reads and
+ *   writes, so it must be one only an IdP admin can set; a claim the
+ *   user can edit lets them pick their own tenant. Mutually exclusive
+ *   with `tenantPrefix`.
  * - `tenantPrefix` — pin every verified token to a fixed tenant
  *   string. Use for single-tenant CF Access deployments: vanilla
  *   CF Access JWTs ship `sub`/`email` but no `tenant` claim, so
@@ -51,8 +56,9 @@ export interface CloudflareAccessOptions {
  * `identity.identity_nonce` — see Cloudflare's "Application Token"
  * reference. The kernel types it as `unknown`; cast at the call site.
  *
- * @throws BaerlyError code="InvalidConfig" — `teamDomain` or
- *   `audienceTag` empty, or `audienceTag` not 64 lowercase-hex chars.
+ * @throws BaerlyError code="InvalidConfig" — `teamDomain` not a bare
+ *   team name (`^[a-z0-9-]+$`), or `audienceTag` not 64 lowercase-hex
+ *   chars.
  *
  * @example
  * ```ts
@@ -74,10 +80,16 @@ export interface CloudflareAccessOptions {
  * ```
  */
 export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
-  if (opts.teamDomain.length === 0) {
-    throw new BaerlyError("InvalidConfig", "cloudflareAccess: teamDomain must be non-empty", {
-      resolution: CLOUDFLARE_ACCESS_CONFIG_RESOLUTION,
-    });
+  // The team name is interpolated into the JWKS host, so anything past
+  // `[a-z0-9-]` (a `/`, `@`, `.` or `:`) could point it at another host.
+  if (!/^[a-z0-9-]+$/.test(opts.teamDomain)) {
+    throw new BaerlyError(
+      "InvalidConfig",
+      `cloudflareAccess: teamDomain must be a bare team name of lowercase letters, digits and "-" (got ${JSON.stringify(
+        opts.teamDomain,
+      )})`,
+      { resolution: CLOUDFLARE_ACCESS_CONFIG_RESOLUTION },
+    );
   }
   if (!/^[0-9a-f]{64}$/.test(opts.audienceTag)) {
     throw new BaerlyError(
@@ -108,10 +120,11 @@ export const cloudflareAccess = (opts: CloudflareAccessOptions): Verifier => {
     // Bearer Authorization so the inner bearerJwt verifier sees the
     // shape it expects. Mutating headers on the original request is
     // unsafe (CF Workers freeze them); clone via Request constructor.
-    const cloned = new Request(req.url, {
-      method: req.method,
-      headers: new Headers([...req.headers.entries(), ["Authorization", `Bearer ${cfHeader}`]]),
-    });
+    // `set` replaces an Authorization header the app sent itself;
+    // appending would join both values and fail verification.
+    const headers = new Headers(req.headers);
+    headers.set("Authorization", `Bearer ${cfHeader}`);
+    const cloned = new Request(req.url, { method: req.method, headers });
     return inner(cloned);
   };
 };

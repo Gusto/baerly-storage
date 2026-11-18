@@ -8,4 +8,4 @@ export const BEARER_JWT_CONFIG_RESOLUTION: string =
 
 /** Corrective action for a `cloudflareAccess(...)` preset misconfig; crosses the wire. */
 export const CLOUDFLARE_ACCESS_CONFIG_RESOLUTION: string =
-  "Pass a non-empty `teamDomain` and a 64-char lowercase-hex `audienceTag` (the Application Audience (AUD) tag from the CF Access app config).";
+  'Pass a bare team name as `teamDomain` (lowercase letters, digits and "-", e.g. `acme`) and a 64-char lowercase-hex `audienceTag` (the Application Audience (AUD) tag from the CF Access app config).';
