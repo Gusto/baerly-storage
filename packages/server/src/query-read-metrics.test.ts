@@ -74,6 +74,18 @@ describe("read-work metrics", () => {
     const counted = await readWork(() => items.where((q) => q.lt("n", 5)).count());
     expect(counted.result).toBe(5);
     expect(counted.work).toEqual({ decoded: 20, live: 20, returned: 5 });
+
+    // A counting pass honours `limit` as `all()` does.
+    const limitedCount = await readWork(() =>
+      items
+        .where((q) => q.lt("n", 5))
+        .limit(3)
+        .count(),
+    );
+    expect(limitedCount.result).toBe(3);
+    expect(limitedCount.work).toEqual({ decoded: 20, live: 20, returned: 3 });
+    await expect(items.limit(7).count()).resolves.toBe(7);
+    await expect(items.limit(50).count()).resolves.toBe(20);
   });
 
   test("updates and deletes decode more entries than live documents", async () => {

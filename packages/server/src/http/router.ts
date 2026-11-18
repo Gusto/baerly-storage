@@ -224,9 +224,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
   //
   // Returns a scalar row count for the matching predicate. Avoids the
   // client downloading every row just to take `.length` (silent egress
-  // burn). Engine cost is currently the same as `runAllWithMeta` — the
-  // win is wire bytes; an O(snapshot+log) count path can land later
-  // without touching this route.
+  // burn). The engine counts matches without materialising rows.
   app.get("/v1/count", async (c) => {
     const collection = c.req.query("collection");
     if (collection === undefined || collection.length === 0) {
@@ -235,7 +233,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
       });
     }
     const wire = parseWhereParam(c);
-    const { rows, manifestPointer, fresh } = await runAllWithMeta(
+    const { count, manifestPointer, fresh } = await runAllWithMeta(
       collectionReadContext(db, collection),
       {
         wire,
@@ -246,7 +244,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     );
     return c.json(
       {
-        data: { count: rows.length },
+        data: { count },
         _meta: { manifest_pointer: manifestPointer, fresh },
       } satisfies HttpOkEnvelope<{ count: number }>,
       200,

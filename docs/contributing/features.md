@@ -20,6 +20,7 @@ The `Db` class is the entry point. `db.collection<T>(name)` returns a typed `Col
 - [`packages/server/src/db.ts`](../../packages/server/src/db.ts) — `Db` class
 - [`packages/server/src/collection.ts`](../../packages/server/src/collection.ts) — `Collection<T>` verbs
 - [`packages/server/src/query.ts`](../../packages/server/src/query.ts) — `Query<T>` predicate AST + reader
+- [`packages/server/src/query-eval.ts`](../../packages/server/src/query-eval.ts) — in-memory predicate filter, count and `limit` over the folded rows
 
 ## Causal consistency
 

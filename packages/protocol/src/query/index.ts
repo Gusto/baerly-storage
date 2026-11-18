@@ -4,7 +4,7 @@ export {
   makeBuilder,
   wireFromBuilder,
 } from "./builder.ts";
-export { matchesWire } from "./matches.ts";
+export { compileWire, matchesWire } from "./matches.ts";
 export { mergePredicateWires } from "./merge.ts";
 export { normalizeObject, normalizePredicateArg } from "./normalize.ts";
 export { validateWire } from "./validate.ts";

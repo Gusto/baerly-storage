@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 
 import type { DocumentValue, JSONObject } from "../json.ts";
 
-import { matchesWire } from "./matches.ts";
+import { compileWire, matchesWire } from "./matches.ts";
 import type { PredicateClause, PredicateWire } from "./wire.ts";
 
 describe("matchesWire — equality and traversal", () => {
@@ -731,4 +731,68 @@ describe("matchesWire — property laws", () => {
       expect(gt).toBe(!lte);
     },
   );
+});
+
+// ---------------------------------------------------------------------
+// compileWire ≡ matchesWire. The compiled form splits each dotted path
+// once; it must agree with the per-call evaluator on every document,
+// including paths that miss, run through arrays, primitives or `null`,
+// and segments that are empty or `__proto__`.
+// ---------------------------------------------------------------------
+
+const segmentArb = fc.constantFrom("a", "b", "c", "", "__proto__");
+const pathArb = fc
+  .array(segmentArb, { minLength: 1, maxLength: 3 })
+  .map((segments) => segments.join("."));
+
+const { tree: treeArb } = fc.letrec<{ tree: unknown }>((tie) => ({
+  tree: fc.oneof(
+    { depthSize: "small", withCrossShrink: true },
+    fc.constantFrom<unknown>("x", "", 0, 1, -1, true, false, null),
+    fc.array(tie("tree"), { maxLength: 3 }),
+    fc
+      .array(fc.tuple(segmentArb, tie("tree")), { maxLength: 3 })
+      .map((pairs) => Object.fromEntries(pairs)),
+  ),
+}));
+const treeDocArb: fc.Arbitrary<JSONObject> = fc
+  .array(fc.tuple(segmentArb, treeArb), { maxLength: 4 })
+  .map((pairs) => Object.fromEntries(pairs) as JSONObject);
+
+const clauseValueArb = fc.oneof(
+  fc.constantFrom<unknown>("x", "", 0, 1, -1, true, false),
+  fc
+    .array(fc.tuple(segmentArb, fc.constantFrom<unknown>("x", 0, true)), { maxLength: 2 })
+    .map((pairs) => Object.fromEntries(pairs)),
+);
+const anyClauseArb: fc.Arbitrary<PredicateClause> = fc.oneof(
+  fc
+    .tuple(fc.constantFrom("eq", "gt", "gte", "lt", "lte"), pathArb, clauseValueArb)
+    .map(([op, field, value]) => ({ op, field, value }) as PredicateClause),
+  fc
+    .tuple(pathArb, fc.array(clauseValueArb, { minLength: 1, maxLength: 3 }))
+    .map(([field, value]) => ({ op: "in", field, value }) as PredicateClause),
+);
+
+describe("compileWire", () => {
+  fcTest.prop({
+    clauses: fc.array(anyClauseArb, { minLength: 1, maxLength: 3 }),
+    docs: fc.array(treeDocArb, { minLength: 8, maxLength: 16 }),
+  })("agrees with matchesWire on every document", ({ clauses, docs }) => {
+    const wire: PredicateWire = { clauses };
+    const compiled = compileWire(wire);
+    for (const doc of docs) {
+      expect(compiled(doc)).toBe(matchesWire(wire, doc));
+    }
+  });
+
+  test("dotted paths miss through arrays, primitives and null", () => {
+    const wire: PredicateWire = { clauses: [{ op: "eq", field: "a.b", value: 1 }] };
+    const compiled = compileWire(wire);
+    for (const doc of [{ a: [{ b: 1 }] }, { a: 1 }, { a: null }, {}] as JSONObject[]) {
+      expect(compiled(doc)).toBe(false);
+      expect(matchesWire(wire, doc)).toBe(false);
+    }
+    expect(compiled({ a: { b: 1 } })).toBe(true);
+  });
 });
