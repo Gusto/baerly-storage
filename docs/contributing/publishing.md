@@ -60,7 +60,7 @@ Generated artifacts (`baerly.spec.json`, `version-matrix.json`) must be fresh at
 
 5. **Approve the deployment.** The tag push runs the `release` workflow in two jobs:
    - `pack` has no OIDC token. It checks that the tag equals `v<version>` for both packages and that the tagged commit is on `origin/main`, installs with the pnpm store cache disabled (so a cache entry written by another run can't reach a tarball), runs `pnpm release --pack` (see [The `pnpm release` script](#the-pnpm-release-script)) and uploads the two tarballs as an artifact.
-   - `publish` waits on the `npm-publish` environment's required reviewer; approve it in the Actions tab. It is the only job with `id-token: write`, and it runs no install, build or lifecycle script, so no dependency or build plugin can mint the token. It publishes the uploaded tarballs with `--provenance`, which exchanges the OIDC token for a short-lived publish credential, then checks that both published versions carry `dist.attestations`.
+   - `publish` waits on the `npm-publish` environment's required reviewer; approve it in the Actions tab. It is the only job with `id-token: write`. It sets up Node with `actions/setup-node` alone and installs nothing, not even pnpm, and runs no build or lifecycle script, so no dependency, build plugin or package-manager release can mint the token. It publishes the uploaded tarballs with the npm CLI bundled with Node (`npm publish <tarball> --provenance`), which exchanges the OIDC token for a short-lived publish credential, then waits until both published versions serve a provenance attestation and fails if they don't.
 
 6. **Run the [post-publish smoke](#post-publish-smoke).**
 
@@ -149,7 +149,7 @@ The gates, which `--dry-run` and `--pack` both run:
 1. **Generated artifacts are fresh** — `verify:artifacts` (`check-spec-drift` + `check-version-matrix`). A stale checked-in `baerly.spec.json` or `version-matrix.json` aborts before the build runs.
 2. **Build and packaging contract** — `verify:package` builds, then runs `check:exports` (attw: every entry point resolves for consumers) and `check:publint` (publint: both manifests are well-formed). A finding aborts before anything is packed. Packing reuses that build (`BAERLY_SKIP_BUILD=1`).
 
-`--publish` runs no gates and no build. It refuses unless `GITHUB_ACTIONS=true` and `GITHUB_REF_TYPE=tag`, requires the directory to hold exactly the two tarballs for the tag's version, and publishes each with `--provenance --access public`. `--provenance` makes a failed signature fail the publish; without it pnpm would warn and publish unattested. `--access public` is passed by hand because pnpm has historically dropped `publishConfig.access` on the wire.
+`--publish` runs no gates and no build, and needs no `node_modules`. It refuses unless `GITHUB_ACTIONS=true` and `GITHUB_REF_TYPE=tag`, and it requires the directory to hold exactly the two tarballs for the tag's version. It reads each tarball's `package/package.json` and refuses one whose name or version doesn't match, or whose `publishConfig` sets anything but `access: "public"` and `exports` (npm applies a packed `publishConfig`, so a `registry` or `tag` there would redirect or retag the publish). It then runs `npm publish <tarball> --provenance --access public --ignore-scripts` from the tarball directory, because npm refuses every command inside the checkout (`devEngines.packageManager` names pnpm). `--provenance` makes a failed signature fail the publish; left at its default, provenance is best-effort and a signing failure would publish unattested.
 
 Run the dry run locally, or from the Actions tab (`release` → Run workflow), which runs it on a clean runner without publish permissions. Review the file list — anything outside `dist/` is a packaging bug.
 
@@ -179,14 +179,14 @@ rm -f "gusto-baerly-storage-$V.tgz"
 
 Expected: `ok: <version>`. A hand-corrupted or stale tarball makes it exit 1.
 
-Provenance check (the workflow's last step runs the first command too):
+Provenance check (the workflow's last step checks the same field for both):
 
 ```sh
-pnpm view "@gusto/baerly-storage@$V" dist.attestations
-pnpm view "@gusto/create-baerly-storage@$V" dist.attestations
+pnpm view "@gusto/baerly-storage@$V" dist.attestations.provenance
+pnpm view "@gusto/create-baerly-storage@$V" dist.attestations.provenance
 ```
 
-Both must print an attestation object. In the scaffold smoke below, `npm audit signatures` must pass after install.
+Both must print a `predicateType` of `https://slsa.dev/provenance/v1`. In the scaffold smoke below, `npm audit signatures` must pass after install.
 
 Scaffold smoke:
 
@@ -229,7 +229,7 @@ The notices file ships via the root package's `files: ["dist"]` — no extra pac
 ## Notes on the publish config
 
 - `publishConfig.access` is set to `"public"` on both published packages, and `scripts/publish.mjs` also passes `--access public` explicitly. If you add a third published `@gusto/*` package, set `"access": "public"` in its `publishConfig`.
-- Provenance is requested with `--provenance` on the publish command rather than `publishConfig.provenance`, so a local `pnpm pack` or dry run doesn't try to sign. Left unset, pnpm treats provenance as best-effort under trusted publishing and publishes unattested when signing fails; one unattested release would make our scaffolds' `trustPolicy: no-downgrade` refuse every later release.
+- Provenance is requested with `--provenance` on the publish command rather than `publishConfig.provenance`, so a local `pnpm pack` or dry run doesn't try to sign. Left at its default, provenance is best-effort under trusted publishing (in npm and pnpm alike), so a signing failure would publish unattested; one unattested release would make our scaffolds' `trustPolicy: no-downgrade` refuse every later release.
 - The 7 workspace `@baerly/*` packages have `"private": true` as a defensive lock. Never remove these flags — those packages are bundled into the published `@gusto/baerly-storage`, never shipped separately. (This is a workspace-packaging detail, unrelated to the project being open source.)
 
 ## Incident runbook

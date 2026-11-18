@@ -2,19 +2,17 @@
 // Build, pack and publish the two public @gusto packages to npmjs.com.
 //
 // `.github/workflows/release.yml` runs this in two jobs. The `pack` job
-// (no OIDC token) installs, gates and packs both packages into tarballs.
-// The `publish` job (OIDC token, `npm-publish` environment) runs no install
-// and no lifecycle scripts: it publishes those exact tarballs with npm
-// trusted publishing, which exchanges the OIDC token for a short-lived
-// publish credential.
+// (no OIDC token) installs, gates and packs both packages into tarballs
+// with pnpm. The `publish` job (OIDC token, `npm-publish` environment)
+// installs nothing and runs no lifecycle scripts: it publishes those exact
+// tarballs with the npm CLI bundled with Node, whose trusted publishing
+// exchanges the OIDC token for a short-lived publish credential.
 //
-// `--provenance` is passed explicitly. Without it pnpm treats provenance
-// as best-effort and publishes unattested when signing fails; with it the
-// publish fails instead. One unattested release would make every later
-// release fail our scaffolds' `trustPolicy: no-downgrade`.
-//
-// `--access public` is passed explicitly too, although `publishConfig.access`
-// is set, because pnpm has historically dropped it on the wire.
+// `--provenance` is passed explicitly. Under trusted publishing, provenance
+// left at its default is best-effort and a signing failure publishes
+// unattested; explicit, a signing failure fails the publish. One unattested
+// release would make every later release fail our scaffolds'
+// `trustPolicy: no-downgrade`.
 //
 // Usage (exactly one mode):
 //   pnpm release --dry-run               gates, then a publish dry run of both packages
@@ -26,7 +24,7 @@
 // Flags parse strictly: an unknown or mistyped flag (`--dryrun`,
 // `--dry-run=true`) aborts instead of doing anything.
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,6 +77,13 @@ const PACKAGES = [
     tarball: (v) => `gusto-create-baerly-storage-${v}.tgz`,
   },
 ];
+
+const REGISTRY = "https://registry.npmjs.org/";
+
+// npm applies a packed manifest's `publishConfig` to the publish, so a
+// tarball could redirect its own publish (`registry`) or retag it (`tag`).
+// Only the keys our manifests set are allowed.
+const ALLOWED_PUBLISH_CONFIG = new Set(["access", "exports"]);
 
 const run = (cmd, opts = {}) => execSync(cmd, { stdio: "inherit", ...opts });
 // Pass BAERLY_SKIP_BUILD so the `prepare` hook, which pnpm publish/pack
@@ -193,16 +198,23 @@ function publishTarballs(dir) {
     );
   }
 
+  for (const pkg of PACKAGES) {
+    checkPackedManifest(join(dir, pkg.tarball(version)), pkg.name, version);
+  }
+
   const problems = [];
   for (const pkg of PACKAGES) {
     const file = join(dir, pkg.tarball(version));
     console.log(`\n▶ Publishing ${pkg.name}@${version}…`);
     try {
-      // Run from the tarball directory, outside the workspace, so pnpm
-      // reads only the packed manifest.
-      run(`pnpm publish ${JSON.stringify(file)} --provenance --access public --no-git-checks`, {
-        cwd: dir,
-      });
+      // npm runs from the tarball directory: inside the checkout it refuses
+      // every command, because `devEngines.packageManager` names pnpm.
+      // A tarball spec runs no lifecycle scripts; `--ignore-scripts` says so.
+      run(
+        `npm publish ${JSON.stringify(file)} --provenance --access public --ignore-scripts ` +
+          `--registry ${REGISTRY}`,
+        { cwd: dir },
+      );
     } catch {
       console.warn(`  ⚠ publish exited non-zero for ${pkg.name}`);
       problems.push(`${pkg.name}: publish step failed — see output above`);
@@ -212,4 +224,29 @@ function publishTarballs(dir) {
     reportProblems(problems, "RELEASE INCOMPLETE");
   }
   console.log("\n✓ Both packages published.\n");
+}
+
+function checkPackedManifest(file, name, version) {
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      execFileSync("tar", ["-xzOf", file, "package/package.json"], { encoding: "utf8" }),
+    );
+  } catch (error) {
+    abort(`could not read package/package.json from ${file}: ${error.message}. Nothing published.`);
+  }
+  if (manifest.name !== name || manifest.version !== version) {
+    abort(
+      `${file} packs ${manifest.name}@${manifest.version}, expected ${name}@${version}. ` +
+        "Nothing published.",
+    );
+  }
+  const config = manifest.publishConfig ?? {};
+  const extra = Object.keys(config).filter((k) => !ALLOWED_PUBLISH_CONFIG.has(k));
+  if (extra.length > 0 || (config.access !== undefined && config.access !== "public")) {
+    abort(
+      `${file} sets publishConfig ${JSON.stringify(config)}; only access: "public" and ` +
+        "exports are allowed. Nothing published.",
+    );
+  }
 }

@@ -4,11 +4,12 @@
 #
 # - Push of a `v*` tag: `pack` installs, gates and packs both packages into
 #   tarballs with no OIDC token, then `publish` publishes those exact
-#   tarballs. Only `publish` gets `id-token: write` and the `npm-publish`
-#   environment (required reviewer, `v*` tag rule), and it runs no install
-#   and no lifecycle scripts, so no dependency or build plugin can mint the
-#   token. npm's trusted-publisher config names this file and that
-#   environment, so renaming either breaks publishing.
+#   tarballs with the npm CLI bundled with Node. Only `publish` gets
+#   `id-token: write` and the `npm-publish` environment (required reviewer,
+#   `v*` tag rule). It installs no package, not even pnpm, and runs no
+#   lifecycle scripts, so no dependency, build plugin or package-manager
+#   release can mint the token. npm's trusted-publisher config names this
+#   file and that environment, so renaming either breaks publishing.
 # - workflow_dispatch: the `dry-run` job runs the same gates and a publish
 #   dry run. It never gets `id-token: write`.
 name: release
@@ -104,23 +105,35 @@ jobs:
       contents: read
       id-token: write # npm trusted publishing (OIDC) + provenance
     steps:
-      # Checked out only for the setup action and scripts/publish.mjs;
-      # nothing is installed or built here.
+      # Checked out only for scripts/publish.mjs; nothing is installed or
+      # built here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup
+      # Node and its bundled npm only. The shared setup action is not used
+      # here: it installs pnpm from a version range, whose install scripts
+      # would run while this job holds the OIDC token.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          cache: "false"
+          node-version: "26"
+
+      # npm trusted publishing needs npm >= 11.5.1.
+      - name: Check the bundled npm supports trusted publishing
+        working-directory: ${{ runner.temp }}
+        run: |
+          v="$(npm --version)"
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$v" \
+            || { echo "::error::npm $v is older than 11.5.1"; exit 1; }
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tarballs
           path: ${{ runner.temp }}/tarballs
 
-      # `--provenance` makes a failed signature fail the publish instead of
-      # publishing unattested. The script refuses outside a tag run.
+      # `npm publish <tarball> --provenance`: a failed signature fails the
+      # publish instead of publishing unattested. The script refuses outside
+      # a tag run and checks each tarball's packed manifest first.
       - name: Publish the packed tarballs
         run: node scripts/publish.mjs --publish="$RUNNER_TEMP/tarballs"
 
@@ -133,9 +146,12 @@ jobs:
           v="${TAG#v}"
           for pkg in @gusto/baerly-storage @gusto/create-baerly-storage; do
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              att="$(pnpm view "$pkg@$v" dist.attestations --json 2>/dev/null || true)"
-              if [ -n "$att" ] && [ "$att" != "null" ] && [ "$att" != "{}" ]; then
-                echo "$pkg@$v: attestations present"
+              # A version the registry doesn't serve yet makes `npm view`
+              # exit non-zero with an error object; only a real provenance
+              # attestation passes.
+              if dist="$(npm view "$pkg@$v" dist --json --registry https://registry.npmjs.org/ 2>/dev/null)" \
+                && jq -e '(.attestations.provenance.predicateType // "") | startswith("https://slsa.dev/provenance/")' <<<"$dist" >/dev/null; then
+                echo "$pkg@$v: provenance attestation present"
                 continue 2
               fi
               sleep 15
