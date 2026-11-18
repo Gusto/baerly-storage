@@ -1,6 +1,7 @@
 import { AwsClient } from "aws4fetch";
 import type { Credentials, CredentialsProvider } from "./types.ts";
 import { credentialResolver } from "./resolve.ts";
+import { signHeadersOnly } from "../sigv4-sign.ts";
 
 function buildAwsClient(creds: Credentials, region: string): AwsClient {
   return new AwsClient({
@@ -31,7 +32,7 @@ export function refreshingSigner(opts: {
 
   if (typeof opts.credentials !== "function") {
     const aws = buildAwsClient(opts.credentials, region);
-    return (req) => aws.sign(req);
+    return (req) => signHeadersOnly(aws, req);
   }
 
   const resolve = credentialResolver(opts.credentials, now, (creds) =>
@@ -41,7 +42,7 @@ export function refreshingSigner(opts: {
   const signedBy = new WeakMap<Request, AwsClient>();
   const sign = async (req: Request): Promise<Request> => {
     const aws = await resolve();
-    const signed = await aws.sign(req);
+    const signed = await signHeadersOnly(aws, req);
     signedBy.set(signed, aws);
     return signed;
   };

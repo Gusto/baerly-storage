@@ -1,5 +1,12 @@
 import { BaerlyError } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { AwsClient } from "aws4fetch";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  startS3WireEchoServer,
+  type EchoServer,
+} from "../../../tests/fixtures/s3-wire-echo-server.ts";
+import { refreshingSigner } from "./credentials/signer.ts";
+import { S3HttpStorage } from "./s3-http.ts";
 import { sigV4Signer, type SigV4SignerOptions } from "./s3-signer.ts";
 
 describe("sigV4Signer", () => {
@@ -77,4 +84,101 @@ describe("sigV4Signer", () => {
     const signed = await sign(new Request("https://s3.example.com/b/k", { method: "GET" }));
     expect(signed.headers.get("x-amz-security-token")).toBe("FQoGZXIvYXdzEXANPLETOKEN");
   });
+});
+
+// The S3 signers sign headers only (`UNSIGNED-PAYLOAD`) and never read the
+// body. These tests pin what that must not change: the request still goes
+// out with a `Content-Length` (AWS S3 `PutObject` rejects a plain chunked
+// upload, Minio accepts one) and the `Authorization` is byte-identical to
+// handing `aws4fetch` the whole request.
+describe("S3 signers sign headers only", () => {
+  const CREDS = {
+    accessKeyId: "AKIAWIRETEST",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    sessionToken: "FQoGZXIvYXdzEXANPLETOKEN",
+  };
+  const REGION = "us-east-1";
+  const FIXED_NOW = Date.parse("2026-01-01T00:00:00Z");
+  const BODY_BYTES = 100_000;
+
+  const signers: [string, () => (req: Request) => Promise<Request>][] = [
+    ["sigV4Signer", () => sigV4Signer({ ...CREDS, region: REGION })],
+    ["refreshingSigner (static)", () => refreshingSigner({ region: REGION, credentials: CREDS })],
+    [
+      "refreshingSigner (provider)",
+      () => refreshingSigner({ region: REGION, credentials: async () => CREDS }),
+    ],
+  ];
+
+  let server: EchoServer;
+  beforeEach(async () => {
+    server = await startS3WireEchoServer();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FIXED_NOW);
+  });
+  afterEach(async () => {
+    vi.useRealTimers();
+    await server.close();
+  });
+
+  test.each(signers)(
+    "%s: a PUT keeps Content-Length and the Authorization aws4fetch gives the full request",
+    async (_label, makeSign) => {
+      const storage = new S3HttpStorage({
+        endpoint: server.origin,
+        bucket: "wire",
+        sign: makeSign(),
+        retries: 0,
+      });
+      const body = new Uint8Array(BODY_BYTES).fill(7);
+      await storage.put("log/00000001", body, {
+        contentType: "application/json",
+        ifNoneMatch: "*",
+      });
+
+      const seen = server.seen.get("/wire/log%2F00000001");
+      expect(seen).toBeDefined();
+      expect(seen!.contentLength).toBe(String(BODY_BYTES));
+      expect(seen!.transferEncoding).toBeNull();
+      expect(seen!.bytes).toBe(BODY_BYTES);
+      expect(seen!.contentSha256).toBe("UNSIGNED-PAYLOAD");
+
+      const expected = await new AwsClient({ ...CREDS, region: REGION, service: "s3" }).sign(
+        new Request(`${server.origin}/wire/log%2F00000001`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "If-None-Match": "*" },
+          body,
+        }),
+      );
+      expect(seen!.authorization).toContain("Credential=AKIAWIRETEST/20260101/us-east-1/s3/");
+      expect(seen!.authorization).toBe(expected.headers.get("authorization"));
+    },
+  );
+
+  test.each(signers)("%s: signing does not clone the request body", async (_label, makeSign) => {
+    const clone = vi.spyOn(Request.prototype, "clone");
+    const signed = await makeSign()(
+      new Request("https://s3.us-east-1.amazonaws.com/b/k", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: new Uint8Array(1024),
+      }),
+    );
+    expect(clone).not.toHaveBeenCalled();
+    const bytes = await signed.arrayBuffer();
+    expect(bytes.byteLength).toBe(1024);
+  });
+
+  test.each(signers)(
+    "%s: the signed request keeps the caller's abort signal",
+    async (_label, makeSign) => {
+      const controller = new AbortController();
+      const signed = await makeSign()(
+        new Request("https://s3.us-east-1.amazonaws.com/b/k", { signal: controller.signal }),
+      );
+      expect(signed.signal.aborted).toBe(false);
+      controller.abort();
+      expect(signed.signal.aborted).toBe(true);
+    },
+  );
 });

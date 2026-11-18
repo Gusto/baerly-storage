@@ -26,8 +26,10 @@
  * whose index barrel drags `node:http` and would fail to bundle here.
  */
 import { BaerlyError } from "@baerly/protocol";
-import { describe, expect, test } from "vitest";
+import { AwsClient } from "aws4fetch";
+import { afterEach, describe, expect, inject, test, vi } from "vitest";
 import { S3HttpStorage, sigV4Signer } from "../../packages/adapter-node/src/s3.ts";
+import type { SeenPut } from "../fixtures/s3-wire-echo-server.ts";
 import { assertAllRequestsSigned, makeS3Stub } from "../fixtures/s3-memory-stub.ts";
 
 const ENDPOINT = "https://s3.us-east-1.amazonaws.com";
@@ -104,5 +106,53 @@ describe("@gusto/baerly-storage/s3 executes inside Workerd", () => {
       keys.push(entry.key);
     }
     expect(keys.toSorted()).toEqual(["p/a", "p/b"]);
+  });
+});
+
+// `sigV4Signer` signs headers only and rebuilds the PUT from the original
+// request. Over a real socket from Workerd that PUT must still carry a
+// `Content-Length` (AWS S3 `PutObject` rejects a plain chunked upload) and
+// the `Authorization` aws4fetch computes from the full request.
+describe("S3 PUT framing from Workerd", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("an injected S3HttpStorage PUT keeps Content-Length and today's Authorization", async () => {
+    const origin = inject("s3WireEchoOrigin");
+    const creds = {
+      accessKeyId: "AKIAWIRETEST",
+      secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      region: "us-east-1",
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-01-01T00:00:00Z"));
+    const storage = new S3HttpStorage({
+      endpoint: origin,
+      bucket: "wire-cf",
+      sign: sigV4Signer(creds),
+      retries: 0,
+    });
+    const body = new Uint8Array(100_000).fill(7);
+    await storage.put("log/00000001", body, { contentType: "application/json", ifNoneMatch: "*" });
+
+    const path = "/wire-cf/log%2F00000001";
+    const res = await fetch(`${origin}/__seen?path=${encodeURIComponent(path)}`);
+    expect(res.status).toBe(200);
+    const seen = (await res.json()) as SeenPut;
+    expect(seen.contentLength).toBe("100000");
+    expect(seen.transferEncoding).toBeNull();
+    expect(seen.bytes).toBe(100_000);
+    expect(seen.contentSha256).toBe("UNSIGNED-PAYLOAD");
+
+    const expected = await new AwsClient({ ...creds, service: "s3" }).sign(
+      new Request(`${origin}${path}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "If-None-Match": "*" },
+        body,
+      }),
+    );
+    expect(seen.authorization).toContain("Credential=AKIAWIRETEST/20260101/us-east-1/s3/");
+    expect(seen.authorization).toBe(expected.headers.get("authorization"));
   });
 });
