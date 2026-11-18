@@ -83,7 +83,7 @@ export interface CreateRouterOptions {
  *  - `PATCH  /v1/c/:collection/:id` → merge-patch. Body: `{ patch }`. → `200 { modified }`.
  *  - `PUT    /v1/c/:collection/:id` → whole-doc replace. Body: `{ doc }`. → `200 { modified }`.
  *  - `DELETE /v1/c/:collection/:id` → delete row by id. → `204`.
- *  - `GET    /v1/count?collection=<name>&where=<json>` → scalar `{ count: N }`.
+ *  - `GET    /v1/count?collection=<name>&where=<json>&limit=<n>` → scalar `{ count: N }`, cut by `limit`.
  *  - `GET    /v1/since?collection=<name>&cursor=<opaque>` → long-poll log.
  *
  * Routes are matched at `/v1/...`: strip any mount prefix from the
@@ -220,7 +220,7 @@ export function createRouter(options: CreateRouterOptions): Hono {
     return c.body(null, 204);
   });
 
-  // Count — GET /v1/count?collection=<name>&where=<json>
+  // Count — GET /v1/count?collection=<name>&where=<json>&limit=<n>
   //
   // Returns a scalar row count for the matching predicate. Avoids the
   // client downloading every row just to take `.length` (silent egress
@@ -233,12 +233,13 @@ export function createRouter(options: CreateRouterOptions): Hono {
       });
     }
     const wire = parseWhereParam(c);
+    const limit = parseLimit(c.req.query("limit"));
     const { count, manifestPointer, fresh } = await runAllWithMeta(
       collectionReadContext(db, collection),
       {
         wire,
         order: undefined,
-        limit: undefined,
+        limit,
       },
       { countOnly: true },
     );

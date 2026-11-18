@@ -27,6 +27,7 @@
  * @see packages/server/src/contract.ts (URL contract + status-code policy)
  */
 
+import { createBaerlyClient } from "@baerly/client";
 import { fc, test as fcTest } from "@fast-check/vitest";
 import { describe, expect, test } from "vitest";
 import {
@@ -872,6 +873,46 @@ export const runHttpConformanceCascade = (opts: {
           readonly data: { readonly count: number };
         };
         expect(filteredBody.data.count).toBe(2);
+      });
+
+      test("the client's limit(n).count() is cut by limit, as the server SDK's is", async () => {
+        const table = await mintTable("count-limit");
+        for (let i = 0; i < 5; i++) {
+          const posted = await postDoc(table, { s: "open", i });
+          expect(posted.status).toBe(201);
+        }
+        const client = createBaerlyClient({
+          baseUrl: BASE,
+          fetch: doFetch,
+          headers: { authorization: `Bearer ${bearerToken}` },
+        });
+        const open = client.collection(table).where({ s: "open" });
+        await expect(open.limit(3).count()).resolves.toBe(3);
+        await expect(open.limit(10).count()).resolves.toBe(5);
+        await expect(open.count()).resolves.toBe(5);
+      });
+
+      test("?limit=<n> on /v1/count is parsed as the list route parses it", async () => {
+        const table = await mintTable("count-limit-wire");
+        for (let i = 0; i < 3; i++) {
+          const posted = await postDoc(table, { i });
+          expect(posted.status).toBe(201);
+        }
+        const res = await doFetch(authedRequest("GET", `/v1/count?collection=${table}&limit=2`));
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { data: { count: number } }).data.count).toBe(2);
+        for (const bad of ["foo", "-1", "1.5"]) {
+          const countRes = await doFetch(
+            authedRequest("GET", `/v1/count?collection=${table}&limit=${bad}`),
+          );
+          const listRes = await doFetch(authedRequest("GET", `/v1/c/${table}?limit=${bad}`));
+          expect(countRes.status).toBe(400);
+          expect(countRes.status).toBe(listRes.status);
+          const countEnv = (await countRes.json()) as ErrorEnvelope;
+          const listEnv = (await listRes.json()) as ErrorEnvelope;
+          expect(countEnv.error?.code).toBe("SchemaError");
+          expect(countEnv.error?.code).toBe(listEnv.error?.code);
+        }
       });
 
       test("without ?collection= returns 400 with SchemaError", async () => {

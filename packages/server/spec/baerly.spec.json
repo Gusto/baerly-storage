@@ -405,7 +405,7 @@
       "method": "GET",
       "path": "/v1/count",
       "auth": "verified",
-      "summary": "Count matching rows."
+      "summary": "Count matching rows (?collection=, ?where=, ?limit=)."
     },
     {
       "method": "GET",

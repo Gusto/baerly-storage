@@ -178,5 +178,5 @@ What to do when a line is crossed is in [graduation.md](../about/graduation.md);
 | `PATCH /v1/c/:collection/:id` | Merge-patch one row. |
 | `PUT /v1/c/:collection/:id` | Replace one row. |
 | `DELETE /v1/c/:collection/:id` | Delete one row. |
-| `GET /v1/count?collection=<name>&where=<json>` | Count matching rows. |
+| `GET /v1/count?collection=<name>&where=<json>&limit=<n>` | Count matching rows, at most `limit`. |
 | `GET /v1/since?collection=<name>&cursor=<opaque>` | Long-poll change feed. |
