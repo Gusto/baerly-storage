@@ -3,15 +3,16 @@
 # See docs/contributing/publishing.md.
 #
 # - Push of a `v*` tag: `pack` installs, gates and packs both packages into
-#   tarballs with no OIDC token, then `publish` publishes those exact
+#   tarballs with no OIDC token (after `pnpm audit --prod --audit-level=high`
+#   and `pnpm audit signatures`), then `publish` publishes those exact
 #   tarballs with the npm CLI bundled with Node. Only `publish` gets
 #   `id-token: write` and the `npm-publish` environment (required reviewer,
 #   `v*` tag rule). It installs no package, not even pnpm, and runs no
 #   lifecycle scripts, so no dependency, build plugin or package-manager
 #   release can mint the token. npm's trusted-publisher config names this
 #   file and that environment, so renaming either breaks publishing.
-# - workflow_dispatch: the `dry-run` job runs the same gates and a publish
-#   dry run. It never gets `id-token: write`.
+# - workflow_dispatch: the `dry-run` job runs the same audits and gates and
+#   a publish dry run. It never gets `id-token: write`.
 name: release
 
 on:
@@ -47,6 +48,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Release-layer audit: production dependencies at high or above, then
+      # registry signatures. Runs where the install runs and no OIDC token
+      # exists; `publish` only runs if `pack` passes. Fail closed.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Audit registry signatures
+        run: pnpm audit signatures
 
       - name: Release dry run
         run: pnpm release --dry-run
@@ -85,6 +95,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Release-layer audit: production dependencies at high or above, then
+      # registry signatures. Runs where the install runs and no OIDC token
+      # exists; `publish` only runs if `pack` passes. Fail closed.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Audit registry signatures
+        run: pnpm audit signatures
 
       - name: Gate and pack
         run: pnpm release --pack="$RUNNER_TEMP/tarballs"
