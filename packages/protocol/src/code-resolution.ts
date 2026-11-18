@@ -15,6 +15,8 @@ export const CODE_RESOLUTIONS: Partial<Record<BaerlyErrorCode, string>> = {
   CursorExpired:
     'Do not retry this cursor. The changes after it are no longer retained: re-read the rows you need, then resume /v1/since with cursor: "".',
   PayloadTooLarge: "Reduce the request body below the server's body-size cap (1 MiB default).",
+  UnsupportedMediaType:
+    "Send the request body as JSON with a Content-Type: application/json header.",
   Unauthorized: "Send a valid Authorization header for the server's configured auth method.",
   AccessDenied: "These credentials are denied for this tenant prefix or bucket policy.",
   NotFound: "No row matches this id; create it first or treat this as a miss.",

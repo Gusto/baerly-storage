@@ -118,6 +118,7 @@ describe("retriable classification", () => {
       Unauthorized: false,
       NotFound: false,
       PayloadTooLarge: false,
+      UnsupportedMediaType: false,
       UnsatisfiablePredicate: false,
       UseQueryAwaitedRecorder: false,
       UnexpectedWriteInQuery: false,

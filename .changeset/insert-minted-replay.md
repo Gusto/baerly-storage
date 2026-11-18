@@ -7,7 +7,7 @@
 `mintedId` must be a canonical UUIDv7 equal to `doc._id`; anything else is `400 SchemaError`. An insert without `mintedId` keeps strict `409 AlreadyExists` on any live row, even an identical one, so a caller-chosen `_id` used as a run-once guard still has at most one winner. In-process `Collection.insert` is unchanged. A server without this change ignores `mintedId` and answers a resend `409`, never with a duplicate row.
 
 ```sh
-curl -X POST "$BASE/v1/c/tickets" -H "Authorization: Bearer $TOKEN" \
+curl -X POST "$BASE/v1/c/tickets" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"doc":{"_id":"0195f1c2-7a3b-7c4d-8e5f-0123456789ab","title":"hi"},"mintedId":"0195f1c2-7a3b-7c4d-8e5f-0123456789ab"}'
 # first send, or identical resend while the current live row matches: 201 {"_id":"0195f1c2-7a3b-7c4d-8e5f-0123456789ab"}
 ```

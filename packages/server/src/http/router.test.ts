@@ -5,6 +5,7 @@ import {
   ERROR_CODES,
   MemoryStorage,
   type BaerlyErrorCode,
+  UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS,
   WHERE_ORDER_JSON_RESOLUTION,
   WRITE_BODY_SHAPE_RESOLUTION,
   uuidv7,
@@ -141,6 +142,7 @@ describe("mapError", () => {
       Unauthorized: { status: 401, retriable: false },
       NotFound: { status: 404, retriable: false },
       PayloadTooLarge: { status: 413, retriable: false },
+      UnsupportedMediaType: { status: 415, retriable: false },
       UnsatisfiablePredicate: { status: 400, retriable: false },
     };
     const actual = Object.fromEntries(
@@ -821,5 +823,33 @@ describe("request body cap", () => {
       } as RequestInit & { duplex: "half" }),
     );
     expect(res.status).toBe(201);
+  });
+});
+
+describe("request Content-Type", () => {
+  test("the 415 message echoes at most UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS of the type", async () => {
+    const app = buildApp();
+    const long = `text/${"x".repeat(UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS * 10)}`;
+    const res = await app.request("/v1/c/notes", {
+      method: "POST",
+      headers: { "content-type": long },
+      body: JSON.stringify({ doc: { title: "x" } }),
+    });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { readonly error: { readonly message: string } };
+    expect(body.error.message).toContain(`${long.slice(0, UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS)}…`);
+    expect(body.error.message).not.toContain(long.slice(0, UNSUPPORTED_MEDIA_TYPE_ECHO_CHARS + 1));
+  });
+
+  test("a short refused type is echoed whole", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/c/notes", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ doc: { title: "x" } }),
+    });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { readonly error: { readonly message: string } };
+    expect(body.error.message).toBe("POST bodies must be sent as application/json; got text/plain");
   });
 });

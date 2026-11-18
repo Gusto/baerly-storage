@@ -20,6 +20,7 @@ describe("errorToExitCode", () => {
       Unauthorized: 2,
       NotFound: 2,
       PayloadTooLarge: 2,
+      UnsupportedMediaType: 2,
       UnsatisfiablePredicate: 2,
       UseQueryAwaitedRecorder: 2,
       UnexpectedWriteInQuery: 2,

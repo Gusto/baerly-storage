@@ -1383,6 +1383,69 @@ export const runHttpConformanceCascade = (opts: {
       });
     });
 
+    // ── Block 11b: request Content-Type on body routes ──────────────
+    //
+    // Every body-bearing route requires a JSON media type and answers
+    // 415 before reading the body. A `text/plain`, form-encoded or
+    // untyped POST is a CORS-simple request, so without this a page on
+    // another origin could forge writes when auth is ambient.
+    describe("request Content-Type on body routes", () => {
+      const bodyRoutes = [
+        ["POST", (table: string) => `/v1/c/${table}`, { doc: { title: "x" } }],
+        ["PATCH", (table: string) => `/v1/c/${table}/${uuidv7()}`, { patch: { title: "x" } }],
+        ["PUT", (table: string) => `/v1/c/${table}/${uuidv7()}`, { doc: { title: "x" } }],
+      ] as const;
+      const refusedTypes = [
+        ["text/plain", "text/plain;charset=UTF-8"],
+        ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded"],
+        ["no Content-Type", undefined],
+      ] as const;
+
+      for (const [method, path, body] of bodyRoutes) {
+        for (const [label, contentType] of refusedTypes) {
+          test(`${method} with ${label} returns 415 UnsupportedMediaType and writes nothing`, async () => {
+            const table = await mintTable("ct-415");
+            const headers: Record<string, string> = { authorization: `Bearer ${bearerToken}` };
+            if (contentType !== undefined) {
+              headers["content-type"] = contentType;
+            }
+            // A byte body carries no implicit Content-Type, so the
+            // untyped case reaches the server untyped.
+            const res = await doFetch(
+              new Request(`${BASE}${path(table)}`, {
+                method,
+                headers,
+                body: new TextEncoder().encode(JSON.stringify(body)),
+              }),
+            );
+            expect(res.status).toBe(415);
+            const env = (await res.json()) as ErrorEnvelope;
+            expect(env.error?.code).toBe("UnsupportedMediaType");
+            const list = await doFetch(authedRequest("GET", `/v1/c/${table}`));
+            const { data } = (await list.json()) as { readonly data: readonly DocumentData[] };
+            expect(data).toEqual([]);
+          });
+        }
+      }
+
+      for (const contentType of [
+        "application/json; charset=utf-8",
+        "application/merge-patch+json",
+      ]) {
+        test(`POST with ${contentType} is accepted`, async () => {
+          const table = await mintTable("ct-json");
+          const res = await doFetch(
+            new Request(`${BASE}/v1/c/${table}`, {
+              method: "POST",
+              headers: { authorization: `Bearer ${bearerToken}`, "content-type": contentType },
+              body: JSON.stringify({ doc: { title: "x" } }),
+            }),
+          );
+          expect(res.status).toBe(201);
+        });
+      }
+    });
+
     // ── Block 12: response Content-Type contract ────────────────────
     //
     // A porter must reproduce the media type across status classes. All
