@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
+  GC_MARK_LIST_PAGE_KEYS,
   MAINTENANCE_FOLD_BASE_REQUESTS,
-  MAINTENANCE_GC_BASE_REQUESTS,
   MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
   STORAGE_RETRY_MAX_ATTEMPTS,
   WRITE_TICK_FOLD_ENTRIES_PER_PASS,
+  WRITE_TICK_GC_MAX_SWEEPS,
 } from "@baerly/protocol";
 import { loadRequestCountSnapshot, parseCell } from "../../scripts/request-counts.ts";
 import {
@@ -15,7 +16,9 @@ import {
   DEFAULT_ASSUMPTIONS,
   findLogTailGets,
   foldTickCalls,
+  GC_WORST_STATE,
   gcTickCalls,
+  type GcTickState,
   HAPPY_PATH,
   maxFittingChangedLeaves,
   pathUnionInternalNodes,
@@ -92,35 +95,65 @@ describe("depth 0 reproduces main's recorded request counts", () => {
   });
 });
 
-describe("GC tick composition", () => {
-  test("at depth 0, all attempts, no sweeps: the GC base and the retirement pre-floor", () => {
-    const calls = gcTickCalls({
+describe("GC tick at depth 0 reproduces main", () => {
+  const gc = (over: Partial<Parameters<typeof gcTickCalls>[0]>) =>
+    gcTickCalls({
       shape: DEPTH_0,
       sweeps: 0,
       retirementDeletes: 0,
-      listPageKeys: 1000,
-      assumptions: { ...DEFAULT_ASSUMPTIONS, gcMembershipGets: 0 },
+      listPageKeys: GC_MARK_LIST_PAGE_KEYS,
+      state: UNCONTENDED,
+      assumptions: DEFAULT_ASSUMPTIONS,
+      ...over,
     });
-    // The 6 contention calls ride on top of the 6-call common path.
-    const contention = 6 * STORAGE_RETRY_MAX_ATTEMPTS;
-    // The GC base's CAS PUT is sent once; its other 5 calls retry.
-    const gcBase = (MAINTENANCE_GC_BASE_REQUESTS - 1) * STORAGE_RETRY_MAX_ATTEMPTS + 1;
-    expect(chargedRequests(calls, ALL_ATTEMPTS)).toBe(
-      gcBase + contention + MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS,
-    );
+  // The grid's GC ticks: a fresh pending ledger (bootstrap create, one CAS),
+  // nothing to retire, `tail_hint` already at the tail.
+  const UNCONTENDED: GcTickState = {
+    pendingBootstrap: true,
+    pendingBootstrapConflict: false,
+    pendingCasAttempts: 1,
+    freshCurrentGet: false,
+    tailHintRefresh: false,
+  };
+
+  test.each([0, 50, 200].flatMap((tail) => [0, 100].map((snap) => ({ tail, snap }))))(
+    "tick:gc, tail=$tail snap=$snap",
+    ({ tail, snap }) => {
+      expect(byKind(gc({}))).toEqual(recorded(`tick:gc tail=${tail} idx=0 snap=${snap}`));
+    },
+  );
+
+  test.each([50, 200])("tick:gc-sweep, tail=%i snap=100: one due snapshot swept", (tail) => {
+    const calls = gc({ sweeps: 1, state: { ...UNCONTENDED, freshCurrentGet: true } });
+    expect(byKind(calls)).toEqual(recorded(`tick:gc-sweep tail=${tail} idx=0 snap=100`));
+  });
+
+  test("the worst state is maintenance-budget.test.ts's contended GC tick", () => {
+    // Pinned in packages/server/src/maintenance-budget.test.ts, test
+    // "maximally contended write-tick GC refreshes tail_hint at 26 storage
+    // operations": `counted.report()` equals
+    // { get: 10, put: 5, delete: 10, listPage: 1 } (26 calls) for a tick
+    // with a bootstrap conflict, three final CAS attempts, the refresh, a
+    // due sweep of WRITE_TICK_GC_MAX_SWEEPS and nothing to retire. Not
+    // importable (a test file), so restated here.
+    const calls = gc({ sweeps: WRITE_TICK_GC_MAX_SWEEPS, state: GC_WORST_STATE });
+    expect(byKind(calls)).toEqual({ get: 10, put: 5, delete: 10, listPage: 1 });
+  });
+
+  test("retirement's pre-floor calls are MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS at all attempts", () => {
+    const without = chargedRequests(gc({}), ALL_ATTEMPTS);
+    const withOne = chargedRequests(gc({ retirementDeletes: 1 }), ALL_ATTEMPTS);
+    // Pre-floor = the gate GET (already in `without`) + the floor CAS GET +
+    // PUT; the one DELETE is past the floor.
+    const gateGet = STORAGE_RETRY_MAX_ATTEMPTS;
+    const oneDelete = STORAGE_RETRY_MAX_ATTEMPTS;
+    expect(withOne - without - oneDelete + gateGet).toBe(MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS);
   });
 
   test("the LIST pages over the node namespace", () => {
     const shape: TreeShape = { depth: 1, fanout: 600, leaves: 600 };
-    const calls = gcTickCalls({
-      shape,
-      sweeps: 0,
-      retirementDeletes: 0,
-      listPageKeys: 1000,
-      assumptions: DEFAULT_ASSUMPTIONS,
-    });
     // 601 live nodes, twice that listed: 2 pages.
-    expect(calls.listPages).toBe(2);
+    expect(gc({ shape }).listPages).toBe(2);
   });
 });
 
@@ -219,7 +252,6 @@ describe("floor shapes", () => {
       concurrentCommits: 0,
       writeStateRead: "point",
       policy: ALL_ATTEMPTS,
-      transport: "r2-binding",
       assumptions: DEFAULT_ASSUMPTIONS,
     };
     const distinct = maxFittingChangedLeaves(shape, scenario);
