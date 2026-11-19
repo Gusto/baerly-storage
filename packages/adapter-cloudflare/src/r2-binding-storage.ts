@@ -40,8 +40,15 @@ const quoteEtag = (hex: string): string => `"${hex}"`;
 
 /** R2 error `10058` `TooManyRequests` at the end of a binding error message. */
 const R2_TOO_MANY_REQUESTS = /\(10058\)\s*$/;
-/** workerd's per-invocation subrequest limit ("Too many subrequests by single Worker invocation"). */
-const WORKERS_SUBREQUEST_LIMIT = /too many subrequests/i;
+/**
+ * workerd's per-invocation subrequest limit. An R2 binding call past the
+ * 1,000 internal calls throws "Too many API requests by single Worker
+ * invocation" (observed on Workers Free, 2026-11-18); "Too many
+ * subrequests …" is the `fetch` cap's wording, matched in case a runtime
+ * reports the binding cap that way.
+ */
+const WORKERS_SUBREQUEST_LIMIT =
+  /too many (?:api requests|subrequests) by single worker invocation/i;
 
 class R2BindingStorageImpl implements Storage {
   readonly #bucket: R2Bucket;
@@ -192,7 +199,8 @@ class R2BindingStorageImpl implements Storage {
    *   R2 binding errors end `message` with the
    *   error code in parentheses
    *   (https://developers.cloudflare.com/r2/api/error-codes/).
-   * - The Workers "Too many subrequests" limit is tagged `refused`: not
+   * - The Workers per-invocation limit ("Too many API requests" on a
+   *   binding call) is tagged `refused`: not
    *   retried, since every later call in the invocation is refused too,
    *   and `notApplied` on a create when no earlier attempt is uncertain.
    *   The message match is a backstop, not the primary guard.
