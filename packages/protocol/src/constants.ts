@@ -263,9 +263,9 @@ export const STORAGE_RETRY_MAX_DELAY_MILLIS: number = 20_000;
  * (https://developers.cloudflare.com/workers/platform/limits/); 900 keeps
  * a 10% margin for calls the ledger cannot see but the platform counts:
  * app code in the same Worker, redirects, and any per-call multiplier on
- * the binding. The 1,000 is documented, not observed (a Free probe saw 60
- * binding calls succeed); the R2 adapter's "Too many subrequests" refusal
- * is the backstop if the real cap is lower.
+ * the binding. A Free probe confirmed the 1,000 (the 1,001st binding call
+ * throws "Too many API requests by single Worker invocation"); the R2
+ * adapter's refusal on that error is the backstop if the ledger undercounts.
  *
  * @see packages/protocol/src/storage/ledger.ts (`RequestLedger`)
  */

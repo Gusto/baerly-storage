@@ -35,8 +35,13 @@ const AMBIGUOUS_COMMIT = "AmbiguousCommit" as const;
 // `TooManyRequests` (429), the 1-write-per-second-per-key limit.
 const R2_SAME_KEY_RATE_LIMIT =
   "put: Reduce your concurrent request rate for the same object. (10058)";
-// The workerd message seen when an invocation exhausts its subrequests.
+// What an R2 binding call throws once the invocation has used its 1,000
+// internal calls (captured on a Workers Free account, 2026-11-18).
 const SUBREQUEST_LIMIT =
+  "Too many API requests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
+// The wording workerd uses for the `fetch` subrequest cap; still matched in
+// case a runtime reports the binding cap the same way.
+const FETCH_SUBREQUEST_LIMIT =
   "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
 
 interface FakePage {
@@ -168,24 +173,30 @@ describe("r2BindingStorage request accounting", () => {
     expect(calls.put).toBe(STORAGE_RETRY_MAX_ATTEMPTS);
   });
 
-  test("the platform's subrequest limit is not retried; a refused create reports notApplied", async () => {
-    const { bucket, calls } = mkBucket([], SUBREQUEST_LIMIT);
-    const storage = r2BindingStorage(bucket);
-    for (const op of [
-      () => storage.get("k"),
-      () => storage.put("k", new Uint8Array([1]), { ifNoneMatch: "*" }),
-      () => storage.delete("k"),
-    ]) {
-      const err = (await op().catch((error: unknown) => error)) as BaerlyError;
-      expect(err.code).toBe(NETWORK_ERROR);
-      expect(err.retriable).toBe(true);
-    }
-    expect([calls.get, calls.put, calls.delete]).toEqual([1, 1, 1]);
-    const createErr = (await storage
-      .put("k", new Uint8Array([1]), { ifNoneMatch: "*" })
-      .catch((error: unknown) => error)) as BaerlyError;
-    expect(createErr.cause).toMatchObject({ notApplied: true });
-  });
+  test.each([
+    ["binding cap", SUBREQUEST_LIMIT],
+    ["fetch-cap wording", FETCH_SUBREQUEST_LIMIT],
+  ])(
+    "the platform's subrequest limit (%s) is not retried; a refused create reports notApplied",
+    async (_label, message) => {
+      const { bucket, calls } = mkBucket([], message);
+      const storage = r2BindingStorage(bucket);
+      for (const op of [
+        () => storage.get("k"),
+        () => storage.put("k", new Uint8Array([1]), { ifNoneMatch: "*" }),
+        () => storage.delete("k"),
+      ]) {
+        const err = (await op().catch((error: unknown) => error)) as BaerlyError;
+        expect(err.code).toBe(NETWORK_ERROR);
+        expect(err.retriable).toBe(true);
+      }
+      expect([calls.get, calls.put, calls.delete]).toEqual([1, 1, 1]);
+      const createErr = (await storage
+        .put("k", new Uint8Array([1]), { ifNoneMatch: "*" })
+        .catch((error: unknown) => error)) as BaerlyError;
+      expect(createErr.cause).toMatchObject({ notApplied: true });
+    },
+  );
 
   test("3 pages — outer meter sees 1 list, binding sees 3", async () => {
     const pages = [
