@@ -25,3 +25,16 @@ test("shared-path tree steps keep their pre-distinct-path output", async () => {
     });
   }
 });
+
+// Pinned from this implementation (no pre-change counterpart): step 5 on the
+// same fresh module, after the four shared steps above.
+test("a distinct-path step is pinned too", async () => {
+  const t = CELL_BY_NAME["tree-k4-b16-d3-distinct"]!.tree!;
+  await expect(runTreeStep(t)).resolves.toEqual({
+    cold: true,
+    leaves: 4,
+    pathNodes: 9,
+    bytesHashed: 129499,
+    root: "5155223b4a038702aeac4df56858419b4670219254256c134c7163ab001642c4",
+  });
+});

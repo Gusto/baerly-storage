@@ -55,7 +55,6 @@ describe("tree fold-step path modes", () => {
     expect(shared.pathNodes).toBe(3);
     expect(distinct.pathNodes).toBe(1 + 4 + 4);
     expect(distinct.bytesHashed).toBeGreaterThan(shared.bytesHashed);
-    expect(distinct.root).not.toBe(shared.root);
     // Omitted path behaves as shared.
     const omitted = await runTreeStep(params(4, 3));
     expect(omitted.pathNodes).toBe(3);
