@@ -6,7 +6,8 @@ import { performance } from "node:perf_hooks";
 import type { Profiler } from "node:inspector";
 import { describe, expect, test, vi } from "vitest";
 import { MemoryStorage } from "@baerly/protocol";
-import { buildFixture, FOLD_CURRENT_JSON_KEY, SEED } from "../lib/fold-fixture.ts";
+import { Db } from "@baerly/server";
+import { buildFixture, FOLD_CURRENT_JSON_KEY, SEED, TAIL_SHAPES } from "../lib/fold-fixture.ts";
 import * as fixtures from "../lib/fold-fixture.ts";
 import {
   createInvocationProfile,
@@ -152,6 +153,106 @@ describe("whole invocation probe", () => {
       fixture.storage.get("app/x/tenant/t/manifests/notes/log/6.json"),
     ).resolves.toBeNull();
     await expect(buildFixture(0, 128)).rejects.toBeInstanceOf(RangeError);
+  });
+});
+
+describe("tail mutation shapes and indexed reads", () => {
+  const logOps = async (storage: MemoryStorage, rows: number, tail: number) => {
+    const entries = [];
+    for (let seq = rows; seq < rows + tail; seq++) {
+      const got = await storage.get(`app/x/tenant/t/manifests/notes/log/${seq}.json`);
+      entries.push(JSON.parse(new TextDecoder().decode(got!.body)));
+    }
+    return entries;
+  };
+  const read = async (storage: MemoryStorage) =>
+    Db.create({ storage, app: "x", tenant: "t" }).collection("notes").all();
+
+  test("each shape writes its own log ops and changes the folded rows accordingly", async () => {
+    const rows = 8;
+    const tail = 3;
+    const expected = { update: 8, append: 11, delete: 5, shrink: 8 } as const;
+    const ops = { update: "U", append: "I", delete: "D", shrink: "U" } as const;
+    for (const shape of TAIL_SHAPES) {
+      const { storage } = await buildFixture(rows, 256, tail, shape);
+      const entries = await logOps(storage, rows, tail);
+      expect(entries.map((e) => e.op)).toEqual(Array(tail).fill(ops[shape]));
+      await expect(read(storage)).resolves.toHaveLength(expected[shape]);
+      const result = await runFoldCpuCell(
+        { axis: "rows", rows, bytes_per_doc: 256, tail_entries: tail, tail_shape: shape },
+        "all",
+        "unprimed",
+        1,
+        1,
+      );
+      expect(result.samples[0]!.outcome).toBe("ok");
+      const fold = await runFoldCpuCell(
+        { axis: "rows", rows, bytes_per_doc: 256, tail_entries: tail, tail_shape: shape },
+        "fold",
+        "unprimed",
+        1,
+        1,
+      );
+      expect(fold.samples[0]!.outcome).toBe("ok");
+    }
+  });
+
+  test("delete removes distinct ids and keeps the point-read row; append ids are new; shrink is smaller", async () => {
+    const delFixture = await buildFixture(8, 256, 3, "delete");
+    const del = await logOps(delFixture.storage, 8, 3);
+    const ids = del.map((e) => e.doc_id);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids).not.toContain("doc-00000000");
+    expect(del.every((e) => e.after === undefined)).toBe(true);
+    const appFixture = await buildFixture(8, 256, 3, "append");
+    const app = await logOps(appFixture.storage, 8, 3);
+    expect(app.map((e) => e.doc_id)).toEqual(["doc-00000008", "doc-00000009", "doc-00000010"]);
+    const updFixture = await buildFixture(8, 256, 3, "update");
+    const shrFixture = await buildFixture(8, 256, 3, "shrink");
+    const upd = await logOps(updFixture.storage, 8, 3);
+    const shr = await logOps(shrFixture.storage, 8, 3);
+    const size = (e: { after: object }) => JSON.stringify(e.after).length;
+    expect(Math.max(...shr.map(size))).toBeLessThan(Math.min(...upd.map(size)));
+    await expect(buildFixture(4, 128, 4, "delete")).rejects.toBeInstanceOf(RangeError);
+  });
+
+  test("default update fixture is unchanged by the shape parameter", async () => {
+    const a = await buildFixture(8, 256, 3);
+    const b = await buildFixture(8, 256, 3, "update");
+    for (const key of [FOLD_CURRENT_JSON_KEY, "app/x/tenant/t/manifests/notes/log/9.json"]) {
+      await expect(a.storage.get(key)).resolves.toEqual(await b.storage.get(key));
+    }
+  });
+
+  test("indexed read declares indexes, finds the point row, and is rejected without indexes", async () => {
+    for (const shape of ["update", "delete"] as const) {
+      const ok = await runFoldCpuCell(
+        { ...cell, tail_shape: shape, index_count: 2 },
+        "indexed",
+        "unprimed",
+        1,
+        1,
+      );
+      expect(ok.samples[0]).toMatchObject({ outcome: "ok" });
+    }
+    const none = await runFoldCpuCell(cell, "indexed", "unprimed", 1, 1);
+    expect(none.samples[0]!.outcome).toBe("failed");
+  });
+
+  test("records with the new cell and workload fields validate; older shapes still do", async () => {
+    const m = await runFoldCpuCell(
+      { ...cell, tail_shape: "append", index_count: 1, admitted_mutations: 2 },
+      "indexed",
+      "unprimed",
+      1,
+      1,
+    );
+    const record = recordFor(m);
+    record.workload.tail_shapes = ["append"];
+    record.workload.document_size_distribution = "fixed";
+    expect(() => assertFoldCpuRecord(record)).not.toThrow();
+    const old = recordFor(await runFoldCpuCell(cell, "all", "unprimed", 1, 1));
+    expect(() => assertFoldCpuRecord(old)).not.toThrow();
   });
 });
 
