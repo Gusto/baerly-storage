@@ -25,9 +25,9 @@
  */
 
 import {
-  CF_FREE_EXTERNAL_REQUEST_LIMIT,
   CF_FREE_INTERNAL_REQUEST_LIMIT,
   COMMIT_RESOLUTION_RESERVE,
+  GC_PENDING_CAS_MAX_ATTEMPTS,
   GC_MARK_LIST_PAGE_KEYS,
   LOG_RETENTION_MAX_DELETES_PER_TICK,
   MAINTENANCE_MAX_FOLD_BYTES_DEFAULT,
@@ -382,44 +382,85 @@ export const foldTickCalls = (input: FoldTickInput): Calls => {
   );
 };
 
+/**
+ * How contended and how due a GC tick is. Main's GC slice
+ * (`packages/server/src/maintenance.ts`, the `CLOUDFLARE_FREE_TIER` JSDoc
+ * "GC, maximally contended": 12 + S) pays for contention on the
+ * `gc/pending.json` ledger and for a due sweep; these say which of those
+ * the tick pays. The tree design does not change them.
+ */
+export interface GcTickState {
+  /**
+   * `gc/pending.json` does not exist yet, so the slice creates it (one
+   * create-only PUT) before its CAS.
+   */
+  readonly pendingBootstrap: boolean;
+  /** The bootstrap create lost a race, so the slice re-reads the pending ledger (one GET). */
+  readonly pendingBootstrapConflict: boolean;
+  /**
+   * Attempts of the final pending CAS, each a GET + an `If-Match` PUT. 1
+   * uncontended; at most `GC_PENDING_CAS_MAX_ATTEMPTS` (3).
+   */
+  readonly pendingCasAttempts: number;
+  /** A sweep is due, so the slice re-reads `current.json` before deleting (one GET). */
+  readonly freshCurrentGet: boolean;
+  /**
+   * The tick's rate-limited `tail_hint` refresh runs (one non-retrying
+   * GET + CAS PUT, `MAINTENANCE_TAIL_HINT_REFRESH_REQUESTS`). Due when the
+   * hint lags by `MAINTENANCE_TAIL_HINT_REFRESH_WRITES`.
+   */
+  readonly tailHintRefresh: boolean;
+}
+
+/** The worst GC tick: every contention arm, a due sweep, and the refresh. */
+export const GC_WORST_STATE: GcTickState = {
+  pendingBootstrap: true,
+  pendingBootstrapConflict: true,
+  pendingCasAttempts: GC_PENDING_CAS_MAX_ATTEMPTS,
+  freshCurrentGet: true,
+  tailHintRefresh: true,
+};
+
 export interface GcTickInput {
   readonly shape: TreeShape;
   /** Delete cap per tick. Main's `cf-free` slice: `WRITE_TICK_GC_MAX_SWEEPS`. */
   readonly sweeps: number;
-  /** Log objects the retirement pass may delete. Main: `LOG_RETENTION_MAX_DELETES_PER_TICK`. */
+  /**
+   * Log objects the retirement pass deletes. Main's cap:
+   * `LOG_RETENTION_MAX_DELETES_PER_TICK`. With 0 the pass stops after its
+   * advisory gate GET.
+   */
   readonly retirementDeletes: number;
   /** Keys per LIST page. S3 and R2 return up to `GC_MARK_LIST_PAGE_KEYS` (1,000). */
   readonly listPageKeys: number;
+  readonly state: GcTickState;
   readonly assumptions: DesignAssumptions;
 }
 
 /**
- * Pending-ledger contention the GC slice can add: the bootstrap race plus
- * two more `gc/pending.json` CAS attempts ("Contention adds at most 6",
- * `MAINTENANCE_GC_BASE_REQUESTS` JSDoc). Charged here as retried GETs,
- * which over-counts the CAS PUT share: conservative.
- */
-const GC_CONTENTION_EXTRA_CALLS = 6;
-
-/**
- * One hard-GC write tick (`runBoundedMaintenance` Step 2: GC slice, then
- * log retirement; never in the same tick as a fold), with the snapshot
- * LIST replaced by a LIST of the node namespace and a membership walk.
+ * One hard-GC write tick (`runBoundedMaintenance` Step 2: GC slice, the
+ * `tail_hint` refresh, then log retirement; never in the same tick as a
+ * fold), with the snapshot LIST replaced by a LIST of the node namespace
+ * and a membership walk:
  *
- * - GC slice common path (`MAINTENANCE_GC_BASE_REQUESTS`, 6): `current.json`
- *   GET, `gc/pending.json` GET, the LIST (here: every listed node, paged),
- *   the fresh `current.json` GET before a due sweep, pending CAS GET + PUT;
- *   contention; membership GETs; one DELETE per sweep.
- * - Retirement (`MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS`, 7 at all attempts):
- *   advisory `current.json` GET and the floor CAS's GET + PUT, then one
- *   DELETE per retired log object.
+ * - runner `current.json` GET (1);
+ * - GC slice: its `current.json` GET, the `gc/pending.json` GET, the LIST
+ *   (here: every listed node, paged), the bootstrap create and its
+ *   conflict re-read, the fresh `current.json` GET before a due sweep,
+ *   each pending CAS attempt (GET + PUT), membership GETs, one DELETE per
+ *   sweep;
+ * - the `tail_hint` refresh (non-retrying GET + CAS PUT) when due;
+ * - retirement: the advisory gate GET, then, with something to retire, the
+ *   floor CAS's GET + PUT and one DELETE per log object
+ *   (`MAINTENANCE_RETIRE_PRE_FLOOR_REQUESTS`, 7 at all attempts).
  *
- * Not anchored to `request-counts.json`: the grid's GC cells measure a
- * nearly empty pending ledger, not the worst case. `model.test.ts` checks
- * the composition against the two constants instead.
+ * At depth 0 this is main: `model.test.ts` asserts the uncontended state
+ * against the `tick:gc` / `tick:gc-sweep` cells of `request-counts.json`
+ * and the worst state against `maintenance-budget.test.ts`'s pinned
+ * contended tick.
  */
 export const gcTickCalls = (input: GcTickInput): Calls => {
-  const { shape, assumptions } = input;
+  const { shape, assumptions, state } = input;
   const liveNodes = internalNodeCount(shape) + shape.leaves;
   const listed = Math.ceil(liveNodes * assumptions.gcListedObjectsPerLiveNode);
   const listPages = Math.max(1, Math.ceil(listed / input.listPageKeys));
@@ -428,9 +469,15 @@ export const gcTickCalls = (input: GcTickInput): Calls => {
       ? internalNodeCount(shape)
       : assumptions.gcMembershipGets;
   return sumCalls(
-    { gets: 4, casPuts: 1, listPages },
-    { gets: GC_CONTENTION_EXTRA_CALLS + membership, deletes: input.sweeps },
-    { gets: 2, casPuts: 1, deletes: input.retirementDeletes },
+    { gets: 1 },
+    { gets: 2 + membership, listPages, deletes: input.sweeps },
+    state.pendingBootstrap ? { creates: 1 } : {},
+    state.pendingBootstrapConflict ? { gets: 1 } : {},
+    { gets: state.pendingCasAttempts, casPuts: state.pendingCasAttempts },
+    state.freshCurrentGet ? { gets: 1 } : {},
+    state.tailHintRefresh ? { unretriedGets: 1, casPuts: 1 } : {},
+    { gets: 1 },
+    input.retirementDeletes > 0 ? { gets: 1, casPuts: 1, deletes: input.retirementDeletes } : {},
   );
 };
 
@@ -540,36 +587,29 @@ export const commitHoldRequests = (): number =>
 
 // ── Ledger ───────────────────────────────────────────────────────────────
 
-/** How the host reaches storage, which decides the pools charged. */
-export type Transport = "r2-binding" | "fetch";
-
 /**
- * The Workers Free ledger. `internal` is 900: the documented 1,000
- * internal subrequests less the 10% margin (`CF_FREE_INTERNAL_REQUEST_LIMIT`);
- * `external` is 45: 50 less 5 (`CF_FREE_EXTERNAL_REQUEST_LIMIT`). Every
- * storage call charges `internal`; a call over `fetch` also charges
- * `external`. The R2 binding charges no external call, and the Worker makes
- * no Cache API call.
+ * The Workers Free + R2 binding ledger: 900 internal requests, the
+ * documented 1,000 internal subrequests less the 10% margin
+ * (`CF_FREE_INTERNAL_REQUEST_LIMIT`). R2 binding calls charge no
+ * `external` request and the Worker makes no Cache API call, so every
+ * charge here is internal. Free + S3 over `fetch` is not a supported host
+ * and is not modelled.
  */
 export interface Ledger {
   readonly internal: number;
-  readonly external: number;
 }
 
 export const FREE_LEDGER: Ledger = {
   internal: CF_FREE_INTERNAL_REQUEST_LIMIT,
-  external: CF_FREE_EXTERNAL_REQUEST_LIMIT,
 };
 
+/** A charge on the ledger's pools. External is always 0 on the R2 binding. */
 export interface PoolCharge {
   readonly internal: number;
-  readonly external: number;
+  readonly external: 0;
 }
 
-export const poolCharge = (requests: number, transport: Transport): PoolCharge => ({
-  internal: requests,
-  external: transport === "fetch" ? requests : 0,
-});
+export const poolCharge = (requests: number): PoolCharge => ({ internal: requests, external: 0 });
 
 export interface Verdict {
   /** What the operation charges. */
@@ -582,7 +622,7 @@ export interface Verdict {
 const verdict = (charge: PoolCharge, budget: PoolCharge): Verdict => ({
   charge,
   budget,
-  fits: charge.internal <= budget.internal && charge.external <= budget.external,
+  fits: charge.internal <= budget.internal,
 });
 
 /**
@@ -592,9 +632,8 @@ const verdict = (charge: PoolCharge, budget: PoolCharge): Verdict => ({
 export const readVerdict = (
   calls: Calls,
   policy: RetryPolicy,
-  transport: Transport = "r2-binding",
   ledger: Ledger = FREE_LEDGER,
-): Verdict => verdict(poolCharge(chargedRequests(calls, policy), transport), ledger);
+): Verdict => verdict(poolCharge(chargedRequests(calls, policy)), poolCharge(ledger.internal));
 
 /**
  * A tick against the ledger. On Workers the tick runs in the write's
@@ -605,14 +644,13 @@ export const tickVerdict = (
   tick: Calls,
   write: Calls,
   policy: RetryPolicy,
-  transport: Transport = "r2-binding",
   ledger: Ledger = FREE_LEDGER,
 ): Verdict => {
-  const writeCharge = poolCharge(chargedRequests(write, policy) + commitHoldRequests(), transport);
-  return verdict(poolCharge(chargedRequests(tick, policy), transport), {
-    internal: ledger.internal - writeCharge.internal,
-    external: ledger.external - writeCharge.external,
-  });
+  const writeCharge = chargedRequests(write, policy) + commitHoldRequests();
+  return verdict(
+    poolCharge(chargedRequests(tick, policy)),
+    poolCharge(ledger.internal - writeCharge),
+  );
 };
 
 // ── Floor sweep ──────────────────────────────────────────────────────────
@@ -626,7 +664,6 @@ export interface Scenario {
   readonly concurrentCommits: number;
   readonly writeStateRead: "point" | "scan";
   readonly policy: RetryPolicy;
-  readonly transport: Transport;
   readonly assumptions: DesignAssumptions;
 }
 
@@ -655,7 +692,7 @@ export const floorFoldTickVerdict = (shape: TreeShape, k: number, s: Scenario): 
     headCasLost: true,
     assumptions: s.assumptions,
   });
-  return tickVerdict(tick, floorWriteRoute(shape, s), s.policy, s.transport);
+  return tickVerdict(tick, floorWriteRoute(shape, s), s.policy);
 };
 
 const floorRead = (shape: TreeShape, s: Scenario): ReadInput => ({
@@ -678,18 +715,18 @@ export const floorGcTickVerdict = (shape: TreeShape, s: Scenario): Verdict =>
       sweeps: FLOOR_PROFILE.gcSweeps,
       retirementDeletes: FLOOR_PROFILE.retirementDeletes,
       listPageKeys: FLOOR_PROFILE.listPageKeys,
+      state: GC_WORST_STATE,
       assumptions: s.assumptions,
     }),
     floorWriteRoute(shape, s),
     s.policy,
-    s.transport,
   );
 
 export const floorPointReadVerdict = (shape: TreeShape, s: Scenario): Verdict =>
-  readVerdict(pointReadCalls(floorRead(shape, s)), s.policy, s.transport);
+  readVerdict(pointReadCalls(floorRead(shape, s)), s.policy);
 
 export const floorScanVerdict = (shape: TreeShape, s: Scenario): Verdict =>
-  readVerdict(scanCalls(floorRead(shape, s)), s.policy, s.transport);
+  readVerdict(scanCalls(floorRead(shape, s)), s.policy);
 
 /**
  * The most changed leaves one fold tick can take at `shape` and stay in
