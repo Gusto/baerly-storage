@@ -11,6 +11,30 @@ pnpm bench:fold-cpu --operations=fold --arms=warmed --tails=16 --byte-targets=41
 
 The default byte ladder targets 64 KiB, 256 KiB, 512 KiB and 1 MiB using 2 KiB documents; the row ladder uses 256, 1024, 2048 and 8192 small documents. Targets approximate the encoded snapshot size: every sample records actual bytes. Tails contain 0, 1 or 16 uniformly selected full-post-image updates to existing rows; empty-tail controls run reads only. Use comma-separated `--byte-targets`, `--rows` and `--tails` for larger screens. Index count is zero. The seeded notes shape uses scalar fields, repeated ASCII padding and sequential fixed-width IDs; timings do not represent heterogeneous application documents.
 
+## Tail shapes and indexed reads
+
+Extra dimensions, all additive (defaults reproduce the earlier uniform-update, index-count-0 screen):
+
+- `--tail-shapes=update,append,delete,shrink` (default `update`): `update` is uniformly selected full-post-image `U` entries; `append` is `I` entries for new sequential ids (row count grows by the tail); `delete` is `D` entries for distinct, evenly strided ids, never `doc-00000000` (rows shrink by the tail; the tail must be shorter than the row count); `shrink` is `U` entries writing quarter-size post-images. A tail of 0 has shape `none` and runs once per size.
+- `--index-count=0..4` (default 0): declares that many indexes (`title`, `n`, `done`, `pad`) through `Db.create({ config })` for every operation in the run. Declared indexes are validated but read and write no storage on this tree, so this records the declared count; it is not an index lookup.
+- `--operations=...,indexed`: a `where({ title })` read returning exactly one row, next to point `get` and scan `all`. Requires `--index-count>=1`.
+
+Each measured cell carries `tail_shape`, `index_count` and `admitted_mutations` (every tail entry is replayed by reads and folded by the one unsliced `compact()`, so fold CPU is total tail drain CPU). The workload block states document size distribution, ID distribution, index count, tail shapes, admitted mutations and the cold/warm label (`runtime_arm`: runtime warmth only, never a cold isolate). Records written before these fields existed still validate.
+
+Quiet-run commands (quiet host, stable checkout, no other jobs):
+
+```sh
+pnpm bench:fold-cpu --byte-targets=524288,4194304,16777216,33554432 --rows=4096,32768 --tails=0,16 --tail-shapes=update,append,delete,shrink --operations=get,all,fold --arms=unprimed,warmed --repetitions=11 --warmups=3 --out=bench/results/fold-cpu/tail-shapes.json
+pnpm bench:fold-cpu --byte-targets=524288,4194304,16777216,33554432 --rows=4096,32768 --tails=0,16 --tail-shapes=update --index-count=2 --operations=get,all,indexed --arms=unprimed,warmed --repetitions=11 --warmups=3 --out=bench/results/fold-cpu/indexed-reads.json
+```
+
+Existing baseline commands are unchanged:
+
+```sh
+pnpm bench:fold-cpu --byte-targets=524288,4194304,16777216,33554432 --rows=4096,32768 --tails=0,16 --repetitions=11 --warmups=3 --out=bench/results/fold-cpu/quiet-baseline.json
+pnpm bench:fold-cpu --byte-targets=524288,4194304,16777216,33554432 --rows=4096,32768 --tails=16 --operations=get,all,fold --arms=warmed --repetitions=11 --warmups=3 --profile-dir=bench/results/fold-cpu/quiet-profiles --out=bench/results/fold-cpu/quiet-profile-run.json
+```
+
 Each sample receives a fresh fixture outside the measured interval. The `unprimed` arm has no explicit warmup; `warmed` runs three same-operation warmups on separate fixtures before its eleven default samples. These are runtime-warmth arms in one process. Earlier cells and fixture encoding already warm the runtime. Neither arm is a fresh isolate or an OS/data-cache experiment; production queries reload and hash-verify snapshots on every invocation.
 
 Output is a versioned JSON record under ignored `bench/results/fold-cpu/` (or `--out=PATH`). It includes source SHA, the full measurement patch from HEAD (including staged, unstaged and untracked files), patch hash, CPU models, core count, runtime, host memory/heap limits, start/end load, workload and all raw samples/failures. A source change during the run rejects the result. Use a stable checkout; do not edit it while measuring. Ignored files are excluded from provenance, so keep all executable measurement inputs tracked or untracked and unignored. No environment-variable values are captured.

@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { relative, resolve, sep } from "node:path";
-import { SEED } from "../lib/fold-fixture.ts";
+import { SEED, TAIL_SHAPES, type TailShape } from "../lib/fold-fixture.ts";
 import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import {
+  INDEX_FIELDS,
   runFoldCpuCell,
   type FoldCpuCell,
   type FoldCpuMeasurement,
@@ -62,6 +63,8 @@ export const main = async (): Promise<number> => {
       "byte-targets": { type: "string", default: "65536,262144,524288,1048576" },
       rows: { type: "string", default: "256,1024,2048,8192" },
       tails: { type: "string", default: "0,1,16" },
+      "tail-shapes": { type: "string", default: "update" },
+      "index-count": { type: "string", default: "0" },
       repetitions: { type: "string", default: "11" },
       warmups: { type: "string", default: "3" },
       operations: { type: "string", default: "get,all,fold" },
@@ -76,7 +79,8 @@ export const main = async (): Promise<number> => {
   if (values.help) {
     console.log(
       "pnpm bench:fold-cpu [--byte-targets=65536,524288] [--rows=256,2048] [--tails=0,1,16] " +
-        "[--repetitions=11] [--warmups=3] [--operations=get,all,fold] [--arms=unprimed,warmed] " +
+        "[--tail-shapes=update,append,delete,shrink] [--index-count=0..4] " +
+        "[--repetitions=11] [--warmups=3] [--operations=get,all,fold,indexed] [--arms=unprimed,warmed] " +
         "[--profile-dir=bench/results/fold-cpu/PROFILE-RUN] " +
         "[--cpu-budget-ms=N] [--latency-budget-ms=N] [--out=PATH]",
     );
@@ -86,7 +90,20 @@ export const main = async (): Promise<number> => {
   const warmups = positive(values.warmups, "warmups");
   const cpuBudget = budget(values["cpu-budget-ms"]);
   const latencyBudget = budget(values["latency-budget-ms"]);
-  const operations = selectValues<FoldCpuOperation>(values.operations, ["get", "all", "fold"]);
+  const operations = selectValues<FoldCpuOperation>(values.operations, [
+    "get",
+    "all",
+    "fold",
+    "indexed",
+  ]);
+  const tailShapes = selectValues<TailShape>(values["tail-shapes"], TAIL_SHAPES);
+  const indexCount = Number(values["index-count"]);
+  if (!Number.isSafeInteger(indexCount) || indexCount < 0 || indexCount > INDEX_FIELDS.length) {
+    throw new RangeError(`index-count: integer 0..${INDEX_FIELDS.length} required`);
+  }
+  if (operations.includes("indexed") && indexCount < 1) {
+    throw new RangeError("operation indexed requires --index-count>=1");
+  }
   const arms = selectValues<RuntimeArm>(values.arms, ["unprimed", "warmed"]);
   const cells: FoldCpuCell[] = [];
   const tails = values.tails.split(",").map((raw) => {
@@ -97,16 +114,32 @@ export const main = async (): Promise<number> => {
     return n;
   });
   for (const tail of tails) {
-    for (const target of ladder(values["byte-targets"], "byte-targets")) {
-      cells.push({
-        axis: "bytes",
-        rows: Math.max(1, Math.round(target / 2048)),
-        bytes_per_doc: 2048,
-        tail_entries: tail,
-      });
+    // A zero-length tail has no mutation shape; emit one control cell per size.
+    for (const shape of tail === 0 ? (["none"] as const) : tailShapes) {
+      const extra = {
+        tail_shape: shape,
+        index_count: indexCount,
+        admitted_mutations: tail,
+      };
+      for (const target of ladder(values["byte-targets"], "byte-targets")) {
+        cells.push({
+          axis: "bytes",
+          rows: Math.max(1, Math.round(target / 2048)),
+          bytes_per_doc: 2048,
+          tail_entries: tail,
+          ...extra,
+        });
+      }
+      for (const rows of ladder(values.rows, "rows")) {
+        cells.push({ axis: "rows", rows, bytes_per_doc: 64, tail_entries: tail, ...extra });
+      }
     }
-    for (const rows of ladder(values.rows, "rows")) {
-      cells.push({ axis: "rows", rows, bytes_per_doc: 64, tail_entries: tail });
+  }
+  if (tailShapes.includes("delete")) {
+    for (const cell of cells) {
+      if (cell.tail_shape === "delete" && cell.tail_entries > cell.rows - 1) {
+        throw new RangeError("delete tail must be shorter than the row count");
+      }
     }
   }
   const cwd = process.cwd();
@@ -140,7 +173,7 @@ export const main = async (): Promise<number> => {
   const measurements: FoldCpuMeasurement[] = [];
   const profiles: ProfileEntry[] = [];
   console.log(
-    "axis rows bytes tail op arm maxThreadMs maxLatencyMs cpuMarginMs latencyMarginMs failures",
+    "axis rows bytes tail shape idx op arm maxThreadMs maxLatencyMs cpuMarginMs latencyMarginMs failures",
   );
   for (const cell of cells) {
     for (const operation of operations) {
@@ -162,7 +195,7 @@ export const main = async (): Promise<number> => {
         const cpu = Math.max(...result.samples.map((s) => s.thread_cpu_ms));
         const latency = Math.max(...result.samples.map((s) => s.latency_ms));
         console.log(
-          `${cell.axis} ${cell.rows} ${result.snapshot_bytes} ${cell.tail_entries} ${operation} ${arm} ` +
+          `${cell.axis} ${cell.rows} ${result.snapshot_bytes} ${cell.tail_entries} ${cell.tail_shape} ${indexCount} ${operation} ${arm} ` +
             `${cpu.toFixed(3)} ${latency.toFixed(3)} ` +
             `${cpuBudget === null ? "unset" : (cpuBudget - cpu).toFixed(3)} ` +
             `${latencyBudget === null ? "unset" : (latencyBudget - latency).toFixed(3)} ` +
@@ -199,15 +232,24 @@ export const main = async (): Promise<number> => {
     workload: {
       seed: SEED,
       data_shape:
-        "notes: title, seeded integer/boolean, repeated ASCII x padding; canonical JSON; uniform full-post-image updates",
+        "notes: title, seeded integer/boolean, repeated ASCII x padding; canonical JSON; tail shapes per cell.tail_shape (update: uniform full-post-image U; append: I of new sequential ids; delete: D of strided existing rows; shrink: U to a quarter-size post-image)",
       id_shape: "doc-00000000: sequential fixed-width ASCII strings; point query doc-00000000",
-      index_count: 0,
+      index_count: indexCount,
       cache_state:
         "MemoryStorage resident bytes; no parsed snapshot cache; unprimed has no explicit warmup; warmed has separate-fixture same-operation warmups; shared process/JIT throughout",
       repetitions,
       warmups,
       operations,
       runtime_arms: arms,
+      tail_shapes: tailShapes,
+      document_size_distribution:
+        "fixed: every document targets cell.bytes_per_doc canonical bytes (2048 on the bytes axis, 64 on the rows axis); shrink tails write quarter-size post-images",
+      id_distribution:
+        "sequential fixed-width doc-NNNNNNNN; update/shrink tails pick ids uniformly (seeded) with replacement; append ids continue past the last row; delete ids are distinct, evenly strided, never row 0; point and indexed reads target doc-00000000",
+      admitted_mutations:
+        "every tail entry (cell.admitted_mutations = tail_entries) is replayed by each read and folded by the single unsliced compact(); no entries are deferred",
+      cold_warm_label:
+        "per measurement: runtime_arm unprimed (no explicit warmup) or warmed (same-operation warmups); runtime/JIT warmth only, never a cold isolate or cold storage",
     },
     measurements,
     failures: measurements.flatMap((m) => m.samples).filter((s) => s.outcome === "failed").length,
@@ -221,6 +263,11 @@ export const main = async (): Promise<number> => {
       "MemoryStorage retains body references; no network wait, transport encoding, realistic storage concurrency, real data heterogeneity or index work.",
       "Margins printed as supplied budget minus observed maximum; no budget selected by harness, no confidence or safety guarantee.",
       "Load screen uses endpoint 1/5/15-minute averages >= 0.5 per logical core or free memory <10%; quiet does not prove absence of contention. Acceptance needs a quiet owner-run study.",
+      ...(indexCount > 0
+        ? [
+            "Declared indexes are validated at Db.create but read and write no storage on this tree; indexed reads are filtered scans (where({title})) with the declared count recorded, not index lookups.",
+          ]
+        : []),
       ...(profileDirectory
         ? [
             "Inspector profiling is enabled for each measured invocation only; timings include inspector stop overhead and are not uninstrumented baseline evidence. Profiles sample the calling thread, not off-thread crypto/GC work; short invocations may have few samples.",
