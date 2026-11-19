@@ -126,8 +126,37 @@ describe("analyze", () => {
     expect(row("distinct", 8, 2).row.cell.name).toBe("tree-k8-b16-d2-distinct");
     const report = formatReport(a);
     expect(report).toContain("distinct | 4 | 16 | 3 | 9 |");
-    expect(report).toContain("shared | 4 | 16 | 3 | 3 |");
+    expect(report).toContain("\n4 | 16 | 3 | 60 | 0 |");
+    expect(report).toContain("DISTINCT paths");
     expect(report).toContain("distinct paths, leaf 16 KiB, d=3: <= 8 ms: 4");
+  });
+
+  test("distinct-path cells do not move the headline factors and get their own", () => {
+    // Shared cells at FACTOR x node; distinct cells at 2x that.
+    const events = makeEvents().map((e) => {
+      const name = new URL(e.url).searchParams.get("cell")!;
+      return name.endsWith("-distinct") ? Object.assign({}, e, { cpuTime: e.cpuTime * 2 }) : e;
+    });
+    const a = analyze(events, makeBaseline(QUIET));
+    expect(a.factor.overall.p50).toBeCloseTo(FACTOR, 9);
+    expect(a.factor.perKind["tree"]!.p50).toBeCloseTo(FACTOR, 9);
+    expect(a.factor.perKind["tree"]!.n).toBe(36);
+    expect(a.factor.distinct.p50).toBeCloseTo(FACTOR * 2, 9);
+    expect(a.factor.distinct.n).toBe(24);
+  });
+
+  test("a capture without distinct cells reports them as not measured, not as 0", () => {
+    const old = makeEvents(60, 1).filter(
+      (e) => !new URL(e.url).searchParams.get("cell")!.endsWith("-distinct"),
+    );
+    const a = analyze(old, makeBaseline(QUIET));
+    const distinct = a.tree.maxLeaves.filter((m) => m.path === "distinct");
+    expect(distinct).toHaveLength(6);
+    expect(distinct.every((m) => !m.measured)).toBe(true);
+    expect(a.tree.maxLeaves.filter((m) => m.path === "shared").every((m) => m.measured)).toBe(true);
+    const report = formatReport(a);
+    expect(report).toContain("distinct paths, leaf 16 KiB, d=3: not measured");
+    expect(report).not.toContain("distinct paths, leaf 16 KiB, d=3: <=");
   });
 
   test.each(["killed", "missing", "insufficient"] as const)(

@@ -174,7 +174,12 @@ export interface Analysis {
   readonly missingCpu: number;
   readonly rows: CellRow[];
   readonly noop: { readonly deployed: number; readonly node: number };
-  readonly factor: { readonly overall: Factor; readonly perKind: Record<string, Factor> };
+  readonly factor: {
+    readonly overall: Factor;
+    readonly perKind: Record<string, Factor>;
+    /** Distinct-path tree cells only; excluded from overall and perKind. */
+    readonly distinct: Factor;
+  };
   readonly gate: Array<{ g: "C" | "E"; ms: number; how: string; pass: boolean }>;
   readonly largestPassing: { c: number | undefined; e: number | undefined };
   readonly tree: {
@@ -185,6 +190,7 @@ export interface Analysis {
       bKiB: number;
       d: number;
       underPass: number;
+      measured: boolean;
       underFree: number;
     }>;
   };
@@ -280,10 +286,13 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
   });
 
   const FACTOR_KINDS: CellKind[] = ["fold", "tree"];
+  // Headline factors keep their pre-distinct meaning (fold + shared-path tree
+  // cells); distinct-path cells get their own factor.
   const usable = rows.filter(
     (r) =>
       r.fits &&
       FACTOR_KINDS.includes(r.cell.kind) &&
+      !isDistinct(r.cell) &&
       r.node !== undefined &&
       r.node.p50 >= MIN_NODE_P50_MS,
   );
@@ -292,6 +301,14 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
     return { p50: median(xs.map((r) => r.fP50)), p99: median(xs.map((r) => r.fP99)), n: xs.length };
   };
   const overall = factorFor(() => true);
+  const distinctXs = rows.filter(
+    (r) => r.fits && isDistinct(r.cell) && r.node !== undefined && r.node.p50 >= MIN_NODE_P50_MS,
+  );
+  const distinct: Factor = {
+    p50: median(distinctXs.map((r) => r.fP50)),
+    p99: median(distinctXs.map((r) => r.fP99)),
+    n: distinctXs.length,
+  };
   const perKind = Object.fromEntries(
     FACTOR_KINDS.map((k) => [k, factorFor((r) => r.cell.kind === k)]),
   );
@@ -369,6 +386,8 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       d: g[0]!.d,
       underPass: under(PASS_MS),
       underFree: under(FREE_LIMIT_MS),
+      // No ok samples at all: the capture predates these cells.
+      measured: g.some((t) => t.row.n > 0),
     };
   });
 
@@ -399,13 +418,15 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
     missingCpu,
     rows,
     noop: { deployed: noopDep, node: noopNode },
-    factor: { overall, perKind },
+    factor: { overall, perKind, distinct },
     gate,
     largestPassing: { c: largest("ladder"), e: largest("rowsLadder") },
     tree: { rows: treeRows, maxLeaves },
     probes,
   };
 };
+
+const isDistinct = (c: Cell): boolean => c.tree !== undefined && treePath(c.tree) === "distinct";
 
 const f2 = (x: number | undefined) => (x !== undefined && Number.isFinite(x) ? x.toFixed(2) : "-");
 
@@ -420,6 +441,16 @@ const probeLine = (name: string, p: ProbeSummary): string => {
   const errors = p.errors.length === 0 ? "none" : p.errors.join(" | ");
   return `  ${name}: ${p.runs - p.skipped} runs; completed ${p.completed.join(",")}; first failing call ${failing}; clean runs ${p.cleanRuns}; errors: ${errors}`;
 };
+
+const treeLine = (t: TreeRow, withPath: boolean): string =>
+  `${withPath ? `${t.path} | ` : ""}${t.k} | ${t.bKiB} | ${t.d} | ${withPath ? `${t.nodes} | ` : ""}${t.row.n} | ${t.row.killed} | ${f2(t.row.d.p50)} / ${f2(t.row.d.p90)} / ${f2(t.row.d.p99)}${t.row.fits ? "" : "  (does not fit)"}`;
+
+const leavesLine = (m: Analysis["tree"]["maxLeaves"][number], withPath: boolean): string =>
+  `  ${withPath ? "distinct paths, " : ""}leaf ${m.bKiB} KiB, d=${m.d}: ${
+    m.measured
+      ? `<= ${PASS_MS} ms: ${m.underPass}; <= ${FREE_LIMIT_MS} ms: ${m.underFree}`
+      : "not measured (no samples in this capture)"
+  }`;
 
 export const formatReport = (a: Analysis): string => {
   const out: string[] = [];
@@ -456,17 +487,17 @@ export const formatReport = (a: Analysis): string => {
     `Largest passing size (fitting cells with measured deployed p99 <= ${PASS_MS} ms, every smaller size passing too):`,
     `  main: C ${a.largestPassing.c === undefined ? "none (fails at 16 KiB)" : `${a.largestPassing.c} KiB (2 KiB docs)`}; E ${a.largestPassing.e === undefined ? "none (fails at 256 rows)" : `${a.largestPassing.e} rows (~240 B docs)`}`,
     "",
-    "Tree fold step (direct deployed CPU, WARM-ISOLATE: JIT-hot, cold invocations dropped, uniform `x` padding is a best case for JSON; not a cold fold cost; `shared` = one root-to-leaf path, the best case; `distinct` = k distinct paths, 1 + k*(d-1) nodes for k <= 64):",
-    "path | k | leaf KiB | d | nodes | n ok | killed | deployed p50 / p90 / p99 ms",
-    ...a.tree.rows.map(
-      (t) =>
-        `${t.path} | ${t.k} | ${t.bKiB} | ${t.d} | ${t.nodes} | ${t.row.n} | ${t.row.killed} | ${f2(t.row.d.p50)} / ${f2(t.row.d.p90)} / ${f2(t.row.d.p99)}${t.row.fits ? "" : "  (does not fit)"}`,
-    ),
+    "Tree fold step (direct deployed CPU, WARM-ISOLATE: JIT-hot, cold invocations dropped, uniform `x` padding is a best case for JSON; not a cold fold cost; one shared path, so the best case for d path nodes):",
+    "k | leaf KiB | d | n ok | killed | deployed p50 / p90 / p99 ms",
+    ...a.tree.rows.filter((t) => t.path === "shared").map((t) => treeLine(t, false)),
     `Leaves per step that fit (measured p99; every smaller k fits too; 0 = none of the grid):`,
-    ...a.tree.maxLeaves.map(
-      (m) =>
-        `  ${m.path} paths, leaf ${m.bKiB} KiB, d=${m.d}: <= ${PASS_MS} ms: ${m.underPass}; <= ${FREE_LIMIT_MS} ms: ${m.underFree}`,
-    ),
+    ...a.tree.maxLeaves.filter((m) => m.path === "shared").map((m) => leavesLine(m, false)),
+    "",
+    `Tree fold step, DISTINCT paths (k leaves on k distinct root-to-leaf paths; nodes = 1 + k*(d-1) for k <= 64; same warm-isolate caveats; its factor is separate from the headline factors above: p50-basis ${f2(a.factor.distinct.p50)}x, p99-basis ${f2(a.factor.distinct.p99)}x, ${a.factor.distinct.n} cells):`,
+    "path | k | leaf KiB | d | nodes | n ok | killed | deployed p50 / p90 / p99 ms",
+    ...a.tree.rows.filter((t) => t.path === "distinct").map((t) => treeLine(t, true)),
+    `Leaves per step that fit, distinct paths (measured p99; every smaller k fits too; 0 = none of the grid):`,
+    ...a.tree.maxLeaves.filter((m) => m.path === "distinct").map((m) => leavesLine(m, true)),
     "",
     "S1 probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):",
     "  probe-cache-match is INCONCLUSIVE on *.workers.dev (the Cache API is a no-op there); only a custom-domain route can show whether Cache API calls count against 50.",
