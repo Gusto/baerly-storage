@@ -24,6 +24,8 @@ export interface FoldCpuCell {
   index_count?: number;
   /** Additive; tail entries the measured call admits/replays (= tail_entries). */
   admitted_mutations?: number;
+  /** Additive; actual encoded post-image bytes of the tail's I/U entries (absent for 0/delete). */
+  tail_post_image_bytes?: { min: number; max: number };
 }
 export type FoldCpuOperation = "get" | "all" | "fold" | "indexed";
 /** Distinct top-level fields available for declared indexes, in declaration order. */
@@ -247,6 +249,7 @@ export const runFoldCpuCell = async (
   }
   const samples: FoldCpuSample[] = [];
   let snapshotBytes = 0;
+  let postImage: FoldCpuCell["tail_post_image_bytes"];
   for (let i = 0; i < repetitions; i++) {
     const fixture = await buildFixture(
       cell.rows,
@@ -255,6 +258,12 @@ export const runFoldCpuCell = async (
       shapeOf(cell),
     );
     snapshotBytes = fixture.snapshotBytes;
+    if (fixture.tailPostImageBytes.length > 0) {
+      postImage = {
+        min: Math.min(...fixture.tailPostImageBytes),
+        max: Math.max(...fixture.tailPostImageBytes),
+      };
+    }
     samples.push(
       await measureInvocation(
         fixture.storage,
@@ -269,5 +278,11 @@ export const runFoldCpuCell = async (
       ),
     );
   }
-  return { cell, operation, runtime_arm: runtimeArm, snapshot_bytes: snapshotBytes, samples };
+  return {
+    cell: postImage ? { ...cell, tail_post_image_bytes: postImage } : cell,
+    operation,
+    runtime_arm: runtimeArm,
+    snapshot_bytes: snapshotBytes,
+    samples,
+  };
 };
