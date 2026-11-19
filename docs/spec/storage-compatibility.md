@@ -3,7 +3,7 @@ title: Storage compatibility
 audience: spec
 doc_type: current-contract
 summary: Which object-storage backends baerly-storage supports (AWS S3, Cloudflare R2, and GCS's native XML API), and the conditional-write features it depends on.
-last-reviewed: 2026-11-13
+last-reviewed: 2026-11-19
 tags: [protocol, s3]
 related: [s3-xml-escaping-cases.md, "../adr/006-native-gcs-adapter.md"]
 ---
@@ -113,6 +113,8 @@ Range-GET (partial-object reads via `Range:`) and delimiter-based listing (`?del
 ### ETag opacity
 
 The `ETag` string is **opaque**. A port MUST compare it byte-for-byte — **including any surrounding quotes** — and round-trip it unchanged; it MUST NOT strip quotes, lowercase, or otherwise normalize the value. The `ifMatch` CAS contract (see [conditional writes](#s3-is-an-immutable-key-value-store-with-a-single-index)) depends on this: the writer passes back the exact `etag` string returned by a prior `put`, and the store must match it verbatim. The conformance suite pins this by asserting `get(...).etag === put(...).etag` exactly, and by passing quoted literals such as `"deadbeef"` (with the quotes) straight through the `ifMatch` path.
+
+Opacity applies to the `Storage` value, not the wire header. Cloudflare R2's S3 API compresses `application/json` `GET` responses over about 159 bytes and returns their ETag weakened (`W/"<md5>"`); `If-Match` with the weak form always fails with 412, while the bare `"<md5>"` matches the stored object. `S3HttpStorage` therefore drops a leading `W/` from response ETags so that `get(...).etag === put(...).etag` holds and the value round-trips into `ifMatch`; that is the only rewrite it applies. The conformance case _"the etag a get returns for a compressible JSON body feeds ifMatch"_ pins this against every backend.
 
 ## Support tiers
 

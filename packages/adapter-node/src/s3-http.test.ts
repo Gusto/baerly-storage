@@ -51,6 +51,20 @@ describe("S3HttpStorage.get", () => {
     expect(req.url).toBe("https://example.invalid/b/k");
   });
 
+  test("weak ETag → returned strong, so it can feed ifMatch", async () => {
+    // R2's S3 API weakens the ETag of a response it compresses
+    // (`application/json` over ~159 bytes); `If-Match` with the weak
+    // value always fails.
+    const fetchFn = vi.fn<typeof fetch>(async (_req) =>
+      okResponse(new TextEncoder().encode("{}").buffer as ArrayBuffer, {
+        ETag: 'W/"abc"',
+      }),
+    );
+    const s = mkStorage(fetchFn as unknown as typeof fetch);
+    const got = await s.get("k");
+    expect(got!.etag).toBe('"abc"');
+  });
+
   test("404 → null", async () => {
     const fetchFn = vi.fn<typeof fetch>(async (_req) => noBody(404));
     const s = mkStorage(fetchFn as unknown as typeof fetch);

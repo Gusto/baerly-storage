@@ -481,6 +481,31 @@ export function defineStorageConformanceSuite(
         expect(got!.etag).toBe(second.etag);
       });
 
+      test("the etag a get returns for a compressible JSON body feeds ifMatch", async () => {
+        // `current.json` and `gc/pending.json` advance this way: get, then
+        // put with `ifMatch` set to the etag that get returned. R2's S3 API
+        // compresses `application/json` responses over ~159 bytes and
+        // weakens their ETag (`W/"…"`), which `If-Match` never matches, so
+        // the small `application/octet-stream` bodies above can't catch it.
+        const enc = new TextEncoder();
+        const body = enc.encode(
+          JSON.stringify({ rows: Array.from({ length: 256 }, (_u, i) => i) }),
+        );
+        const first = await s.put("k.json", body, { contentType: "application/json" });
+        const got = await pollUntil(
+          () => s.get("k.json"),
+          (g) => g !== null && bytesEqual(g.body, body),
+          settle,
+        );
+        expect(got!.etag).toBe(first.etag);
+        await expect(
+          s.put("k.json", enc.encode('{"rows":[]}'), {
+            contentType: "application/json",
+            ifMatch: got!.etag,
+          }),
+        ).resolves.toMatchObject({ etag: expect.any(String) });
+      });
+
       test("fails with BaerlyError WriteConflict when key is absent", async () => {
         await expect(
           s.put("k", new TextEncoder().encode("v"), { ifMatch: opts.staleEtag }),

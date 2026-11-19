@@ -14,6 +14,16 @@ import {
 import { mapS3StorageError, retryAfterCause, s3ExpiredTokenCode } from "./http-transport.ts";
 import { parseListObjectsV2CommandOutput } from "./xml.ts";
 
+/**
+ * Drop a weak-validator prefix from a response ETag. R2's S3 API compresses
+ * `application/json` GET responses over ~159 bytes and returns the stored
+ * ETag as `W/"<md5>"`; `If-Match` with that weak value always fails, while
+ * the bare `"<md5>"` matches the stored object (and a wrong one is still
+ * refused). `current.json` and `gc/pending.json` advance by exactly that
+ * get-then-`ifMatch`, so without this no fold lands on R2 over S3.
+ */
+const strongEtag = (etag: string): string => (etag.startsWith("W/") ? etag.slice(2) : etag);
+
 /** State shared by the attempts of one storage call. */
 interface CallState {
   /** The call already refreshed credentials after an expired-token response. */
@@ -200,7 +210,7 @@ export class S3HttpStorage implements Storage {
             throw new BaerlyError("InvalidResponse", `GET ${key}: missing ETag`);
           }
           const body = new Uint8Array(await res.arrayBuffer());
-          return { body, etag };
+          return { body, etag: strongEtag(etag) };
         }
         case 404: {
           return null;
@@ -273,7 +283,7 @@ export class S3HttpStorage implements Storage {
         throw new BaerlyError("InvalidResponse", `PUT ${key}: missing ETag`);
       }
       const dateStr = res.headers.get("Date");
-      const result: { etag: string; serverDate?: Date } = { etag };
+      const result: { etag: string; serverDate?: Date } = { etag: strongEtag(etag) };
       if (dateStr !== null) {
         result.serverDate = new Date(dateStr);
       }
