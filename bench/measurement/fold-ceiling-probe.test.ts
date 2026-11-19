@@ -28,6 +28,7 @@ describe("peak measurement failures", () => {
         storage: new MemoryStorage(),
         snapshotBytes: 1000,
         rows: 1,
+        tailPostImageBytes: [],
       });
       vi.mocked(measureOneFold).mockResolvedValue({ cpuMs: 1, peakBytes });
       await expect(runProbeGrid()).rejects.toThrow(/no usable peak samples/);
@@ -38,6 +39,7 @@ describe("peak measurement failures", () => {
       storage: new MemoryStorage(),
       snapshotBytes: 1000,
       rows: 1,
+      tailPostImageBytes: [],
     });
     let sample = 0;
     vi.mocked(measureOneFold).mockImplementation(async () => ({

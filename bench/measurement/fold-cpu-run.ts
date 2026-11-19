@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { relative, resolve, sep } from "node:path";
-import { SEED, TAIL_SHAPES, type TailShape } from "../lib/fold-fixture.ts";
+import { canShrink, SEED, TAIL_SHAPES, type TailShape } from "../lib/fold-fixture.ts";
 import { runAsCliEntrypoint } from "./cli-entrypoint.ts";
 import {
   INDEX_FIELDS,
@@ -135,6 +135,16 @@ export const main = async (): Promise<number> => {
       }
     }
   }
+  // Shrink needs pad bytes to remove; 64 B rows-axis docs are at the fixed-field minimum.
+  const skippedShrink = cells.filter(
+    (cell) => cell.tail_shape === "shrink" && !canShrink(cell.bytes_per_doc),
+  );
+  if (skippedShrink.length > 0) {
+    cells.splice(0, cells.length, ...cells.filter((cell) => !skippedShrink.includes(cell)));
+    console.warn(
+      `SKIPPED shrink on ${skippedShrink.length} cells: bytes_per_doc leaves no pad to shrink`,
+    );
+  }
   if (tailShapes.includes("delete")) {
     for (const cell of cells) {
       if (cell.tail_shape === "delete" && cell.tail_entries > cell.rows - 1) {
@@ -232,7 +242,7 @@ export const main = async (): Promise<number> => {
     workload: {
       seed: SEED,
       data_shape:
-        "notes: title, seeded integer/boolean, repeated ASCII x padding; canonical JSON; tail shapes per cell.tail_shape (update: uniform full-post-image U; append: I of new sequential ids; delete: D of strided existing rows; shrink: U to a quarter-size post-image)",
+        "notes: title, seeded integer/boolean, repeated ASCII x padding; canonical JSON; tail shapes per cell.tail_shape (update: uniform full-post-image U; append: I of new sequential ids; delete: D of strided existing rows; shrink: U with pad cut to a quarter; bytes axis only)",
       id_shape: "doc-00000000: sequential fixed-width ASCII strings; point query doc-00000000",
       index_count: indexCount,
       cache_state:
@@ -243,7 +253,7 @@ export const main = async (): Promise<number> => {
       runtime_arms: arms,
       tail_shapes: tailShapes,
       document_size_distribution:
-        "fixed: every document targets cell.bytes_per_doc canonical bytes (2048 on the bytes axis, 64 on the rows axis); shrink tails write quarter-size post-images",
+        "fixed: every document targets cell.bytes_per_doc canonical bytes (2048 on the bytes axis, 64 on the rows axis); shrink tails cut pad to a quarter and are not run on the rows axis (64 B rows have no pad); cell.tail_post_image_bytes records actual post-image min/max",
       id_distribution:
         "sequential fixed-width doc-NNNNNNNN; update/shrink tails pick ids uniformly (seeded) with replacement; append ids continue past the last row; delete ids are distinct, evenly strided, never row 0; point and indexed reads target doc-00000000",
       admitted_mutations:
@@ -263,6 +273,11 @@ export const main = async (): Promise<number> => {
       "MemoryStorage retains body references; no network wait, transport encoding, realistic storage concurrency, real data heterogeneity or index work.",
       "Margins printed as supplied budget minus observed maximum; no budget selected by harness, no confidence or safety guarantee.",
       "Load screen uses endpoint 1/5/15-minute averages >= 0.5 per logical core or free memory <10%; quiet does not prove absence of contention. Acceptance needs a quiet owner-run study.",
+      ...(skippedShrink.length > 0
+        ? [
+            "Shrink cells were omitted on the rows axis: 64 B documents are at the fixed-field minimum, so a shrink post-image would equal an update post-image.",
+          ]
+        : []),
       ...(indexCount > 0
         ? [
             "Declared indexes are validated at Db.create but read and write no storage on this tree; indexed reads are filtered scans (where({title})) with the declared count recorded, not index lookups.",

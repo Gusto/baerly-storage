@@ -15,7 +15,7 @@ The default byte ladder targets 64 KiB, 256 KiB, 512 KiB and 1 MiB using 2 KiB d
 
 Extra dimensions, all additive (defaults reproduce the earlier uniform-update, index-count-0 screen):
 
-- `--tail-shapes=update,append,delete,shrink` (default `update`): `update` is uniformly selected full-post-image `U` entries; `append` is `I` entries for new sequential ids (row count grows by the tail); `delete` is `D` entries for distinct, evenly strided ids, never `doc-00000000` (rows shrink by the tail; the tail must be shorter than the row count); `shrink` is `U` entries writing quarter-size post-images. A tail of 0 has shape `none` and runs once per size.
+- `--tail-shapes=update,append,delete,shrink` (default `update`): `update` is uniformly selected full-post-image `U` entries; `append` is `I` entries for new sequential ids (row count grows by the tail); `delete` is `D` entries for distinct, evenly strided ids, never `doc-00000000` (rows shrink by the tail; the tail must be shorter than the row count); `shrink` is `U` entries with `pad` cut to a quarter of its length; the rows axis (64 B documents, no pad) is skipped for shrink with a warning and a limitation. Each cell records the actual tail post-image bytes (`tail_post_image_bytes` min/max). A tail of 0 has shape `none` and runs once per size.
 - `--index-count=0..4` (default 0): declares that many indexes (`title`, `n`, `done`, `pad`) through `Db.create({ config })` for every operation in the run. Declared indexes are validated but read and write no storage on this tree, so this records the declared count; it is not an index lookup.
 - `--operations=...,indexed`: a `where({ title })` read returning exactly one row, next to point `get` and scan `all`. Requires `--index-count>=1`.
 
