@@ -1117,6 +1117,16 @@ export class Writer {
    *
    * @throws BaerlyError code="CapacityExceeded", cause `{ refused: true }`.
    */
+  /**
+   * The collection segment of `current.json`'s key, for messages that
+   * reach HTTP callers unscrubbed (`CapacityExceeded` is `public`), which
+   * must not carry the storage key.
+   */
+  #collectionName(): string {
+    const parts = this.#currentJsonKey.split("/");
+    return parts[parts.length - 2] ?? "";
+  }
+
   async #withCommitHold<T>(errorPrefix: string, fn: () => Promise<T>): Promise<T> {
     const ctx = getCurrentContext();
     const ledger = ctx?.ledger;
@@ -1128,7 +1138,7 @@ export class Writer {
     if (remaining < needed) {
       throw new BaerlyError(
         "CapacityExceeded",
-        `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit on ${this.#currentJsonKey} may need (the committing create, with retries, plus resolving it), so nothing was committed; the work this request needs does not fit in one request on this host`,
+        `${errorPrefix}: this request has ${String(remaining)} storage calls left, fewer than the ${String(needed)} a commit to collection ${JSON.stringify(this.#collectionName())} may need (the committing create, with retries, plus resolving it), so nothing was committed; the work this request needs does not fit in one request on this host`,
         // The HTTP envelope fills in the code's canonical resolution.
         { cause: { refused: true, needed, remaining } },
       );
