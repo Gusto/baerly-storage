@@ -22,7 +22,7 @@ baerly-storage has **five independent version axes**. Each answers a different q
 
 | Axis | What it signals | Source of truth | Today |
 | --- | --- | --- | --- |
-| **Package semver** | npm release train + public TS API compatibility | `package.json#version` (lockstep: `@gusto/baerly-storage` + `@gusto/create-baerly-storage`) | `0.3.0` |
+| **Package semver** | npm release train + public TS API compatibility | `package.json#version` (lockstep: `@gusto/baerly-storage` + `@gusto/create-baerly-storage`) | `0.7.0` |
 | **`specVersion`** | `/v1/spec` IR + HTTP/API contract shape — NOT bucket layout | `buildSpecIR().specVersion` (`packages/server/src/spec/ir.ts`) | `"1"` |
 | **Per-artifact `schema_version`** | durable control-object schema (`current.json`, `gc/pending.json`, snapshot) | the `*_SCHEMA_VERSION` constants in `packages/protocol/src/constants.ts` | 3 / 1 / 1 |
 | **`layout_version`** | bucket key-layout axis only | deferred; reserved namespace per [ADR-003](../../adr/003-layout-versioning-cordon.md) | implicit 1 (absent) |

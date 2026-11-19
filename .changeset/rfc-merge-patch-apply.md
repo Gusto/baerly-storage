@@ -1,5 +1,0 @@
----
-"@gusto/baerly-storage": minor
----
-
-**Behavior change:** `update` (by id or by predicate, in-process and over HTTP) applies its patch as RFC 7396 defines, with one exception: patch members named `__proto__`, `constructor` or `prototype` are skipped at every depth, so `update(id, { constructor: null })` reports `modified: 1` and changes nothing. A `null` member now deletes at every depth, so a patch never stores `null`: under a field that is absent or holds a scalar or array, an object patch merges into `{}` and its nulls are dropped. `update(id, { meta: { a: 1, b: null } })` on a row without `meta` now stores `meta: { a: 1 }`; before, it stored `meta: { a: 1, b: null }`. A `null` inside an array is still stored as written, and `insert` and `replace` are unchanged. Beneath an absent field, those three member names are now dropped too; before, the patch object was stored as written, including them. Rows written by an earlier release keep any stored nulls, and nothing rewrites them: setting such a field to a value overwrites it, only a `null` for that exact field deletes it, and a patch that touches only its parent leaves the stored `null` in place.
