@@ -1,13 +1,15 @@
 /** Whole production calls; fixture construction and warmup stay outside the timer. */
 import { performance } from "node:perf_hooks";
-import type { Storage } from "@baerly/protocol";
+import type { BaerlyConfig, Storage } from "@baerly/protocol";
 import { Db } from "@baerly/server";
 import type { InternalCompactOptions } from "@baerly/server/_internal/testing";
 import { compact } from "@baerly/server/_internal/maintenance";
 import {
   buildFixture,
+  expectedRows,
   FOLD_CURRENT_JSON_KEY,
   HEAP_SAMPLE_INTERVAL_MS,
+  type TailShape,
 } from "../lib/fold-fixture.ts";
 import type { InvocationProfiler, ProfileIdentity } from "./fold-cpu-profile.ts";
 
@@ -16,8 +18,17 @@ export interface FoldCpuCell {
   rows: number;
   bytes_per_doc: number;
   tail_entries: number;
+  /** Additive; absent in older records, meaning `update` (or no tail). `none` when tail is 0. */
+  tail_shape?: TailShape | "none";
+  /** Additive; declared index count on the collection (absent = 0). */
+  index_count?: number;
+  /** Additive; tail entries the measured call admits/replays (= tail_entries). */
+  admitted_mutations?: number;
 }
-export type FoldCpuOperation = "get" | "all" | "fold";
+export type FoldCpuOperation = "get" | "all" | "fold" | "indexed";
+/** Distinct top-level fields available for declared indexes, in declaration order. */
+export const INDEX_FIELDS = ["title", "n", "done", "pad"] as const;
+const POINT_TITLE = "note doc-00000000";
 export type RuntimeArm = "unprimed" | "warmed";
 export interface StorageCounts {
   get: number;
@@ -148,6 +159,20 @@ export const measureInvocation = async (
   };
 };
 
+const shapeOf = (cell: FoldCpuCell): TailShape =>
+  cell.tail_shape === undefined || cell.tail_shape === "none" ? "update" : cell.tail_shape;
+
+const configFor = (indexCount: number): BaerlyConfig | undefined =>
+  indexCount === 0
+    ? undefined
+    : {
+        collections: {
+          notes: {
+            indexes: INDEX_FIELDS.slice(0, indexCount).map((on) => ({ name: `by_${on}`, on })),
+          },
+        },
+      };
+
 const invoke = async (
   storage: Storage,
   operation: FoldCpuOperation,
@@ -163,14 +188,29 @@ const invoke = async (
       throw new Error(`unexpected fold: ${JSON.stringify(result)}`);
     }
   } else {
-    const collection = Db.create({ storage, app: "x", tenant: "t" }).collection("notes");
-    if (operation === "get") {
+    const indexCount = cell.index_count ?? 0;
+    if (operation === "indexed" && (indexCount < 1 || indexCount > INDEX_FIELDS.length)) {
+      throw new RangeError(`indexed reads need 1..${INDEX_FIELDS.length} declared indexes`);
+    }
+    const collection = Db.create({
+      storage,
+      app: "x",
+      tenant: "t",
+      config: configFor(indexCount),
+    }).collection("notes");
+    if (operation === "indexed") {
+      // Declared indexes are inert on main: this is a filtered scan of a config with indexes.
+      const rows = await collection.where({ title: POINT_TITLE }).all();
+      if (rows.length !== 1) {
+        throw new Error("fixture indexed read row count mismatch");
+      }
+    } else if (operation === "get") {
       if ((await collection.get("doc-00000000")) === null) {
         throw new Error("fixture point read missing");
       }
     } else {
       const rows = await collection.all();
-      if (rows.length !== cell.rows) {
+      if (rows.length !== expectedRows(cell.rows, cell.tail_entries, shapeOf(cell))) {
         throw new Error("fixture scan row count mismatch");
       }
     }
@@ -196,14 +236,24 @@ export const runFoldCpuCell = async (
   }
   if (runtimeArm === "warmed") {
     for (let i = 0; i < warmups; i++) {
-      const fixture = await buildFixture(cell.rows, cell.bytes_per_doc, cell.tail_entries);
+      const fixture = await buildFixture(
+        cell.rows,
+        cell.bytes_per_doc,
+        cell.tail_entries,
+        shapeOf(cell),
+      );
       await invoke(fixture.storage, operation, cell);
     }
   }
   const samples: FoldCpuSample[] = [];
   let snapshotBytes = 0;
   for (let i = 0; i < repetitions; i++) {
-    const fixture = await buildFixture(cell.rows, cell.bytes_per_doc, cell.tail_entries);
+    const fixture = await buildFixture(
+      cell.rows,
+      cell.bytes_per_doc,
+      cell.tail_entries,
+      shapeOf(cell),
+    );
     snapshotBytes = fixture.snapshotBytes;
     samples.push(
       await measureInvocation(

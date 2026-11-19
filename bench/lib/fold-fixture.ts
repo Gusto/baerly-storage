@@ -125,6 +125,26 @@ const byIdAsc = (a: string, b: string): number => {
   return 0;
 };
 
+/**
+ * Mutation shape of the log tail. `update` (default) is uniformly
+ * selected full-post-image `U` entries over existing rows; `append` is
+ * `I` entries for new sequential ids past the last row; `delete` is `D`
+ * entries for distinct, evenly strided existing rows (never row 0);
+ * `shrink` is `U` entries whose post-image is a quarter of the row size.
+ */
+export type TailShape = "update" | "append" | "delete" | "shrink";
+export const TAIL_SHAPES: readonly TailShape[] = ["update", "append", "delete", "shrink"];
+
+/** Rows a full fold/scan of the fixture yields. */
+export const expectedRows = (rows: number, tailEntries: number, shape: TailShape): number => {
+  if (shape === "append") {
+    return rows + tailEntries;
+  }
+  return shape === "delete" ? rows - tailEntries : rows;
+};
+
+const docId = (i: number): string => `doc-${i.toString().padStart(8, "0")}`;
+
 export interface FoldFixture {
   readonly storage: MemoryStorage;
   /** Actual canonical snapshot-body byteLength (measured, not target). */
@@ -142,6 +162,7 @@ export const buildFixture = async (
   rows: number,
   bytesPerDoc: number,
   tailEntries = TAIL_ENTRIES,
+  tailShape: TailShape = "update",
 ): Promise<FoldFixture> => {
   if (
     !Number.isSafeInteger(rows) ||
@@ -149,10 +170,13 @@ export const buildFixture = async (
     !Number.isSafeInteger(bytesPerDoc) ||
     bytesPerDoc < 1 ||
     !Number.isSafeInteger(tailEntries) ||
-    tailEntries < 0
+    tailEntries < 0 ||
+    !TAIL_SHAPES.includes(tailShape) ||
+    (tailShape === "delete" && tailEntries > rows - 1)
   ) {
     throw new RangeError(
-      "fold fixture: rows/bytesPerDoc must be positive integers; tail must be nonnegative",
+      "fold fixture: rows/bytesPerDoc must be positive integers; tail must be nonnegative; " +
+        "tail shape must be update|append|delete|shrink and a delete tail must leave row 0",
     );
   }
   const storage = new MemoryStorage();
@@ -178,19 +202,38 @@ export const buildFixture = async (
   await storage.put(snapKey, snapBytes, { contentType: "application/json" });
 
   // 2. Log tail: tailEntries updates to existing docs at seqs
-  //    [rows, rows + tailEntries). U with a full post-image keeps the
-  //    rebuilt snapshot the same row count (steady-state fold).
+  //    [rows, rows + tailEntries), shaped by `tailShape`. The default `U` with a
+  //    full post-image keeps the rebuilt snapshot the same row count.
+  // The `update` branch's rng consumption is the original sequence, so
+  // default fixtures stay byte-identical.
+  const deleteStride = Math.max(1, Math.floor((rows - 1) / Math.max(1, tailEntries)));
   for (let t = 0; t < tailEntries; t++) {
     const seq = rows + t;
-    const targetIdx = Math.floor(rng() * rows);
-    const id = `doc-${targetIdx.toString().padStart(8, "0")}`;
+    let op: LogEntry["op"] = "U";
+    let id: string;
+    let after: DocumentData | undefined;
+    if (tailShape === "append") {
+      op = "I";
+      id = docId(rows + t);
+      after = makeDoc(id, bytesPerDoc, rng);
+    } else if (tailShape === "delete") {
+      op = "D";
+      id = docId(1 + t * deleteStride);
+    } else {
+      id = docId(Math.floor(rng() * rows));
+      after = makeDoc(
+        id,
+        tailShape === "shrink" ? Math.max(1, bytesPerDoc >> 2) : bytesPerDoc,
+        rng,
+      );
+    }
     const entry: LogEntry = {
       lsn: `${timestamp(1_700_000_000_000 + seq)}_${SESSION}_${countKey(seq)}`,
       commit_ts: new Date(1_700_000_000_000 + seq).toISOString(),
-      op: "U",
+      op,
       collection: COLLECTION,
       doc_id: id,
-      after: makeDoc(id, bytesPerDoc, rng),
+      ...(after === undefined ? {} : { after }),
       session: SESSION,
       seq,
     };

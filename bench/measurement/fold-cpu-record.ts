@@ -131,6 +131,12 @@ export interface FoldCpuRecord {
     warmups: number;
     operations: FoldCpuOperation[];
     runtime_arms: RuntimeArm[];
+    /** Additive reduced-screen declarations; absent in older records. */
+    tail_shapes?: string[];
+    document_size_distribution?: string;
+    id_distribution?: string;
+    admitted_mutations?: string;
+    cold_warm_label?: string;
   };
   measurements: FoldCpuMeasurement[];
   failures: number;
@@ -141,9 +147,9 @@ export interface FoldCpuRecord {
 // Validate persisted evidence at the writer boundary, including raw samples.
 const number = { type: "number", minimum: 0 };
 const integer = { type: "integer", minimum: 0 };
-const object = (properties: Record<string, unknown>) => ({
+const object = (properties: Record<string, unknown>, optional: string[] = []) => ({
   type: "object",
-  required: Object.keys(properties),
+  required: Object.keys(properties).filter((key) => !optional.includes(key)),
   additionalProperties: false,
   properties,
 });
@@ -194,38 +200,58 @@ const schema = object({
     classification: { enum: ["exploratory-loaded", "quiet-local-screen"] },
     reasons: strings,
   }),
-  workload: object({
-    seed: integer,
-    data_shape: string,
-    id_shape: string,
-    index_count: integer,
-    cache_state: string,
-    repetitions: { type: "integer", minimum: 1 },
-    warmups: { type: "integer", minimum: 1 },
-    operations: {
-      type: "array",
-      minItems: 1,
-      uniqueItems: true,
-      items: { enum: ["get", "all", "fold"] },
+  workload: object(
+    {
+      seed: integer,
+      data_shape: string,
+      id_shape: string,
+      index_count: integer,
+      cache_state: string,
+      repetitions: { type: "integer", minimum: 1 },
+      warmups: { type: "integer", minimum: 1 },
+      operations: {
+        type: "array",
+        minItems: 1,
+        uniqueItems: true,
+        items: { enum: ["get", "all", "fold", "indexed"] },
+      },
+      runtime_arms: {
+        type: "array",
+        minItems: 1,
+        uniqueItems: true,
+        items: { enum: ["unprimed", "warmed"] },
+      },
+      tail_shapes: strings,
+      document_size_distribution: string,
+      id_distribution: string,
+      admitted_mutations: string,
+      cold_warm_label: string,
     },
-    runtime_arms: {
-      type: "array",
-      minItems: 1,
-      uniqueItems: true,
-      items: { enum: ["unprimed", "warmed"] },
-    },
-  }),
+    [
+      "tail_shapes",
+      "document_size_distribution",
+      "id_distribution",
+      "admitted_mutations",
+      "cold_warm_label",
+    ],
+  ),
   measurements: {
     type: "array",
     minItems: 1,
     items: object({
-      cell: object({
-        axis: { enum: ["bytes", "rows"] },
-        rows: { type: "integer", minimum: 1 },
-        bytes_per_doc: { type: "integer", minimum: 1 },
-        tail_entries: integer,
-      }),
-      operation: { enum: ["get", "all", "fold"] },
+      cell: object(
+        {
+          axis: { enum: ["bytes", "rows"] },
+          rows: { type: "integer", minimum: 1 },
+          bytes_per_doc: { type: "integer", minimum: 1 },
+          tail_entries: integer,
+          tail_shape: { enum: ["update", "append", "delete", "shrink", "none"] },
+          index_count: integer,
+          admitted_mutations: integer,
+        },
+        ["tail_shape", "index_count", "admitted_mutations"],
+      ),
+      operation: { enum: ["get", "all", "fold", "indexed"] },
       runtime_arm: { enum: ["unprimed", "warmed"] },
       snapshot_bytes: number,
       samples: {
