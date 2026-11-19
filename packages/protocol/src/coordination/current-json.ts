@@ -504,7 +504,7 @@ const assertCurrentJson = (parsed: unknown, key: string): CurrentJson => {
   if (r["schema_version"] === 1 || r["schema_version"] === 2) {
     throw new BaerlyError(
       "InvalidResponse",
-      `current.json at ${key} uses schema v${String(r["schema_version"])} from a pre-0.3.0 internal build; this build requires schema v${CURRENT_JSON_SCHEMA_VERSION}. Dump/restore with the old build, or re-provision local scratch data.`,
+      `current.json at ${key} uses schema v${String(r["schema_version"])} from a release before 0.3.0; this release requires schema v${CURRENT_JSON_SCHEMA_VERSION}. Dump/restore with that release, or re-provision local scratch data.`,
     );
   }
   if (r["schema_version"] !== CURRENT_JSON_SCHEMA_VERSION) {
