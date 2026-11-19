@@ -131,11 +131,13 @@ jobs:
           persist-credentials: false
 
       # Node and its bundled npm only. The shared setup action is not used
-      # here: it installs pnpm from a version range, whose install scripts
-      # would run while this job holds the OIDC token.
+      # here: it installs pnpm, and nothing should install or run package
+      # scripts while this job holds the OIDC token. No package-manager
+      # cache either, so no cached entry can reach the publishing job.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
+          package-manager-cache: false
 
       # npm trusted publishing needs npm >= 11.5.1.
       - name: Check the bundled npm supports trusted publishing
