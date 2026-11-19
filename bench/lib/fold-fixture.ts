@@ -130,7 +130,8 @@ const byIdAsc = (a: string, b: string): number => {
  * selected full-post-image `U` entries over existing rows; `append` is
  * `I` entries for new sequential ids past the last row; `delete` is `D`
  * entries for distinct, evenly strided existing rows (never row 0);
- * `shrink` is `U` entries whose post-image is a quarter of the row size.
+ * `shrink` is `U` entries whose `pad` is cut to a quarter of the row's pad length
+ * (refused when the row has under 4 pad bytes, i.e. bytesPerDoc is at the fixed-field minimum).
  */
 export type TailShape = "update" | "append" | "delete" | "shrink";
 export const TAIL_SHAPES: readonly TailShape[] = ["update", "append", "delete", "shrink"];
@@ -145,11 +146,17 @@ export const expectedRows = (rows: number, tailEntries: number, shape: TailShape
 
 const docId = (i: number): string => `doc-${i.toString().padStart(8, "0")}`;
 
+const SCAFFOLD_BYTES = encodeJsonBytes(makeDoc("doc-00000000", 0, () => 0)).byteLength;
+/** True when a row of this size has at least 4 pad bytes for `shrink` to remove. */
+export const canShrink = (bytesPerDoc: number): boolean => bytesPerDoc - SCAFFOLD_BYTES >= 4;
+
 export interface FoldFixture {
   readonly storage: MemoryStorage;
   /** Actual canonical snapshot-body byteLength (measured, not target). */
   readonly snapshotBytes: number;
   readonly rows: number;
+  /** Encoded byte length of each tail entry's post-image (empty for deletes). */
+  readonly tailPostImageBytes: readonly number[];
 }
 
 /**
@@ -172,11 +179,12 @@ export const buildFixture = async (
     !Number.isSafeInteger(tailEntries) ||
     tailEntries < 0 ||
     !TAIL_SHAPES.includes(tailShape) ||
+    (tailShape === "shrink" && !canShrink(bytesPerDoc)) ||
     (tailShape === "delete" && tailEntries > rows - 1)
   ) {
     throw new RangeError(
       "fold fixture: rows/bytesPerDoc must be positive integers; tail must be nonnegative; " +
-        "tail shape must be update|append|delete|shrink and a delete tail must leave row 0",
+        "tail shape must be update|append|delete|shrink a delete tail must leave row 0 and a shrink row needs >= 4 pad bytes",
     );
   }
   const storage = new MemoryStorage();
@@ -206,6 +214,7 @@ export const buildFixture = async (
   //    full post-image keeps the rebuilt snapshot the same row count.
   // The `update` branch's rng consumption is the original sequence, so
   // default fixtures stay byte-identical.
+  const tailPostImageBytes: number[] = [];
   const deleteStride = Math.max(1, Math.floor((rows - 1) / Math.max(1, tailEntries)));
   for (let t = 0; t < tailEntries; t++) {
     const seq = rows + t;
@@ -221,11 +230,11 @@ export const buildFixture = async (
       id = docId(1 + t * deleteStride);
     } else {
       id = docId(Math.floor(rng() * rows));
-      after = makeDoc(
-        id,
-        tailShape === "shrink" ? Math.max(1, bytesPerDoc >> 2) : bytesPerDoc,
-        rng,
-      );
+      after = makeDoc(id, bytesPerDoc, rng);
+      if (tailShape === "shrink") {
+        const pad = after["pad"] as string;
+        after = { ...after, pad: pad.slice(0, pad.length >> 2) };
+      }
     }
     const entry: LogEntry = {
       lsn: `${timestamp(1_700_000_000_000 + seq)}_${SESSION}_${countKey(seq)}`,
@@ -238,6 +247,9 @@ export const buildFixture = async (
       seq,
     };
     const entryBytes = encodeJsonBytes(entry);
+    if (after !== undefined) {
+      tailPostImageBytes.push(encodeJsonBytes(after).byteLength);
+    }
     await storage.put(`${COLLECTION_PREFIX}/log/${seq}.json`, entryBytes, {
       contentType: "application/json",
     });
@@ -258,7 +270,7 @@ export const buildFixture = async (
     contentType: "application/json",
   });
 
-  return { storage, snapshotBytes: snapBytes.byteLength, rows };
+  return { storage, snapshotBytes: snapBytes.byteLength, rows, tailPostImageBytes };
 };
 
 /** A single measured fold over an already-built fixture. */

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -216,12 +217,52 @@ describe("tail mutation shapes and indexed reads", () => {
     await expect(buildFixture(4, 128, 4, "delete")).rejects.toBeInstanceOf(RangeError);
   });
 
-  test("default update fixture is unchanged by the shape parameter", async () => {
-    const a = await buildFixture(8, 256, 3);
-    const b = await buildFixture(8, 256, 3, "update");
-    for (const key of [FOLD_CURRENT_JSON_KEY, "app/x/tenant/t/manifests/notes/log/9.json"]) {
-      await expect(a.storage.get(key)).resolves.toEqual(await b.storage.get(key));
+  test("default update fixtures are byte-identical to origin/main's generator", async () => {
+    // sha256 over current.json + every log body, captured from origin/main's fold-fixture.ts.
+    const pinned = [
+      [8, 256, 3, "f06b9e129a8d5515b50ac12543a8428203897ae06b6aab07dca7c77a79f89098"],
+      [256, 2048, 16, "e35626f2b41ab5ffb82817d74d7b813e1168a28066790e8504587ec91afc03fe"],
+      [16, 64, 5, "30aa7efd2fcfdaae76d56eea9d421f8a4618294d1adb8700461395d2f4e3537b"],
+    ] as const;
+    for (const [rows, bytes, tail, digest] of pinned) {
+      for (const fixture of [
+        await buildFixture(rows, bytes, tail),
+        await buildFixture(rows, bytes, tail, "update"),
+      ]) {
+        const hash = createHash("sha256");
+        const keys = [
+          FOLD_CURRENT_JSON_KEY,
+          ...Array.from(
+            { length: tail },
+            (_, i) => `app/x/tenant/t/manifests/notes/log/${rows + i}.json`,
+          ),
+        ];
+        for (const key of keys) {
+          const got = await fixture.storage.get(key);
+          hash.update(got!.body);
+        }
+        expect(hash.digest("hex")).toBe(digest);
+      }
     }
+  });
+
+  test("shrink post-images are smaller than update's where pad exists and refused at 64 B", async () => {
+    const upd = await buildFixture(8, 2048, 4, "update");
+    const shr = await buildFixture(8, 2048, 4, "shrink");
+    expect(Math.max(...shr.tailPostImageBytes)).toBeLessThan(Math.min(...upd.tailPostImageBytes));
+    await expect(buildFixture(16, 64, 4, "shrink")).rejects.toBeInstanceOf(RangeError);
+    const small = await buildFixture(16, 64, 4, "update");
+    const deleted = await buildFixture(8, 256, 3, "delete");
+    expect(small.tailPostImageBytes).toHaveLength(4);
+    expect(deleted.tailPostImageBytes).toHaveLength(0);
+    const m = await runFoldCpuCell(
+      { axis: "bytes", rows: 8, bytes_per_doc: 2048, tail_entries: 4, tail_shape: "shrink" },
+      "all",
+      "unprimed",
+      1,
+      1,
+    );
+    expect(m.cell.tail_post_image_bytes?.max).toBe(Math.max(...shr.tailPostImageBytes));
   });
 
   test("indexed read declares indexes, finds the point row, and is rejected without indexes", async () => {
