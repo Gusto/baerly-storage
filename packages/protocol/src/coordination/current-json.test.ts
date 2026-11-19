@@ -486,23 +486,26 @@ describe("CurrentJson schema v2 — snapshot_bytes / snapshot_rows", () => {
   });
 
   // ── v1 reject with actionable message ──────────────────────────────
-  plainTest("rejects pre-0.3.0 schema with dump/restore or re-provision guidance", async () => {
-    const s = new MemoryStorage();
-    const body = JSON.stringify({
-      schema_version: 1,
-      snapshot: null,
-      tail_hint: 0,
-      log_seq_start: 0,
-      writer_fence: { epoch: 0, owner: "", claimed_at: "" },
-    });
-    await s.put("k", new TextEncoder().encode(body));
-    await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
-      code: "InvalidResponse",
-      message: expect.stringMatching(
-        /pre-0\.3\.0 internal build[\s\S]*Dump\/restore[\s\S]*re-provision/,
-      ),
-    });
-  });
+  plainTest(
+    "rejects a pre-0.3.0 release's schema with dump/restore or re-provision guidance",
+    async () => {
+      const s = new MemoryStorage();
+      const body = JSON.stringify({
+        schema_version: 1,
+        snapshot: null,
+        tail_hint: 0,
+        log_seq_start: 0,
+        writer_fence: { epoch: 0, owner: "", claimed_at: "" },
+      });
+      await s.put("k", new TextEncoder().encode(body));
+      await expect(readCurrentJson(s, "k")).rejects.toMatchObject({
+        code: "InvalidResponse",
+        message: expect.stringMatching(
+          /from a release before 0\.3\.0[\s\S]*Dump\/restore with that release[\s\S]*re-provision/,
+        ),
+      });
+    },
+  );
 
   // ── missing required byte/row fields ───────────────────────────────
   plainTest("rejects v2 record missing snapshot_bytes", async () => {
