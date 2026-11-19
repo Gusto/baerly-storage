@@ -13,6 +13,13 @@ export interface FixtureSpec {
   readonly kib?: number;
 }
 
+/**
+ * How the k changed leaves sit in the tree. "shared": all under one
+ * root-to-leaf path (best case). "distinct": k distinct root-to-leaf paths
+ * that merge only where the tree forces it (at the root for k <= fanout).
+ */
+export type TreePath = "shared" | "distinct";
+
 export interface TreeParams {
   /** Leaves re-encoded and hashed in one step. */
   readonly k: number;
@@ -20,6 +27,8 @@ export interface TreeParams {
   readonly bKiB: number;
   /** Path nodes (internal levels) re-encoded and hashed above the leaves. */
   readonly d: number;
+  /** Absent means "shared", so cells and captures from before this field stay valid. */
+  readonly path?: TreePath;
 }
 
 export interface Cell {
@@ -68,7 +77,33 @@ export const PROBE_CALLS = 60;
 /** Requests per probe cell: each request is an independent invocation. */
 export const PROBE_SAMPLES = 5;
 
-export const treeCellName = (t: TreeParams): string => `tree-k${t.k}-b${t.bKiB}-d${t.d}`;
+/** Children per path node; a wide node as in the prolly-tree direction. */
+export const TREE_FANOUT = 64;
+
+/** Path mode of a tree cell; absent means "shared". */
+export const treePath = (t: TreeParams): TreePath => t.path ?? "shared";
+
+/** Shared-path names are unchanged; distinct-path cells carry a `-distinct` suffix. */
+export const treeCellName = (t: TreeParams): string =>
+  `tree-k${t.k}-b${t.bKiB}-d${t.d}${treePath(t) === "distinct" ? "-distinct" : ""}`;
+
+/**
+ * Path nodes re-encoded and hashed per step, by level counted from the root
+ * (level 0 = root, level d-1 = parent of the leaves).
+ *   shared:   1 node per level            => d
+ *   distinct: min(k, FANOUT^level) nodes  => sum_{level<d} min(k, FANOUT^level)
+ * A level cannot hold more than FANOUT^level nodes, and k paths cannot touch
+ * more than k nodes there. For k <= FANOUT that is 1 root + k per lower level:
+ * 1 + k*(d-1). d = 1 has a single node either way, so the grid has no
+ * distinct d = 1 cells.
+ */
+export const treeNodesPerLevel = (t: TreeParams): number[] =>
+  Array.from({ length: t.d }, (_unused, level) =>
+    treePath(t) === "shared" ? 1 : Math.min(t.k, TREE_FANOUT ** level),
+  );
+
+export const treePathNodes = (t: TreeParams): number =>
+  treeNodesPerLevel(t).reduce((a, b) => a + b, 0);
 
 const foldCells = (): Cell[] => [
   {
@@ -151,6 +186,18 @@ const treeCells = (): Cell[] =>
     ),
   );
 
+// Appended after the shared grid so earlier cell order is unchanged. d = 1 is
+// omitted: one node holds every leaf in either mode.
+const distinctTreeCells = (): Cell[] =>
+  TREE_B_KIB.flatMap((bKiB) =>
+    TREE_D.filter((d) => d >= 2).flatMap((d) =>
+      TREE_K.map((k): Cell => {
+        const tree: TreeParams = { k, bKiB, d, path: "distinct" };
+        return { name: treeCellName(tree), kind: "tree", tree };
+      }),
+    ),
+  );
+
 const probeCells = (): Cell[] =>
   (["r2-head", "fetch", "cache-match"] as const).map((probe): Cell => ({
     name: `probe-${probe}`,
@@ -163,6 +210,7 @@ export const CELLS: readonly Cell[] = [
   { name: "noop", kind: "noop" },
   ...foldCells(),
   ...treeCells(),
+  ...distinctTreeCells(),
   ...probeCells(),
 ];
 

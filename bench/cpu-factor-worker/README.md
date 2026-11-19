@@ -3,7 +3,12 @@
 An owner-deployed Cloudflare Worker that measures, on a real Workers account, per-invocation CPU (`cpuTime`) and outcomes for three groups of cells. Nothing here runs in `pnpm verify` or `pnpm test` beyond the analyzer unit test.
 
 - **Fold cells:** the current tree's fold invocation (a write that reaches the fold, then one `compact()` pass at the Cloudflare Free options) over synthetic fixtures. They give the deployed/Node factor.
-- **Tree fold-step cells (`tree-k<k>-b<B>-d<d>`):** a synthetic step on a content-addressed tree: re-encode `k` leaves (JSON) of about `B` KiB, SHA-256 each with `crypto.subtle.digest`, then re-encode and hash `d` path nodes. Grid: k in {1,2,4,8}, B in {4,16,64} KiB, d in {1,2,3}. The `d` nodes are one shared path (best case); leaves on distinct paths touch up to `k*d` nodes. The report says how many leaves fit under Free's ~10 ms, measured directly with no factor involved.
+- **Tree fold-step cells (`tree-k<k>-b<B>-d<d>[-distinct]`):** a synthetic step on a content-addressed tree: re-encode `k` leaves (JSON) of about `B` KiB, SHA-256 each with `crypto.subtle.digest`, then re-encode and hash the path nodes. Grid: k in {1,2,4,8}, B in {4,16,64} KiB, d in {1,2,3}, in two path modes (an explicit cell dimension; the analyzer reports and groups by it):
+  - **`shared`** (names without suffix, e.g. `tree-k4-b16-d2`): all k leaves under one root-to-leaf path, so the step touches `d` nodes (best case). 36 cells.
+  - **`distinct`** (`-distinct` suffix, e.g. `tree-k4-b16-d2-distinct`): k leaves on k distinct root-to-leaf paths that merge only where forced. Level `L` from the root (0 = root) holds `min(k, 64^L)` nodes (fanout 64), so the step touches `sum over L<d of min(k, 64^L)` nodes, which is `1 + k*(d-1)` for k <= 64 (one root, k per lower level). d = 1 is a single node in both modes, so there are no distinct d = 1 cells: 24 cells.
+
+  The report says how many leaves fit under Free's ~10 ms per (path, B, d), measured directly with no factor involved.
+
 - **S1 probe cells (`probe-r2-head`, `probe-fetch`, `probe-cache-match`):** 60 sequential calls per request, recording the call index at which each first fails and the exact error. `probe-r2-head` is `env.BUCKET.head` on a missing key; `probe-fetch` is the control (`HEAD https://example.com/`, no data sent); `probe-cache-match` is `caches.default.match`. This answers whether R2 binding calls on Free count against the 50-subrequest cap.
 
   - **Free account only.** The S1 probes are valid only on a Workers Free account. On Paid the 50 cap does not apply and every probe reads clean.
