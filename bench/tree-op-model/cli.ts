@@ -5,7 +5,8 @@
  *
  *   pnpm bench:tree-op-model [--leaf-bytes=65536,16384,4096,1024]
  *     [--min-fill=0.5] [--max-fanout=Infinity] [--tail=50] [--lag=128]
- *     [--neighbors=1] [--splits=1] [--write-read=point|scan] [--happy]
+ *     [--neighbors=1] [--splits=1] [--write-read=point|scan] [--concurrent=0]
+ *     [--happy]
  *
  * Pure arithmetic over `./model.ts`; no storage, no network.
  */
@@ -96,6 +97,7 @@ const main = async (): Promise<number> => {
       },
       splits: { type: "string", default: String(DEFAULT_ASSUMPTIONS.splitCreatesPerRewrittenNode) },
       "write-read": { type: "string", default: "point" },
+      concurrent: { type: "string", default: "0" },
       happy: { type: "boolean", default: false },
     },
   });
@@ -111,8 +113,10 @@ const main = async (): Promise<number> => {
       `ledger ${FREE_LEDGER.internal} internal (R2 binding, 0 external); ` +
       `${values.happy ? "happy path" : "every attempt charged"}.`,
     `Fixed: tail ${values.tail} entries, tail_hint lag ${values.lag}, ` +
+      `${values.concurrent} concurrent commits during the fold's tail probe, ` +
       `pass max(k, ${FLOOR_PROFILE.entriesPerPass}) entries, GC ${FLOOR_PROFILE.gcSweeps} sweeps + ` +
-      `${FLOOR_PROFILE.retirementDeletes} retirements, head CAS lost (closing hint refresh).`,
+      `${FLOOR_PROFILE.retirementDeletes} retirements under maximal pending contention, ` +
+      "head CAS lost (closing hint refresh).",
     `Unspecified-design parameters: leaf min fill ${values["min-fill"]}, max fanout ` +
       `${values["max-fanout"]}, boundary neighbors/changed leaf ${assumptions.neighborLeavesPerChangedLeaf}, ` +
       `split creates/rewritten node ${assumptions.splitCreatesPerRewrittenNode}, ` +
@@ -134,10 +138,9 @@ const main = async (): Promise<number> => {
         sharing,
         tailEntries: Number(values.tail),
         tailHintLag: Number(values.lag),
-        concurrentCommits: 0,
+        concurrentCommits: Number(values.concurrent),
         writeStateRead: writeRead,
         policy,
-        transport: "r2-binding",
         assumptions,
       };
       out.push("", `leaf target ${leafBytes} B, ${sharing} paths`, ...table(scenario));
