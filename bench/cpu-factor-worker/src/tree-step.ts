@@ -9,17 +9,16 @@
  *   2. re-encode and hash d path nodes, bottom-up, each carrying the new
  *      child hashes.
  *
- * The d path nodes are one path: all k leaves are assumed to sit under the
- * same parent chain, so this is the best case. Leaves spread over distinct
- * paths touch up to k * d nodes; the analyzer's per-node cost lets the owner
- * scale it. Leaf and node objects are synthetic (counter plus `x` padding)
+ * Shared mode: the d path nodes are one path, all k leaves under the same
+ * parent chain (best case). Distinct mode: the k leaves sit on k distinct
+ * root-to-leaf paths, so level L from the root (0 = root) holds
+ * min(k, FANOUT^L) nodes, 1 + k*(d-1) in total for k <= FANOUT (see
+ * `treePathNodes` in cells.ts). Leaf and node objects are synthetic (counter plus `x` padding)
  * and built once per isolate; that first request reports `cold: true` and
  * the analyzer drops it.
  */
-import type { TreeParams } from "./cells.ts";
+import { TREE_FANOUT, treeNodesPerLevel, treePath, type TreeParams } from "./cells.ts";
 
-/** Children per path node; a wide node as in the prolly-tree direction. */
-export const TREE_FANOUT = 64;
 const DOC_PAYLOAD = 200;
 
 interface Leaf {
@@ -35,7 +34,8 @@ interface PathNode {
 
 interface TreeFixture {
   readonly leaves: Leaf[];
-  readonly nodes: PathNode[];
+  /** Levels bottom-up (parent of the leaves first); one node each when shared. */
+  readonly levels: PathNode[][];
 }
 
 const fixtures = new Map<string, TreeFixture>();
@@ -58,16 +58,19 @@ const makeFixture = (t: TreeParams): TreeFixture => {
       p,
     })),
   }));
-  const nodes: PathNode[] = Array.from({ length: t.d }, (_unused3, level) => ({
-    schema_version: 1,
-    level,
-    children: Array.from({ length: TREE_FANOUT }, (_unused4, i) => ({
-      first_id: `d${String(i).padStart(8, "0")}`,
-      hash: "0".repeat(64),
-      bytes: 0,
+  const perLevel = treeNodesPerLevel(t).toReversed();
+  const levels: PathNode[][] = perLevel.map((count, bottomUp) =>
+    Array.from({ length: count }, () => ({
+      schema_version: 1,
+      level: bottomUp,
+      children: Array.from({ length: TREE_FANOUT }, (_unused4, i) => ({
+        first_id: `d${String(i).padStart(8, "0")}`,
+        hash: "0".repeat(64),
+        bytes: 0,
+      })),
     })),
-  }));
-  return { leaves, nodes };
+  );
+  return { leaves, levels };
 };
 
 export interface TreeStepResult {
@@ -81,7 +84,7 @@ export interface TreeStepResult {
 let step = 0;
 
 export const runTreeStep = async (t: TreeParams): Promise<TreeStepResult> => {
-  const key = `${t.k}/${t.bKiB}/${t.d}`;
+  const key = `${t.k}/${t.bKiB}/${t.d}/${treePath(t)}`;
   let fx = fixtures.get(key);
   const cold = fx === undefined;
   if (fx === undefined) {
@@ -103,17 +106,30 @@ export const runTreeStep = async (t: TreeParams): Promise<TreeStepResult> => {
   let hashes = leafHashes;
   let sizes = leafSizes;
   let root = hashes[0] ?? "";
-  for (const node of fx.nodes) {
+  let pathNodes = 0;
+  for (const level of fx.levels) {
+    // Child i goes to node i % level.length: one-to-one where every child has
+    // its own parent (distinct paths), all into node 0 when there is one node.
+    const slot = Array.from({ length: level.length }, () => 0);
     hashes.forEach((h, i) => {
-      const child = node.children[i % TREE_FANOUT]!;
+      const n = i % level.length;
+      const child = level[n]!.children[slot[n]! % TREE_FANOUT]!;
+      slot[n]! += 1;
       child.hash = h;
       child.bytes = sizes[i]!;
     });
-    const bytes = encoder.encode(JSON.stringify(node));
-    root = await sha256Hex(bytes);
-    bytesHashed += bytes.byteLength;
-    hashes = [root];
-    sizes = [bytes.byteLength];
+    const nextHashes: string[] = [];
+    const nextSizes: number[] = [];
+    for (const node of level) {
+      const bytes = encoder.encode(JSON.stringify(node));
+      root = await sha256Hex(bytes);
+      bytesHashed += bytes.byteLength;
+      nextHashes.push(root);
+      nextSizes.push(bytes.byteLength);
+      pathNodes += 1;
+    }
+    hashes = nextHashes;
+    sizes = nextSizes;
   }
-  return { cold, leaves: t.k, pathNodes: t.d, bytesHashed, root };
+  return { cold, leaves: t.k, pathNodes, bytesHashed, root };
 };

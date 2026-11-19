@@ -17,7 +17,14 @@
 // The factor is a diagnostic comparison between matched subjects. It is
 // labelled EXPLORATORY unless the Node baseline was captured on a quiet
 // machine, and factor extrapolation alone never establishes a safe C/E.
-import { CELLS, type Cell, type CellKind } from "./src/cells.ts";
+import {
+  CELLS,
+  type Cell,
+  type CellKind,
+  type TreePath,
+  treePath,
+  treePathNodes,
+} from "./src/cells.ts";
 
 export const PASS_MS = 8;
 export const FREE_LIMIT_MS = 10;
@@ -147,6 +154,10 @@ export interface ProbeSummary {
 }
 
 export interface TreeRow {
+  /** Path mode; older cells without one are "shared". */
+  readonly path: TreePath;
+  /** Path nodes re-encoded and hashed per step (cells.ts `treePathNodes`). */
+  readonly nodes: number;
   readonly k: number;
   readonly bKiB: number;
   readonly d: number;
@@ -168,8 +179,14 @@ export interface Analysis {
   readonly largestPassing: { c: number | undefined; e: number | undefined };
   readonly tree: {
     readonly rows: TreeRow[];
-    /** Per (bKiB, d): largest k whose measured p99 fits, and every smaller k fits too. */
-    readonly maxLeaves: Array<{ bKiB: number; d: number; underPass: number; underFree: number }>;
+    /** Per (path, bKiB, d): largest k whose measured p99 fits, and every smaller k fits too. */
+    readonly maxLeaves: Array<{
+      path: TreePath;
+      bKiB: number;
+      d: number;
+      underPass: number;
+      underFree: number;
+    }>;
   };
   readonly probes: Record<string, ProbeSummary>;
 }
@@ -321,10 +338,17 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
 
   const treeRows: TreeRow[] = rows
     .filter((r) => r.cell.kind === "tree")
-    .map((row) => ({ k: row.cell.tree!.k, bKiB: row.cell.tree!.bKiB, d: row.cell.tree!.d, row }));
+    .map((row) => ({
+      path: treePath(row.cell.tree!),
+      nodes: treePathNodes(row.cell.tree!),
+      k: row.cell.tree!.k,
+      bKiB: row.cell.tree!.bKiB,
+      d: row.cell.tree!.d,
+      row,
+    }));
   const groups = new Map<string, TreeRow[]>();
   for (const t of treeRows) {
-    const key = `${t.bKiB}/${t.d}`;
+    const key = `${t.path}/${t.bKiB}/${t.d}`;
     groups.set(key, [...(groups.get(key) ?? []), t]);
   }
   const maxLeaves = [...groups.values()].map((g) => {
@@ -340,6 +364,7 @@ export const analyze = (events: readonly Json[], base: NodeBaseline): Analysis =
       return best;
     };
     return {
+      path: g[0]!.path,
       bKiB: g[0]!.bKiB,
       d: g[0]!.d,
       underPass: under(PASS_MS),
@@ -431,16 +456,16 @@ export const formatReport = (a: Analysis): string => {
     `Largest passing size (fitting cells with measured deployed p99 <= ${PASS_MS} ms, every smaller size passing too):`,
     `  main: C ${a.largestPassing.c === undefined ? "none (fails at 16 KiB)" : `${a.largestPassing.c} KiB (2 KiB docs)`}; E ${a.largestPassing.e === undefined ? "none (fails at 256 rows)" : `${a.largestPassing.e} rows (~240 B docs)`}`,
     "",
-    "Tree fold step (direct deployed CPU, WARM-ISOLATE: JIT-hot, cold invocations dropped, uniform `x` padding is a best case for JSON; not a cold fold cost; one shared path, so the best case for d path nodes):",
-    "k | leaf KiB | d | n ok | killed | deployed p50 / p90 / p99 ms",
+    "Tree fold step (direct deployed CPU, WARM-ISOLATE: JIT-hot, cold invocations dropped, uniform `x` padding is a best case for JSON; not a cold fold cost; `shared` = one root-to-leaf path, the best case; `distinct` = k distinct paths, 1 + k*(d-1) nodes for k <= 64):",
+    "path | k | leaf KiB | d | nodes | n ok | killed | deployed p50 / p90 / p99 ms",
     ...a.tree.rows.map(
       (t) =>
-        `${t.k} | ${t.bKiB} | ${t.d} | ${t.row.n} | ${t.row.killed} | ${f2(t.row.d.p50)} / ${f2(t.row.d.p90)} / ${f2(t.row.d.p99)}${t.row.fits ? "" : "  (does not fit)"}`,
+        `${t.path} | ${t.k} | ${t.bKiB} | ${t.d} | ${t.nodes} | ${t.row.n} | ${t.row.killed} | ${f2(t.row.d.p50)} / ${f2(t.row.d.p90)} / ${f2(t.row.d.p99)}${t.row.fits ? "" : "  (does not fit)"}`,
     ),
     `Leaves per step that fit (measured p99; every smaller k fits too; 0 = none of the grid):`,
     ...a.tree.maxLeaves.map(
       (m) =>
-        `  leaf ${m.bKiB} KiB, d=${m.d}: <= ${PASS_MS} ms: ${m.underPass}; <= ${FREE_LIMIT_MS} ms: ${m.underFree}`,
+        `  ${m.path} paths, leaf ${m.bKiB} KiB, d=${m.d}: <= ${PASS_MS} ms: ${m.underPass}; <= ${FREE_LIMIT_MS} ms: ${m.underFree}`,
     ),
     "",
     "S1 probe (calls before failure; 60 sequential calls per run; valid only on a Workers FREE account, on Paid every probe reads clean):",

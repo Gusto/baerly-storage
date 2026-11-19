@@ -93,12 +93,41 @@ describe("analyze", () => {
   });
 
   test("reports leaves per step that fit from direct deployed CPU", () => {
-    const a = analyze(makeEvents(), makeBaseline(QUIET));
+    const a = analyze(makeEvents(60, 1), makeBaseline(QUIET));
     // Every tree cell sits well under 8 ms here, so the whole grid fits.
-    expect(a.tree.maxLeaves.length).toBe(9);
+    // 3 leaf sizes x 3 depths shared, plus 3 x 2 distinct (no d = 1).
+    expect(a.tree.maxLeaves.length).toBe(15);
     for (const m of a.tree.maxLeaves) {
       expect(m.underFree).toBe(8);
     }
+  });
+
+  test("groups tree rows by path mode and reports node counts", () => {
+    // Distinct-path k = 8 cells run over Free's limit; the shared grid stays under.
+    const cpuFor = (name: string) => (name.endsWith("-distinct") && name.includes("-k8-") ? 12 : 5);
+    const events = makeEvents().map((e) => {
+      const name = new URL(e.url).searchParams.get("cell")!;
+      return name.startsWith("tree-") ? Object.assign({}, e, { cpuTime: cpuFor(name) }) : e;
+    });
+    const a = analyze(events, makeBaseline(QUIET));
+    const shared = a.tree.maxLeaves.filter((m) => m.path === "shared");
+    const distinct = a.tree.maxLeaves.filter((m) => m.path === "distinct");
+    expect(shared).toHaveLength(9);
+    expect(distinct).toHaveLength(6);
+    expect(shared.every((m) => m.underFree === 8)).toBe(true);
+    // k = 8 is over Free's limit, so the distinct groups stop at k = 4.
+    expect(distinct.every((m) => m.underFree === 4 && m.d >= 2)).toBe(true);
+    const row = (path: string, k: number, d: number) =>
+      a.tree.rows.find((t) => t.path === path && t.k === k && t.bKiB === 16 && t.d === d)!;
+    expect(row("shared", 4, 3).nodes).toBe(3);
+    expect(row("distinct", 4, 3).nodes).toBe(9);
+    expect(row("distinct", 8, 2).nodes).toBe(9);
+    expect(row("shared", 8, 2).row.cell.name).toBe("tree-k8-b16-d2");
+    expect(row("distinct", 8, 2).row.cell.name).toBe("tree-k8-b16-d2-distinct");
+    const report = formatReport(a);
+    expect(report).toContain("distinct | 4 | 16 | 3 | 9 |");
+    expect(report).toContain("shared | 4 | 16 | 3 | 3 |");
+    expect(report).toContain("distinct paths, leaf 16 KiB, d=3: <= 8 ms: 4");
   });
 
   test.each(["killed", "missing", "insufficient"] as const)(
