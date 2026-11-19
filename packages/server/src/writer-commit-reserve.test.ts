@@ -228,6 +228,10 @@ describe.each(POOLS)("Writer commit-resolution reserve (%s pool)", (pool) => {
     expect((err as BaerlyError).code).toBe("CapacityExceeded");
     expect((err as BaerlyError).retriable).toBe(false);
     expect((err as BaerlyError).cause).toMatchObject({ refused: true, needed });
+    // CapacityExceeded messages reach HTTP callers unscrubbed: name the
+    // collection, never the storage key.
+    expect((err as BaerlyError).message).toContain('collection "tickets"');
+    expect((err as BaerlyError).message).not.toContain("manifests/");
     expect(inner.puts).toBe(0);
   });
 
