@@ -42,7 +42,9 @@ import {
 
 type Fold = (input: LogicalFoldInput) => LogicalView;
 
-const COLLECTION = "c";
+const COLLECTION = "caf\u00e9";
+/** NFD spelling of {@link COLLECTION}: canonically equivalent, byte-different. */
+const ALIAS_COLLECTION = "cafe\u0301";
 const PREFIX = `app/t/tenant/x/manifests/${COLLECTION}`;
 const CURRENT_JSON_KEY = `${PREFIX}/current.json`;
 
@@ -62,7 +64,11 @@ type Invariant =
   | "absent-delete-invisible"
   | "insertion-order-invisible"
   | "no-aliasing"
-  | "prefix-split";
+  | "prefix-split"
+  | "production-agreement";
+
+/** The invariants with a mutation-block catcher. */
+type PropertyInvariant = Exclude<Invariant, "production-agreement">;
 
 /** A property failure, naming the invariant and the first differing `_id`. */
 class Violation extends Error {
@@ -118,7 +124,7 @@ const expectSeq = (invariant: Invariant, actual: number, expected: number): void
 
 // ── Case generation ────────────────────────────────────────────────────
 
-type Kind = "I" | "U" | "D" | "foreign";
+type Kind = "I" | "U" | "D" | "foreign" | "alias";
 
 interface Op {
   readonly kind: Kind;
@@ -165,13 +171,23 @@ const baseArb = fc.uniqueArray(fc.tuple(idArb, fieldsArb), {
   maxLength: ID_POOL.length,
 });
 
-const foldCaseArb: fc.Arbitrary<FoldCase> = fc.record({
-  base: baseArb,
-  baseSeq: fc.nat({ max: 20 }),
-  ops: fc.array(opArb(kindArb), { maxLength: 24 }),
-  cut: fc.nat(),
-  pick: fc.nat(),
-});
+const foldCaseArbWith = (kind: fc.Arbitrary<Kind>): fc.Arbitrary<FoldCase> =>
+  fc.record({
+    base: baseArb,
+    baseSeq: fc.nat({ max: 20 }),
+    ops: fc.array(opArb(kind), { maxLength: 24 }),
+    cut: fc.nat(),
+    pick: fc.nat(),
+  });
+
+const foldCaseArb = foldCaseArbWith(kindArb);
+/** Adds NFD-alias entries, which every fold must refuse with the same code. */
+const crossCaseArb = foldCaseArbWith(
+  fc.oneof(
+    { weight: 12, arbitrary: kindArb },
+    { weight: 1, arbitrary: fc.constant("alias" as const) },
+  ),
+);
 
 const bodyOf = (id: string, fields: Record<string, unknown>): DocumentData =>
   ({ _id: id, ...structuredClone(fields) }) as DocumentData;
@@ -179,8 +195,8 @@ const bodyOf = (id: string, fields: Record<string, unknown>): DocumentData =>
 const entryOf = (op: Op, seq: number): LogEntry => ({
   lsn: `lsn-${seq}`,
   commit_ts: "2026-01-01T00:00:00.000Z",
-  op: op.kind === "foreign" ? "I" : op.kind,
-  collection: op.kind === "foreign" ? "other" : COLLECTION,
+  op: op.kind === "foreign" || op.kind === "alias" ? "I" : op.kind,
+  collection: { foreign: "other", alias: ALIAS_COLLECTION }[op.kind as string] ?? COLLECTION,
   doc_id: op.id,
   session: "ssn001",
   seq,
@@ -618,63 +634,161 @@ describe("logical fold domain", () => {
 
 // ── Cross-check against the production folds ──────────────────────────
 
+type Outcome<T> = { readonly value: T } | { readonly code: string };
+
+const outcomeOf = <T>(action: () => T): Outcome<T> => {
+  try {
+    return { value: action() };
+  } catch (error) {
+    return { code: error instanceof BaerlyError ? error.code : String(error) };
+  }
+};
+
+const asyncOutcomeOf = async <T>(action: () => Promise<T>): Promise<Outcome<T>> => {
+  try {
+    return { value: await action() };
+  } catch (error) {
+    return { code: error instanceof BaerlyError ? error.code : String(error) };
+  }
+};
+
+/** Both folds refused with the same code, or both produced the same rows. */
+const expectSameOutcome = (
+  oracle: Outcome<ReadonlyMap<string, DocumentData>>,
+  production: Outcome<ReadonlyMap<string, DocumentData>>,
+): void => {
+  if ("code" in oracle || "code" in production) {
+    const code = (o: Outcome<unknown>): string => ("code" in o ? o.code : "no error");
+    if (code(oracle) !== code(production)) {
+      throw new Violation(
+        "production-agreement",
+        `oracle ${code(oracle)}, production ${code(production)}`,
+      );
+    }
+    return;
+  }
+  expectRows("production-agreement", oracle.value, production.value);
+};
+
 describe("logical fold agrees with production", () => {
-  fcTest.prop({ c: foldCaseArb })("foldLogEntriesOnto (the read-path fold)", ({ c }) => {
+  fcTest.prop({ c: crossCaseArb })("foldLogEntriesOnto (the read-path fold)", ({ c }) => {
     const input = inputOf(c);
-    const production = new Map(input.base);
     const inRange = inputOf(c)
       .entries.filter((e) => e.seq >= input.baseSeq && e.seq < input.targetSeq)
       .toSorted((a, b) => a.seq - b.seq);
-    foldLogEntriesOnto(production, inRange, { collection: COLLECTION });
-    expectRows("last-write-wins", foldLogical(input).rows, production);
+    const production = outcomeOf(() => {
+      const rows = new Map(input.base);
+      foldLogEntriesOnto(rows, inRange, { collection: COLLECTION });
+      return rows;
+    });
+    expectSameOutcome(
+      outcomeOf(() => foldLogical(input).rows),
+      production,
+    );
   });
+
+  const seededStorage = async (entries: readonly LogEntry[]): Promise<MemoryStorage> => {
+    const storage = new MemoryStorage();
+    await provisionCollection(storage, CURRENT_JSON_KEY);
+    for (const logEntry of entries) {
+      await storage.put(logObjectKey(PREFIX, logEntry.seq), encodeJsonBytes(logEntry));
+    }
+    return storage;
+  };
+
+  const compactTo = async (
+    storage: MemoryStorage,
+    maxEntriesPerRun: number,
+  ): Promise<LogicalView> => {
+    const options: InternalCompactOptions = { minEntriesToCompact: 0, maxEntriesPerRun };
+    const result = await compactInternal({ storage, currentJsonKey: CURRENT_JSON_KEY }, options);
+    expect(result.written).toBe(true);
+    const rows = await loadSnapshotAsMap(storage, result.newSnapshotKey!, COLLECTION);
+    return { collection: COLLECTION, foldedSeq: result.logSeqStartAfter, rows };
+  };
 
   // MemoryStorage keeps this in-process; a run seeds a fresh log and folds it
   // twice, the second time onto the first snapshot as a non-empty base.
-  fcTest.prop({ c: foldCaseArb }, { numRuns: 25 })(
+  fcTest.prop({ c: crossCaseArb }, { numRuns: 25 })(
     "compact(), folding to a target and then to the tail",
     async ({ c }) => {
-      const storage = new MemoryStorage();
-      await provisionCollection(storage, CURRENT_JSON_KEY);
       const entries = c.ops.map((op, seq) => entryOf(op, seq));
-      for (const logEntry of entries) {
-        await storage.put(logObjectKey(PREFIX, logEntry.seq), encodeJsonBytes(logEntry));
-      }
+      const storage = await seededStorage(entries);
       const target = c.cut % (entries.length + 1);
-      const compactTo = async (maxEntriesPerRun: number): Promise<LogicalView> => {
-        const options: InternalCompactOptions = { minEntriesToCompact: 0, maxEntriesPerRun };
-        const result = await compactInternal(
-          { storage, currentJsonKey: CURRENT_JSON_KEY },
-          options,
-        );
-        expect(result.written).toBe(true);
-        const rows = await loadSnapshotAsMap(storage, result.newSnapshotKey!, COLLECTION);
-        return { collection: COLLECTION, foldedSeq: result.logSeqStartAfter, rows };
-      };
 
-      const firstProduction = await compactTo(target);
-      const first = foldLogical({
-        collection: COLLECTION,
-        base: new Map(),
-        baseSeq: 0,
-        entries,
-        targetSeq: target,
-      });
-      expectRows("last-write-wins", first.rows, firstProduction.rows);
-      expect(first.foldedSeq).toBe(firstProduction.foldedSeq);
+      const firstProduction = await asyncOutcomeOf(() => compactTo(storage, target));
+      const first = outcomeOf(() =>
+        foldLogical({
+          collection: COLLECTION,
+          base: new Map(),
+          baseSeq: 0,
+          entries,
+          targetSeq: target,
+        }),
+      );
+      expectSameOutcome(
+        "value" in first ? { value: first.value.rows } : first,
+        "value" in firstProduction ? { value: firstProduction.value.rows } : firstProduction,
+      );
+      if (!("value" in first) || !("value" in firstProduction)) {
+        return;
+      }
+      expect(first.value.foldedSeq).toBe(firstProduction.value.foldedSeq);
 
-      const secondProduction = await compactTo(Number.MAX_SAFE_INTEGER);
-      const second = foldLogical({
-        collection: COLLECTION,
-        base: first.rows,
-        baseSeq: first.foldedSeq,
-        entries,
-        targetSeq: entries.length,
-      });
-      expectRows("last-write-wins", second.rows, secondProduction.rows);
-      expect(second.foldedSeq).toBe(secondProduction.foldedSeq);
+      const secondProduction = await asyncOutcomeOf(() =>
+        compactTo(storage, Number.MAX_SAFE_INTEGER),
+      );
+      const second = outcomeOf(() =>
+        foldLogical({
+          collection: COLLECTION,
+          base: first.value.rows,
+          baseSeq: first.value.foldedSeq,
+          entries,
+          targetSeq: entries.length,
+        }),
+      );
+      expectSameOutcome(
+        "value" in second ? { value: second.value.rows } : second,
+        "value" in secondProduction ? { value: secondProduction.value.rows } : secondProduction,
+      );
+      if ("value" in second && "value" in secondProduction) {
+        expect(second.value.foldedSeq).toBe(secondProduction.value.foldedSeq);
+      }
     },
   );
+
+  test("an NFD alias of the collection is refused by every fold, and only in range", async () => {
+    const ops: Op[] = [
+      { kind: "I", id: "a", fields: {} },
+      { kind: "alias", id: "b", fields: {} },
+    ];
+    const entries = ops.map((op, seq) => entryOf(op, seq));
+    const oracleTo = (targetSeq: number): Outcome<ReadonlyMap<string, DocumentData>> =>
+      outcomeOf(
+        () =>
+          foldLogical({ collection: COLLECTION, base: new Map(), baseSeq: 0, entries, targetSeq })
+            .rows,
+      );
+    const readerTo = (targetSeq: number): Outcome<ReadonlyMap<string, DocumentData>> =>
+      outcomeOf(() => {
+        const rows = new Map<string, DocumentData>();
+        foldLogEntriesOnto(rows, entries.slice(0, targetSeq), { collection: COLLECTION });
+        return rows;
+      });
+
+    expect(oracleTo(2)).toEqual({ code: "InvalidConfig" });
+    expect(readerTo(2)).toEqual({ code: "InvalidConfig" });
+    const storage = await seededStorage(entries);
+    await expect(asyncOutcomeOf(() => compactTo(storage, 2))).resolves.toEqual({
+      code: "InvalidConfig",
+    });
+
+    // Out of range, the alias is never read.
+    expect(oracleTo(1)).toEqual({ value: new Map([["a", { _id: "a" }]]) });
+    expectSameOutcome(oracleTo(1), readerTo(1));
+    const view = await compactTo(storage, 1);
+    expectSameOutcome(oracleTo(1), { value: view.rows });
+  });
 });
 
 // ── Mutation: every single-defect variant goes red ─────────────────────
@@ -684,16 +798,19 @@ describe("mutation", () => {
   // FC_NUM_RUNS.
   const RUNS = { seed: 0x1d0c, numRuns: 500 } as const;
 
-  interface Outcome {
+  interface CheckOutcome {
     readonly failed: boolean;
     readonly error: unknown;
   }
-  const run = <T>(arb: fc.Arbitrary<T>, check: (c: T) => void): Outcome => {
+  const run = <T>(arb: fc.Arbitrary<T>, check: (c: T) => void): CheckOutcome => {
     const details = fc.check(fc.property(arb, check), RUNS);
     return { failed: details.failed, error: details.errorInstance };
   };
 
-  const catchers: Record<Invariant, (fold: Fold) => Outcome> = {
+  const catchers: Record<
+    Exclude<Invariant, "production-agreement">,
+    (fold: Fold) => CheckOutcome
+  > = {
     "empty-identity": (fold) => run(foldCaseArb, (c) => checkEmptyIdentity(fold, c)),
     "last-write-wins": (fold) => run(foldCaseArb, (c) => checkLastWriteWins(fold, c)),
     "folded-seq": (fold) => run(foldCaseArb, (c) => checkFoldedSeq(fold, c)),
@@ -708,7 +825,7 @@ describe("mutation", () => {
   };
 
   /** The properties that must name each variant. Others may also go red. */
-  const caughtBy: Record<LogicalFoldMutant, readonly Invariant[]> = {
+  const caughtBy: Record<LogicalFoldMutant, readonly PropertyInvariant[]> = {
     "target-inclusive-bound": ["empty-identity", "last-write-wins", "beyond-target-invisible"],
     "skip-first-mutation": ["last-write-wins"],
     "skip-last-mutation": ["last-write-wins"],
