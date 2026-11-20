@@ -22,6 +22,17 @@ export interface TreeMutant {
   readonly options: TreeConstructorOptions;
 }
 
+/**
+ * A decoder that skips the canonical-bytes check, so it accepts any body
+ * that parses to a valid node: whitespace, `2.50`, `-0`, duplicate
+ * members, alternate escapes.
+ */
+export const DECODER_SKIPS_REENCODE: TreeMutant = {
+  name: "decoder-skips-reencode",
+  defect: "strict decode accepts a body that is not the canonical encoding of its value",
+  options: { steps: { canonicalBytesMatch: () => true } },
+};
+
 /** A layout validator missing the rule named `rule`. */
 export const layoutWithoutRule = (rule: string): TreeMutant => {
   if (!TREE_LAYOUT_RULES.some((r) => r.name === rule)) {
