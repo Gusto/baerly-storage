@@ -13,6 +13,7 @@ import {
   TREE_LAYOUT_RULES,
   type TreeConstructorOptions,
 } from "../../packages/server/src/tree/layout.ts";
+import { sortMutationsById } from "../../packages/server/src/tree/plan.ts";
 
 export interface TreeMutant {
   /** Stable name for test titles. */
@@ -122,4 +123,75 @@ export const BUILD_MUTANTS: readonly TreeMutant[] = [
   CHUNK_LEVEL_BYTE_STUCK,
   UTF16_ID_ORDER,
   ISOLATION_EXCLUSIVE,
+];
+
+// ---------------------------------------------------------------------
+// Fold planner
+// ---------------------------------------------------------------------
+
+/** A planner that loses the last mutation of the fold, in `_id` order. */
+export const PLANNER_DROPS_LAST_MUTATION: TreeMutant = {
+  name: "planner-drops-last-mutation",
+  defect: "the fold planner drops the last mutation",
+  options: {
+    steps: {
+      sortMutations: (mutations) => sortMutationsById(mutations).slice(0, -1),
+    },
+  },
+};
+
+/**
+ * A planner that stops re-chunking at the first old node boundary past
+ * a change even when its chunker is mid-chunk, closing that chunk
+ * instead of resyncing into the neighbour.
+ */
+export const PLANNER_RESYNCS_ONE_SHORT: TreeMutant = {
+  name: "planner-resyncs-one-short",
+  defect: "the fold planner stops one neighbour short of a resynced cut",
+  options: { steps: { resyncStops: () => true } },
+};
+
+/**
+ * A planner that never re-chunks the leaf before an isolated document,
+ * although that leaf's cut read the isolated document's size.
+ */
+export const PLANNER_SKIPS_ISOLATION_RESTART: TreeMutant = {
+  name: "planner-skips-isolation-restart",
+  defect: "the fold planner keeps the leaf cut before a changed isolated document",
+  options: { steps: { leafRestartsBefore: () => false } },
+};
+
+/**
+ * A planner that re-chunks the leaf before an isolated document only
+ * when the document is larger than `leafIsolationDocumentBytes`, missing
+ * the leaf before a document of exactly that size.
+ */
+export const PLANNER_ISOLATION_RESTART_EXCLUSIVE: TreeMutant = {
+  name: "planner-isolation-restart-exclusive",
+  defect: "the fold planner treats a leaf at exactly leafIsolationDocumentBytes as not isolated",
+  options: {
+    steps: {
+      leafRestartsBefore: (leaf, layout) =>
+        leaf.rows === 1 && leaf.bytes > layout.leafIsolationDocumentBytes,
+    },
+  },
+};
+
+/**
+ * A planner that never resyncs: it re-chunks from the first change to
+ * the end of every level. Its trees are canonical, but it rewrites
+ * every node after the change.
+ */
+export const PLANNER_NEVER_RESYNCS: TreeMutant = {
+  name: "planner-never-resyncs",
+  defect: "the fold planner rewrites every node after the first change",
+  options: { steps: { resyncStops: () => false } },
+};
+
+/** The planner mutants the fold-equals-build suite must catch. */
+export const PLAN_MUTANTS: readonly TreeMutant[] = [
+  PLANNER_DROPS_LAST_MUTATION,
+  PLANNER_RESYNCS_ONE_SHORT,
+  PLANNER_SKIPS_ISOLATION_RESTART,
+  PLANNER_ISOLATION_RESTART_EXCLUSIVE,
 ];

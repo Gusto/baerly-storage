@@ -8,7 +8,7 @@
  * chosen when the format is adopted.
  */
 
-import { MAX_KEY_BYTES } from "@baerly/protocol";
+import { MAX_KEY_BYTES, STORAGE_RETRY_MAX_ATTEMPTS } from "@baerly/protocol";
 import { MAX_SEGMENT_BYTES } from "../path-segment.ts";
 
 /** Namespace segment under the collection prefix that holds every tree object. */
@@ -41,6 +41,23 @@ export const TREE_CHUNK_SALT_BYTES = 16;
  * a tree of 2^53 rows stays far below this.
  */
 export const TREE_MAX_LEVEL = 16;
+
+/**
+ * Calls the request ledger is charged for one node GET, node PUT or head
+ * GET of a fold. Each goes through `retryStorageCall`
+ * (`packages/protocol/src/storage/retry.ts`), which may make up to
+ * `STORAGE_RETRY_MAX_ATTEMPTS` attempts, and the ledger charges every
+ * attempt as it is issued, so a plan charged at this rate cannot run out
+ * of ledger through retries partway through publication.
+ */
+export const TREE_RETRIED_CALL_CHARGE: number = STORAGE_RETRY_MAX_ATTEMPTS;
+
+/**
+ * Calls charged for a fold's head CAS. It is an `If-Match` PUT, which
+ * `retryStorageCall` sends exactly once (`compareAndSwap`): a resend
+ * would meet its own landed write as a 412.
+ */
+export const TREE_HEAD_CAS_CHARGE = 1;
 
 /** Most child entries one branch may hold. */
 export const BRANCH_MAX_ENTRIES = 256;
